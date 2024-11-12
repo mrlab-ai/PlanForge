@@ -118,7 +118,7 @@ fn parse_mutex_group(input: &str) -> IResult<&str, Vec<(u32, u32)>> {
 
 
 
-fn parse_mutexes(input: &str) -> IResult<&str, Vec<Vec<String>>> {
+fn parse_mutexes(input: &str) -> IResult<&str, Vec<Vec<(u32, u32)>>> {
     let (input, num_mutexes) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let mut input = input;
@@ -130,7 +130,7 @@ fn parse_mutexes(input: &str) -> IResult<&str, Vec<Vec<String>>> {
         mutexes.push(mutex_group);
         input = new_input;
     }
-   Ok((input, vec![]))
+   Ok((input, mutexes))
 }
 
 
@@ -150,6 +150,29 @@ fn parse_state(input: &str) -> IResult<&str, Vec<i32>> {
         input = loop_input;
     }
     Ok((input, states))
+}
+
+fn parse_goal(input: &str) -> IResult<&str, Vec<i32>> {
+    let (input, _) = tag("begin_goal")(input)?;
+    let (input, _) = line_ending(input)?;
+    let (input, num_goals) = u32(input)?;
+    let (input, _) = line_ending(input)?;
+
+
+
+    let mut input = input;
+    let mut goals = vec![];
+    for _ in 0..num_goals {
+        let (loop_input, goal) = not_line_ending(input)?;
+        if goal == "end_goal" {
+            break;
+        }
+        let (_, goal) = i32(goal)?;
+        goals.push(goal);
+        let (loop_input, _) = line_ending(loop_input)?;
+        input = loop_input;
+    }
+    Ok((input, goals))
 }
 
 
