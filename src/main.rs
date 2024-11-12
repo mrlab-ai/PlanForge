@@ -142,6 +142,7 @@ fn parse_state(input: &str) -> IResult<&str, Vec<i32>> {
     loop {
         let (loop_input, state) = not_line_ending(input)?;
         if state == "end_state" {
+            input = loop_input;
             break;
         }
         let (_, state) = i32(state)?;
@@ -149,10 +150,11 @@ fn parse_state(input: &str) -> IResult<&str, Vec<i32>> {
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
     }
+    let (input, _) = line_ending(input)?;
     Ok((input, states))
 }
 
-fn parse_goal(input: &str) -> IResult<&str, Vec<i32>> {
+fn parse_goal(input: &str) -> IResult<&str, Vec<(u32, u32)>> {
     let (input, _) = tag("begin_goal")(input)?;
     let (input, _) = line_ending(input)?;
     let (input, num_goals) = u32(input)?;
@@ -163,11 +165,8 @@ fn parse_goal(input: &str) -> IResult<&str, Vec<i32>> {
     let mut input = input;
     let mut goals = vec![];
     for _ in 0..num_goals {
-        let (loop_input, goal) = not_line_ending(input)?;
-        if goal == "end_goal" {
-            break;
-        }
-        let (_, goal) = i32(goal)?;
+        let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
+        let (loop_input, goal) = parser(input)?;
         goals.push(goal);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
@@ -190,6 +189,8 @@ fn parse_sas_output(input: &str) -> IResult<&str, SasOutput> {
     let (input, states) = parse_state(input)?;
     println!("Parsed states: {:?}", states);
 
+    let (input, goals) = parse_goal(input)?;
+    println!("Parsed goals: {:?}", goals);
 
     
 
