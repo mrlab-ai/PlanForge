@@ -120,4 +120,22 @@ impl AbstractTask for TaskProxy {
     fn get_num_axioms(&self) -> i32 {
         0
     }
+
+    fn get_num_goals(&self) -> i32 {
+        0
+    }
+
+    fn get_goal_fact(&self, index: i32) -> &Fact {
+        unimplemented!("This function is not yet implemented");
+    }
+
+    fn get_initial_state_values(&self) -> Vec<i32> {
+        vec![]
+    }
+
+    fn convert_ancestor_state_values(&self, ancestor_state_values: &Vec<i32>, ancestor_task: &dyn AbstractTask) -> Vec<i32> {
+        vec![]
+    }
+
+    
 }
