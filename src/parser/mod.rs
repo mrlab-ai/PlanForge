@@ -1,73 +1,12 @@
+use crate::search::task::{Axiom, Effect, ExplicitVariable, Fact, Operator, RootTask};
 use nom::{
     bytes::complete::tag,
     character::complete::{alphanumeric1, digit1, i32, line_ending, not_line_ending, u32},
     combinator::map_res,
-    sequence::{delimited, preceded, separated_pair},
+    sequence::separated_pair,
     IResult,
 };
-use core::num;
-use std::{fs, vec};
-
-// Struct to hold parsed data
-#[derive(Debug)]
-pub struct RootTask {
-    version: u32,
-    metric: bool,
-    variables: Vec<ExplicitVariable>,
-    goals: Vec<Fact>,
-    mutexes: Vec<Vec<Fact>>,
-    states: Vec<i32>,
-    operators: Vec<Operator>,
-    axioms: Vec<Axiom>,
-}
-
-#[derive(Debug)]
-struct ExplicitVariable {
-    domain_size: u32,
-    name: String, 
-    fact_names: Vec<String>,
-    axiom_layer: i32, 
-    axiom_default_value: u32,
-}
-
-#[derive(Debug)]
-pub struct Fact {
-    name: u32,
-    value: u32,
-}
-
-impl Fact {
-    pub fn new(name: u32, value: u32) -> Self {
-        Fact {
-            name,
-            value,
-        }
-    }
-}
-
-struct Effect {
-    conditions: Vec<Fact>,
-    var_id: u32,
-    precondition_value: i32,
-    effect_value: u32,
-}
-
-#[derive(Debug)]
-pub struct Operator {
-    name: String,
-    preconditions: Vec<(u32, u32)>,
-    effects: Vec<(u32, u32)>,
-    cost: u32,
-}
-
-#[derive(Debug)]
-struct Axiom {
-    conditions: Vec<Fact>,
-    var_id: u32,
-    precondition_value: u32,
-    effect_value: u32,
-}
-
+use std::vec;
 
 fn parse_version(input: &str) -> IResult<&str, u32> {
     let (input, _) = tag("begin_version")(input)?;
@@ -110,13 +49,7 @@ fn parse_variable(input: &str) -> IResult<&str, ExplicitVariable> {
     }
     let (input, _) = tag("end_variable")(input)?;
     let (input, _) = line_ending(input)?;
-    let var = ExplicitVariable {
-        domain_size,
-        name: variable_name.to_string(),
-        fact_names,
-        axiom_layer: ws,
-        axiom_default_value: 0,
-    };
+    let var = ExplicitVariable::new(domain_size, variable_name.to_string(), fact_names, ws, 0);
     Ok((input, var))
 }
 
@@ -141,8 +74,8 @@ fn parse_integer(input: &str) -> IResult<&str, u32> {
 fn parse_mutex_group(input: &str) -> IResult<&str, Vec<Fact>> {
     let (input, _) = tag("begin_mutex_group")(input)?;
     let (input, _) = line_ending(input)?;
-    
-    let (input, num_facts) = u32(input)?; 
+
+    let (input, num_facts) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let mut input = input;
 
@@ -150,10 +83,8 @@ fn parse_mutex_group(input: &str) -> IResult<&str, Vec<Fact>> {
     for _ in 0..num_facts {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (new_input, fact) = parser(input)?;
-        let fact = Fact {
-            name: fact.0,
-            value: fact.1,
-        };
+        let fact = Fact::new(fact.0, fact.1);
+
         mutex_group.push(fact);
         let (new_input, _) = line_ending(new_input)?;
         input = new_input;
@@ -164,8 +95,6 @@ fn parse_mutex_group(input: &str) -> IResult<&str, Vec<Fact>> {
 
     Ok((input, mutex_group))
 }
-
-
 
 fn parse_mutexes(input: &str) -> IResult<&str, Vec<Vec<Fact>>> {
     let (input, num_mutexes) = u32(input)?;
@@ -179,9 +108,8 @@ fn parse_mutexes(input: &str) -> IResult<&str, Vec<Vec<Fact>>> {
         mutexes.push(mutex_group);
         input = new_input;
     }
-   Ok((input, mutexes))
+    Ok((input, mutexes))
 }
-
 
 fn parse_state(input: &str) -> IResult<&str, Vec<i32>> {
     let (input, _) = tag("begin_state")(input)?;
@@ -209,17 +137,12 @@ fn parse_goal(input: &str) -> IResult<&str, Vec<Fact>> {
     let (input, num_goals) = u32(input)?;
     let (input, _) = line_ending(input)?;
 
-
-
     let mut input = input;
     let mut goals = vec![];
     for _ in 0..num_goals {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (loop_input, goal) = parser(input)?;
-        let goal = Fact {
-            name: goal.0,
-            value: goal.1,
-        };
+        let goal = Fact::new(goal.0, goal.1);
         goals.push(goal);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
@@ -242,10 +165,9 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
     for _ in 0..num_prevail_cond {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (loop_input, prevail_cond) = parser(input)?;
-        let prevail_cond = Fact {
-            name: prevail_cond.0,
-            value: prevail_cond.1,
-        };
+
+        let prevail_cond = Fact::new(prevail_cond.0, prevail_cond.1);
+
         prevail_conditions.push(prevail_cond);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
@@ -253,7 +175,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
 
     let (input, num_effects) = u32(input)?;
     let (input, _) = line_ending(input)?;
-    
+
     let mut input = input;
     let mut effects = vec![];
     for _ in 0..num_effects {
@@ -265,10 +187,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         for _ in 0..num_conditions {
             let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
             let (loop_input2, condition) = parser(loop_input)?;
-            let condition = Fact {
-                name: condition.0,
-                value: condition.1,
-            };
+            let condition = Fact::new(condition.0, condition.1);
             effect_conditions.push(condition);
             let (loop_input2, _) = tag(" ")(loop_input2)?;
             loop_input = loop_input2;
@@ -279,31 +198,24 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         let (loop_input, _) = tag(" ")(loop_input)?;
         let (loop_input, effect_value) = u32(loop_input)?;
 
-        let effect = Effect {
-            conditions: effect_conditions,
-            var_id: effect_var_id,
+        let effect = Effect::new(
+            effect_conditions,
+            effect_var_id,
             precondition_value,
             effect_value,
-        };
+        );
         effects.push(effect);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
-
     }
     let (input, cost) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_operator")(input)?;
     let (input, _) = line_ending(input)?;
 
-    let operator = Operator {
-        name: name.to_string(),
-        preconditions: vec![],
-        effects: vec![],
-        cost,
-    };
+    let operator = Operator::new(name.to_string(), effects, cost);
+
     Ok((input, operator))
-
-
 }
 
 fn parse_operators(input: &str) -> IResult<&str, Vec<Operator>> {
@@ -320,7 +232,6 @@ fn parse_operators(input: &str) -> IResult<&str, Vec<Operator>> {
 }
 
 fn parse_axiom(input: &str) -> IResult<&str, Axiom> {
-
     let (input, _) = tag("begin_rule")(input)?;
     let (input, _) = line_ending(input)?;
 
@@ -332,29 +243,20 @@ fn parse_axiom(input: &str) -> IResult<&str, Axiom> {
     for _ in 0..num_conditions {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (loop_input, condition) = parser(input)?;
-        let condition = Fact {
-            name: condition.0,
-            value: condition.1,
-        };
+        let condition = Fact::new(condition.0, condition.1);
         conditions.push(condition);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
     }
     let (input, var_id) = u32(input)?;
     let (input, _) = tag(" ")(input)?;
-    let (input, precondition_value) = u32(input)?; 
+    let (input, precondition_value) = u32(input)?;
     let (input, _) = tag(" ")(input)?;
     let (input, effect_value) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_rule")(input)?;
     let (input, _) = line_ending(input)?;
-
-    let axiom = Axiom {
-        conditions,
-        var_id,
-        precondition_value,
-        effect_value,
-    };
+    let axiom = Axiom::new(conditions, var_id, precondition_value, effect_value);
 
     Ok((input, axiom))
 }
@@ -371,7 +273,6 @@ fn parse_axioms(input: &str) -> IResult<&str, Vec<Axiom>> {
     }
     Ok((input, axioms))
 }
-
 
 pub fn parse_sas_output(input: &str) -> IResult<&str, RootTask> {
     let (input, version) = parse_version(input)?;
@@ -392,16 +293,9 @@ pub fn parse_sas_output(input: &str) -> IResult<&str, RootTask> {
 
     let (input, axioms) = parse_axioms(input)?;
 
-    let output = RootTask {
-        version,
-        metric,
-        variables,
-        goals,
-        mutexes,
-        states,
-        operators,
-        axioms,
-    };
+    let output = RootTask::new(
+        version, metric, variables, goals, mutexes, states, operators, axioms,
+    );
 
     Ok((input, output))
 }

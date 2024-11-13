@@ -1,13 +1,9 @@
-use crate::parser::{Fact, Operator, RootTask};
-
 trait AbstractTask {
-
-    fn new() -> Self where Self: Sized;
     fn get_num_variables(&self) -> i32;
-    fn get_variable_name(&self, index: i32) -> &str;
-    fn get_variable_domain_size(&self, index: i32) -> i32;
-    fn get_variable_axiom_layer(&self, index: i32) -> i32;
-    fn get_variable_default_axiom_value(&self, index: i32) -> i32;
+    fn get_variable_name(&self, index: i32) -> Result<&str, &str>;
+    fn get_variable_domain_size(&self, index: i32) -> Result<i32, &str>;
+    fn get_variable_axiom_layer(&self, index: i32) -> Result<i32, &str>;
+    fn get_variable_default_axiom_value(&self, index: i32) -> Result<i32, &str>;
     fn get_fact_name(&self, fact: &Fact) -> &str;
 
     fn are_facts_mutex(&self, fact1: &Fact, fact2: &Fact) -> bool;
@@ -17,8 +13,15 @@ trait AbstractTask {
     fn get_num_operator_preconditions(&self, index: i32, is_axiom: bool) -> i32;
     fn get_operator_precondition(&self, index: i32, precond_index: i32, is_axiom: bool) -> &Fact;
     fn get_num_operator_effects(&self, index: i32, is_axiom: bool) -> i32;
-    fn get_num_operator_effect_conditions(&self, index: i32, eff_index: i32, is_axiom: bool) -> i32;
-    fn get_operator_effect_condition(&self, index: i32, eff_index: i32, cond_index: i32, is_axiom: bool) -> &Fact;
+    fn get_num_operator_effect_conditions(&self, index: i32, eff_index: i32, is_axiom: bool)
+        -> i32;
+    fn get_operator_effect_condition(
+        &self,
+        index: i32,
+        eff_index: i32,
+        cond_index: i32,
+        is_axiom: bool,
+    ) -> &Fact;
     fn get_operator_effect(&self, index: i32, eff_index: i32, is_axiom: bool) -> &Fact;
 
     fn convert_operator_index(&self, index: i32, ancestor_task: &dyn AbstractTask);
@@ -29,45 +32,186 @@ trait AbstractTask {
 
     fn get_initial_state_values(&self) -> Vec<i32>;
 
-    fn convert_ancestor_state_values(&self, ancestor_state_values: &Vec<i32>, ancestor_task: &dyn AbstractTask) -> Vec<i32>;
-
+    fn convert_ancestor_state_values(
+        &self,
+        ancestor_state_values: &Vec<i32>,
+        ancestor_task: &dyn AbstractTask,
+    ) -> Vec<i32>;
 }
 
-trait MyTrait {
-    fn do_something(&self, other: &dyn MyTrait);
-    fn another_function(&self);
+#[derive(Debug)]
+pub struct ExplicitVariable {
+    domain_size: u32,
+    name: String,
+    fact_names: Vec<String>,
+    axiom_layer: i32,
+    axiom_default_value: u32,
 }
 
-struct MyStruct;
+impl ExplicitVariable {
+    pub fn new(
+        domain_size: u32,
+        name: String,
+        fact_names: Vec<String>,
+        axiom_layer: i32,
+        axiom_default_value: u32,
+    ) -> Self {
+        ExplicitVariable {
+            domain_size,
+            name,
+            fact_names,
+            axiom_layer,
+            axiom_default_value,
+        }
+    }
+}
 
+#[derive(Debug)]
+pub struct Fact {
+    name: u32,
+    value: u32,
+}
 
+impl Fact {
+    pub fn new(name: u32, value: u32) -> Self {
+        Fact { name, value }
+    }
+}
 
+#[derive(Debug)]
+pub struct Effect {
+    conditions: Vec<Fact>,
+    var_id: u32,
+    precondition_value: i32,
+    effect_value: u32,
+}
+
+impl Effect {
+    pub fn new(
+        conditions: Vec<Fact>,
+        var_id: u32,
+        precondition_value: i32,
+        effect_value: u32,
+    ) -> Self {
+        Effect {
+            conditions,
+            var_id,
+            precondition_value,
+            effect_value,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Operator {
+    name: String,
+    effects: Vec<Effect>,
+    cost: u32,
+}
+
+impl Operator {
+    pub fn new(name: String, effects: Vec<Effect>, cost: u32) -> Self {
+        Operator {
+            name,
+            effects,
+            cost,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Axiom {
+    conditions: Vec<Fact>,
+    var_id: u32,
+    precondition_value: u32,
+    effect_value: u32,
+}
+
+impl Axiom {
+    pub fn new(
+        conditions: Vec<Fact>,
+        var_id: u32,
+        precondition_value: u32,
+        effect_value: u32,
+    ) -> Self {
+        Axiom {
+            conditions,
+            var_id,
+            precondition_value,
+            effect_value,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct RootTask {
+    version: u32,
+    metric: bool,
+    variables: Vec<ExplicitVariable>,
+    goals: Vec<Fact>,
+    mutexes: Vec<Vec<Fact>>,
+    states: Vec<i32>,
+    operators: Vec<Operator>,
+    axioms: Vec<Axiom>,
+}
+
+impl RootTask {
+    pub fn new(
+        version: u32,
+        metric: bool,
+        variables: Vec<ExplicitVariable>,
+        goals: Vec<Fact>,
+        mutexes: Vec<Vec<Fact>>,
+        states: Vec<i32>,
+        operators: Vec<Operator>,
+        axioms: Vec<Axiom>,
+    ) -> Self {
+        RootTask {
+            version,
+            metric,
+            variables,
+            goals,
+            mutexes,
+            states,
+            operators,
+            axioms,
+        }
+    }
+}
 
 struct TaskProxy {}
 
-impl AbstractTask for TaskProxy {
-    fn new() -> Self {
-        TaskProxy {}
-    }
-
+impl AbstractTask for RootTask {
     fn get_num_variables(&self) -> i32 {
-        0
+        self.variables.len() as i32
     }
 
-    fn get_variable_name(&self, index: i32) -> &str {
-        ""
+    fn get_variable_name(&self, index: i32) -> Result<&str, &str> {
+        if index < 0 || index >= self.variables.len() as i32 {
+            return Err("Index out of bounds");
+        }
+        Ok(&self.variables[index as usize].name)
     }
 
-    fn get_variable_domain_size(&self, index: i32) -> i32 {
-        0
+    fn get_variable_domain_size(&self, index: i32) -> Result<i32, &str> {
+        if index < 0 || index >= self.variables.len() as i32 {
+            return Err("Index out of bounds");
+        }
+        Ok(self.variables[index as usize].domain_size as i32)
     }
 
-    fn get_variable_axiom_layer(&self, index: i32) -> i32 {
-        0
+    fn get_variable_axiom_layer(&self, index: i32) -> Result<i32, &str> {
+        if index < 0 || index >= self.variables.len() as i32 {
+            return Err("Index out of bounds");
+        }
+        Ok(self.variables[index as usize].axiom_layer)
     }
 
-    fn get_variable_default_axiom_value(&self, index: i32) -> i32 {
-        0
+    fn get_variable_default_axiom_value(&self, index: i32) -> Result<i32, &str> {
+        if index < 0 || index >= self.variables.len() as i32 {
+            return Err("Index out of bounds");
+        }
+        Ok(self.variables[index as usize].axiom_default_value as i32)
     }
 
     fn get_fact_name(&self, fact: &Fact) -> &str {
@@ -102,11 +246,22 @@ impl AbstractTask for TaskProxy {
         0
     }
 
-    fn get_num_operator_effect_conditions(&self, index: i32, eff_index: i32, is_axiom: bool) -> i32 {
+    fn get_num_operator_effect_conditions(
+        &self,
+        index: i32,
+        eff_index: i32,
+        is_axiom: bool,
+    ) -> i32 {
         0
     }
 
-    fn get_operator_effect_condition(&self, index: i32, eff_index: i32, cond_index: i32, is_axiom: bool) -> &Fact {
+    fn get_operator_effect_condition(
+        &self,
+        index: i32,
+        eff_index: i32,
+        cond_index: i32,
+        is_axiom: bool,
+    ) -> &Fact {
         unimplemented!("This function is not yet implemented");
     }
 
@@ -114,8 +269,7 @@ impl AbstractTask for TaskProxy {
         unimplemented!("This function is not yet implemented");
     }
 
-    fn convert_operator_index(&self, index: i32, ancestor_task: &dyn AbstractTask) {
-    }
+    fn convert_operator_index(&self, index: i32, ancestor_task: &dyn AbstractTask) {}
 
     fn get_num_axioms(&self) -> i32 {
         0
@@ -133,9 +287,11 @@ impl AbstractTask for TaskProxy {
         vec![]
     }
 
-    fn convert_ancestor_state_values(&self, ancestor_state_values: &Vec<i32>, ancestor_task: &dyn AbstractTask) -> Vec<i32> {
+    fn convert_ancestor_state_values(
+        &self,
+        ancestor_state_values: &Vec<i32>,
+        ancestor_task: &dyn AbstractTask,
+    ) -> Vec<i32> {
         vec![]
     }
-
-
 }

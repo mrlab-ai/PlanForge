@@ -1,2 +1,2 @@
 mod search_algorithm;
-mod task;
+pub mod task;
