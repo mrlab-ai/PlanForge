@@ -1,4 +1,4 @@
-use crate::parser::{Fact, Operator};
+use crate::parser::{Fact, Operator, RootTask};
 
 trait AbstractTask {
 
@@ -137,5 +137,5 @@ impl AbstractTask for TaskProxy {
         vec![]
     }
 
-    
+
 }

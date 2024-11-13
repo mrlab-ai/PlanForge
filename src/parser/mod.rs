@@ -10,7 +10,7 @@ use std::{fs, vec};
 
 // Struct to hold parsed data
 #[derive(Debug)]
-pub struct SasOutput {
+pub struct RootTask {
     version: u32,
     metric: bool,
     variables: Vec<ExplicitVariable>,
@@ -373,7 +373,7 @@ fn parse_axioms(input: &str) -> IResult<&str, Vec<Axiom>> {
 }
 
 
-pub fn parse_sas_output(input: &str) -> IResult<&str, SasOutput> {
+pub fn parse_sas_output(input: &str) -> IResult<&str, RootTask> {
     let (input, version) = parse_version(input)?;
     println!("Parsed version: {}", version);
     let (input, metric) = parse_metric(input)?;
@@ -392,7 +392,7 @@ pub fn parse_sas_output(input: &str) -> IResult<&str, SasOutput> {
 
     let (input, axioms) = parse_axioms(input)?;
 
-    let output = SasOutput {
+    let output = RootTask {
         version,
         metric,
         variables,
