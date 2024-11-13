@@ -36,6 +36,15 @@ pub struct Fact {
     value: u32,
 }
 
+impl Fact {
+    pub fn new(name: u32, value: u32) -> Self {
+        Fact {
+            name,
+            value,
+        }
+    }
+}
+
 struct Effect {
     conditions: Vec<Fact>,
     var_id: u32,
