@@ -1,18 +1,24 @@
 use nom::{
     bytes::complete::tag,
-    character::complete::{digit1, line_ending, alphanumeric1, i32, u32, not_line_ending},
+    character::complete::{alphanumeric1, digit1, i32, line_ending, not_line_ending, u32},
     combinator::map_res,
     sequence::{delimited, preceded, separated_pair},
     IResult,
 };
-use std::fs;
+use core::num;
+use std::{fs, vec};
 
 // Struct to hold parsed data
 #[derive(Debug)]
 struct SasOutput {
     version: u32,
     metric: bool,
-    variables: Vec<String>,
+    variables: Vec<ExplicitVariable>,
+    goals: Vec<Fact>,
+    mutexes: Vec<Vec<Fact>>,
+    states: Vec<i32>,
+    operators: Vec<Operator>,
+    axioms: Vec<Axiom>,
 }
 
 #[derive(Debug)]
@@ -23,6 +29,36 @@ struct ExplicitVariable {
     axiom_layer: i32, 
     axiom_default_value: u32,
 }
+
+#[derive(Debug)]
+struct Fact {
+    name: u32,
+    value: u32,
+}
+
+struct Effect {
+    conditions: Vec<Fact>,
+    var_id: u32,
+    precondition_value: i32,
+    effect_value: u32,
+}
+
+#[derive(Debug)]
+struct Operator {
+    name: String,
+    preconditions: Vec<(u32, u32)>,
+    effects: Vec<(u32, u32)>,
+    cost: u32,
+}
+
+#[derive(Debug)]
+struct Axiom {
+    conditions: Vec<Fact>,
+    var_id: u32,
+    precondition_value: u32,
+    effect_value: u32,
+}
+
 
 fn parse_version(input: &str) -> IResult<&str, u32> {
     let (input, _) = tag("begin_version")(input)?;
@@ -93,7 +129,7 @@ fn parse_integer(input: &str) -> IResult<&str, u32> {
     map_res(digit1, str::parse::<u32>)(input)
 }
 
-fn parse_mutex_group(input: &str) -> IResult<&str, Vec<(u32, u32)>> {
+fn parse_mutex_group(input: &str) -> IResult<&str, Vec<Fact>> {
     let (input, _) = tag("begin_mutex_group")(input)?;
     let (input, _) = line_ending(input)?;
     
@@ -105,6 +141,10 @@ fn parse_mutex_group(input: &str) -> IResult<&str, Vec<(u32, u32)>> {
     for _ in 0..num_facts {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (new_input, fact) = parser(input)?;
+        let fact = Fact {
+            name: fact.0,
+            value: fact.1,
+        };
         mutex_group.push(fact);
         let (new_input, _) = line_ending(new_input)?;
         input = new_input;
@@ -118,7 +158,7 @@ fn parse_mutex_group(input: &str) -> IResult<&str, Vec<(u32, u32)>> {
 
 
 
-fn parse_mutexes(input: &str) -> IResult<&str, Vec<Vec<(u32, u32)>>> {
+fn parse_mutexes(input: &str) -> IResult<&str, Vec<Vec<Fact>>> {
     let (input, num_mutexes) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let mut input = input;
@@ -154,7 +194,7 @@ fn parse_state(input: &str) -> IResult<&str, Vec<i32>> {
     Ok((input, states))
 }
 
-fn parse_goal(input: &str) -> IResult<&str, Vec<(u32, u32)>> {
+fn parse_goal(input: &str) -> IResult<&str, Vec<Fact>> {
     let (input, _) = tag("begin_goal")(input)?;
     let (input, _) = line_ending(input)?;
     let (input, num_goals) = u32(input)?;
@@ -167,11 +207,160 @@ fn parse_goal(input: &str) -> IResult<&str, Vec<(u32, u32)>> {
     for _ in 0..num_goals {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (loop_input, goal) = parser(input)?;
+        let goal = Fact {
+            name: goal.0,
+            value: goal.1,
+        };
         goals.push(goal);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
     }
+
+    let (input, _) = tag("end_goal")(input)?;
+    let (input, _) = line_ending(input)?;
     Ok((input, goals))
+}
+
+fn parse_operator(input: &str) -> IResult<&str, Operator> {
+    let (input, _) = tag("begin_operator")(input)?;
+    let (input, _) = line_ending(input)?;
+    let (input, name) = not_line_ending(input)?;
+    let (input, _) = line_ending(input)?;
+    let (input, num_prevail_cond) = u32(input)?;
+    let (input, _) = line_ending(input)?;
+    let mut prevail_conditions = vec![];
+    let mut input = input;
+    for _ in 0..num_prevail_cond {
+        let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
+        let (loop_input, prevail_cond) = parser(input)?;
+        let prevail_cond = Fact {
+            name: prevail_cond.0,
+            value: prevail_cond.1,
+        };
+        prevail_conditions.push(prevail_cond);
+        let (loop_input, _) = line_ending(loop_input)?;
+        input = loop_input;
+    }
+
+    let (input, num_effects) = u32(input)?;
+    let (input, _) = line_ending(input)?;
+    
+    let mut input = input;
+    let mut effects = vec![];
+    for _ in 0..num_effects {
+        let (loop_input, num_conditions) = u32(input)?;
+        let (loop_input, _) = tag(" ")(loop_input)?;
+        let mut effect_conditions = vec![];
+
+        let mut loop_input = loop_input;
+        for _ in 0..num_conditions {
+            let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
+            let (loop_input2, condition) = parser(loop_input)?;
+            let condition = Fact {
+                name: condition.0,
+                value: condition.1,
+            };
+            effect_conditions.push(condition);
+            let (loop_input2, _) = tag(" ")(loop_input2)?;
+            loop_input = loop_input2;
+        }
+        let (loop_input, effect_var_id) = u32(loop_input)?;
+        let (loop_input, _) = tag(" ")(loop_input)?;
+        let (loop_input, precondition_value) = i32(loop_input)?; // NOTE: -1 if there is no precondition
+        let (loop_input, _) = tag(" ")(loop_input)?;
+        let (loop_input, effect_value) = u32(loop_input)?;
+
+        let effect = Effect {
+            conditions: effect_conditions,
+            var_id: effect_var_id,
+            precondition_value,
+            effect_value,
+        };
+        effects.push(effect);
+        let (loop_input, _) = line_ending(loop_input)?;
+        input = loop_input;
+
+    }
+    let (input, cost) = u32(input)?;
+    let (input, _) = line_ending(input)?;
+    let (input, _) = tag("end_operator")(input)?;
+    let (input, _) = line_ending(input)?;
+
+    let operator = Operator {
+        name: name.to_string(),
+        preconditions: vec![],
+        effects: vec![],
+        cost,
+    };
+    Ok((input, operator))
+
+
+}
+
+fn parse_operators(input: &str) -> IResult<&str, Vec<Operator>> {
+    let (input, num_operators) = u32(input)?;
+    let (input, _) = line_ending(input)?;
+    let mut input = input;
+    let mut operators = vec![];
+    for _ in 0..num_operators {
+        let (loop_input, operator) = parse_operator(input)?;
+        operators.push(operator);
+        input = loop_input;
+    }
+    Ok((input, operators))
+}
+
+fn parse_axiom(input: &str) -> IResult<&str, Axiom> {
+
+    let (input, _) = tag("begin_rule")(input)?;
+    let (input, _) = line_ending(input)?;
+
+    let (input, num_conditions) = u32(input)?;
+    let (input, _) = line_ending(input)?;
+
+    let mut input = input;
+    let mut conditions = vec![];
+    for _ in 0..num_conditions {
+        let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
+        let (loop_input, condition) = parser(input)?;
+        let condition = Fact {
+            name: condition.0,
+            value: condition.1,
+        };
+        conditions.push(condition);
+        let (loop_input, _) = line_ending(loop_input)?;
+        input = loop_input;
+    }
+    let (input, var_id) = u32(input)?;
+    let (input, _) = tag(" ")(input)?;
+    let (input, precondition_value) = u32(input)?; 
+    let (input, _) = tag(" ")(input)?;
+    let (input, effect_value) = u32(input)?;
+    let (input, _) = line_ending(input)?;
+    let (input, _) = tag("end_rule")(input)?;
+    let (input, _) = line_ending(input)?;
+
+    let axiom = Axiom {
+        conditions,
+        var_id,
+        precondition_value,
+        effect_value,
+    };
+
+    Ok((input, axiom))
+}
+
+fn parse_axioms(input: &str) -> IResult<&str, Vec<Axiom>> {
+    let (input, num_axioms) = u32(input)?;
+    let (input, _) = line_ending(input)?;
+    let mut input = input;
+    let mut axioms = vec![];
+    for _ in 0..num_axioms {
+        let (loop_input, axiom) = parse_axiom(input)?;
+        axioms.push(axiom);
+        input = loop_input;
+    }
+    Ok((input, axioms))
 }
 
 
@@ -181,9 +370,7 @@ fn parse_sas_output(input: &str) -> IResult<&str, SasOutput> {
     let (input, metric) = parse_metric(input)?;
     println!("Parsed metric: {}", metric);
 
-    let variables = vec![];
-    let (input, var) = parse_all_variables(input)?;
-    println!("Parsed variables: {:?}", var);
+    let (input, variables) = parse_all_variables(input)?;
 
     let (input, mutexes) = parse_mutexes(input)?;
     let (input, states) = parse_state(input)?;
@@ -192,17 +379,28 @@ fn parse_sas_output(input: &str) -> IResult<&str, SasOutput> {
     let (input, goals) = parse_goal(input)?;
     println!("Parsed goals: {:?}", goals);
 
-    
+    let (input, operators) = parse_operators(input)?;
 
+    let (input, axioms) = parse_axioms(input)?;
 
+    let output = SasOutput {
+        version,
+        metric,
+        variables,
+        goals,
+        mutexes,
+        states,
+        operators,
+        axioms,
+    };
 
-    Ok((input, SasOutput { version, metric, variables }))
+    Ok((input, output))
 }
 
 fn main() {
     let content = fs::read_to_string("output.sas").expect("Could not read file");
     match parse_sas_output(&content) {
-        Ok((_, sas_output)) => println!("Parsed output: {:?}", sas_output),
+        Ok((_, sas_output)) => {},
         Err(e) => println!("Failed to parse file: {:?}", e),
     }
 }
