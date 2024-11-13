@@ -31,7 +31,7 @@ struct ExplicitVariable {
 }
 
 #[derive(Debug)]
-struct Fact {
+pub struct Fact {
     name: u32,
     value: u32,
 }
@@ -44,7 +44,7 @@ struct Effect {
 }
 
 #[derive(Debug)]
-struct Operator {
+pub struct Operator {
     name: String,
     preconditions: Vec<(u32, u32)>,
     effects: Vec<(u32, u32)>,
