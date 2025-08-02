@@ -1,4 +1,4 @@
-use crate::search::task::{Axiom, Effect, ExplicitVariable, Fact, Operator, RootTask};
+use crate::search::classical_task::{Axiom, Effect, ExplicitVariable, Fact, Operator, RootTask};
 use nom::{
     bytes::complete::tag,
     character::complete::{alphanumeric1, digit1, i32, line_ending, not_line_ending, u32},

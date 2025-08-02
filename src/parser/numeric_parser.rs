@@ -1,8 +1,19 @@
-use crate::search::task::{Axiom, Effect, ExplicitVariable, Fact, Operator, RootTask};
-use nom::{
-    branch::alt, bytes::complete::tag, character::complete::{alphanumeric1, char, digit1, i32, line_ending, not_line_ending, space1, u32}, combinator::map_res, sequence::separated_pair, IResult
+use crate::search::numeric_task::{NumericType, NumericVariable};
+use crate::search::numeric_task::{
+    Axiom, Effect, ExplicitVariable, Fact, NumericRootTask, Operator,
 };
 use nom::bytes::complete::take_while1;
+use nom::combinator::{map, recognize};
+use nom::{
+    branch::alt,
+    bytes::complete::tag,
+    character::complete::{
+        alphanumeric1, char, digit1, i32, line_ending, not_line_ending, space1, u32,
+    },
+    combinator::map_res,
+    sequence::separated_pair,
+    IResult,
+};
 use std::{process::exit, vec};
 
 fn parse_version(input: &str) -> IResult<&str, u32> {
@@ -64,6 +75,55 @@ fn parse_all_variables(input: &str) -> IResult<&str, Vec<ExplicitVariable>> {
         input = loop_input;
     }
     Ok((input, variables))
+}
+
+fn parse_line_type(input: &str) -> IResult<&str, NumericType> {
+    alt((
+        map(tag("C"), |_| NumericType::Constant),
+        map(tag("D"), |_| NumericType::Derived),
+        map(tag("I"), |_| NumericType::Implicit),
+        map(tag("R"), |_| NumericType::Root),
+    ))(input)
+}
+
+fn parse_layer(input: &str) -> IResult<&str, i32> {
+    map(
+        recognize(nom::sequence::pair(char('-'), digit1)),
+        |s: &str| s.parse::<i32>().unwrap(),
+    )(input)
+}
+
+fn parse_name(input: &str) -> IResult<&str, String> {
+    // take_while1 takes all characters until a newline or end of input
+    let (input, name) = take_while1(|c: char| c != '\n')(input)?;
+    Ok((input, name.trim().to_string()))
+}
+
+fn parse_numeric_variable(input: &str) -> IResult<&str, NumericVariable> {
+    let (input, numeric_type) = parse_line_type(input)?;
+    let (input, _) = space1(input)?;
+    let (input, layer) = parse_layer(input)?;
+    let (input, _) = space1(input)?;
+    let (input, variable_name) = parse_name(input)?;
+    let (input, _) = line_ending(input)?;
+    let var = NumericVariable::new(variable_name.to_string(), numeric_type, layer);
+    Ok((input, var))
+}
+
+fn parse_all_numeric_variables(input: &str) -> IResult<&str, Vec<NumericVariable>> {
+    let (input, num_numeric_variables) = u32(input)?;
+    println!("Number of variables: {}", num_numeric_variables);
+    let (input, _) = line_ending(input)?;
+    let (input, _) = tag("begin_numeric_variables")(input)?;
+    let (input, _) = line_ending(input)?;
+    let mut numeric_variables = Vec::new();
+    let mut input = input;
+    for _ in 0..num_numeric_variables {
+        let (loop_input, var) = parse_numeric_variable(input)?;
+        numeric_variables.push(var);
+        input = loop_input;
+    }
+    Ok((input, numeric_variables))
 }
 
 fn parse_integer(input: &str) -> IResult<&str, u32> {
@@ -273,13 +333,14 @@ fn parse_axioms(input: &str) -> IResult<&str, Vec<Axiom>> {
     Ok((input, axioms))
 }
 
-pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, RootTask> {
+pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     let (input, version) = parse_version(input)?;
     println!("Parsed version: {}", version);
     let (input, metric) = parse_metric(input)?;
     println!("Parsed metric: {}", metric);
 
     let (input, variables) = parse_all_variables(input)?;
+    let (input, numeric_variables) = parse_all_numeric_variables(input)?;
 
     let (input, mutexes) = parse_mutexes(input)?;
     let (input, states) = parse_state(input)?;
@@ -292,7 +353,7 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, RootTask> {
 
     let (input, axioms) = parse_axioms(input)?;
 
-    let output = RootTask::new(
+    let output = NumericRootTask::new(
         version, metric, variables, goals, mutexes, states, operators, axioms,
     );
 
