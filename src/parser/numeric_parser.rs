@@ -3,7 +3,7 @@ use crate::search::numeric_task::{
     Axiom, Effect, ExplicitVariable, Fact, NumericRootTask, Operator,
 };
 use nom::bytes::complete::take_while1;
-use nom::combinator::{map, recognize};
+use nom::combinator::{map, opt, recognize};
 use nom::{
     branch::alt,
     bytes::complete::tag,
@@ -88,7 +88,8 @@ fn parse_line_type(input: &str) -> IResult<&str, NumericType> {
 
 fn parse_layer(input: &str) -> IResult<&str, i32> {
     map(
-        recognize(nom::sequence::pair(char('-'), digit1)),
+        // We recognize an optional minus sign followed by one or more digits.
+        recognize(nom::sequence::pair(opt(char('-')), digit1)),
         |s: &str| s.parse::<i32>().unwrap(),
     )(input)
 }
@@ -123,6 +124,7 @@ fn parse_all_numeric_variables(input: &str) -> IResult<&str, Vec<NumericVariable
         numeric_variables.push(var);
         input = loop_input;
     }
+    let (input, _) = tag("end_numeric_variables")(input)?;
     Ok((input, numeric_variables))
 }
 
