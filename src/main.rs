@@ -3,7 +3,7 @@ mod search;
 
 use std::fs;
 use std::env;
-use parser::parse_sas_output;
+use parser::classical_parser::parse_sas_output;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

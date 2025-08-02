@@ -6,3 +6,16 @@ Right now, only a parser, applicable for regular SAS+ files exist.
 ```
 cargo run <sas file>
 ```
+
+The final goal is to create a library that can be extended with heuristics, task transformations, and search algorithms using either python or rust. 
+
+## Planned Features
+
+* All public functions and methods will be exposed to python
+* supports classical and numeric planning
+* Supports SAS and PDDL
+* Adds a lifted and grounded planner
+* Adds various functions required for learning, among others: 
+  * Sample state spaces
+  * Candle compatible 
+  * Serialization of states for saving and loading from disk
