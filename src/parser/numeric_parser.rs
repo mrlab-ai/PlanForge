@@ -4,6 +4,7 @@ use crate::search::numeric_task::{
 };
 use nom::bytes::complete::take_while1;
 use nom::combinator::{map, opt, recognize};
+use nom::number::complete::double;
 use nom::{
     branch::alt,
     bytes::complete::tag,
@@ -125,6 +126,7 @@ fn parse_all_numeric_variables(input: &str) -> IResult<&str, Vec<NumericVariable
         input = loop_input;
     }
     let (input, _) = tag("end_numeric_variables")(input)?;
+    let (input, _) = line_ending(input)?;
     Ok((input, numeric_variables))
 }
 
@@ -184,6 +186,26 @@ fn parse_state(input: &str) -> IResult<&str, Vec<i32>> {
             break;
         }
         let (_, state) = i32(state)?;
+        states.push(state);
+        let (loop_input, _) = line_ending(loop_input)?;
+        input = loop_input;
+    }
+    let (input, _) = line_ending(input)?;
+    Ok((input, states))
+}
+
+fn parse_numeric_state(input: &str) -> IResult<&str, Vec<f64>> {
+    let (input, _) = tag("begin_numeric_state")(input)?;
+    let (input, _) = line_ending(input)?;
+    let mut input = input;
+    let mut states = vec![];
+    loop {
+        let (loop_input, state) = not_line_ending(input)?;
+        if state == "end_numeric_state" {
+            input = loop_input;
+            break;
+        }
+        let (_, state) = double(state)?;
         states.push(state);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
@@ -347,6 +369,9 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     let (input, mutexes) = parse_mutexes(input)?;
     let (input, states) = parse_state(input)?;
     println!("Parsed states: {:?}", states);
+    let (input, numeric_states) = parse_numeric_state(input)?;
+    println!("Parsed numeric states: {:?}", numeric_states);
+
 
     let (input, goals) = parse_goal(input)?;
     println!("Parsed goals: {:?}", goals);

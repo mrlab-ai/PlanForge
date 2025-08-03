@@ -20,3 +20,4 @@ The final goal is to create a library that can be extended with heuristics, task
   * Candle compatible 
   * Serialization of states for saving and loading from disk
   * A PDDL2SAS translator written in rust
+  * Paralleizable successor generation with goal estimation
