@@ -66,6 +66,7 @@ impl ExplicitVariable {
     }
 }
 
+#[derive(Debug)]
 pub struct NumericVariable {
     name: String,
     numeric_type: NumericType,
@@ -187,6 +188,7 @@ pub struct NumericRootTask {
     version: u32,
     metric: bool,
     variables: Vec<ExplicitVariable>,
+    numeric_variables: Vec<NumericVariable>,
     goals: Vec<Fact>,
     mutexes: Vec<Vec<Fact>>,
     states: Vec<i32>,
@@ -199,6 +201,7 @@ impl NumericRootTask {
         version: u32,
         metric: bool,
         variables: Vec<ExplicitVariable>,
+        numeric_variables: Vec<NumericVariable>,
         goals: Vec<Fact>,
         mutexes: Vec<Vec<Fact>>,
         states: Vec<i32>,
@@ -209,6 +212,7 @@ impl NumericRootTask {
             version,
             metric,
             variables,
+            numeric_variables,
             goals,
             mutexes,
             states,
