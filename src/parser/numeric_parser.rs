@@ -1,4 +1,4 @@
-use crate::search::numeric_task::{NumericType, NumericVariable};
+use crate::search::numeric_task::{AssignmentEffect, NumericType, NumericVariable, PlusMinus};
 use crate::search::numeric_task::{
     Axiom, Effect, ExplicitVariable, Fact, NumericRootTask, Operator,
 };
@@ -84,6 +84,15 @@ fn parse_line_type(input: &str) -> IResult<&str, NumericType> {
         map(tag("D"), |_| NumericType::Derived),
         map(tag("I"), |_| NumericType::Implicit),
         map(tag("R"), |_| NumericType::Root),
+    ))(input)
+}
+
+
+
+fn parse_plus_or_minus(input: &str) -> IResult<&str, PlusMinus> {
+    alt((
+        map(tag("+"), |_| PlusMinus::Plus),
+        map(tag("-"), |_| PlusMinus::Minus),
     ))(input)
 }
 
@@ -261,11 +270,12 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
 
     let mut input = input;
     let mut effects = vec![];
+    println!("Number of effects: {}", num_effects);
     for _ in 0..num_effects {
         let (loop_input, num_conditions) = u32(input)?;
         let (loop_input, _) = tag(" ")(loop_input)?;
         let mut effect_conditions = vec![];
-
+        println!("Number of conditions: {}", num_conditions);
         let mut loop_input = loop_input;
         for _ in 0..num_conditions {
             let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
@@ -275,6 +285,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
             let (loop_input2, _) = tag(" ")(loop_input2)?;
             loop_input = loop_input2;
         }
+
         let (loop_input, effect_var_id) = u32(loop_input)?;
         let (loop_input, _) = tag(" ")(loop_input)?;
         let (loop_input, precondition_value) = i32(loop_input)?; // NOTE: -1 if there is no precondition
@@ -289,6 +300,41 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         );
         effects.push(effect);
         let (loop_input, _) = line_ending(loop_input)?;
+        input = loop_input;
+    }
+
+
+    let mut assignment_effects = vec![];
+    let (input, num_assignment_effects) = u32(input)?;
+    let (mut input, _) = line_ending(input)?;
+    for _ in 0..num_assignment_effects {
+        let (loop_input, cond_count) = u32(input)?;
+        println!("Number of conditions in assignment effect: {}", cond_count);
+        println!("before tag");
+        let (loop_input, _) = space1(loop_input)?;
+        //TODO: Add conditional counts. For now we ignore them.
+        if cond_count > 0 {
+            panic!("Conditional effects are not supported yet.");
+        }
+        let (loop_input, effect_var_id) = u32(loop_input)?;
+
+        let (loop_input, _) = space1(loop_input)?;
+        println!("after tag, {}", cond_count);
+
+        let (loop_input, plus_or_minus) = parse_plus_or_minus(loop_input)?;
+
+        let (loop_input, _) = space1(loop_input)?;
+        println!("after tag, {:?}", effect_var_id);
+
+        let (loop_input, effect_value) = u32(loop_input)?;
+        let (loop_input, _) = line_ending(loop_input)?;
+        let assignment_effect = AssignmentEffect::new(
+            effect_var_id,
+            plus_or_minus,
+            effect_value,
+        );
+        println!("Parsed assignment effect: {:?}", assignment_effect);
+        assignment_effects.push(assignment_effect);
         input = loop_input;
     }
     let (input, cost) = u32(input)?;

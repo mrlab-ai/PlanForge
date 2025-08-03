@@ -73,11 +73,7 @@ pub struct NumericVariable {
 }
 
 impl NumericVariable {
-    pub fn new(
-        name: String,
-        numeric_type: NumericType,
-        axiom_layer: i32,
-    ) -> Self {
+    pub fn new(name: String, numeric_type: NumericType, axiom_layer: i32) -> Self {
         NumericVariable {
             name,
             numeric_type,
@@ -117,6 +113,29 @@ impl Effect {
             conditions,
             var_id,
             precondition_value,
+            effect_value,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum PlusMinus {
+    Plus,
+    Minus,
+}
+
+#[derive(Debug)]
+pub struct AssignmentEffect {
+    var_id: u32,
+    operation: PlusMinus,
+    effect_value: u32,
+}
+
+impl AssignmentEffect {
+    pub fn new(var_id: u32, operation: PlusMinus, effect_value: u32) -> Self {
+        AssignmentEffect {
+            var_id,
+            operation,
             effect_value,
         }
     }
