@@ -1,5 +1,3 @@
-use nom::bits;
-
 const BITS_PER_BIN: i32 = (std::mem::size_of::<u64>() * 8) as i32;
 
 fn get_bit_size_for_range(range: u64) -> i32 {
