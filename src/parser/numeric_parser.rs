@@ -1,4 +1,4 @@
-use crate::search::numeric_task::{AssignmentEffect, NumericType, NumericVariable, PlusMinus};
+use crate::search::numeric_task::{AssignmentEffect, ComparisonAxiom, ComparisonOperator, NumericType, NumericVariable, PlusMinus};
 use crate::search::numeric_task::{
     Axiom, Effect, ExplicitVariable, Fact, NumericRootTask, Operator,
 };
@@ -398,6 +398,48 @@ fn parse_axioms(input: &str) -> IResult<&str, Vec<Axiom>> {
     Ok((input, axioms))
 }
 
+fn parse_comparison_operator(input: &str) -> IResult<&str, ComparisonOperator> {
+    alt((
+        map(tag(">="), |_| ComparisonOperator::GreaterThanOrEqual),
+        map(tag("<="), |_| ComparisonOperator::LessThanOrEqual),
+        map(tag("!="), |_| ComparisonOperator::UnEqual),
+        map(tag(">"), |_| ComparisonOperator::GreaterThan),
+        map(tag("<"), |_| ComparisonOperator::LessThan),
+        map(tag("="), |_| ComparisonOperator::Equal),
+    ))(input)
+}
+
+fn parse_comparison_axiom(input: &str) -> IResult<&str, ComparisonAxiom> {
+    // This function is a placeholder for parsing comparison axioms.
+    // Currently, it returns an empty Axiom as no comparison axioms are defined.
+    let (input, affected_var_id) = u32(input)?;
+    let (input, _) = space1(input)?;
+    let (input, comparison_operator) = parse_comparison_operator(input)?;
+    let (input, _) = space1(input)?;
+    let (input, left_hand_side) = u32(input)?;
+    let (input, _) = space1(input)?;
+    let (input, right_hand_side) = u32(input)?;
+    let (input, _) = line_ending(input)?;
+    Ok((input, ComparisonAxiom::new(affected_var_id, comparison_operator, left_hand_side, right_hand_side)))
+}
+
+fn parse_comparison_axioms(input: &str) -> IResult<&str, Vec<ComparisonAxiom>> {
+    // This function is a placeholder for parsing comparison axioms.
+    // Currently, it returns an empty vector as no comparison axioms are defined.
+    let (input, num_comparison_axioms) = u32(input)?;
+    let (input, _) = line_ending(input)?;
+    let (input, _) = tag("begin_comparison_axioms")(input)?;
+    let (mut input, _) = line_ending(input)?;
+
+    let mut comparison_axioms = vec![];
+    for _ in 0..num_comparison_axioms {
+        let (loop_input, comparison_axiom) = parse_comparison_axiom(input)?;
+        comparison_axioms.push(comparison_axiom);
+        input = loop_input;
+    }
+    Ok((input, comparison_axioms))
+}
+
 pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     let (input, version) = parse_version(input)?;
     println!("Parsed version: {}", version);
@@ -408,10 +450,10 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     let (input, numeric_variables) = parse_all_numeric_variables(input)?;
 
     let (input, mutexes) = parse_mutexes(input)?;
-    let (input, states) = parse_state(input)?;
-    println!("Parsed states: {:?}", states);
+    let (input, state) = parse_state(input)?;
+    println!("Parsed initial propositional states: {:?}", state);
     let (input, numeric_states) = parse_numeric_state(input)?;
-    println!("Parsed numeric states: {:?}", numeric_states);
+    println!("Parsed initial numeric state: {:?}", numeric_states);
 
 
     let (input, goals) = parse_goal(input)?;
@@ -420,12 +462,16 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     let (input, operators) = parse_operators(input)?;
 
     let (input, axioms) = parse_axioms(input)?;
+    let (input, comparison_axioms) = parse_comparison_axioms(input)?;
+    println!("Parsed axioms: {:?}", axioms);
+    println!("Parsed comparison axioms: {:?}", comparison_axioms);
 
     //TODO: parse numeric axioms, global constraints and check for final line
 
     let output = NumericRootTask::new(
-        version, metric, variables, numeric_variables, goals, mutexes, states, operators, axioms,
+        version, metric, variables, numeric_variables, goals, mutexes, state, numeric_states, operators, axioms,
     );
+
 
     Ok((input, output))
 }

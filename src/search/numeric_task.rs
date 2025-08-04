@@ -184,6 +184,30 @@ impl Axiom {
 }
 
 #[derive(Debug)]
+pub struct ComparisonAxiom {
+    affected_var_id: u32,
+    comparison_operator: ComparisonOperator,
+    left_hand_side: u32,
+    right_hand_side: u32,
+}
+
+impl ComparisonAxiom {
+    pub fn new(
+        affected_var_id: u32,
+        comparison_operator: ComparisonOperator,
+        left_hand_side: u32,
+        right_hand_side: u32,
+    ) -> Self {
+        ComparisonAxiom {
+            affected_var_id,
+            comparison_operator,
+            left_hand_side,
+            right_hand_side,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct NumericRootTask {
     version: u32,
     metric: bool,
@@ -191,7 +215,8 @@ pub struct NumericRootTask {
     numeric_variables: Vec<NumericVariable>,
     goals: Vec<Fact>,
     mutexes: Vec<Vec<Fact>>,
-    states: Vec<i32>,
+    state: Vec<i32>,
+    numeric_state: Vec<f64>,
     operators: Vec<Operator>,
     axioms: Vec<Axiom>,
 }
@@ -204,7 +229,8 @@ impl NumericRootTask {
         numeric_variables: Vec<NumericVariable>,
         goals: Vec<Fact>,
         mutexes: Vec<Vec<Fact>>,
-        states: Vec<i32>,
+        state: Vec<i32>,
+        numeric_state: Vec<f64>,
         operators: Vec<Operator>,
         axioms: Vec<Axiom>,
     ) -> Self {
@@ -215,7 +241,8 @@ impl NumericRootTask {
             numeric_variables,
             goals,
             mutexes,
-            states,
+            state,
+            numeric_state,
             operators,
             axioms,
         }
@@ -228,6 +255,16 @@ pub enum NumericType {
     Derived,
     Implicit,
     Root, // not sure if Root is correct
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ComparisonOperator {
+    LessThan,
+    LessThanOrEqual,
+    Equal,
+    GreaterThanOrEqual,
+    GreaterThan,
+    UnEqual,
 }
 
 impl AbstractNumericTask for NumericRootTask {
