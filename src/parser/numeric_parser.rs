@@ -499,6 +499,19 @@ fn parse_assignment_axioms(input: &str) -> IResult<&str, Vec<AssignmentAxiom>> {
     Ok((input, assignment_axioms))
 }
 
+fn parse_global_constraint(input: &str) -> IResult<&str, (u32, u32)> {
+    let (input, _) = tag("begin_global_constraint")(input)?;
+    let (input, _) = line_ending(input)?;
+    let (input, constraint_var_id) = u32(input)?;
+    let (input, _) = space1(input)?;
+    let (input, constraing_value ) = u32(input)?;
+    let (input, _) = line_ending(input)?;
+    let (input, _) = tag("end_global_constraint")(input)?;
+    let (input, _) = line_ending(input)?;
+    let constraint = (constraint_var_id, constraing_value);
+    Ok((input, constraint))
+}
+
 pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     let (input, version) = parse_version(input)?;
     println!("Parsed version: {}", version);
@@ -521,9 +534,17 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
 
     let (input, axioms) = parse_axioms(input)?;
     let (input, comparison_axioms) = parse_comparison_axioms(input)?;
-    let (input, assignment_axions) = parse_assignment_axioms(input)?;
+    let (input, assignment_axioms) = parse_assignment_axioms(input)?;
     println!("Parsed axioms: {:?}", axioms);
     println!("Parsed comparison axioms: {:?}", comparison_axioms);
+    println!("Parsed assignment axioms: {:?}", assignment_axioms);
+
+    let (input, global_constraints) = parse_global_constraint(input)?;
+    println!("Parsed global constraints: {:?}", global_constraints);
+
+    let (input, _ ) = tag("begin_SG")(input)?;
+    let (input, _) = line_ending(input)?;
+    assert!(input.is_empty(), "Expected no more input after parsing SG, but found: {}", input);
 
     let output = NumericRootTask::new(
         version,
@@ -537,7 +558,7 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
         operators,
         axioms,
         comparison_axioms,
-        assignment_axions
+        assignment_axioms
     );
 
     Ok((input, output))
