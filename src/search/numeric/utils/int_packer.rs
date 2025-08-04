@@ -95,4 +95,7 @@ impl IntDoublePacker {
     fn pack_bins(ranges: &Vec<u64>) {
         todo!()
     }
+
+
+    
 }
