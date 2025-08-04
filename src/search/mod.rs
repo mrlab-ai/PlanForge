@@ -1,3 +1,3 @@
 mod search_algorithm;
-pub mod classical_task;
-pub mod numeric_task;
+pub mod classical;
+pub mod numeric;

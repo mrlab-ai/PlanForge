@@ -1,4 +1,4 @@
-use crate::search::numeric_task::{
+use crate::search::numeric::numeric_task::{
     AssignmentAxiom,
     AssignmentEffect,
     CalOperator,
@@ -9,7 +9,7 @@ use crate::search::numeric_task::{
     NumericVariable,
     PlusMinus,
 };
-use crate::search::numeric_task::{
+use crate::search::numeric::numeric_task::{
     Axiom,
     Effect,
     ExplicitVariable,
