@@ -208,6 +208,38 @@ impl ComparisonAxiom {
 }
 
 #[derive(Debug)]
+pub enum CalOperator {
+    Sum, 
+    Difference,
+    Product,
+    Division,
+}
+
+#[derive(Debug)]
+pub struct AssignmentAxiom {
+    affected_var_id: u32,
+    operator: CalOperator,
+    left_hand_side: u32,
+    right_hand_side: u32,
+}
+
+impl AssignmentAxiom {
+    pub fn new(
+        affected_var_id: u32,
+        operator: CalOperator,
+        left_hand_side: u32,
+        right_hand_side: u32,
+    ) -> Self {
+        AssignmentAxiom {
+            affected_var_id,
+            operator,
+            left_hand_side,
+            right_hand_side,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct NumericRootTask {
     version: u32,
     metric: bool,
@@ -219,6 +251,8 @@ pub struct NumericRootTask {
     numeric_state: Vec<f64>,
     operators: Vec<Operator>,
     axioms: Vec<Axiom>,
+    comparison_axioms: Vec<ComparisonAxiom>,
+    assignment_axioms: Vec<AssignmentAxiom>,
 }
 
 impl NumericRootTask {
@@ -233,6 +267,8 @@ impl NumericRootTask {
         numeric_state: Vec<f64>,
         operators: Vec<Operator>,
         axioms: Vec<Axiom>,
+        comparison_axioms: Vec<ComparisonAxiom>,
+        assignment_axioms: Vec<AssignmentAxiom>,
     ) -> Self {
         NumericRootTask {
             version,
@@ -245,6 +281,8 @@ impl NumericRootTask {
             numeric_state,
             operators,
             axioms,
+            comparison_axioms,
+            assignment_axioms,
         }
     }
 }
