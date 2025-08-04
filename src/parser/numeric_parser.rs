@@ -36,7 +36,7 @@ use nom::{
     sequence::separated_pair,
     IResult,
 };
-use std::{ process::exit, vec };
+use std::vec;
 
 fn parse_version(input: &str) -> IResult<&str, u32> {
     let (input, _) = tag("begin_version")(input)?;
@@ -88,7 +88,6 @@ fn parse_variable(input: &str) -> IResult<&str, ExplicitVariable> {
 fn parse_all_variables(input: &str) -> IResult<&str, Vec<ExplicitVariable>> {
     let (input, num_variables) = u32(input)?;
     let (input, _) = line_ending(input)?;
-    println!("Number of variables: {}", num_variables);
     let mut variables = Vec::new();
     let mut input = input;
     for _ in 0..num_variables {
@@ -139,7 +138,6 @@ fn parse_numeric_variable(input: &str) -> IResult<&str, NumericVariable> {
 
 fn parse_all_numeric_variables(input: &str) -> IResult<&str, Vec<NumericVariable>> {
     let (input, num_numeric_variables) = u32(input)?;
-    println!("Number of variables: {}", num_numeric_variables);
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("begin_numeric_variables")(input)?;
     let (input, _) = line_ending(input)?;
@@ -286,12 +284,10 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
 
     let mut input = input;
     let mut effects = vec![];
-    println!("Number of effects: {}", num_effects);
     for _ in 0..num_effects {
         let (loop_input, num_conditions) = u32(input)?;
         let (loop_input, _) = tag(" ")(loop_input)?;
         let mut effect_conditions = vec![];
-        println!("Number of conditions: {}", num_conditions);
         let mut loop_input = loop_input;
         for _ in 0..num_conditions {
             let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
@@ -513,38 +509,22 @@ fn parse_global_constraint(input: &str) -> IResult<&str, (u32, u32)> {
 }
 
 pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
+    let timer = std::time::Instant::now();
     let (input, version) = parse_version(input)?;
-    println!("Parsed version: {}", version);
     let (input, metric) = parse_metric(input)?;
-    println!("Parsed metric: {}", metric);
-
     let (input, variables) = parse_all_variables(input)?;
     let (input, numeric_variables) = parse_all_numeric_variables(input)?;
-
     let (input, mutexes) = parse_mutexes(input)?;
     let (input, state) = parse_state(input)?;
-    println!("Parsed initial propositional states: {:?}", state);
-    let (input, numeric_states) = parse_numeric_state(input)?;
-    println!("Parsed initial numeric state: {:?}", numeric_states);
-
+    let (input, numeric_state) = parse_numeric_state(input)?;
     let (input, goals) = parse_goal(input)?;
-    println!("Parsed goals: {:?}", goals);
-
     let (input, operators) = parse_operators(input)?;
-
     let (input, axioms) = parse_axioms(input)?;
     let (input, comparison_axioms) = parse_comparison_axioms(input)?;
     let (input, assignment_axioms) = parse_assignment_axioms(input)?;
-    println!("Parsed axioms: {:?}", axioms);
-    println!("Parsed comparison axioms: {:?}", comparison_axioms);
-    println!("Parsed assignment axioms: {:?}", assignment_axioms);
-
-    let (input, global_constraints) = parse_global_constraint(input)?;
-    println!("Parsed global constraints: {:?}", global_constraints);
-
+    let (input, global_constraint) = parse_global_constraint(input)?;
     let (input, _ ) = tag("begin_SG")(input)?;
     let (input, _) = line_ending(input)?;
-    assert!(input.is_empty(), "Expected no more input after parsing SG, but found: {}", input);
 
     let output = NumericRootTask::new(
         version,
@@ -554,12 +534,16 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
         goals,
         mutexes,
         state,
-        numeric_states,
+        numeric_state,
         operators,
         axioms,
         comparison_axioms,
-        assignment_axioms
+        assignment_axioms,
+        global_constraint,
     );
+
+    let duration = timer.elapsed();
+    println!("Parsed numeric SAS output in: {:?}", duration);
 
     Ok((input, output))
 }

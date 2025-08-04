@@ -253,6 +253,7 @@ pub struct NumericRootTask {
     axioms: Vec<Axiom>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
+    global_constraint: (u32, u32),
 }
 
 impl NumericRootTask {
@@ -269,6 +270,7 @@ impl NumericRootTask {
         axioms: Vec<Axiom>,
         comparison_axioms: Vec<ComparisonAxiom>,
         assignment_axioms: Vec<AssignmentAxiom>,
+        global_constraint: (u32, u32),
     ) -> Self {
         NumericRootTask {
             version,
@@ -283,6 +285,7 @@ impl NumericRootTask {
             axioms,
             comparison_axioms,
             assignment_axioms,
+            global_constraint,
         }
     }
 }
