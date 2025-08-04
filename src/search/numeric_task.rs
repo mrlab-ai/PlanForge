@@ -130,14 +130,16 @@ pub struct AssignmentEffect {
     var_id: u32,
     operation: PlusMinus,
     effect_value: u32,
+    conditions: Vec<GlobalCondition>,
 }
 
 impl AssignmentEffect {
-    pub fn new(var_id: u32, operation: PlusMinus, effect_value: u32) -> Self {
+    pub fn new(var_id: u32, operation: PlusMinus, effect_value: u32, conditions: Vec<GlobalCondition>) -> Self {
         AssignmentEffect {
             var_id,
             operation,
             effect_value,
+            conditions,
         }
     }
 }
@@ -236,6 +238,18 @@ impl AssignmentAxiom {
             left_hand_side,
             right_hand_side,
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct GlobalCondition {
+    var_id: u32,
+    value: u32,
+}
+
+impl GlobalCondition {
+    pub fn new(var_id: u32, value: u32) -> Self {
+        GlobalCondition { var_id, value }
     }
 }
 

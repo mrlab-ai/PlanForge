@@ -4,6 +4,7 @@ use crate::search::numeric_task::{
     CalOperator,
     ComparisonAxiom,
     ComparisonOperator,
+    GlobalCondition,
     NumericType,
     NumericVariable,
     PlusMinus,
@@ -320,22 +321,34 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
     let (mut input, _) = line_ending(input)?;
     for _ in 0..num_assignment_effects {
         let (loop_input, cond_count) = u32(input)?;
+        let is_conditional_effect = cond_count > 0;
+        let mut conditions = vec![];
         let (loop_input, _) = space1(loop_input)?;
         //TODO: Add conditional counts. For now we ignore them.
-        if cond_count > 0 {
-            panic!("Conditional effects are not supported yet.");
+        for _ in 0..cond_count {
+            let (loop_input, var_id) = u32(loop_input)?;
+            let (loop_input, _) = space1(loop_input)?;
+            let (loop_input, value) = u32(loop_input)?;
+            let (loop_input, _) = space1(loop_input)?;
+            let condition = GlobalCondition::new(var_id, value);
+            conditions.push(condition);
         }
         let (loop_input, effect_var_id) = u32(loop_input)?;
 
         let (loop_input, _) = space1(loop_input)?;
 
-        let (loop_input, plus_or_minus) = parse_plus_or_minus(loop_input)?;
+        let (loop_input, operation) = parse_plus_or_minus(loop_input)?;
 
         let (loop_input, _) = space1(loop_input)?;
 
         let (loop_input, effect_value) = u32(loop_input)?;
         let (loop_input, _) = line_ending(loop_input)?;
-        let assignment_effect = AssignmentEffect::new(effect_var_id, plus_or_minus, effect_value);
+        let assignment_effect = AssignmentEffect::new(
+            effect_var_id,
+            operation,
+            effect_value,
+            conditions
+        );
         assignment_effects.push(assignment_effect);
         input = loop_input;
     }
@@ -500,7 +513,7 @@ fn parse_global_constraint(input: &str) -> IResult<&str, (u32, u32)> {
     let (input, _) = line_ending(input)?;
     let (input, constraint_var_id) = u32(input)?;
     let (input, _) = space1(input)?;
-    let (input, constraing_value ) = u32(input)?;
+    let (input, constraing_value) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_global_constraint")(input)?;
     let (input, _) = line_ending(input)?;
@@ -523,7 +536,7 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     let (input, comparison_axioms) = parse_comparison_axioms(input)?;
     let (input, assignment_axioms) = parse_assignment_axioms(input)?;
     let (input, global_constraint) = parse_global_constraint(input)?;
-    let (input, _ ) = tag("begin_SG")(input)?;
+    let (input, _) = tag("begin_SG")(input)?;
     let (input, _) = line_ending(input)?;
 
     let output = NumericRootTask::new(
@@ -539,7 +552,7 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
         axioms,
         comparison_axioms,
         assignment_axioms,
-        global_constraint,
+        global_constraint
     );
 
     let duration = timer.elapsed();
