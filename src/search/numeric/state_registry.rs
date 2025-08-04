@@ -1,42 +1,55 @@
+use std::hash::{Hash, Hasher};
 use std::collections::HashSet;
-use std::hash::{ BuildHasherDefault, Hasher, Hash };
-use std::fmt;
+
+
+
+// Placeholder for `PackedStateBin`
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+struct PackedStateBin(u32);
+
+#[derive(Clone, Copy)]
+struct StateID<'a> {
+    value: usize,
+    state_data_pool: &'a Vec<PackedStateBin>,
+}
+
+// Placeholder for `g_state_packer`
+struct StatePacker {
+    num_bins: usize,
+}
+
+impl StatePacker {
+    fn get_num_bins(&self) -> usize {
+        self.num_bins
+    }
+}
+
+static NUM_BINS: usize = 10; //TODO: Replace with actual number of bins from IntDoublePacker
+
+impl<'a> PartialEq for StateID<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        let size = NUM_BINS;
+        let lhs_data = &self.state_data_pool[self.value..self.value + size];
+        let rhs_data = &other.state_data_pool[other.value..other.value + size];
+        lhs_data == rhs_data
+    }
+}
+
+impl<'a> Eq for StateID<'a> {}
+
+impl<'a> Hash for StateID<'a> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let size = NUM_BINS;
+        let data = &self.state_data_pool[self.value..self.value + size];
+        for bin in data {
+            bin.0.hash(state);
+        }
+    }
+}
 
 struct State {}
 
-struct PackedStateBin;
-
-struct StateIDSemanticHash<'a> {
-    state_data_pool: &'a Vec<PackedStateBin>,
-}
-struct StatePacker { num_bins: usize }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StateID {
-    value: usize,
-}
-
-impl StateID {
-    pub const NO_STATE: StateID = StateID { value: usize::MAX };
-
-    pub(crate) fn new(value: usize) -> Self {
-        StateID { value }
-    }
-}
-
-impl Hash for StateID {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.value.hash(state);
-    }
-}
-
-// The `Display` trait allows `StateID` to be formatted for printing.
-// This is the equivalent of the C++ `operator<<`.
-impl fmt::Display for StateID {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.value)
-    }
-}
+type StateIDSet<'a> = HashSet<StateID<'a>>;
 
 struct StateRegistry {
     state_data_pool: Vec<State>,
