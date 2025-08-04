@@ -1,8 +1,7 @@
-use std::hash::{Hash, Hasher};
+use std::hash::{ Hash, Hasher };
 use std::collections::HashSet;
 
-
-
+//TODO: Replace the Vector with the segmented array vector eventually. Since it is unsafe, we should stick to regular vectors for now.
 // Placeholder for `PackedStateBin`
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 struct PackedStateBin(u32);
@@ -13,7 +12,6 @@ struct StateID<'a> {
     state_data_pool: &'a Vec<PackedStateBin>,
 }
 
-// Placeholder for `g_state_packer`
 struct StatePacker {
     num_bins: usize,
 }
