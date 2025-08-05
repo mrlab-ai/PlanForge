@@ -1,4 +1,8 @@
-trait AbstractNumericTask {
+pub trait AbstractNumericTask {
+
+    fn numeric_variables(&self) -> &Vec<NumericVariable>;
+
+
     fn get_num_variables(&self) -> i32;
     fn get_variable_name(&self, index: i32) -> Result<&str, &str>;
     fn get_variable_domain_size(&self, index: i32) -> Result<i32, &str>;
@@ -80,6 +84,10 @@ impl NumericVariable {
             numeric_type,
             axiom_layer,
         }
+    }
+
+    pub fn get_type(&self) -> &NumericType {
+        &self.numeric_type
     }
 }
 
@@ -324,6 +332,13 @@ pub enum ComparisonOperator {
 }
 
 impl AbstractNumericTask for NumericRootTask {
+
+    fn numeric_variables(&self) -> &Vec<NumericVariable> {
+        &self.numeric_variables
+    }
+
+
+
     fn get_num_variables(&self) -> i32 {
         self.variables.len() as i32
     }

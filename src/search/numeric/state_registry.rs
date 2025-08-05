@@ -1,6 +1,10 @@
 use std::collections::HashSet;
 
-use crate::search::numeric::{ numeric_task::NumericType, utils::int_packer::IntDoublePacker };
+use crate::search::numeric::{
+    numeric_task::{ NumericRootTask, NumericType },
+    utils::int_packer::IntDoublePacker,
+};
+use crate::search::numeric::numeric_task::AbstractNumericTask;
 
 type StatePacker = IntDoublePacker;
 
@@ -21,8 +25,8 @@ impl GlobalState {
 }
 
 struct StateRegistry {
-    global_state_packer: Box<StatePacker>,
-    global_numeric_var_types: Vec<NumericType>,
+    root_task: Box<NumericRootTask>,
+    global_state_packer: StatePacker,
     state_data_pool: Vec<StatePacker>,
     numeric_constants: Vec<f64>,
     numeric_indices: Vec<i32>,
@@ -30,14 +34,11 @@ struct StateRegistry {
 }
 
 impl StateRegistry {
-    pub fn new(
-        state_packer: Box<StatePacker>,
-        global_numeric_var_types: Vec<NumericType>,
-        number_numeric_vars: usize
-    ) -> Self {
+    pub fn new(root_task: Box<NumericRootTask>, global_state_packer: StatePacker) -> Self {
+        let number_numeric_vars = root_task.numeric_variables().len();
         StateRegistry {
-            global_state_packer: state_packer,
-            global_numeric_var_types,
+            root_task,
+            global_state_packer,
             state_data_pool: Vec::new(),
             numeric_constants: Vec::new(),
             numeric_indices: vec![-1; number_numeric_vars],
@@ -62,29 +63,37 @@ impl StateRegistry {
         let mut instrumentation_variables = vec![];
 
         for i in 0..numeric_values.len() {
-            match self.global_numeric_var_types.get(i) {
-                Some(NumericType::Instrumentation) => {
+            let numeric_variable = self.root_task
+                .numeric_variables()
+                .get(i)
+                .ok_or_else(|| {
+                    StateInsertError {
+                        message: format!("Numeric variable at index {} not found", i),
+                    }
+                })?;
+            match numeric_variable.get_type() {
+                NumericType::Instrumentation => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
                     self.numeric_indices[i] = instrumentation_variables.len() as i32;
                     instrumentation_variables.push(numeric_values[i]);
                 }
 
-                Some(NumericType::Constant) => {
+                NumericType::Constant => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
                 }
 
-                Some(NumericType::Unknown) => {
+                NumericType::Unknown => {
                     assert!(false);
                     return Err(StateInsertError {
                         message: "Unknown numeric type encountered".to_string(),
                     });
                 }
 
-                Some(NumericType::Derived) => {
+                NumericType::Derived => {
                     derived_index += 1;
                 }
 
-                Some(NumericType::Regular) => {
+                NumericType::Regular => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
                     self.numeric_indices[i] = regular_index as i32;
                     let packed_numeric_value = self.global_state_packer.pack_double(
@@ -95,16 +104,11 @@ impl StateRegistry {
                 }
 
                 _ => {
-                    eprintln!(
-                        "Unexpected numeric type at index {}: {:?}",
-                        i,
-                        self.global_numeric_var_types.get(i)
-                    );
                     return Err(StateInsertError {
                         message: format!(
                             "Unexpected numeric type at index {}: {:?}",
                             i,
-                            self.global_numeric_var_types.get(i)
+                            numeric_variable.get_type()
                         ),
                     });
                 }
