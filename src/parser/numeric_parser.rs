@@ -3,7 +3,6 @@ use crate::search::numeric::numeric_task::{
     AssignmentEffect,
     CalOperator,
     ComparisonAxiom,
-    ComparisonOperator,
     GlobalCondition,
     NumericType,
     NumericVariable,
@@ -418,31 +417,31 @@ fn parse_axioms(input: &str) -> IResult<&str, Vec<Axiom>> {
     Ok((input, axioms))
 }
 
-fn parse_comparison_operator(input: &str) -> IResult<&str, ComparisonOperator> {
+fn parse_comparison_operator(input: &str) -> IResult<&str, &str> {
     alt((
-        map(tag(">="), |_| ComparisonOperator::GreaterThanOrEqual),
-        map(tag("<="), |_| ComparisonOperator::LessThanOrEqual),
-        map(tag("!="), |_| ComparisonOperator::UnEqual),
-        map(tag(">"), |_| ComparisonOperator::GreaterThan),
-        map(tag("<"), |_| ComparisonOperator::LessThan),
-        map(tag("="), |_| ComparisonOperator::Equal),
+        map(tag(">="), |_| ">="),
+        map(tag("<="), |_| "<="),
+        map(tag("!="), |_| "!="),
+        map(tag(">"), |_| ">"),
+        map(tag("<"), |_| "<"),
+        map(tag("="), |_| "="),
     ))(input)
 }
 
 fn parse_comparison_axiom(input: &str) -> IResult<&str, ComparisonAxiom> {
     // This function is a placeholder for parsing comparison axioms.
     // Currently, it returns an empty Axiom as no comparison axioms are defined.
-    let (input, affected_var_id) = u32(input)?;
+    let (input, affected_var_id) = i32(input)?;
     let (input, _) = space1(input)?;
     let (input, comparison_operator) = parse_comparison_operator(input)?;
     let (input, _) = space1(input)?;
-    let (input, left_hand_side) = u32(input)?;
+    let (input, left_hand_side) = i32(input)?;
     let (input, _) = space1(input)?;
-    let (input, right_hand_side) = u32(input)?;
+    let (input, right_hand_side) = i32(input)?;
     let (input, _) = line_ending(input)?;
     Ok((
         input,
-        ComparisonAxiom::new(affected_var_id, comparison_operator, left_hand_side, right_hand_side),
+        ComparisonAxiom::new(affected_var_id, left_hand_side, right_hand_side, comparison_operator),
     ))
 }
 
