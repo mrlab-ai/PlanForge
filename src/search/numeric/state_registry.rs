@@ -1,81 +1,125 @@
-use std::hash::{ Hash, Hasher };
 use std::collections::HashSet;
 
-//TODO: Replace the Vector with the segmented array vector eventually. Since it is unsafe, we should stick to regular vectors for now.
-// Placeholder for `PackedStateBin`
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-struct PackedStateBin(u32);
+use crate::search::numeric::{ numeric_task::NumericType, utils::int_packer::IntDoublePacker };
 
-#[derive(Clone, Copy)]
-struct StateID<'a> {
-    value: usize,
-    state_data_pool: &'a Vec<PackedStateBin>,
+type StatePacker = IntDoublePacker;
+
+struct StateNotFoundError {
+    index: usize,
 }
 
-struct StatePacker {
-    num_bins: usize,
+struct StateInsertError {
+    message: String,
 }
 
-impl StatePacker {
-    fn get_num_bins(&self) -> usize {
-        self.num_bins
+struct GlobalState {}
+
+impl GlobalState {
+    pub fn new(state: &StatePacker) -> Self {
+        todo!()
     }
 }
-
-static NUM_BINS: usize = 10; //TODO: Replace with actual number of bins from IntDoublePacker
-
-impl<'a> PartialEq for StateID<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        let size = NUM_BINS;
-        let lhs_data = &self.state_data_pool[self.value..self.value + size];
-        let rhs_data = &other.state_data_pool[other.value..other.value + size];
-        lhs_data == rhs_data
-    }
-}
-
-impl<'a> Eq for StateID<'a> {}
-
-impl<'a> Hash for StateID<'a> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        let size = NUM_BINS;
-        let data = &self.state_data_pool[self.value..self.value + size];
-        for bin in data {
-            bin.0.hash(state);
-        }
-    }
-}
-
-struct State {}
-
-type StateIDSet<'a> = HashSet<StateID<'a>>;
 
 struct StateRegistry {
-    state_data_pool: Vec<State>,
+    global_state_packer: Box<StatePacker>,
+    global_numeric_var_types: Vec<NumericType>,
+    state_data_pool: Vec<StatePacker>,
     numeric_constants: Vec<f64>,
-    numeric_indices: Vec<usize>,
+    numeric_indices: Vec<i32>,
     registered_states: HashSet<usize>,
 }
 
 impl StateRegistry {
-    pub fn new() -> Self {
+    pub fn new(
+        state_packer: Box<StatePacker>,
+        global_numeric_var_types: Vec<NumericType>,
+        number_numeric_vars: usize
+    ) -> Self {
         StateRegistry {
+            global_state_packer: state_packer,
+            global_numeric_var_types,
             state_data_pool: Vec::new(),
             numeric_constants: Vec::new(),
-            numeric_indices: Vec::new(),
+            numeric_indices: vec![-1; number_numeric_vars],
             registered_states: HashSet::new(),
         }
     }
 
-    pub fn insert_state(&mut self, state: State) -> &State {
-        let is_new_entry = self.registered_states.insert(self.state_data_pool.len());
-        if !is_new_entry {
-            self.state_data_pool.pop();
+    pub fn register_state(
+        &mut self,
+        values: Vec<u64>,
+        numeric_values: Vec<f64>
+    ) -> Result<GlobalState, StateInsertError> {
+        let mut buffer = vec![0; self.global_state_packer.num_bins() as usize];
+        for i in 0..values.len() {
+            let var_id = i as i32;
+            self.global_state_packer.set(&mut buffer, var_id, values[i]);
         }
-        self.state_data_pool.push(state);
-        self.state_data_pool.last().unwrap()
+
+        let mut regular_index = values.len() as i32;
+        let mut derived_index = 0;
+
+        let mut instrumentation_variables = vec![];
+
+        for i in 0..numeric_values.len() {
+            match self.global_numeric_var_types.get(i) {
+                Some(NumericType::Instrumentation) => {
+                    assert!(self.numeric_indices.get(i) == Some(&-1));
+                    self.numeric_indices[i] = instrumentation_variables.len() as i32;
+                    instrumentation_variables.push(numeric_values[i]);
+                }
+
+                Some(NumericType::Constant) => {
+                    assert!(self.numeric_indices.get(i) == Some(&-1));
+                }
+
+                Some(NumericType::Unknown) => {
+                    assert!(false);
+                    return Err(StateInsertError {
+                        message: "Unknown numeric type encountered".to_string(),
+                    });
+                }
+
+                Some(NumericType::Derived) => {
+                    derived_index += 1;
+                }
+
+                Some(NumericType::Regular) => {
+                    assert!(self.numeric_indices.get(i) == Some(&-1));
+                    self.numeric_indices[i] = regular_index as i32;
+                    let packed_numeric_value = self.global_state_packer.pack_double(
+                        numeric_values[i]
+                    );
+                    self.global_state_packer.set(&mut buffer, regular_index, packed_numeric_value);
+                    regular_index += 1;
+                }
+
+                _ => {
+                    eprintln!(
+                        "Unexpected numeric type at index {}: {:?}",
+                        i,
+                        self.global_numeric_var_types.get(i)
+                    );
+                    return Err(StateInsertError {
+                        message: format!(
+                            "Unexpected numeric type at index {}: {:?}",
+                            i,
+                            self.global_numeric_var_types.get(i)
+                        ),
+                    });
+                }
+            }
+        }
+
+        drop(buffer);
+
+        todo!()
     }
 
-    pub fn lookup_state(&self, index: usize) -> Option<&State> {
-        self.state_data_pool.get(index)
+    pub fn lookup_state(&self, index: usize) -> Result<GlobalState, StateNotFoundError> {
+        match self.state_data_pool.get(index) {
+            Some(state) => Ok(GlobalState::new(&state)),
+            None => Err(StateNotFoundError { index }),
+        }
     }
 }

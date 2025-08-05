@@ -1,6 +1,4 @@
-#![allow(unused_variables)]
-#![allow(unused_mut)]
-#![allow(dead_code)]
+//NOTE: This code is unsafe. Once we know it does not cause seg faults, we can replace the safe but slow implementation.
 
 use std::alloc::{ alloc, dealloc, Layout };
 use std::ptr::{ self, NonNull };

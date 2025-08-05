@@ -72,14 +72,21 @@ impl VariableInfo {
     //NOTE: associated functions
 }
 
-struct IntDoublePacker {
+pub struct IntDoublePacker {
     var_infos: Vec<VariableInfo>,
     num_bins: i32,
 }
 
 impl IntDoublePacker {
-    pub fn new(num_bins: i32, var_infos: Vec<VariableInfo>) -> Self {
-        IntDoublePacker { var_infos, num_bins }
+    pub fn new(ranges: Vec<u64>) -> Self {
+
+        let mut packer = IntDoublePacker { var_infos: vec![], num_bins: 0 };
+        packer.pack_bins(&ranges);
+        packer
+    }
+
+    pub fn num_bins(&self) -> i32 {
+        self.num_bins
     }
 
     fn pack_one_bin(&mut self, ranges: &Vec<u64>, bits_to_var: &Vec<Vec<i32>>) -> i32 {
@@ -129,7 +136,7 @@ impl IntDoublePacker {
         }
     }
 
-    pub fn pack_double(plain_double: f64) -> u64 {
+    pub fn pack_double(&self, plain_double: f64) -> u64 {
         plain_double.to_bits()
     }
 

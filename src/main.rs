@@ -6,6 +6,7 @@ use std::env;
 use parser::numeric_parser::parse_numeric_sas_output;
 
 fn main() -> std::io::Result<()> {
+
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         println!("Usage: {} [sas_file]", args[0]);

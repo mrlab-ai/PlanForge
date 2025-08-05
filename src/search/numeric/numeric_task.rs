@@ -308,8 +308,9 @@ impl NumericRootTask {
 pub enum NumericType {
     Constant,
     Derived,
-    Implicit,
-    Root, // not sure if Root is correct
+    Instrumentation,
+    Regular, // not sure if Root is correct
+    Unknown, //TODO: Remove that somehow
 }
 
 #[derive(Debug, PartialEq)]
