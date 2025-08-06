@@ -4,7 +4,7 @@ use crate::{
     parser::numeric_parser,
     search::numeric::{
         self,
-        numeric_task::{self, AbstractNumericTask, Fact},
+        numeric_task::{self, AbstractNumericTask, Fact, GlobalCondition},
         utils::{errors::InvalidIndex, int_packer::IntDoublePacker},
     },
 };
@@ -30,6 +30,10 @@ impl Axiom {
             precondition_value,
             effect_value,
         }
+    }
+
+    pub fn conditions(&self) -> &Vec<Fact> {
+        &self.conditions
     }
 }
 
@@ -210,7 +214,31 @@ impl ComparisonAxiom {
     }
 }
 #[derive(Debug, Clone)]
-struct AxiomRule;
+struct AxiomRule {
+    condition_count: i32,
+    unsatisfied_conditions: i32,
+    effect_var: i32,
+    effect_value: u64,
+    effect_literal: AxiomLiteral,
+}
+
+impl AxiomRule {
+    pub fn new(
+        cond_count: usize,
+        eff_var: usize,
+        eff_val: usize,
+        eff_literal: &AxiomLiteral,
+    ) -> Self {
+        AxiomRule {
+            condition_count: cond_count as i32,
+            unsatisfied_conditions: cond_count as i32,
+            effect_var: eff_var as i32,
+            effect_value: eff_val as u64,
+            effect_literal: eff_literal.clone(), //TODO: Get rid of clone. Either use lifetime or Rc
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct AxiomLiteral {
     condition_of: Vec<AxiomRule>,
@@ -220,14 +248,17 @@ struct AxiomEvaluator {
     numeric_task: Box<dyn AbstractNumericTask>,
     state_packer: IntDoublePacker,
     axiom_literals: Vec<Vec<AxiomLiteral>>,
+    rules: Vec<AxiomRule>,
     comparison_axiom_layer: i32,
     first_propositional_axiom_layer: i32,
     last_propositional_axiom_layer: i32,
+    last_arithmetic_axiom_layer: i32,
 }
 
 impl AxiomEvaluator {
     pub fn new(numeric_task: Box<dyn AbstractNumericTask>, state_packer: IntDoublePacker) -> Self {
-        let mut axiom_literals = vec![vec![]; numeric_task.get_num_axioms() as usize];
+        let mut axiom_literals = vec![];
+        let mut rules = vec![];
         let mut comparison_axiom_layer = -1;
         let mut first_propositional_axiom_layer = -1;
         let mut last_propositional_axiom_layer = -1;
@@ -262,13 +293,30 @@ impl AxiomEvaluator {
             axiom_literals.push(literal);
         }
 
+        for axiom in numeric_task.axioms().iter() {
+            let cond_count = axiom.conditions.len();
+            let eff_var = axiom.var_id as usize;
+            let eff_val = axiom.effect_value as usize;
+            let eff_literal = &axiom_literals[eff_var][eff_var];
+            rules.push(AxiomRule::new(cond_count, eff_var, eff_val, eff_literal));
+        }
+
+        for axiom in numeric_task.axioms().iter() {
+            let conditions = axiom.conditions();
+            for condition in conditions.iter() {
+                //let global_condition = GlobalCondition
+            }
+        }
+
         AxiomEvaluator {
             numeric_task,
             state_packer,
             axiom_literals,
+            rules,
             comparison_axiom_layer,
             first_propositional_axiom_layer,
             last_propositional_axiom_layer,
+            last_arithmetic_axiom_layer,
         }
     }
 
