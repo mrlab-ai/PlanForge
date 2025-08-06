@@ -1,11 +1,19 @@
 use std::{cmp::max, collections::btree_map::Values};
 
+use nom::Err;
+
 use crate::{
     parser::numeric_parser,
-    search::numeric::{
-        self,
-        numeric_task::{self, AbstractNumericTask, Fact, GlobalCondition},
-        utils::{errors::InvalidIndex, int_packer::IntDoublePacker},
+    search::{
+        classical::classical_task::Axiom,
+        numeric::{
+            self,
+            numeric_task::{self, AbstractNumericTask, Fact, GlobalCondition},
+            utils::{
+                errors::{AxiomEvalError, InvalidIndex},
+                int_packer::IntDoublePacker,
+            },
+        },
     },
 };
 
@@ -338,20 +346,14 @@ impl AxiomEvaluator {
                 numeric_task.get_variable_axiom_layer(i).unwrap(),
             );
         }
-        nbf_info_by_layer.resize(
-            (last_layer + 1) as usize,
-            vec![],
-        );
+        nbf_info_by_layer.resize((last_layer + 1) as usize, vec![]);
 
         for var_id in 0..numeric_task.get_num_variables() {
             let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
             if axiom_layer != -1 && axiom_layer != last_layer {
                 let nbf_value = numeric_task.get_initial_state_values()[var_id as usize];
                 let literal = axiom_literals[var_id as usize][nbf_value as usize].clone();
-                let nbf_info = NegationByFailureInfo::new(
-                    var_id as u32,
-                    literal,
-                );
+                let nbf_info = NegationByFailureInfo::new(var_id as u32, literal);
                 nbf_info_by_layer[axiom_layer as usize].push(nbf_info);
             }
         }
@@ -395,21 +397,48 @@ impl AxiomEvaluator {
         Ok(true)
     }
 
-    pub fn evaluate_propositional_axioms(&mut self, buffer: &mut [u64]) -> Result<(), InvalidIndex> {
+    pub fn evaluate_propositional_axioms(
+        &mut self,
+        buffer: &mut [u64],
+    ) -> Result<(), AxiomEvalError> {
         if self.numeric_task.axioms().is_empty() {
             return Ok(());
         }
 
         for i in 0..self.numeric_task.get_num_variables() {
             let axiom_layer = self.numeric_task.get_variable_axiom_layer(i).unwrap();
-            match axiom_layer  {
-                -1 => {
-                    self.queue.push(self.axiom_literals[i as usize][self.state_packer.get(buffer, i) as usize].clone());
-                },
-                _ => {}
+            if axiom_layer == -1 {
+                self.queue.push(
+                    self.axiom_literals[i as usize][self.state_packer.get(buffer, i) as usize]
+                        .clone(),
+                );
+            } else if axiom_layer <= self.last_arithmetic_axiom_layer {
+                return Err(AxiomEvalError::WrongAxiomLayer(
+                    numeric::utils::errors::WrongAxiomLayer {
+                        axiom_layer,
+                        last_arithmetic_axiom_layer: self.last_arithmetic_axiom_layer,
+                    },
+                ));
+            } else if axiom_layer == self.comparison_axiom_layer {
+                self.queue.push(
+                    self.axiom_literals[i as usize][self.state_packer.get(buffer, i) as usize]
+                        .clone(),
+                );
+            } else if axiom_layer <= self.last_propositional_axiom_layer {
+                self.state_packer.set(
+                    buffer,
+                    i,
+                    self.numeric_task.get_initial_state_values()[i as usize] as u64,
+                );
+            } else {
+                return Err(AxiomEvalError::WrongAxiomLayer(
+                    numeric::utils::errors::WrongAxiomLayer {
+                        axiom_layer,
+                        last_arithmetic_axiom_layer: self.last_arithmetic_axiom_layer,
+                    },
+                ));
             }
         }
-
 
         Ok(())
     }
