@@ -1,7 +1,6 @@
-use crate::search::numeric::axioms::{AssignmentAxiom, Axiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use crate::search::numeric::axioms::{AssignmentAxiom, PropositionalAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use crate::search::numeric::numeric_task::{
     AssignmentEffect,
-    GlobalCondition,
     NumericType,
     NumericVariable,
     PlusMinus,
@@ -326,7 +325,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
             let (loop_input, _) = space1(loop_input)?;
             let (loop_input, value) = u32(loop_input)?;
             let (loop_input, _) = space1(loop_input)?;
-            let condition = GlobalCondition::new(var_id, value);
+            let condition = Fact::new(var_id, value);
             conditions.push(condition);
         }
         let (loop_input, effect_var_id) = u32(loop_input)?;
@@ -371,7 +370,7 @@ fn parse_operators(input: &str) -> IResult<&str, Vec<Operator>> {
     Ok((input, operators))
 }
 
-fn parse_axiom(input: &str) -> IResult<&str, Axiom> {
+fn parse_axiom(input: &str) -> IResult<&str, PropositionalAxiom> {
     let (input, _) = tag("begin_rule")(input)?;
     let (input, _) = line_ending(input)?;
 
@@ -396,12 +395,12 @@ fn parse_axiom(input: &str) -> IResult<&str, Axiom> {
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_rule")(input)?;
     let (input, _) = line_ending(input)?;
-    let axiom = Axiom::new(conditions, var_id, precondition_value, effect_value);
+    let axiom = PropositionalAxiom::new(conditions, var_id, precondition_value, effect_value);
 
     Ok((input, axiom))
 }
 
-fn parse_axioms(input: &str) -> IResult<&str, Vec<Axiom>> {
+fn parse_axioms(input: &str) -> IResult<&str, Vec<PropositionalAxiom>> {
     let (input, num_axioms) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let mut input = input;

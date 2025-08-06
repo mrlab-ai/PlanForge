@@ -10,21 +10,21 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct Axiom {
+pub struct PropositionalAxiom {
     conditions: Vec<Fact>,
     var_id: u32,
     precondition_value: u32,
     effect_value: u32,
 }
 
-impl Axiom {
+impl PropositionalAxiom {
     pub fn new(
         conditions: Vec<Fact>,
         var_id: u32,
         precondition_value: u32,
         effect_value: u32,
     ) -> Self {
-        Axiom {
+        PropositionalAxiom {
             conditions,
             var_id,
             precondition_value,
@@ -301,12 +301,18 @@ impl AxiomEvaluator {
             rules.push(AxiomRule::new(cond_count, eff_var, eff_val, eff_literal));
         }
 
-        for axiom in numeric_task.axioms().iter() {
+        for i in 0..numeric_task.axioms().len() {
+            let axiom = &numeric_task.axioms()[i];
             let conditions = axiom.conditions();
             for condition in conditions.iter() {
-                //let global_condition = GlobalCondition
+                axiom_literals[condition.var() as usize][condition.value() as usize]
+                    .condition_of
+                    .push(rules[i].clone()); //TODO: Get rid of clone
             }
         }
+
+        let last_layer = -1;
+        
 
         AxiomEvaluator {
             numeric_task,
@@ -346,9 +352,7 @@ impl AxiomEvaluator {
     }
 
     pub fn evaluate_propositional_axioms(&self, buffer: &mut [u64]) -> Result<(), InvalidIndex> {
-        if self.numeric_task.axioms().is_empty() {
-            return Ok(());
-        }
+        if self.numeric_task.axioms().is_empty() {}
 
         Ok(())
     }

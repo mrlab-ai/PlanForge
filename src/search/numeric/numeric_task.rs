@@ -1,11 +1,11 @@
-use crate::search::numeric::axioms::{AssignmentAxiom, Axiom, ComparisonAxiom};
+use crate::search::numeric::axioms::{AssignmentAxiom, PropositionalAxiom, ComparisonAxiom};
 
 pub trait AbstractNumericTask {
     fn variables(&self) -> &Vec<ExplicitVariable>;
     fn numeric_variables(&self) -> &Vec<NumericVariable>;
     fn assignment_axioms(&self) -> &Vec<AssignmentAxiom>;
     fn comparison_axioms(&self) -> &Vec<ComparisonAxiom>;
-    fn axioms(&self) -> &Vec<Axiom>;
+    fn axioms(&self) -> &Vec<PropositionalAxiom>;
 
     fn get_num_variables(&self) -> i32;
     fn get_variable_name(&self, index: i32) -> Result<&str, &str>;
@@ -111,13 +111,21 @@ impl NumericVariable {
 
 #[derive(Debug)]
 pub struct Fact {
-    name: u32,
+    var: u32,
     value: u32,
 }
 
 impl Fact {
-    pub fn new(name: u32, value: u32) -> Self {
-        Fact { name, value }
+    pub fn new(var: u32, value: u32) -> Self {
+        Fact { var, value }
+    }
+
+    pub fn var(&self) -> u32 {
+        self.var
+    }
+
+    pub fn value(&self) -> u32 {
+        self.value
     }
 }
 
@@ -156,7 +164,7 @@ pub struct AssignmentEffect {
     var_id: u32,
     operation: PlusMinus,
     effect_value: u32,
-    conditions: Vec<GlobalCondition>,
+    conditions: Vec<Fact>,
 }
 
 impl AssignmentEffect {
@@ -164,7 +172,7 @@ impl AssignmentEffect {
         var_id: u32,
         operation: PlusMinus,
         effect_value: u32,
-        conditions: Vec<GlobalCondition>,
+        conditions: Vec<Fact>,
     ) -> Self {
         AssignmentEffect {
             var_id,
@@ -217,7 +225,7 @@ pub struct NumericRootTask {
     state: Vec<i32>,
     numeric_state: Vec<f64>,
     operators: Vec<Operator>,
-    axioms: Vec<Axiom>,
+    axioms: Vec<PropositionalAxiom>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
     global_constraint: (u32, u32),
@@ -234,7 +242,7 @@ impl NumericRootTask {
         state: Vec<i32>,
         numeric_state: Vec<f64>,
         operators: Vec<Operator>,
-        axioms: Vec<Axiom>,
+        axioms: Vec<PropositionalAxiom>,
         comparison_axioms: Vec<ComparisonAxiom>,
         assignment_axioms: Vec<AssignmentAxiom>,
         global_constraint: (u32, u32),
@@ -286,7 +294,7 @@ impl AbstractNumericTask for NumericRootTask {
         &self.comparison_axioms
     }
 
-    fn axioms(&self) -> &Vec<Axiom> {
+    fn axioms(&self) -> &Vec<PropositionalAxiom> {
         &self.axioms
     }
 
