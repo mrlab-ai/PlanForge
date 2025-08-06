@@ -1,4 +1,4 @@
-use crate::search::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use crate::search::numeric::axioms::{AssignmentAxiom, Axiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use crate::search::numeric::numeric_task::{
     AssignmentEffect,
     GlobalCondition,
@@ -7,7 +7,6 @@ use crate::search::numeric::numeric_task::{
     PlusMinus,
 };
 use crate::search::numeric::numeric_task::{
-    Axiom,
     Effect,
     ExplicitVariable,
     Fact,

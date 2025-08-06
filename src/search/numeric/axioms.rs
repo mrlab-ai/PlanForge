@@ -1,12 +1,37 @@
-use std::collections::btree_map::Values;
+use std::{cmp::max, collections::btree_map::Values};
 
 use crate::{
     parser::numeric_parser,
     search::numeric::{
-        numeric_task::{self, AbstractNumericTask},
+        self,
+        numeric_task::{self, AbstractNumericTask, Fact},
         utils::{errors::InvalidIndex, int_packer::IntDoublePacker},
     },
 };
+
+#[derive(Debug)]
+pub struct Axiom {
+    conditions: Vec<Fact>,
+    var_id: u32,
+    precondition_value: u32,
+    effect_value: u32,
+}
+
+impl Axiom {
+    pub fn new(
+        conditions: Vec<Fact>,
+        var_id: u32,
+        precondition_value: u32,
+        effect_value: u32,
+    ) -> Self {
+        Axiom {
+            conditions,
+            var_id,
+            precondition_value,
+            effect_value,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum CalOperator {
@@ -184,17 +209,66 @@ impl ComparisonAxiom {
         self.right_hand_side
     }
 }
+#[derive(Debug, Clone)]
+struct AxiomRule;
+#[derive(Clone, Debug, Default)]
+struct AxiomLiteral {
+    condition_of: Vec<AxiomRule>,
+}
 
 struct AxiomEvaluator {
-    pub numeric_task: Box<dyn AbstractNumericTask>,
-    pub state_packer: IntDoublePacker,
+    numeric_task: Box<dyn AbstractNumericTask>,
+    state_packer: IntDoublePacker,
+    axiom_literals: Vec<Vec<AxiomLiteral>>,
+    comparison_axiom_layer: i32,
+    first_propositional_axiom_layer: i32,
+    last_propositional_axiom_layer: i32,
 }
 
 impl AxiomEvaluator {
     pub fn new(numeric_task: Box<dyn AbstractNumericTask>, state_packer: IntDoublePacker) -> Self {
+        let mut axiom_literals = vec![vec![]; numeric_task.get_num_axioms() as usize];
+        let mut comparison_axiom_layer = -1;
+        let mut first_propositional_axiom_layer = -1;
+        let mut last_propositional_axiom_layer = -1;
+        let mut last_arithmetic_axiom_layer = -1;
+
+        for numeric_var in numeric_task.numeric_variables().iter() {
+            last_arithmetic_axiom_layer =
+                max(last_arithmetic_axiom_layer, numeric_var.axiom_layer());
+        }
+
+        for i in 0..numeric_task.get_num_variables() {
+            let axiom_layer = numeric_task.get_variable_axiom_layer(i).unwrap();
+            if axiom_layer == -1 {
+                continue; // Skip regular variables
+            }
+            last_propositional_axiom_layer = max(last_propositional_axiom_layer, axiom_layer);
+            if axiom_layer < first_propositional_axiom_layer
+                || first_propositional_axiom_layer == -1
+            {
+                first_propositional_axiom_layer = axiom_layer;
+            }
+        }
+
+        if first_propositional_axiom_layer >= 0 && numeric_task.get_num_cmp_axioms() > 0 {
+            comparison_axiom_layer = last_propositional_axiom_layer;
+            last_propositional_axiom_layer += 1;
+            assert!(comparison_axiom_layer == last_arithmetic_axiom_layer + 1);
+        }
+
+        for var in numeric_task.variables().iter() {
+            let literal = vec![AxiomLiteral::default(); var.domain_size() as usize];
+            axiom_literals.push(literal);
+        }
+
         AxiomEvaluator {
             numeric_task,
             state_packer,
+            axiom_literals,
+            comparison_axiom_layer,
+            first_propositional_axiom_layer,
+            last_propositional_axiom_layer,
         }
     }
 
@@ -221,5 +295,13 @@ impl AxiomEvaluator {
         }
 
         Ok(true)
+    }
+
+    pub fn evaluate_propositional_axioms(&self, buffer: &mut [u64]) -> Result<(), InvalidIndex> {
+        if self.numeric_task.axioms().is_empty() {
+            return Ok(());
+        }
+
+        Ok(())
     }
 }

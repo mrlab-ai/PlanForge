@@ -1,9 +1,11 @@
-use crate::search::numeric::axioms::{AssignmentAxiom, ComparisonAxiom};
+use crate::search::numeric::axioms::{AssignmentAxiom, Axiom, ComparisonAxiom};
 
 pub trait AbstractNumericTask {
+    fn variables(&self) -> &Vec<ExplicitVariable>;
     fn numeric_variables(&self) -> &Vec<NumericVariable>;
     fn assignment_axioms(&self) -> &Vec<AssignmentAxiom>;
     fn comparison_axioms(&self) -> &Vec<ComparisonAxiom>;
+    fn axioms(&self) -> &Vec<Axiom>;
 
     fn get_num_variables(&self) -> i32;
     fn get_variable_name(&self, index: i32) -> Result<&str, &str>;
@@ -43,6 +45,8 @@ pub trait AbstractNumericTask {
         ancestor_state_values: &Vec<i32>,
         ancestor_task: &dyn AbstractNumericTask,
     ) -> Vec<i32>;
+
+    fn get_num_cmp_axioms(&self) -> i32;
 }
 
 #[derive(Debug)]
@@ -70,6 +74,14 @@ impl ExplicitVariable {
             axiom_default_value,
         }
     }
+
+    fn axiom_layer(&self) -> i32 {
+        self.axiom_layer
+    }
+
+    pub fn domain_size(&self) -> u32 {
+        self.domain_size
+    }
 }
 
 #[derive(Debug)]
@@ -90,6 +102,10 @@ impl NumericVariable {
 
     pub fn get_type(&self) -> &NumericType {
         &self.numeric_type
+    }
+
+    pub fn axiom_layer(&self) -> i32 {
+        self.axiom_layer
     }
 }
 
@@ -176,29 +192,7 @@ impl Operator {
     }
 }
 
-#[derive(Debug)]
-pub struct Axiom {
-    conditions: Vec<Fact>,
-    var_id: u32,
-    precondition_value: u32,
-    effect_value: u32,
-}
 
-impl Axiom {
-    pub fn new(
-        conditions: Vec<Fact>,
-        var_id: u32,
-        precondition_value: u32,
-        effect_value: u32,
-    ) -> Self {
-        Axiom {
-            conditions,
-            var_id,
-            precondition_value,
-            effect_value,
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct GlobalCondition {
@@ -245,6 +239,9 @@ impl NumericRootTask {
         assignment_axioms: Vec<AssignmentAxiom>,
         global_constraint: (u32, u32),
     ) -> Self {
+
+
+
         NumericRootTask {
             version,
             metric,
@@ -273,6 +270,10 @@ pub enum NumericType {
 }
 
 impl AbstractNumericTask for NumericRootTask {
+    fn variables(&self) -> &Vec<ExplicitVariable> {
+        &self.variables
+    }
+
     fn numeric_variables(&self) -> &Vec<NumericVariable> {
         &self.numeric_variables
     }
@@ -283,6 +284,10 @@ impl AbstractNumericTask for NumericRootTask {
 
     fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
         &self.comparison_axioms
+    }
+
+    fn axioms(&self) -> &Vec<Axiom> {
+        &self.axioms
     }
 
     fn get_num_variables(&self) -> i32 {
@@ -396,5 +401,9 @@ impl AbstractNumericTask for NumericRootTask {
         ancestor_task: &dyn AbstractNumericTask,
     ) -> Vec<i32> {
         vec![]
+    }
+
+    fn get_num_cmp_axioms(&self) -> i32 {
+        self.comparison_axioms.len() as i32
     }
 }
