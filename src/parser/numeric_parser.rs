@@ -1,32 +1,20 @@
-use crate::search::numeric::axioms::{AssignmentAxiom, PropositionalAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
-use crate::search::numeric::numeric_task::{
-    AssignmentEffect,
-    NumericType,
-    NumericVariable,
-    PlusMinus,
+use crate::search::numeric::axioms::{
+    AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
 use crate::search::numeric::numeric_task::{
-    Effect,
-    ExplicitVariable,
-    Fact,
-    NumericRootTask,
-    Operator,
+    AssignmentEffect, NumericType, NumericVariable, PlusMinus,
+};
+use crate::search::numeric::numeric_task::{
+    Effect, ExplicitVariable, Fact, NumericRootTask, Operator,
 };
 use nom::bytes::complete::take_while1;
-use nom::combinator::{ map, opt, recognize };
+use nom::combinator::{map, opt, recognize};
 use nom::number::complete::double;
 use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{
-        alphanumeric1,
-        char,
-        digit1,
-        i32,
-        line_ending,
-        not_line_ending,
-        space1,
-        u32,
+        alphanumeric1, char, digit1, i32, line_ending, not_line_ending, space1, u32,
     },
     combinator::map_res,
     sequence::separated_pair,
@@ -77,7 +65,13 @@ fn parse_variable(input: &str) -> IResult<&str, ExplicitVariable> {
     }
     let (input, _) = tag("end_variable")(input)?;
     let (input, _) = line_ending(input)?;
-    let var = ExplicitVariable::new(domain_size, variable_name.to_string(), fact_names, axiom_layer, 0);
+    let var = ExplicitVariable::new(
+        domain_size,
+        variable_name.to_string(),
+        fact_names,
+        axiom_layer,
+        0,
+    );
     Ok((input, var))
 }
 
@@ -104,14 +98,17 @@ fn parse_line_type(input: &str) -> IResult<&str, NumericType> {
 }
 
 fn parse_plus_or_minus(input: &str) -> IResult<&str, PlusMinus> {
-    alt((map(tag("+"), |_| PlusMinus::Plus), map(tag("-"), |_| PlusMinus::Minus)))(input)
+    alt((
+        map(tag("+"), |_| PlusMinus::Plus),
+        map(tag("-"), |_| PlusMinus::Minus),
+    ))(input)
 }
 
 fn parse_layer(input: &str) -> IResult<&str, i32> {
     map(
         // We recognize an optional minus sign followed by one or more digits.
         recognize(nom::sequence::pair(opt(char('-')), digit1)),
-        |s: &str| s.parse::<i32>().unwrap()
+        |s: &str| s.parse::<i32>().unwrap(),
     )(input)
 }
 
@@ -262,15 +259,13 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
     let (input, _) = line_ending(input)?;
     let (input, num_prevail_cond) = u32(input)?;
     let (input, _) = line_ending(input)?;
-    let mut prevail_conditions = vec![];
+    let mut preconditions = vec![];
     let mut input = input;
     for _ in 0..num_prevail_cond {
-        let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
+        let mut parser = separated_pair(parse_integer, space1, parse_integer);
         let (loop_input, prevail_cond) = parser(input)?;
-
         let prevail_cond = Fact::new(prevail_cond.0, prevail_cond.1);
-
-        prevail_conditions.push(prevail_cond);
+        preconditions.push(prevail_cond);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
     }
@@ -286,25 +281,30 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         let mut effect_conditions = vec![];
         let mut loop_input = loop_input;
         for _ in 0..num_conditions {
-            let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
+            let mut parser = separated_pair(parse_integer, space1, parse_integer);
             let (loop_input2, condition) = parser(loop_input)?;
             let condition = Fact::new(condition.0, condition.1);
             effect_conditions.push(condition);
-            let (loop_input2, _) = tag(" ")(loop_input2)?;
+            let (loop_input2, _) = space1(loop_input2)?;
             loop_input = loop_input2;
         }
 
         let (loop_input, effect_var_id) = u32(loop_input)?;
-        let (loop_input, _) = tag(" ")(loop_input)?;
+        let (loop_input, _) = space1(loop_input)?;
         let (loop_input, precondition_value) = i32(loop_input)?; // NOTE: -1 if there is no precondition
-        let (loop_input, _) = tag(" ")(loop_input)?;
+        let (loop_input, _) = space1(loop_input)?;
         let (loop_input, effect_value) = u32(loop_input)?;
+
+        if precondition_value != -1 {
+            let precondition = Fact::new(effect_var_id, precondition_value as u32);
+            preconditions.push(precondition);
+        }
 
         let effect = Effect::new(
             effect_conditions,
             effect_var_id,
             precondition_value,
-            effect_value
+            effect_value,
         );
         effects.push(effect);
         let (loop_input, _) = line_ending(loop_input)?;
@@ -319,31 +319,23 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         let is_conditional_effect = cond_count > 0;
         let mut conditions = vec![];
         let (loop_input, _) = space1(loop_input)?;
-        //TODO: Add conditional counts. For now we ignore them.
         for _ in 0..cond_count {
-            let (loop_input, var_id) = u32(loop_input)?;
+            let (loop_input, var_id) = u32(input)?;
             let (loop_input, _) = space1(loop_input)?;
             let (loop_input, value) = u32(loop_input)?;
             let (loop_input, _) = space1(loop_input)?;
+            input = loop_input;
             let condition = Fact::new(var_id, value);
             conditions.push(condition);
         }
         let (loop_input, effect_var_id) = u32(loop_input)?;
-
         let (loop_input, _) = space1(loop_input)?;
-
         let (loop_input, operation) = parse_plus_or_minus(loop_input)?;
-
         let (loop_input, _) = space1(loop_input)?;
-
         let (loop_input, effect_value) = u32(loop_input)?;
         let (loop_input, _) = line_ending(loop_input)?;
-        let assignment_effect = AssignmentEffect::new(
-            effect_var_id,
-            operation,
-            effect_value,
-            conditions
-        );
+        let assignment_effect =
+            AssignmentEffect::new(effect_var_id, operation, effect_value, is_conditional_effect, conditions);
         assignment_effects.push(assignment_effect);
         input = loop_input;
     }
@@ -352,7 +344,13 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
     let (input, _) = tag("end_operator")(input)?;
     let (input, _) = line_ending(input)?;
 
-    let operator = Operator::new(name.to_string(), effects, cost);
+    let operator = Operator::new(
+        name.to_string(),
+        preconditions,
+        effects,
+        assignment_effects,
+        cost,
+    );
 
     Ok((input, operator))
 }
@@ -437,7 +435,12 @@ fn parse_comparison_axiom(input: &str) -> IResult<&str, ComparisonAxiom> {
     let (input, _) = line_ending(input)?;
     Ok((
         input,
-        ComparisonAxiom::new(affected_var_id, left_hand_side, right_hand_side, comparison_operator),
+        ComparisonAxiom::new(
+            affected_var_id,
+            left_hand_side,
+            right_hand_side,
+            comparison_operator,
+        ),
     ))
 }
 
@@ -480,7 +483,12 @@ fn parse_assignment_axiom(input: &str) -> IResult<&str, AssignmentAxiom> {
     let (input, _) = line_ending(input)?;
     Ok((
         input,
-        AssignmentAxiom::new(affected_var_id, cal_operator, left_hand_side, right_hand_side),
+        AssignmentAxiom::new(
+            affected_var_id,
+            cal_operator,
+            left_hand_side,
+            right_hand_side,
+        ),
     ))
 }
 
@@ -547,7 +555,7 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
         axioms,
         comparison_axioms,
         assignment_axioms,
-        global_constraint
+        global_constraint,
     );
 
     let duration = timer.elapsed();

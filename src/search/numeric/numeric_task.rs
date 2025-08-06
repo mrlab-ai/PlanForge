@@ -1,4 +1,4 @@
-use crate::search::numeric::axioms::{AssignmentAxiom, PropositionalAxiom, ComparisonAxiom};
+use crate::search::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
 
 pub trait AbstractNumericTask {
     fn variables(&self) -> &Vec<ExplicitVariable>;
@@ -15,6 +15,8 @@ pub trait AbstractNumericTask {
     fn get_fact_name(&self, fact: &Fact) -> &str;
 
     fn are_facts_mutex(&self, fact1: &Fact, fact2: &Fact) -> bool;
+
+    fn get_operators(&self) -> &Vec<Operator>;
     fn get_operator_cost(&self, index: i32, is_axiom: bool) -> i32;
     fn get_operator_name(&self, index: i32, is_axiom: bool) -> &str;
     fn get_num_operators(&self) -> i32;
@@ -164,6 +166,7 @@ pub struct AssignmentEffect {
     var_id: u32,
     operation: PlusMinus,
     effect_value: u32,
+    is_conditional: bool,
     conditions: Vec<Fact>,
 }
 
@@ -172,12 +175,14 @@ impl AssignmentEffect {
         var_id: u32,
         operation: PlusMinus,
         effect_value: u32,
+        is_conditional: bool,
         conditions: Vec<Fact>,
     ) -> Self {
         AssignmentEffect {
             var_id,
             operation,
             effect_value,
+            is_conditional,
             conditions,
         }
     }
@@ -186,31 +191,27 @@ impl AssignmentEffect {
 #[derive(Debug)]
 pub struct Operator {
     name: String,
+    preconditions: Vec<Fact>,
     effects: Vec<Effect>,
+    assignment_effects: Vec<AssignmentEffect>,
     cost: u32,
 }
 
 impl Operator {
-    pub fn new(name: String, effects: Vec<Effect>, cost: u32) -> Self {
+    pub fn new(
+        name: String,
+        preconditions: Vec<Fact>,
+        effects: Vec<Effect>,
+        assignment_effects: Vec<AssignmentEffect>,
+        cost: u32,
+    ) -> Self {
         Operator {
             name,
+            preconditions,
             effects,
+            assignment_effects,
             cost,
         }
-    }
-}
-
-
-
-#[derive(Debug)]
-pub struct GlobalCondition {
-    var_id: u32,
-    value: u32,
-}
-
-impl GlobalCondition {
-    pub fn new(var_id: u32, value: u32) -> Self {
-        GlobalCondition { var_id, value }
     }
 }
 
@@ -247,9 +248,6 @@ impl NumericRootTask {
         assignment_axioms: Vec<AssignmentAxiom>,
         global_constraint: (u32, u32),
     ) -> Self {
-
-
-
         NumericRootTask {
             version,
             metric,
@@ -292,6 +290,10 @@ impl AbstractNumericTask for NumericRootTask {
 
     fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
         &self.comparison_axioms
+    }
+
+    fn get_operators(&self) -> &Vec<Operator> {
+        &self.operators
     }
 
     fn axioms(&self) -> &Vec<PropositionalAxiom> {
