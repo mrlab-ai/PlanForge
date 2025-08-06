@@ -1,0 +1,90 @@
+use std::cmp;
+use std::ops::{Index, IndexMut};
+
+const SEGMENT_BYTES: usize = 8192;
+
+#[derive(Debug)]
+pub struct SegmentedArrayVector<T: Clone> {
+    elements_per_array: usize,
+    arrays_per_segment: usize,
+    elements_per_segment: usize,
+    pub segments: Vec<Box<[T]>>, // flat arrays per segment
+    size: usize, // number of elements (each of size elements_per_array)
+}
+
+impl<T: Clone + Default> SegmentedArrayVector<T> {
+    pub fn new(elements_per_array: usize) -> Self {
+        assert!(elements_per_array > 0);
+        let arrays_per_segment =
+            cmp::max(SEGMENT_BYTES / (elements_per_array * std::mem::size_of::<T>()), 1);
+        let elements_per_segment = elements_per_array * arrays_per_segment;
+        Self {
+            elements_per_array,
+            arrays_per_segment,
+            elements_per_segment,
+            segments: Vec::new(),
+            size: 0,
+        }
+    }
+
+    #[inline]
+    fn get_segment_index(&self, index: usize) -> (usize, usize) {
+        let segment = index / self.arrays_per_segment;
+        let offset = (index % self.arrays_per_segment) * self.elements_per_array;
+        (segment, offset)
+    }
+
+    fn add_segment(&mut self) {
+        // Allocate new zeroed segment of size elements_per_segment
+        let new_segment = vec![T::default(); self.elements_per_segment].into_boxed_slice();
+        self.segments.push(new_segment);
+    }
+
+    pub fn push_back(&mut self, entry: &[T]) {
+        assert_eq!(entry.len(), self.elements_per_array);
+
+        let (segment, offset) = self.get_segment_index(self.size);
+        if segment == self.segments.len() {
+            self.add_segment();
+        }
+        self.segments[segment][offset..offset + self.elements_per_array]
+            .clone_from_slice(entry);
+        self.size += 1;
+    }
+
+    pub fn pop_back(&mut self) {
+        assert!(self.size > 0);
+        self.size -= 1;
+        // No actual deallocation; reuse on next push_back
+    }
+
+    pub fn resize(&mut self, new_size: usize, entry: &[T]) {
+        assert_eq!(entry.len(), self.elements_per_array);
+        while self.size < new_size {
+            self.push_back(entry);
+        }
+        while self.size > new_size {
+            self.pop_back();
+        }
+    }
+
+    pub fn get(&self, index: usize) -> Option<&[T]> {
+        if index >= self.size {
+            return None;
+        }
+        let (segment, offset) = self.get_segment_index(index);
+        Some(&self.segments[segment][offset..offset + self.elements_per_array])
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut [T]> {
+        if index >= self.size {
+            return None;
+        }
+        let (segment, offset) = self.get_segment_index(index);
+        Some(&mut self.segments[segment][offset..offset + self.elements_per_array])
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+}
