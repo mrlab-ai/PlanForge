@@ -248,6 +248,7 @@ struct AxiomLiteral {
     condition_of: Vec<AxiomRule>,
 }
 
+#[derive(Debug, Clone, Default)]
 struct NegationByFailureInfo {
     var_id: u32,
     literal: AxiomLiteral, // TODO: make this a reference to avoid cloning.
@@ -269,6 +270,7 @@ struct AxiomEvaluator {
     last_propositional_axiom_layer: i32,
     last_arithmetic_axiom_layer: i32,
     nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
+    queue: Vec<AxiomLiteral>, // Queue for processing axioms
 }
 
 impl AxiomEvaluator {
@@ -336,6 +338,23 @@ impl AxiomEvaluator {
                 numeric_task.get_variable_axiom_layer(i).unwrap(),
             );
         }
+        nbf_info_by_layer.resize(
+            (last_layer + 1) as usize,
+            vec![],
+        );
+
+        for var_id in 0..numeric_task.get_num_variables() {
+            let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
+            if axiom_layer != -1 && axiom_layer != last_layer {
+                let nbf_value = numeric_task.get_initial_state_values()[var_id as usize];
+                let literal = axiom_literals[var_id as usize][nbf_value as usize].clone();
+                let nbf_info = NegationByFailureInfo::new(
+                    var_id as u32,
+                    literal,
+                );
+                nbf_info_by_layer[axiom_layer as usize].push(nbf_info);
+            }
+        }
 
         AxiomEvaluator {
             numeric_task,
@@ -347,6 +366,7 @@ impl AxiomEvaluator {
             last_propositional_axiom_layer,
             last_arithmetic_axiom_layer,
             nbf_info_by_layer,
+            queue: vec![],
         }
     }
 
@@ -375,8 +395,21 @@ impl AxiomEvaluator {
         Ok(true)
     }
 
-    pub fn evaluate_propositional_axioms(&self, buffer: &mut [u64]) -> Result<(), InvalidIndex> {
-        if self.numeric_task.axioms().is_empty() {}
+    pub fn evaluate_propositional_axioms(&mut self, buffer: &mut [u64]) -> Result<(), InvalidIndex> {
+        if self.numeric_task.axioms().is_empty() {
+            return Ok(());
+        }
+
+        for i in 0..self.numeric_task.get_num_variables() {
+            let axiom_layer = self.numeric_task.get_variable_axiom_layer(i).unwrap();
+            match axiom_layer  {
+                -1 => {
+                    self.queue.push(self.axiom_literals[i as usize][self.state_packer.get(buffer, i) as usize].clone());
+                },
+                _ => {}
+            }
+        }
+
 
         Ok(())
     }
