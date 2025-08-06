@@ -1,8 +1,6 @@
+use crate::search::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use crate::search::numeric::numeric_task::{
-    AssignmentAxiom,
     AssignmentEffect,
-    CalOperator,
-    ComparisonAxiom,
     GlobalCondition,
     NumericType,
     NumericVariable,
@@ -417,14 +415,14 @@ fn parse_axioms(input: &str) -> IResult<&str, Vec<Axiom>> {
     Ok((input, axioms))
 }
 
-fn parse_comparison_operator(input: &str) -> IResult<&str, &str> {
+fn parse_comparison_operator(input: &str) -> IResult<&str, ComparisonOperator> {
     alt((
-        map(tag(">="), |_| ">="),
-        map(tag("<="), |_| "<="),
-        map(tag("!="), |_| "!="),
-        map(tag(">"), |_| ">"),
-        map(tag("<"), |_| "<"),
-        map(tag("="), |_| "="),
+        map(tag(">="), |_| ComparisonOperator::LessThanOrEqual),
+        map(tag("<="), |_| ComparisonOperator::GreaterThanOrEqual),
+        map(tag("!="), |_| ComparisonOperator::UnEqual),
+        map(tag(">"), |_| ComparisonOperator::GreaterThan),
+        map(tag("<"), |_| ComparisonOperator::LessThan),
+        map(tag("="), |_| ComparisonOperator::Equal),
     ))(input)
 }
 

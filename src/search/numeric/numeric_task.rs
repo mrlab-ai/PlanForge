@@ -1,3 +1,5 @@
+use crate::search::numeric::axioms::{AssignmentAxiom, ComparisonAxiom};
+
 pub trait AbstractNumericTask {
     fn numeric_variables(&self) -> &Vec<NumericVariable>;
     fn assignment_axioms(&self) -> &Vec<AssignmentAxiom>;
@@ -17,13 +19,14 @@ pub trait AbstractNumericTask {
     fn get_num_operator_preconditions(&self, index: i32, is_axiom: bool) -> i32;
     fn get_operator_precondition(&self, index: i32, precond_index: i32, is_axiom: bool) -> &Fact;
     fn get_num_operator_effects(&self, index: i32, is_axiom: bool) -> i32;
-    fn get_num_operator_effect_conditions(&self, index: i32, eff_index: i32, is_axiom: bool) -> i32;
+    fn get_num_operator_effect_conditions(&self, index: i32, eff_index: i32, is_axiom: bool)
+        -> i32;
     fn get_operator_effect_condition(
         &self,
         index: i32,
         eff_index: i32,
         cond_index: i32,
-        is_axiom: bool
+        is_axiom: bool,
     ) -> &Fact;
     fn get_operator_effect(&self, index: i32, eff_index: i32, is_axiom: bool) -> &Fact;
 
@@ -38,7 +41,7 @@ pub trait AbstractNumericTask {
     fn convert_ancestor_state_values(
         &self,
         ancestor_state_values: &Vec<i32>,
-        ancestor_task: &dyn AbstractNumericTask
+        ancestor_task: &dyn AbstractNumericTask,
     ) -> Vec<i32>;
 }
 
@@ -57,7 +60,7 @@ impl ExplicitVariable {
         name: String,
         fact_names: Vec<String>,
         axiom_layer: i32,
-        axiom_default_value: u32
+        axiom_default_value: u32,
     ) -> Self {
         ExplicitVariable {
             domain_size,
@@ -115,7 +118,7 @@ impl Effect {
         conditions: Vec<Fact>,
         var_id: u32,
         precondition_value: i32,
-        effect_value: u32
+        effect_value: u32,
     ) -> Self {
         Effect {
             conditions,
@@ -145,7 +148,7 @@ impl AssignmentEffect {
         var_id: u32,
         operation: PlusMinus,
         effect_value: u32,
-        conditions: Vec<GlobalCondition>
+        conditions: Vec<GlobalCondition>,
     ) -> Self {
         AssignmentEffect {
             var_id,
@@ -186,7 +189,7 @@ impl Axiom {
         conditions: Vec<Fact>,
         var_id: u32,
         precondition_value: u32,
-        effect_value: u32
+        effect_value: u32,
     ) -> Self {
         Axiom {
             conditions,
@@ -194,165 +197,6 @@ impl Axiom {
             precondition_value,
             effect_value,
         }
-    }
-}
-
-#[derive(Debug)]
-pub enum ComparisonAxiom {
-    LessThan {
-        affected_var_id: i32,
-        left_hand_side: i32,
-        right_hand_side: i32,
-    },
-    LessThanOrEqual {
-        affected_var_id: i32,
-        left_hand_side: i32,
-        right_hand_side: i32,
-    },
-    Equal {
-        affected_var_id: i32,
-        left_hand_side: i32,
-        right_hand_side: i32,
-    },
-    GreaterThanOrEqual {
-        affected_var_id: i32,
-        left_hand_side: i32,
-        right_hand_side: i32,
-    },
-    GreaterThan {
-        affected_var_id: i32,
-        left_hand_side: i32,
-        right_hand_side: i32,
-    },
-    UnEqual {
-        affected_var_id: i32,
-        left_hand_side: i32,
-        right_hand_side: i32,
-    },
-}
-
-impl ComparisonAxiom {
-    pub fn new(
-        affected_var_id: i32,
-        left_hand_side: i32,
-        right_hand_side: i32,
-        operator: &str
-    ) -> Self {
-        match operator {
-            "<" =>
-                ComparisonAxiom::LessThan {
-                    affected_var_id,
-                    left_hand_side,
-                    right_hand_side,
-                },
-            "<=" =>
-                ComparisonAxiom::LessThanOrEqual {
-                    affected_var_id,
-                    left_hand_side,
-                    right_hand_side,
-                },
-            "==" =>
-                ComparisonAxiom::Equal {
-                    affected_var_id,
-                    left_hand_side,
-                    right_hand_side,
-                },
-            ">=" =>
-                ComparisonAxiom::GreaterThanOrEqual {
-                    affected_var_id,
-                    left_hand_side,
-                    right_hand_side,
-                },
-            ">" =>
-                ComparisonAxiom::GreaterThan {
-                    affected_var_id,
-                    left_hand_side,
-                    right_hand_side,
-                },
-            "!=" =>
-                ComparisonAxiom::UnEqual {
-                    affected_var_id,
-                    left_hand_side,
-                    right_hand_side,
-                },
-            _ => panic!("Unknown comparison operator: {}", operator),
-        }
-    }
-
-    pub fn evaluate(&self, numeric_state: &Vec<f64>) -> bool {
-        match self {
-            ComparisonAxiom::LessThan { left_hand_side, right_hand_side, .. } =>
-                left_hand_side < right_hand_side,
-            ComparisonAxiom::LessThanOrEqual { left_hand_side, right_hand_side, .. } =>
-                left_hand_side <= right_hand_side,
-            ComparisonAxiom::Equal { left_hand_side, right_hand_side, .. } =>
-                left_hand_side == right_hand_side,
-            ComparisonAxiom::GreaterThanOrEqual { left_hand_side, right_hand_side, .. } =>
-                left_hand_side >= right_hand_side,
-            ComparisonAxiom::GreaterThan { left_hand_side, right_hand_side, .. } =>
-                left_hand_side > right_hand_side,
-            ComparisonAxiom::UnEqual { left_hand_side, right_hand_side, .. } =>
-                left_hand_side != right_hand_side,
-        }
-    }
-
-    pub fn get_affected_var_id(&self) -> i32 {
-        match self {
-            ComparisonAxiom::LessThan { affected_var_id, .. } => *affected_var_id,
-            ComparisonAxiom::LessThanOrEqual { affected_var_id, .. } => *affected_var_id,
-            ComparisonAxiom::Equal { affected_var_id, .. } => *affected_var_id,
-            ComparisonAxiom::GreaterThanOrEqual { affected_var_id, .. } => *affected_var_id,
-            ComparisonAxiom::GreaterThan { affected_var_id, .. } => *affected_var_id,
-            ComparisonAxiom::UnEqual { affected_var_id, .. } => *affected_var_id,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum CalOperator {
-    Sum,
-    Difference,
-    Product,
-    Division,
-}
-
-#[derive(Debug)]
-pub struct AssignmentAxiom {
-    affected_var_id: u32,
-    operator: CalOperator,
-    left_hand_side: u32,
-    right_hand_side: u32,
-}
-
-impl AssignmentAxiom {
-    pub fn new(
-        affected_var_id: u32,
-        operator: CalOperator,
-        left_hand_side: u32,
-        right_hand_side: u32
-    ) -> Self {
-        AssignmentAxiom {
-            affected_var_id,
-            operator,
-            left_hand_side,
-            right_hand_side,
-        }
-    }
-
-    pub fn get_left_var_id(&self) -> u32 {
-        self.left_hand_side
-    }
-
-    pub fn get_right_var_id(&self) -> u32 {
-        self.right_hand_side
-    }
-
-    pub fn get_affected_var_id(&self) -> u32 {
-        self.affected_var_id
-    }
-
-    pub fn get_operator(&self) -> &CalOperator {
-        &self.operator
     }
 }
 
@@ -399,7 +243,7 @@ impl NumericRootTask {
         axioms: Vec<Axiom>,
         comparison_axioms: Vec<ComparisonAxiom>,
         assignment_axioms: Vec<AssignmentAxiom>,
-        global_constraint: (u32, u32)
+        global_constraint: (u32, u32),
     ) -> Self {
         NumericRootTask {
             version,
@@ -509,7 +353,7 @@ impl AbstractNumericTask for NumericRootTask {
         &self,
         index: i32,
         eff_index: i32,
-        is_axiom: bool
+        is_axiom: bool,
     ) -> i32 {
         0
     }
@@ -519,7 +363,7 @@ impl AbstractNumericTask for NumericRootTask {
         index: i32,
         eff_index: i32,
         cond_index: i32,
-        is_axiom: bool
+        is_axiom: bool,
     ) -> &Fact {
         unimplemented!("This function is not yet implemented");
     }
@@ -549,7 +393,7 @@ impl AbstractNumericTask for NumericRootTask {
     fn convert_ancestor_state_values(
         &self,
         ancestor_state_values: &Vec<i32>,
-        ancestor_task: &dyn AbstractNumericTask
+        ancestor_task: &dyn AbstractNumericTask,
     ) -> Vec<i32> {
         vec![]
     }
