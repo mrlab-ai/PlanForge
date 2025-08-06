@@ -32,6 +32,10 @@ impl PropositionalAxiom {
         }
     }
 
+    pub fn var_id(&self) -> u32 {
+        self.var_id
+    }
+
     pub fn conditions(&self) -> &Vec<Fact> {
         &self.conditions
     }
@@ -244,6 +248,17 @@ struct AxiomLiteral {
     condition_of: Vec<AxiomRule>,
 }
 
+struct NegationByFailureInfo {
+    var_id: u32,
+    literal: AxiomLiteral, // TODO: make this a reference to avoid cloning.
+}
+
+impl NegationByFailureInfo {
+    pub fn new(var_id: u32, literal: AxiomLiteral) -> Self {
+        NegationByFailureInfo { var_id, literal }
+    }
+}
+
 struct AxiomEvaluator {
     numeric_task: Box<dyn AbstractNumericTask>,
     state_packer: IntDoublePacker,
@@ -253,11 +268,14 @@ struct AxiomEvaluator {
     first_propositional_axiom_layer: i32,
     last_propositional_axiom_layer: i32,
     last_arithmetic_axiom_layer: i32,
+    nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
 }
 
 impl AxiomEvaluator {
     pub fn new(numeric_task: Box<dyn AbstractNumericTask>, state_packer: IntDoublePacker) -> Self {
         let mut axiom_literals = vec![];
+        let mut nbf_info_by_layer = vec![];
+
         let mut rules = vec![];
         let mut comparison_axiom_layer = -1;
         let mut first_propositional_axiom_layer = -1;
@@ -311,8 +329,13 @@ impl AxiomEvaluator {
             }
         }
 
-        let last_layer = -1;
-        
+        let mut last_layer = -1;
+        for i in 0..numeric_task.get_num_variables() {
+            last_layer = max(
+                last_layer,
+                numeric_task.get_variable_axiom_layer(i).unwrap(),
+            );
+        }
 
         AxiomEvaluator {
             numeric_task,
@@ -323,6 +346,7 @@ impl AxiomEvaluator {
             first_propositional_axiom_layer,
             last_propositional_axiom_layer,
             last_arithmetic_axiom_layer,
+            nbf_info_by_layer,
         }
     }
 

@@ -55,7 +55,7 @@ pub struct ExplicitVariable {
     name: String,
     fact_names: Vec<String>,
     axiom_layer: i32,
-    axiom_default_value: u32,
+    axiom_default_value: u32, //Is this field even required?
 }
 
 impl ExplicitVariable {
@@ -75,7 +75,7 @@ impl ExplicitVariable {
         }
     }
 
-    fn axiom_layer(&self) -> i32 {
+    pub fn axiom_layer(&self) -> i32 {
         self.axiom_layer
     }
 

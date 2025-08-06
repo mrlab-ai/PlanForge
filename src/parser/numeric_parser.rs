@@ -62,7 +62,7 @@ fn parse_variable(input: &str) -> IResult<&str, ExplicitVariable> {
     let (input, _) = line_ending(input)?;
     let (input, variable_name) = alphanumeric1(input)?;
     let (input, _) = line_ending(input)?;
-    let (input, ws) = i32(input)?;
+    let (input, axiom_layer) = i32(input)?;
     let (input, _) = line_ending(input)?;
     let (input, domain_size) = u32(input)?;
     let (input, _) = line_ending(input)?;
@@ -77,7 +77,7 @@ fn parse_variable(input: &str) -> IResult<&str, ExplicitVariable> {
     }
     let (input, _) = tag("end_variable")(input)?;
     let (input, _) = line_ending(input)?;
-    let var = ExplicitVariable::new(domain_size, variable_name.to_string(), fact_names, ws, 0);
+    let var = ExplicitVariable::new(domain_size, variable_name.to_string(), fact_names, axiom_layer, 0);
     Ok((input, var))
 }
 
