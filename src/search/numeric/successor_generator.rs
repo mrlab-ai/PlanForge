@@ -1,26 +1,25 @@
 use crate::search::numeric::numeric_task::{AbstractNumericTask, Fact};
 
-struct SuccessorGenerator<'a> {
+struct GroundedSuccessorGenerator<'a> {
     task: &'a dyn AbstractNumericTask,
-    conditions: Vec<Vec<Fact>>,
+    conditions: Vec<Vec<&'a Fact>>,
 }
 
-impl SuccessorGenerator<'_> {
-    pub fn new(task: &dyn AbstractNumericTask) -> SuccessorGenerator {
+impl GroundedSuccessorGenerator<'_> {
+    pub fn new(task: &dyn AbstractNumericTask) -> GroundedSuccessorGenerator {
 
         let operators = task.get_operators();
+        let mut conditions = vec![];
 
         for operator in operators.iter() {
-            for precondition in operator.preconditions.iter() {
-                if !task.get_fact_name(precondition).is_empty() {
-                    // Initialize conditions with the preconditions of the operator
-                    let condition = vec![precondition.clone()];
-                    // Add the condition to the conditions vector
-                    self.conditions.push(condition);
-                }
+            let mut condition = vec![];
+            for precondition in operator.preconditions().iter() {
+                condition.push(precondition);
             }
+            condition.sort();
+            conditions.push(condition);
         }
 
-        SuccessorGenerator { task, conditions: vec![] }
+        GroundedSuccessorGenerator { task, conditions: vec![] }
     }
 }

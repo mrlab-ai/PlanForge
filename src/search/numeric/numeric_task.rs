@@ -111,7 +111,7 @@ impl NumericVariable {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Fact {
     var: u32,
     value: u32,
@@ -212,6 +212,10 @@ impl Operator {
             assignment_effects,
             cost,
         }
+    }
+
+    pub fn preconditions(&self) -> &Vec<Fact> {
+        &self.preconditions
     }
 }
 
