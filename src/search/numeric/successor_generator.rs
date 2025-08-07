@@ -26,8 +26,8 @@ trait OperatorGenerator {
     ) -> Vec<&Operator>;
 }
 
-impl GroundedSuccessorGenerator<'_> {
-    pub fn new(task: &dyn AbstractNumericTask) -> GroundedSuccessorGenerator {
+impl<'a> GroundedSuccessorGenerator<'a> {
+    pub fn new(task: &dyn AbstractNumericTask) -> GroundedSuccessorGenerator<'a> {
         let operators = task.get_operators();
         let mut conditions = vec![];
 
@@ -53,8 +53,8 @@ impl GroundedSuccessorGenerator<'_> {
     fn construct(
         &self,
         branch_var_id: u32,
-        queue: &mut VecDeque<(Operator, u32)>,
-    ) -> Result<Box<dyn Node>, ConstructError> {
+        queue: &mut VecDeque<(&'a Operator, u32)>,
+    ) -> Result<Box<dyn Node<'a>>, ConstructError> {
         if queue.is_empty() {
             return Ok(Box::new(LeafNode::new(None)));
         }
@@ -63,7 +63,7 @@ impl GroundedSuccessorGenerator<'_> {
 
         let mut operators_for_value = vec![];
         let mut default_operators = LinkedList::new();
-        let mut applicable_operators = LinkedList::new();
+        let mut applicable_operators = VecDeque::new();
 
         let mut all_ops_immediate = true;
         let mut var_interesting = false;
@@ -98,29 +98,33 @@ impl GroundedSuccessorGenerator<'_> {
             }
         }
 
-        todo!()
+        if all_ops_immediate {
+            return Ok(Box::new(LeafNode::new(Some(applicable_operators))));
+        }
+
+        todo!() 
     }
 }
-trait Node {
-    fn get_applicable_operators(&self) -> Option<&Vec<Operator>>;
+trait Node<'a>: 'a {
+    fn get_applicable_operators(&self) -> Option<VecDeque<&'a Operator>>;
 }
 
-struct BranchNode {
-    children: Vec<Box<dyn Node>>,
+struct BranchNode<'a> {
+    children: Vec<Box<dyn Node<'a>>>,
 }
 
-impl BranchNode {
-    pub fn new(children: Vec<Box<dyn Node>>) -> BranchNode {
+impl<'a> BranchNode<'a> {
+    pub fn new(children: Vec<Box<dyn Node<'a>>>) -> BranchNode<'a> {
         BranchNode { children }
     }
 
-    pub fn add_child(&mut self, child: Box<dyn Node>) {
+    pub fn add_child(&mut self, child: Box<dyn Node<'a>>) {
         self.children.push(child);
     }
 }
 
-impl Node for BranchNode {
-    fn get_applicable_operators(&self) -> Option<&Vec<Operator>> {
+impl<'a> Node<'a> for BranchNode<'a> {
+    fn get_applicable_operators(&self) -> Option<VecDeque<&'a Operator>> {
         for child in &self.children {
             if let Some(operators) = child.get_applicable_operators() {
                 return Some(operators);
@@ -131,19 +135,19 @@ impl Node for BranchNode {
 }
 
 struct LeafNode<'a> {
-    applicable_operators: Option<&'a Vec<Operator>>,
+    applicable_operators: Option<VecDeque<&'a Operator>>,
 }
 
 impl<'a> LeafNode<'a> {
-    pub fn new(applicable_operators: Option<&'a Vec<Operator>>) -> LeafNode<'a> {
+    pub fn new(applicable_operators: Option<VecDeque<&'a Operator>>) -> LeafNode<'a> {
         LeafNode {
             applicable_operators,
         }
     }
 }
 
-impl Node for LeafNode<'_> {
-    fn get_applicable_operators(&self) -> Option<&Vec<Operator>> {
-        self.applicable_operators
+impl<'a> Node<'a> for LeafNode<'a> {
+    fn get_applicable_operators(&self) -> Option<VecDeque<&'a Operator>> {
+        self.applicable_operators.clone()
     }
 }
