@@ -1,6 +1,4 @@
-use std::{
-    collections::{LinkedList, VecDeque},
-};
+use std::collections::{LinkedList, VecDeque};
 
 use crate::search::{
     classical::classical_task::Operator,
@@ -61,7 +59,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
         let branch_var = &self.task.variables()[*branch_var_id as usize];
         let num_children = branch_var.domain_size();
 
-        let mut operators_for_value = vec![];
+        let mut operators_for_value = vec![VecDeque::new(); num_children as usize];
         let mut default_operators = VecDeque::new();
         let mut applicable_operators = VecDeque::new();
 
@@ -91,9 +89,9 @@ impl<'a> GroundedSuccessorGenerator<'a> {
                             message: "Condition iterator is empty".to_string(),
                         })?;
                     }
-                    operators_for_value.push(op);
+                    operators_for_value[fact.value() as usize].push_back((op, op_id));
                 } else {
-                    default_operators.push_back(op);
+                    default_operators.push_back((op, op_id));
                 }
             }
         }
@@ -101,13 +99,24 @@ impl<'a> GroundedSuccessorGenerator<'a> {
         if all_ops_immediate {
             return Ok(Box::new(LeafNode::new(Some(applicable_operators))));
         } else if var_interesting {
-
+            let mut children = vec![];
+            for ops in operators_for_value.iter_mut() {
+                children.push(self.construct(&mut (*branch_var_id + 1), ops)?);
+            }
+            let default_branch =
+                self.construct(&mut (*branch_var_id + 1), &mut default_operators)?;
+            return Ok(Box::new(BranchNode::new(
+                *branch_var_id,
+                applicable_operators,
+                children,
+                default_branch,
+            )));
         } else {
             *branch_var_id += 1;
-           //std::mem::swap(&mut default_operators, &mut queue);
+            std::mem::swap(&mut default_operators, queue);
         }
 
-        todo!() 
+        todo!()
     }
 }
 trait Node<'a>: 'a {
@@ -115,22 +124,31 @@ trait Node<'a>: 'a {
 }
 
 struct BranchNode<'a> {
-    children: Vec<Box<dyn Node<'a>>>,
+    var_id: u32,
+    immediate_operators: VecDeque<&'a Operator>,
+    value_children: Vec<Box<dyn Node<'a>>>,
+    default_child: Box<dyn Node<'a>>,
 }
 
 impl<'a> BranchNode<'a> {
-    pub fn new(children: Vec<Box<dyn Node<'a>>>) -> BranchNode<'a> {
-        BranchNode { children }
-    }
-
-    pub fn add_child(&mut self, child: Box<dyn Node<'a>>) {
-        self.children.push(child);
+    pub fn new(
+        var_id: u32,
+        immediate_operators: VecDeque<&'a Operator>,
+        value_children: Vec<Box<dyn Node<'a>>>,
+        default_child: Box<dyn Node<'a>>,
+    ) -> BranchNode<'a> {
+        BranchNode {
+            var_id,
+            immediate_operators,
+            value_children,
+            default_child,
+        }
     }
 }
 
 impl<'a> Node<'a> for BranchNode<'a> {
     fn get_applicable_operators(&self) -> Option<VecDeque<&'a Operator>> {
-        for child in &self.children {
+        for child in &self.value_children {
             if let Some(operators) = child.get_applicable_operators() {
                 return Some(operators);
             }
