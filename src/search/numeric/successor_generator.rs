@@ -52,17 +52,17 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 
     fn construct(
         &self,
-        branch_var_id: u32,
+        branch_var_id: &mut u32,
         queue: &mut VecDeque<(&'a Operator, u32)>,
     ) -> Result<Box<dyn Node<'a>>, ConstructError> {
         if queue.is_empty() {
             return Ok(Box::new(LeafNode::new(None)));
         }
-        let branch_var = &self.task.variables()[branch_var_id as usize];
+        let branch_var = &self.task.variables()[*branch_var_id as usize];
         let num_children = branch_var.domain_size();
 
         let mut operators_for_value = vec![];
-        let mut default_operators = LinkedList::new();
+        let mut default_operators = VecDeque::new();
         let mut applicable_operators = VecDeque::new();
 
         let mut all_ops_immediate = true;
@@ -85,7 +85,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
                 let mut fact = condition_iter.next().ok_or(ConstructError {
                     message: "Condition iterator is empty".to_string(),
                 })?;
-                if fact.var() == branch_var_id {
+                if fact.var() == *branch_var_id {
                     while condition_iter.len() > 0 {
                         fact = condition_iter.next().ok_or(ConstructError {
                             message: "Condition iterator is empty".to_string(),
@@ -100,6 +100,11 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 
         if all_ops_immediate {
             return Ok(Box::new(LeafNode::new(Some(applicable_operators))));
+        } else if var_interesting {
+
+        } else {
+            *branch_var_id += 1;
+           //std::mem::swap(&mut default_operators, &mut queue);
         }
 
         todo!() 
