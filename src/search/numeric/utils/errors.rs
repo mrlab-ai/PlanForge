@@ -4,6 +4,10 @@ pub struct InvalidIndex {
     pub index: u32,
 }
 
+pub struct ConstructError {
+    pub message: String,
+}
+
 pub struct WrongAxiomLayer {
     pub axiom_layer: i32,
     pub last_arithmetic_axiom_layer: i32,
