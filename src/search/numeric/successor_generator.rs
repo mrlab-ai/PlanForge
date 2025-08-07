@@ -8,14 +8,6 @@ use crate::search::{
     },
 };
 
-type Condition<'a> = Vec<&'a Fact>;
-
-struct GroundedSuccessorGenerator<'a> {
-    task: &'a dyn AbstractNumericTask,
-    conditions: Vec<Condition<'a>>,
-    next_condition_by_operator: Vec<Condition<'a>>,
-}
-
 trait OperatorGenerator {
     fn generate_applicable_operators(
         &self,
@@ -24,27 +16,34 @@ trait OperatorGenerator {
     ) -> Vec<&Operator>;
 }
 
+type Condition<'a> = Vec<&'a Fact>;
+
+struct GroundedSuccessorGenerator<'a> {
+    task: &'a dyn AbstractNumericTask,
+    conditions: Vec<Condition<'a>>,
+    next_condition_by_operator: Vec<usize>, // index into conditions
+}
+
 impl<'a> GroundedSuccessorGenerator<'a> {
-    pub fn new(task: &dyn AbstractNumericTask) -> GroundedSuccessorGenerator<'a> {
+    pub fn new(task: &'a dyn AbstractNumericTask) -> GroundedSuccessorGenerator<'a> {
         let operators = task.get_operators();
         let mut conditions = vec![];
+        let mut next_condition_by_operator = vec![];
 
         for operator in operators.iter() {
             let mut condition = vec![];
             for precondition in operator.preconditions().iter() {
                 condition.push(precondition);
             }
-            condition.sort();
+            condition.sort(); // only works if &Condition<'a>: Ord
             conditions.push(condition);
-            let num_vars = task.get_num_variables() as i32;
+            next_condition_by_operator.push(conditions.len() - 1);
         }
-
-        todo!();
 
         GroundedSuccessorGenerator {
             task,
-            conditions: vec![],
-            next_condition_by_operator: vec![],
+            conditions,
+            next_condition_by_operator,
         }
     }
 
@@ -66,17 +65,17 @@ impl<'a> GroundedSuccessorGenerator<'a> {
         let mut all_ops_immediate = true;
         let mut var_interesting = false;
 
-        let num_operators = self.task.get_num_operators();
 
         while !queue.is_empty() {
             let (op, op_id) = queue.pop_front().ok_or(ConstructError {
                 message: "Queue is empty".to_string(),
             })?;
-            assert!(op_id >= 0 && op_id < self.next_condition_by_operator.len() as u32);
-
-            let mut condition_iter = self.next_condition_by_operator[op_id as usize].iter();
+            let condition_index = self.next_condition_by_operator[op_id as usize];
+            
+            let mut condition_iter = self.conditions[condition_index].iter();
 
             if condition_iter.len() == 0 {
+                var_interesting = true;
                 applicable_operators.push_back(op);
             } else {
                 all_ops_immediate = false;
@@ -120,7 +119,11 @@ impl<'a> GroundedSuccessorGenerator<'a> {
     }
 }
 trait Node<'a>: 'a {
-    fn get_applicable_operators(&self) -> Option<VecDeque<&'a Operator>>;
+    fn get_applicable_operators(
+        &self,
+        state: &Vec<&'a Fact>,
+        applicable_operators: &mut VecDeque<&'a Operator>,
+    );
 }
 
 struct BranchNode<'a> {
@@ -147,13 +150,16 @@ impl<'a> BranchNode<'a> {
 }
 
 impl<'a> Node<'a> for BranchNode<'a> {
-    fn get_applicable_operators(&self) -> Option<VecDeque<&'a Operator>> {
-        for child in &self.value_children {
-            if let Some(operators) = child.get_applicable_operators() {
-                return Some(operators);
-            }
+    fn get_applicable_operators(
+        &self,
+        state: &Vec<&'a Fact>,
+        applicable_operators: &mut VecDeque<&'a Operator>,
+    ) {
+        for operator in &self.immediate_operators {
+            applicable_operators.push_back(operator);
         }
-        None
+        let value = state[self.var_id as usize].value();
+        self.value_children[value as usize].get_applicable_operators(state, applicable_operators);
     }
 }
 
@@ -170,7 +176,13 @@ impl<'a> LeafNode<'a> {
 }
 
 impl<'a> Node<'a> for LeafNode<'a> {
-    fn get_applicable_operators(&self) -> Option<VecDeque<&'a Operator>> {
-        self.applicable_operators.clone()
+    fn get_applicable_operators(
+        &self,
+        _state: &Vec<&'a Fact>,
+        applicable_operators: &mut VecDeque<&'a Operator>,
+    ) {
+        if let Some(operators) = &self.applicable_operators {
+            applicable_operators.extend(operators.iter());
+        }
     }
 }
