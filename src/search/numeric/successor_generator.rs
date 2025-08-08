@@ -1,12 +1,9 @@
 use std::collections::{LinkedList, VecDeque};
 
-use crate::search::{
-    classical::classical_task::Operator,
-    numeric::{
-        numeric_task::{AbstractNumericTask, Fact},
+use crate::search::numeric::{
+        numeric_task::{AbstractNumericTask, Fact, Operator},
         utils::errors::ConstructError,
-    },
-};
+    };
 
 trait OperatorGenerator {
     fn generate_applicable_operators(
@@ -182,6 +179,51 @@ impl<'a> Node<'a> for LeafNode<'a> {
     ) {
         if let Some(operators) = &self.applicable_operators {
             applicable_operators.extend(operators.iter());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        parser::numeric_parser::parse_numeric_sas_output,
+        search::numeric::numeric_task::NumericRootTask,
+    };
+
+    fn setup_problems() -> Vec<NumericRootTask> {
+        let mut problems = vec![];
+        for file in std::fs::read_dir("misc/numeric_sas").unwrap() {
+            let file = file.unwrap();
+            if file.path().extension().unwrap() == "sas" {
+                let input = std::fs::read_to_string(file.path()).unwrap();
+                let (unconsumed_input, problem) = parse_numeric_sas_output(&input).unwrap();
+                assert!(
+                    unconsumed_input.is_empty(),
+                    "Unconsumed input: {}",
+                    unconsumed_input
+                );
+                problems.push(problem);
+            }
+        }
+        problems
+    }
+
+    #[test]
+    fn test_grounded_successor_generator() {
+        let problems = setup_problems();
+
+        for problem in problems {
+            let generator = GroundedSuccessorGenerator::new(&problem);
+
+            let mut queue = VecDeque::new();
+            for (op_id, operator) in problem.get_operators().iter().enumerate() {
+                queue.push_back((operator, op_id as u32));
+            }
+            generator.construct(&mut 0, &mut queue).unwrap();
+
+
+            
         }
     }
 }

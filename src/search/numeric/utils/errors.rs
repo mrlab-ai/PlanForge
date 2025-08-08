@@ -3,6 +3,7 @@ pub struct InvalidIndex {
     pub index: u32,
 }
 
+#[derive(Debug)]
 pub struct ConstructError {
     pub message: String,
 }
