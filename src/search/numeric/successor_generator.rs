@@ -1,9 +1,9 @@
 use std::collections::{LinkedList, VecDeque};
 
 use crate::search::numeric::{
-        numeric_task::{AbstractNumericTask, Fact, Operator},
-        utils::errors::ConstructError,
-    };
+    numeric_task::{AbstractNumericTask, Fact, Operator},
+    utils::errors::ConstructError,
+};
 
 trait OperatorGenerator {
     fn generate_applicable_operators(
@@ -55,63 +55,63 @@ impl<'a> GroundedSuccessorGenerator<'a> {
         let branch_var = &self.task.variables()[*branch_var_id as usize];
         let num_children = branch_var.domain_size();
 
-        let mut operators_for_value = vec![VecDeque::new(); num_children as usize];
-        let mut default_operators = VecDeque::new();
-        let mut applicable_operators = VecDeque::new();
+        loop {
+            let mut operators_for_value = vec![VecDeque::new(); num_children as usize];
+            let mut default_operators = VecDeque::new();
+            let mut applicable_operators = VecDeque::new();
 
-        let mut all_ops_immediate = true;
-        let mut var_interesting = false;
+            let mut all_ops_immediate = true;
+            let mut var_interesting = false;
 
-        while !queue.is_empty() {
-            let (op, op_id) = queue.pop_front().ok_or(ConstructError {
-                message: "Queue is empty".to_string(),
-            })?;
-            let condition_index = self.next_condition_by_operator[op_id as usize];
-
-            let mut condition_iter = self.conditions[condition_index].iter();
-
-            if condition_iter.len() == 0 {
-                var_interesting = true;
-                applicable_operators.push_back(op);
-            } else {
-                all_ops_immediate = false;
-                let mut fact = condition_iter.next().ok_or(ConstructError {
-                    message: "Condition iterator is empty".to_string(),
+            while !queue.is_empty() {
+                let (op, op_id) = queue.pop_front().ok_or(ConstructError {
+                    message: "Queue is empty".to_string(),
                 })?;
-                if fact.var() == *branch_var_id {
-                    while condition_iter.len() > 0 {
-                        fact = condition_iter.next().ok_or(ConstructError {
-                            message: "Condition iterator is empty".to_string(),
-                        })?;
-                    }
-                    operators_for_value[fact.value() as usize].push_back((op, op_id));
+                let condition_index = self.next_condition_by_operator[op_id as usize];
+
+                let mut condition_iter = self.conditions[condition_index].iter();
+
+                if condition_iter.len() == 0 {
+                    var_interesting = true;
+                    applicable_operators.push_back(op);
                 } else {
-                    default_operators.push_back((op, op_id));
+                    all_ops_immediate = false;
+                    let mut fact = condition_iter.next().ok_or(ConstructError {
+                        message: "Condition iterator is empty".to_string(),
+                    })?;
+                    if fact.var() == *branch_var_id {
+                        while condition_iter.len() > 0 {
+                            fact = condition_iter.next().ok_or(ConstructError {
+                                message: "Condition iterator is empty".to_string(),
+                            })?;
+                        }
+                        operators_for_value[fact.value() as usize].push_back((op, op_id));
+                    } else {
+                        default_operators.push_back((op, op_id));
+                    }
                 }
             }
-        }
 
-        if all_ops_immediate {
-            return Ok(Box::new(LeafNode::new(Some(applicable_operators))));
-        } else if var_interesting {
-            let mut children = vec![];
-            for ops in operators_for_value.iter_mut() {
-                children.push(self.construct(&mut (*branch_var_id + 1), ops)?);
+            if all_ops_immediate {
+                return Ok(Box::new(LeafNode::new(Some(applicable_operators))));
+            } else if var_interesting {
+                let mut children = vec![];
+                for ops in operators_for_value.iter_mut() {
+                    children.push(self.construct(&mut (*branch_var_id + 1), ops)?);
+                }
+                let default_branch =
+                    self.construct(&mut (*branch_var_id + 1), &mut default_operators)?;
+                return Ok(Box::new(BranchNode::new(
+                    *branch_var_id,
+                    applicable_operators,
+                    children,
+                    default_branch,
+                )));
+            } else {
+                *branch_var_id += 1;
+                std::mem::swap(&mut default_operators, queue);
             }
-            let default_branch =
-                self.construct(&mut (*branch_var_id + 1), &mut default_operators)?;
-            return Ok(Box::new(BranchNode::new(
-                *branch_var_id,
-                applicable_operators,
-                children,
-                default_branch,
-            )));
-        } else {
-            *branch_var_id += 1;
-            std::mem::swap(&mut default_operators, queue);
         }
-
-        todo!()
     }
 }
 trait Node<'a>: 'a {
@@ -221,9 +221,7 @@ mod tests {
                 queue.push_back((operator, op_id as u32));
             }
             generator.construct(&mut 0, &mut queue).unwrap();
-
-
-            
+            dbg!(queue);
         }
     }
 }
