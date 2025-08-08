@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
+use crate::search::numeric::numeric_task::AbstractNumericTask;
 use crate::search::numeric::{
-    numeric_task::{ NumericRootTask, NumericType },
+    numeric_task::{NumericRootTask, NumericType},
     utils::int_packer::IntDoublePacker,
 };
-use crate::search::numeric::numeric_task::AbstractNumericTask;
 
 type StatePacker = IntDoublePacker;
 
@@ -49,7 +49,7 @@ impl StateRegistry {
     pub fn register_state(
         &mut self,
         values: Vec<u64>,
-        numeric_values: Vec<f64>
+        numeric_values: Vec<f64>,
     ) -> Result<GlobalState, StateInsertError> {
         let mut buffer = vec![0; self.global_state_packer.num_bins() as usize];
         for i in 0..values.len() {
@@ -63,14 +63,13 @@ impl StateRegistry {
         let mut instrumentation_variables = vec![];
 
         for i in 0..numeric_values.len() {
-            let numeric_variable = self.root_task
-                .numeric_variables()
-                .get(i)
-                .ok_or_else(|| {
-                    StateInsertError {
+            let numeric_variable =
+                self.root_task
+                    .numeric_variables()
+                    .get(i)
+                    .ok_or_else(|| StateInsertError {
                         message: format!("Numeric variable at index {} not found", i),
-                    }
-                })?;
+                    })?;
             match numeric_variable.get_type() {
                 NumericType::Instrumentation => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
@@ -96,10 +95,10 @@ impl StateRegistry {
                 NumericType::Regular => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
                     self.numeric_indices[i] = regular_index as i32;
-                    let packed_numeric_value = self.global_state_packer.pack_double(
-                        numeric_values[i]
-                    );
-                    self.global_state_packer.set(&mut buffer, regular_index, packed_numeric_value);
+                    let packed_numeric_value =
+                        self.global_state_packer.pack_double(numeric_values[i]);
+                    self.global_state_packer
+                        .set(&mut buffer, regular_index, packed_numeric_value);
                     regular_index += 1;
                 }
 

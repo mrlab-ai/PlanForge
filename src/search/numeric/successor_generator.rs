@@ -65,13 +65,12 @@ impl<'a> GroundedSuccessorGenerator<'a> {
         let mut all_ops_immediate = true;
         let mut var_interesting = false;
 
-
         while !queue.is_empty() {
             let (op, op_id) = queue.pop_front().ok_or(ConstructError {
                 message: "Queue is empty".to_string(),
             })?;
             let condition_index = self.next_condition_by_operator[op_id as usize];
-            
+
             let mut condition_iter = self.conditions[condition_index].iter();
 
             if condition_iter.len() == 0 {

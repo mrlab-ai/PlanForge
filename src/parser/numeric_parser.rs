@@ -334,8 +334,13 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         let (loop_input, _) = space1(loop_input)?;
         let (loop_input, effect_value) = u32(loop_input)?;
         let (loop_input, _) = line_ending(loop_input)?;
-        let assignment_effect =
-            AssignmentEffect::new(effect_var_id, operation, effect_value, is_conditional_effect, conditions);
+        let assignment_effect = AssignmentEffect::new(
+            effect_var_id,
+            operation,
+            effect_value,
+            is_conditional_effect,
+            conditions,
+        );
         assignment_effects.push(assignment_effect);
         input = loop_input;
     }

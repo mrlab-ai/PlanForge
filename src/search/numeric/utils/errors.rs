@@ -1,4 +1,3 @@
-
 pub struct InvalidIndex {
     pub length: u32,
     pub index: u32,

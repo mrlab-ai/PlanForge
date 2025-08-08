@@ -9,14 +9,16 @@ pub struct SegmentedArrayVector<T: Clone> {
     arrays_per_segment: usize,
     elements_per_segment: usize,
     pub segments: Vec<Box<[T]>>, // flat arrays per segment
-    size: usize, // number of elements (each of size elements_per_array)
+    size: usize,                 // number of elements (each of size elements_per_array)
 }
 
 impl<T: Clone + Default> SegmentedArrayVector<T> {
     pub fn new(elements_per_array: usize) -> Self {
         assert!(elements_per_array > 0);
-        let arrays_per_segment =
-            cmp::max(SEGMENT_BYTES / (elements_per_array * std::mem::size_of::<T>()), 1);
+        let arrays_per_segment = cmp::max(
+            SEGMENT_BYTES / (elements_per_array * std::mem::size_of::<T>()),
+            1,
+        );
         let elements_per_segment = elements_per_array * arrays_per_segment;
         Self {
             elements_per_array,
@@ -47,8 +49,7 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
         if segment == self.segments.len() {
             self.add_segment();
         }
-        self.segments[segment][offset..offset + self.elements_per_array]
-            .clone_from_slice(entry);
+        self.segments[segment][offset..offset + self.elements_per_array].clone_from_slice(entry);
         self.size += 1;
     }
 

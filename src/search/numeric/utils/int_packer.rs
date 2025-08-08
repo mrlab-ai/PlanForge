@@ -70,7 +70,6 @@ impl VariableInfo {
     }
 }
 
-
 pub struct IntDoublePacker {
     var_infos: Vec<VariableInfo>,
     num_bins: i32,
@@ -78,7 +77,10 @@ pub struct IntDoublePacker {
 
 impl IntDoublePacker {
     pub fn new(ranges: Vec<u64>) -> Self {
-        let mut packer = IntDoublePacker { var_infos: vec![], num_bins: 0 };
+        let mut packer = IntDoublePacker {
+            var_infos: vec![],
+            num_bins: 0,
+        };
         packer.pack_bins(&ranges);
         packer
     }
@@ -108,19 +110,15 @@ impl IntDoublePacker {
             // Pop the last variable index if available
             if let Some(var) = best_fit_vars.pop() {
                 assert!(var >= 0);
-                self.var_infos[var as usize] = VariableInfo::new(
-                    ranges[var as usize],
-                    bin_index,
-                    used_bits
-                );
+                self.var_infos[var as usize] =
+                    VariableInfo::new(ranges[var as usize], bin_index, used_bits);
                 used_bits += bits;
                 num_vars_in_bin += 1;
             } else {
                 // This shouldn't happen because of the `is_empty()` check above
                 eprintln!(
                     "Unexpected: no variable with {} bits available for bin {}",
-                    bits,
-                    bin_index
+                    bits, bin_index
                 );
                 return num_vars_in_bin;
             }

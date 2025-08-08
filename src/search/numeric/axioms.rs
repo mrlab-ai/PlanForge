@@ -8,7 +8,7 @@ use crate::{
         classical::classical_task::Axiom,
         numeric::{
             self,
-            numeric_task::{self, AbstractNumericTask, Fact },
+            numeric_task::{self, AbstractNumericTask, Fact},
             utils::{
                 errors::{AxiomEvalError, InvalidIndex},
                 int_packer::IntDoublePacker,
