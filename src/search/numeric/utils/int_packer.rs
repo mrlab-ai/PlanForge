@@ -48,7 +48,7 @@ impl Default for VariableInfo {
 impl VariableInfo {
     pub fn new(range: u64, bin_index: i32, shift: i32) -> Self {
         let bit_size = get_bit_size_for_range(range);
-        let read_mask = get_bit_mask(0, bit_size as i32);
+        let read_mask = get_bit_mask(shift, shift + bit_size);
         let clear_mask = !read_mask;
         VariableInfo {
             range,
@@ -63,14 +63,13 @@ impl VariableInfo {
         (buffer[self.bin_index as usize] & self.read_mask) >> self.shift
     }
 
-    fn set(&self, buffer: &mut [u64], value: u64) {
+    pub fn set(&self, buffer: &mut [u64], value: u64) {
         let bin_index = self.bin_index as usize;
         let bin = buffer[bin_index];
-        buffer[bin_index] = (bin & self.clear_mask) | (value << self.shift);
+        buffer[bin_index] = (bin & self.clear_mask) | ((value << self.shift) & self.read_mask);
     }
-
-    //NOTE: associated functions
 }
+
 
 pub struct IntDoublePacker {
     var_infos: Vec<VariableInfo>,
@@ -79,7 +78,6 @@ pub struct IntDoublePacker {
 
 impl IntDoublePacker {
     pub fn new(ranges: Vec<u64>) -> Self {
-
         let mut packer = IntDoublePacker { var_infos: vec![], num_bins: 0 };
         packer.pack_bins(&ranges);
         packer
@@ -89,7 +87,7 @@ impl IntDoublePacker {
         self.num_bins
     }
 
-    fn pack_one_bin(&mut self, ranges: &Vec<u64>, bits_to_var: &Vec<Vec<i32>>) -> i32 {
+    fn pack_one_bin(&mut self, ranges: &Vec<u64>, bits_to_var: &mut Vec<Vec<i32>>) -> i32 {
         self.num_bins += 1;
         let bin_index = self.num_bins - 1;
         let mut used_bits = 0;
@@ -103,15 +101,35 @@ impl IntDoublePacker {
             if bits == 0 {
                 return num_vars_in_bin;
             }
-            let best_fit_vars = &bits_to_var[bits as usize];
-            let var = best_fit_vars.last().unwrap(); //TODO: Replace the unwrap with proper error handling
-            self.var_infos[*var as usize] = VariableInfo::new(
-                ranges[*var as usize],
-                bin_index,
-                used_bits
-            );
-            used_bits += bits;
-            num_vars_in_bin += 1;
+
+            // Get mutable reference to the best-fit list
+            let best_fit_vars = &mut bits_to_var[bits as usize];
+
+            // Pop the last variable index if available
+            if let Some(var) = best_fit_vars.pop() {
+                assert!(var >= 0);
+                println!(
+                    "Packing var {} with range {} into bin {}",
+                    var,
+                    ranges[var as usize],
+                    bin_index
+                );
+                self.var_infos[var as usize] = VariableInfo::new(
+                    ranges[var as usize],
+                    bin_index,
+                    used_bits
+                );
+                used_bits += bits;
+                num_vars_in_bin += 1;
+            } else {
+                // This shouldn't happen because of the `is_empty()` check above
+                eprintln!(
+                    "Unexpected: no variable with {} bits available for bin {}",
+                    bits,
+                    bin_index
+                );
+                return num_vars_in_bin;
+            }
         }
     }
 
@@ -131,7 +149,7 @@ impl IntDoublePacker {
 
         let mut packed_vars: i32 = 0;
         while packed_vars < (num_vars as i32) {
-            let num_vars_in_bin = self.pack_one_bin(ranges, &bits_to_var);
+            let num_vars_in_bin = self.pack_one_bin(ranges, &mut bits_to_var);
             packed_vars += num_vars_in_bin;
         }
     }
@@ -155,5 +173,32 @@ impl IntDoublePacker {
 
     pub fn set(&mut self, buffer: &mut [u64], var: i32, value: u64) {
         self.var_infos[var as usize].set(buffer, value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup() -> IntDoublePacker {
+        let ranges = vec![100, 200, 300, 400, 500];
+        dbg!(&ranges);
+        IntDoublePacker::new(ranges)
+    }
+
+    #[test]
+    fn pack_and_unpack_ints() {
+        let mut packer = setup();
+        let buffer = &mut [0u64; 5];
+
+        // Pack some integers
+        packer.set(buffer, 0, 42);
+        packer.set(buffer, 1, 84);
+        packer.set(buffer, 2, 126);
+
+        // Unpack and assert
+        assert_eq!(packer.get(buffer, 0), 42);
+        assert_eq!(packer.get(buffer, 1), 84);
+        assert_eq!(packer.get(buffer, 2), 126);
     }
 }
