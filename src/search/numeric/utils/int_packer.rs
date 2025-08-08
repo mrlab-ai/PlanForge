@@ -108,12 +108,6 @@ impl IntDoublePacker {
             // Pop the last variable index if available
             if let Some(var) = best_fit_vars.pop() {
                 assert!(var >= 0);
-                println!(
-                    "Packing var {} with range {} into bin {}",
-                    var,
-                    ranges[var as usize],
-                    bin_index
-                );
                 self.var_infos[var as usize] = VariableInfo::new(
                     ranges[var as usize],
                     bin_index,
@@ -182,7 +176,6 @@ mod tests {
 
     fn setup() -> IntDoublePacker {
         let ranges = vec![100, 200, 300, 400, 500, u64::MAX];
-        dbg!(&ranges);
         IntDoublePacker::new(ranges)
     }
 
