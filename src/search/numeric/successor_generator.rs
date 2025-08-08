@@ -1,5 +1,5 @@
 use std::collections::{LinkedList, VecDeque};
-
+use std::fmt::Debug;
 use crate::search::numeric::{
     numeric_task::{AbstractNumericTask, Fact, Operator},
     utils::errors::ConstructError,
@@ -45,17 +45,18 @@ impl<'a> GroundedSuccessorGenerator<'a> {
     }
 
     fn construct(
-        &self,
+        &mut self,
         branch_var_id: &mut u32,
         queue: &mut VecDeque<(&'a Operator, u32)>,
     ) -> Result<Box<dyn Node<'a>>, ConstructError> {
         if queue.is_empty() {
+            //let insert_queue = queue.iter().map(|(op, op_id)| *op).collect::<VecDeque<_>>();
             return Ok(Box::new(LeafNode::new(None)));
         }
-        let branch_var = &self.task.variables()[*branch_var_id as usize];
-        let num_children = branch_var.domain_size();
-
         loop {
+            let branch_var = &self.task.variables()[*branch_var_id as usize];
+            let num_children = branch_var.domain_size();
+            
             let mut operators_for_value = vec![VecDeque::new(); num_children as usize];
             let mut default_operators = VecDeque::new();
             let mut applicable_operators = VecDeque::new();
@@ -69,22 +70,21 @@ impl<'a> GroundedSuccessorGenerator<'a> {
                 })?;
                 let condition_index = self.next_condition_by_operator[op_id as usize];
 
-                let mut condition_iter = self.conditions[condition_index].iter();
-
-                if condition_iter.len() == 0 {
+                if condition_index >= self.conditions[op_id as usize].len() {
                     var_interesting = true;
                     applicable_operators.push_back(op);
                 } else {
                     all_ops_immediate = false;
-                    let mut fact = condition_iter.next().ok_or(ConstructError {
-                        message: "Condition iterator is empty".to_string(),
-                    })?;
+                    let fact = &self.conditions[op_id as usize][condition_index];
                     if fact.var() == *branch_var_id {
-                        while condition_iter.len() > 0 {
-                            fact = condition_iter.next().ok_or(ConstructError {
-                                message: "Condition iterator is empty".to_string(),
-                            })?;
+                        var_interesting = true;
+                        let mut new_index = condition_index;
+                        while new_index < self.conditions[op_id as usize].len()
+                            && self.conditions[op_id as usize][new_index].var() == *branch_var_id
+                        {
+                            new_index += 1;
                         }
+                        self.next_condition_by_operator[op_id as usize] = new_index;
                         operators_for_value[fact.value() as usize].push_back((op, op_id));
                     } else {
                         default_operators.push_back((op, op_id));
@@ -114,7 +114,8 @@ impl<'a> GroundedSuccessorGenerator<'a> {
         }
     }
 }
-trait Node<'a>: 'a {
+
+trait Node<'a>: 'a + Debug {
     fn get_applicable_operators(
         &self,
         state: &Vec<&'a Fact>,
@@ -122,6 +123,7 @@ trait Node<'a>: 'a {
     );
 }
 
+#[derive(Debug)]
 struct BranchNode<'a> {
     var_id: u32,
     immediate_operators: VecDeque<&'a Operator>,
@@ -159,6 +161,7 @@ impl<'a> Node<'a> for BranchNode<'a> {
     }
 }
 
+#[derive(Debug)]    
 struct LeafNode<'a> {
     applicable_operators: Option<VecDeque<&'a Operator>>,
 }
@@ -214,14 +217,14 @@ mod tests {
         let problems = setup_problems();
 
         for problem in problems {
-            let generator = GroundedSuccessorGenerator::new(&problem);
+            let mut generator = GroundedSuccessorGenerator::new(&problem);
 
             let mut queue = VecDeque::new();
             for (op_id, operator) in problem.get_operators().iter().enumerate() {
                 queue.push_back((operator, op_id as u32));
             }
-            generator.construct(&mut 0, &mut queue).unwrap();
-            dbg!(queue);
+            let node = generator.construct(&mut 0, &mut queue).unwrap();
+            dbg!(&node);
         }
     }
 }
