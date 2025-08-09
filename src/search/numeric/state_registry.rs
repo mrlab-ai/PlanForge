@@ -8,8 +8,10 @@ use crate::search::numeric::{
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
+use std::fmt;
 
 type StatePacker = IntDoublePacker;
+
 
 pub struct ConcreteState<'a> {
     state_registry: &'a StateRegistry<'a>,
@@ -22,6 +24,25 @@ impl<'a> ConcreteState<'a> {
             state_registry,
             buffer,
         }
+    }
+}
+
+impl fmt::Debug for ConcreteState<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let num_variables = self.state_registry.root_task.variables().len();
+        let num_numeric_variables = self.state_registry.root_task.numeric_variables().len();
+        write!(f, "ConcreteState with {} bins\n", self.buffer.len())?;
+        let state_packer = &self.state_registry.global_state_packer;
+        for i in 0..num_variables {
+            let value = state_packer.get(&self.buffer, i as i32);
+            write!(f, "Var {}: {}\n", i, value)?;
+        }
+        for i in 0..num_numeric_variables {
+            let numeric_value = state_packer.unpack_double(self.buffer[i + num_variables]);
+            write!(f, "Numeric Var {}: {}\n", i, numeric_value)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -103,8 +124,7 @@ impl<'a> StateRegistry<'a> {
     }
 
     pub fn get_initial_state(&mut self) -> ConcreteState {
-        let mut init_buffer =
-            vec![0 as u64; self.global_state_packer.num_bins() as usize].into_boxed_slice();
+        let mut init_buffer = vec![0 as u64; self.global_state_packer.num_bins() as usize];
         let initial_propositional_state = self.root_task.get_initial_propositional_state_values();
 
         for i in 0..initial_propositional_state.len() {
@@ -118,7 +138,7 @@ impl<'a> StateRegistry<'a> {
         let mut numeric_var_index = initial_propositional_state.len();
         let mut constant_index = 0;
         let mut derived_index = 0;
-        let mut initial_numeric_state = self.root_task.get_initial_numeric_state_values();
+        let initial_numeric_state = self.root_task.get_initial_numeric_state_values();
 
         let mut instrumentation_variables = vec![];
 
@@ -180,7 +200,14 @@ impl<'a> StateRegistry<'a> {
         self.axiom_evaluator
             .evaluate(&mut init_buffer, &mut initial_numeric_state)
             .unwrap();
-        todo!()
+
+        self.state_data_pool.push(init_buffer);
+        let state_id = self.insert_id_or_pop_state();
+
+        // TODO get rid of this clone
+        let concrete_state = ConcreteState::new(self, self.state_data_pool[state_id].clone());
+
+        concrete_state
     }
 
     pub fn register_state(
@@ -264,7 +291,6 @@ impl<'a> StateRegistry<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::setup_axiom_evaluator;
     use crate::setup_numeric_task;
     use crate::setup_state_packer;
@@ -277,5 +303,6 @@ mod tests {
         let axiom_evaluator = setup_axiom_evaluator(&problem, &state_packer);
         let mut state_registry = setup_state_registry(&problem, &state_packer, &axiom_evaluator);
         let initial_state = state_registry.get_initial_state();
+        print!("Initial state: {:?}", initial_state);
     }
 }
