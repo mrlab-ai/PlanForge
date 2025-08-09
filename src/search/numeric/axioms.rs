@@ -443,3 +443,57 @@ impl<'a> AxiomEvaluator<'a> {
         Ok(())
     }
 }
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::search::numeric::numeric_task::NumericRootTask;
+
+
+    fn setup_problems() -> Vec<NumericRootTask> {
+        let mut problems = vec![];
+        for file in std::fs::read_dir("misc/numeric_sas").unwrap() {
+            let file = file.unwrap();
+            if file.path().extension().unwrap() == "sas" {
+                let input = std::fs::read_to_string(file.path()).unwrap();
+                let (unconsumed_input, problem) = numeric_parser::parse_numeric_sas_output(&input).unwrap();
+                assert!(
+                    unconsumed_input.is_empty(),
+                    "Unconsumed input: {}",
+                    unconsumed_input
+                );
+                problems.push(problem);
+            }
+        }
+        problems
+    }
+
+    #[test]
+    fn test_axiom_evaluator_creation() {
+        let problems = setup_problems();
+        assert!(!problems.is_empty());
+
+        for problem in problems {
+
+            let mut domain_sizes = vec![];
+            for var in problem.variables().iter() {
+                domain_sizes.push(var.domain_size() as u64);
+            }
+            for numeric_var in problem.numeric_variables().iter() {
+                domain_sizes.push(u64::MAX);
+            }
+
+
+            let state_packer = IntDoublePacker::new(&domain_sizes);
+            let axiom_evaluator = AxiomEvaluator::new(&problem, state_packer);
+            assert!(!axiom_evaluator.axiom_literals.is_empty());
+            assert!(!axiom_evaluator.rules.is_empty());
+            assert!(axiom_evaluator.comparison_axiom_layer >= -1);
+            assert!(axiom_evaluator.first_propositional_axiom_layer >= -1);
+            assert!(axiom_evaluator.last_propositional_axiom_layer >= -1);
+            assert!(axiom_evaluator.last_arithmetic_axiom_layer >= -1);
+        }
+    }
+}

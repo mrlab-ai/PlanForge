@@ -76,7 +76,7 @@ pub struct IntDoublePacker {
 }
 
 impl IntDoublePacker {
-    pub fn new(ranges: Vec<u64>) -> Self {
+    pub fn new(ranges: &[u64]) -> Self {
         let mut packer = IntDoublePacker {
             var_infos: vec![],
             num_bins: 0,
@@ -89,7 +89,7 @@ impl IntDoublePacker {
         self.num_bins
     }
 
-    fn pack_one_bin(&mut self, ranges: &Vec<u64>, bits_to_var: &mut Vec<Vec<i32>>) -> i32 {
+    fn pack_one_bin(&mut self, ranges: &[u64], bits_to_var: &mut Vec<Vec<i32>>) -> i32 {
         self.num_bins += 1;
         let bin_index = self.num_bins - 1;
         let mut used_bits = 0;
@@ -125,7 +125,7 @@ impl IntDoublePacker {
         }
     }
 
-    fn pack_bins(&mut self, ranges: &Vec<u64>) {
+    fn pack_bins(&mut self, ranges: &[u64]) {
         assert!(self.var_infos.is_empty());
 
         let num_vars = ranges.len();
@@ -174,7 +174,7 @@ mod tests {
 
     fn setup() -> IntDoublePacker {
         let ranges = vec![100, 200, 300, 400, 500, u64::MAX];
-        IntDoublePacker::new(ranges)
+        IntDoublePacker::new(&ranges)
     }
 
     #[test]

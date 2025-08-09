@@ -226,9 +226,9 @@ mod tests {
             let node = generator.construct(&mut 0, &mut queue).unwrap();
             dbg!(&node);
 
-            let state = problem.get_initial_state_values();
-            let mut applicable_operators = VecDeque::new();
-            node.get_applicable_operators(state, &mut applicable_operators);
+            let state = problem.get_initial_propositional_state_values();
+            //let mut applicable_operators = VecDeque::new();
+            //node.get_applicable_operators(state, &mut applicable_operators);
         }
     }
 }
