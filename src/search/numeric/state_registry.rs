@@ -65,7 +65,7 @@ pub struct StateRegistry<'a> {
     root_task: &'a NumericRootTask,
     axiom_evaluator: &'a AxiomEvaluator<'a>,
     global_state_packer: &'a StatePacker,
-    state_data_pool: Vec<StatePacker>,
+    state_data_pool: Vec<Vec<u64>>, // This is a pool of state data, each state is a vector of u64
     numeric_constants: Vec<f64>,
     numeric_indices: Vec<i32>,
     registered_states: HashSet<StateID>,
@@ -86,6 +86,19 @@ impl<'a> StateRegistry<'a> {
             numeric_indices: vec![-1; number_numeric_vars],
             registered_states: HashSet::new(),
             axiom_evaluator,
+        }
+    }
+
+    fn insert_id_or_pop_state(&mut self) -> StateID {
+        let state_id = self.state_data_pool.len() - 1;
+        if self.registered_states.contains(&state_id) {
+            self.state_data_pool.remove(state_id);
+        }
+        if let Some(existing_id) = self.registered_states.get(&state_id) {
+            return *existing_id;
+        } else {
+            self.registered_states.insert(state_id);
+            return state_id;
         }
     }
 
@@ -239,8 +252,6 @@ impl<'a> StateRegistry<'a> {
 
         todo!()
     }
-
-    fn insert_id_or_pop_state() {}
 
     pub fn lookup_state(&self, index: usize) -> Result<ConcreteState, StateNotFoundError> {
         todo!()
