@@ -6,12 +6,11 @@ use crate::search::numeric::{
     utils::int_packer::IntDoublePacker,
 };
 use std::collections::HashSet;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
-use std::fmt;
 
 type StatePacker = IntDoublePacker;
-
 
 pub struct ConcreteState<'a> {
     state_registry: &'a StateRegistry<'a>,
@@ -29,17 +28,26 @@ impl<'a> ConcreteState<'a> {
 
 impl fmt::Debug for ConcreteState<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let num_variables = self.state_registry.root_task.variables().len();
-        let num_numeric_variables = self.state_registry.root_task.numeric_variables().len();
+        let task = &self.state_registry.root_task;
+
+        let num_variables = task.variables().len();
+        let num_regular_numeric_vars = task
+            .numeric_variables()
+            .iter()
+            .filter(|v| v.get_type() == &NumericType::Regular)
+            .count();
+
         write!(f, "ConcreteState with {} bins\n", self.buffer.len())?;
         let state_packer = &self.state_registry.global_state_packer;
         for i in 0..num_variables {
             let value = state_packer.get(&self.buffer, i as i32);
             write!(f, "Var {}: {}\n", i, value)?;
         }
-        for i in 0..num_numeric_variables {
-            let numeric_value = state_packer.unpack_double(self.buffer[i + num_variables]);
-            write!(f, "Numeric Var {}: {}\n", i, numeric_value)?;
+        for i in 0..num_regular_numeric_vars {
+            let numeric_var_id = i + num_variables;
+            let packed_value = state_packer.get(&self.buffer, numeric_var_id as i32);
+            let numeric_value = state_packer.unpack_double(packed_value);
+            write!(f, "Numeric Var {}: {}\n", numeric_var_id, numeric_value)?;
         }
 
         Ok(())
@@ -145,6 +153,7 @@ impl<'a> StateRegistry<'a> {
         for i in 0..initial_numeric_state.len() {
             let numeric_var = self.root_task.numeric_variables().get(i).unwrap(); //TODO: Remove unwrap
             let numeric_var_type = numeric_var.get_type();
+
             match numeric_var_type {
                 NumericType::Instrumentation => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
@@ -197,11 +206,12 @@ impl<'a> StateRegistry<'a> {
         self.axiom_evaluator
             .evaluate_arithmetic_axioms(&mut initial_numeric_state)
             .unwrap();
-        self.axiom_evaluator
-            .evaluate(&mut init_buffer, &mut initial_numeric_state)
-            .unwrap();
+        //self.axiom_evaluator
+        //    .evaluate(&mut init_buffer, &mut initial_numeric_state)
+        //    .unwrap();
 
         self.state_data_pool.push(init_buffer);
+        println!("Init buffer: {:?}", self.state_data_pool.last());
         let state_id = self.insert_id_or_pop_state();
 
         // TODO get rid of this clone

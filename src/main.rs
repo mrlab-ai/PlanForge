@@ -8,6 +8,7 @@ use std::fs;
 use crate::search::numeric::axioms::AxiomEvaluator;
 use crate::search::numeric::numeric_task::AbstractNumericTask;
 use crate::search::numeric::numeric_task::NumericRootTask;
+use crate::search::numeric::numeric_task::NumericType;
 use crate::search::numeric::state_registry::StateRegistry;
 use crate::search::numeric::utils::int_packer::IntDoublePacker;
 
@@ -35,9 +36,10 @@ fn setup_state_packer<'a>(problem: &'a NumericRootTask) -> IntDoublePacker {
         domain_sizes.push(var.domain_size() as u64);
     }
     for numeric_var in problem.numeric_variables().iter() {
-        domain_sizes.push(u64::MAX);
+        if numeric_var.get_type() == &NumericType::Regular {
+            domain_sizes.push(u64::MAX);
+        }
     }
-
     IntDoublePacker::new(&domain_sizes)
 }
 
