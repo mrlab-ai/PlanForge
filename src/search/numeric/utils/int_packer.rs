@@ -163,7 +163,7 @@ impl IntDoublePacker {
         self.var_infos[var as usize].get(buffer)
     }
 
-    pub fn set(&mut self, buffer: &mut [u64], var: i32, value: u64) {
+    pub fn set(&self, buffer: &mut [u64], var: i32, value: u64) {
         self.var_infos[var as usize].set(buffer, value);
     }
 }

@@ -35,10 +35,10 @@ impl Index<usize> for ConcreteState<'_> {
 }
 
 //TODO: There should be only a single axiom evaluator so it should be fine if the StateRegistry has it
-struct StateRegistry<'a> {
+pub struct StateRegistry<'a> {
     root_task: &'a NumericRootTask,
     axiom_evaluator: &'a AxiomEvaluator<'a>,
-    global_state_packer: StatePacker,
+    global_state_packer: &'a StatePacker,
     state_data_pool: Vec<StatePacker>,
     numeric_constants: Vec<f64>,
     numeric_indices: Vec<i32>,
@@ -46,7 +46,11 @@ struct StateRegistry<'a> {
 }
 
 impl<'a> StateRegistry<'a> {
-    pub fn new(root_task: &'a NumericRootTask, global_state_packer: StatePacker, axiom_evaluator: &'a AxiomEvaluator<'a>) -> Self {
+    pub fn new(
+        root_task: &'a NumericRootTask,
+        global_state_packer: &'a StatePacker,
+        axiom_evaluator: &'a AxiomEvaluator<'a>,
+    ) -> Self {
         let number_numeric_vars = root_task.numeric_variables().len();
         StateRegistry {
             root_task,
@@ -195,8 +199,6 @@ impl<'a> StateRegistry<'a> {
             }
         }
 
-
-
         drop(buffer);
 
         todo!()
@@ -208,5 +210,36 @@ impl<'a> StateRegistry<'a> {
         //    Some(state) => Ok(ConcreteState::new(&state)),
         //    None => Err(StateNotFoundError { index }),
         //}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::numeric_parser;
+    use crate::search::numeric::axioms::AxiomEvaluator;
+
+    use crate::search::numeric::numeric_task::AbstractNumericTask;
+    use crate::search::numeric::numeric_task::NumericRootTask;
+
+    use crate::search::numeric::utils::int_packer::IntDoublePacker;
+    use crate::setup_axiom_evaluator;
+    use crate::setup_numeric_task;
+    use crate::setup_state_packer;
+
+    fn setup_state_registry<'a>(
+        problem: &'a NumericRootTask,
+        state_packer: &'a IntDoublePacker,
+        axiom_evaluator: &'a AxiomEvaluator<'a>,
+    ) -> StateRegistry<'a> {
+        StateRegistry::new(problem, state_packer, axiom_evaluator)
+    }
+
+    #[test]
+    fn test_state_registry_initialization() {
+        let problem = setup_numeric_task("misc/numeric_sas/example1.sas");
+        let state_packer = setup_state_packer(&problem);
+        let axiom_evaluator = setup_axiom_evaluator(&problem, &state_packer);
+        let state_registry = setup_state_registry(&problem, &state_packer, &axiom_evaluator);
     }
 }

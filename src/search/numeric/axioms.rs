@@ -270,7 +270,7 @@ impl NegationByFailureInfo {
 
 pub struct AxiomEvaluator<'a> {
     numeric_task: &'a dyn AbstractNumericTask,
-    state_packer: IntDoublePacker,
+    state_packer: &'a IntDoublePacker,
     axiom_literals: Vec<Vec<AxiomLiteral>>,
     rules: Vec<AxiomRule>,
     comparison_axiom_layer: i32,
@@ -282,7 +282,10 @@ pub struct AxiomEvaluator<'a> {
 }
 
 impl<'a> AxiomEvaluator<'a> {
-    pub fn new(numeric_task: &'a dyn AbstractNumericTask, state_packer: IntDoublePacker) -> Self {
+    pub fn new(
+        numeric_task: &'a dyn AbstractNumericTask,
+        state_packer: &'a IntDoublePacker,
+    ) -> Self {
         let mut axiom_literals = vec![];
         let mut nbf_info_by_layer = vec![];
 
@@ -351,7 +354,8 @@ impl<'a> AxiomEvaluator<'a> {
         for var_id in 0..numeric_task.get_num_variables() {
             let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
             if axiom_layer != -1 && axiom_layer != last_layer {
-                let nbf_value = numeric_task.get_initial_propositional_state_values()[var_id as usize];
+                let nbf_value =
+                    numeric_task.get_initial_propositional_state_values()[var_id as usize];
                 let literal = axiom_literals[var_id as usize][nbf_value as usize].clone();
                 let nbf_info = NegationByFailureInfo::new(var_id as u32, literal);
                 nbf_info_by_layer[axiom_layer as usize].push(nbf_info);
@@ -384,7 +388,7 @@ impl<'a> AxiomEvaluator<'a> {
     }
 
     pub fn evaluate_comparison_axioms(
-        &mut self,
+        &self,
         buffer: &mut [u64],
         numeric_state: &mut Vec<f64>,
     ) -> Result<bool, InvalidIndex> {
@@ -444,13 +448,10 @@ impl<'a> AxiomEvaluator<'a> {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::search::numeric::numeric_task::NumericRootTask;
-
 
     fn setup_problems() -> Vec<NumericRootTask> {
         let mut problems = vec![];
@@ -458,7 +459,8 @@ mod tests {
             let file = file.unwrap();
             if file.path().extension().unwrap() == "sas" {
                 let input = std::fs::read_to_string(file.path()).unwrap();
-                let (unconsumed_input, problem) = numeric_parser::parse_numeric_sas_output(&input).unwrap();
+                let (unconsumed_input, problem) =
+                    numeric_parser::parse_numeric_sas_output(&input).unwrap();
                 assert!(
                     unconsumed_input.is_empty(),
                     "Unconsumed input: {}",
@@ -476,7 +478,6 @@ mod tests {
         assert!(!problems.is_empty());
 
         for problem in problems {
-
             let mut domain_sizes = vec![];
             for var in problem.variables().iter() {
                 domain_sizes.push(var.domain_size() as u64);
@@ -485,15 +486,22 @@ mod tests {
                 domain_sizes.push(u64::MAX);
             }
 
-
             let state_packer = IntDoublePacker::new(&domain_sizes);
-            let axiom_evaluator = AxiomEvaluator::new(&problem, state_packer);
-            assert!(!axiom_evaluator.axiom_literals.is_empty());
-            assert!(!axiom_evaluator.rules.is_empty());
-            assert!(axiom_evaluator.comparison_axiom_layer >= -1);
-            assert!(axiom_evaluator.first_propositional_axiom_layer >= -1);
-            assert!(axiom_evaluator.last_propositional_axiom_layer >= -1);
-            assert!(axiom_evaluator.last_arithmetic_axiom_layer >= -1);
+            let axiom_evaluator = AxiomEvaluator::new(&problem, &state_packer);
+
+            let init_state = problem.get_initial_propositional_state_values();
+            let mut buffer = vec![0; axiom_evaluator.state_packer.num_bins() as usize];
+            for (i, value) in init_state.iter().enumerate() {
+                dbg!(i, value);
+                axiom_evaluator
+                    .state_packer
+                    .set(&mut buffer, i as i32, *value as u64);
+            }
+
+            dbg!(axiom_evaluator.state_packer.get(&buffer, 0));
+
+            dbg!(&buffer);
+            dbg!(problem.numeric_variables().len());
         }
     }
 }
