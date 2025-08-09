@@ -418,8 +418,8 @@ fn parse_axioms(input: &str) -> IResult<&str, Vec<PropositionalAxiom>> {
 
 fn parse_comparison_operator(input: &str) -> IResult<&str, ComparisonOperator> {
     alt((
-        map(tag(">="), |_| ComparisonOperator::LessThanOrEqual),
-        map(tag("<="), |_| ComparisonOperator::GreaterThanOrEqual),
+        map(tag("<="), |_| ComparisonOperator::LessThanOrEqual),
+        map(tag(">="), |_| ComparisonOperator::GreaterThanOrEqual),
         map(tag("!="), |_| ComparisonOperator::UnEqual),
         map(tag(">"), |_| ComparisonOperator::GreaterThan),
         map(tag("<"), |_| ComparisonOperator::LessThan),

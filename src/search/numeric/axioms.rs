@@ -142,27 +142,24 @@ pub enum ComparisonOperator {
 }
 
 impl ComparisonOperator {
-    pub fn update_values(
+    pub fn compare(
         &self,
         numeric_values: &mut Vec<f64>,
-        affected: i32,
         left: i32,
         right: i32,
-    ) -> f64 {
+    ) -> bool {
         let (left, right) = (
             numeric_values[left as usize],
             numeric_values[right as usize],
         );
-        let result = match self {
+        match self {
             ComparisonOperator::LessThan => left < right,
             ComparisonOperator::LessThanOrEqual => left <= right,
             ComparisonOperator::Equal => left == right,
             ComparisonOperator::GreaterThanOrEqual => left >= right,
             ComparisonOperator::GreaterThan => left > right,
             ComparisonOperator::UnEqual => left != right,
-        };
-        numeric_values[affected as usize] = if result { 1.0 } else { 0.0 };
-        numeric_values[affected as usize]
+        }
     }
 }
 
@@ -189,26 +186,22 @@ impl ComparisonAxiom {
         }
     }
 
-    pub fn update_values(&self, numeric_state: &mut Vec<f64>) -> Result<f64, InvalidIndex> {
+    pub fn update_values(&self, numeric_state: &mut Vec<f64>) -> Result<bool, InvalidIndex> {
         let left = self.left_hand_side as usize;
         let right = self.right_hand_side as usize;
-        if left >= numeric_state.len() || right >= numeric_state.len() {
+        let affected = self.affected_var_id as usize;
+        if left >= numeric_state.len()
+            || right >= numeric_state.len()
+            || affected >= numeric_state.len()
+        {
             return Err(InvalidIndex {
                 length: numeric_state.len() as u32,
                 index: left as u32,
             });
         }
-        let affected = self.affected_var_id as usize;
-        if affected >= numeric_state.len() {
-            return Err(InvalidIndex {
-                length: numeric_state.len() as u32,
-                index: affected as u32,
-            });
-        }
-        let result = ComparisonOperator::update_values(
-            &ComparisonOperator::Equal, // Assuming Equal for simplicity, this should be parameterized
+        let comp_op = &self.operator;
+        let result = comp_op.compare(
             numeric_state,
-            self.affected_var_id,
             self.left_hand_side,
             self.right_hand_side,
         );
@@ -402,21 +395,18 @@ impl<'a> AxiomEvaluator<'a> {
                 })
             })?;
             self.state_packer
-                .set(buffer, axiom.get_affected_var_id(), result as u64);
+                .set(buffer, axiom.get_affected_var_id(), !result as u64);
         }
 
         Ok(true)
     }
 
-    pub fn evaluate_propositional_axioms(
-        &self,
-        buffer: &mut [u64],
-    ) -> Result<(), AxiomEvalError> {
+    pub fn evaluate_propositional_axioms(&self, buffer: &mut [u64]) -> Result<(), AxiomEvalError> {
         if self.numeric_task.axioms().is_empty() {
             return Ok(());
         }
 
-        let mut queue =  Vec::<AxiomLiteral>::new();
+        let mut queue = Vec::<AxiomLiteral>::new();
 
         for i in 0..self.numeric_task.get_num_variables() {
             let axiom_layer = self.numeric_task.get_variable_axiom_layer(i).unwrap();
@@ -456,7 +446,11 @@ impl<'a> AxiomEvaluator<'a> {
         Ok(())
     }
 
-    pub fn evaluate(&self, buffer: &mut [u64], numeric_state: &mut Vec<f64>) -> Result<(), AxiomEvalError> {
+    pub fn evaluate(
+        &self,
+        buffer: &mut [u64],
+        numeric_state: &mut Vec<f64>,
+    ) -> Result<(), AxiomEvalError> {
         if !self.has_axioms() {
             println!("No axioms to evaluate");
             return Ok(());

@@ -206,9 +206,9 @@ impl<'a> StateRegistry<'a> {
         self.axiom_evaluator
             .evaluate_arithmetic_axioms(&mut initial_numeric_state)
             .unwrap();
-        //self.axiom_evaluator
-        //    .evaluate(&mut init_buffer, &mut initial_numeric_state)
-        //    .unwrap();
+        self.axiom_evaluator
+            .evaluate(&mut init_buffer, &mut initial_numeric_state)
+            .unwrap();
 
         self.state_data_pool.push(init_buffer);
         println!("Init buffer: {:?}", self.state_data_pool.last());
@@ -271,16 +271,6 @@ impl<'a> StateRegistry<'a> {
                     self.global_state_packer
                         .set(&mut buffer, regular_index, packed_numeric_value);
                     regular_index += 1;
-                }
-
-                _ => {
-                    return Err(StateInsertError {
-                        message: format!(
-                            "Unexpected numeric type at index {}: {:?}",
-                            i,
-                            numeric_variable.get_type()
-                        ),
-                    });
                 }
             }
         }
