@@ -1,4 +1,3 @@
-use crate::search::numeric;
 use crate::search::numeric::axioms::AxiomEvaluator;
 use crate::search::numeric::numeric_task::AbstractNumericTask;
 use crate::search::numeric::utils::errors::{StateInsertError, StateNotFoundError};
@@ -7,11 +6,12 @@ use crate::search::numeric::{
     utils::int_packer::IntDoublePacker,
 };
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 use std::ops::Index;
 
 type StatePacker = IntDoublePacker;
 
-struct ConcreteState<'a> {
+pub struct ConcreteState<'a> {
     state_registry: &'a StateRegistry<'a>,
     buffer: Vec<u64>,
 }
@@ -34,6 +34,32 @@ impl Index<usize> for ConcreteState<'_> {
     }
 }
 
+type StateID = usize;
+type DataStorage = Vec<Vec<u64>>; //TODO: Make this a vector of boxed slices for better performance
+
+struct SemanticStateID<'a> {
+    id: StateID,
+    state_data_pool: &'a DataStorage,
+    num_bins: usize,
+}
+
+impl<'a> PartialEq for SemanticStateID<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        let lhs_data = &self.state_data_pool[self.id][..self.num_bins];
+        let rhs_data = &other.state_data_pool[other.id][..self.num_bins];
+        lhs_data == rhs_data
+    }
+}
+
+impl<'a> Eq for SemanticStateID<'a> {}
+
+impl<'a> Hash for SemanticStateID<'a> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let bins = &self.state_data_pool[self.id][..self.num_bins];
+        bins.hash(state); // slices of u64 already implement Hash
+    }
+}
+
 //TODO: There should be only a single axiom evaluator so it should be fine if the StateRegistry has it
 pub struct StateRegistry<'a> {
     root_task: &'a NumericRootTask,
@@ -42,7 +68,7 @@ pub struct StateRegistry<'a> {
     state_data_pool: Vec<StatePacker>,
     numeric_constants: Vec<f64>,
     numeric_indices: Vec<i32>,
-    registered_states: HashSet<usize>,
+    registered_states: HashSet<StateID>,
 }
 
 impl<'a> StateRegistry<'a> {
@@ -131,14 +157,16 @@ impl<'a> StateRegistry<'a> {
             derived_index
         );
 
-        //TODO: Figure out if we can omit clone() without using Rc and RefCell... 
+        //TODO: Figure out if we can omit clone() without using Rc and RefCell...
+        //Probably this struct needs to own the task, axiom evaluator and state packer
+        //The current design could lead to issues
         let mut initial_numeric_state = initial_numeric_state.clone();
         self.axiom_evaluator
-            .evaluate_arithmetic_axioms(&mut initial_numeric_state);
-        self.axiom_evaluator.evaluate(
-            &mut init_buffer,
-            &mut initial_numeric_state,
-        );
+            .evaluate_arithmetic_axioms(&mut initial_numeric_state)
+            .unwrap();
+        self.axiom_evaluator
+            .evaluate(&mut init_buffer, &mut initial_numeric_state)
+            .unwrap();
         todo!()
     }
 
@@ -212,6 +240,8 @@ impl<'a> StateRegistry<'a> {
         todo!()
     }
 
+    fn insert_id_or_pop_state() {}
+
     pub fn lookup_state(&self, index: usize) -> Result<ConcreteState, StateNotFoundError> {
         todo!()
         //match self.state_data_pool.get(index) {
@@ -224,11 +254,6 @@ impl<'a> StateRegistry<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::numeric::axioms::AxiomEvaluator;
-
-    use crate::search::numeric::numeric_task::NumericRootTask;
-
-    use crate::search::numeric::utils::int_packer::IntDoublePacker;
     use crate::setup_axiom_evaluator;
     use crate::setup_numeric_task;
     use crate::setup_state_packer;

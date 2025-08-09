@@ -42,6 +42,7 @@ pub trait AbstractNumericTask {
 
     fn get_initial_propositional_state_values(&self) -> &Vec<i32>;
     fn get_initial_numeric_state_values(&self) -> &Vec<f64>;
+    fn get_initial_numeric_state_values_mut(&mut self) -> &mut Vec<f64>;
 
     fn convert_ancestor_state_values(
         &self,
@@ -411,6 +412,10 @@ impl AbstractNumericTask for NumericRootTask {
 
     fn get_initial_numeric_state_values(&self) -> &Vec<f64> {
         &self.numeric_state
+    }
+
+    fn get_initial_numeric_state_values_mut(&mut self) -> &mut Vec<f64> {
+        &mut self.numeric_state
     }
 
     fn convert_ancestor_state_values(
