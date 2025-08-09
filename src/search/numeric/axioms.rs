@@ -268,8 +268,8 @@ impl NegationByFailureInfo {
     }
 }
 
-struct AxiomEvaluator {
-    numeric_task: Box<dyn AbstractNumericTask>,
+pub struct AxiomEvaluator<'a> {
+    numeric_task: &'a dyn AbstractNumericTask,
     state_packer: IntDoublePacker,
     axiom_literals: Vec<Vec<AxiomLiteral>>,
     rules: Vec<AxiomRule>,
@@ -281,8 +281,8 @@ struct AxiomEvaluator {
     queue: Vec<AxiomLiteral>, // Queue for processing axioms
 }
 
-impl AxiomEvaluator {
-    pub fn new(numeric_task: Box<dyn AbstractNumericTask>, state_packer: IntDoublePacker) -> Self {
+impl<'a> AxiomEvaluator<'a> {
+    pub fn new(numeric_task: &'a dyn AbstractNumericTask, state_packer: IntDoublePacker) -> Self {
         let mut axiom_literals = vec![];
         let mut nbf_info_by_layer = vec![];
 

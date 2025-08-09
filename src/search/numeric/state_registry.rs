@@ -1,4 +1,5 @@
 use crate::search::numeric;
+use crate::search::numeric::axioms::AxiomEvaluator;
 use crate::search::numeric::numeric_task::AbstractNumericTask;
 use crate::search::numeric::utils::errors::{StateInsertError, StateNotFoundError};
 use crate::search::numeric::{
@@ -11,7 +12,7 @@ use std::ops::Index;
 type StatePacker = IntDoublePacker;
 
 struct ConcreteState<'a> {
-    state_registry: &'a StateRegistry,
+    state_registry: &'a StateRegistry<'a>,
     buffer: Vec<u64>,
 }
 
@@ -33,8 +34,10 @@ impl Index<usize> for ConcreteState<'_> {
     }
 }
 
-struct StateRegistry {
-    root_task: Box<NumericRootTask>,
+//TODO: There should be only a single axiom evaluator so it should be fine if the StateRegistry has it
+struct StateRegistry<'a> {
+    root_task: &'a NumericRootTask,
+    axiom_evaluator: &'a AxiomEvaluator<'a>,
     global_state_packer: StatePacker,
     state_data_pool: Vec<StatePacker>,
     numeric_constants: Vec<f64>,
@@ -42,8 +45,8 @@ struct StateRegistry {
     registered_states: HashSet<usize>,
 }
 
-impl StateRegistry {
-    pub fn new(root_task: Box<NumericRootTask>, global_state_packer: StatePacker) -> Self {
+impl<'a> StateRegistry<'a> {
+    pub fn new(root_task: &'a NumericRootTask, global_state_packer: StatePacker, axiom_evaluator: &'a AxiomEvaluator<'a>) -> Self {
         let number_numeric_vars = root_task.numeric_variables().len();
         StateRegistry {
             root_task,
@@ -52,6 +55,7 @@ impl StateRegistry {
             numeric_constants: Vec::new(),
             numeric_indices: vec![-1; number_numeric_vars],
             registered_states: HashSet::new(),
+            axiom_evaluator,
         }
     }
 
@@ -68,9 +72,9 @@ impl StateRegistry {
             );
         }
 
-        let numeric_var_index = initial_propositional_state.len();
-        let constant_index = 0;
-        let derived_index = 0;
+        let mut numeric_var_index = initial_propositional_state.len();
+        let mut constant_index = 0;
+        let mut derived_index = 0;
         let initial_numeric_state = self.root_task.get_initial_numeric_state_values();
 
         let mut instrumentation_variables = vec![];
@@ -87,11 +91,15 @@ impl StateRegistry {
 
                 NumericType::Constant => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
+                    self.numeric_indices[i] = constant_index;
                     self.numeric_constants.push(initial_numeric_state[i]);
+                    constant_index += 1;
                 }
 
                 NumericType::Derived => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
+                    //TODO: derived index never used besides printing...
+                    derived_index += 1;
                 }
 
                 NumericType::Regular => {
@@ -105,13 +113,19 @@ impl StateRegistry {
                         numeric_var_index as i32,
                         packed_numeric_value,
                     );
-                }
-
-                _ => {
-                    panic!("Unexpected numeric type: {:?}", numeric_var_type);
+                    numeric_var_index += 1;
                 }
             }
         }
+
+        #[cfg(debug_assertions)]
+        println!(
+            "Initial state: {} regular, {} constants, {} instrumentation variables, {} derived variables",
+            numeric_var_index - initial_propositional_state.len(),
+            constant_index,
+            instrumentation_variables.len(),
+            derived_index
+        );
 
         todo!()
     }
@@ -180,6 +194,8 @@ impl StateRegistry {
                 }
             }
         }
+
+
 
         drop(buffer);
 
