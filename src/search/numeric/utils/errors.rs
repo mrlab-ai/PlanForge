@@ -17,3 +17,11 @@ pub enum AxiomEvalError {
     InvalidIndex(InvalidIndex),
     WrongAxiomLayer(WrongAxiomLayer),
 }
+
+pub struct StateNotFoundError {
+    index: usize,
+}
+
+pub struct StateInsertError {
+    pub message: String,
+}

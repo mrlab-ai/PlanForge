@@ -40,7 +40,8 @@ pub trait AbstractNumericTask {
     fn get_num_goals(&self) -> i32;
     fn get_goal_fact(&self, index: i32) -> &Fact;
 
-    fn get_initial_state_values(&self) -> Vec<i32>;
+    fn get_initial_propositional_state_values(&self) -> &Vec<i32>;
+    fn get_initial_numeric_state_values(&self) -> &Vec<f64>;
 
     fn convert_ancestor_state_values(
         &self,
@@ -405,8 +406,12 @@ impl AbstractNumericTask for NumericRootTask {
         unimplemented!("This function is not yet implemented");
     }
 
-    fn get_initial_state_values(&self) -> Vec<i32> {
-        vec![]
+    fn get_initial_propositional_state_values(&self) -> &Vec<i32> {
+        &(&self.state)
+    }
+
+    fn get_initial_numeric_state_values(&self) -> &Vec<f64> {
+        &self.numeric_state
     }
 
     fn convert_ancestor_state_values(

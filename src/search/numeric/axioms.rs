@@ -351,7 +351,7 @@ impl AxiomEvaluator {
         for var_id in 0..numeric_task.get_num_variables() {
             let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
             if axiom_layer != -1 && axiom_layer != last_layer {
-                let nbf_value = numeric_task.get_initial_state_values()[var_id as usize];
+                let nbf_value = numeric_task.get_initial_propositional_state_values()[var_id as usize];
                 let literal = axiom_literals[var_id as usize][nbf_value as usize].clone();
                 let nbf_info = NegationByFailureInfo::new(var_id as u32, literal);
                 nbf_info_by_layer[axiom_layer as usize].push(nbf_info);
@@ -428,7 +428,7 @@ impl AxiomEvaluator {
                 self.state_packer.set(
                     buffer,
                     i,
-                    self.numeric_task.get_initial_state_values()[i as usize] as u64,
+                    self.numeric_task.get_initial_propositional_state_values()[i as usize] as u64,
                 );
             } else {
                 return Err(AxiomEvalError::WrongAxiomLayer(

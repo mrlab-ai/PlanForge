@@ -1,26 +1,35 @@
-use std::collections::HashSet;
-
+use crate::search::numeric;
 use crate::search::numeric::numeric_task::AbstractNumericTask;
+use crate::search::numeric::utils::errors::{StateInsertError, StateNotFoundError};
 use crate::search::numeric::{
     numeric_task::{NumericRootTask, NumericType},
     utils::int_packer::IntDoublePacker,
 };
+use std::collections::HashSet;
+use std::ops::Index;
 
 type StatePacker = IntDoublePacker;
 
-struct StateNotFoundError {
-    index: usize,
+struct ConcreteState<'a> {
+    state_registry: &'a StateRegistry,
+    buffer: Vec<u64>,
 }
 
-struct StateInsertError {
-    message: String,
+impl<'a> ConcreteState<'a> {
+    pub fn new(state_registry: &'a StateRegistry, buffer: Vec<u64>) -> Self {
+        ConcreteState {
+            state_registry,
+            buffer,
+        }
+    }
 }
 
-struct GlobalState {}
+impl Index<usize> for ConcreteState<'_> {
+    type Output = u64;
 
-impl GlobalState {
-    pub fn new(state: &StatePacker) -> Self {
-        todo!()
+    fn index(&self, index: usize) -> &Self::Output {
+        assert!(index < self.buffer.len(), "Index for State out of bounds");
+        &self.buffer[index]
     }
 }
 
@@ -46,11 +55,71 @@ impl StateRegistry {
         }
     }
 
+    pub fn get_initial_state(&mut self) -> ConcreteState {
+        let mut init_buffer =
+            vec![0 as u64; self.global_state_packer.num_bins() as usize].into_boxed_slice();
+        let initial_propositional_state = self.root_task.get_initial_propositional_state_values();
+
+        for i in 0..initial_propositional_state.len() {
+            self.global_state_packer.set(
+                &mut init_buffer,
+                i as i32,
+                initial_propositional_state[i] as u64,
+            );
+        }
+
+        let numeric_var_index = initial_propositional_state.len();
+        let constant_index = 0;
+        let derived_index = 0;
+        let initial_numeric_state = self.root_task.get_initial_numeric_state_values();
+
+        let mut instrumentation_variables = vec![];
+
+        for i in 0..initial_numeric_state.len() {
+            let numeric_var = self.root_task.numeric_variables().get(i).unwrap(); //TODO: Remove unwrap
+            let numeric_var_type = numeric_var.get_type();
+            match numeric_var_type {
+                NumericType::Instrumentation => {
+                    assert!(self.numeric_indices.get(i) == Some(&-1));
+                    self.numeric_indices[i] = instrumentation_variables.len() as i32;
+                    instrumentation_variables.push(initial_numeric_state[i]);
+                }
+
+                NumericType::Constant => {
+                    assert!(self.numeric_indices.get(i) == Some(&-1));
+                    self.numeric_constants.push(initial_numeric_state[i]);
+                }
+
+                NumericType::Derived => {
+                    assert!(self.numeric_indices.get(i) == Some(&-1));
+                }
+
+                NumericType::Regular => {
+                    assert!(self.numeric_indices.get(i) == Some(&-1));
+                    self.numeric_indices[i] = numeric_var_index as i32;
+                    let packed_numeric_value =
+                        self.global_state_packer.pack_double(initial_numeric_state[i]);
+                    self.global_state_packer
+                        .set(&mut init_buffer, numeric_var_index as i32, packed_numeric_value);
+                }
+
+                _ => {
+                    panic!("Unexpected numeric type: {:?}", numeric_var_type);
+                }
+
+
+            }
+        }
+
+
+        todo!()
+    }
+
     pub fn register_state(
         &mut self,
         values: Vec<u64>,
         numeric_values: Vec<f64>,
-    ) -> Result<GlobalState, StateInsertError> {
+    ) -> Result<ConcreteState, StateInsertError> {
         let mut buffer = vec![0; self.global_state_packer.num_bins() as usize];
         for i in 0..values.len() {
             let var_id = i as i32;
@@ -119,10 +188,11 @@ impl StateRegistry {
         todo!()
     }
 
-    pub fn lookup_state(&self, index: usize) -> Result<GlobalState, StateNotFoundError> {
-        match self.state_data_pool.get(index) {
-            Some(state) => Ok(GlobalState::new(&state)),
-            None => Err(StateNotFoundError { index }),
-        }
+    pub fn lookup_state(&self, index: usize) -> Result<ConcreteState, StateNotFoundError> {
+        todo!()
+        //match self.state_data_pool.get(index) {
+        //    Some(state) => Ok(ConcreteState::new(&state)),
+        //    None => Err(StateNotFoundError { index }),
+        //}
     }
 }
