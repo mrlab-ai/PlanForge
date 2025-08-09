@@ -97,20 +97,21 @@ impl StateRegistry {
                 NumericType::Regular => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
                     self.numeric_indices[i] = numeric_var_index as i32;
-                    let packed_numeric_value =
-                        self.global_state_packer.pack_double(initial_numeric_state[i]);
-                    self.global_state_packer
-                        .set(&mut init_buffer, numeric_var_index as i32, packed_numeric_value);
+                    let packed_numeric_value = self
+                        .global_state_packer
+                        .pack_double(initial_numeric_state[i]);
+                    self.global_state_packer.set(
+                        &mut init_buffer,
+                        numeric_var_index as i32,
+                        packed_numeric_value,
+                    );
                 }
 
                 _ => {
                     panic!("Unexpected numeric type: {:?}", numeric_var_type);
                 }
-
-
             }
         }
-
 
         todo!()
     }
@@ -127,6 +128,7 @@ impl StateRegistry {
         }
 
         let mut regular_index = values.len() as i32;
+        let mut constant_index = 0;
         let mut derived_index = 0;
 
         let mut instrumentation_variables = vec![];
@@ -148,13 +150,9 @@ impl StateRegistry {
 
                 NumericType::Constant => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
-                }
-
-                NumericType::Unknown => {
-                    assert!(false);
-                    return Err(StateInsertError {
-                        message: "Unknown numeric type encountered".to_string(),
-                    });
+                    self.numeric_indices[i] = constant_index;
+                    self.numeric_constants.push(numeric_values[i]);
+                    constant_index += 1;
                 }
 
                 NumericType::Derived => {

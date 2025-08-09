@@ -277,7 +277,6 @@ pub enum NumericType {
     Derived,
     Instrumentation,
     Regular, // not sure if Root is correct
-    Unknown, //TODO: Remove that somehow
 }
 
 impl AbstractNumericTask for NumericRootTask {
