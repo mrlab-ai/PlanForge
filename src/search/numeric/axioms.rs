@@ -311,8 +311,8 @@ impl<'a> AxiomEvaluator<'a> {
         }
 
         if first_propositional_axiom_layer >= 0 && numeric_task.get_num_cmp_axioms() > 0 {
-            comparison_axiom_layer = last_propositional_axiom_layer;
-            last_propositional_axiom_layer += 1;
+            comparison_axiom_layer = first_propositional_axiom_layer;
+            first_propositional_axiom_layer += 1;
             assert!(comparison_axiom_layer == last_arithmetic_axiom_layer + 1);
         }
 
@@ -325,7 +325,7 @@ impl<'a> AxiomEvaluator<'a> {
             let cond_count = axiom.conditions.len();
             let eff_var = axiom.var_id as usize;
             let eff_val = axiom.effect_value as usize;
-            let eff_literal = &axiom_literals[eff_var][eff_var];
+            let eff_literal = &axiom_literals[eff_var][eff_val];
             rules.push(AxiomRule::new(cond_count, eff_var, eff_val, eff_literal));
         }
 
