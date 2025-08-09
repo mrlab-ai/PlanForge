@@ -11,6 +11,14 @@ use crate::search::numeric::numeric_task::NumericRootTask;
 use crate::search::numeric::state_registry::StateRegistry;
 use crate::search::numeric::utils::int_packer::IntDoublePacker;
 
+fn setup_state_registry<'a>(
+    problem: &'a NumericRootTask,
+    state_packer: &'a IntDoublePacker,
+    axiom_evaluator: &'a AxiomEvaluator<'a>,
+) -> StateRegistry<'a> {
+    StateRegistry::new(problem, state_packer, axiom_evaluator)
+}
+
 fn setup_axiom_evaluator<'a>(
     problem: &'a NumericRootTask,
     state_packer: &'a IntDoublePacker,

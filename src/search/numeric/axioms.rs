@@ -362,6 +362,8 @@ impl<'a> AxiomEvaluator<'a> {
             }
         }
 
+        //TODO: evaluate arithmetic axioms here instead of state_registry
+
         AxiomEvaluator {
             numeric_task,
             state_packer,
@@ -391,9 +393,14 @@ impl<'a> AxiomEvaluator<'a> {
         &self,
         buffer: &mut [u64],
         numeric_state: &mut Vec<f64>,
-    ) -> Result<bool, InvalidIndex> {
+    ) -> Result<bool, AxiomEvalError> {
         for axiom in self.numeric_task.comparison_axioms() {
-            let result = axiom.update_values(numeric_state)?;
+            let result = axiom.update_values(numeric_state).map_err(|e| {
+                AxiomEvalError::InvalidIndex(numeric::utils::errors::InvalidIndex {
+                    length: numeric_state.len() as u32,
+                    index: e.index,
+                })
+            })?;
             self.state_packer
                 .set(buffer, axiom.get_affected_var_id(), result as u64);
         }
@@ -402,17 +409,19 @@ impl<'a> AxiomEvaluator<'a> {
     }
 
     pub fn evaluate_propositional_axioms(
-        &mut self,
+        &self,
         buffer: &mut [u64],
     ) -> Result<(), AxiomEvalError> {
         if self.numeric_task.axioms().is_empty() {
             return Ok(());
         }
 
+        let mut queue =  Vec::<AxiomLiteral>::new();
+
         for i in 0..self.numeric_task.get_num_variables() {
             let axiom_layer = self.numeric_task.get_variable_axiom_layer(i).unwrap();
             if axiom_layer == -1 {
-                self.queue.push(
+                queue.push(
                     self.axiom_literals[i as usize][self.state_packer.get(buffer, i) as usize]
                         .clone(),
                 );
@@ -424,7 +433,7 @@ impl<'a> AxiomEvaluator<'a> {
                     },
                 ));
             } else if axiom_layer == self.comparison_axiom_layer {
-                self.queue.push(
+                queue.push(
                     self.axiom_literals[i as usize][self.state_packer.get(buffer, i) as usize]
                         .clone(),
                 );
@@ -445,6 +454,33 @@ impl<'a> AxiomEvaluator<'a> {
         }
 
         Ok(())
+    }
+
+    pub fn evaluate(&self, buffer: &mut [u64], numeric_state: &mut Vec<f64>) -> Result<(), AxiomEvalError> {
+        if !self.has_axioms() {
+            println!("No axioms to evaluate");
+            return Ok(());
+        }
+        if self.has_numeric_axioms() {
+            self.evaluate_comparison_axioms(buffer, numeric_state)?;
+        }
+        if self.has_propositional_axioms() {
+            self.evaluate_propositional_axioms(buffer)?;
+        }
+        Ok(())
+    }
+
+    fn has_axioms(&self) -> bool {
+        self.has_numeric_axioms() || self.has_propositional_axioms()
+    }
+
+    fn has_numeric_axioms(&self) -> bool {
+        self.numeric_task.assignment_axioms().len() > 0
+            || self.numeric_task.comparison_axioms().len() > 0
+    }
+
+    fn has_propositional_axioms(&self) -> bool {
+        self.numeric_task.axioms().len() > 0
     }
 }
 

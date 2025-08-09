@@ -79,7 +79,7 @@ impl<'a> StateRegistry<'a> {
         let mut numeric_var_index = initial_propositional_state.len();
         let mut constant_index = 0;
         let mut derived_index = 0;
-        let initial_numeric_state = self.root_task.get_initial_numeric_state_values();
+        let mut initial_numeric_state = self.root_task.get_initial_numeric_state_values();
 
         let mut instrumentation_variables = vec![];
 
@@ -131,6 +131,14 @@ impl<'a> StateRegistry<'a> {
             derived_index
         );
 
+        //TODO: Figure out if we can omit clone() without using Rc and RefCell... 
+        let mut initial_numeric_state = initial_numeric_state.clone();
+        self.axiom_evaluator
+            .evaluate_arithmetic_axioms(&mut initial_numeric_state);
+        self.axiom_evaluator.evaluate(
+            &mut init_buffer,
+            &mut initial_numeric_state,
+        );
         todo!()
     }
 
@@ -216,30 +224,22 @@ impl<'a> StateRegistry<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::numeric_parser;
     use crate::search::numeric::axioms::AxiomEvaluator;
 
-    use crate::search::numeric::numeric_task::AbstractNumericTask;
     use crate::search::numeric::numeric_task::NumericRootTask;
 
     use crate::search::numeric::utils::int_packer::IntDoublePacker;
     use crate::setup_axiom_evaluator;
     use crate::setup_numeric_task;
     use crate::setup_state_packer;
-
-    fn setup_state_registry<'a>(
-        problem: &'a NumericRootTask,
-        state_packer: &'a IntDoublePacker,
-        axiom_evaluator: &'a AxiomEvaluator<'a>,
-    ) -> StateRegistry<'a> {
-        StateRegistry::new(problem, state_packer, axiom_evaluator)
-    }
+    use crate::setup_state_registry;
 
     #[test]
-    fn test_state_registry_initialization() {
+    fn test_state_registry_initial_state() {
         let problem = setup_numeric_task("misc/numeric_sas/example1.sas");
         let state_packer = setup_state_packer(&problem);
         let axiom_evaluator = setup_axiom_evaluator(&problem, &state_packer);
-        let state_registry = setup_state_registry(&problem, &state_packer, &axiom_evaluator);
+        let mut state_registry = setup_state_registry(&problem, &state_packer, &axiom_evaluator);
+        let initial_state = state_registry.get_initial_state();
     }
 }
