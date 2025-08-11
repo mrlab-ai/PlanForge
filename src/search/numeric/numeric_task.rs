@@ -165,25 +165,25 @@ pub enum PlusMinus {
 
 #[derive(Debug)]
 pub struct AssignmentEffect {
-    var_id: u32,
+    affected__var_id: u32,
     operation: PlusMinus,
-    effect_value: u32,
+    var_id: u32,
     is_conditional: bool,
     conditions: Vec<Fact>,
 }
 
 impl AssignmentEffect {
     pub fn new(
-        var_id: u32,
+        affected__var_id: u32,
         operation: PlusMinus,
-        effect_value: u32,
+        var_id: u32,
         is_conditional: bool,
         conditions: Vec<Fact>,
     ) -> Self {
         AssignmentEffect {
-            var_id,
+            affected__var_id,
             operation,
-            effect_value,
+            var_id,
             is_conditional,
             conditions,
         }
