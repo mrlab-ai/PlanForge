@@ -1,5 +1,5 @@
 use crate::search::numeric::axioms::AxiomEvaluator;
-use crate::search::numeric::numeric_task::AbstractNumericTask;
+use crate::search::numeric::numeric_task::{AbstractNumericTask, Fact};
 use crate::search::numeric::utils::errors::{StateInsertError, StateNotFoundError};
 use crate::search::numeric::{
     numeric_task::{NumericRootTask, NumericType},
@@ -23,6 +23,17 @@ impl<'a> ConcreteState<'a> {
             state_registry,
             buffer,
         }
+    }
+
+    pub fn get_state(&self) -> Vec<Fact> {
+        let mut facts = vec![];
+        let task = &self.state_registry.root_task;
+        let state_packer = &self.state_registry.global_state_packer;
+        for i in 0..task.variables().len() {
+            let value = state_packer.get(&self.buffer, i as i32);
+            facts.push(Fact::new(i as u32, value as i32));
+        }
+        facts
     }
 }
 
