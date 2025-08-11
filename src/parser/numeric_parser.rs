@@ -92,7 +92,7 @@ fn parse_line_type(input: &str) -> IResult<&str, NumericType> {
     alt((
         map(tag("C"), |_| NumericType::Constant),
         map(tag("D"), |_| NumericType::Derived),
-        map(tag("I"), |_| NumericType::Instrumentation),
+        map(tag("I"), |_| NumericType::Cost),
         map(tag("R"), |_| NumericType::Regular),
     ))(input)
 }

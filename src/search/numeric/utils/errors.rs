@@ -22,7 +22,7 @@ pub enum AxiomEvalError {
 }
 
 pub struct StateNotFoundError {
-    index: usize,
+    pub index: usize,
 }
 
 pub struct StateInsertError {

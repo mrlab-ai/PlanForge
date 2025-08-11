@@ -239,12 +239,6 @@ mod tests {
 
             let state = problem.get_initial_propositional_state_values();
 
-            let mut facts = vec![];
-            for (var_id, value) in state.iter().enumerate() {
-                let fact = Fact::new(var_id as u32, *value);
-                facts.push(fact);
-            }
-
             let state_packer = setup_state_packer(&problem);
             let axiom_evaluator = setup_axiom_evaluator(&problem, &state_packer);
             let mut state_registry = setup_state_registry(

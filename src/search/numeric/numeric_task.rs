@@ -1,4 +1,5 @@
 use crate::search::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
+use std::fmt;
 
 pub trait AbstractNumericTask {
     fn variables(&self) -> &Vec<ExplicitVariable>;
@@ -113,7 +114,7 @@ impl NumericVariable {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct Fact {
     var: u32,
     value: i32,
@@ -130,6 +131,12 @@ impl Fact {
 
     pub fn value(&self) -> i32 {
         self.value
+    }
+}
+
+impl fmt::Debug for Fact {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Fact(var: {}, value: {})", self.var, self.value)
     }
 }
 
@@ -165,7 +172,7 @@ pub enum PlusMinus {
 
 #[derive(Debug)]
 pub struct AssignmentEffect {
-    affected__var_id: u32,
+    affected_var_id: u32,
     operation: PlusMinus,
     var_id: u32,
     is_conditional: bool,
@@ -174,14 +181,14 @@ pub struct AssignmentEffect {
 
 impl AssignmentEffect {
     pub fn new(
-        affected__var_id: u32,
+        affected_var_id: u32,
         operation: PlusMinus,
         var_id: u32,
         is_conditional: bool,
         conditions: Vec<Fact>,
     ) -> Self {
         AssignmentEffect {
-            affected__var_id,
+            affected_var_id,
             operation,
             var_id,
             is_conditional,
@@ -276,7 +283,7 @@ impl NumericRootTask {
 pub enum NumericType {
     Constant,
     Derived,
-    Instrumentation,
+    Cost,
     Regular, // not sure if Root is correct
 }
 

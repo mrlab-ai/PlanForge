@@ -1,24 +1,24 @@
 use crate::search::numeric::axioms::AxiomEvaluator;
-use crate::search::numeric::numeric_task::{AbstractNumericTask, Fact};
-use crate::search::numeric::utils::errors::{StateInsertError, StateNotFoundError};
+use crate::search::numeric::numeric_task::{ AbstractNumericTask, Fact };
+use crate::search::numeric::utils::errors::{ StateInsertError, StateNotFoundError };
 use crate::search::numeric::{
-    numeric_task::{NumericRootTask, NumericType},
+    numeric_task::{ NumericRootTask, NumericType },
     utils::int_packer::IntDoublePacker,
 };
 use std::collections::HashSet;
 use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::hash::{ Hash, Hasher };
 use std::ops::Index;
 
 type StatePacker = IntDoublePacker;
 
 pub struct ConcreteState<'a> {
     state_registry: &'a StateRegistry<'a>,
-    buffer: Vec<u64>,
+    buffer: &'a Vec<u64>,
 }
 
 impl<'a> ConcreteState<'a> {
-    pub fn new(state_registry: &'a StateRegistry, buffer: Vec<u64>) -> Self {
+    pub fn new(state_registry: &'a StateRegistry, buffer: &'a Vec<u64>) -> Self {
         ConcreteState {
             state_registry,
             buffer,
@@ -34,6 +34,10 @@ impl<'a> ConcreteState<'a> {
             facts.push(Fact::new(i as u32, value as i32));
         }
         facts
+    }
+
+    pub fn buffer(&self) -> &Vec<u64> {
+        &self.buffer
     }
 }
 
@@ -115,7 +119,7 @@ impl<'a> StateRegistry<'a> {
     pub fn new(
         root_task: &'a NumericRootTask,
         global_state_packer: &'a StatePacker,
-        axiom_evaluator: &'a AxiomEvaluator<'a>,
+        axiom_evaluator: &'a AxiomEvaluator<'a>
     ) -> Self {
         let number_numeric_vars = root_task.numeric_variables().len();
         StateRegistry {
@@ -150,7 +154,7 @@ impl<'a> StateRegistry<'a> {
             self.global_state_packer.set(
                 &mut init_buffer,
                 i as i32,
-                initial_propositional_state[i] as u64,
+                initial_propositional_state[i] as u64
             );
         }
 
@@ -166,7 +170,7 @@ impl<'a> StateRegistry<'a> {
             let numeric_var_type = numeric_var.get_type();
 
             match numeric_var_type {
-                NumericType::Instrumentation => {
+                NumericType::Cost => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
                     self.numeric_indices[i] = instrumentation_variables.len() as i32;
                     instrumentation_variables.push(initial_numeric_state[i]);
@@ -188,13 +192,13 @@ impl<'a> StateRegistry<'a> {
                 NumericType::Regular => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
                     self.numeric_indices[i] = numeric_var_index as i32;
-                    let packed_numeric_value = self
-                        .global_state_packer
-                        .pack_double(initial_numeric_state[i]);
+                    let packed_numeric_value = self.global_state_packer.pack_double(
+                        initial_numeric_state[i]
+                    );
                     self.global_state_packer.set(
                         &mut init_buffer,
                         numeric_var_index as i32,
-                        packed_numeric_value,
+                        packed_numeric_value
                     );
                     numeric_var_index += 1;
                 }
@@ -214,19 +218,15 @@ impl<'a> StateRegistry<'a> {
         //Probably this struct needs to own the task, axiom evaluator and state packer
         //The current design could lead to issues
         let mut initial_numeric_state = initial_numeric_state.clone();
-        self.axiom_evaluator
-            .evaluate_arithmetic_axioms(&mut initial_numeric_state)
-            .unwrap();
-        self.axiom_evaluator
-            .evaluate(&mut init_buffer, &mut initial_numeric_state)
-            .unwrap();
+        self.axiom_evaluator.evaluate_arithmetic_axioms(&mut initial_numeric_state).unwrap();
+        self.axiom_evaluator.evaluate(&mut init_buffer, &mut initial_numeric_state).unwrap();
 
         self.state_data_pool.push(init_buffer);
         println!("Init buffer: {:?}", self.state_data_pool.last());
         let state_id = self.insert_id_or_pop_state();
 
         // TODO get rid of this clone
-        let concrete_state = ConcreteState::new(self, self.state_data_pool[state_id].clone());
+        let concrete_state = ConcreteState::new(self, &self.state_data_pool[state_id]);
 
         concrete_state
     }
@@ -234,7 +234,7 @@ impl<'a> StateRegistry<'a> {
     pub fn register_state(
         &mut self,
         values: Vec<u64>,
-        numeric_values: Vec<f64>,
+        numeric_values: Vec<f64>
     ) -> Result<ConcreteState, StateInsertError> {
         let mut buffer = vec![0; self.global_state_packer.num_bins() as usize];
         for i in 0..values.len() {
@@ -246,59 +246,85 @@ impl<'a> StateRegistry<'a> {
         let mut constant_index = 0;
         let mut derived_index = 0;
 
-        let mut instrumentation_variables = vec![];
+        let mut cost_variables = vec![];
 
         for i in 0..numeric_values.len() {
-            let numeric_variable =
-                self.root_task
-                    .numeric_variables()
-                    .get(i)
-                    .ok_or_else(|| StateInsertError {
-                        message: format!("Numeric variable at index {} not found", i),
-                    })?;
+            let numeric_variable = self.root_task
+                .numeric_variables()
+                .get(i)
+                .ok_or_else(|| StateInsertError {
+                    message: format!("Numeric variable at index {} not found", i),
+                })?;
             match numeric_variable.get_type() {
-                NumericType::Instrumentation => {
+                NumericType::Cost => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
-                    self.numeric_indices[i] = instrumentation_variables.len() as i32;
-                    instrumentation_variables.push(numeric_values[i]);
-                }
-
-                NumericType::Constant => {
-                    assert!(self.numeric_indices.get(i) == Some(&-1));
-                    self.numeric_indices[i] = constant_index;
-                    self.numeric_constants.push(numeric_values[i]);
-                    constant_index += 1;
-                }
-
-                NumericType::Derived => {
-                    derived_index += 1;
+                    self.numeric_indices[i] = cost_variables.len() as i32;
+                    cost_variables.push(numeric_values[i]);
                 }
 
                 NumericType::Regular => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
                     self.numeric_indices[i] = regular_index as i32;
-                    let packed_numeric_value =
-                        self.global_state_packer.pack_double(numeric_values[i]);
-                    self.global_state_packer
-                        .set(&mut buffer, regular_index, packed_numeric_value);
+                    let packed_numeric_value = self.global_state_packer.pack_double(
+                        numeric_values[i]
+                    );
+                    self.global_state_packer.set(&mut buffer, regular_index, packed_numeric_value);
                     regular_index += 1;
+                }
+
+                _ => {
+                    return Err(StateInsertError {
+                        message: format!(
+                            "Only regular and cost variables are allowed here: {:?}",
+                            numeric_variable.get_type()
+                        ),
+                    });
                 }
             }
         }
 
-        drop(buffer);
+        self.axiom_evaluator
+            .evaluate_arithmetic_axioms(&mut numeric_values.clone())
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to evaluate arithmetic axioms: {:?}", e),
+            })?;
+        self.axiom_evaluator
+            .evaluate(&mut buffer, &mut numeric_values.clone())
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to evaluate axioms: {:?}", e),
+            })?;
 
-        todo!()
+        self.state_data_pool.push(buffer);
+        self.insert_id_or_pop_state();
+
+        // TODO get rid of this clone
+        let new_state = ConcreteState::new(self, self.state_data_pool.last().unwrap());
+
+        //TODO: Add cost information
+        Ok(new_state)
+
     }
 
     pub fn lookup_state(&self, index: usize) -> Result<ConcreteState, StateNotFoundError> {
-        todo!()
-        //match self.state_data_pool.get(index) {
-        //    Some(state) => Ok(ConcreteState::new(&state)),
-        //    None => Err(StateNotFoundError { index }),
-        //}
+        if index >= self.state_data_pool.len() {
+            return Err(StateNotFoundError {
+                index: index, 
+            });
+        }
+        let state_data = &self.state_data_pool[index];
+        Ok(ConcreteState::new(self, state_data))
     }
+
+    pub fn get_successor_state(&self, current_state: &ConcreteState, operator: &Fact) -> Result<ConcreteState, StateInsertError> {
+        let buffer = current_state.buffer();
+        //self.state_data_pool.push(current_state.buffer());
+
+        todo!()
+    }
+
+
 }
+
 
 #[cfg(test)]
 mod tests {
