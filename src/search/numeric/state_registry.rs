@@ -1,4 +1,5 @@
 use crate::search::numeric::axioms::AxiomEvaluator;
+use crate::search::numeric::numeric_task::Operator;
 use crate::search::numeric::numeric_task::{ AbstractNumericTask, Fact };
 use crate::search::numeric::utils::errors::{ StateInsertError, StateNotFoundError };
 use crate::search::numeric::{
@@ -315,9 +316,14 @@ impl<'a> StateRegistry<'a> {
         Ok(ConcreteState::new(self, state_data))
     }
 
-    pub fn get_successor_state(&self, current_state: &ConcreteState, operator: &Fact) -> Result<ConcreteState, StateInsertError> {
-        let buffer = current_state.buffer();
-        //self.state_data_pool.push(current_state.buffer());
+    pub fn get_successor_state(&mut self, current_state: &ConcreteState, operator: &Operator) -> Result<ConcreteState, StateInsertError> {
+        self.state_data_pool.push(current_state.buffer().clone());
+        let buffer = self.state_data_pool.last_mut().unwrap();
+        for eff in operator.effects().iter() {
+            let var_id = eff.var_id() as i32;
+            let value = eff.value() as u64;
+            self.global_state_packer.set(buffer, var_id, value);
+        }
 
         todo!()
     }

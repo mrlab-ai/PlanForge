@@ -162,6 +162,14 @@ impl Effect {
             effect_value,
         }
     }
+
+    pub fn var_id(&self) -> u32 {
+        self.var_id
+    }
+
+    pub fn value(&self) -> u32 {
+        self.effect_value
+    }
 }
 
 #[derive(Debug)]
@@ -221,6 +229,10 @@ impl Operator {
             assignment_effects,
             cost,
         }
+    }
+
+    pub fn effects(&self) -> &Vec<Effect> {
+        &self.effects
     }
 
     pub fn preconditions(&self) -> &Vec<Fact> {
