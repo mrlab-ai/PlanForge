@@ -1,14 +1,15 @@
 use crate::search::numeric::axioms::AxiomEvaluator;
-use crate::search::numeric::numeric_task::Operator;
-use crate::search::numeric::numeric_task::{ AbstractNumericTask, Fact };
-use crate::search::numeric::utils::errors::{ StateInsertError, StateNotFoundError };
+use crate::search::numeric::numeric_task::{
+    AbstractNumericTask, AssignmentOperation, Fact, Operator,
+};
+use crate::search::numeric::utils::errors::{StateInsertError, StateNotFoundError};
 use crate::search::numeric::{
-    numeric_task::{ NumericRootTask, NumericType },
+    numeric_task::{NumericRootTask, NumericType},
     utils::int_packer::IntDoublePacker,
 };
 use std::collections::HashSet;
 use std::fmt;
-use std::hash::{ Hash, Hasher };
+use std::hash::{Hash, Hasher};
 use std::ops::Index;
 
 type StatePacker = IntDoublePacker;
@@ -120,7 +121,7 @@ impl<'a> StateRegistry<'a> {
     pub fn new(
         root_task: &'a NumericRootTask,
         global_state_packer: &'a StatePacker,
-        axiom_evaluator: &'a AxiomEvaluator<'a>
+        axiom_evaluator: &'a AxiomEvaluator<'a>,
     ) -> Self {
         let number_numeric_vars = root_task.numeric_variables().len();
         StateRegistry {
@@ -155,7 +156,7 @@ impl<'a> StateRegistry<'a> {
             self.global_state_packer.set(
                 &mut init_buffer,
                 i as i32,
-                initial_propositional_state[i] as u64
+                initial_propositional_state[i] as u64,
             );
         }
 
@@ -193,13 +194,13 @@ impl<'a> StateRegistry<'a> {
                 NumericType::Regular => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
                     self.numeric_indices[i] = numeric_var_index as i32;
-                    let packed_numeric_value = self.global_state_packer.pack_double(
-                        initial_numeric_state[i]
-                    );
+                    let packed_numeric_value = self
+                        .global_state_packer
+                        .pack_double(initial_numeric_state[i]);
                     self.global_state_packer.set(
                         &mut init_buffer,
                         numeric_var_index as i32,
-                        packed_numeric_value
+                        packed_numeric_value,
                     );
                     numeric_var_index += 1;
                 }
@@ -219,8 +220,12 @@ impl<'a> StateRegistry<'a> {
         //Probably this struct needs to own the task, axiom evaluator and state packer
         //The current design could lead to issues
         let mut initial_numeric_state = initial_numeric_state.clone();
-        self.axiom_evaluator.evaluate_arithmetic_axioms(&mut initial_numeric_state).unwrap();
-        self.axiom_evaluator.evaluate(&mut init_buffer, &mut initial_numeric_state).unwrap();
+        self.axiom_evaluator
+            .evaluate_arithmetic_axioms(&mut initial_numeric_state)
+            .unwrap();
+        self.axiom_evaluator
+            .evaluate(&mut init_buffer, &mut initial_numeric_state)
+            .unwrap();
 
         self.state_data_pool.push(init_buffer);
         println!("Init buffer: {:?}", self.state_data_pool.last());
@@ -235,7 +240,7 @@ impl<'a> StateRegistry<'a> {
     pub fn register_state(
         &mut self,
         values: Vec<u64>,
-        numeric_values: Vec<f64>
+        numeric_values: Vec<f64>,
     ) -> Result<ConcreteState, StateInsertError> {
         let mut buffer = vec![0; self.global_state_packer.num_bins() as usize];
         for i in 0..values.len() {
@@ -250,12 +255,13 @@ impl<'a> StateRegistry<'a> {
         let mut cost_variables = vec![];
 
         for i in 0..numeric_values.len() {
-            let numeric_variable = self.root_task
-                .numeric_variables()
-                .get(i)
-                .ok_or_else(|| StateInsertError {
-                    message: format!("Numeric variable at index {} not found", i),
-                })?;
+            let numeric_variable =
+                self.root_task
+                    .numeric_variables()
+                    .get(i)
+                    .ok_or_else(|| StateInsertError {
+                        message: format!("Numeric variable at index {} not found", i),
+                    })?;
             match numeric_variable.get_type() {
                 NumericType::Cost => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
@@ -266,10 +272,10 @@ impl<'a> StateRegistry<'a> {
                 NumericType::Regular => {
                     assert!(self.numeric_indices.get(i) == Some(&-1));
                     self.numeric_indices[i] = regular_index as i32;
-                    let packed_numeric_value = self.global_state_packer.pack_double(
-                        numeric_values[i]
-                    );
-                    self.global_state_packer.set(&mut buffer, regular_index, packed_numeric_value);
+                    let packed_numeric_value =
+                        self.global_state_packer.pack_double(numeric_values[i]);
+                    self.global_state_packer
+                        .set(&mut buffer, regular_index, packed_numeric_value);
                     regular_index += 1;
                 }
 
@@ -303,20 +309,21 @@ impl<'a> StateRegistry<'a> {
 
         //TODO: Add cost information
         Ok(new_state)
-
     }
 
     pub fn lookup_state(&self, index: usize) -> Result<ConcreteState, StateNotFoundError> {
         if index >= self.state_data_pool.len() {
-            return Err(StateNotFoundError {
-                index: index, 
-            });
+            return Err(StateNotFoundError { index: index });
         }
         let state_data = &self.state_data_pool[index];
         Ok(ConcreteState::new(self, state_data))
     }
 
-    pub fn get_successor_state(&mut self, current_state: &ConcreteState, operator: &Operator) -> Result<ConcreteState, StateInsertError> {
+    pub fn get_successor_state(
+        &mut self,
+        current_state: &ConcreteState,
+        operator: &Operator,
+    ) -> Result<ConcreteState, StateInsertError> {
         self.state_data_pool.push(current_state.buffer().clone());
         let buffer = self.state_data_pool.last_mut().unwrap();
         for eff in operator.effects().iter() {
@@ -328,9 +335,52 @@ impl<'a> StateRegistry<'a> {
         todo!()
     }
 
+    fn get_numeric_successor(
+        &self,
+        current_values: &mut Vec<f64>,
+        operator: &Operator,
+    ) -> Result<(), StateInsertError> {
+        let values_before_changing = current_values.clone(); //TODO: Can I get rid of this clone?
+        for effect in operator.assignment_effects().iter() {
+            let var_id = effect.var_id() as usize;
+            debug_assert!(
+                effect.var_id() < current_values.len() as u32,
+                "Effect variable ID out of bounds"
+            );
+            let numeric_var = self.root_task.numeric_variables().get(var_id).unwrap();
 
+            let mut assignment_value = current_values[var_id];
+            if numeric_var.get_type() == &NumericType::Regular {
+                assignment_value = values_before_changing[var_id];
+            }
+
+            let result = AssignmentOperation::apply(
+                current_values[effect.affected_var_id() as usize],
+                effect.operation(),
+                assignment_value,
+            );
+
+            match numeric_var.get_type() {
+                NumericType::Cost => {
+                    //TODO: Add instrumentation handling
+                    current_values[effect.affected_var_id() as usize] = result;
+                }
+                NumericType::Regular => {
+                    current_values[effect.affected_var_id() as usize] = result;
+                }
+                _ => {
+                    return Err(StateInsertError {
+                        message: format!(
+                            "Only regular and cost variables are allowed here: {:?}",
+                            numeric_var.get_type()
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
 }
-
 
 #[cfg(test)]
 mod tests {

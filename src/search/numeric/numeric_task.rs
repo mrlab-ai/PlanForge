@@ -173,15 +173,35 @@ impl Effect {
 }
 
 #[derive(Debug)]
-pub enum PlusMinus {
+pub enum AssignmentOperation {
     Plus,
     Minus,
+    Times,
+    Divide, //TODO: Use proper names here
+}
+
+impl AssignmentOperation {
+
+    pub fn apply(left: f64, operation: &AssignmentOperation, right: f64) -> f64 {
+        match operation {
+            AssignmentOperation::Plus => left + right,
+            AssignmentOperation::Minus => left - right,
+            AssignmentOperation::Times => left * right,
+            AssignmentOperation::Divide => {
+                if right == 0.0 {
+                    panic!("Division by zero is not allowed");
+                }
+                left / right
+            }
+        }
+    }
+
 }
 
 #[derive(Debug)]
 pub struct AssignmentEffect {
     affected_var_id: u32,
-    operation: PlusMinus,
+    operation: AssignmentOperation,
     var_id: u32,
     is_conditional: bool,
     conditions: Vec<Fact>,
@@ -190,7 +210,7 @@ pub struct AssignmentEffect {
 impl AssignmentEffect {
     pub fn new(
         affected_var_id: u32,
-        operation: PlusMinus,
+        operation: AssignmentOperation,
         var_id: u32,
         is_conditional: bool,
         conditions: Vec<Fact>,
@@ -202,6 +222,17 @@ impl AssignmentEffect {
             is_conditional,
             conditions,
         }
+    }
+
+    pub fn affected_var_id(&self) -> u32 {
+        self.affected_var_id
+    }
+    pub fn var_id(&self) -> u32 {
+        self.var_id
+    }
+
+    pub fn operation(&self) -> &AssignmentOperation {
+        &self.operation
     }
 }
 
@@ -233,6 +264,10 @@ impl Operator {
 
     pub fn effects(&self) -> &Vec<Effect> {
         &self.effects
+    }
+
+    pub fn assignment_effects(&self) -> &Vec<AssignmentEffect> {
+        &self.assignment_effects
     }
 
     pub fn preconditions(&self) -> &Vec<Fact> {

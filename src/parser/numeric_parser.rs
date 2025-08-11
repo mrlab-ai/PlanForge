@@ -2,7 +2,7 @@ use crate::search::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
 use crate::search::numeric::numeric_task::{
-    AssignmentEffect, NumericType, NumericVariable, PlusMinus,
+    AssignmentEffect, NumericType, NumericVariable, AssignmentOperation,
 };
 use crate::search::numeric::numeric_task::{
     Effect, ExplicitVariable, Fact, NumericRootTask, Operator,
@@ -97,10 +97,10 @@ fn parse_line_type(input: &str) -> IResult<&str, NumericType> {
     ))(input)
 }
 
-fn parse_plus_or_minus(input: &str) -> IResult<&str, PlusMinus> {
+fn parse_plus_or_minus(input: &str) -> IResult<&str, AssignmentOperation> {
     alt((
-        map(tag("+"), |_| PlusMinus::Plus),
-        map(tag("-"), |_| PlusMinus::Minus),
+        map(tag("+"), |_| AssignmentOperation::Plus),
+        map(tag("-"), |_| AssignmentOperation::Minus),
     ))(input)
 }
 

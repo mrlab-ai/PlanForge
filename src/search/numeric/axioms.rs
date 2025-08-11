@@ -1,19 +1,11 @@
-use std::{cmp::max, collections::btree_map::Values};
+use std::cmp::max;
 
-use nom::Err;
-
-use crate::{
-    parser::numeric_parser,
-    search::{
-        classical::classical_task::Axiom,
-        numeric::{
-            self,
-            numeric_task::{self, AbstractNumericTask, Fact},
-            utils::{
-                errors::{AxiomEvalError, InvalidIndex},
-                int_packer::IntDoublePacker,
-            },
-        },
+use crate::search::numeric::{
+    self,
+    numeric_task::{AbstractNumericTask, Fact},
+    utils::{
+        errors::{AxiomEvalError, InvalidIndex},
+        int_packer::IntDoublePacker,
     },
 };
 
@@ -142,12 +134,7 @@ pub enum ComparisonOperator {
 }
 
 impl ComparisonOperator {
-    pub fn compare(
-        &self,
-        numeric_values: &mut Vec<f64>,
-        left: i32,
-        right: i32,
-    ) -> bool {
+    pub fn compare(&self, numeric_values: &mut Vec<f64>, left: i32, right: i32) -> bool {
         let (left, right) = (
             numeric_values[left as usize],
             numeric_values[right as usize],
@@ -200,11 +187,7 @@ impl ComparisonAxiom {
             });
         }
         let comp_op = &self.operator;
-        let result = comp_op.compare(
-            numeric_state,
-            self.left_hand_side,
-            self.right_hand_side,
-        );
+        let result = comp_op.compare(numeric_state, self.left_hand_side, self.right_hand_side);
         Ok(result)
     }
 
