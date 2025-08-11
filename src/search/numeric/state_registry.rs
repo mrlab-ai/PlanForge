@@ -378,6 +378,74 @@ impl<'a> StateRegistry<'a> {
                 }
             }
         }
+        self.axiom_evaluator
+            .evaluate_arithmetic_axioms(current_values)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to evaluate arithmetic axioms: {:?}", e),
+            })?;
+        Ok(())
+    }
+
+    fn get_numeric_successor2(
+        &self,
+        current_values: &mut Vec<f64>,
+        operator: &Operator,
+        next_buffer: &mut Vec<u64>,
+        current_buffer: &Vec<u64>,
+    ) -> Result<(), StateInsertError> {
+        for effect in operator.assignment_effects().iter() {
+            let var_id = effect.var_id() as usize;
+            debug_assert!(
+                effect.var_id() < current_values.len() as u32,
+                "Effect variable ID out of bounds"
+            );
+            let numeric_var = self.root_task.numeric_variables().get(var_id).unwrap();
+
+            let mut assignment_value = current_values[var_id];
+            if numeric_var.get_type() == &NumericType::Regular {
+                assignment_value = self.global_state_packer.get_double(current_buffer, var_id as i32);
+            }
+
+            let result = AssignmentOperation::apply(
+                current_values[effect.affected_var_id() as usize],
+                effect.operation(),
+                assignment_value,
+            );
+
+            match numeric_var.get_type() {
+                NumericType::Cost => {
+                    //TODO: Add instrumentation handling
+                    current_values[effect.affected_var_id() as usize] = result;
+                }
+                NumericType::Regular => {
+                    self.global_state_packer.set(
+                        next_buffer,
+                        effect.affected_var_id() as i32,
+                        self.global_state_packer.pack_double(result),
+                    );
+                    current_values[effect.affected_var_id() as usize] = result;
+                }
+                _ => {
+                    return Err(StateInsertError {
+                        message: format!(
+                            "Only regular and cost variables are allowed here: {:?}",
+                            numeric_var.get_type()
+                        ),
+                    });
+                }
+            }
+        }
+        self.axiom_evaluator
+            .evaluate_arithmetic_axioms(current_values)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to evaluate arithmetic axioms: {:?}", e),
+            })?;
+
+        self.axiom_evaluator
+            .evaluate(next_buffer, current_values)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to evaluate axioms: {:?}", e),
+            })?;
         Ok(())
     }
 }

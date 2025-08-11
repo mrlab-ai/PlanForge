@@ -99,8 +99,11 @@ fn parse_line_type(input: &str) -> IResult<&str, NumericType> {
 
 fn parse_plus_or_minus(input: &str) -> IResult<&str, AssignmentOperation> {
     alt((
+        map(tag("="), |_| AssignmentOperation::Assign),
         map(tag("+"), |_| AssignmentOperation::Plus),
         map(tag("-"), |_| AssignmentOperation::Minus),
+        map(tag("*"), |_| AssignmentOperation::Times),
+        map(tag("/"), |_| AssignmentOperation::Divide),
     ))(input)
 }
 

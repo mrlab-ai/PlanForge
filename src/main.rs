@@ -25,8 +25,6 @@ fn setup_axiom_evaluator<'a>(
     state_packer: &'a IntDoublePacker,
 ) -> AxiomEvaluator<'a> {
     let axiom_evaluator = AxiomEvaluator::new(problem as &dyn AbstractNumericTask, &state_packer);
-    let state_registry = StateRegistry::new(problem, &state_packer, &axiom_evaluator);
-
     axiom_evaluator
 }
 
@@ -62,13 +60,10 @@ fn main() -> std::io::Result<()> {
         ));
     }
     let sas_file = &args[1];
-    let content = fs::read_to_string(sas_file).expect("Could not read file");
-    match parse_numeric_sas_output(&content) {
-        Ok((_, sas_output)) => {
-            println!("Successfully parsed SAS file");
-            let task: &dyn AbstractNumericTask = &sas_output;
-        }
-        Err(e) => println!("Failed to parse file: {:?}", e),
-    }
+
+    let task = setup_numeric_task(sas_file);
+    let state_packer = setup_state_packer(&task);
+    let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
+    let mut state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
     Ok(())
 }

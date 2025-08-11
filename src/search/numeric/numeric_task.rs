@@ -174,6 +174,7 @@ impl Effect {
 
 #[derive(Debug)]
 pub enum AssignmentOperation {
+    Assign,
     Plus,
     Minus,
     Times,
@@ -184,6 +185,7 @@ impl AssignmentOperation {
 
     pub fn apply(left: f64, operation: &AssignmentOperation, right: f64) -> f64 {
         match operation {
+            AssignmentOperation::Assign => right,
             AssignmentOperation::Plus => left + right,
             AssignmentOperation::Minus => left - right,
             AssignmentOperation::Times => left * right,
