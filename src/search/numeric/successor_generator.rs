@@ -72,6 +72,10 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 
                 if condition_index >= self.conditions[op_id as usize].len() {
                     var_interesting = true;
+                    println!(
+                        "Operator (ID: {}) has no conditions, treating as immediate.",
+                        op_id
+                    );
                     applicable_operators.push_back(op);
                 } else {
                     all_ops_immediate = false;
