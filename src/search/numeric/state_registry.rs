@@ -27,13 +27,13 @@ impl<'a> ConcreteState<'a> {
         }
     }
 
-    pub fn get_state(&self) -> Vec<Fact> {
+    pub fn get_state(&self) -> Vec<i32> {
         let mut facts = vec![];
         let task = &self.state_registry.root_task;
         let state_packer = &self.state_registry.global_state_packer;
         for i in 0..task.variables().len() {
             let value = state_packer.get(&self.buffer, i as i32);
-            facts.push(Fact::new(i as u32, value as i32));
+            facts.push(value as i32);
         }
         facts
     }
@@ -41,7 +41,16 @@ impl<'a> ConcreteState<'a> {
     pub fn buffer(&self) -> &Vec<u64> {
         &self.buffer
     }
+
+    pub fn len(&self) -> usize {
+        self.state_registry.root_task.variables().len()
+    }
+
+    pub fn state_registry(&self) -> &StateRegistry<'a> {
+        self.state_registry
+    }
 }
+
 
 impl fmt::Debug for ConcreteState<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -133,6 +142,10 @@ impl<'a> StateRegistry<'a> {
             registered_states: HashSet::new(),
             axiom_evaluator,
         }
+    }
+
+    pub fn global_state_packer(&self) -> &StatePacker {
+        self.global_state_packer
     }
 
     fn insert_id_or_pop_state(&mut self) -> StateID {
@@ -329,9 +342,15 @@ impl<'a> StateRegistry<'a> {
         for eff in operator.effects().iter() {
             let var_id = eff.var_id() as i32;
             let value = eff.value() as u64;
-            self.global_state_packer.set(buffer, var_id, value);
+            if eff.conditions_met(&current_state) {
+                self.global_state_packer.set(buffer, var_id, value);
+            } 
         }
 
+        todo!()
+    }
+
+    fn get_numeric_vars() -> Vec<i32> {
         todo!()
     }
 
@@ -403,7 +422,9 @@ impl<'a> StateRegistry<'a> {
 
             let mut assignment_value = current_values[var_id];
             if numeric_var.get_type() == &NumericType::Regular {
-                assignment_value = self.global_state_packer.get_double(current_buffer, var_id as i32);
+                assignment_value = self
+                    .global_state_packer
+                    .get_double(current_buffer, var_id as i32);
             }
 
             let result = AssignmentOperation::apply(

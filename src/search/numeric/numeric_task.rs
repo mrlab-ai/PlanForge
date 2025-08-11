@@ -1,4 +1,8 @@
-use crate::search::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
+use crate::search::numeric::{
+    axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom},
+    state_registry::ConcreteState,
+    utils::int_packer::IntDoublePacker,
+};
 use std::fmt;
 
 pub trait AbstractNumericTask {
@@ -132,6 +136,13 @@ impl Fact {
     pub fn value(&self) -> i32 {
         self.value
     }
+
+    pub fn is_true(&self, state: &ConcreteState) -> bool {
+        let buffer = state.buffer();
+        let state_packer = state.state_registry().global_state_packer();
+        let value = state_packer.get(buffer, self.var as i32);
+        value == self.value as u64
+    }
 }
 
 impl fmt::Debug for Fact {
@@ -170,6 +181,15 @@ impl Effect {
     pub fn value(&self) -> u32 {
         self.effect_value
     }
+
+    pub fn conditions_met(&self, state: &ConcreteState) -> bool {
+        for condition in &self.conditions {
+            if !condition.is_true(&state) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 #[derive(Debug)]
@@ -182,7 +202,6 @@ pub enum AssignmentOperation {
 }
 
 impl AssignmentOperation {
-
     pub fn apply(left: f64, operation: &AssignmentOperation, right: f64) -> f64 {
         match operation {
             AssignmentOperation::Assign => right,
@@ -197,7 +216,6 @@ impl AssignmentOperation {
             }
         }
     }
-
 }
 
 #[derive(Debug)]
@@ -262,6 +280,17 @@ impl Operator {
             assignment_effects,
             cost,
         }
+    }
+
+    pub fn conditions_met(&self, state: &Vec<&Fact>) -> bool {
+        for precondition in &self.preconditions {
+            if !state.iter().any(|fact| {
+                fact.var() == precondition.var() && fact.value() == precondition.value()
+            }) {
+                return false;
+            }
+        }
+        true
     }
 
     pub fn effects(&self) -> &Vec<Effect> {
