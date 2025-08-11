@@ -105,7 +105,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
                     *branch_var_id,
                     applicable_operators,
                     children,
-                    default_branch,
+                    Some(default_branch),
                 )));
             } else {
                 *branch_var_id += 1;
@@ -128,7 +128,7 @@ struct BranchNode<'a> {
     var_id: u32,
     immediate_operators: VecDeque<&'a Operator>,
     value_children: Vec<Box<dyn Node<'a>>>,
-    default_child: Box<dyn Node<'a>>,
+    default_child: Option<Box<dyn Node<'a>>>,
 }
 
 impl<'a> BranchNode<'a> {
@@ -136,7 +136,7 @@ impl<'a> BranchNode<'a> {
         var_id: u32,
         immediate_operators: VecDeque<&'a Operator>,
         value_children: Vec<Box<dyn Node<'a>>>,
-        default_child: Box<dyn Node<'a>>,
+        default_child: Option<Box<dyn Node<'a>>>,
     ) -> BranchNode<'a> {
         BranchNode {
             var_id,
@@ -223,12 +223,33 @@ mod tests {
             for (op_id, operator) in problem.get_operators().iter().enumerate() {
                 queue.push_back((operator, op_id as u32));
             }
-            let node = generator.construct(&mut 0, &mut queue).unwrap();
-            dbg!(&node);
 
             let state = problem.get_initial_propositional_state_values();
-            //let mut applicable_operators = VecDeque::new();
-            //node.get_applicable_operators(state, &mut applicable_operators);
+
+            let mut facts = vec![];
+            for (var_id, value) in state.iter().enumerate() {
+                let fact = Fact::new(var_id as u32, *value);    
+                facts.push(fact);
+            }
+
+            {
+                let node = generator.construct(&mut 0, &mut queue).unwrap();
+
+                let mut facts_refs = Vec::new();
+
+                for fact in &facts {
+                    facts_refs.push(fact);
+                }
+
+                let mut applicable_operators = VecDeque::new();
+                node.get_applicable_operators(&facts_refs, &mut applicable_operators);
+
+                dbg!("Facts: {:?}", facts_refs);
+                dbg!("Applicable operators: {:?}", applicable_operators);
+                dbg!("Node: {:?}", node);
+            }
+            
+
         }
     }
 }

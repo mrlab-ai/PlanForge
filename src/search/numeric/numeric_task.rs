@@ -116,11 +116,11 @@ impl NumericVariable {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Fact {
     var: u32,
-    value: u32,
+    value: i32,
 }
 
 impl Fact {
-    pub fn new(var: u32, value: u32) -> Self {
+    pub fn new(var: u32, value: i32) -> Self {
         Fact { var, value }
     }
 
@@ -128,7 +128,7 @@ impl Fact {
         self.var
     }
 
-    pub fn value(&self) -> u32 {
+    pub fn value(&self) -> i32 {
         self.value
     }
 }

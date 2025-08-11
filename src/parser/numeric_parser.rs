@@ -162,7 +162,7 @@ fn parse_mutex_group(input: &str) -> IResult<&str, Vec<Fact>> {
     for _ in 0..num_facts {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (new_input, fact) = parser(input)?;
-        let fact = Fact::new(fact.0, fact.1);
+        let fact = Fact::new(fact.0, fact.1 as i32);
 
         mutex_group.push(fact);
         let (new_input, _) = line_ending(new_input)?;
@@ -241,7 +241,7 @@ fn parse_goal(input: &str) -> IResult<&str, Vec<Fact>> {
     for _ in 0..num_goals {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (loop_input, goal) = parser(input)?;
-        let goal = Fact::new(goal.0, goal.1);
+        let goal = Fact::new(goal.0, goal.1 as i32);
         goals.push(goal);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
@@ -264,7 +264,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
     for _ in 0..num_prevail_cond {
         let mut parser = separated_pair(parse_integer, space1, parse_integer);
         let (loop_input, prevail_cond) = parser(input)?;
-        let prevail_cond = Fact::new(prevail_cond.0, prevail_cond.1);
+        let prevail_cond = Fact::new(prevail_cond.0, prevail_cond.1 as i32);
         preconditions.push(prevail_cond);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
@@ -283,7 +283,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         for _ in 0..num_conditions {
             let mut parser = separated_pair(parse_integer, space1, parse_integer);
             let (loop_input2, condition) = parser(loop_input)?;
-            let condition = Fact::new(condition.0, condition.1);
+            let condition = Fact::new(condition.0, condition.1 as i32);
             effect_conditions.push(condition);
             let (loop_input2, _) = space1(loop_input2)?;
             loop_input = loop_input2;
@@ -296,7 +296,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         let (loop_input, effect_value) = u32(loop_input)?;
 
         if precondition_value != -1 {
-            let precondition = Fact::new(effect_var_id, precondition_value as u32);
+            let precondition = Fact::new(effect_var_id, precondition_value as i32);
             preconditions.push(precondition);
         }
 
@@ -325,7 +325,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
             let (loop_input, value) = u32(loop_input)?;
             let (loop_input, _) = space1(loop_input)?;
             input = loop_input;
-            let condition = Fact::new(var_id, value);
+            let condition = Fact::new(var_id, value as i32);
             conditions.push(condition);
         }
         let (loop_input, effect_var_id) = u32(loop_input)?;
@@ -385,7 +385,7 @@ fn parse_axiom(input: &str) -> IResult<&str, PropositionalAxiom> {
     for _ in 0..num_conditions {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (loop_input, condition) = parser(input)?;
-        let condition = Fact::new(condition.0, condition.1);
+        let condition = Fact::new(condition.0, condition.1 as i32);
         conditions.push(condition);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
