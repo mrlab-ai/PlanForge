@@ -2,7 +2,7 @@ use crate::search::numeric::axioms::AxiomEvaluator;
 use crate::search::numeric::numeric_task::{
     AbstractNumericTask, AssignmentOperation, Fact, Operator,
 };
-use crate::search::numeric::utils::errors::{StateInsertError, StateNotFoundError};
+use crate::search::numeric::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
 use crate::search::numeric::{
     numeric_task::{NumericRootTask, NumericType},
     utils::int_packer::IntDoublePacker,
@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
+use std::thread::current;
 
 type StatePacker = IntDoublePacker;
 
@@ -50,7 +51,6 @@ impl<'a> ConcreteState<'a> {
         self.state_registry
     }
 }
-
 
 impl fmt::Debug for ConcreteState<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -337,21 +337,67 @@ impl<'a> StateRegistry<'a> {
         current_state: &ConcreteState,
         operator: &Operator,
     ) -> Result<ConcreteState, StateInsertError> {
-        self.state_data_pool.push(current_state.buffer().clone());
-        let buffer = self.state_data_pool.last_mut().unwrap();
+        let mut buffer = current_state.buffer().clone();
         for eff in operator.effects().iter() {
             let var_id = eff.var_id() as i32;
             let value = eff.value() as u64;
             if eff.conditions_met(&current_state) {
-                self.global_state_packer.set(buffer, var_id, value);
-            } 
+                self.global_state_packer.set(&mut buffer, var_id, value);
+            }
         }
 
-        todo!()
+        //TODO: Add cost here
+        let mut successor_values = self.get_numeric_vars(current_state).unwrap();
+        self.get_numeric_successor2(&mut successor_values, operator, &mut buffer, &mut current_state.buffer())?;
+
+        self.state_data_pool.push(buffer); //TODO: Figure out how to initialize that in the vector. 
+
+        let id = self.insert_id_or_pop_state();
+        let successor = self.lookup_state(id).unwrap();
+
+        if id == self.state_data_pool.len() - 1 {
+            //TODO: Update cost here
+        } else {
+            //TODO: cost
+        }
+
+
+        Ok(successor)
     }
 
-    fn get_numeric_vars() -> Vec<i32> {
-        todo!()
+    fn get_numeric_vars(&self, state: &ConcreteState) -> Result<Vec<f64>, InvalidIndex> {
+        let mut result = vec![0.0; self.root_task.numeric_variables().len()];
+        let cost_variables: Option<i32> = None; //TODO: Add cost variables handling
+
+        let buffer = state.buffer();
+        for i in 0..self.root_task.numeric_variables().len() {
+            let numeric_var = self.root_task.numeric_variables().get(i).unwrap();
+            match numeric_var.get_type() {
+                NumericType::Cost => {
+                    //result[i] = cost_variables
+                }
+                NumericType::Constant => {
+                    result[i] = self.numeric_constants[self.numeric_indices[i] as usize];
+                }
+                NumericType::Regular => {
+                    result[i] = self
+                        .global_state_packer
+                        .get_double(buffer, self.numeric_indices[i]);
+                }
+                _ => {}
+            }
+        }
+        //TODO: Change initial state once constructed.
+        //debug_assert!(
+        //    result.len() == self.root_task.numeric_variables().len(),
+        //    "Numeric variables length mismatch"
+        //);
+        if self.axiom_evaluator.has_numeric_axioms() {
+            self.axiom_evaluator
+                .evaluate_arithmetic_axioms(&mut result)?;
+        }
+
+        Ok((result))
     }
 
     fn get_numeric_successor(

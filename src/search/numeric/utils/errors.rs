@@ -21,6 +21,7 @@ pub enum AxiomEvalError {
     WrongAxiomLayer(WrongAxiomLayer),
 }
 
+#[derive(Debug)]
 pub struct StateNotFoundError {
     pub index: usize,
 }

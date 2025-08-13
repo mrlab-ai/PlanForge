@@ -451,7 +451,7 @@ impl<'a> AxiomEvaluator<'a> {
         self.has_numeric_axioms() || self.has_propositional_axioms()
     }
 
-    fn has_numeric_axioms(&self) -> bool {
+    pub fn has_numeric_axioms(&self) -> bool {
         self.numeric_task.assignment_axioms().len() > 0
             || self.numeric_task.comparison_axioms().len() > 0
     }
