@@ -36,6 +36,25 @@ impl ConcreteState {
         facts
     }
 
+    pub fn get_numeric_state(&self, state_registry: &StateRegistry) -> Vec<f64> {
+        let buffer = state_registry.get_buffer(self.pool_offset);
+        let task = state_registry.root_task;
+        let state_packer = state_registry.global_state_packer;
+        let mut numeric_values = vec![];
+
+        for i in 0..task.numeric_variables().len() {
+            let numeric_var = task.numeric_variables().get(i).unwrap();
+            match numeric_var.get_type() {
+                NumericType::Regular => {
+                    numeric_values.push(state_packer.get_double(buffer, i as i32));
+                }
+                NumericType::Constant => {}
+                _ => {}
+            }
+        }
+        numeric_values
+    }
+
     pub fn buffer<'a>(&self, state_registry: &'a StateRegistry) -> &'a Vec<u64> {
         state_registry.get_buffer(self.pool_offset)
     }
@@ -151,7 +170,7 @@ impl<'a> StateRegistry<'a> {
 
     pub fn get_initial_state(&mut self) -> ConcreteState {
         let mut init_buffer = vec![0 as u64; self.global_state_packer.num_bins() as usize];
-        let initial_propositional_state = self.root_task.get_initial_propositional_state_values();
+        let mut initial_propositional_state = self.root_task.get_initial_propositional_state_values_mut();
 
         for i in 0..initial_propositional_state.len() {
             self.global_state_packer.set(
@@ -164,7 +183,7 @@ impl<'a> StateRegistry<'a> {
         let mut numeric_var_index = initial_propositional_state.len();
         let mut constant_index = 0;
         let mut derived_index = 0;
-        let initial_numeric_state = self.root_task.get_initial_numeric_state_values();
+        let mut initial_numeric_state = self.root_task.get_initial_numeric_state_values_mut();
 
         let mut instrumentation_variables = vec![];
 
@@ -217,26 +236,31 @@ impl<'a> StateRegistry<'a> {
             derived_index
         );
 
-        //TODO: Figure out if we can omit clone() without using Rc and RefCell...
-        //Probably this struct needs to own the task, axiom evaluator and state packer
-        //The current design could lead to issues
-        let mut initial_numeric_state = initial_numeric_state.clone();
+        //TODO: Figure out the impact of using RefCells to store the initial state data
         self.axiom_evaluator
             .evaluate_arithmetic_axioms(&mut initial_numeric_state)
             .unwrap();
         self.axiom_evaluator
-            .evaluate(&mut init_buffer, &mut initial_numeric_state)
+            .evaluate(&mut init_buffer, &initial_propositional_state, &mut initial_numeric_state)
             .unwrap();
 
         self.state_data_pool.push(init_buffer);
-        println!("Init buffer: {:?}", self.state_data_pool.last());
         let state_id = self.insert_id_or_pop_state();
 
-        // TODO get rid of this clone
-
-        ConcreteState {
+        let init_state = ConcreteState {
             pool_offset: state_id,
-        }
+        };
+
+        let state_values = init_state.get_state(&self);
+
+        *initial_propositional_state = state_values;
+
+        let numeric_values = self.get_numeric_vars(&init_state).unwrap();
+        *initial_numeric_state = numeric_values;
+
+        init_state.get_state(&self);
+
+        init_state
     }
 
     pub fn register_state(
@@ -297,8 +321,10 @@ impl<'a> StateRegistry<'a> {
             .map_err(|e| StateInsertError {
                 message: format!("Failed to evaluate arithmetic axioms: {:?}", e),
             })?;
+
+        let propositional_initial_state = self.root_task.get_initial_propositional_state_values();
         self.axiom_evaluator
-            .evaluate(&mut buffer, &mut numeric_values.clone())
+            .evaluate(&mut buffer, &propositional_initial_state, &mut numeric_values.clone())
             .map_err(|e| StateInsertError {
                 message: format!("Failed to evaluate axioms: {:?}", e),
             })?;
@@ -380,11 +406,10 @@ impl<'a> StateRegistry<'a> {
                 _ => {}
             }
         }
-        //TODO: Change initial state once constructed.
-        //debug_assert!(
-        //    result.len() == self.root_task.numeric_variables().len(),
-        //    "Numeric variables length mismatch"
-        //);
+        debug_assert!(
+            result.len() == self.root_task.numeric_variables().len(),
+            "Numeric variables length mismatch"
+        );
         if self.axiom_evaluator.has_numeric_axioms() {
             self.axiom_evaluator
                 .evaluate_arithmetic_axioms(&mut result)?;
@@ -513,8 +538,10 @@ impl<'a> StateRegistry<'a> {
                 message: format!("Failed to evaluate arithmetic axioms: {:?}", e),
             })?;
 
+        let initial_propositional_state =
+            self.root_task.get_initial_propositional_state_values();
         self.axiom_evaluator
-            .evaluate(next_buffer, current_values)
+            .evaluate(next_buffer, &initial_propositional_state, current_values)
             .map_err(|e| StateInsertError {
                 message: format!("Failed to evaluate axioms: {:?}", e),
             })?;
@@ -527,7 +554,6 @@ mod tests {
     use std::collections::VecDeque;
 
     use crate::search::numeric::numeric_task::Fact;
-    use crate::search::numeric::numeric_task::Operator;
     use crate::setup_axiom_evaluator;
     use crate::setup_numeric_task;
     use crate::setup_state_packer;
@@ -542,7 +568,7 @@ mod tests {
         let mut state_registry = setup_state_registry(&problem, &state_packer, &axiom_evaluator);
         let initial_state = state_registry.get_initial_state();
         print!(
-            "Initial state: {:?}",
+            "Initial state: {}",
             initial_state.debug_with_registry(&state_registry)
         );
     }

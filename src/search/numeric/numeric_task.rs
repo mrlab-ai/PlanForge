@@ -3,7 +3,7 @@ use crate::search::numeric::{
     state_registry::{ConcreteState, StateRegistry},
     utils::int_packer::IntDoublePacker,
 };
-use std::fmt;
+use std::{cell::{Ref, RefCell, RefMut}, fmt, rc::Rc};
 
 pub trait AbstractNumericTask {
     fn variables(&self) -> &Vec<ExplicitVariable>;
@@ -45,9 +45,14 @@ pub trait AbstractNumericTask {
     fn get_num_goals(&self) -> i32;
     fn get_goal_fact(&self, index: i32) -> &Fact;
 
-    fn get_initial_propositional_state_values(&self) -> &Vec<i32>;
-    fn get_initial_numeric_state_values(&self) -> &Vec<f64>;
-    fn get_initial_numeric_state_values_mut(&mut self) -> &mut Vec<f64>;
+    fn get_initial_propositional_state_values(&self) -> Ref<Vec<i32>>;
+    fn get_initial_numeric_state_values(&self) -> Ref<Vec<f64>>;
+
+    fn get_initial_propositional_state_values_mut(&self) -> RefMut<Vec<i32>>;
+    fn get_initial_numeric_state_values_mut(&self) -> RefMut<Vec<f64>>;
+
+    fn set_initial_numeric_state_values(&self, values: Vec<f64>);
+    fn set_initial_propositional_state_values(&self, values: Vec<i32>);
 
     fn convert_ancestor_state_values(
         &self,
@@ -314,8 +319,8 @@ pub struct NumericRootTask {
     numeric_variables: Vec<NumericVariable>,
     goals: Vec<Fact>,
     mutexes: Vec<Vec<Fact>>,
-    state: Vec<i32>,
-    numeric_state: Vec<f64>,
+    state: Rc<RefCell<Vec<i32>>>,
+    numeric_state: Rc<RefCell<Vec<f64>>>,
     operators: Vec<Operator>,
     axioms: Vec<PropositionalAxiom>,
     comparison_axioms: Vec<ComparisonAxiom>,
@@ -346,8 +351,8 @@ impl NumericRootTask {
             numeric_variables,
             goals,
             mutexes,
-            state,
-            numeric_state,
+            state: Rc::new(RefCell::new(state)),
+            numeric_state: Rc::new(RefCell::new(numeric_state)),
             operators,
             axioms,
             comparison_axioms,
@@ -491,16 +496,28 @@ impl AbstractNumericTask for NumericRootTask {
         unimplemented!("This function is not yet implemented");
     }
 
-    fn get_initial_propositional_state_values(&self) -> &Vec<i32> {
-        &(&self.state)
+    fn get_initial_propositional_state_values(&self) -> Ref<Vec<i32>> {
+        self.state.borrow()
     }
 
-    fn get_initial_numeric_state_values(&self) -> &Vec<f64> {
-        &self.numeric_state
+    fn get_initial_numeric_state_values(&self) -> Ref<Vec<f64>> {
+        self.numeric_state.borrow()
     }
 
-    fn get_initial_numeric_state_values_mut(&mut self) -> &mut Vec<f64> {
-        &mut self.numeric_state
+    fn get_initial_propositional_state_values_mut(&self) -> RefMut<Vec<i32>> {
+        self.state.borrow_mut()
+    }
+
+    fn get_initial_numeric_state_values_mut(&self) -> RefMut<Vec<f64>> {
+        self.numeric_state.borrow_mut()
+    }
+
+    fn set_initial_numeric_state_values(&self, values: Vec<f64>) {
+        *self.numeric_state.borrow_mut() = values;
+    }
+
+    fn set_initial_propositional_state_values(&self, values: Vec<i32>) {
+        *self.state.borrow_mut() = values;
     }
 
     fn convert_ancestor_state_values(

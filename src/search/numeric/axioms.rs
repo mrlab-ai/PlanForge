@@ -384,7 +384,7 @@ impl<'a> AxiomEvaluator<'a> {
         Ok(true)
     }
 
-    pub fn evaluate_propositional_axioms(&self, buffer: &mut [u64]) -> Result<(), AxiomEvalError> {
+    pub fn evaluate_propositional_axioms(&self, propositional_state: &Vec<i32>, buffer: &mut [u64]) -> Result<(), AxiomEvalError> {
         if self.numeric_task.axioms().is_empty() {
             return Ok(());
         }
@@ -414,7 +414,7 @@ impl<'a> AxiomEvaluator<'a> {
                 self.state_packer.set(
                     buffer,
                     i,
-                    self.numeric_task.get_initial_propositional_state_values()[i as usize] as u64,
+                    propositional_state[i as usize] as u64,
                 );
             } else {
                 return Err(AxiomEvalError::WrongAxiomLayer(
@@ -432,6 +432,7 @@ impl<'a> AxiomEvaluator<'a> {
     pub fn evaluate(
         &self,
         buffer: &mut [u64],
+        propositional_state: &Vec<i32>,
         numeric_state: &mut Vec<f64>,
     ) -> Result<(), AxiomEvalError> {
         if !self.has_axioms() {
@@ -442,7 +443,7 @@ impl<'a> AxiomEvaluator<'a> {
             self.evaluate_comparison_axioms(buffer, numeric_state)?;
         }
         if self.has_propositional_axioms() {
-            self.evaluate_propositional_axioms(buffer)?;
+            self.evaluate_propositional_axioms(propositional_state, buffer)?;
         }
         Ok(())
     }
