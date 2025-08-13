@@ -170,7 +170,8 @@ impl<'a> StateRegistry<'a> {
 
     pub fn get_initial_state(&mut self) -> ConcreteState {
         let mut init_buffer = vec![0 as u64; self.global_state_packer.num_bins() as usize];
-        let mut initial_propositional_state = self.root_task.get_initial_propositional_state_values_mut();
+        let mut initial_propositional_state =
+            self.root_task.get_initial_propositional_state_values_mut();
 
         for i in 0..initial_propositional_state.len() {
             self.global_state_packer.set(
@@ -241,7 +242,11 @@ impl<'a> StateRegistry<'a> {
             .evaluate_arithmetic_axioms(&mut initial_numeric_state)
             .unwrap();
         self.axiom_evaluator
-            .evaluate(&mut init_buffer, &initial_propositional_state, &mut initial_numeric_state)
+            .evaluate(
+                &mut init_buffer,
+                &initial_propositional_state,
+                &mut initial_numeric_state,
+            )
             .unwrap();
 
         self.state_data_pool.push(init_buffer);
@@ -324,7 +329,11 @@ impl<'a> StateRegistry<'a> {
 
         let propositional_initial_state = self.root_task.get_initial_propositional_state_values();
         self.axiom_evaluator
-            .evaluate(&mut buffer, &propositional_initial_state, &mut numeric_values.clone())
+            .evaluate(
+                &mut buffer,
+                &propositional_initial_state,
+                &mut numeric_values.clone(),
+            )
             .map_err(|e| StateInsertError {
                 message: format!("Failed to evaluate axioms: {:?}", e),
             })?;
@@ -498,9 +507,10 @@ impl<'a> StateRegistry<'a> {
                 .unwrap();
 
             if assignment_var.get_type() == &NumericType::Regular {
-                assignment_value = self
-                    .global_state_packer
-                    .get_double(current_buffer, assignment_var_id as i32);
+                assignment_value = self.global_state_packer.get_double(
+                    current_buffer,
+                    self.numeric_indices[assignment_var_id as usize],
+                );
             }
 
             let result = AssignmentOperation::apply(
@@ -517,7 +527,7 @@ impl<'a> StateRegistry<'a> {
                 NumericType::Regular => {
                     self.global_state_packer.set(
                         next_buffer,
-                        effect.affected_var_id() as i32,
+                        self.numeric_indices[effect.affected_var_id() as usize],
                         self.global_state_packer.pack_double(result),
                     );
                     current_values[effect.affected_var_id() as usize] = result;
@@ -538,8 +548,7 @@ impl<'a> StateRegistry<'a> {
                 message: format!("Failed to evaluate arithmetic axioms: {:?}", e),
             })?;
 
-        let initial_propositional_state =
-            self.root_task.get_initial_propositional_state_values();
+        let initial_propositional_state = self.root_task.get_initial_propositional_state_values();
         self.axiom_evaluator
             .evaluate(next_buffer, &initial_propositional_state, current_values)
             .map_err(|e| StateInsertError {
