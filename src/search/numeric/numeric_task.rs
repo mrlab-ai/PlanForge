@@ -1,6 +1,6 @@
 use crate::search::numeric::{
     axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom},
-    state_registry::ConcreteState,
+    state_registry::{ConcreteState, StateRegistry},
     utils::int_packer::IntDoublePacker,
 };
 use std::fmt;
@@ -137,9 +137,9 @@ impl Fact {
         self.value
     }
 
-    pub fn is_true(&self, state: &ConcreteState) -> bool {
-        let buffer = state.buffer();
-        let state_packer = state.state_registry().global_state_packer();
+    pub fn is_true(&self, state: &ConcreteState, state_registry: &StateRegistry) -> bool {
+        let buffer = state.buffer(state_registry);
+        let state_packer = state_registry.global_state_packer();
         let value = state_packer.get(buffer, self.var as i32);
         value == self.value as u64
     }
@@ -182,9 +182,9 @@ impl Effect {
         self.effect_value
     }
 
-    pub fn conditions_met(&self, state: &ConcreteState) -> bool {
+    pub fn conditions_met(&self, state: &ConcreteState, state_registry: &StateRegistry) -> bool {
         for condition in &self.conditions {
-            if !condition.is_true(&state) {
+            if !condition.is_true(&state, state_registry) {
                 return false;
             }
         }

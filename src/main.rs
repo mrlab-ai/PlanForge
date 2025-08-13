@@ -2,6 +2,7 @@ mod parser;
 mod search;
 
 use parser::numeric_parser::parse_numeric_sas_output;
+use std::collections::VecDeque;
 use std::env;
 use std::fs;
 
@@ -10,6 +11,9 @@ use crate::search::numeric::numeric_task::AbstractNumericTask;
 use crate::search::numeric::numeric_task::NumericRootTask;
 use crate::search::numeric::numeric_task::NumericType;
 use crate::search::numeric::state_registry::StateRegistry;
+use crate::search::numeric::successor_generator;
+use crate::search::numeric::successor_generator::GroundedSuccessorGenerator;
+use crate::search::numeric::successor_generator::Node;
 use crate::search::numeric::utils::int_packer::IntDoublePacker;
 
 fn setup_state_registry<'a>(
@@ -50,6 +54,19 @@ fn setup_numeric_task(file_name: &str) -> NumericRootTask {
         .1
 }
 
+fn setup_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn Node<'a> + 'a> {
+    let mut queue = VecDeque::new();
+    for (op_id, operator) in task.get_operators().iter().enumerate() {
+        queue.push_back((operator, op_id as u32));
+    }
+
+    let mut generator = GroundedSuccessorGenerator::new(task);
+
+    let node = generator.construct(&mut 0, &mut queue).unwrap();
+    
+    node
+}
+
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -65,5 +82,6 @@ fn main() -> std::io::Result<()> {
     let state_packer = setup_state_packer(&task);
     let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
     let mut state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+    let suc_gen = setup_successor_generator(&task);
     Ok(())
 }

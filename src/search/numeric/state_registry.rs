@@ -15,47 +15,39 @@ use std::thread::current;
 
 type StatePacker = IntDoublePacker;
 
-pub struct ConcreteState<'a> {
-    state_registry: &'a StateRegistry<'a>,
-    buffer: &'a Vec<u64>,
+pub struct ConcreteState {
+    pool_offset: usize,
 }
 
-impl<'a> ConcreteState<'a> {
-    pub fn new(state_registry: &'a StateRegistry, buffer: &'a Vec<u64>) -> Self {
+impl ConcreteState {
+    pub fn new(pool_offset: usize) -> Self {
         ConcreteState {
-            state_registry,
-            buffer,
+            pool_offset,
         }
     }
 
-    pub fn get_state(&self) -> Vec<i32> {
+    pub fn get_state(&self, state_registry: &StateRegistry) -> Vec<i32> {
+        let buffer = state_registry.get_buffer(self.pool_offset);
         let mut facts = vec![];
-        let task = &self.state_registry.root_task;
-        let state_packer = &self.state_registry.global_state_packer;
+        let task = state_registry.root_task;
+        let state_packer = state_registry.global_state_packer;
         for i in 0..task.variables().len() {
-            let value = state_packer.get(&self.buffer, i as i32);
+            let value = state_packer.get(buffer, i as i32);
             facts.push(value as i32);
         }
         facts
     }
 
-    pub fn buffer(&self) -> &Vec<u64> {
-        &self.buffer
+    pub fn buffer<'a>(&self, state_registry: &'a StateRegistry) -> &'a Vec<u64> {
+        state_registry.get_buffer(self.pool_offset)
     }
 
-    pub fn len(&self) -> usize {
-        self.state_registry.root_task.variables().len()
+    pub fn len(&self, state_registry: &StateRegistry) -> usize {
+        state_registry.root_task.variables().len()
     }
 
-    pub fn state_registry(&self) -> &StateRegistry<'a> {
-        self.state_registry
-    }
-}
-
-impl fmt::Debug for ConcreteState<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let task = &self.state_registry.root_task;
-
+    pub fn debug_with_registry(&self, registry: &StateRegistry) -> String {
+        let task = &registry.root_task;
         let num_variables = task.variables().len();
         let num_regular_numeric_vars = task
             .numeric_variables()
@@ -63,29 +55,21 @@ impl fmt::Debug for ConcreteState<'_> {
             .filter(|v| v.get_type() == &NumericType::Regular)
             .count();
 
-        write!(f, "ConcreteState with {} bins\n", self.buffer.len())?;
-        let state_packer = &self.state_registry.global_state_packer;
+        let buffer = self.buffer(registry);
+
+        let mut s = format!("ConcreteState with {} bins\n", buffer.len());
+        let state_packer = &registry.global_state_packer;
         for i in 0..num_variables {
-            let value = state_packer.get(&self.buffer, i as i32);
-            write!(f, "Var {}: {}\n", i, value)?;
+            let value = state_packer.get(buffer, i as i32);
+            s += &format!("Var {}: {}\n", i, value);
         }
         for i in 0..num_regular_numeric_vars {
             let numeric_var_id = i + num_variables;
-            let packed_value = state_packer.get(&self.buffer, numeric_var_id as i32);
+            let packed_value = state_packer.get(buffer, numeric_var_id as i32);
             let numeric_value = state_packer.unpack_double(packed_value);
-            write!(f, "Numeric Var {}: {}\n", numeric_var_id, numeric_value)?;
+            s += &format!("Numeric Var {}: {}\n", numeric_var_id, numeric_value);
         }
-
-        Ok(())
-    }
-}
-
-impl Index<usize> for ConcreteState<'_> {
-    type Output = u64;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        assert!(index < self.buffer.len(), "Index for State out of bounds");
-        &self.buffer[index]
+        s
     }
 }
 
@@ -142,6 +126,12 @@ impl<'a> StateRegistry<'a> {
             registered_states: HashSet::new(),
             axiom_evaluator,
         }
+    }
+
+    pub fn get_buffer(&self, index: usize) -> &Vec<u64> {
+        self.state_data_pool
+            .get(index)
+            .expect("State index out of bounds")
     }
 
     pub fn global_state_packer(&self) -> &StatePacker {
@@ -245,9 +235,8 @@ impl<'a> StateRegistry<'a> {
         let state_id = self.insert_id_or_pop_state();
 
         // TODO get rid of this clone
-        let concrete_state = ConcreteState::new(self, &self.state_data_pool[state_id]);
 
-        concrete_state
+        ConcreteState { pool_offset: state_id }
     }
 
     pub fn register_state(
@@ -318,7 +307,7 @@ impl<'a> StateRegistry<'a> {
         self.insert_id_or_pop_state();
 
         // TODO get rid of this clone
-        let new_state = ConcreteState::new(self, self.state_data_pool.last().unwrap());
+        let new_state = ConcreteState::new(self.state_data_pool.len() - 1);
 
         //TODO: Add cost information
         Ok(new_state)
@@ -329,7 +318,7 @@ impl<'a> StateRegistry<'a> {
             return Err(StateNotFoundError { index: index });
         }
         let state_data = &self.state_data_pool[index];
-        Ok(ConcreteState::new(self, state_data))
+        Ok(ConcreteState::new(index))
     }
 
     pub fn get_successor_state(
@@ -337,20 +326,25 @@ impl<'a> StateRegistry<'a> {
         current_state: &ConcreteState,
         operator: &Operator,
     ) -> Result<ConcreteState, StateInsertError> {
-        let mut buffer = current_state.buffer().clone();
+        let mut buffer = current_state.buffer(&self).clone();
         for eff in operator.effects().iter() {
             let var_id = eff.var_id() as i32;
             let value = eff.value() as u64;
-            if eff.conditions_met(&current_state) {
+            if eff.conditions_met(&current_state, &self) {
                 self.global_state_packer.set(&mut buffer, var_id, value);
             }
         }
 
         //TODO: Add cost here
         let mut successor_values = self.get_numeric_vars(current_state).unwrap();
-        self.get_numeric_successor2(&mut successor_values, operator, &mut buffer, &mut current_state.buffer())?;
+        self.get_numeric_successor2(
+            &mut successor_values,
+            operator,
+            &mut buffer,
+            &mut current_state.buffer(&self),
+        )?;
 
-        self.state_data_pool.push(buffer); //TODO: Figure out how to initialize that in the vector. 
+        self.state_data_pool.push(buffer); //TODO: Figure out how to initialize that in the vector.
 
         let id = self.insert_id_or_pop_state();
         let successor = self.lookup_state(id).unwrap();
@@ -361,7 +355,6 @@ impl<'a> StateRegistry<'a> {
             //TODO: cost
         }
 
-
         Ok(successor)
     }
 
@@ -369,7 +362,7 @@ impl<'a> StateRegistry<'a> {
         let mut result = vec![0.0; self.root_task.numeric_variables().len()];
         let cost_variables: Option<i32> = None; //TODO: Add cost variables handling
 
-        let buffer = state.buffer();
+        let buffer = state.buffer(&self);
         for i in 0..self.root_task.numeric_variables().len() {
             let numeric_var = self.root_task.numeric_variables().get(i).unwrap();
             match numeric_var.get_type() {
@@ -397,7 +390,7 @@ impl<'a> StateRegistry<'a> {
                 .evaluate_arithmetic_axioms(&mut result)?;
         }
 
-        Ok((result))
+        Ok(result)
     }
 
     fn get_numeric_successor(
@@ -519,10 +512,15 @@ impl<'a> StateRegistry<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
+    use crate::search::numeric::numeric_task::Fact;
+    use crate::search::numeric::numeric_task::Operator;
     use crate::setup_axiom_evaluator;
     use crate::setup_numeric_task;
     use crate::setup_state_packer;
     use crate::setup_state_registry;
+    use crate::setup_successor_generator;
 
     #[test]
     fn test_state_registry_initial_state() {
@@ -531,6 +529,42 @@ mod tests {
         let axiom_evaluator = setup_axiom_evaluator(&problem, &state_packer);
         let mut state_registry = setup_state_registry(&problem, &state_packer, &axiom_evaluator);
         let initial_state = state_registry.get_initial_state();
-        print!("Initial state: {:?}", initial_state);
+        print!("Initial state: {:?}", initial_state.debug_with_registry(&state_registry));
+    }
+
+    #[test]
+    fn test_generate_immediate_successor_of_init_state() {
+        let task = setup_numeric_task("misc/numeric_sas/example1.sas");
+        let state_packer = setup_state_packer(&task);
+        let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
+        let mut state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+        let initial_state = state_registry.get_initial_state();
+
+        let state = initial_state.get_state(&state_registry);
+        let facts = state
+            .iter()
+            .enumerate()
+            .map(|(i, value)| Fact::new(i as u32, *value as i32))
+            .collect::<Vec<_>>();
+        let mut facts_refs = Vec::new();
+
+        for fact in &facts {
+            facts_refs.push(fact);
+        }
+
+        let suc_gen = setup_successor_generator(&task);
+
+        let mut applicable_operators = VecDeque::new();
+        suc_gen.get_applicable_operators(&facts_refs, &mut applicable_operators);
+
+        let op = applicable_operators.pop_front().unwrap();
+
+        println!("Initial state: {}", initial_state.debug_with_registry(&state_registry));
+        println!("OP: {:?}", op);
+
+        let successor = state_registry
+            .get_successor_state(&initial_state, op)
+            .expect("Failed to get successor state");
+
     }
 }

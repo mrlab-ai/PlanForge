@@ -26,6 +26,7 @@ pub struct StateNotFoundError {
     pub index: usize,
 }
 
+#[derive(Debug)]
 pub struct StateInsertError {
     pub message: String,
 }
