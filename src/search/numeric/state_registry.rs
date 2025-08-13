@@ -623,5 +623,6 @@ mod tests {
             "Successor state: {}",
             successor.debug_with_registry(&state_registry)
         );
+        println!("Numeric indices: {:?}", state_registry.numeric_indices);
     }
 }
