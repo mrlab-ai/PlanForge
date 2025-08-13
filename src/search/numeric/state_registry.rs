@@ -21,9 +21,7 @@ pub struct ConcreteState {
 
 impl ConcreteState {
     pub fn new(pool_offset: usize) -> Self {
-        ConcreteState {
-            pool_offset,
-        }
+        ConcreteState { pool_offset }
     }
 
     pub fn get_state(&self, state_registry: &StateRegistry) -> Vec<i32> {
@@ -236,7 +234,9 @@ impl<'a> StateRegistry<'a> {
 
         // TODO get rid of this clone
 
-        ConcreteState { pool_offset: state_id }
+        ConcreteState {
+            pool_offset: state_id,
+        }
     }
 
     pub fn register_state(
@@ -452,27 +452,39 @@ impl<'a> StateRegistry<'a> {
         current_buffer: &Vec<u64>,
     ) -> Result<(), StateInsertError> {
         for effect in operator.assignment_effects().iter() {
-            let var_id = effect.var_id() as usize;
+            let assignment_var_id = effect.var_id() as usize;
+            let affected_var_id = effect.affected_var_id() as usize;
             debug_assert!(
                 effect.var_id() < current_values.len() as u32,
                 "Effect variable ID out of bounds"
             );
-            let numeric_var = self.root_task.numeric_variables().get(var_id).unwrap();
 
-            let mut assignment_value = current_values[var_id];
-            if numeric_var.get_type() == &NumericType::Regular {
+            let assignment_var = self
+                .root_task
+                .numeric_variables()
+                .get(assignment_var_id)
+                .unwrap();
+            let mut assignment_value = current_values[assignment_var_id];
+
+            let affected_var = self
+                .root_task
+                .numeric_variables()
+                .get(affected_var_id as usize)
+                .unwrap();
+
+            if assignment_var.get_type() == &NumericType::Regular {
                 assignment_value = self
                     .global_state_packer
-                    .get_double(current_buffer, var_id as i32);
+                    .get_double(current_buffer, assignment_var_id as i32);
             }
 
             let result = AssignmentOperation::apply(
-                current_values[effect.affected_var_id() as usize],
+                current_values[affected_var_id as usize],
                 effect.operation(),
                 assignment_value,
             );
 
-            match numeric_var.get_type() {
+            match affected_var.get_type() {
                 NumericType::Cost => {
                     //TODO: Add instrumentation handling
                     current_values[effect.affected_var_id() as usize] = result;
@@ -488,8 +500,8 @@ impl<'a> StateRegistry<'a> {
                 _ => {
                     return Err(StateInsertError {
                         message: format!(
-                            "Only regular and cost variables are allowed here: {:?}",
-                            numeric_var.get_type()
+                            "!!!!!Only regular and cost variables are allowed here: {:?}",
+                            affected_var.get_type()
                         ),
                     });
                 }
@@ -529,7 +541,10 @@ mod tests {
         let axiom_evaluator = setup_axiom_evaluator(&problem, &state_packer);
         let mut state_registry = setup_state_registry(&problem, &state_packer, &axiom_evaluator);
         let initial_state = state_registry.get_initial_state();
-        print!("Initial state: {:?}", initial_state.debug_with_registry(&state_registry));
+        print!(
+            "Initial state: {:?}",
+            initial_state.debug_with_registry(&state_registry)
+        );
     }
 
     #[test]
@@ -559,12 +574,19 @@ mod tests {
 
         let op = applicable_operators.pop_front().unwrap();
 
-        println!("Initial state: {}", initial_state.debug_with_registry(&state_registry));
+        println!(
+            "Initial state: {}",
+            initial_state.debug_with_registry(&state_registry)
+        );
         println!("OP: {:?}", op);
 
         let successor = state_registry
             .get_successor_state(&initial_state, op)
             .expect("Failed to get successor state");
 
+        println!(
+            "Successor state: {}",
+            successor.debug_with_registry(&state_registry)
+        );
     }
 }
