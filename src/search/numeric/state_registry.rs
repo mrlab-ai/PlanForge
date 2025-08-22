@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::current;
 
 type StatePacker = IntDoublePacker;
@@ -91,7 +92,7 @@ impl ConcreteState {
     }
 }
 
-type StateID = usize;
+pub type StateID = usize;
 type DataStorage = Vec<Vec<u64>>; //TODO: Make this a vector of boxed slices for better performance
 
 struct SemanticStateID<'a> {
@@ -117,8 +118,17 @@ impl<'a> Hash for SemanticStateID<'a> {
     }
 }
 
+static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+#[derive(Debug)]
+struct UniqueObject {
+    id: usize,
+    // Other fields can be added here
+    name: String,
+}
+
 //TODO: There should be only a single axiom evaluator so it should be fine if the StateRegistry has it
 pub struct StateRegistry<'a> {
+    id: usize,
     root_task: &'a NumericRootTask,
     axiom_evaluator: &'a AxiomEvaluator<'a>,
     global_state_packer: &'a StatePacker,
@@ -126,7 +136,7 @@ pub struct StateRegistry<'a> {
     numeric_constants: Vec<f64>,
     numeric_indices: Vec<i32>,
     registered_states: HashSet<StateID>,
-    cost_info: Vec<StateInfo>,
+    cost_info: StateInfo<'a, Vec<f64>>, // This is a pool of cost information, each state has a vector of f64s
 }
 
 impl<'a> StateRegistry<'a> {
@@ -136,7 +146,9 @@ impl<'a> StateRegistry<'a> {
         axiom_evaluator: &'a AxiomEvaluator<'a>,
     ) -> Self {
         let number_numeric_vars = root_task.numeric_variables().len();
+        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
         StateRegistry {
+            id, 
             root_task,
             global_state_packer,
             state_data_pool: Vec::new(),
@@ -144,8 +156,16 @@ impl<'a> StateRegistry<'a> {
             numeric_indices: vec![-1; number_numeric_vars],
             registered_states: HashSet::new(),
             axiom_evaluator,
-            cost_info: Vec::new(), // Initialize cost_info as an empty vector
+            cost_info: StateInfo::new(),
         }
+    }
+
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    pub fn subscribe(&mut self, registry: &StateRegistry) {
+        todo!()
     }
 
     pub fn get_buffer(&self, index: usize) -> &Vec<u64> {
