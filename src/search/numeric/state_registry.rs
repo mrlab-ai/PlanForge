@@ -3,6 +3,7 @@ use crate::search::numeric::numeric_task::{
     AbstractNumericTask, AssignmentOperation, Fact, Operator,
 };
 use crate::search::numeric::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
+use crate::search::numeric::utils::state_info::StateInfo;
 use crate::search::numeric::{
     numeric_task::{NumericRootTask, NumericType},
     utils::int_packer::IntDoublePacker,
@@ -125,6 +126,7 @@ pub struct StateRegistry<'a> {
     numeric_constants: Vec<f64>,
     numeric_indices: Vec<i32>,
     registered_states: HashSet<StateID>,
+    cost_info: Vec<StateInfo>,
 }
 
 impl<'a> StateRegistry<'a> {
@@ -142,6 +144,7 @@ impl<'a> StateRegistry<'a> {
             numeric_indices: vec![-1; number_numeric_vars],
             registered_states: HashSet::new(),
             axiom_evaluator,
+            cost_info: Vec::new(), // Initialize cost_info as an empty vector
         }
     }
 
@@ -372,8 +375,10 @@ impl<'a> StateRegistry<'a> {
 
         //TODO: Add cost here
         let mut successor_values = self.get_numeric_vars(current_state).unwrap();
+        let mut cost_values = 
         self.get_numeric_successor2(
             &mut successor_values,
+            &mut Vec::new(),
             operator,
             &mut buffer,
             &mut current_state.buffer(&self),
@@ -430,15 +435,12 @@ impl<'a> StateRegistry<'a> {
     fn get_numeric_successor(
         &self,
         current_values: &mut Vec<f64>,
+        cost_part: &mut Vec<f64>,
         operator: &Operator,
     ) -> Result<(), StateInsertError> {
         let values_before_changing = current_values.clone(); //TODO: Can I get rid of this clone?
         for effect in operator.assignment_effects().iter() {
             let var_id = effect.var_id() as usize;
-            debug_assert!(
-                effect.var_id() < current_values.len() as u32,
-                "Effect variable ID out of bounds"
-            );
             let numeric_var = self.root_task.numeric_variables().get(var_id).unwrap();
 
             let mut assignment_value = current_values[var_id];
@@ -454,7 +456,11 @@ impl<'a> StateRegistry<'a> {
 
             match numeric_var.get_type() {
                 NumericType::Cost => {
-                    //TODO: Add instrumentation handling
+                    debug_assert!(
+                        cost_part.len() as i32 > self.numeric_indices[effect.affected_var_id() as usize],
+                        "Effect affected variable ID out of bounds"
+                    );
+                    cost_part[self.numeric_indices[effect.affected_var_id() as usize] as usize] = result;
                     current_values[effect.affected_var_id() as usize] = result;
                 }
                 NumericType::Regular => {
@@ -481,6 +487,7 @@ impl<'a> StateRegistry<'a> {
     fn get_numeric_successor2(
         &self,
         current_values: &mut Vec<f64>,
+        cost_part: &mut Vec<f64>,
         operator: &Operator,
         next_buffer: &mut Vec<u64>,
         current_buffer: &Vec<u64>,
@@ -521,7 +528,8 @@ impl<'a> StateRegistry<'a> {
 
             match affected_var.get_type() {
                 NumericType::Cost => {
-                    //TODO: Add instrumentation handling
+                    debug_assert!(cost_part.len() as i32 > self.numeric_indices[effect.affected_var_id() as usize]);
+                    cost_part[self.numeric_indices[effect.affected_var_id() as usize] as usize] = result;
                     current_values[effect.affected_var_id() as usize] = result;
                 }
                 NumericType::Regular => {

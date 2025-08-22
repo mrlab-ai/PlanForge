@@ -2,7 +2,7 @@ use crate::search::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
 use crate::search::numeric::numeric_task::{
-    AssignmentEffect, NumericType, NumericVariable, AssignmentOperation,
+    AssignmentEffect, AssignmentOperation, Metric, NumericType, NumericVariable
 };
 use crate::search::numeric::numeric_task::{
     Effect, ExplicitVariable, Fact, NumericRootTask, Operator,
@@ -32,16 +32,18 @@ fn parse_version(input: &str) -> IResult<&str, u32> {
     Ok((input, version))
 }
 
-fn parse_metric(input: &str) -> IResult<&str, bool> {
+fn parse_metric(input: &str) -> IResult<&str, Metric> {
     let (input, _) = tag("begin_metric")(input)?;
     let (input, _) = line_ending(input)?;
     let (input, min_or_max) = alt((char('<'), char('>')))(input)?;
+    let is_min = min_or_max == '<';
     let (input, _) = space1(input)?;
-    let (input, metric) = u32(input)?;
+    let (input, metric) = i32(input)?;
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_metric")(input)?;
     let (input, _) = line_ending(input)?;
-    let metric = metric != 0;
+
+    let metric = Metric::new(is_min, metric);
     Ok((input, metric))
 }
 

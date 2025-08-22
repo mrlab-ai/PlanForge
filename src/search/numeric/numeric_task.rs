@@ -63,6 +63,31 @@ pub trait AbstractNumericTask {
     fn get_num_cmp_axioms(&self) -> i32;
 }
 
+
+#[derive(Debug)]
+pub struct Metric {
+    is_min: bool,
+    var_id: i32,
+}
+
+impl Metric {
+    pub fn new(is_min: bool, var_id: i32) -> Self {
+        Metric { is_min, var_id }
+    }
+
+    pub fn is_min(&self) -> bool {
+        self.is_min
+    }
+
+    pub fn var_id(&self) -> i32 {
+        self.var_id
+    }
+
+    pub fn use_metric(&self) -> bool {
+        self.var_id >= 0
+    }
+}
+
 #[derive(Debug)]
 pub struct ExplicitVariable {
     domain_size: u32,
@@ -314,7 +339,7 @@ impl Operator {
 #[derive(Debug)]
 pub struct NumericRootTask {
     version: u32,
-    metric: bool,
+    metric: Metric,
     variables: Vec<ExplicitVariable>,
     numeric_variables: Vec<NumericVariable>,
     goals: Vec<Fact>,
@@ -331,7 +356,7 @@ pub struct NumericRootTask {
 impl NumericRootTask {
     pub fn new(
         version: u32,
-        metric: bool,
+        metric: Metric,
         variables: Vec<ExplicitVariable>,
         numeric_variables: Vec<NumericVariable>,
         goals: Vec<Fact>,
