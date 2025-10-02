@@ -915,7 +915,7 @@ mod tests {
         let suc_gen = setup_successor_generator(&task);
 
         let mut applicable_operators = VecDeque::new();
-        suc_gen.get_applicable_operators(&facts_refs, &mut applicable_operators);
+        suc_gen.get_applicable_operators(&facts, &mut applicable_operators);
 
         let op = applicable_operators.pop_front().unwrap();
 
@@ -1007,7 +1007,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_successor_should_not_generate_new_id() {
-        let task = setup_numeric_task("misc/numeric_sas/example5.sas");
+        let task = setup_numeric_task("misc/numeric_sas/example1.sas");
         let state_packer = setup_state_packer(&task);
         let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
         let mut state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
@@ -1028,7 +1028,7 @@ mod tests {
         let suc_gen = setup_successor_generator(&task);
 
         let mut applicable_operators = VecDeque::new();
-        suc_gen.get_applicable_operators(&facts_refs, &mut applicable_operators);
+        suc_gen.get_applicable_operators(&facts, &mut applicable_operators);
 
         // Get the first applicable operator
         let op = applicable_operators.front().unwrap();

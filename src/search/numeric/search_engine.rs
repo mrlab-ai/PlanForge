@@ -198,32 +198,33 @@ impl<'a> AStarSearch<'a> {
         // and check preconditions manually. This is less efficient but works around
         // the lifetime issues with the successor generator.
         let mut successors = Vec::new();
-        
-        for op in self.task.get_operators() {
+
+
+        let state_facts = state.get_state(&self.state_registry);
+        let facts = state_facts
+            .iter()
+            .enumerate()
+            .map(|(i, value)| Fact::new(i as u32, *value as i32))
+            .collect::<Vec<_>>();
+
+        let mut applicable_operators: VecDeque<&Operator> = VecDeque::new();
+        self.successor_generator.get_applicable_operators(&facts, &mut applicable_operators);
+
+        for op in applicable_operators {
             // Check if all preconditions are satisfied
-            let mut applicable = true;
-            for precondition in op.preconditions() {
-                if !self.state_satisfies_fact(state, precondition) {
-                    applicable = false;
-                    break;
+    
+            match self.state_registry.get_successor_state(state, op) {
+                Ok(succ_state) => {
+                    // Use operator cost (or default to 1.0)
+                    let cost = 1.0; // TODO: Get actual operator cost from task
+                    successors.push((succ_state, op.clone(), cost));
                 }
-            }
-            
-            if applicable {
-                match self.state_registry.get_successor_state(state, op) {
-                    Ok(succ_state) => {
-                        // Use operator cost (or default to 1.0)
-                        let cost = 1.0; // TODO: Get actual operator cost from task
-                        successors.push((succ_state, op.clone(), cost));
-                    }
-                    Err(_) => {
-                        // Skip operators that can't be applied
-                        continue;
-                    }
+                Err(_) => {
+                    // Skip operators that can't be applied
+                    continue;
                 }
             }
         }
-        
         successors
     }
     

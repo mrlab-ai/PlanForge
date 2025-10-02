@@ -124,7 +124,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 pub trait Node<'a>: 'a + Debug {
     fn get_applicable_operators(
         &self,
-        state: &Vec<&'a Fact>, //TODO: Most likely we can get rid of the `&'a` lifetime here for facts
+        state: &Vec<Fact>,
         applicable_operators: &mut VecDeque<&'a Operator>, //TODO: Why is a DeqQueue here? Did I do this on purpose?
     );
 }
@@ -156,7 +156,7 @@ impl<'a> BranchNode<'a> {
 impl<'a> Node<'a> for BranchNode<'a> {
     fn get_applicable_operators(
         &self,
-        state: &Vec<&'a Fact>,
+        state: &Vec<Fact>,
         applicable_operators: &mut VecDeque<&'a Operator>,
     ) {
         for operator in &self.immediate_operators {
@@ -164,6 +164,11 @@ impl<'a> Node<'a> for BranchNode<'a> {
         }
         let value = state[self.var_id as usize].value();
         self.value_children[value as usize].get_applicable_operators(state, applicable_operators);
+        
+        // Also process the default child, which contains operators that don't depend on this variable
+        if let Some(ref default_child) = self.default_child {
+            default_child.get_applicable_operators(state, applicable_operators);
+        }
     }
 }
 
@@ -183,7 +188,7 @@ impl<'a> LeafNode<'a> {
 impl<'a> Node<'a> for LeafNode<'a> {
     fn get_applicable_operators(
         &self,
-        _state: &Vec<&'a Fact>,
+        _state: &Vec<Fact>,
         applicable_operators: &mut VecDeque<&'a Operator>,
     ) {
         if let Some(operators) = &self.applicable_operators {
@@ -254,8 +259,7 @@ mod tests {
 
             // Create references to the facts for the node API
             let mut applicable_operators: VecDeque<&Operator> = VecDeque::new();
-            let facts_refs: Vec<&Fact> = facts.iter().collect();
-            node.get_applicable_operators(&facts_refs, &mut applicable_operators);
+            node.get_applicable_operators(&facts, &mut applicable_operators);
 
             //dbg!("Facts: {:?}", facts_refs);
             dbg!("Applicable operators: {:?}", applicable_operators);
