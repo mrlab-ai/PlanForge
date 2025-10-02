@@ -148,7 +148,7 @@ impl NumericVariable {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Fact {
     var: u32,
     value: i32,
@@ -181,7 +181,7 @@ impl fmt::Debug for Fact {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Effect {
     conditions: Vec<Fact>,
     var_id: u32,
@@ -222,7 +222,7 @@ impl Effect {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AssignmentOperation {
     Assign,
     Plus,
@@ -248,7 +248,7 @@ impl AssignmentOperation {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AssignmentEffect {
     affected_var_id: u32,
     operation: AssignmentOperation,
@@ -286,7 +286,7 @@ impl AssignmentEffect {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Operator {
     name: String,
     preconditions: Vec<Fact>,

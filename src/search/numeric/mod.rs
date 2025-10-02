@@ -4,7 +4,9 @@
 #![allow(unused_mut)]
 
 pub mod axioms;
+pub mod evaluation;
 pub mod numeric_task;
+pub mod open_lists;
 pub mod state_registry;
 pub mod successor_generator;
 pub mod utils;

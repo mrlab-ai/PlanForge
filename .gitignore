@@ -2,3 +2,6 @@
 
 *.sas
 .vscode
+
+//Fast downward files
+cpp/ 
