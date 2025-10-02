@@ -395,10 +395,10 @@ impl<'a> StateRegistry<'a> {
 
         //TODO: Add cost here
         let mut successor_values = self.get_numeric_vars(current_state).unwrap();
-        let mut cost_values = 
+        let mut cost_values = vec![0.0; self.count_cost_variables()];
         self.get_numeric_successor2(
             &mut successor_values,
-            &mut Vec::new(),
+            &mut cost_values,
             operator,
             &mut buffer,
             &mut current_state.buffer(&self),
@@ -416,6 +416,14 @@ impl<'a> StateRegistry<'a> {
         }
 
         Ok(successor)
+    }
+
+    fn count_cost_variables(&self) -> usize {
+        self.root_task
+            .numeric_variables()
+            .iter()
+            .filter(|var| var.get_type() == &NumericType::Cost)
+            .count()
     }
 
     fn get_numeric_vars(&self, state: &ConcreteState) -> Result<Vec<f64>, InvalidIndex> {
