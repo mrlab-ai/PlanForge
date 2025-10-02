@@ -107,7 +107,7 @@ fn main() -> std::io::Result<()> {
         let search = AStarSearch::new(
             &task,
             state_registry,
-            None, // ZeroHeuristic
+            None, // BlindHeuristic (will be created by default)
             None  // 30-minute timeout
         );
         

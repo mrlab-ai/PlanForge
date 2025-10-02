@@ -7,7 +7,7 @@ use crate::search::numeric::{
     numeric_task::{AbstractNumericTask, Fact, Operator},
     state_registry::{ConcreteState, StateID, StateRegistry},
     evaluation::{Evaluator, EvaluationResult, EvaluationState, Heuristic},
-    evaluation::heuristic::ZeroHeuristic,
+    evaluation::heuristic::BlindHeuristic,
     evaluation::g_evaluator::{GEvaluator, SumEvaluator},
     open_lists::{OpenList, SearchNode, TieBreakingOpenList},
     successor_generator::{GroundedSuccessorGenerator, Node},
@@ -111,8 +111,8 @@ impl<'a> AStarSearch<'a> {
     ) -> Self {
         let successor_generator = Self::create_successor_generator(task);
         
-        // Use ZeroHeuristic as default
-        let heuristic = heuristic.unwrap_or_else(|| Box::new(ZeroHeuristic::new(None)));
+        // Use BlindHeuristic as default
+        let heuristic = heuristic.unwrap_or_else(|| Box::new(BlindHeuristic::new(None)));
         
         // Create evaluators for A*
         let g_evaluator = GEvaluator::new(None);
