@@ -165,7 +165,7 @@ impl<'a> AStarSearch<'a> {
         while let Some(node_info) = self.search_nodes.get(&current_state) {
             if let (Some(parent_state), Some(operator)) = (&node_info.parent_state, &node_info.parent_operator) {
                 plan.push(operator.clone());
-                current_state = *parent_state;
+                current_state = *parent_state;                
             } else {
                 break; // Reached initial state
             }
@@ -247,12 +247,38 @@ impl<'a> AStarSearch<'a> {
         
         // Check if already closed
         if self.closed_set.contains(&state_id) {
+            if self.nodes_expanded <= 20 {
+                println!("  Skipping already closed state: {}", state_id);
+            }
             return SearchStatus::InProgress;
+        }
+        
+        // Check if this node is stale (better path found since it was added to open list)
+        if let Some(current_info) = self.search_nodes.get(&state_id) {
+            if current_info.g_value < node.g_value() {
+                if self.nodes_expanded <= 20 {
+                    println!("  Skipping stale node: {} (current g: {} < node g: {})", 
+                             state_id, current_info.g_value, node.g_value());
+                }
+                return SearchStatus::InProgress;
+            }
         }
         
         // Close the node
         self.closed_set.insert(state_id);
         self.nodes_expanded += 1;
+        
+        // Debug: Print information about the expanded node
+        if self.nodes_expanded <= 20 {
+            let search_info = self.search_nodes.get(&state_id).unwrap();
+            println!("Expanding node {} (g: {}, expanded: {})", 
+                     state_id, search_info.g_value, self.nodes_expanded);
+        }
+        
+        // Check if we're re-expanding a node (this should never happen in proper A*)
+        if self.nodes_expanded > 20 && self.nodes_expanded % 10000 == 0 {
+            println!("WARNING: Expanded {} nodes (this seems excessive)", self.nodes_expanded);
+        }
         
         // Check if goal
         if self.is_goal_state(&node.state) {
@@ -262,6 +288,13 @@ impl<'a> AStarSearch<'a> {
         // Generate successors
         let successors = self.generate_successors(&node.state);
         
+        // Get the current best g-value for this state
+        let current_g = if let Some(info) = self.search_nodes.get(&state_id) {
+            info.g_value
+        } else {
+            0.0 // Initial state
+        };
+        
         for (succ_state, operator, op_cost) in successors {
             let succ_state_id = succ_state.get_id();
             
@@ -270,12 +303,18 @@ impl<'a> AStarSearch<'a> {
                 continue;
             }
             
-            let new_g_value = node.g_value() + op_cost;
+            let new_g_value = current_g + op_cost;
+            
+            // Debug: Print cost information for first few steps  
+            if self.nodes_expanded <= 5 {
+                println!("  -> Successor: {} (op: {}, cost: {}, g: {} -> {})", 
+                         succ_state_id, operator.name(), op_cost, current_g, new_g_value);
+            }
             
             // Check if we've seen this state before
             if let Some(existing_info) = self.search_nodes.get(&succ_state_id) {
                 if existing_info.g_value <= new_g_value {
-                    continue; // We already have a better path
+                    continue; // We already have a better or equal path
                 }
             }
             

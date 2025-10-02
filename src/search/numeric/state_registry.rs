@@ -186,7 +186,7 @@ pub struct StateRegistry<'a> {
     numeric_constants: Vec<f64>,
     /// Mapping from numeric variable index to packed state index
     numeric_indices: Vec<i32>,
-    /// Set of registered state IDs for deduplication
+    /// Set of registered state IDs for duplicate detection (using semantic equality)
     registered_states: HashSet<StateID>,
     /// Per-state cost information storage
     cost_info: RefCell<PerStateInformation<Vec<f64>>>,
@@ -274,22 +274,22 @@ impl<'a> StateRegistry<'a> {
     /// the existing state ID.
     fn insert_id_or_pop_state(&mut self) -> StateID {
         let state_id = self.state_data_pool.len() - 1;
+        let num_bins = self.global_state_packer.num_bins() as usize;
+        let new_state_data = &self.state_data_pool[state_id][..num_bins];
         
-        // Try to insert the state ID into the registered states set
-        // This uses semantic hashing/equality to detect duplicates
-        let is_new_entry = self.registered_states.insert(state_id);
-        
-        if !is_new_entry {
-            // State already exists, remove the duplicate from pool
-            self.state_data_pool.pop();
-            // Find and return the existing state ID
-            // Note: In a proper implementation, we'd use a hash set with semantic equality
-            // For now, we'll return the attempted ID (this needs proper semantic hashing)
-            state_id
-        } else {
-            // New state, keep it
-            state_id
+        // Check if an equivalent state already exists by comparing state content
+        for &existing_id in &self.registered_states {
+            let existing_state_data = &self.state_data_pool[existing_id][..num_bins];
+            if existing_state_data == new_state_data {
+                // Duplicate found, remove the new state from pool and return existing ID
+                self.state_data_pool.pop();
+                return existing_id;
+            }
         }
+        
+        // New unique state, register it and keep it
+        self.registered_states.insert(state_id);
+        state_id
     }
 
     /// Creates and registers the initial state of the planning problem
@@ -1003,5 +1003,61 @@ mod tests {
         }; // StateRegistry drops here, triggering automatic cleanup
         
         println!("StateRegistry {} has been dropped with automatic cleanup", registry_id);
+    }
+
+    #[test]
+    fn test_duplicate_successor_should_not_generate_new_id() {
+        let task = setup_numeric_task("misc/numeric_sas/example5.sas");
+        let state_packer = setup_state_packer(&task);
+        let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
+        let mut state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+        let initial_state = state_registry.get_initial_state();
+
+        let state = initial_state.get_state(&state_registry);
+        let facts = state
+            .iter()
+            .enumerate()
+            .map(|(i, value)| Fact::new(i as u32, *value as i32))
+            .collect::<Vec<_>>();
+        let mut facts_refs = Vec::new();
+
+        for fact in &facts {
+            facts_refs.push(fact);
+        }
+
+        let suc_gen = setup_successor_generator(&task);
+
+        let mut applicable_operators = VecDeque::new();
+        suc_gen.get_applicable_operators(&facts_refs, &mut applicable_operators);
+
+        // Get the first applicable operator
+        let op = applicable_operators.front().unwrap();
+
+        println!("Testing operator: {:?}", op.name());
+        println!("Initial state ID: {}", initial_state.get_id());
+        println!("Initial registered_states size: {}", state_registry.registered_states.len());
+
+        // Generate the successor state twice
+        let successor1 = state_registry
+            .get_successor_state(&initial_state, op)
+            .expect("Failed to get first successor state");
+
+        println!("After first successor - registered_states size: {}", state_registry.registered_states.len());
+        println!("First successor ID: {}", successor1.get_id());
+
+        let successor2 = state_registry
+            .get_successor_state(&initial_state, op)
+            .expect("Failed to get second successor state");
+
+        println!("After second successor - registered_states size: {}", state_registry.registered_states.len());
+        println!("Second successor ID: {}", successor2.get_id());
+
+        // They should have the same ID if duplicate detection is working
+        assert_eq!(successor1.get_id(), successor2.get_id(), 
+                  "Generating the same successor twice should yield the same state ID");
+
+        // The registered_states set should not have grown from the second duplicate
+        assert_eq!(state_registry.registered_states.len(), 2, 
+                  "registered_states should contain exactly 2 states: initial + 1 successor");
     }
 }
