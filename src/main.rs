@@ -120,7 +120,7 @@ fn main() -> std::io::Result<()> {
     };
     
     match result.status {
-        SearchStatus::Solved => {
+        SearchStatus::Solved(_) => {
             println!("SOLVED!");
             if let Some(plan) = result.plan {
                 println!("Solution plan ({} steps):", plan.len());

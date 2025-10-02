@@ -20,7 +20,7 @@ use std::rc::Rc;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchStatus {
     InProgress,
-    Solved,
+    Solved(StateID),  // Include the goal state ID
     Failed,
     Timeout,
 }
@@ -240,8 +240,10 @@ impl<'a> AStarSearch<'a> {
         };
 
         // Print debug info
-        //println!("Expanding node: {:?}", node.state);
-        //println!("{}", node.state.debug_with_registry(&self.state_registry));
+        if self.nodes_expanded <= 15 {
+            println!("Expanding node: {:?}", node.state);
+            println!("{}", node.state.debug_with_registry(&self.state_registry));
+        }
 
         let state_id = node.state.get_id();
         
@@ -269,7 +271,7 @@ impl<'a> AStarSearch<'a> {
         self.nodes_expanded += 1;
         
         // Debug: Print information about the expanded node
-        if self.nodes_expanded <= 20 {
+        if self.nodes_expanded <= 15 {
             let search_info = self.search_nodes.get(&state_id).unwrap();
             println!("Expanding node {} (g: {}, expanded: {})", 
                      state_id, search_info.g_value, self.nodes_expanded);
@@ -282,7 +284,7 @@ impl<'a> AStarSearch<'a> {
         
         // Check if goal
         if self.is_goal_state(&node.state) {
-            return SearchStatus::Solved;
+            return SearchStatus::Solved(state_id);
         }
         
         // Generate successors
@@ -306,7 +308,7 @@ impl<'a> AStarSearch<'a> {
             let new_g_value = current_g + op_cost;
             
             // Debug: Print cost information for first few steps  
-            if self.nodes_expanded <= 5 {
+            if self.nodes_expanded <= 15 {
                 println!("  -> Successor: {} (op: {}, cost: {}, g: {} -> {})", 
                          succ_state_id, operator.name(), op_cost, current_g, new_g_value);
             }
@@ -377,13 +379,12 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             
             // Perform one search step
             match self.step() {
-                SearchStatus::Solved => {
-                    // Find the goal state (last closed state)
-                    let goal_state_id = *self.closed_set.iter().last().unwrap();
+                SearchStatus::Solved(goal_state_id) => {
+                    // Use the goal state ID returned from step()
                     let plan = self.extract_plan(goal_state_id);
                     
                     return SearchResult {
-                        status: SearchStatus::Solved,
+                        status: SearchStatus::Solved(goal_state_id),
                         plan: Some(plan),
                         nodes_expanded: self.nodes_expanded,
                         nodes_generated: self.nodes_generated,
@@ -423,7 +424,7 @@ mod tests {
     fn test_search_status_enum() {
         // Test basic enum functionality
         assert_eq!(SearchStatus::InProgress, SearchStatus::InProgress);
-        assert_ne!(SearchStatus::Solved, SearchStatus::Failed);
+        assert_ne!(SearchStatus::Solved(0), SearchStatus::Failed);
     }
     
     #[test]
