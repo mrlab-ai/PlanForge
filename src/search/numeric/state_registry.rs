@@ -3,7 +3,7 @@ use crate::search::numeric::numeric_task::{
     AbstractNumericTask, AssignmentOperation, Fact, Operator,
 };
 use crate::search::numeric::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
-use crate::search::numeric::utils::state_info::StateInfo;
+use crate::search::numeric::utils::per_state_info::PerStateInformation;
 use crate::search::numeric::{
     numeric_task::{NumericRootTask, NumericType},
     utils::int_packer::IntDoublePacker,
@@ -136,7 +136,7 @@ pub struct StateRegistry<'a> {
     numeric_constants: Vec<f64>,
     numeric_indices: Vec<i32>,
     registered_states: HashSet<StateID>,
-    cost_info: StateInfo<'a, Vec<f64>>, // This is a pool of cost information, each state has a vector of f64s
+    cost_info: PerStateInformation<Vec<f64>>, // This is a pool of cost information, each state has a vector of f64s
 }
 
 impl<'a> StateRegistry<'a> {
@@ -156,7 +156,7 @@ impl<'a> StateRegistry<'a> {
             numeric_indices: vec![-1; number_numeric_vars],
             registered_states: HashSet::new(),
             axiom_evaluator,
-            cost_info: StateInfo::new(),
+            cost_info: PerStateInformation::new(),
         }
     }
 

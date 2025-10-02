@@ -1,3 +1,4 @@
+//NOTE: Deprecated. Use per_state_info.rs instead.
 use std::collections::HashMap;
 
 use crate::search::numeric::state_registry::{self, ConcreteState};

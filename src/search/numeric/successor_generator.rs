@@ -230,8 +230,6 @@ mod tests {
                 queue.push_back((operator, op_id as u32));
             }
 
-            let state = problem.get_initial_propositional_state_values();
-
             let state_packer = setup_state_packer(&problem);
             let axiom_evaluator = setup_axiom_evaluator(&problem, &state_packer);
             let mut state_registry =
@@ -248,13 +246,9 @@ mod tests {
 
             let node = generator.construct(&mut 0, &mut queue).unwrap();
 
-            let mut facts_refs = Vec::new();
-
-            for fact in &facts {
-                facts_refs.push(fact);
-            }
-
-            let mut applicable_operators = VecDeque::new();
+            // Create references to the facts for the node API
+            let mut applicable_operators: VecDeque<&Operator> = VecDeque::new();
+            let facts_refs: Vec<&Fact> = facts.iter().collect();
             node.get_applicable_operators(&facts_refs, &mut applicable_operators);
 
             //dbg!("Facts: {:?}", facts_refs);
