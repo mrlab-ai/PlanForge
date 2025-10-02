@@ -90,7 +90,7 @@ fn main() -> std::io::Result<()> {
     let parse_time = start_time.elapsed();
     println!("Parsed numeric SAS output in: {:?}", parse_time);
     
-    println!("=== A* Search Engine - LIVE DEMO ===");
+    println!("=== A* Search Engine ===");
     println!("File: {}", sas_file);
     println!("Variables: {} regular, {} numeric", 
              task.variables().len(), 
@@ -111,7 +111,6 @@ fn main() -> std::io::Result<()> {
             None  // 30-minute timeout
         );
         
-        println!("\n✅ A* Search Engine created!");
         println!("Starting search...");
         
         // Mutable binding so we can call search()
@@ -122,7 +121,7 @@ fn main() -> std::io::Result<()> {
     
     match result.status {
         SearchStatus::Solved => {
-            println!("🎉 SOLVED!");
+            println!("SOLVED!");
             if let Some(plan) = result.plan {
                 println!("Solution plan ({} steps):", plan.len());
                 for (i, op) in plan.iter().enumerate() {

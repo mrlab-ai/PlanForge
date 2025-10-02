@@ -238,7 +238,11 @@ impl<'a> AStarSearch<'a> {
             Some(node) => node,
             None => return SearchStatus::Failed,
         };
-        
+
+        // Print debug info
+        //println!("Expanding node: {:?}", node.state);
+        //println!("{}", node.state.debug_with_registry(&self.state_registry));
+
         let state_id = node.state.get_id();
         
         // Check if already closed

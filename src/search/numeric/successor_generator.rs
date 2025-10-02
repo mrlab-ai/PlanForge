@@ -54,6 +54,12 @@ impl<'a> GroundedSuccessorGenerator<'a> {
             return Ok(Box::new(LeafNode::new(None)));
         }
         loop {
+            // Test if no further switch is necessary (or possible).
+            if *branch_var_id as usize >= self.task.variables().len() {
+                let ops: VecDeque<&'a Operator> = queue.iter().map(|(op, _)| *op).collect();
+                return Ok(Box::new(LeafNode::new(Some(ops))));
+            }
+            
             let branch_var = &self.task.variables()[*branch_var_id as usize];
             let num_children = branch_var.domain_size();
 
@@ -210,7 +216,7 @@ mod tests {
                     "Unconsumed input: {}",
                     unconsumed_input
                 );
-                if file.path().file_name().unwrap() == "example1.sas" {
+                if file.path().file_name().unwrap() == "example3.sas" {
                     problems.push(problem);
                 }
             }
