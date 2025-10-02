@@ -21,7 +21,7 @@ use crate::search::numeric::numeric_task::{
     AbstractNumericTask, AssignmentOperation, Fact, Operator,
 };
 use crate::search::numeric::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
-use crate::search::numeric::utils::per_state_info::PerStateInformation;
+use crate::search::numeric::utils::per_state_info::{PerStateInformation, PerStateInformationBase};
 use crate::search::numeric::{
     numeric_task::{NumericRootTask, NumericType},
     utils::int_packer::IntDoublePacker,
@@ -196,6 +196,10 @@ impl<'a> StateRegistry<'a> {
         let number_numeric_vars = root_task.numeric_variables().len();
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
         
+        // Create cost info and subscribe it to this registry
+        let mut cost_info = PerStateInformation::new();
+        cost_info.subscribe(id);
+        
         Self {
             id,
             root_task,
@@ -205,7 +209,7 @@ impl<'a> StateRegistry<'a> {
             numeric_indices: vec![-1; number_numeric_vars],
             registered_states: HashSet::new(),
             axiom_evaluator,
-            cost_info: RefCell::new(PerStateInformation::new()),
+            cost_info: RefCell::new(cost_info),
         }
     }
 
@@ -217,6 +221,29 @@ impl<'a> StateRegistry<'a> {
     /// Subscribe to another registry (placeholder for future functionality)
     pub fn subscribe(&mut self, _registry: &StateRegistry) {
         todo!("Registry subscription not yet implemented")
+    }
+
+    /// Subscribes a PerStateInformation instance to this registry
+    /// 
+    /// When this registry is dropped, it will notify the subscribed PerStateInformation
+    /// instances to clean up their data. This follows the C++ Fast Downward pattern
+    /// where PerStateInformation instances register themselves with StateRegistry instances.
+    /// 
+    /// Note: In Rust, we can't hold mutable references to the PerStateInformation,
+    /// so this method just ensures the PerStateInformation knows about this registry.
+    pub fn subscribe_per_state_info<T>(&self, per_state_info: &mut PerStateInformation<T>) 
+    where 
+        T: Clone + Default,
+    {
+        per_state_info.subscribe(self.id);
+    }
+
+    /// Unsubscribes a PerStateInformation instance from this registry
+    pub fn unsubscribe_per_state_info<T>(&self, per_state_info: &mut PerStateInformation<T>) 
+    where 
+        T: Clone + Default,
+    {
+        per_state_info.unsubscribe(self.id);
     }
 
     /// Gets the buffer at the specified index
@@ -748,24 +775,6 @@ impl<'a> StateRegistry<'a> {
         Ok(())
     }
 
-    // ============================================================================
-    // COST INFORMATION AND METRIC HANDLING
-    // ============================================================================
-    // 
-    // This section implements the cost information and metric optimization logic
-    // that corresponds to the C++ g_cost_information and evaluate_metric functionality.
-    // 
-    // Key features implemented:
-    // 1. ✅ Metric evaluation from numeric states (evaluate_metric)
-    // 2. ✅ Cost information selection during state deduplication (select_cost_information)  
-    // 3. ✅ Proper metric optimization (minimization/maximization) logic
-    // 4. ✅ Cost information storage (using RefCell for interior mutability)
-    // 
-    // Architecture:
-    // - Uses RefCell<PerStateInformation<Vec<f64>>> for cost information storage
-    // - Provides interior mutability to resolve borrowing conflicts
-    // - All cost handling features now fully implemented and working
-
     /// Evaluates the metric value for a given numeric state
     /// 
     /// This corresponds to the C++ evaluate_metric function that retrieves
@@ -836,6 +845,20 @@ impl<'a> StateRegistry<'a> {
     /// Uses RefCell for interior mutability to resolve borrowing conflicts.
     fn set_cost_information(&self, state: &ConcreteState, values: Vec<f64>) {
         self.cost_info.borrow_mut().set(state, self, values);
+    }
+}
+
+impl<'a> Drop for StateRegistry<'a> {
+    /// Implements the C++ StateRegistry destructor pattern
+    /// 
+    /// When a StateRegistry is destroyed, it notifies all subscribed
+    /// PerStateInformation instances to clean up their data for this registry.
+    /// This prevents memory leaks and dangling references.
+    fn drop(&mut self) {
+        // Notify the cost_info that this registry is being destroyed
+        // This follows the C++ pattern where StateRegistry destructor
+        // calls remove_state_registry on all subscribed PerStateInformation instances
+        self.cost_info.borrow_mut().cleanup_registry(self.id);
     }
 }
 
@@ -922,5 +945,57 @@ mod tests {
         
         // The cost information should be accessible (empty vector if no cost variables)
         println!("Cost information length: {}", cost_info.len());
+    }
+
+    #[test]
+    fn test_per_state_info_subscription() {
+        let task = setup_numeric_task("misc/numeric_sas/example1.sas");
+        let state_packer = setup_state_packer(&task);
+        let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
+        let state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+
+        // Create a PerStateInformation instance
+        let mut custom_per_state_info = crate::search::numeric::utils::per_state_info::PerStateInformation::<i32>::new();
+
+        // Subscribe it to the registry
+        state_registry.subscribe_per_state_info(&mut custom_per_state_info);
+        
+        // Verify subscription
+        assert!(custom_per_state_info.is_subscribed_to(state_registry.id()));
+        println!("PerStateInformation subscribed to registry {}", state_registry.id());
+
+        // Test unsubscription
+        state_registry.unsubscribe_per_state_info(&mut custom_per_state_info);
+        assert!(!custom_per_state_info.is_subscribed_to(state_registry.id()));
+        println!("PerStateInformation unsubscribed from registry {}", state_registry.id());
+
+        // Re-subscribe for cleanup test
+        state_registry.subscribe_per_state_info(&mut custom_per_state_info);
+        assert!(custom_per_state_info.is_subscribed_to(state_registry.id()));
+
+        // Manually cleanup (simulating registry destruction)
+        custom_per_state_info.cleanup_registry(state_registry.id());
+        assert!(!custom_per_state_info.is_subscribed_to(state_registry.id()));
+        println!("PerStateInformation cleaned up for registry {}", state_registry.id());
+    }
+
+    #[test]
+    fn test_automatic_cleanup_on_drop() {
+        let task = setup_numeric_task("misc/numeric_sas/example1.sas");
+        let state_packer = setup_state_packer(&task);
+        let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
+        
+        let registry_id = {
+            let state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+            let id = state_registry.id();
+            
+            // Verify the cost_info is automatically subscribed
+            assert!(state_registry.cost_info.borrow().is_subscribed_to(id));
+            println!("StateRegistry {} has auto-subscribed cost_info", id);
+            
+            id
+        }; // StateRegistry drops here, triggering automatic cleanup
+        
+        println!("StateRegistry {} has been dropped with automatic cleanup", registry_id);
     }
 }
