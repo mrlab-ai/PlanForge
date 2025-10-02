@@ -124,6 +124,20 @@ fn main() -> std::io::Result<()> {
             println!("SOLVED!");
             if let Some(plan) = result.plan {
                 println!("Solution plan ({} steps):", plan.len());
+                
+                // Create the sas_plan file content
+                let mut plan_content = String::new();
+                for op in plan.iter() {
+                    plan_content.push_str(&format!("({})\n", op.name()));
+                }
+                
+                // Write the plan to sas_plan file
+                match fs::write("sas_plan", plan_content) {
+                    Ok(()) => println!("Plan written to sas_plan file"),
+                    Err(e) => eprintln!("Error writing plan file: {}", e),
+                }
+                
+                // Also print the plan to console
                 for (i, op) in plan.iter().enumerate() {
                     println!("  {}: {}", i + 1, op.name());
                 }
