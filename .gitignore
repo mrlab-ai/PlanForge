@@ -6,3 +6,6 @@
 //Fast downward files
 cpp/ 
 sas_plan
+
+perf.*
+flamegraph.svg

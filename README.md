@@ -91,6 +91,15 @@ cargo test
 cargo test test_name -- --nocapture
 ```
 
+### Profiling
+```bash
+# Profile with flamegraph (requires cargo-flamegraph: cargo install flamegraph)
+cargo flamegraph --bin planners -- <sas file here>
+
+# This will generate a flamegraph.svg file showing performance hotspots
+# Open flamegraph.svg in a web browser to view the interactive flame graph
+```
+
 ### Library Usage (Planned)
 ```rust
 use numeric_planners::{parse_sas, StateRegistry, SearchAlgorithm};
