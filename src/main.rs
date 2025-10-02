@@ -15,11 +15,13 @@ use crate::search::numeric::axioms::AxiomEvaluator;
 use crate::search::numeric::numeric_task::AbstractNumericTask;
 use crate::search::numeric::numeric_task::NumericRootTask;
 use crate::search::numeric::numeric_task::NumericType;
+use crate::search::numeric::search_engine::{SearchStatus, SearchResult};
 use crate::search::numeric::state_registry::StateRegistry;
 use crate::search::numeric::successor_generator;
 use crate::search::numeric::successor_generator::GroundedSuccessorGenerator;
 use crate::search::numeric::successor_generator::Node;
 use crate::search::numeric::utils::int_packer::IntDoublePacker;
+use search::numeric::search_engine::{AStarSearch, SearchEngine};
 
 fn setup_state_registry<'a>(
     problem: &'a NumericRootTask,
@@ -83,10 +85,64 @@ fn main() -> std::io::Result<()> {
     }
     let sas_file = &args[1];
 
+    let start_time = std::time::Instant::now();
     let task = setup_numeric_task(sas_file);
+    let parse_time = start_time.elapsed();
+    println!("Parsed numeric SAS output in: {:?}", parse_time);
+    
+    println!("=== A* Search Engine - LIVE DEMO ===");
+    println!("File: {}", sas_file);
+    println!("Variables: {} regular, {} numeric", 
+             task.variables().len(), 
+             task.numeric_variables().len());
+    
+    // Create all components in main() scope where lifetimes can be properly managed
     let state_packer = setup_state_packer(&task);
     let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
     let mut state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
-    let suc_gen = setup_successor_generator(&task);
+    
+    // Create search engine and get result, then explicitly drop the search engine
+    let result = {
+        // Move ownership of state_registry into the search engine to avoid lifetime issues
+        let search = AStarSearch::new(
+            &task,
+            state_registry,
+            None, // ZeroHeuristic
+            None  // 30-minute timeout
+        );
+        
+        println!("\n✅ A* Search Engine created!");
+        println!("Starting search...");
+        
+        // Mutable binding so we can call search()
+        let mut search = search;
+        let search_result = search.search();
+        search_result
+    };
+    
+    match result.status {
+        SearchStatus::Solved => {
+            println!("🎉 SOLVED!");
+            if let Some(plan) = result.plan {
+                println!("Solution plan ({} steps):", plan.len());
+                for (i, op) in plan.iter().enumerate() {
+                    println!("  {}: {}", i + 1, op.name());
+                }
+            }
+        },
+        SearchStatus::Failed => {
+            println!("No solution found");
+        },
+        SearchStatus::Timeout => {
+            println!("Search timed out");
+        },
+        SearchStatus::InProgress => {
+            println!("Search ended in progress");
+        }
+    }
+    
+    println!("Statistics: {} expanded, {} generated, {:?}", 
+             result.nodes_expanded, result.nodes_generated, result.search_time);
+    
     Ok(())
 }

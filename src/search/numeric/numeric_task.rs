@@ -312,6 +312,10 @@ impl Operator {
         }
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn conditions_met(&self, state: &Vec<&Fact>) -> bool {
         for precondition in &self.preconditions {
             if !state.iter().any(|fact| {
