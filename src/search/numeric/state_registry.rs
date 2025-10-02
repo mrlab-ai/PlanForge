@@ -53,6 +53,12 @@ impl ConcreteState {
         Self { pool_offset }
     }
 
+    /// Gets the state ID (equivalent to C++ GlobalState::get_id())
+    /// This is the index into the state registry's data pool
+    pub fn get_id(&self) -> usize {
+        self.pool_offset
+    }
+
     /// Gets the propositional state values as a vector
     pub fn get_state(&self, state_registry: &StateRegistry) -> Vec<i32> {
         let buffer = state_registry.get_buffer(self.pool_offset);

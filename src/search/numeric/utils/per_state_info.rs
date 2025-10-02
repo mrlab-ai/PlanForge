@@ -165,27 +165,17 @@ where
     }
     
     /// Helper method to extract registry ID from registry
-    /// Uses the registry's memory address as a unique identifier
+    /// Uses the registry's unique ID instead of memory address for reliability
     fn get_registry_id(&self, registry: &StateRegistry) -> usize {
-        registry as *const _ as usize
+        registry.id()
     }
     
     /// Helper method to extract state ID from state
-    /// Uses the buffer pointer as a unique identifier for the state
-    fn get_state_id(&self, state: &ConcreteState, registry: &StateRegistry) -> usize {
-        // Use the buffer pointer address as a unique identifier for this state
-        // This is stable as long as the state exists
-        let buffer_ptr = state.buffer(registry).as_ptr() as usize;
-        
-        // Apply a simple hash to make the ID more manageable
-        let mut hash = buffer_ptr;
-        hash = hash.wrapping_mul(0x9e3779b9);
-        hash ^= hash >> 16;
-        hash = hash.wrapping_mul(0x9e3779b9);
-        hash ^= hash >> 16;
-        
-        // Keep it reasonably sized
-        hash % 1000000
+    /// Uses the state's ID directly, matching the C++ GlobalState::get_id() pattern
+    fn get_state_id(&self, state: &ConcreteState, _registry: &StateRegistry) -> usize {
+        // In C++ this would be: state.get_id().value
+        // The state ID is just the index into the state registry's data pool
+        state.get_id()
     }
 
     /// Subscribes this PerStateInformation to a StateRegistry
@@ -348,5 +338,23 @@ mod tests {
         // Verify all subscriptions are cleaned up
         assert_eq!(per_state_info1.subscribed_registries().len(), 0);
         assert_eq!(per_state_info2.subscribed_registries().len(), 0);
+    }
+
+    #[test]
+    fn test_state_id_extraction() {
+        // This test would require actual ConcreteState instances to be meaningful
+        // For now, we verify that the state ID is directly extracted without hashing
+        
+        // Create a mock state with a known ID
+        use crate::search::numeric::state_registry::ConcreteState;
+        
+        let state = ConcreteState::new(42);  // pool_offset = 42
+        assert_eq!(state.get_id(), 42);      // Should return the ID directly, not hashed
+        
+        let state2 = ConcreteState::new(100);
+        assert_eq!(state2.get_id(), 100);
+        
+        // Verify they're different
+        assert_ne!(state.get_id(), state2.get_id());
     }
 }
