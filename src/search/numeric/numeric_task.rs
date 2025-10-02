@@ -228,7 +228,7 @@ pub enum AssignmentOperation {
     Plus,
     Minus,
     Times,
-    Divide, //TODO: Use proper names here
+    Divide,
 }
 
 impl AssignmentOperation {
@@ -385,6 +385,11 @@ impl NumericRootTask {
             global_constraint,
         }
     }
+
+    /// Returns a reference to the metric configuration
+    pub fn metric(&self) -> &Metric {
+        &self.metric
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -469,11 +474,18 @@ impl AbstractNumericTask for NumericRootTask {
     }
 
     fn get_num_operators(&self) -> i32 {
-        0
+        self.operators.len() as i32
     }
 
     fn get_num_operator_preconditions(&self, index: i32, is_axiom: bool) -> i32 {
-        0
+        if is_axiom {
+            // Axioms don't have preconditions in the same way
+            return 0;
+        }
+        if index < 0 || index >= self.operators.len() as i32 {
+            return 0;
+        }
+        self.operators[index as usize].preconditions().len() as i32
     }
 
     fn get_operator_precondition(&self, index: i32, precond_index: i32, is_axiom: bool) -> &Fact {
@@ -481,7 +493,14 @@ impl AbstractNumericTask for NumericRootTask {
     }
 
     fn get_num_operator_effects(&self, index: i32, is_axiom: bool) -> i32 {
-        0
+        if is_axiom {
+            // Handle axiom effects differently
+            return 0;
+        }
+        if index < 0 || index >= self.operators.len() as i32 {
+            return 0;
+        }
+        self.operators[index as usize].effects().len() as i32
     }
 
     fn get_num_operator_effect_conditions(
@@ -510,15 +529,18 @@ impl AbstractNumericTask for NumericRootTask {
     fn convert_operator_index(&self, index: i32, ancestor_task: &dyn AbstractNumericTask) {}
 
     fn get_num_axioms(&self) -> i32 {
-        0
+        self.axioms.len() as i32
     }
 
     fn get_num_goals(&self) -> i32 {
-        0
+        self.goals.len() as i32
     }
 
     fn get_goal_fact(&self, index: i32) -> &Fact {
-        unimplemented!("This function is not yet implemented");
+        if index < 0 || index >= self.goals.len() as i32 {
+            panic!("Goal index {} out of bounds", index);
+        }
+        &self.goals[index as usize]
     }
 
     fn get_initial_propositional_state_values(&self) -> Ref<Vec<i32>> {
