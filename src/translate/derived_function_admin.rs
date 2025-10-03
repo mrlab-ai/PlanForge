@@ -24,41 +24,42 @@ impl DerivedFunctionAdministrator {
     pub fn get_derived_function(&mut self, exp: &SExpr) -> PrimitiveNumericExpression {
         match exp {
             SExpr::Atom(a) => {
-                if let Ok(_n) = a.parse::<i64>() {
-                    // numeric constant represented as const:val
-                    PrimitiveNumericExpression { name: format!("const:{}", a), args: vec![] }
+                // numeric constant -> canonical derived constant name like derived!4.0()
+                if let Ok(nv) = a.parse::<i64>() {
+                    PrimitiveNumericExpression { name: format!("derived!{}.0()", nv), args: vec![] }
                 } else {
-                    // primitive PNE like (f a b) represented by key "f(a, b)"
+                    // plain atom treated as primitive PNE name (no args)
                     PrimitiveNumericExpression { name: a.clone(), args: vec![] }
                 }
             }
             SExpr::List(list) => {
                 if list.is_empty() { return PrimitiveNumericExpression { name: "".to_string(), args: vec![] }; }
                 if let SExpr::Atom(op) = &list[0] {
-                    if op == "+" || op == "*" {
-                        // commutative: sort parts by string form
-                        let mut parts: Vec<String> = list[1..].iter().map(|p| match p { SExpr::Atom(a)=>a.clone(), SExpr::List(_)=>format!("{}", Self::sexpr_to_string(p)), }).collect();
-                        parts.sort();
-                        let key = format!("({} {})", op, parts.join(" "));
-                        if let Some((sym, args)) = self.functions.get(&key) {
-                            return PrimitiveNumericExpression { name: sym.clone(), args: args.clone() };
+                    // arithmetic operators: build child PNE tokens and return operator-style name + args
+                    if op == "+" || op == "-" || op == "*" || op == "/" {
+                        // collect child tokens using recursive calls
+                        let mut child_tokens: Vec<String> = Vec::new();
+                        let mut child_args: Vec<String> = Vec::new();
+                        for p in &list[1..] {
+                            let pne = self.get_derived_function(p);
+                            // token form: if child is a derived symbol keep it, otherwise append _PNE to its name
+                            let token = if pne.name.starts_with("derived!") { pne.name.clone() } else { format!("{}{}_PNE", pne.name, "") };
+                            child_tokens.push(token);
+                            // keep the underlying primitive name (without _PNE) as arg for effect representation
+                            child_args.push(pne.name.clone());
                         }
-                        let symbol = format!("derived!{}", self.counter);
-                        self.counter += 1;
-                        let args: Vec<String> = vec![]; // placeholder
-                        self.functions.insert(key.clone(), (symbol.clone(), args.clone()));
-                        PrimitiveNumericExpression { name: symbol, args }
-                    } else if op == "-" || op == "/" {
-                        let parts: Vec<String> = list[1..].iter().map(|p| Self::sexpr_to_string(p)).collect();
-                        let key = format!("({} {})", op, parts.join(" "));
-                        if let Some((sym, args)) = self.functions.get(&key) {
-                            return PrimitiveNumericExpression { name: sym.clone(), args: args.clone() };
+                        if op == "+" || op == "*" {
+                            child_tokens.sort();
+                            child_args.sort();
                         }
-                        let symbol = format!("derived!{}", self.counter);
-                        self.counter += 1;
-                        let args: Vec<String> = vec![];
-                        self.functions.insert(key.clone(), (symbol.clone(), args.clone()));
-                        PrimitiveNumericExpression { name: symbol, args }
+                        let op_name = match op.as_str() {
+                            "+" => "derived!sum_PNE",
+                            "*" => "derived!product_PNE",
+                            "-" => "derived!difference_PNE",
+                            "/" => "derived!division_PNE",
+                            _ => "derived!op_PNE",
+                        };
+                        PrimitiveNumericExpression { name: op_name.to_string(), args: child_tokens }
                     } else {
                         // treat as primitive PNE, name(args...)
                         let args = list[1..].iter().filter_map(|x| match x { SExpr::Atom(a)=>Some(a.clone()), _=>None }).collect::<Vec<_>>();

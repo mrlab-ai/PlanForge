@@ -8,6 +8,8 @@ pub struct Variable {
 pub struct NumericVariable {
     pub name: String,
     pub initial: Option<i64>,
+    pub ntype: String,
+    pub axiom_layer: i32,
 }
 
 #[derive(Debug, Clone)]

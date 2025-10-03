@@ -2,6 +2,72 @@ use crate::translate::instantiate::GroundedOp;
 use crate::translate::pddl_ast::{Problem, Domain};
 use crate::translate::sas::SASTask;
 
+// Helper to ensure a numeric variable exists for an expression. This is a
+// module-level function so we can pass a mutable DerivedFunctionAdministrator
+// reference without closure capture problems.
+fn ensure_expr_var_visit(
+    sexpr: &crate::translate::pddl_parser::SExpr,
+    df_admin: &mut crate::translate::derived_function_admin::DerivedFunctionAdministrator,
+    num_index: &mut std::collections::HashMap<String, usize>,
+    numeric_list: &mut Vec<crate::translate::sas::NumericVariable>,
+    numeric_init_vec: &mut Vec<i64>,
+    instantiated_num_axioms: &mut Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
+    derived_axiom_index: &mut std::collections::HashMap<String, usize>,
+) -> Option<String> {
+    match sexpr {
+        crate::translate::pddl_parser::SExpr::List(inner) => {
+            if inner.is_empty() { return None; }
+            if let crate::translate::pddl_parser::SExpr::Atom(op) = &inner[0] {
+                if op == "+" || op == "-" || op == "*" || op == "/" {
+                    // Ask df_admin for canonical operator name and build parts
+                    let pne = df_admin.get_derived_function(&crate::translate::pddl_parser::SExpr::List(inner.clone()));
+                    let derived_name = if pne.args.is_empty() { pne.name.clone() } else { format!("{} {}", pne.name, pne.args.join(" ")) };
+                    let mut parts_numericparts: Vec<crate::translate::numeric_axiom_rules::NumericPart> = Vec::new();
+                    for p in &inner[1..] {
+                        match p {
+                            crate::translate::pddl_parser::SExpr::Atom(a) => {
+                                if let Ok(nv) = a.parse::<i64>() {
+                                    parts_numericparts.push(crate::translate::numeric_axiom_rules::NumericPart::Constant(crate::translate::numeric_axiom_rules::NumericConstant(nv)));
+                                } else {
+                                    let prim = crate::translate::numeric_axiom_rules::PrimitiveNumericExpression { name: a.clone(), args: vec![] };
+                                    parts_numericparts.push(crate::translate::numeric_axiom_rules::NumericPart::Primitive(prim));
+                                }
+                            }
+                            crate::translate::pddl_parser::SExpr::List(_) => {
+                                let child = df_admin.get_derived_function(p);
+                                let prim = crate::translate::numeric_axiom_rules::PrimitiveNumericExpression { name: child.name.clone(), args: child.args.clone() };
+                                parts_numericparts.push(crate::translate::numeric_axiom_rules::NumericPart::Primitive(prim));
+                            }
+                        }
+                    }
+                    if !num_index.contains_key(&derived_name) {
+                        let idx = numeric_list.len();
+                        num_index.insert(derived_name.clone(), idx);
+                        numeric_list.push(crate::translate::sas::NumericVariable { name: derived_name.clone(), initial: None, ntype: "D".to_string(), axiom_layer: -1 });
+                        numeric_init_vec.push(0);
+                                let effect = crate::translate::numeric_axiom_rules::PrimitiveNumericExpression { name: pne.name.clone(), args: pne.args.clone() };
+                        let ax = crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom { name: derived_name.clone(), op: Some(op.clone()), parts: parts_numericparts, effect };
+                        let ai = instantiated_num_axioms.len();
+                        instantiated_num_axioms.push(ax.clone());
+                        derived_axiom_index.insert(derived_name.clone(), ai);
+                    }
+                    return Some(derived_name);
+                }
+                // not an arithmetic op -> treat as PNE (list with fname and args)
+                if let crate::translate::pddl_parser::SExpr::Atom(fname) = &inner[0] {
+                    let args = inner[1..].iter().filter_map(|x| match x { crate::translate::pddl_parser::SExpr::Atom(a)=>Some(a.clone()), _=>None }).collect::<Vec<_>>();
+                    let key = format!("{}({})", fname, args.join(", "));
+                    return Some(key);
+                }
+                None
+            } else { None }
+        }
+        crate::translate::pddl_parser::SExpr::Atom(a) => {
+            if let Ok(v) = a.parse::<i64>() { Some(format!("const:{}", v)) } else { None }
+        }
+    }
+}
+
 /// Build boolean variables for each grounded atom occurring in init/pre/effects.
 pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_instantiated_num_axioms: &Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>, py_groups: Option<Vec<Vec<String>>>) -> SASTask {
     fn normalize_op(op: &str) -> String {
@@ -28,90 +94,26 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
     // Map of derived expression name -> index into instantiated_num_axioms
     let mut derived_axiom_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
+    // Derived function canonicalizer
+    let mut df_admin = crate::translate::derived_function_admin::DerivedFunctionAdministrator::new();
+
     // recursive helper: ensure a numeric variable exists for the expression; returns its canonical name
-    let ensure_expr_var = |sexpr: &crate::translate::pddl_parser::SExpr,
+    let mut df_admin = crate::translate::derived_function_admin::DerivedFunctionAdministrator::new();
+    let mut ensure_expr_var = |sexpr: &crate::translate::pddl_parser::SExpr,
                                num_index: &mut std::collections::HashMap<String, usize>,
                                numeric_list: &mut Vec<crate::translate::sas::NumericVariable>,
                                numeric_init_vec: &mut Vec<i64>,
                                instantiated_num_axioms: &mut Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
                                derived_axiom_index: &mut std::collections::HashMap<String, usize>|
                                -> Option<String> {
-        // inner recursive function
-        fn visit(sexpr: &crate::translate::pddl_parser::SExpr,
-                 num_index: &mut std::collections::HashMap<String, usize>,
-                 numeric_list: &mut Vec<crate::translate::sas::NumericVariable>,
-                 numeric_init_vec: &mut Vec<i64>,
-                 instantiated_num_axioms: &mut Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
-                 derived_axiom_index: &mut std::collections::HashMap<String, usize>) -> Option<String> {
-        match sexpr {
-            crate::translate::pddl_parser::SExpr::List(inner) => {
-                if inner.is_empty() { return None; }
-                if let crate::translate::pddl_parser::SExpr::Atom(op) = &inner[0] {
-                        if op == "+" || op == "-" || op == "*" || op == "/" {
-                            if inner.len() != 3 { return None; }
-                            // process operands recursively
-                            let mut parts_keys: Vec<String> = Vec::new();
-                            let mut parts_numericparts: Vec<crate::translate::numeric_axiom_rules::NumericPart> = Vec::new();
-                            for operand in &inner[1..] {
-                                match operand {
-                                    crate::translate::pddl_parser::SExpr::List(_) => {
-                                        if let Some(sub_name) = visit(operand, num_index, numeric_list, numeric_init_vec, instantiated_num_axioms, derived_axiom_index) {
-                                            let pne_name = sub_name.clone();
-                                            let pne = crate::translate::numeric_axiom_rules::PrimitiveNumericExpression { name: pne_name.clone(), args: vec![] };
-                                            parts_numericparts.push(crate::translate::numeric_axiom_rules::NumericPart::Primitive(pne));
-                                            parts_keys.push(pne_name);
-                                        } else { return None; }
-                                    }
-                                    crate::translate::pddl_parser::SExpr::Atom(atom) => {
-                                        if let Ok(nv) = atom.parse::<i64>() {
-                                            parts_numericparts.push(crate::translate::numeric_axiom_rules::NumericPart::Constant(crate::translate::numeric_axiom_rules::NumericConstant(nv)));
-                                            parts_keys.push(format!("const:{}", nv));
-                                        } else {
-                                            return None;
-                                        }
-                                    }
-                                }
-                            }
-                            // determine canonical key for commutative ops
-                            let mut key_elements = parts_keys.clone();
-                            if op == "+" || op == "*" {
-                                key_elements.sort();
-                            }
-                            let derived_name = format!("({} {})", op, key_elements.join(" "));
-                            if !num_index.contains_key(&derived_name) {
-                                let idx = numeric_list.len();
-                                num_index.insert(derived_name.clone(), idx);
-                                numeric_list.push(crate::translate::sas::NumericVariable { name: derived_name.clone(), initial: None });
-                                numeric_init_vec.push(0);
-                                let effect = crate::translate::numeric_axiom_rules::PrimitiveNumericExpression { name: derived_name.clone(), args: vec![] };
-                                let ax = crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom { name: derived_name.clone(), op: Some(op.clone()), parts: parts_numericparts, effect };
-                                let ai = instantiated_num_axioms.len();
-                                instantiated_num_axioms.push(ax.clone());
-                                derived_axiom_index.insert(derived_name.clone(), ai);
-                            }
-                            return Some(derived_name);
-                        }
-                        // not an arithmetic op -> treat as PNE (list with fname and args)
-                        if let crate::translate::pddl_parser::SExpr::Atom(fname) = &inner[0] {
-                            let args = inner[1..].iter().filter_map(|x| match x { crate::translate::pddl_parser::SExpr::Atom(a)=>Some(a.clone()), _=>None }).collect::<Vec<_>>();
-                            let key = format!("{}({})", fname, args.join(", "));
-                            return Some(key);
-                        }
-                        None
-                    } else { None }
-                }
-                crate::translate::pddl_parser::SExpr::Atom(a) => {
-                    // atom alone is either a constant or unsupported
-                    if let Ok(v) = a.parse::<i64>() { Some(format!("const:{}", v)) } else { None }
-                }
-            }
-        }
-        visit(sexpr, num_index, numeric_list, numeric_init_vec, instantiated_num_axioms, derived_axiom_index)
+        ensure_expr_var_visit(sexpr, &mut df_admin, num_index, numeric_list, numeric_init_vec, instantiated_num_axioms, derived_axiom_index)
     };
     // collect numeric inits and boolean init atoms
     let mut numeric_inits: Vec<(String, i64)> = Vec::new();
     // temporary set of grounded boolean atoms encountered
     let mut grounded_atoms: Vec<String> = Vec::new();
+    // set of function names declared in the domain so we can distinguish numeric inits
+    let func_names: std::collections::HashSet<String> = dom.functions.iter().map(|(n, _)| n.clone()).collect();
     for a in &prob.init {
         if let crate::translate::pddl_parser::SExpr::List(list) = a {
             if list.len() >= 3 {
@@ -123,8 +125,14 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
                                 let key = format!("{}({})", fname, arg_s);
                                 if let crate::translate::pddl_parser::SExpr::Atom(val) = &list[2] {
                                     if let Ok(n) = val.parse::<i64>() {
-                                            grounded_atoms.push(key.clone());
-                                            numeric_inits.push((key, n));
+                                            // If lhs is a numeric function declared in the domain, treat as numeric init
+                                            if func_names.contains(fname) {
+                                                numeric_inits.push((key, n));
+                                            } else {
+                                                // otherwise keep as a grounded boolean atom as before
+                                                grounded_atoms.push(key.clone());
+                                                numeric_inits.push((key, n));
+                                            }
                                         }
                                 }
                             }
@@ -225,7 +233,12 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
     let mut numeric_list: Vec<crate::translate::sas::NumericVariable> = Vec::new();
     let mut numeric_init_vec: Vec<i64> = Vec::new();
     for (n, v) in num_map.iter() {
-        numeric_list.push(crate::translate::sas::NumericVariable { name: n.clone(), initial: Some(*v) });
+        // heuristically classify numeric variable type: constants 'C', derived 'D' if expression or contains '+'/'-' or 'derived' patterns, regular 'R', instrumentation 'I'
+        let ntype = if n.contains("derived!") || n.contains('+') || n.contains('-') && n.contains('(') { "D".to_string() }
+                    else if n.starts_with("const:") { "C".to_string() }
+                    else if n == "cost" || n.ends_with("cost") { "R".to_string() }
+                    else { "R".to_string() };
+    numeric_list.push(crate::translate::sas::NumericVariable { name: n.clone(), initial: Some(*v), ntype, axiom_layer: -1 });
         numeric_init_vec.push(*v);
     }
 
@@ -462,8 +475,21 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
         }
     }
 
-    let (_num_axioms_by_layer, _max_layer, _num_axiom_map, _const_num_axioms) =
+    let (num_axioms_by_layer, _max_layer, _num_axiom_map, _const_num_axioms) =
         crate::translate::numeric_axiom_rules::handle_axioms(&instantiated_num_axioms);
+
+    // Propagate computed axiom layers back into numeric_list entries by matching axiom.name
+    let mut axname_to_layer: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
+    for (layer, axs) in &num_axioms_by_layer {
+        for ax in axs {
+            axname_to_layer.insert(ax.name.clone(), *layer);
+        }
+    }
+    for nv in &mut numeric_list {
+        if let Some(l) = axname_to_layer.get(&nv.name) {
+            nv.axiom_layer = *l;
+        }
+    }
 
     // We don't yet populate comparison axioms from other sources here; leave empty for now.
     SASTask { variables: vars, operators, numeric_variables: numeric_list, numeric_axioms, comparison_axioms: comp_axioms, numeric_init: numeric_init_vec, mutex_groups: mutex_groups_pairs }

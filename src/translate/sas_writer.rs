@@ -28,8 +28,8 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
     writeln!(f, "{}", task.numeric_variables.len())?;
     writeln!(f, "begin_numeric_variables")?;
     for nv in task.numeric_variables.iter() {
-        // Default to regular (R) with layer -1; print variable name
-        writeln!(f, "R -1 PNE {}", nv.name)?;
+        // nv.ntype should be one of D/C/R/I; axiom_layer may be -1
+        writeln!(f, "{} {} PNE {}", nv.ntype, nv.axiom_layer, nv.name)?;
     }
     writeln!(f, "end_numeric_variables")?;
 

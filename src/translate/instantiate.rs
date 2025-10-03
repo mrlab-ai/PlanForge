@@ -93,7 +93,7 @@ pub fn ground_with_numeric_axioms(domain: &Domain, problem: &Problem) -> (Vec<Gr
                         if let crate::translate::pddl_parser::SExpr::List(lhs_vec) = &list[1] {
                             // construct an SExpr::List to pass into df_admin
                             let lhs_sexpr = crate::translate::pddl_parser::SExpr::List(lhs_vec.clone());
-                            // get canonicalized PNE description
+                            // get canonicalized PNE description (derived! tokens)
                             let pne = df_admin.get_derived_function(&lhs_sexpr);
                             // parse rhs as integer constant if possible
                             if let crate::translate::pddl_parser::SExpr::Atom(rhs) = &list[2] {
