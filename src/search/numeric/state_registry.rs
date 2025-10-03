@@ -137,57 +137,9 @@ impl ConcreteState {
     }
 }
 
-/// Semantic state ID for hash-based state deduplication that follows FD's StateIDSemanticHash pattern
-#[derive(Clone)]
-struct SemanticStateID {
-    id: StateID,
-    // We store a hash of the state content for fast comparison
-    content_hash: u64,
-    // Store the number of bins for bounds checking
-    num_bins: usize,
-}
-
-impl SemanticStateID {
-    fn new(id: StateID, state_data: &[u64], num_bins: usize) -> Self {
-        // Hash the actual state content like FD's utils::hash_sequence
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        state_data[..num_bins].hash(&mut hasher);
-        let content_hash = hasher.finish();
-        
-        Self {
-            id,
-            content_hash,
-            num_bins,
-        }
-    }
-    
-    fn state_content_equal(&self, other: &Self, state_data_pool: &DataStorage) -> bool {
-        // Fast path: compare hashes first
-        if self.content_hash != other.content_hash {
-            return false;
-        }
-        
-        // Slow path: compare actual state data like FD's StateIDSemanticEqual
-        let lhs_data = &state_data_pool[self.id][..self.num_bins];
-        let rhs_data = &state_data_pool[other.id][..self.num_bins];
-        lhs_data == rhs_data
-    }
-}
-
-impl PartialEq for SemanticStateID {
-    fn eq(&self, other: &Self) -> bool {
-        self.content_hash == other.content_hash
-    }
-}
-
-impl Eq for SemanticStateID {}
-
-impl Hash for SemanticStateID {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Use the precomputed content hash for fast hashing
-        self.content_hash.hash(state);
-    }
-}
+// No external-key comparator like C++ unordered_set functors in Rust.
+// We use a bucketed map from content hash -> list of StateIDs, then compare
+// only within the bucket using the packed bins for semantic equality.
 
 /// Static counter for generating unique registry IDs
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -214,8 +166,8 @@ pub struct StateRegistry<'a> {
     numeric_constants: Vec<f64>,
     /// Mapping from numeric variable index to packed state index
     numeric_indices: Vec<i32>,
-    /// Set of registered states for duplicate detection using semantic equality (FD-style)
-    registered_states: HashMap<SemanticStateID, StateID>,
+    /// Buckets of registered states for duplicate detection (hash -> IDs)
+    registered_states: HashMap<u64, Vec<StateID>>,
     /// Per-state cost information storage
     cost_info: RefCell<PerStateInformation<Vec<f64>>>,
 }
@@ -300,24 +252,33 @@ impl<'a> StateRegistry<'a> {
     /// This method implements FD's insert_id_or_pop_state pattern using semantic state comparison.
     /// It checks if an equivalent state already exists by comparing state content (not memory location).
     fn insert_id_or_pop_state(&mut self) -> StateID {
+        debug_assert!(!self.state_data_pool.is_empty());
         let state_id = self.state_data_pool.len() - 1;
         let num_bins = self.global_state_packer.num_bins() as usize;
-        
-        // Create semantic state ID for the new state
-        let new_state_data = &self.state_data_pool[state_id];
-        let semantic_id = SemanticStateID::new(state_id, new_state_data, num_bins);
-        
-        // Check if an equivalent state already exists using semantic comparison
-        for (existing_semantic_id, &existing_id) in &self.registered_states {
-            if semantic_id.state_content_equal(existing_semantic_id, &self.state_data_pool) {
-                // Duplicate found, remove the new state from pool and return existing ID
-                self.state_data_pool.pop();
-                return existing_id;
+
+        // Compute stable hash of the packed bins for the new state.
+        let data = &self.state_data_pool[state_id];
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        data[..num_bins].hash(&mut hasher);
+        let key = hasher.finish();
+
+        // Probe bucket and compare within it for semantic equality
+        if let Some(bucket) = self.registered_states.get_mut(&key) {
+            for &existing_id in bucket.iter() {
+                if self.state_data_pool[existing_id][..num_bins] == data[..num_bins] {
+                    // Duplicate: pop newly pushed state and return existing ID
+                    self.state_data_pool.pop();
+                    return existing_id;
+                }
             }
+            // Unique within bucket; append
+            bucket.push(state_id);
+        } else {
+            // First entry for this hash
+            self.registered_states.insert(key, vec![state_id]);
         }
-        
-        // New unique state, register it and keep it
-        self.registered_states.insert(semantic_id, state_id);
+
+        // Unique state; keep and return new ID
         state_id
     }
 
@@ -478,13 +439,12 @@ impl<'a> StateRegistry<'a> {
         self.evaluate_axioms(&mut buffer, &mut numeric_values_copy)?;
 
         self.state_data_pool.push(buffer);
-        self.insert_id_or_pop_state();
+        let id = self.insert_id_or_pop_state();
 
-        let new_state = ConcreteState::new(self.state_data_pool.len() - 1);
+        let new_state = ConcreteState::new(id);
         
         // Handle cost information based on whether this is a new or existing state
-        let state_id = self.state_data_pool.len() - 1;
-        if state_id == self.registered_states.len() - 1 {
+        if id == self.state_data_pool.len() - 1 {
             // New state - store cost information
             if !_cost_variables.is_empty() {
                 self.set_cost_information(&new_state, _cost_variables);
@@ -1084,8 +1044,8 @@ mod tests {
         assert_eq!(successor1.get_id(), successor2.get_id(), 
                   "Generating the same successor twice should yield the same state ID");
 
-        // The registered_states set should not have grown from the second duplicate
-        assert_eq!(state_registry.registered_states.len(), 2, 
-                  "registered_states should contain exactly 2 states: initial + 1 successor");
+    // Ensure only two unique states exist (initial + 1 successor)
+    assert_eq!(state_registry.state_data_pool.len(), 2, 
+          "There should be exactly 2 unique states in the pool: initial + 1 successor");
     }
 }
