@@ -1,84 +1,138 @@
-## numeric_planneRS — TODOS (focused plan to finish the Python -> Rust translator port)
+# Python to Rust Translation Status — Fast Downward Numeric PDDL Translator
 
-Purpose
-- Provide a complete, faithful Rust port of the Fast Downward "translate" pipeline (numeric planning support) so the repository contains no runtime Python and generated SAS files are semantically and textually compatible with the original translator for regression tests.
+## Goal
+Port the Fast Downward `python/translate/` pipeline to Rust for numeric planning with perfect semantic parity. The final product should produce identical SAS+ files and require no Python runtime.
 
-This document records a step-by-step translation checklist, current differences (concise table), and the next actionable work items prioritized for parity.
+## Python Translation Pipeline Overview
 
-Tasks ordered by difficulty (easy → hard)
+### Main Flow (from `python/translate/translate.py`)
+1. **Parse PDDL** (`pddl_parser.open()`) → Parse domain and problem files
+2. **Add Global Constraints** (`task.add_global_constraints()`) → Handle global constraints
+3. **Normalize** (`normalize.normalize()`) → Normalize task representation
+4. **PDDL to SAS Conversion** (`pddl_to_sas()`) → Main translation pipeline:
+   - **Instantiate** (`instantiate.explore()`) → Ground actions and collect reachable facts/fluents
+   - **Build invariants** (`invariant_finder` + `fact_groups`) → Find invariants and group facts
+   - **Build dictionaries** (`strips_to_sas_dictionary()`) → Map STRIPS to SAS variables
+   - **Translate task** (`translate_task()`) → Convert to SAS format
+   - **Simplify** (`simplify.filter_unreachable_propositions()`) → Remove unreachable facts
+5. **Write output** → Generate `output.sas` file
 
-Easy (quick wins)
-- [x] Remove unused imports and variables (warnings) in `pddl_parser.rs`, `to_sas.rs`, `numeric_axiom_rules.rs`.
-- [x] Remove Python runtime call from CLI; keep Rust-only path.
-- [x] Add fish-shell run snippet to docs.
-- [ ] Remove `scripts/compute_groups.py` after parity is achieved (defer until final).
+## Implementation Status by Module
 
-Medium
-- [x] Port GroupCoverQueue and choose_groups semantics (partial-encoding) in `fact_groups.rs`.
-- [x] Implement lexicographic sort of groups and group contents to approximate Python repr ordering.
-- [ ] Align translation_key formatting fully with Python (negations, sentinels, exact string forms) — partial, continue.
-- [ ] Tighten variable and value ordering in `to_sas` to match Python’s sequence.
+| Python Module | Python Functionality | Rust Module | Implementation Status | Differences/Issues |
+|---|---|---|---|---|
+| **Core Pipeline** |
+| `translate.py` | Main pipeline orchestration, PDDL→SAS conversion | `bin/translator.rs` + `to_sas.rs` | 🟡 **Partial** | Missing normalization, simplified task building |
+| `pddl_parser/` | PDDL parsing (S-expressions) | `pddl_parser.rs` | ✅ **Complete** | Basic S-expr parsing works |
+| `pddl/` | PDDL AST classes | `pddl_ast.rs` | ✅ **Complete** | Domain/Problem/Action/Effect/Condition structures |
+| `sas_tasks.py` | SAS+ data structures | `sas.rs` + `sas_writer.rs` | ✅ **Complete** | SAS task representation and file writing |
+| **Instantiation & Grounding** |
+| `instantiate.py` | Action grounding, reachability analysis | `instantiate.rs` | 🟡 **Partial** | Basic grounding works, missing fluent analysis |
+| `build_model.py` | Prolog model building | *Not ported* | ❌ **Missing** | Uses external Prolog solver for reachability |
+| `normalize.py` | Task normalization | *Not ported* | ❌ **Missing** | Missing axiom normalization, goal simplification |
+| **Fact Grouping & Invariants** |
+| `invariant_finder.py` | Balance checking, invariant discovery | `invariant_finder.rs` | 🔴 **Stub** | Missing BalanceChecker, heavy actions, reachable_action_params |
+| `fact_groups.py` | Fact grouping, GroupCoverQueue | `fact_groups.rs` | 🔴 **Simplified** | Basic predicate grouping only, missing GroupCoverQueue |
+| `invariants.py` | Invariant data structures | `invariants.rs` | ✅ **Complete** | Basic invariant representation |
+| **Numeric Planning** |
+| `numeric_axiom_rules.py` | Numeric axiom analysis, layering | `numeric_axiom_rules.rs` | 🟡 **Partial** | Missing equivalence detection, constant analysis |
+| `derived_function_admin.py` | Derived function canonicalization | `derived_function_admin.rs` | 🔴 **Stub** | Basic placeholder naming only |
+| **Constraint & Mutex Handling** |
+| `constraints.py` | Constraint enumeration | `constraints.rs` | ✅ **Complete** | Constraint generation works |
+| `axiom_rules.py` | Axiom handling | *Not ported* | ❌ **Missing** | Axiom layer computation, axiom rules |
+| **Simplification** |
+| `simplify.py` | Unreachable fact filtering | *Not ported* | ❌ **Missing** | DTG-based simplification |
+| **Utilities** |
+| `tools.py`, `timers.py`, `options.py` | Utilities | *Various* | 🟡 **Partial** | Basic timing, missing memory tracking |
 
-Hard (priority for parity)
-- [ ] Port `invariant_finder.py` semantics:
-   - [ ] BalanceChecker.add_inequality_preconds (with reachable_action_params), heavy-action duplication.
-   - [ ] check_balance/operator_unbalanced and candidate refinement with enqueue logic.
-   - [ ] useful_groups: ensure crowding detection and parameter extraction identical to Python.
-- [ ] Numeric axiom instantiation parity:
-   - [ ] Full instantiation for arithmetic expressions and PNEs; stable names/order equal to Python.
-   - [ ] Comparison axioms packing and variable creation ordering identical to Python.
-- [ ] Derived-function canonicalization and integration.
+## Critical Missing Components (High Priority)
 
-Acceptance checkpoints
-- After each hard task, run the translator and compare against `output.sas.reference`; record deltas and iterate.
-- Final: byte-for-byte parity for provided references (ordering accepted as equal only if required by tests; minor ordering differences are acceptable during porting).
+### 1. **Invariant Finding & Fact Grouping**
+**Python:** `invariant_finder.py` + `fact_groups.py`
+- `BalanceChecker` with `add_inequality_preconds()` 
+- Heavy action duplication for universal effects
+- `GroupCoverQueue` for optimal fact group selection
+- Translation key generation with proper mutex handling
 
-Mapping: Python files → Rust work items
-- `python/translate/invariant_finder.py` -> `src/translate/invariant_finder.rs` (implement fully). HIGH
-- `python/translate/fact_groups.py` -> `src/translate/fact_groups.rs` (match grouping + translation_key semantics). HIGH
-- `python/translate/invariants.py` -> `src/translate/invariants.rs` (verify port). MEDIUM
-- `python/translate/constraints.py` -> `src/translate/constraints.rs` (verify port). MEDIUM
-- `python/translate/numeric_axiom_rules.py` -> `src/translate/numeric_axiom_rules.rs` (finish instantiate flow). HIGH
-- `python/translate/derived_function_admin.py` -> `src/translate/derived_function_admin.rs` (implement canonicalization). HIGH
+**Rust Status:** Basic predicate-based grouping only
+**Impact:** Different variable encoding → completely different SAS+ structure
 
-Current differences — concise table
-| Area | Python source (behavior) | Rust status | Difference / Effect | Priority |
-|---|---:|---|---|---:|
-| Invariant finding & grouping | `invariant_finder.py` (BalanceChecker, find_invariants, useful_groups) | placeholder deterministic grouping in `src/translate/invariant_finder.rs` | Groups differ; packing into FDR vars does not match Python translation_key; causes many SAS differences | High |
-| Fact-group instantiation | `fact_groups.py` (instantiate + choose_groups + translation_key) | simplified `src/translate/fact_groups.rs` & `to_sas` usage | `translation_key` formatting and group selection (choose_groups/GroupCoverQueue semantics) differ => different mutex vars and value lists | High |
-| Invariants helpers | `invariants.py` | `src/translate/invariants.rs` (ported) | Mostly ported; verify edge cases (possible_matches, instantiate mappings) and deterministic ordering | Medium |
-| Constraint system | `constraints.py` | `src/translate/constraints.rs` (ported) | Port completed; verify identical enumeration order/behavior and any corner-case differences in combinatorial enumeration | Medium |
-| Numeric axiom instantiation | `numeric_axiom_rules.py` & `numeric_axiom` classes | `src/translate/numeric_axiom_rules.rs` partially ported; instantiate semantics incomplete | Missing nested instantiation/parameter mapping; names/order of generated axioms may differ | High |
-| Derived-function canonicalization | `derived_function_admin.py` | `src/translate/derived_function_admin.rs` (stub) | Missing full canonicalization and derived-name generation -> different derived vars and numeric init handling | High |
-| Comparison-axiom variables & packing | comparison axiom creation code | partly wired in `to_sas` | Value ordering and sentinel value (`<none of those>`) semantics must match Python exactly | High |
-| CLI Python helper usage | `scripts/compute_groups.py` (temporary) | translator optionally calls Python helper | Present; must be removed after faithful Rust port | Medium (remove) |
+### 2. **Numeric Axiom Analysis**
+**Python:** `numeric_axiom_rules.py`
+- `handle_axioms()`: constant detection, layer computation, equivalence mapping
+- `identify_constants()`, `compute_axiom_layers()`, `identify_equivalent_axioms()`
 
-Acceptance criteria (concrete)
-- `get_groups(domain, problem)` implemented in Rust returns the same translation_key as Python for representative test inputs.
-- After replacing Python groups, `output.sas` for provided test domains must be byte-for-byte identical to `output.sas.reference` (or a small, explained delta that we iterate on until parity).
-- No runtime Python required by the repository.
+**Rust Status:** Basic axiom creation, missing analysis
+**Impact:** Incorrect numeric variable types, missing constant folding
 
-Immediate next steps (ordered by difficulty)
-1) Medium: Align translation_key formatting and sorting with Python precisely (fact_groups.rs + to_sas.rs), then run/diff.
-2) Hard: Implement BalanceChecker.add_inequality_preconds + heavy-action handling; port minimal operator_unbalanced to refine two-part invariants, then run/diff.
-3) Hard: Extend invariant refinement to multi-part cases and finalize enqueue rules; run/diff.
-4) Hard: Numeric axioms instantiation parity; run/diff.
+### 3. **Task Normalization**
+**Python:** `normalize.py`
+- Axiom normalization, goal simplification
+- Function symbol management
 
-Note about running commands in fish shell
-- When running the translator in fish, use the following pattern to preserve the exit code handling used in earlier notes:
+**Rust Status:** Not implemented
+**Impact:** May miss optimizations, incorrect axiom handling
 
-```fish
-cd /home/markus/code/sas_parser; cargo run --bin translator -- translate pddl/domain.pddl pddl/pfile1.pddl > /dev/null; echo exit:$status; diff -u output.sas output.sas.reference | sed -n '1,120p' || true
-```
+### 4. **Derived Function Canonicalization**
+**Python:** `derived_function_admin.py` (implied from usage)
+- Canonical naming for derived expressions
+- Parameter management for arithmetic expressions
 
-Ordering note
-- Group ordering and the relative order of variables/values may differ between the Rust port and the original Python implementation during porting. This is acceptable while we iteratively converge on semantics; the final goal is to match translation_key string contents and ordering where tests require it.
+**Rust Status:** Basic stub
+**Impact:** Different derived variable names → numeric variable mismatch
 
-Checkpoint (short):
-- Implemented GroupCoverQueue semantics in `src/translate/fact_groups.rs` and removed the runtime call to the Python helper in `src/bin/translator.rs`. Built and ran the translator; differences remain concentrated in packing/translation_key and will be the focus of the next iteration.
+### 5. **Simplification**
+**Python:** `simplify.py`
+- `filter_unreachable_propositions()` using DTG analysis
+- Removes unreachable facts after encoding
 
-Progress cadence & verification
-- After I implement each of the high-priority ports (invariant_finder, fact_groups, numeric instantiation, derived functions), I'll run the build and one regression check. If a change edits more than 3 files in a burst, I'll pause and post a compact checkpoint.
+**Rust Status:** Not implemented
+**Impact:** May include spurious variables, larger SAS+ files
 
-Notes
-- I inferred some ordering and small implementation choices from repository conventions (e.g., deterministic ordering using sorted keys and stable stringify of atoms). If you prefer a different deterministic tie-breaker, tell me and I will adopt it.
+## Implementation Priorities
+
+### Phase 1: Core Translation Pipeline
+1. **Fix fact grouping** - Implement proper `GroupCoverQueue` and invariant-based grouping
+2. **Add task normalization** - Port essential normalization steps
+3. **Improve numeric axiom analysis** - Complete constant detection and layering
+
+### Phase 2: Advanced Features  
+4. **Implement simplification** - Port DTG-based unreachable fact removal
+5. **Add derived function canonicalization** - Proper derived variable naming
+6. **Complete axiom handling** - Port axiom layer computation
+
+### Phase 3: Polish & Optimization
+7. **Add missing utilities** - Memory tracking, advanced timing
+8. **Performance optimization** - Optimize hot paths
+9. **Testing & validation** - Comprehensive test suite
+
+## Key Technical Differences
+
+### Translation Key Generation
+**Python:** Uses invariant-based grouping with `BalanceChecker` to find optimal fact groups
+**Rust:** Simple predicate-based grouping
+**Effect:** Different SAS+ variable structure
+
+### Numeric Variable Handling  
+**Python:** Sophisticated axiom analysis with constant folding and equivalence detection
+**Rust:** Basic axiom creation without analysis
+**Effect:** Missing optimizations, different variable counts
+
+### Comparison Axioms
+**Python:** Integrated with main translation pipeline, proper variable indexing
+**Rust:** Basic implementation, may have indexing issues
+**Effect:** Incorrect comparison variable references
+
+## Testing Strategy
+
+1. **Unit tests** for each ported module
+2. **Integration tests** comparing SAS+ output
+3. **Regression tests** against known working examples
+4. **Performance benchmarks** vs Python implementation
+
+## Success Criteria
+
+- [ ] Produces identical SAS+ files for test domains
+- [ ] No Python runtime dependency  
+- [ ] Passes all regression tests
+- [ ] Performance comparable to or better than Python
