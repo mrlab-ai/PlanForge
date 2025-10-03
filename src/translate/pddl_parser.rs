@@ -1,7 +1,7 @@
 use nom::branch::alt;
-use nom::bytes::complete::{is_not, take_while1, take_while};
-use nom::character::complete::{char, multispace1, one_of};
-use nom::combinator::{map, opt, recognize};
+use nom::bytes::complete::{take_while1, take_while};
+use nom::character::complete::{char, multispace1};
+use nom::combinator::{map, recognize};
 use nom::error::VerboseError;
 use nom::multi::{many0, many1};
 use nom::sequence::{delimited, preceded};

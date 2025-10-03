@@ -1,9 +1,9 @@
 use crate::translate::instantiate::GroundedOp;
-use crate::translate::pddl_ast::{Problem};
+use crate::translate::pddl_ast::{Problem, Domain};
 use crate::translate::sas::SASTask;
 
 /// Build boolean variables for each grounded atom occurring in init/pre/effects.
-pub fn build_sas(ops: &[GroundedOp], prob: &Problem, external_instantiated_num_axioms: &Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>, py_groups: Option<Vec<Vec<String>>>) -> SASTask {
+pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_instantiated_num_axioms: &Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>, py_groups: Option<Vec<Vec<String>>>) -> SASTask {
     fn normalize_op(op: &str) -> String {
         match op {
             "=" => "eq".to_string(),
@@ -175,36 +175,33 @@ pub fn build_sas(ops: &[GroundedOp], prob: &Problem, external_instantiated_num_a
     }
 
     // Compute fact groups: prefer externally provided Python groups for faithful semantics,
-    // otherwise fall back to the simplified Rust grouping implementation.
+    // otherwise use the Rust port of invariant-based grouping.
     let translation_key: Vec<Vec<String>> = if let Some(pg) = py_groups {
         pg
     } else {
-        let (_groups, _mutex_groups, tk) = crate::translate::fact_groups::compute_groups_from_atoms(&grounded_atoms);
+        let (_chosen_groups, _mutex_groups, tk) = crate::translate::fact_groups::compute_groups(dom, prob, &grounded_atoms, None);
         tk
     };
     // Build variables from translation_key
     for (var_no, group_values) in translation_key.iter().enumerate() {
         let mut value_names: Vec<String> = Vec::new();
-        // positive atoms first
         for v in group_values {
-            value_names.push(format!("Atom {}", v));
-        }
-        // append negation or <none of those>
-        if group_values.len() == 1 {
-            // binary variable: add NegatedAtom <atom>
-            value_names.push(format!("NegatedAtom {}", group_values[0]));
-        } else {
-            value_names.push("<none of those>".to_string());
+            if v.starts_with("<") || v.starts_with("NegatedAtom ") || v.starts_with("not ") {
+                // sentinel or comparison token: keep as-is
+                value_names.push(v.clone());
+            } else {
+                value_names.push(format!("Atom {}", v));
+            }
         }
         vars.push(crate::translate::sas::Variable { value_names: value_names.clone() });
         // map each positive atom to (var, val)
         for (val_no, val) in group_values.iter().enumerate() {
-            atom_to_fdr.insert(val.clone(), (var_no, val_no));
+            if !val.starts_with("<") && !val.starts_with("NegatedAtom ") && !val.starts_with("not ") {
+                atom_to_fdr.insert(val.clone(), (var_no, val_no));
+            }
         }
     }
-    // First pass: collect numeric effect hints already done earlier in grounded_atoms collection
-    let mut numeric_vars: Vec<(String, i64)> = Vec::new();
-    // (numeric_vars were already populated above into numeric_vars by the previous pass)
+    // numeric effect hints already collected above
 
     // fold numeric vars into NumericVariable structs; prefer init values from problem init, otherwise use effect values
     let mut num_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();

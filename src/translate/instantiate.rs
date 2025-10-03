@@ -1,4 +1,4 @@
-use crate::translate::pddl_ast::{Action, Domain, Problem, Condition, Effect};
+use crate::translate::pddl_ast::{Domain, Problem, Condition, Effect};
 use crate::translate::derived_function_admin::DerivedFunctionAdministrator;
 
 #[derive(Debug, Clone)]

@@ -43,12 +43,35 @@ impl BalanceChecker {
     }
 }
 
+// Collect fluent predicates: those that occur in add/del effects of any action
+fn get_fluent_predicates(domain: &Domain) -> HashSet<String> {
+    let mut fluents: HashSet<String> = HashSet::new();
+    for act in &domain.actions {
+        if let Some(eff_s) = &act.effect {
+            let eff = crate::translate::pddl_ast::sexpr_to_effect(eff_s);
+            fn collect(eff: &crate::translate::pddl_ast::Effect, fluents: &mut HashSet<String>) {
+                match eff {
+                    crate::translate::pddl_ast::Effect::Add(name, _)
+                    | crate::translate::pddl_ast::Effect::Del(name, _) => { fluents.insert(name.clone()); }
+                    crate::translate::pddl_ast::Effect::And(list) => {
+                        for sub in list { collect(sub, fluents); }
+                    }
+                    _ => {}
+                }
+            }
+            collect(&eff, &mut fluents);
+        }
+    }
+    fluents
+}
+
 // Build initial invariants analogous to python: for each fluent predicate produce
 // InvariantPart for omitted_pos in [-1] + all positions and wrap into Invariant
 fn get_initial_invariants(domain: &Domain) -> Vec<Invariant> {
     let mut out: Vec<Invariant> = Vec::new();
-    // Determine fluent predicates by looking at domain predicates (we conservatively use all)
+    let fluent_names = get_fluent_predicates(domain);
     for (pred, params) in &domain.predicates {
+        if !fluent_names.contains(pred) { continue; }
         let arity = params.len();
         let all_args: Vec<usize> = (0..arity).collect();
         let mut omitted_positions: Vec<i32> = vec![-1];
@@ -60,6 +83,26 @@ fn get_initial_invariants(domain: &Domain) -> Vec<Invariant> {
         }
     }
     out
+}
+
+// Generate unique variable names for an invariant relative to an action's parameters
+fn find_unique_variables(action: &crate::translate::pddl_ast::Action, invariant: &Invariant) -> Vec<String> {
+    let mut params: HashSet<String> = HashSet::new();
+    for (p, _t) in &action.parameters { params.insert(p.clone()); }
+    // also collect any names in the effect SExpr if possible (conservative: none)
+    let mut inv_vars: Vec<String> = Vec::new();
+    let mut counter: usize = 0;
+    for _ in 0..invariant.parts[0].arity() {
+        loop {
+            let candidate = format!("?v{}", counter);
+            counter += 1;
+            if !params.contains(&candidate) {
+                inv_vars.push(candidate);
+                break;
+            }
+        }
+    }
+    inv_vars
 }
 
 pub fn get_groups(domain: &Domain, problem: &Problem) -> Vec<Vec<String>> {
@@ -80,10 +123,64 @@ pub fn get_groups(domain: &Domain, problem: &Problem) -> Vec<Vec<String>> {
     let mut found: Vec<Invariant> = Vec::new();
     while let Some(candidate) = candidates.pop_front() {
         if start.elapsed().as_secs() > max_time_secs { break; }
-        // simplified balance check: check whether candidate predicates map to any add actions and accept
-        // full python logic is complex; for progress we use a conservative check that accepts all candidates
-        // that are not trivially invalid. Here we simply accept the candidate and add to found.
-        found.push(candidate);
+        // perform a conservative 'operator_too_heavy' check: if any action can add two
+        // facts from the invariant such that constraints allow them simultaneously,
+        // reject the candidate.
+        let mut reject = false;
+        for act in &domain.actions {
+            // parse effect SExpr into structured Effect
+            if let Some(eff_s) = &act.effect {
+                let eff = crate::translate::pddl_ast::sexpr_to_effect(eff_s);
+                // collect add effects whose predicate is part of the candidate
+                let mut add_effects: Vec<(String, Vec<String>)> = Vec::new();
+                match eff {
+                    crate::translate::pddl_ast::Effect::Add(ref name, ref args) => {
+                        if candidate.predicates.contains(name) {
+                            add_effects.push((name.clone(), args.clone()));
+                        }
+                    }
+                    crate::translate::pddl_ast::Effect::And(ref vec_eff) => {
+                        for sub in vec_eff {
+                            if let crate::translate::pddl_ast::Effect::Add(ref name, ref args) = sub {
+                                if candidate.predicates.contains(name) {
+                                    add_effects.push((name.clone(), args.clone()));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                if add_effects.len() > 1 {
+                    // for each pair, build a constraint system and test solvability
+                    for i in 0..add_effects.len() {
+                        for j in (i+1)..add_effects.len() {
+                            let (ref n1, ref a1) = add_effects[i];
+                            let (ref n2, ref a2) = add_effects[j];
+                            // build peffect as Condition::Atom
+                            let c1 = Condition::Atom(n1.clone(), a1.clone());
+                            let c2 = Condition::Atom(n2.clone(), a2.clone());
+                            let mut system = crate::translate::constraints::ConstraintSystem::new();
+                            // ensure inequality and covers
+                            crate::translate::invariants::ensure_inequality(&mut system, &c1, &c2);
+                            // inv_vars: generate unique variables for invariant arity
+                            let inv_vars = find_unique_variables(act, &candidate);
+                            crate::translate::invariants::ensure_cover(&mut system, &c1, &candidate, &inv_vars);
+                            crate::translate::invariants::ensure_cover(&mut system, &c2, &candidate, &inv_vars);
+                            // Note: ensure_conjunction_sat is a simplified no-op currently
+                            if system.is_solvable() {
+                                reject = true;
+                                break;
+                            }
+                        }
+                        if reject { break; }
+                    }
+                }
+            }
+            if reject { break; }
+        }
+        if !reject {
+            found.push(candidate);
+        }
     }
 
     // Build useful_groups: map each found invariant to instantiated groups present in problem.init
@@ -145,4 +242,12 @@ pub fn get_groups(domain: &Domain, problem: &Problem) -> Vec<Vec<String>> {
     }
 
     groups_out
+}
+
+// Stub matching Python API: compute reachable action params for the task.
+// Full implementation would analyze the task to determine which parameter
+// tuples are reachable for each action. For now return None to indicate
+// we don't provide additional inequality preconditions.
+pub fn get_reachable_action_params(_domain: &Domain) -> Option<HashMap<String, Vec<Vec<String>>>> {
+    None
 }

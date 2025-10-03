@@ -34,6 +34,18 @@ impl InvariantPart {
         }
         crate::translate::constraints::Assignment::new(equalities)
     }
+    
+    // Placeholder for possible_matches: returns empty list until full mapping
+    // logic is implemented. Signature mirrors Python: given another literal,
+    // produce InvariantPart candidates that would match the other literal.
+    pub fn possible_matches(&self, _own_literal: &crate::translate::pddl_ast::Condition, _other_literal: &crate::translate::pddl_ast::Condition) -> Vec<InvariantPart> {
+        Vec::new()
+    }
+
+    // Rough equality check used in some refinement heuristics: compare parameters
+    pub fn matches(&self, other: &InvariantPart, own_literal: &crate::translate::pddl_ast::Condition, other_literal: &crate::translate::pddl_ast::Condition) -> bool {
+        self.get_parameters(own_literal) == other.get_parameters(other_literal)
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -143,7 +143,7 @@ pub fn identify_constants(axioms: &[InstantiatedNumericAxiom], axiom_by_pne: &Ha
 }
 
 /// Compute axiom layers (dependency depth), similar to compute_axiom_layers in Python.
-pub fn compute_axiom_layers(axioms: &[InstantiatedNumericAxiom], constant_axioms: &[InstantiatedNumericAxiom], axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>) -> (HashMap<i32, Vec<InstantiatedNumericAxiom>>, i32) {
+pub fn compute_axiom_layers(axioms: &[InstantiatedNumericAxiom], constant_axioms: &[InstantiatedNumericAxiom], _axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>) -> (HashMap<i32, Vec<InstantiatedNumericAxiom>>, i32) {
     const CONSTANT_OR_NO_AXIOM: i32 = -1;
     const UNKNOWN_LAYER: i32 = -2;
 
@@ -221,7 +221,7 @@ pub fn compute_axiom_layers(axioms: &[InstantiatedNumericAxiom], constant_axioms
 }
 
 /// Identify equivalent axioms within each layer.
-pub fn identify_equivalent_axioms(axioms_by_layer: &HashMap<i32, Vec<InstantiatedNumericAxiom>>, axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>) -> HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom> {
+pub fn identify_equivalent_axioms(axioms_by_layer: &HashMap<i32, Vec<InstantiatedNumericAxiom>>, _axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>) -> HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom> {
     let mut axiom_map: HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom> = HashMap::new();
     for (_layer, axioms) in axioms_by_layer {
         let mut key_to_unique: HashMap<(Option<String>, Vec<PrimitiveNumericExpression>), InstantiatedNumericAxiom> = HashMap::new();
