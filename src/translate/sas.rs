@@ -33,6 +33,8 @@ pub struct SASTask {
     pub comparison_axioms: Vec<CompareAxiom>,
     // initial values for numeric variables
     pub numeric_init: Vec<i64>,
+    // mutex groups over propositional variables as pairs (var, val)
+    pub mutex_groups: Vec<Vec<(usize, usize)>>,
 }
 
 #[derive(Debug, Clone)]

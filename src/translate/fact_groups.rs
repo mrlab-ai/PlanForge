@@ -161,13 +161,15 @@ pub fn choose_groups(groups: Vec<Vec<String>>, _domain: &crate::translate::pddl_
 
 pub fn build_translation_key(groups: &Vec<Vec<String>>) -> Vec<Vec<String>> {
     groups.iter().map(|group| {
-        let mut key = group.clone();
+        // For multi-valued groups we return exactly the positive atom strings
+        // (matching the reference SAS output). For singleton groups, return
+        // the positive atom followed by its NegatedAtom counterpart.
         if group.len() == 1 {
-            key.push(format!("{}", format!("NegatedAtom {}", group[0])));
+            vec![group[0].clone(), format!("NegatedAtom {}", group[0])]
         } else {
-            key.push("<none of those>".to_string());
+            let key = group.clone();
+            key
         }
-        key
     }).collect()
 }
 
@@ -212,9 +214,100 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
     // instantiate groups using atoms set
     let reachable: HashSet<String> = atoms.iter().cloned().collect();
     let instantiated = instantiate_groups(&groups, domain, problem, &reachable);
-    let sorted = sort_groups(instantiated.clone());
+    // Add a fallback heuristic: group grounded atoms by their first argument (object-centric)
+    // but only for predicates defined in the domain (exclude numeric functions).
+    let mut augmented = instantiated.clone();
+    // predicate -> index map to enforce domain predicate ordering when sorting
+    let mut pred_index: HashMap<String, usize> = HashMap::new();
+    for (i, (pname, _)) in domain.predicates.iter().enumerate() {
+        pred_index.insert(pname.clone(), i);
+    }
+    let func_names: HashSet<String> = domain.functions.iter().map(|(n, _)| n.clone()).collect();
+    // build map first_arg -> Vec<atom> but only for atoms whose predicate is in domain.predicates
+    let mut by_first: HashMap<String, Vec<String>> = HashMap::new();
+    for a in atoms {
+        if let Some(open) = a.find('(') {
+            if let Some(close) = a.rfind(')') {
+                let pred = a[..open].trim().to_string();
+                if func_names.contains(&pred) { continue; }
+                if !pred_index.contains_key(&pred) { continue; }
+                let args = &a[open+1..close];
+                let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
+                if !parts.is_empty() {
+                    let first = parts[0].to_string();
+                    by_first.entry(first).or_default().push(a.clone());
+                }
+            }
+        }
+    }
+    // incorporate first-arg groups if they look multi-valued and are not duplicates
+    for (_first, group) in by_first.into_iter() {
+        if group.len() <= 1 { continue; }
+        // create deduped vector
+        let mut gset: HashSet<String> = group.into_iter().collect();
+        let mut gvec: Vec<String> = gset.drain().collect();
+        // sort by predicate order first (domain-defined), then lexicographically
+        gvec.sort_by(|a, b| {
+            let a_pred = a.split('(').next().unwrap_or("").to_string();
+            let b_pred = b.split('(').next().unwrap_or("").to_string();
+            let ai = pred_index.get(&a_pred).cloned().unwrap_or(usize::MAX);
+            let bi = pred_index.get(&b_pred).cloned().unwrap_or(usize::MAX);
+            if ai != bi { return ai.cmp(&bi); }
+            a.cmp(b)
+        });
+        // check if already present (by equality of sets)
+        let mut exists = false;
+        for ex in &augmented {
+            let exset: HashSet<String> = ex.iter().cloned().collect();
+            let gset2: HashSet<String> = gvec.iter().cloned().collect();
+            if exset == gset2 { exists = true; break; }
+        }
+        if !exists {
+            augmented.push(gvec);
+        }
+    }
+    // now sort groups: prefer groups ordered by the first object's position in the problem
+    // (so item1 groups come before item2, etc.), then fall back to lexicographic group comparison.
+    let mut object_index: HashMap<String, usize> = HashMap::new();
+    for (i, (name, _tp)) in problem.objects.iter().enumerate() {
+        object_index.insert(name.clone(), i);
+    }
+    let mut groups_with_key: Vec<(Option<usize>, Vec<String>)> = Vec::new();
+    for mut g in augmented.into_iter() {
+        g.sort();
+        // extract the first argument of the first atom if possible
+        let mut key: Option<usize> = None;
+        if let Some(first_atom) = g.get(0) {
+            if let Some(open) = first_atom.find('(') {
+                if let Some(close) = first_atom.rfind(')') {
+                    let args = &first_atom[open+1..close];
+                    let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
+                    if !parts.is_empty() {
+                        if let Some(&idx) = object_index.get(parts[0]) { key = Some(idx); }
+                    }
+                }
+            }
+        }
+        groups_with_key.push((key, g));
+    }
+    groups_with_key.sort_by(|(ka, a), (kb, b)| {
+        match (ka, kb) {
+            (Some(ai), Some(bi)) => {
+                if ai != bi { return ai.cmp(bi); }
+            }
+            (Some(_), None) => return std::cmp::Ordering::Less,
+            (None, Some(_)) => return std::cmp::Ordering::Greater,
+            (None, None) => {}
+        }
+        // fall back to lexicographic compare of the group contents
+        a.cmp(b)
+    });
+    let sorted: Vec<Vec<String>> = groups_with_key.into_iter().map(|(_k,g)| g).collect();
     let mutex_groups = collect_all_mutex_groups(&sorted, &reachable);
     let chosen = choose_groups(sorted.clone(), domain, problem, &reachable, true);
-    let tk = build_translation_key(&chosen);
-    (chosen, mutex_groups, tk)
+    // normalize ordering inside each chosen group: lexicographic sort of atom strings
+    let mut chosen_sorted = chosen.clone();
+    for group in &mut chosen_sorted { group.sort(); }
+    let tk = build_translation_key(&chosen_sorted);
+    (chosen_sorted, mutex_groups, tk)
 }

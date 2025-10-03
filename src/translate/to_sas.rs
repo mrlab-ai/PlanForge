@@ -176,11 +176,10 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
 
     // Compute fact groups: prefer externally provided Python groups for faithful semantics,
     // otherwise use the Rust port of invariant-based grouping.
-    let translation_key: Vec<Vec<String>> = if let Some(pg) = py_groups {
-        pg
+    let (chosen_groups, _mutex_groups, translation_key) = if let Some(pg) = py_groups {
+        (Vec::new(), Vec::new(), pg)
     } else {
-        let (_chosen_groups, _mutex_groups, tk) = crate::translate::fact_groups::compute_groups(dom, prob, &grounded_atoms, None);
-        tk
+        crate::translate::fact_groups::compute_groups(dom, prob, &grounded_atoms, None)
     };
     // Build variables from translation_key
     for (var_no, group_values) in translation_key.iter().enumerate() {
@@ -199,6 +198,16 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
             if !val.starts_with("<") && !val.starts_with("NegatedAtom ") && !val.starts_with("not ") {
                 atom_to_fdr.insert(val.clone(), (var_no, val_no));
             }
+        }
+    }
+    // Build mutex groups from chosen_groups: each group is a list of facts (var,val)
+    let mut mutex_groups_pairs: Vec<Vec<(usize, usize)>> = Vec::new();
+    if !chosen_groups.is_empty() {
+        for group in chosen_groups {
+            // translate each atom string to (var,val)
+            let mg: Vec<(usize, usize)> = group.into_iter().filter_map(|atom| atom_to_fdr.get(&atom).cloned()).collect();
+            // keep only groups with at least two facts
+            if mg.len() > 1 { mutex_groups_pairs.push(mg); }
         }
     }
     // numeric effect hints already collected above
@@ -457,5 +466,5 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
         crate::translate::numeric_axiom_rules::handle_axioms(&instantiated_num_axioms);
 
     // We don't yet populate comparison axioms from other sources here; leave empty for now.
-    SASTask { variables: vars, operators, numeric_variables: numeric_list, numeric_axioms, comparison_axioms: comp_axioms, numeric_init: numeric_init_vec }
+    SASTask { variables: vars, operators, numeric_variables: numeric_list, numeric_axioms, comparison_axioms: comp_axioms, numeric_init: numeric_init_vec, mutex_groups: mutex_groups_pairs }
 }

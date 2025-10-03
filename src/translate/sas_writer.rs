@@ -9,7 +9,8 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
     writeln!(f, "4")?; // match python/translate/sas_tasks.SAS_FILE_VERSION
     writeln!(f, "end_version")?;
     writeln!(f, "begin_metric")?;
-    writeln!(f, "0")?; // metric placeholder
+    // Use a minimization metric placeholder. The numeric parser expects '< N'.
+    writeln!(f, "< 0")?;
     writeln!(f, "end_metric")?;
     // Emit full begin_variable blocks for each variable. We don't yet compute axiom layers here so use -1.
     writeln!(f, "{}", task.variables.len())?;
@@ -23,13 +24,23 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
         }
         writeln!(f, "end_variable")?;
     }
-    writeln!(f, "# numeric variables: {}", task.numeric_variables.len())?;
-    for (i, nv) in task.numeric_variables.iter().enumerate() {
-        writeln!(f, "num {} {} {}", i, nv.name, nv.initial.map(|v| v.to_string()).unwrap_or_else(|| "none".to_string()))?;
+    // Numeric variables section (minimal, parseable by numeric_parser)
+    writeln!(f, "{}", task.numeric_variables.len())?;
+    writeln!(f, "begin_numeric_variables")?;
+    for nv in task.numeric_variables.iter() {
+        // Default to regular (R) with layer -1; print variable name
+        writeln!(f, "R -1 PNE {}", nv.name)?;
     }
-    writeln!(f, "# numeric init: {}", task.numeric_init.len())?;
-    for (i, v) in task.numeric_init.iter().enumerate() {
-        writeln!(f, "numinit {} {}", i, v)?;
+    writeln!(f, "end_numeric_variables")?;
+
+    // Mutex groups
+    writeln!(f, "{}", task.mutex_groups.len())?;
+    for mg in &task.mutex_groups {
+        writeln!(f, "begin_mutex_group")?;
+        // each mutex group line is a (var, val) pair; we encode as 2-column rows count
+        writeln!(f, "{}", mg.len())?;
+        for (v, val) in mg { writeln!(f, "{} {}", v, val)?; }
+        writeln!(f, "end_mutex_group")?;
     }
     // comparison axioms block
     writeln!(f, "{}", task.comparison_axioms.len())?;
