@@ -27,7 +27,7 @@ use crate::search::numeric::{
     utils::int_packer::IntDoublePacker,
 };
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -137,27 +137,55 @@ impl ConcreteState {
     }
 }
 
-/// Semantic state ID for hash-based state deduplication
-struct SemanticStateID<'a> {
+/// Semantic state ID for hash-based state deduplication that follows FD's StateIDSemanticHash pattern
+#[derive(Clone)]
+struct SemanticStateID {
     id: StateID,
-    state_data_pool: &'a DataStorage,
+    // We store a hash of the state content for fast comparison
+    content_hash: u64,
+    // Store the number of bins for bounds checking
     num_bins: usize,
 }
 
-impl<'a> PartialEq for SemanticStateID<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        let lhs_data = &self.state_data_pool[self.id][..self.num_bins];
-        let rhs_data = &other.state_data_pool[other.id][..self.num_bins];
+impl SemanticStateID {
+    fn new(id: StateID, state_data: &[u64], num_bins: usize) -> Self {
+        // Hash the actual state content like FD's utils::hash_sequence
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        state_data[..num_bins].hash(&mut hasher);
+        let content_hash = hasher.finish();
+        
+        Self {
+            id,
+            content_hash,
+            num_bins,
+        }
+    }
+    
+    fn state_content_equal(&self, other: &Self, state_data_pool: &DataStorage) -> bool {
+        // Fast path: compare hashes first
+        if self.content_hash != other.content_hash {
+            return false;
+        }
+        
+        // Slow path: compare actual state data like FD's StateIDSemanticEqual
+        let lhs_data = &state_data_pool[self.id][..self.num_bins];
+        let rhs_data = &state_data_pool[other.id][..self.num_bins];
         lhs_data == rhs_data
     }
 }
 
-impl<'a> Eq for SemanticStateID<'a> {}
+impl PartialEq for SemanticStateID {
+    fn eq(&self, other: &Self) -> bool {
+        self.content_hash == other.content_hash
+    }
+}
 
-impl<'a> Hash for SemanticStateID<'a> {
+impl Eq for SemanticStateID {}
+
+impl Hash for SemanticStateID {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let bins = &self.state_data_pool[self.id][..self.num_bins];
-        bins.hash(state); // slices of u64 already implement Hash
+        // Use the precomputed content hash for fast hashing
+        self.content_hash.hash(state);
     }
 }
 
@@ -186,8 +214,8 @@ pub struct StateRegistry<'a> {
     numeric_constants: Vec<f64>,
     /// Mapping from numeric variable index to packed state index
     numeric_indices: Vec<i32>,
-    /// Set of registered state IDs for duplicate detection (using semantic equality)
-    registered_states: HashSet<StateID>,
+    /// Set of registered states for duplicate detection using semantic equality (FD-style)
+    registered_states: HashMap<SemanticStateID, StateID>,
     /// Per-state cost information storage
     cost_info: RefCell<PerStateInformation<Vec<f64>>>,
 }
@@ -213,7 +241,7 @@ impl<'a> StateRegistry<'a> {
             state_data_pool: Vec::new(),
             numeric_constants: Vec::new(),
             numeric_indices: vec![-1; number_numeric_vars],
-            registered_states: HashSet::new(),
+            registered_states: HashMap::new(),
             axiom_evaluator,
             cost_info: RefCell::new(cost_info),
         }
@@ -269,18 +297,19 @@ impl<'a> StateRegistry<'a> {
 
     /// Inserts a state into the registry or returns existing ID if duplicate
     /// 
-    /// This method handles state deduplication by checking if an equivalent state
-    /// already exists in the registry. If so, it removes the duplicate and returns
-    /// the existing state ID.
+    /// This method implements FD's insert_id_or_pop_state pattern using semantic state comparison.
+    /// It checks if an equivalent state already exists by comparing state content (not memory location).
     fn insert_id_or_pop_state(&mut self) -> StateID {
         let state_id = self.state_data_pool.len() - 1;
         let num_bins = self.global_state_packer.num_bins() as usize;
-        let new_state_data = &self.state_data_pool[state_id][..num_bins];
         
-        // Check if an equivalent state already exists by comparing state content
-        for &existing_id in &self.registered_states {
-            let existing_state_data = &self.state_data_pool[existing_id][..num_bins];
-            if existing_state_data == new_state_data {
+        // Create semantic state ID for the new state
+        let new_state_data = &self.state_data_pool[state_id];
+        let semantic_id = SemanticStateID::new(state_id, new_state_data, num_bins);
+        
+        // Check if an equivalent state already exists using semantic comparison
+        for (existing_semantic_id, &existing_id) in &self.registered_states {
+            if semantic_id.state_content_equal(existing_semantic_id, &self.state_data_pool) {
                 // Duplicate found, remove the new state from pool and return existing ID
                 self.state_data_pool.pop();
                 return existing_id;
@@ -288,7 +317,7 @@ impl<'a> StateRegistry<'a> {
         }
         
         // New unique state, register it and keep it
-        self.registered_states.insert(state_id);
+        self.registered_states.insert(semantic_id, state_id);
         state_id
     }
 
