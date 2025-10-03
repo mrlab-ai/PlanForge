@@ -60,7 +60,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
                 let ops: VecDeque<&'a Operator> = queue.iter().map(|(op, _)| *op).collect();
                 return Ok(Box::new(LeafNode::new(Some(ops))));
             }
-            
+
             let branch_var = &self.task.variables()[*branch_var_id as usize];
             let num_children = branch_var.domain_size();
 
@@ -124,9 +124,9 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 
 pub trait Node<'a>: 'a + Debug {
     fn get_applicable_operators(
-    &self,
-    state: &[Fact],
-    applicable_operators: &mut VecDeque<&'a Operator>, //TODO: Why is a DeqQueue here? Did I do this on purpose?
+        &self,
+        state: &[Fact],
+        applicable_operators: &mut VecDeque<&'a Operator>, //TODO: Why is a DeqQueue here? Did I do this on purpose?
     );
 }
 
@@ -156,16 +156,16 @@ impl<'a> BranchNode<'a> {
 
 impl<'a> Node<'a> for BranchNode<'a> {
     fn get_applicable_operators(
-    &self,
-    state: &[Fact],
-    applicable_operators: &mut VecDeque<&'a Operator>,
+        &self,
+        state: &[Fact],
+        applicable_operators: &mut VecDeque<&'a Operator>,
     ) {
         for operator in &self.immediate_operators {
             applicable_operators.push_back(operator);
         }
         let value = state[self.var_id as usize].value();
         self.value_children[value as usize].get_applicable_operators(state, applicable_operators);
-        
+
         // Also process the default child, which contains operators that don't depend on this variable
         if let Some(ref default_child) = self.default_child {
             default_child.get_applicable_operators(state, applicable_operators);
@@ -188,9 +188,9 @@ impl<'a> LeafNode<'a> {
 
 impl<'a> Node<'a> for LeafNode<'a> {
     fn get_applicable_operators(
-    &self,
-    _state: &[Fact],
-    applicable_operators: &mut VecDeque<&'a Operator>,
+        &self,
+        _state: &[Fact],
+        applicable_operators: &mut VecDeque<&'a Operator>,
     ) {
         if let Some(operators) = &self.applicable_operators {
             applicable_operators.extend(operators.iter());

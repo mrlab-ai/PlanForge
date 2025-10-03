@@ -3,7 +3,11 @@ use crate::search::numeric::{
     state_registry::{ConcreteState, StateRegistry},
     utils::int_packer::IntDoublePacker,
 };
-use std::{cell::{Ref, RefCell, RefMut}, fmt, rc::Rc};
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    fmt,
+    rc::Rc,
+};
 
 pub trait AbstractNumericTask {
     fn variables(&self) -> &Vec<ExplicitVariable>;
@@ -63,7 +67,6 @@ pub trait AbstractNumericTask {
 
     fn get_num_cmp_axioms(&self) -> i32;
 }
-
 
 #[derive(Debug)]
 pub struct Metric {
@@ -479,15 +482,23 @@ impl AbstractNumericTask for NumericRootTask {
     }
 
     fn get_operator_cost(&self, index: i32, is_axiom: bool) -> i32 {
-    if is_axiom { return 0; }
-    if index < 0 || index >= self.operators.len() as i32 { return 0; }
-    self.operators[index as usize].cost() as i32
+        if is_axiom {
+            return 0;
+        }
+        if index < 0 || index >= self.operators.len() as i32 {
+            return 0;
+        }
+        self.operators[index as usize].cost() as i32
     }
 
     fn get_operator_name(&self, index: i32, is_axiom: bool) -> &str {
-    if is_axiom { return "<axiom>"; }
-    if index < 0 || index >= self.operators.len() as i32 { return ""; }
-    self.operators[index as usize].name()
+        if is_axiom {
+            return "<axiom>";
+        }
+        if index < 0 || index >= self.operators.len() as i32 {
+            return "";
+        }
+        self.operators[index as usize].name()
     }
 
     fn get_num_operators(&self) -> i32 {

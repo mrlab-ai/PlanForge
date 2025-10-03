@@ -3,18 +3,18 @@
 //! This module provides the heuristic trait that specializes the general
 //! Evaluator trait for heuristic functions.
 
-use crate::search::numeric::evaluation::evaluator::{Evaluator, EvaluationState, EvaluationError};
+use crate::search::numeric::evaluation::evaluator::{EvaluationError, EvaluationState, Evaluator};
+use crate::search::numeric::numeric_task::{AbstractNumericTask, Operator};
 use crate::search::numeric::state_registry::ConcreteState;
-use crate::search::numeric::numeric_task::{Operator, AbstractNumericTask};
 use std::collections::HashMap;
 
 /// Base trait for heuristic functions
-/// 
+///
 /// This replaces the C++ Heuristic class with a clean trait-based design.
 /// Heuristics are specialized evaluators that estimate the cost to reach the goal.
 pub trait Heuristic: Evaluator {
     /// Computes the heuristic value for the given state
-    /// 
+    ///
     /// This is the core method that subclasses must implement.
     /// Returns the estimated cost to reach the goal, or infinity for dead ends.
     fn compute_heuristic(&self, eval_state: &EvaluationState) -> Result<f64, EvaluationError>;
@@ -22,11 +22,17 @@ pub trait Heuristic: Evaluator {
     /// Gets the name of this heuristic (allows custom names)
     fn heuristic_name(&self) -> String {
         // Default implementation uses the type name
-        format!("heuristic_{}", std::any::type_name::<Self>().split("::").last().unwrap_or("unknown"))
+        format!(
+            "heuristic_{}",
+            std::any::type_name::<Self>()
+                .split("::")
+                .last()
+                .unwrap_or("unknown")
+        )
     }
 
     /// Called when a new state is reached during search
-    /// 
+    ///
     /// This allows heuristics to update internal state or caches.
     /// Returns true if the heuristic successfully processed the state.
     fn reach_state(
@@ -39,7 +45,7 @@ pub trait Heuristic: Evaluator {
     }
 
     /// Gets preferred operators for the given state
-    /// 
+    ///
     /// Some heuristics can suggest operators that are likely to lead
     /// towards the goal. The default implementation returns no preferences.
     fn get_preferred_operators(&self, _state: &ConcreteState) -> Vec<Operator> {
@@ -76,18 +82,23 @@ impl<H: Heuristic> Evaluator for H {
 
     fn evaluate_state(&self, eval_state: &mut EvaluationState) -> Result<f64, EvaluationError> {
         let heuristic_name = self.name();
-        
+
         // Check if already computed
-        if let Some(value) = eval_state.result().get_heuristic_value_optional(&heuristic_name) {
+        if let Some(value) = eval_state
+            .result()
+            .get_heuristic_value_optional(&heuristic_name)
+        {
             return Ok(value);
         }
 
-    // Compute the heuristic value (heuristic can inspect goal flag)
-    let h_value = self.compute_heuristic(&eval_state)?;
-        
+        // Compute the heuristic value (heuristic can inspect goal flag)
+        let h_value = self.compute_heuristic(&eval_state)?;
+
         // Update the evaluation state
-        eval_state.result_mut().set_heuristic_value(heuristic_name, h_value);
-        
+        eval_state
+            .result_mut()
+            .set_heuristic_value(heuristic_name, h_value);
+
         // Check for dead ends
         if h_value.is_infinite() && h_value.is_sign_positive() {
             if self.dead_ends_are_reliable() {
@@ -137,7 +148,11 @@ impl BlindHeuristic {
 impl Heuristic for BlindHeuristic {
     fn compute_heuristic(&self, eval_state: &EvaluationState) -> Result<f64, EvaluationError> {
         // Blind heuristic: 0 for goal states, 1 otherwise
-    Ok(if eval_state.is_goal() { 0.0 } else { self.min_action_cost })
+        Ok(if eval_state.is_goal() {
+            0.0
+        } else {
+            self.min_action_cost
+        })
     }
 
     fn heuristic_name(&self) -> String {
@@ -225,9 +240,11 @@ mod tests {
     }
 
     impl Heuristic for TestHeuristic {
-    fn compute_heuristic(&self, _eval_state: &EvaluationState) -> Result<f64, EvaluationError> {
+        fn compute_heuristic(&self, _eval_state: &EvaluationState) -> Result<f64, EvaluationError> {
             if self.value.is_infinite() && self.value.is_sign_positive() {
-                Err(EvaluationError::DeadEnd { reliable: self.is_reliable })
+                Err(EvaluationError::DeadEnd {
+                    reliable: self.is_reliable,
+                })
             } else {
                 Ok(self.value)
             }
@@ -247,7 +264,7 @@ mod tests {
         let state = create_test_state(1);
         let heuristic = BlindHeuristic::new(None);
         let result = heuristic.evaluate(&state, 5.0).unwrap();
-        
+
         assert_eq!(result.get_heuristic_value("blind_heuristic"), 1.0);
         assert!(!result.is_dead_end);
     }
@@ -257,7 +274,7 @@ mod tests {
         let state = create_test_state(1);
         let heuristic = TestHeuristic::new("dead_end_h", f64::INFINITY, true);
         let error = heuristic.evaluate(&state, 5.0).unwrap_err();
-        
+
         match error {
             EvaluationError::DeadEnd { reliable } => assert!(reliable),
             _ => panic!("Expected dead end error"),
@@ -269,7 +286,7 @@ mod tests {
         let state = create_test_state(1);
         let heuristic = TestHeuristic::new("unreliable_h", f64::INFINITY, false);
         let error = heuristic.evaluate(&state, 5.0).unwrap_err();
-        
+
         match error {
             EvaluationError::DeadEnd { reliable } => assert!(!reliable),
             _ => panic!("Expected dead end error"),
@@ -281,7 +298,7 @@ mod tests {
         let state = create_test_state(1);
         let heuristic = TestHeuristic::new("normal_h", 42.0, false);
         let result = heuristic.evaluate(&state, 5.0).unwrap();
-        
+
         assert_eq!(result.get_heuristic_value("normal_h"), 42.0);
         assert_eq!(result.get_f_value("normal_h"), 47.0); // g + h = 5 + 42
         assert!(!result.is_dead_end);
@@ -291,10 +308,11 @@ mod tests {
     fn test_cached_heuristic() {
         let state = create_test_state(1);
         let inner_heuristic = TestHeuristic::new("inner_h", 25.0, false);
-        let cached_heuristic = CachedHeuristic::new(inner_heuristic, Some("cached_test".to_string()));
-        
+        let cached_heuristic =
+            CachedHeuristic::new(inner_heuristic, Some("cached_test".to_string()));
+
         let result = cached_heuristic.evaluate(&state, 3.0).unwrap();
-        
+
         assert_eq!(result.get_heuristic_value("cached_test"), 25.0);
         assert_eq!(result.get_f_value("cached_test"), 28.0);
     }

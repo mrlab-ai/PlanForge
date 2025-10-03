@@ -15,7 +15,7 @@ use crate::search::numeric::axioms::AxiomEvaluator;
 use crate::search::numeric::numeric_task::AbstractNumericTask;
 use crate::search::numeric::numeric_task::NumericRootTask;
 use crate::search::numeric::numeric_task::NumericType;
-use crate::search::numeric::search_engine::{SearchStatus, SearchResult};
+use crate::search::numeric::search_engine::{SearchResult, SearchStatus};
 use crate::search::numeric::state_registry::StateRegistry;
 use crate::search::numeric::successor_generator;
 use crate::search::numeric::successor_generator::GroundedSuccessorGenerator;
@@ -70,7 +70,7 @@ fn setup_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn N
     let mut generator = GroundedSuccessorGenerator::new(task);
 
     let node = generator.construct(&mut 0, &mut queue).unwrap();
-    
+
     node
 }
 
@@ -89,18 +89,20 @@ fn main() -> std::io::Result<()> {
     let task = setup_numeric_task(sas_file);
     let parse_time = start_time.elapsed();
     println!("Parsed numeric SAS output in: {:?}", parse_time);
-    
+
     println!("=== A* Search Engine ===");
     println!("File: {}", sas_file);
-    println!("Variables: {} regular, {} numeric", 
-             task.variables().len(), 
-             task.numeric_variables().len());
-    
+    println!(
+        "Variables: {} regular, {} numeric",
+        task.variables().len(),
+        task.numeric_variables().len()
+    );
+
     // Create all components in main() scope where lifetimes can be properly managed
     let state_packer = setup_state_packer(&task);
     let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
     let mut state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
-    
+
     // Create search engine and get result, then explicitly drop the search engine
     let result = {
         // Move ownership of state_registry into the search engine to avoid lifetime issues
@@ -108,54 +110,56 @@ fn main() -> std::io::Result<()> {
             &task,
             state_registry,
             None, // BlindHeuristic (will be created by default)
-            None  // 30-minute timeout
+            None, // 30-minute timeout
         );
-        
+
         println!("Starting search...");
-        
+
         // Mutable binding so we can call search()
         let mut search = search;
         let search_result = search.search();
         search_result
     };
-    
+
     match result.status {
         SearchStatus::Solved(_) => {
             println!("SOLVED!");
             if let Some(plan) = result.plan {
                 println!("Solution plan ({} steps):", plan.len());
-                
+
                 // Create the sas_plan file content
                 let mut plan_content = String::new();
                 for op in plan.iter() {
                     plan_content.push_str(&format!("({})\n", op.name()));
                 }
-                
+
                 // Write the plan to sas_plan file
                 match fs::write("sas_plan", plan_content) {
                     Ok(()) => println!("Plan written to sas_plan file"),
                     Err(e) => eprintln!("Error writing plan file: {}", e),
                 }
-                
+
                 // Also print the plan to console
                 for (i, op) in plan.iter().enumerate() {
                     println!("  {}: {}", i + 1, op.name());
                 }
             }
-        },
+        }
         SearchStatus::Failed => {
             println!("No solution found");
-        },
+        }
         SearchStatus::Timeout => {
             println!("Search timed out");
-        },
+        }
         SearchStatus::InProgress => {
             println!("Search ended in progress");
         }
     }
-    
-    println!("Statistics: {} expanded, {} generated, {:?}", 
-             result.nodes_expanded, result.nodes_generated, result.search_time);
-    
+
+    println!(
+        "Statistics: {} expanded, {} generated, {:?}",
+        result.nodes_expanded, result.nodes_generated, result.search_time
+    );
+
     Ok(())
 }

@@ -2,7 +2,7 @@ use crate::search::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
 use crate::search::numeric::numeric_task::{
-    AssignmentEffect, AssignmentOperation, Metric, NumericType, NumericVariable
+    AssignmentEffect, AssignmentOperation, Metric, NumericType, NumericVariable,
 };
 use crate::search::numeric::numeric_task::{
     Effect, ExplicitVariable, Fact, NumericRootTask, Operator,

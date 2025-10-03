@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 nom = "7"
 ordered-float = "5.1.0"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
 
 [profile.release]
 debug = true

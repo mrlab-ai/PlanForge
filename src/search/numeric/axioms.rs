@@ -415,7 +415,8 @@ impl<'a> AxiomEvaluator<'a> {
                 );
             } else if axiom_layer <= self.last_propositional_axiom_layer {
                 // Set derived variables to their default values initially
-                let default_value = self.numeric_task.get_initial_propositional_state_values()[i as usize];
+                let default_value =
+                    self.numeric_task.get_initial_propositional_state_values()[i as usize];
                 self.state_packer.set(buffer, i, default_value as u64);
             } else {
                 return Err(AxiomEvalError::WrongAxiomLayer(
@@ -431,7 +432,7 @@ impl<'a> AxiomEvaluator<'a> {
         let mut rules = self.rules.clone();
         for rule in &mut rules {
             rule.unsatisfied_conditions = rule.condition_count;
-            
+
             // Handle trivial axioms (no conditions)
             if rule.condition_count == 0 {
                 let var_no = rule.effect_var;
@@ -448,17 +449,17 @@ impl<'a> AxiomEvaluator<'a> {
             // Apply Horn rules - continue until queue is empty
             while !queue.is_empty() {
                 let curr_literal = queue.pop().unwrap();
-                
+
                 // For each rule that depends on this literal
                 for rule_ref in &curr_literal.condition_of {
                     // Find the matching rule in our mutable copy
-                    if let Some(rule) = rules.iter_mut().find(|r| 
-                        r.effect_var == rule_ref.effect_var && 
-                        r.effect_value == rule_ref.effect_value) {
-                        
+                    if let Some(rule) = rules.iter_mut().find(|r| {
+                        r.effect_var == rule_ref.effect_var
+                            && r.effect_value == rule_ref.effect_value
+                    }) {
                         // Decrement unsatisfied conditions
                         rule.unsatisfied_conditions -= 1;
-                        
+
                         // If all conditions are satisfied, apply the rule
                         if rule.unsatisfied_conditions == 0 {
                             let var_no = rule.effect_var;
@@ -477,7 +478,8 @@ impl<'a> AxiomEvaluator<'a> {
                 let nbf_info = &self.nbf_info_by_layer[layer_no];
                 for info in nbf_info {
                     let var_no = info.var_id as i32;
-                    let default_value = self.numeric_task.get_initial_propositional_state_values()[var_no as usize];
+                    let default_value =
+                        self.numeric_task.get_initial_propositional_state_values()[var_no as usize];
                     if self.state_packer.get(buffer, var_no) == default_value as u64 {
                         queue.push(info.literal.clone());
                     }
@@ -586,8 +588,7 @@ mod tests {
     fn test_example1_axiom_evaluation() {
         // Load specifically example1.sas
         let input = std::fs::read_to_string("misc/numeric_sas/example1.sas").unwrap();
-        let (unconsumed_input, problem) =
-            numeric_parser::parse_numeric_sas_output(&input).unwrap();
+        let (unconsumed_input, problem) = numeric_parser::parse_numeric_sas_output(&input).unwrap();
         assert!(unconsumed_input.is_empty());
 
         // Set up state packer and axiom evaluator
@@ -603,18 +604,34 @@ mod tests {
         let axiom_evaluator = AxiomEvaluator::new(&problem, &state_packer);
 
         // Verify axiom structure is set up correctly
-        assert!(axiom_evaluator.has_numeric_axioms(), "Should have numeric axioms");
-        assert!(axiom_evaluator.has_propositional_axioms(), "Should have propositional axioms");
-        assert_eq!(problem.comparison_axioms().len(), 5, "Should have 5 comparison axioms");
-        assert_eq!(problem.axioms().len(), 2, "Should have 2 propositional axioms");
+        assert!(
+            axiom_evaluator.has_numeric_axioms(),
+            "Should have numeric axioms"
+        );
+        assert!(
+            axiom_evaluator.has_propositional_axioms(),
+            "Should have propositional axioms"
+        );
+        assert_eq!(
+            problem.comparison_axioms().len(),
+            5,
+            "Should have 5 comparison axioms"
+        );
+        assert_eq!(
+            problem.axioms().len(),
+            2,
+            "Should have 2 propositional axioms"
+        );
 
         // Set up initial state buffer
         let init_state = problem.get_initial_propositional_state_values();
         let mut buffer = vec![0; axiom_evaluator.state_packer.num_bins() as usize];
-        
+
         // Pack initial propositional state into buffer
         for (i, value) in init_state.iter().enumerate() {
-            axiom_evaluator.state_packer.set(&mut buffer, i as i32, *value as u64);
+            axiom_evaluator
+                .state_packer
+                .set(&mut buffer, i as i32, *value as u64);
         }
 
         // Test initial state before axiom evaluation
@@ -653,7 +670,10 @@ mod tests {
 
         // Test propositional axiom evaluation
         let result = axiom_evaluator.evaluate_propositional_axioms(&mut buffer);
-        assert!(result.is_ok(), "Propositional axiom evaluation should succeed");
+        assert!(
+            result.is_ok(),
+            "Propositional axiom evaluation should succeed"
+        );
 
         println!("After propositional axioms:");
         for i in 0..problem.variables().len() {
@@ -665,7 +685,9 @@ mod tests {
         let mut numeric_state_copy = problem.get_initial_numeric_state_values().clone();
         let mut buffer_copy = vec![0; axiom_evaluator.state_packer.num_bins() as usize];
         for (i, value) in init_state.iter().enumerate() {
-            axiom_evaluator.state_packer.set(&mut buffer_copy, i as i32, *value as u64);
+            axiom_evaluator
+                .state_packer
+                .set(&mut buffer_copy, i as i32, *value as u64);
         }
 
         let result = axiom_evaluator.evaluate(&mut buffer_copy, &mut numeric_state_copy);
@@ -684,10 +706,16 @@ mod tests {
 
         let var4_value = axiom_evaluator.state_packer.get(&buffer_copy, 4);
         println!("Variable 4 final value: {}", var4_value);
-        println!("  numeric_var_16 = {}, numeric_var_2 = {}", numeric_state_copy[16], numeric_state_copy[2]);
-        println!("  Comparison result: {} >= {} = {}", 
-                numeric_state_copy[16], numeric_state_copy[2], 
-                numeric_state_copy[16] >= numeric_state_copy[2]);
+        println!(
+            "  numeric_var_16 = {}, numeric_var_2 = {}",
+            numeric_state_copy[16], numeric_state_copy[2]
+        );
+        println!(
+            "  Comparison result: {} >= {} = {}",
+            numeric_state_copy[16],
+            numeric_state_copy[2],
+            numeric_state_copy[16] >= numeric_state_copy[2]
+        );
 
         // Variables 0,1,2,3 should all be 0 (comparison results should be true)
         for i in 0..4 {
@@ -698,10 +726,19 @@ mod tests {
         // The complete evaluation actually reaches the goal state where:
         // - Variable 4 becomes 0 (because numeric_var_16 becomes >= numeric_var_2)
         // - Variable 5 becomes 0 (because all conditions var1=0, var2=0, var4=0 are met)
-        assert_eq!(var4_value, 0, "Variable 4 should be 0 after complete evaluation");
-        assert_eq!(var5_value, 0, "Variable 5 should be 0 after complete evaluation (goal reached!)");
-        
+        assert_eq!(
+            var4_value, 0,
+            "Variable 4 should be 0 after complete evaluation"
+        );
+        assert_eq!(
+            var5_value, 0,
+            "Variable 5 should be 0 after complete evaluation (goal reached!)"
+        );
+
         // Verify that the goal condition is actually satisfied
-        println!("🎉 Goal state reached! Variable 5 = {} (required: 0)", var5_value);
+        println!(
+            "🎉 Goal state reached! Variable 5 = {} (required: 0)",
+            var5_value
+        );
     }
 }

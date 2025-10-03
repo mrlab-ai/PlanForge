@@ -1,28 +1,46 @@
 //! Modern evaluation system for planning
-//! 
+//!
 //! This module provides a clean, idiomatic Rust implementation for state evaluation
 //! that combines the functionality of the C++ EvaluationContext and EvaluationResult
 //! into a unified design.
 
 pub mod evaluator;
-pub mod heuristic;
 pub mod g_evaluator;
+pub mod heuristic;
 
-pub use evaluator::{Evaluator, EvaluationState, EvaluationError};
-pub use heuristic::Heuristic;
+pub use evaluator::{EvaluationError, EvaluationState, Evaluator};
 pub use g_evaluator::GEvaluator;
+pub use heuristic::Heuristic;
 
 use crate::search::numeric::state_registry::ConcreteState;
+use crate::search::numeric::state_registry::StateID;
 use std::collections::HashMap;
 
+/// Light-weight reference to a state used inside EvaluationResult.
+/// Can either own a ConcreteState or store a compact StateID to avoid cloning.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EvalStateRef {
+    Owned(ConcreteState),
+    Id(StateID),
+}
+
+impl EvalStateRef {
+    pub fn id(&self) -> StateID {
+        match self {
+            EvalStateRef::Owned(s) => s.get_id(),
+            EvalStateRef::Id(id) => *id,
+        }
+    }
+}
+
 /// Result of evaluating a state
-/// 
+///
 /// This combines the C++ EvaluationResult and relevant parts of EvaluationContext
 /// into a single, immutable structure that contains all evaluation information.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EvaluationResult {
-    /// The state that was evaluated
-    pub state: ConcreteState,
+    /// Reference to the state that was evaluated. May be an owned state or a compact id.
+    pub state: EvalStateRef,
     /// G-value (cost to reach this state)
     pub g_value: f64,
     /// Whether this state was reached by a preferred operator
@@ -39,7 +57,19 @@ impl EvaluationResult {
     /// Creates a new evaluation result for the given state
     pub fn new(state: ConcreteState, g_value: f64, is_preferred: bool) -> Self {
         Self {
-            state,
+            state: EvalStateRef::Owned(state),
+            g_value,
+            is_preferred,
+            heuristic_values: HashMap::new(),
+            is_dead_end: false,
+            is_reliable_dead_end: false,
+        }
+    }
+
+    /// Create an evaluation result that stores only a compact state id.
+    pub fn new_with_id(state_id: StateID, g_value: f64, is_preferred: bool) -> Self {
+        Self {
+            state: EvalStateRef::Id(state_id),
             g_value,
             is_preferred,
             heuristic_values: HashMap::new(),
@@ -51,7 +81,10 @@ impl EvaluationResult {
     /// Gets a heuristic value by evaluator name
     /// Returns infinity if the heuristic is not available
     pub fn get_heuristic_value(&self, evaluator_name: &str) -> f64 {
-        self.heuristic_values.get(evaluator_name).copied().unwrap_or(f64::INFINITY)
+        self.heuristic_values
+            .get(evaluator_name)
+            .copied()
+            .unwrap_or(f64::INFINITY)
     }
 
     /// Gets a heuristic value by evaluator name, returning None if not computed
@@ -117,18 +150,18 @@ mod tests {
     fn test_evaluation_result_basic() {
         let state = create_test_state(1);
         let mut result = EvaluationResult::new(state, 5.0, false);
-        
+
         assert_eq!(result.g_value, 5.0);
         assert!(!result.is_preferred);
         assert!(!result.is_dead_end);
         assert!(!result.has_heuristics());
-        
+
         // Test heuristic value setting
         result.set_heuristic_value("h1".to_string(), 10.0);
         assert_eq!(result.get_heuristic_value("h1"), 10.0);
         assert_eq!(result.get_f_value("h1"), 15.0);
         assert!(result.has_heuristics());
-        
+
         // Test infinite heuristic (dead end)
         result.set_heuristic_value("h2".to_string(), f64::INFINITY);
         assert!(result.is_heuristic_infinite("h2"));
@@ -139,16 +172,16 @@ mod tests {
     #[test]
     fn test_evaluation_result_merge() {
         let state = create_test_state(1);
-        
+
         let mut result1 = EvaluationResult::new(state.clone(), 5.0, false);
         result1.set_heuristic_value("h1".to_string(), 10.0);
-        
+
         let mut result2 = EvaluationResult::new(state, 5.0, false);
         result2.set_heuristic_value("h2".to_string(), 15.0);
         result2.set_reliable_dead_end();
-        
+
         result1.merge(&result2);
-        
+
         assert_eq!(result1.get_heuristic_value("h1"), 10.0);
         assert_eq!(result1.get_heuristic_value("h2"), 15.0);
         assert!(result1.is_dead_end);
@@ -160,11 +193,11 @@ mod tests {
         let state = create_test_state(1);
         let mut result = EvaluationResult::new(state, 5.0, false);
         result.set_heuristic_value("existing".to_string(), 42.0);
-        
+
         // Test existing heuristic
         assert_eq!(result.get_heuristic_value("existing"), 42.0);
         assert_eq!(result.get_heuristic_value_optional("existing"), Some(42.0));
-        
+
         // Test non-existing heuristic
         assert_eq!(result.get_heuristic_value("missing"), f64::INFINITY);
         assert_eq!(result.get_heuristic_value_optional("missing"), None);
