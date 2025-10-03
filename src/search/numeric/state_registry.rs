@@ -314,7 +314,7 @@ impl<'a> StateRegistry<'a> {
         
         // Evaluate axioms
         let mut numeric_state_copy = initial_numeric_values;
-        self.evaluate_axioms(&mut init_buffer, &initial_propositional_values, &mut numeric_state_copy)
+        self.evaluate_axioms(&mut init_buffer, &mut numeric_state_copy)
             .expect("Failed to evaluate axioms during initial state creation");
 
         // Register the state
@@ -389,7 +389,6 @@ impl<'a> StateRegistry<'a> {
     fn evaluate_axioms(
         &self,
         buffer: &mut [u64],
-        propositional_state: &Vec<i32>,
         numeric_state: &mut Vec<f64>,
     ) -> Result<(), StateInsertError> {
         self.axiom_evaluator
@@ -399,7 +398,7 @@ impl<'a> StateRegistry<'a> {
             })?;
 
         self.axiom_evaluator
-            .evaluate(buffer, propositional_state, numeric_state)
+            .evaluate(buffer, numeric_state)
             .map_err(|e| StateInsertError {
                 message: format!("Failed to evaluate axioms: {:?}", e),
             })?;
@@ -447,7 +446,7 @@ impl<'a> StateRegistry<'a> {
         // Evaluate axioms
         let propositional_initial_state = self.root_task.get_initial_propositional_state_values().clone();
         let mut numeric_values_copy = numeric_values;
-        self.evaluate_axioms(&mut buffer, &propositional_initial_state, &mut numeric_values_copy)?;
+        self.evaluate_axioms(&mut buffer, &mut numeric_values_copy)?;
 
         self.state_data_pool.push(buffer);
         self.insert_id_or_pop_state();
@@ -773,7 +772,7 @@ impl<'a> StateRegistry<'a> {
         // Evaluate general axioms
         let initial_propositional_state = self.root_task.get_initial_propositional_state_values().clone();
         self.axiom_evaluator
-            .evaluate(next_buffer, &initial_propositional_state, current_values)
+            .evaluate(next_buffer, current_values)
             .map_err(|e| StateInsertError {
                 message: format!("Failed to evaluate axioms: {:?}", e),
             })?;
