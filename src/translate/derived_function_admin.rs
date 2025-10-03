@@ -9,12 +9,11 @@ use std::collections::HashMap;
 pub struct DerivedFunctionAdministrator {
     // map from canonical key -> (symbol, args)
     pub functions: HashMap<String, (String, Vec<String>)>,
-    counter: usize,
 }
 
 impl DerivedFunctionAdministrator {
     pub fn new() -> Self {
-        DerivedFunctionAdministrator { functions: HashMap::new(), counter: 0 }
+    DerivedFunctionAdministrator { functions: HashMap::new() }
     }
 
     /// Given an SExpr that represents either a primitive PNE, a numeric constant,
@@ -35,35 +34,50 @@ impl DerivedFunctionAdministrator {
             SExpr::List(list) => {
                 if list.is_empty() { return PrimitiveNumericExpression { name: "".to_string(), args: vec![] }; }
                 if let SExpr::Atom(op) = &list[0] {
-                    // arithmetic operators: build child PNE tokens and return operator-style name + args
+                    // arithmetic operators: build child primitives and create canonical symbol with placeholders
                     if op == "+" || op == "-" || op == "*" || op == "/" {
-                        // collect child tokens using recursive calls
-                        let mut child_tokens: Vec<String> = Vec::new();
-                        let mut child_args: Vec<String> = Vec::new();
+                        // build keylist like Python: [op, child1_symbol, child2_symbol, ...]
+                        let mut keylist: Vec<String> = Vec::new();
+                        keylist.push(op.clone());
+                        let mut child_pnes: Vec<PrimitiveNumericExpression> = Vec::new();
                         for p in &list[1..] {
                             let pne = self.get_derived_function(p);
-                            // token form: if child is a derived symbol keep it, otherwise append _PNE to its name
-                            let token = if pne.name.starts_with("derived!") { pne.name.clone() } else { format!("{}{}_PNE", pne.name, "") };
-                            child_tokens.push(token);
-                            // keep the underlying primitive name (without _PNE) as arg for effect representation
-                            child_args.push(pne.name.clone());
+                            keylist.push(pne.name.clone());
+                            child_pnes.push(pne);
                         }
+                        // for commutative ops, sort child symbols to canonicalize
                         if op == "+" || op == "*" {
-                            child_tokens.sort();
-                            child_args.sort();
+                            keylist[1..].sort();
                         }
-                        let op_name = match op.as_str() {
-                            "+" => "derived!sum_PNE",
-                            "*" => "derived!product_PNE",
-                            "-" => "derived!difference_PNE",
-                            "/" => "derived!division_PNE",
-                            _ => "derived!op_PNE",
-                        };
-                        PrimitiveNumericExpression { name: op_name.to_string(), args: child_tokens }
+                        let key = keylist.join("|");
+                        // compute args (placeholders) as ?v0..?vN where N is total args from children
+                        let mut total_args: Vec<String> = Vec::new();
+                        for child in &child_pnes {
+                            for _ in 0..child.args.len() { total_args.push(String::new()); }
+                        }
+                        // compute default placeholder names for number of args
+                        let arg_count = child_pnes.iter().map(|c| c.args.len()).sum();
+                        let mut placeholders: Vec<String> = Vec::new();
+                        for i in 0..arg_count { placeholders.push(format!("?v{}", i)); }
+
+                        if !self.functions.contains_key(&key) {
+                            // generate new function name similar to Python's prettyprint concatenation
+                            let pretty = match op.as_str() {
+                                "+" => "sum",
+                                "*" => "product",
+                                "-" => "difference",
+                                "/" => "division",
+                                _ => "op",
+                            };
+                            let new_name = format!("derived!{}_PNE", pretty);
+                            self.functions.insert(key.clone(), (new_name.clone(), placeholders.clone()));
+                        }
+                        let (sym, args) = self.functions.get(&key).unwrap().clone();
+                        PrimitiveNumericExpression { name: sym, args }
                     } else {
                         // treat as primitive PNE, name(args...)
                         let args = list[1..].iter().filter_map(|x| match x { SExpr::Atom(a)=>Some(a.clone()), _=>None }).collect::<Vec<_>>();
-                        let key = format!("{}({})", op, args.join(", "));
+                        let key = format!("{}({})", op, args.join(","));
                         PrimitiveNumericExpression { name: key.clone(), args }
                     }
                 } else {
