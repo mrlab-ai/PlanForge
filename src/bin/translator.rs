@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use planners::translate::pddl::PddlTask;
+use serde_json;
 
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
 #[derive(Parser)]
@@ -52,9 +53,24 @@ fn main() -> anyhow::Result<()> {
             eprintln!("translator: parsed forms: {} domain / {} problem", task.domain_forms.len(), task.problem_forms.len());
             let dom = planners::translate::pddl_ast::Domain::from_sexprs(&task.domain_forms).expect("domain parse");
             let prob = planners::translate::pddl_ast::Problem::from_sexprs(&task.problem_forms).expect("problem parse");
-            let ops = planners::translate::instantiate::ground(&dom, &prob);
+            let (ops, instantiated_num_axioms) = planners::translate::instantiate::ground_with_numeric_axioms(&dom, &prob);
             eprintln!("translator: grounded {} operators", ops.len());
-            let sastask = planners::translate::to_sas::build_sas(&ops, &prob);
+            // attempt to call the python grouping helper to compute exact mutex groups
+            let mut py_groups: Option<Vec<Vec<String>>> = None;
+            if let Ok(output) = std::process::Command::new("python3")
+                .arg("scripts/compute_groups.py")
+                .arg(domain.as_os_str())
+                .arg(problem.as_os_str())
+                .output() {
+                if output.status.success() {
+                    if let Ok(s) = String::from_utf8(output.stdout) {
+                        if let Ok(j) = serde_json::from_str::<Vec<Vec<String>>>(&s) {
+                            py_groups = Some(j);
+                        }
+                    }
+                }
+            }
+            let sastask = planners::translate::to_sas::build_sas(&ops, &prob, &instantiated_num_axioms, py_groups);
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
             planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
             eprintln!("translator: wrote {}", out_path.display());

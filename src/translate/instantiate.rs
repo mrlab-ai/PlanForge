@@ -1,4 +1,5 @@
 use crate::translate::pddl_ast::{Action, Domain, Problem, Condition, Effect};
+use crate::translate::derived_function_admin::DerivedFunctionAdministrator;
 
 #[derive(Debug, Clone)]
 pub struct GroundedOp {
@@ -71,4 +72,43 @@ pub fn ground(domain: &Domain, problem: &Problem) -> Vec<GroundedOp> {
     }
 
     result
+}
+
+/// New API: ground the task and also return instantiated numeric axioms discovered
+pub fn ground_with_numeric_axioms(domain: &Domain, problem: &Problem) -> (Vec<GroundedOp>, Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>) {
+    // For now reuse the same grounding and produce instantiated numeric axioms
+    // for numeric init facts. Use the DerivedFunctionAdministrator so the
+    // produced PNE names follow the same canonicalization that will be used
+    // later during derived-function handling.
+    let ops = ground(domain, problem);
+    let mut df_admin = DerivedFunctionAdministrator::new();
+    // Build simple instantiated numeric axioms from numeric init facts in the problem.
+    let mut inst_axioms: Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom> = Vec::new();
+    for sexpr in &problem.init {
+        // look for forms like (= (f a b) 42)
+        if let crate::translate::pddl_parser::SExpr::List(list) = sexpr {
+            if list.len() >= 3 {
+                if let crate::translate::pddl_parser::SExpr::Atom(eq) = &list[0] {
+                    if eq == "=" {
+                        if let crate::translate::pddl_parser::SExpr::List(lhs_vec) = &list[1] {
+                            // construct an SExpr::List to pass into df_admin
+                            let lhs_sexpr = crate::translate::pddl_parser::SExpr::List(lhs_vec.clone());
+                            // get canonicalized PNE description
+                            let pne = df_admin.get_derived_function(&lhs_sexpr);
+                            // parse rhs as integer constant if possible
+                            if let crate::translate::pddl_parser::SExpr::Atom(rhs) = &list[2] {
+                                if let Ok(n) = rhs.parse::<i64>() {
+                                    let part = crate::translate::numeric_axiom_rules::NumericPart::Constant(crate::translate::numeric_axiom_rules::NumericConstant(n));
+                                    let ax = crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom { name: pne.name.clone(), op: None, parts: vec![part], effect: pne };
+                                    inst_axioms.push(ax);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (ops, inst_axioms)
 }
