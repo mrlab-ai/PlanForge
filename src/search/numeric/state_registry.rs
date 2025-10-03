@@ -141,6 +141,22 @@ impl ConcreteState {
 // We use a bucketed map from content hash -> list of StateIDs, then compare
 // only within the bucket using the packed bins for semantic equality.
 
+#[inline]
+fn fast_hash_bins(bins: &[u64]) -> u64 {
+    // 64-bit FNV-1a
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x00000100000001B3;
+    let mut hash = FNV_OFFSET;
+    for &x in bins {
+        let bytes = x.to_le_bytes();
+        for b in bytes {
+            hash ^= b as u64;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+    }
+    hash
+}
+
 /// Static counter for generating unique registry IDs
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -193,7 +209,7 @@ impl<'a> StateRegistry<'a> {
             state_data_pool: Vec::new(),
             numeric_constants: Vec::new(),
             numeric_indices: vec![-1; number_numeric_vars],
-            registered_states: HashMap::new(),
+            registered_states: HashMap::with_capacity(1024),
             axiom_evaluator,
             cost_info: RefCell::new(cost_info),
         }
@@ -258,9 +274,7 @@ impl<'a> StateRegistry<'a> {
 
         // Compute stable hash of the packed bins for the new state.
         let data = &self.state_data_pool[state_id];
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        data[..num_bins].hash(&mut hasher);
-        let key = hasher.finish();
+    let key = fast_hash_bins(&data[..num_bins]);
 
         // Probe bucket and compare within it for semantic equality
         if let Some(bucket) = self.registered_states.get_mut(&key) {
@@ -275,7 +289,9 @@ impl<'a> StateRegistry<'a> {
             bucket.push(state_id);
         } else {
             // First entry for this hash
-            self.registered_states.insert(key, vec![state_id]);
+            let mut v = Vec::with_capacity(4);
+            v.push(state_id);
+            self.registered_states.insert(key, v);
         }
 
         // Unique state; keep and return new ID
@@ -540,29 +556,30 @@ impl<'a> StateRegistry<'a> {
         current_state: &ConcreteState,
         operator: &Operator,
     ) -> Result<ConcreteState, StateInsertError> {
-        let mut buffer = current_state.buffer(self).clone();
-        
-        // Apply propositional effects
-        self.apply_propositional_effects(&mut buffer, current_state, operator);
-        
-        // Apply numeric effects
-        let mut successor_values = self.get_numeric_vars(current_state)
+        // Start from a copy of the current buffer for the successor
+        let previous_buffer = current_state.buffer(self);
+        let mut next_buffer = previous_buffer.clone();
+
+        // Apply propositional effects in-place on next_buffer
+        self.apply_propositional_effects(&mut next_buffer, current_state, operator);
+
+        // Apply numeric effects (reading regular values from previous_buffer)
+        let mut successor_values = self
+            .get_numeric_vars(current_state)
             .map_err(|e| StateInsertError {
                 message: format!("Failed to get numeric variables: {:?}", e),
             })?;
         let mut cost_values = vec![0.0; self.count_cost_variables()];
-        let mut buffer_copy = buffer.clone();
-        let mut current_buffer = current_state.buffer(self).clone();
         
         self.apply_numeric_effects(
             &mut successor_values,
             &mut cost_values,
             operator,
-            &mut buffer_copy,
-            &mut current_buffer,
+            &mut next_buffer,
+            previous_buffer,
         )?;
-
-        self.state_data_pool.push(buffer_copy);
+        
+        self.state_data_pool.push(next_buffer);
         let id = self.insert_id_or_pop_state();
         let successor = self.lookup_state(id)
             .map_err(|e| StateInsertError {
@@ -687,7 +704,7 @@ impl<'a> StateRegistry<'a> {
         cost_part: &mut [f64],
         operator: &Operator,
         next_buffer: &mut [u64],
-        current_buffer: &mut [u64],
+        previous_buffer: &[u64],
     ) -> Result<(), StateInsertError> {
         for effect in operator.assignment_effects() {
             let assignment_var_id = effect.var_id() as usize;
@@ -705,7 +722,7 @@ impl<'a> StateRegistry<'a> {
             // Get the assignment value based on variable type
             let assignment_value = if assignment_var.get_type() == &NumericType::Regular {
                 self.global_state_packer.get_double(
-                    current_buffer,
+                    previous_buffer,
                     self.numeric_indices[assignment_var_id],
                 )
             } else {

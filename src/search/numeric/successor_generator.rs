@@ -32,7 +32,8 @@ impl<'a> GroundedSuccessorGenerator<'a> {
             for precondition in operator.preconditions().iter() {
                 condition.push(precondition);
             }
-            condition.sort(); // only works if &Condition<'a>: Ord
+            // Sort by (var, value) to group by variable and keep order stable
+            condition.sort_by_key(|f| (f.var(), f.value()));
             conditions.push(condition);
             next_condition_by_operator.push(0);
         }
@@ -101,7 +102,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
             if all_ops_immediate {
                 return Ok(Box::new(LeafNode::new(Some(applicable_operators))));
             } else if var_interesting {
-                let mut children = vec![];
+                let mut children = Vec::with_capacity(operators_for_value.len());
                 for ops in operators_for_value.iter_mut() {
                     children.push(self.construct(&mut (*branch_var_id + 1), ops)?);
                 }
@@ -123,9 +124,9 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 
 pub trait Node<'a>: 'a + Debug {
     fn get_applicable_operators(
-        &self,
-        state: &Vec<Fact>,
-        applicable_operators: &mut VecDeque<&'a Operator>, //TODO: Why is a DeqQueue here? Did I do this on purpose?
+    &self,
+    state: &[Fact],
+    applicable_operators: &mut VecDeque<&'a Operator>, //TODO: Why is a DeqQueue here? Did I do this on purpose?
     );
 }
 
@@ -155,9 +156,9 @@ impl<'a> BranchNode<'a> {
 
 impl<'a> Node<'a> for BranchNode<'a> {
     fn get_applicable_operators(
-        &self,
-        state: &Vec<Fact>,
-        applicable_operators: &mut VecDeque<&'a Operator>,
+    &self,
+    state: &[Fact],
+    applicable_operators: &mut VecDeque<&'a Operator>,
     ) {
         for operator in &self.immediate_operators {
             applicable_operators.push_back(operator);
@@ -187,9 +188,9 @@ impl<'a> LeafNode<'a> {
 
 impl<'a> Node<'a> for LeafNode<'a> {
     fn get_applicable_operators(
-        &self,
-        _state: &Vec<Fact>,
-        applicable_operators: &mut VecDeque<&'a Operator>,
+    &self,
+    _state: &[Fact],
+    applicable_operators: &mut VecDeque<&'a Operator>,
     ) {
         if let Some(operators) = &self.applicable_operators {
             applicable_operators.extend(operators.iter());
@@ -259,7 +260,7 @@ mod tests {
 
             // Create references to the facts for the node API
             let mut applicable_operators: VecDeque<&Operator> = VecDeque::new();
-            node.get_applicable_operators(&facts, &mut applicable_operators);
+            node.get_applicable_operators(&facts[..], &mut applicable_operators);
 
             //dbg!("Facts: {:?}", facts_refs);
             dbg!("Applicable operators: {:?}", applicable_operators);

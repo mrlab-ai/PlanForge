@@ -209,8 +209,8 @@ impl<'a> AStarSearch<'a> {
             .map(|(i, value)| Fact::new(i as u32, *value as i32))
             .collect::<Vec<_>>();
 
-        let mut applicable_operators: VecDeque<&Operator> = VecDeque::new();
-        self.successor_generator.get_applicable_operators(&facts, &mut applicable_operators);
+    let mut applicable_operators: VecDeque<&Operator> = VecDeque::new();
+    self.successor_generator.get_applicable_operators(&facts[..], &mut applicable_operators);
 
         for op in applicable_operators {
             // Check if all preconditions are satisfied
