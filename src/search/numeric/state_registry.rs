@@ -569,7 +569,18 @@ impl<'a> StateRegistry<'a> {
             .map_err(|e| StateInsertError {
                 message: format!("Failed to get numeric variables: {:?}", e),
             })?;
-        let mut cost_values = vec![0.0; self.count_cost_variables()];
+        // Initialize cost instrumentation from predecessor's stored info
+        let mut cost_values = {
+            let prev_inst = self.get_cost_information(current_state);
+            if prev_inst.len() == self.count_cost_variables() {
+                prev_inst
+            } else {
+                // Resize to expected number of cost vars
+                let mut v = prev_inst;
+                v.resize(self.count_cost_variables(), 0.0);
+                v
+            }
+        };
         
         self.apply_numeric_effects(
             &mut successor_values,
@@ -806,6 +817,27 @@ impl<'a> StateRegistry<'a> {
         }
         
         Ok(numeric_state[metric_fluent_id as usize])
+    }
+
+    /// Computes the transition cost between two states based on the metric fluent.
+    /// If a metric is defined, the cost is the absolute change according to min/max:
+    /// - For minimizing metrics, cost = max(0, new - old)
+    /// - For maximizing metrics, cost = max(0, old - new)
+    /// If no metric is defined, returns 1.0 as a default unit cost.
+    pub fn transition_cost(&self, predecessor: &ConcreteState, successor: &ConcreteState) -> Result<f64, InvalidIndex> {
+        if !self.root_task.metric().use_metric() {
+            return Ok(1.0);
+        }
+
+        // Get numeric vectors for both states
+        let old_vals = self.get_numeric_vars(predecessor)?;
+        let new_vals = self.get_numeric_vars(successor)?;
+        let old_metric = self.evaluate_metric(&old_vals)?;
+        let new_metric = self.evaluate_metric(&new_vals)?;
+
+        let is_min = self.root_task.metric().is_min();
+        let delta = if is_min { new_metric - old_metric } else { old_metric - new_metric };
+        Ok(delta.max(0.0))
     }
 
     /// Determines which cost information to keep when states are deduplicated

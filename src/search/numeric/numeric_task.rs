@@ -11,6 +11,7 @@ pub trait AbstractNumericTask {
     fn assignment_axioms(&self) -> &Vec<AssignmentAxiom>;
     fn comparison_axioms(&self) -> &Vec<ComparisonAxiom>;
     fn axioms(&self) -> &Vec<PropositionalAxiom>;
+    fn metric(&self) -> &Metric;
 
     fn get_num_variables(&self) -> i32;
     fn get_variable_name(&self, index: i32) -> Result<&str, &str>;
@@ -338,6 +339,10 @@ impl Operator {
     pub fn preconditions(&self) -> &Vec<Fact> {
         &self.preconditions
     }
+
+    pub fn cost(&self) -> u32 {
+        self.cost
+    }
 }
 
 #[derive(Debug)]
@@ -429,6 +434,10 @@ impl AbstractNumericTask for NumericRootTask {
         &self.axioms
     }
 
+    fn metric(&self) -> &Metric {
+        &self.metric
+    }
+
     fn get_num_variables(&self) -> i32 {
         self.variables.len() as i32
     }
@@ -470,11 +479,15 @@ impl AbstractNumericTask for NumericRootTask {
     }
 
     fn get_operator_cost(&self, index: i32, is_axiom: bool) -> i32 {
-        0
+    if is_axiom { return 0; }
+    if index < 0 || index >= self.operators.len() as i32 { return 0; }
+    self.operators[index as usize].cost() as i32
     }
 
     fn get_operator_name(&self, index: i32, is_axiom: bool) -> &str {
-        ""
+    if is_axiom { return "<axiom>"; }
+    if index < 0 || index >= self.operators.len() as i32 { return ""; }
+    self.operators[index as usize].name()
     }
 
     fn get_num_operators(&self) -> i32 {

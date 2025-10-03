@@ -113,12 +113,23 @@ impl<H: Heuristic> Evaluator for H {
 /// The goal checking would require complex lifetime management that doesn't fit the current design
 pub struct BlindHeuristic {
     name: String,
+    // Cost to return for non-goal states (min action cost)
+    min_action_cost: f64,
 }
 
 impl BlindHeuristic {
     pub fn new(name: Option<String>) -> Self {
         Self {
             name: name.unwrap_or_else(|| "blind_heuristic".to_string()),
+            min_action_cost: 1.0,
+        }
+    }
+
+    /// Create a BlindHeuristic that uses the provided min_action_cost for non-goal states
+    pub fn with_min_action_cost(min_action_cost: f64, name: Option<String>) -> Self {
+        Self {
+            name: name.unwrap_or_else(|| "blind_heuristic".to_string()),
+            min_action_cost,
         }
     }
 }
@@ -126,7 +137,7 @@ impl BlindHeuristic {
 impl Heuristic for BlindHeuristic {
     fn compute_heuristic(&self, eval_state: &EvaluationState) -> Result<f64, EvaluationError> {
         // Blind heuristic: 0 for goal states, 1 otherwise
-        Ok(if eval_state.is_goal() { 0.0 } else { 1.0 })
+    Ok(if eval_state.is_goal() { 0.0 } else { self.min_action_cost })
     }
 
     fn heuristic_name(&self) -> String {

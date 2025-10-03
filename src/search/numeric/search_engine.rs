@@ -84,6 +84,7 @@ pub struct AStarSearch<'a> {
     
     // Configuration
     time_limit: Duration,
+    initial_state: Option<ConcreteState>,
     
     // Statistics
     nodes_expanded: usize,
@@ -110,9 +111,28 @@ impl<'a> AStarSearch<'a> {
         time_limit: Option<Duration>,
     ) -> Self {
         let successor_generator = Self::create_successor_generator(task);
-        
-        // Use BlindHeuristic as default
-        let heuristic = heuristic.unwrap_or_else(|| Box::new(BlindHeuristic::new(None)));
+
+        // Determine min_action_cost following FD semantics
+        let declared_min_cost = task
+            .get_operators()
+            .iter()
+            .map(|op| op.cost() as f64)
+            .fold(f64::INFINITY, |a, b| a.min(b));
+
+        // If a metric is used, evaluate cost at initial state for true costs later; for blind we need a lower bound
+        let uses_metric = task.metric().use_metric();
+        let min_action_cost = if uses_metric {
+            // FD uses declared operator cost when metric is used at parse time.
+            // Use the minimum declared operator cost as min_action_cost.
+            if declared_min_cost.is_finite() { declared_min_cost.max(0.0) } else { 1.0 }
+        } else if declared_min_cost.is_finite() {
+            declared_min_cost.max(0.0)
+        } else {
+            1.0
+        };
+
+        // Use BlindHeuristic as default, configured with min_action_cost
+        let heuristic = heuristic.unwrap_or_else(|| Box::new(BlindHeuristic::with_min_action_cost(min_action_cost, None)));
         
         // Create evaluators for A*
         let g_evaluator = GEvaluator::new(None);
@@ -125,6 +145,10 @@ impl<'a> AStarSearch<'a> {
         ];
         let open_list = TieBreakingOpenList::new(evaluator_names, true); // ascending order
         
+        // Build initial state now to allow potential cost initializations (matches FD ordering)
+        let mut state_registry = state_registry;
+        let initial_state = state_registry.get_initial_state();
+
         Self {
             task,
             state_registry,
@@ -136,6 +160,7 @@ impl<'a> AStarSearch<'a> {
             g_evaluator,
             f_evaluator,
             time_limit: time_limit.unwrap_or(Duration::from_secs(30 * 60)), // 30 minutes default
+            initial_state: Some(initial_state),
             nodes_expanded: 0,
             nodes_generated: 0,
         }
@@ -217,8 +242,14 @@ impl<'a> AStarSearch<'a> {
     
             match self.state_registry.get_successor_state(state, op) {
                 Ok(succ_state) => {
-                    // Use operator cost (or default to 1.0)
-                    let cost = 1.0; // TODO: Get actual operator cost from task
+                    // If metric is enabled, use metric-based transition cost; else, use parsed operator cost
+                    let cost = if self.task.metric().use_metric() {
+                        self.state_registry
+                            .transition_cost(state, &succ_state)
+                            .unwrap_or(1.0)
+                    } else {
+                        op.cost() as f64
+                    };
                     successors.push((succ_state, op.clone(), cost));
                 }
                 Err(_) => {
@@ -318,8 +349,8 @@ impl<'a> SearchEngine for AStarSearch<'a> {
     fn search(&mut self) -> SearchResult {
         let start_time = Instant::now();
         
-        // Initialize search with initial state
-    let initial_state = self.state_registry.get_initial_state();
+    // Initialize search with initial state (created in constructor)
+    let initial_state = self.initial_state.as_ref().cloned().unwrap_or_else(|| self.state_registry.get_initial_state());
         
         // Add initial state to open list
         if let Ok(initial_evaluation) = self.evaluate_state(&initial_state, 0.0) {
