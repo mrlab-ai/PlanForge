@@ -177,13 +177,15 @@ impl<'a> AStarSearch<'a> {
     
     /// Evaluates a state and creates evaluation result
     fn evaluate_state(&self, state: &ConcreteState, g_value: f64) -> Result<EvaluationResult, Box<dyn std::error::Error>> {
-        // Create evaluation state
+        // Create evaluation state and mark goal flag
         let mut eval_state = EvaluationState::new(state.clone(), g_value, false);
+        let is_goal = self.is_goal_state(state);
+        eval_state.set_is_goal(is_goal);
         
         // Evaluate g-value
         self.g_evaluator.evaluate_state(&mut eval_state)?;
         
-        // Evaluate heuristic
+    // Evaluate heuristic (can use goal flag)
         self.heuristic.evaluate_state(&mut eval_state)?;
         
         // Evaluate f-value

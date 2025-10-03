@@ -48,6 +48,8 @@ pub struct EvaluationState {
     result: EvaluationResult,
     /// Cache of already computed evaluators to avoid recomputation
     computed_evaluators: RefCell<HashMap<String, bool>>,
+    /// Whether the currently evaluated state is a goal
+    is_goal: bool,
 }
 
 impl EvaluationState {
@@ -56,6 +58,7 @@ impl EvaluationState {
         Self {
             result: EvaluationResult::new(state, g_value, is_preferred),
             computed_evaluators: RefCell::new(HashMap::new()),
+            is_goal: false,
         }
     }
 
@@ -72,6 +75,16 @@ impl EvaluationState {
     /// Consumes the evaluation state and returns the final result
     pub fn into_result(self) -> EvaluationResult {
         self.result
+    }
+
+    /// Mark whether this state is a goal
+    pub fn set_is_goal(&mut self, is_goal: bool) {
+        self.is_goal = is_goal;
+    }
+
+    /// Query whether this state is a goal
+    pub fn is_goal(&self) -> bool {
+        self.is_goal
     }
 
     /// Checks if an evaluator has already been computed

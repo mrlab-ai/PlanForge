@@ -569,7 +569,6 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     );
 
     let duration = timer.elapsed();
-    println!("Parsed numeric SAS output in: {:?}", duration);
 
     Ok((input, output))
 }

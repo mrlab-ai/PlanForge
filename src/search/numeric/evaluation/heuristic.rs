@@ -17,7 +17,7 @@ pub trait Heuristic: Evaluator {
     /// 
     /// This is the core method that subclasses must implement.
     /// Returns the estimated cost to reach the goal, or infinity for dead ends.
-    fn compute_heuristic(&self, state: &ConcreteState) -> Result<f64, EvaluationError>;
+    fn compute_heuristic(&self, eval_state: &EvaluationState) -> Result<f64, EvaluationError>;
 
     /// Gets the name of this heuristic (allows custom names)
     fn heuristic_name(&self) -> String {
@@ -82,8 +82,8 @@ impl<H: Heuristic> Evaluator for H {
             return Ok(value);
         }
 
-        // Compute the heuristic value
-        let h_value = self.compute_heuristic(&eval_state.result().state)?;
+    // Compute the heuristic value (heuristic can inspect goal flag)
+    let h_value = self.compute_heuristic(&eval_state)?;
         
         // Update the evaluation state
         eval_state.result_mut().set_heuristic_value(heuristic_name, h_value);
@@ -124,12 +124,9 @@ impl BlindHeuristic {
 }
 
 impl Heuristic for BlindHeuristic {
-    fn compute_heuristic(&self, _state: &ConcreteState) -> Result<f64, EvaluationError> {
-        // For this simplified implementation, return 1.0 for all states
-        // This provides the same search behavior as blind search (uniform cost search)
-        // The ideal implementation would return 0 for goal states and 1 for non-goal states,
-        // but that requires complex lifetime management that doesn't fit the current architecture
-        Ok(1.0)
+    fn compute_heuristic(&self, eval_state: &EvaluationState) -> Result<f64, EvaluationError> {
+        // Blind heuristic: 0 for goal states, 1 otherwise
+        Ok(if eval_state.is_goal() { 0.0 } else { 1.0 })
     }
 
     fn heuristic_name(&self) -> String {
@@ -174,9 +171,9 @@ impl<H: Heuristic> CachedHeuristic<H> {
 }
 
 impl<H: Heuristic> Heuristic for CachedHeuristic<H> {
-    fn compute_heuristic(&self, state: &ConcreteState) -> Result<f64, EvaluationError> {
+    fn compute_heuristic(&self, eval_state: &EvaluationState) -> Result<f64, EvaluationError> {
         // For the direct interface, we bypass caching
-        self.inner.compute_heuristic(state)
+        self.inner.compute_heuristic(eval_state)
     }
 
     fn heuristic_name(&self) -> String {
@@ -217,7 +214,7 @@ mod tests {
     }
 
     impl Heuristic for TestHeuristic {
-        fn compute_heuristic(&self, _state: &ConcreteState) -> Result<f64, EvaluationError> {
+    fn compute_heuristic(&self, _eval_state: &EvaluationState) -> Result<f64, EvaluationError> {
             if self.value.is_infinite() && self.value.is_sign_positive() {
                 Err(EvaluationError::DeadEnd { reliable: self.is_reliable })
             } else {
