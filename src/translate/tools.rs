@@ -51,8 +51,7 @@ mod tests {
     fn test_cartesian_product_empty() {
         let sequences: Vec<Vec<Vec<i32>>> = vec![];
         let result = cartesian_product(&sequences);
-        let expected: Vec<Vec<i32>> = vec![vec![]];
-        assert_eq!(result, expected);
+        assert_eq!(result, vec![vec![]]);
     }
 
     #[test]

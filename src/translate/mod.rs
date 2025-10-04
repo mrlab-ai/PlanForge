@@ -28,6 +28,6 @@ pub mod instantiate;             // Level 3 - RE-ENABLED for testing ✅ API FIX
 pub mod derived_function_admin;  // Support - RE-ENABLED for instantiate
 // pub mod graph;
 // pub mod greedy_join;
-pub mod pddl_to_prolog;      // Support - RE-ENABLED and COMPLETED ✅
+// pub mod pddl_to_prolog;
 // pub mod simple_to_restricted_task;
 // pub mod split_rules;
