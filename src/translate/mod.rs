@@ -18,3 +18,4 @@ pub mod options;
 pub mod pddl_to_prolog;
 pub mod sas_tasks;
 pub mod axiom_rules;
+pub mod build_model;

@@ -1,5 +1,7 @@
 use crate::translate::pddl_parser::SExpr;
 use std::collections::{HashMap, HashSet};
+use crate::translate::pddl_ast::Condition;
+use crate::translate::build_model as bm;
 use crate::translate::pddl_ast::{Domain, Problem};
 
 // Minimal, compiling placeholder. We'll expand to mirror python/translate/pddl_to_prolog.py
@@ -315,13 +317,18 @@ pub struct PrologProgram {
     pub rules: Vec<String>,
     pub objects: HashSet<String>,
     counter: usize,
+    // Structured representation for Rust model building
+    pub model_facts: Vec<bm::Atom>,
+    pub model_rules: Vec<bm::RuleSpec>,
 }
 
 impl PrologProgram {
-    pub fn new() -> Self { Self { facts: vec![], rules: vec![], objects: HashSet::new(), counter: 0 } }
+    pub fn new() -> Self { Self { facts: vec![], rules: vec![], objects: HashSet::new(), counter: 0, model_facts: vec![], model_rules: vec![] } }
     pub fn new_name(&mut self) -> String { let n = self.counter; self.counter += 1; format!("p${}", n) }
     pub fn add_fact<S: Into<String>>(&mut self, atom: S) { let a = atom.into(); self.facts.push(a.clone()); }
     pub fn add_rule<S: Into<String>>(&mut self, rule: S) { self.rules.push(rule.into()); }
+    pub fn add_model_fact(&mut self, atom: bm::Atom) { self.model_facts.push(atom); }
+    pub fn add_model_rule(&mut self, rule: bm::RuleSpec) { self.model_rules.push(rule); }
     pub fn dump(&self) -> String {
         let mut out = String::new();
         out.push_str("Facts in PrologProgram:\n");
@@ -340,12 +347,14 @@ fn atom_to_string(pred: &str, args: &[String]) -> String {
     if args.is_empty() { format!("{}.", sanitize(pred)) } else { format!("{}({}).", sanitize(pred), args.iter().map(|a| sanitize(a)).collect::<Vec<_>>().join(", ")) }
 }
 
-fn translate_typed_object(prog: &mut PrologProgram, obj: &(String, Option<String>), type_hierarchy: &HashMap<String, Vec<String>>) {
+fn translate_typed_object(prog: &mut PrologProgram, obj: &(String, Option<String>), _type_hierarchy: &HashMap<String, Vec<String>>) {
     let (name, ty) = obj;
     if let Some(t) = ty {
         // add fact type(name).
         prog.add_fact(atom_to_string(t, &[name.clone()]));
         // add supertypes if we had them; we don't yet compute hierarchy, so skip
+    // structured model fact for datalog
+    prog.add_model_fact(bm::Atom { predicate: t.clone(), args: vec![bm::Arg::Const(name.clone())] });
     }
 }
 
@@ -362,21 +371,114 @@ fn sexpr_atom_to_fact(sexpr: &SExpr) -> Option<String> {
     }
 }
 
+fn sexpr_atom_to_model_atom(sexpr: &SExpr) -> Option<bm::Atom> {
+    match sexpr {
+        SExpr::Atom(a) => Some(bm::Atom { predicate: a.clone(), args: vec![] }),
+        SExpr::List(list) => {
+            if let Some(SExpr::Atom(pred)) = list.get(0) {
+                let mut args: Vec<bm::Arg> = Vec::new();
+                for a in &list[1..] { if let SExpr::Atom(s) = a { args.push(bm::Arg::Const(s.clone())); } }
+                Some(bm::Atom { predicate: pred.clone(), args })
+            } else { None }
+        }
+    }
+}
+
+fn cond_to_symatoms(cond: &Condition) -> Option<Vec<bm::SymAtom>> {
+    match cond {
+        Condition::Atom(name, args) => Some(vec![bm::SymAtom::new(name.clone(), args.clone())]),
+        Condition::And(list) => {
+            let mut out: Vec<bm::SymAtom> = Vec::new();
+            for c in list { if let Some(mut v) = cond_to_symatoms(c) { out.append(&mut v); } else { return None; } }
+            Some(out)
+        }
+        Condition::True => Some(vec![]),
+        _ => None, // skip Not/Comparison for now
+    }
+}
+
 pub fn translate_from_ast(domain_forms: &[SExpr], problem_forms: &[SExpr]) -> PrologProgram {
     let mut prog = PrologProgram::new();
-    let dom = Domain::from_sexprs(domain_forms);
-    let prob = Problem::from_sexprs(problem_forms);
+    let dom = crate::translate::pddl_ast::Domain::from_sexprs(domain_forms);
+    let prob = crate::translate::pddl_ast::Problem::from_sexprs(problem_forms);
     if let (Some(dom), Some(prob)) = (dom, prob) {
         // Build a trivial type hierarchy map: type -> empty supertypes (full hierarchy not yet ported)
-        let mut type_h: HashMap<String, Vec<String>> = HashMap::new();
+    let type_h: HashMap<String, Vec<String>> = HashMap::new();
         // objects
         for obj in &prob.objects { translate_typed_object(&mut prog, obj, &type_h); }
         // init facts
-        for init in &prob.init { if let Some(f) = sexpr_atom_to_fact(init) { prog.add_fact(f); } }
+        for init in &prob.init {
+            if let Some(f) = sexpr_atom_to_fact(init) { prog.add_fact(f); }
+            if let Some(a) = sexpr_atom_to_model_atom(init) { prog.add_model_fact(a); }
+        }
         // Numeric init isn't modeled separately in current AST; future work.
-        // No rules yet; would require normalize/build_exploration_rules port.
-        let _ = dom; // silence unused
+        // Build minimal exploration rules for actions with conjunction-of-atom preconditions
+        for action in &dom.actions {
+            if let Some(pre) = &action.precond {
+                let cond = crate::translate::pddl_ast::sexpr_to_condition(pre);
+                if let Some(conds) = cond_to_symatoms(&cond) {
+                    // Head predicate name: action name. Ensure params are proper var tokens (don't double-prefix '?').
+                    let head_args: Vec<String> = action
+                        .parameters
+                        .iter()
+                        .map(|(p, _)| if p.starts_with('?') { p.clone() } else { format!("?{}", p) })
+                        .collect();
+                    let head = bm::SymAtom::new(action.name.clone(), head_args);
+                    let rtype = match conds.len() {
+                        0 => "project", // trivial; will turn into facts after convert_trivial_rules in Python; we keep project
+                        1 => "project",
+                        2 => "join",
+                        _ => "product", // approximation; proper splitting not yet ported
+                    };
+                    prog.add_model_rule(bm::RuleSpec { rtype: rtype.to_string(), effect: head, conditions: conds });
+                }
+            }
+        }
     }
     prog.normalize();
     prog
+}
+
+// Convenience: compute a datalog model directly from AST using our minimal rules
+pub fn compute_model_from_ast(domain_forms: &[crate::translate::pddl_parser::SExpr], problem_forms: &[crate::translate::pddl_parser::SExpr]) -> Vec<bm::Atom> {
+    let prog = translate_from_ast(domain_forms, problem_forms);
+    // Convert rules and facts to engine input
+    let mut rules = bm::convert_rules(&prog.model_rules);
+    bm::compute_model(&mut rules, &prog.model_facts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::translate::pddl_parser::SExpr;
+
+    fn a(s: &str) -> SExpr { SExpr::Atom(s.to_string()) }
+    fn l(items: Vec<SExpr>) -> SExpr { SExpr::List(items) }
+
+    #[test]
+    fn compute_model_with_single_precondition_action() {
+        // Domain with an action move(?x) pre: at(?x)
+        let domain = vec![
+            l(vec![a("define"),
+                l(vec![a("domain"), a("d")]),
+                // action inside define (flat tokens, as expected by parser)
+                l(vec![a(":action"), a("move"),
+                    a(":parameters"), l(vec![a("?x")]),
+                    a(":precondition"), l(vec![a("at"), a("?x")])
+                ])
+            ])
+        ];
+        let problem = vec![
+            l(vec![a("define"),
+                l(vec![a("problem"), a("p")]),
+                l(vec![a(":init"), l(vec![a("at"), a("a1")])])
+            ])
+        ];
+        let model = compute_model_from_ast(&domain, &problem);
+        // Expect at(a1) fact present and move(a1) derived
+        let has_at = model.iter().any(|m| m.predicate=="at" && matches!(&m.args[0], bm::Arg::Const(s) if s=="a1"));
+        assert!(has_at);
+        let has_move = model.iter().any(|m| m.predicate=="move" && matches!(&m.args[0], bm::Arg::Const(s) if s=="a1"));
+        assert!(has_move);
+    }
 }

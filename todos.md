@@ -1,243 +1,67 @@
-# Python to Rust Translation Status — Fast Downward Numeric PDDL Translator
+# Next Intermediate Steps — Numeric PDDL Translator (checkpoint 2025-10-04)
 
-## Goal
-Port the Fast Downward `python/translate/` pipeline to Rust for numeric planning with perfect semantic parity. The final product should produce identical SAS+ files and require no Python runtime.
+This checklist captures only the next actionable steps (with tests) so you can resume quickly in a new session. Current status: the internal rule engine (`translate/build_model.rs`) is green, minimal rule generation in `pddl_to_prolog.rs` derives action-head atoms for single-precondition actions, and an end-to-end unit test passes. Grounding still uses a naive path; invariants/fact-groups/numeric-axioms remain partial or stubs.
 
-## Python Translation Pipeline Overview
+## immediate next steps
 
-### Main Flow (from `python/translate/translate.py`)
-1. **Parse PDDL** (`pddl_parser.open()`) → Parse domain and problem files
-2. **Add Global Constraints** (`task.add_global_constraints()`) → Handle global constraints
-3. **Normalize** (`normalize.normalize()`) → Normalize task representation
-4. **PDDL to SAS Conversion** (`pddl_to_sas()`) → Main translation pipeline:
-   - **Instantiate** (`instantiate.explore()`) → Ground actions and collect reachable facts/fluents
-   - **Build invariants** (`invariant_finder` + `fact_groups`) → Find invariants and group facts
-   - **Build dictionaries** (`strips_to_sas_dictionary()`) → Map STRIPS to SAS variables
-   - **Translate task** (`translate_task()`) → Convert to SAS format
-   - **Simplify** (`simplify.filter_unreachable_propositions()`) → Remove unreachable facts
-5. **Write output** → Generate `output.sas` file
+1) Normalize + rule-generation parity (minimal)
+- Add `src/translate/normalize.rs` with three transforms used in Python before exploration:
+  - remove_free_effect_variables
+  - split_duplicate_arguments
+  - convert_trivial_rules (turns 0-condition rules into facts)
+- Wire a `normalize()` call inside `translate_from_ast()` before pushing `model_rules`.
+- Tests:
+  - Unit tests in `normalize.rs` for each transform (happy + 1 edge case).
+  - Extend `pddl_to_prolog.rs` tests to cover a rule with duplicated args and a trivial rule becoming a fact.
 
-## Implementation Status by Module
+2) Broaden condition support for exploration
+- Extend `cond_to_symatoms()` to accept simple `And(Atom...)`, `Atom`, and ignore `True`; keep `Not`/`Comparison` as TODO but add explicit tests to ensure they’re skipped deterministically (documented behavior).
+- Tests: add cases asserting skipped constructs don’t break model building (no panics, rules unaffected).
 
-| Python Module | Python Functionality | Rust Module | Implementation Status | Differences/Issues |
-|---|---|---|---|---|
-| **Core Pipeline** |
-| `translate.py` | Main pipeline orchestration, PDDL→SAS conversion | `bin/translator.rs` + `to_sas.rs` | 🟡 **Partial** | Missing normalization, simplified task building |
-| `pddl_parser/` | PDDL parsing (S-expressions) | `pddl_parser.rs` | ✅ **Complete** | Basic S-expr parsing works |
-| `pddl/` | PDDL AST classes | `pddl_ast.rs` | ✅ **Complete** | Domain/Problem/Action/Effect/Condition structures |
-| `sas_tasks.py` | SAS+ data structures | `sas.rs` + `sas_writer.rs` | ✅ **Complete** | SAS task representation and file writing |
-| **Instantiation & Grounding** |
-| `instantiate.py` | Action grounding, reachability analysis | `instantiate.rs` | 🟡 **Partial** | Basic grounding works, missing fluent analysis |
-| `build_model.py` | Prolog model building | *Not ported* | ❌ **Missing** | Uses external Prolog solver for reachability |
-| `normalize.py` | Task normalization | *Not ported* | ❌ **Missing** | Missing axiom normalization, goal simplification |
-| **Fact Grouping & Invariants** |
-| `invariant_finder.py` | Balance checking, invariant discovery | `invariant_finder.rs` | 🔴 **Stub** | Missing BalanceChecker, heavy actions, reachable_action_params |
-| `fact_groups.py` | Fact grouping, GroupCoverQueue | `fact_groups.rs` | 🔴 **Simplified** | Basic predicate grouping only, missing GroupCoverQueue |
-| `invariants.py` | Invariant data structures | `invariants.rs` | ✅ **Complete** | Basic invariant representation |
-| **Numeric Planning** |
-| `numeric_axiom_rules.py` | Numeric axiom analysis, layering | `numeric_axiom_rules.rs` | 🟡 **Partial** | Missing equivalence detection, constant analysis |
-| `derived_function_admin.py` | Derived function canonicalization | `derived_function_admin.rs` | 🔴 **Stub** | Basic placeholder naming only |
-| **Constraint & Mutex Handling** |
-| `constraints.py` | Constraint enumeration | `constraints.rs` | ✅ **Complete** | Constraint generation works |
-| `axiom_rules.py` | Axiom handling | *Not ported* | ❌ **Missing** | Axiom layer computation, axiom rules |
-| **Simplification** |
-| `simplify.py` | Unreachable fact filtering | *Not ported* | ❌ **Missing** | DTG-based simplification |
-| **Utilities** |
-| `tools.py`, `timers.py`, `options.py` | Utilities | *Various* | 🟡 **Partial** | Basic timing, missing memory tracking |
+3) Multi-atom preconditions → correct rule kinds
+- For 2 atoms → emit join rule; for >2 → emit product rule (temporary heuristic). Consider reusing `translate/greedy_join.rs` later.
+- Tests: new e2e test where an action with two preconditions is derived only when both facts exist.
 
-## Dependency-Ordered Task List
+4) Effects and action-instance tracking (exploration facts)
+- Emit an explicit action-instance atom (e.g., `act_move(?x)`) on precondition satisfaction to tag reachable operator instances. Keep normal predicate effects for later stages.
+- Tests: assert both the predicate fact(s) and `act_move(a1)` appear given suitable init.
 
-Based on the analysis of the Python translation pipeline, here is the dependency-ordered implementation plan:
+5) Integrate reachability into grounding
+- In `instantiate.rs`, add an optional reachability filter: compute `model = compute_model_from_ast(...)` and only ground actions whose `act_<name>(...)` are present (or fall back to naive if disabled).
+- Tests: integration test using `pddl/domain.pddl` + `pddl/pfile1.pddl` validating: reachable-guarded grounding yields ≤ naive grounding and > 0 actions.
 
-### Phase 1: Foundation & Core Infrastructure (Prerequisites)
-**Timeline: 1-2 weeks**
+6) Regression harness scaffold (for Python parity later)
+- Add a test util that runs the Rust translator on small PDDL files and snapshots key artifacts (counts of operators/facts, a few symbol names). Store golden JSON beside tests.
+- Tests: create 1-2 golden snapshots from `pddl/pfile1.pddl`, ensure they stay stable across refactors.
 
-#### Task 1.1: Task Normalization (`normalize.py` → Rust)
-**Dependencies:** None  
-**Effort:** Medium  
-**Impact:** High
+## supporting tasks (small, quick wins)
 
-- **What it does:** Normalizes PDDL tasks by simplifying goal conditions, handling derived predicates, and standardizing function symbols
-- **Why first:** Required by subsequent steps; affects how facts and axioms are processed
-- **Implementation:** Create `src/translate/normalize.rs`
-  - Port essential normalization functions
-  - Handle goal simplification and constraint normalization
-  - Function symbol management
+- Fix warnings: remove unused imports/vars in `build_model.rs` and `pddl_to_prolog.rs` (clippy-clean).
+- Document `build_model.rs`: brief comments for Arg, RuleSpec, and rule kinds.
+- Add a cargo alias for faster test runs of translate-only modules.
 
-#### Task 1.2: Build Model Integration (`build_model.py` integration)
-**Dependencies:** Task 1.1  
-**Effort:** Medium  
-**Impact:** High
+## how to test (quick reminders)
 
-- **What it does:** Provides reachability analysis using external Prolog solver
-- **Why needed:** Required for accurate fact collection and action parameter analysis
-- **Implementation:** 
-  - Create Rust interface to external Prolog (or port core logic)
-  - Integrate with `instantiate.rs` for better reachability analysis
-  - Generate `reachable_action_params` for invariant finding
+- Run unit tests
+  - fish shell
+  - cargo test -q
 
-### Phase 2: Invariant Finding & Fact Grouping (Core Logic)
-**Timeline: 2-3 weeks**
+- Focused tests (examples)
+  - cargo test -q translate::build_model
+  - cargo test -q translate::pddl_to_prolog
 
-#### Task 2.1: Complete Invariant Finder (`invariant_finder.py` → `invariant_finder.rs`)
-**Dependencies:** Task 1.2  
-**Effort:** Hard  
-**Impact:** Critical
+- Optional: run translator binary on sample PDDL
+  - cargo run -q --bin translator -- pddl/domain.pddl pddl/pfile1.pddl
+  - Check that `output.sas` is produced and non-empty.
 
-- **What it does:** 
-  - `BalanceChecker` with `add_inequality_preconds()` for parameter constraints
-  - Heavy action duplication for universal effects  
-  - Candidate queue management with balance checking
-  - Invariant refinement and useful group detection
-- **Implementation:**
-  - Complete `BalanceChecker` with proper inequality preconditions
-  - Implement heavy action creation and parameter management
-  - Port balance checking algorithms and candidate refinement
-  - Ensure deterministic invariant ordering
+## definition of done (for this checkpoint)
 
-#### Task 2.2: Advanced Fact Grouping (`fact_groups.py` → `fact_groups.rs`)
-**Dependencies:** Task 2.1  
-**Effort:** Hard  
-**Impact:** Critical
+- [ ] normalize.rs exists; unit tests for three transforms are green.
+- [ ] pddl_to_prolog emits join/product appropriately; tests for 2-precond action pass.
+- [ ] action-instance atoms `act_<name>(...)` are produced and used by grounding when enabled.
+- [ ] instantiate.rs has a reachability-guarded path; integration test shows reduced (or equal) operator count vs naive and > 0.
+- [ ] warnings reduced or eliminated in touched files.
 
-- **What it does:**
-  - `GroupCoverQueue` for optimal fact group selection
-  - Translation key generation with proper value ordering
-  - Mutex group computation and verification
-- **Implementation:**
-  - Complete `GroupCoverQueue` implementation
-  - Port `choose_groups()` algorithm with proper cost evaluation
-  - Implement translation key building with exact Python formatting
-  - Add mutex group collection and validation
+## notes / parking lot
 
-### Phase 3: Numeric Planning Enhancement
-**Timeline: 1-2 weeks**
-
-#### Task 3.1: Complete Numeric Axiom Analysis (`numeric_axiom_rules.py` → `numeric_axiom_rules.rs`)
-**Dependencies:** Task 2.2  
-**Effort:** Medium  
-**Impact:** High
-
-- **What it does:**
-  - `handle_axioms()`: constant detection, equivalence mapping, layer computation
-  - `identify_constants()`, `compute_axiom_layers()`, `identify_equivalent_axioms()`
-- **Implementation:**
-  - Complete constant detection and folding
-  - Implement axiom layer computation with proper ordering
-  - Add equivalence detection and axiom mapping
-  - Ensure numeric variable type classification matches Python
-
-#### Task 3.2: Derived Function Canonicalization (`derived_function_admin.py` → `derived_function_admin.rs`)
-**Dependencies:** Task 3.1  
-**Effort:** Medium  
-**Impact:** High
-
-- **What it does:** Canonical naming for derived expressions, parameter management for arithmetic
-- **Implementation:**
-  - Complete canonical derived expression naming
-  - Implement parameter propagation for nested expressions
-  - Ensure derived variable names match Python exactly
-  - Add placeholder argument generation
-
-### Phase 4: Task Translation & Processing
-**Timeline: 1-2 weeks**
-
-#### Task 4.1: Complete `strips_to_sas_dictionary()` Logic
-**Dependencies:** Task 3.2  
-**Effort:** Medium  
-**Impact:** High
-
-- **What it does:** Maps STRIPS facts to SAS variables with proper indexing
-- **Implementation:**
-  - Complete variable range computation
-  - Implement proper fact-to-variable mapping
-  - Add numeric variable dictionary construction
-  - Ensure index consistency with Python
-
-#### Task 4.2: Enhance Operator Translation
-**Dependencies:** Task 4.1  
-**Effort:** Medium  
-**Impact:** Medium
-
-- **What it does:** Complete operator precondition/effect translation with comparison axioms
-- **Implementation:**
-  - Improve comparison axiom creation and indexing
-  - Add proper conditional effect handling
-  - Implement numeric effect translation
-  - Add mutex checking integration
-
-### Phase 5: Advanced Features & Optimization
-**Timeline: 1-2 weeks**
-
-#### Task 5.1: Axiom Handling (`axiom_rules.py` → Rust)
-**Dependencies:** Task 4.2  
-**Effort:** Medium  
-**Impact:** Medium
-
-- **What it does:** Axiom layer computation, axiom rule processing
-- **Implementation:**
-  - Create `src/translate/axiom_rules.rs`
-  - Port axiom layer computation
-  - Implement axiom rule processing and validation
-
-#### Task 5.2: Task Simplification (`simplify.py` → Rust)
-**Dependencies:** Task 5.1  
-**Effort:** Hard  
-**Impact:** Medium
-
-- **What it does:** DTG-based unreachable fact removal, task optimization
-- **Implementation:**
-  - Create `src/translate/simplify.rs`
-  - Implement DTG construction and analysis
-  - Port unreachable proposition filtering
-  - Add task size optimization
-
-### Phase 6: Integration & Testing
-**Timeline: 1 week**
-
-#### Task 6.1: Pipeline Integration
-**Dependencies:** All previous tasks  
-**Effort:** Medium  
-**Impact:** Critical
-
-- **Implementation:**
-  - Update `bin/translator.rs` to use complete pipeline
-  - Ensure proper module integration and data flow
-  - Add comprehensive error handling
-
-#### Task 6.2: Testing & Validation
-**Dependencies:** Task 6.1  
-**Effort:** Medium  
-**Impact:** Critical
-
-- **Implementation:**
-  - Create comprehensive test suite
-  - Add regression testing against Python output
-  - Performance benchmarking and optimization
-
-## Critical Path Analysis
-
-**Critical Path:** 1.1 → 1.2 → 2.1 → 2.2 → 6.1 → 6.2  
-**Estimated Total Time:** 8-12 weeks
-
-**Parallel Opportunities:**
-- Tasks 3.1 and 3.2 can run in parallel after Task 2.2
-- Tasks 4.1 and 4.2 can run in parallel after Task 3.2  
-- Tasks 5.1 and 5.2 can run in parallel after Task 4.2
-
-**Highest Risk Tasks:**
-1. **Task 2.1 (Invariant Finder)** - Most complex algorithm with intricate balance checking
-2. **Task 2.2 (Fact Grouping)** - Critical for SAS structure, complex optimization algorithms  
-3. **Task 5.2 (Simplification)** - Complex DTG analysis, potential performance bottlenecks
-
-**Early Wins (Low-hanging fruit):**
-1. **Task 1.1 (Normalization)** - Straightforward porting with clear interfaces
-2. **Task 3.1 (Numeric Axioms)** - Well-defined mathematical operations
-3. **Task 5.1 (Axiom Rules)** - Clear algorithmic steps
-
-## Success Criteria
-
-- [ ] **Semantic Parity:** Identical SAS+ files for all test domains
-- [ ] **Performance:** Comparable or better than Python (target: 1-2x speed improvement)
-- [ ] **No Dependencies:** Zero Python runtime requirements
-- [ ] **Maintainability:** Clear, well-documented Rust code with comprehensive tests
+- Full Python parity (normalize, greedy split, axioms, invariants, fact groups, numeric layers) remains ahead. The above steps unblock a functional exploration-guided grounding path to iterate on.
