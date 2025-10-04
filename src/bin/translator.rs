@@ -8,7 +8,11 @@ use planners::translate::pddl::PddlTask;
 
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
 #[derive(Parser)]
-#[clap(name = "translator", version = "0.1", about = "Rust translator for numeric PDDL (minimal stub)")]
+#[clap(
+    name = "translator",
+    version = "0.1",
+    about = "Rust translator for numeric PDDL (minimal stub)"
+)]
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
@@ -46,17 +50,36 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Translate { domain, problem, output } => {
-            eprintln!("translator: reading domain {:?} and problem {:?}", domain, problem);
+        Commands::Translate {
+            domain,
+            problem,
+            output,
+        } => {
+            eprintln!(
+                "translator: reading domain {:?} and problem {:?}",
+                domain, problem
+            );
             let task = PddlTask::from_files(&domain, &problem)?;
-            eprintln!("translator: parsed forms: {} domain / {} problem", task.domain_forms.len(), task.problem_forms.len());
-            let dom = planners::translate::pddl_ast::Domain::from_sexprs(&task.domain_forms).expect("domain parse");
-            let prob = planners::translate::pddl_ast::Problem::from_sexprs(&task.problem_forms).expect("problem parse");
-            let (ops, instantiated_num_axioms) = planners::translate::instantiate::ground_with_numeric_axioms(&dom, &prob);
+            eprintln!(
+                "translator: parsed forms: {} domain / {} problem",
+                task.domain_forms.len(),
+                task.problem_forms.len()
+            );
+            let dom = planners::translate::pddl_ast::Domain::from_sexprs(&task.domain_forms)
+                .expect("domain parse");
+            let prob = planners::translate::pddl_ast::Problem::from_sexprs(&task.problem_forms)
+                .expect("problem parse");
+            let (ops, instantiated_num_axioms) =
+                planners::translate::instantiate::ground_with_numeric_axioms(&dom, &prob);
             eprintln!("translator: grounded {} operators", ops.len());
-            // Use Rust-only grouping implementation (no Python helper)
             let py_groups: Option<Vec<Vec<String>>> = None;
-            let sastask = planners::translate::to_sas::build_sas(&ops, &dom, &prob, &instantiated_num_axioms, py_groups);
+            let sastask = planners::translate::to_sas::build_sas(
+                &ops,
+                &dom,
+                &prob,
+                &instantiated_num_axioms,
+                py_groups,
+            );
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
             planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
             eprintln!("translator: wrote {}", out_path.display());

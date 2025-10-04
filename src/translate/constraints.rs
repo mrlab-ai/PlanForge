@@ -19,7 +19,16 @@ impl NegativeClause {
         false
     }
     pub fn apply_mapping(&self, m: &HashMap<String, String>) -> NegativeClause {
-        let new_parts = self.parts.iter().map(|(a,b)| (m.get(a).cloned().unwrap_or(a.clone()), m.get(b).cloned().unwrap_or(b.clone()))).collect();
+        let new_parts = self
+            .parts
+            .iter()
+            .map(|(a, b)| {
+                (
+                    m.get(a).cloned().unwrap_or(a.clone()),
+                    m.get(b).cloned().unwrap_or(b.clone()),
+                )
+            })
+            .collect();
         NegativeClause::new(new_parts)
     }
 }
@@ -35,7 +44,12 @@ pub struct Assignment {
 
 impl Assignment {
     pub fn new(equalities: Vec<(String, String)>) -> Self {
-        Self { equalities, consistent: None, mapping: None, eq_classes: None }
+        Self {
+            equalities,
+            consistent: None,
+            mapping: None,
+            eq_classes: None,
+        }
     }
     fn compute_equivalence_classes(&mut self) {
         // union-find (disjoint set) over the variables/values
@@ -50,14 +64,18 @@ impl Assignment {
             let mut cur = x.to_string();
             // find root
             while let Some(p) = parent.get(&cur) {
-                if p == &cur { break; }
+                if p == &cur {
+                    break;
+                }
                 cur = p.clone();
             }
             let root = cur.clone();
             // path compression
             let mut node = x.to_string();
             while let Some(p) = parent.get(&node) {
-                if p == &root { break; }
+                if p == &root {
+                    break;
+                }
                 let next = p.clone();
                 parent.insert(node.clone(), root.clone());
                 node = next;
@@ -78,18 +96,25 @@ impl Assignment {
         let keys: Vec<String> = parent.keys().cloned().collect();
         for key in keys.iter() {
             let root = find(&mut parent, key);
-            classes.entry(root).or_insert_with(HashSet::new).insert(key.clone());
+            classes
+                .entry(root)
+                .or_insert_with(HashSet::new)
+                .insert(key.clone());
         }
         self.eq_classes = Some(classes);
     }
     fn compute_mapping(&mut self) {
-        if self.eq_classes.is_none() { self.compute_equivalence_classes(); }
+        if self.eq_classes.is_none() {
+            self.compute_equivalence_classes();
+        }
         let eq_classes = self.eq_classes.as_ref().unwrap();
         let mut mapping: HashMap<String, String> = HashMap::new();
         for eq in eq_classes.values() {
             // variables start with '?'
-            let mut variables: Vec<String> = eq.iter().filter(|s| s.starts_with('?')).cloned().collect();
-            let constants: Vec<String> = eq.iter().filter(|s| !s.starts_with('?')).cloned().collect();
+            let mut variables: Vec<String> =
+                eq.iter().filter(|s| s.starts_with('?')).cloned().collect();
+            let constants: Vec<String> =
+                eq.iter().filter(|s| !s.starts_with('?')).cloned().collect();
             if constants.len() >= 2 {
                 self.consistent = Some(false);
                 self.mapping = None;
@@ -101,17 +126,23 @@ impl Assignment {
                 variables.sort();
                 variables[0].clone()
             };
-            for entry in eq.iter() { mapping.insert(entry.clone(), set_val.clone()); }
+            for entry in eq.iter() {
+                mapping.insert(entry.clone(), set_val.clone());
+            }
         }
         self.consistent = Some(true);
         self.mapping = Some(mapping);
     }
     pub fn is_consistent(&mut self) -> bool {
-        if self.consistent.is_none() { self.compute_mapping(); }
+        if self.consistent.is_none() {
+            self.compute_mapping();
+        }
         self.consistent.unwrap_or(false)
     }
     pub fn get_mapping(&mut self) -> Option<HashMap<String, String>> {
-        if self.consistent.is_none() { self.compute_mapping(); }
+        if self.consistent.is_none() {
+            self.compute_mapping();
+        }
         self.mapping.clone()
     }
 }
@@ -123,34 +154,64 @@ pub struct ConstraintSystem {
 }
 
 impl ConstraintSystem {
-    pub fn new() -> Self { Self { combinatorial_assignments: Vec::new(), neg_clauses: Vec::new() } }
+    pub fn new() -> Self {
+        Self {
+            combinatorial_assignments: Vec::new(),
+            neg_clauses: Vec::new(),
+        }
+    }
     fn all_clauses_satisfiable(&self, assignment: &mut Assignment) -> bool {
         if let Some(mapping) = assignment.get_mapping() {
             for neg in &self.neg_clauses {
                 let clause = neg.apply_mapping(&mapping);
-                if !clause.is_satisfiable() { return false; }
+                if !clause.is_satisfiable() {
+                    return false;
+                }
             }
             true
-        } else { false }
+        } else {
+            false
+        }
     }
     fn combine_assignments(&self, assignments: &[Assignment]) -> Assignment {
         let mut new_equalities = Vec::new();
-        for a in assignments { for e in &a.equalities { new_equalities.push(e.clone()); } }
+        for a in assignments {
+            for e in &a.equalities {
+                new_equalities.push(e.clone());
+            }
+        }
         Assignment::new(new_equalities)
     }
-    pub fn add_assignment(&mut self, a: Assignment) { self.add_assignment_disjunction(vec![a]); }
-    pub fn add_assignment_disjunction(&mut self, assignments: Vec<Assignment>) { self.combinatorial_assignments.push(assignments); }
-    pub fn add_negative_clause(&mut self, c: NegativeClause) { self.neg_clauses.push(c); }
+    pub fn add_assignment(&mut self, a: Assignment) {
+        self.add_assignment_disjunction(vec![a]);
+    }
+    pub fn add_assignment_disjunction(&mut self, assignments: Vec<Assignment>) {
+        self.combinatorial_assignments.push(assignments);
+    }
+    pub fn add_negative_clause(&mut self, c: NegativeClause) {
+        self.neg_clauses.push(c);
+    }
     pub fn combine(&self, other: &ConstraintSystem) -> ConstraintSystem {
         let mut combined = ConstraintSystem::new();
-        combined.combinatorial_assignments = [self.combinatorial_assignments.clone(), other.combinatorial_assignments.clone()].concat();
+        combined.combinatorial_assignments = [
+            self.combinatorial_assignments.clone(),
+            other.combinatorial_assignments.clone(),
+        ]
+        .concat();
         combined.neg_clauses = [self.neg_clauses.clone(), other.neg_clauses.clone()].concat();
         combined
     }
-    pub fn copy(&self) -> ConstraintSystem { ConstraintSystem { combinatorial_assignments: self.combinatorial_assignments.clone(), neg_clauses: self.neg_clauses.clone() } }
+    pub fn copy(&self) -> ConstraintSystem {
+        ConstraintSystem {
+            combinatorial_assignments: self.combinatorial_assignments.clone(),
+            neg_clauses: self.neg_clauses.clone(),
+        }
+    }
     pub fn is_solvable(&self) -> bool {
         // product over combinatorial_assignments
-        if self.combinatorial_assignments.is_empty() { return false; }
+        if self.combinatorial_assignments.is_empty() {
+            return false;
+        }
         let mut indices = vec![0usize; self.combinatorial_assignments.len()];
         loop {
             let mut selected: Vec<Assignment> = Vec::new();
@@ -159,17 +220,26 @@ impl ConstraintSystem {
             }
             let mut combined = self.combine_assignments(&selected);
             if combined.is_consistent() {
-                if self.all_clauses_satisfiable(&mut combined) { return true; }
+                if self.all_clauses_satisfiable(&mut combined) {
+                    return true;
+                }
             }
             // increment indices
             let mut carry = true;
             for i in 0..indices.len() {
                 if carry {
                     indices[i] += 1;
-                    if indices[i] >= self.combinatorial_assignments[i].len() { indices[i] = 0; carry = true; } else { carry = false; }
+                    if indices[i] >= self.combinatorial_assignments[i].len() {
+                        indices[i] = 0;
+                        carry = true;
+                    } else {
+                        carry = false;
+                    }
                 }
             }
-            if carry { break; }
+            if carry {
+                break;
+            }
         }
         false
     }

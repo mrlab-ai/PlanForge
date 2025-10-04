@@ -1,6 +1,6 @@
+use planners::translate::pddl_parser::parse_sexprs;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use planners::translate::pddl_parser::parse_sexprs;
 
 fn dump(inpath: &str, outpath: &str) -> io::Result<()> {
     let mut s = String::new();
@@ -25,6 +25,9 @@ fn main() -> io::Result<()> {
     let problem_out = out_dir.join("rust_problem_sexpr.txt");
     dump(&args[1], domain_out.to_str().unwrap())?;
     dump(&args[2], problem_out.to_str().unwrap())?;
-    println!("Wrote rust domain and problem sexpr files to {}", out_dir.display());
+    println!(
+        "Wrote rust domain and problem sexpr files to {}",
+        out_dir.display()
+    );
     Ok(())
 }

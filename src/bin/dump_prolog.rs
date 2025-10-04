@@ -1,7 +1,7 @@
-use std::fs::File;
-use std::io::{Read, Write};
 use planners::translate::pddl_parser::parse_sexprs;
 use planners::translate::pddl_to_prolog::{domain_to_prolog, problem_to_prolog};
+use std::fs::File;
+use std::io::{Read, Write};
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -25,6 +25,10 @@ fn main() -> anyhow::Result<()> {
     fd.write_all(dom_pl.as_bytes())?;
     let mut fp = File::create(outdir.join("rust_problem.pl"))?;
     fp.write_all(prob_pl.as_bytes())?;
-    println!("WROTE {} and {}", outdir.join("rust_domain.pl").display(), outdir.join("rust_problem.pl").display());
+    println!(
+        "WROTE {} and {}",
+        outdir.join("rust_domain.pl").display(),
+        outdir.join("rust_problem.pl").display()
+    );
     Ok(())
 }

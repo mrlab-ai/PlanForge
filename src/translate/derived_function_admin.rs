@@ -1,5 +1,5 @@
-use crate::translate::pddl_parser::SExpr;
 use crate::translate::numeric_axiom_rules::PrimitiveNumericExpression;
+use crate::translate::pddl_parser::SExpr;
 use std::collections::HashMap;
 
 /// Minimal DerivedFunctionAdministrator: canonicalize simple arithmetic
@@ -14,7 +14,10 @@ pub struct DerivedFunctionAdministrator {
 
 impl DerivedFunctionAdministrator {
     pub fn new() -> Self {
-        DerivedFunctionAdministrator { functions: HashMap::new(), counter: 0 }
+        DerivedFunctionAdministrator {
+            functions: HashMap::new(),
+            counter: 0,
+        }
     }
 
     /// Given an SExpr that represents either a primitive PNE, a numeric constant,
@@ -26,14 +29,25 @@ impl DerivedFunctionAdministrator {
             SExpr::Atom(a) => {
                 // numeric constant -> canonical derived constant name like derived!4.0()
                 if let Ok(nv) = a.parse::<i64>() {
-                    PrimitiveNumericExpression { name: format!("derived!{}.0()", nv), args: vec![] }
+                    PrimitiveNumericExpression {
+                        name: format!("derived!{}.0()", nv),
+                        args: vec![],
+                    }
                 } else {
                     // plain atom treated as primitive PNE name (no args)
-                    PrimitiveNumericExpression { name: a.clone(), args: vec![] }
+                    PrimitiveNumericExpression {
+                        name: a.clone(),
+                        args: vec![],
+                    }
                 }
             }
             SExpr::List(list) => {
-                if list.is_empty() { return PrimitiveNumericExpression { name: "".to_string(), args: vec![] }; }
+                if list.is_empty() {
+                    return PrimitiveNumericExpression {
+                        name: "".to_string(),
+                        args: vec![],
+                    };
+                }
                 if let SExpr::Atom(op) = &list[0] {
                     // arithmetic operators: build child PNE tokens and return operator-style name + args
                     if op == "+" || op == "-" || op == "*" || op == "/" {
@@ -43,7 +57,11 @@ impl DerivedFunctionAdministrator {
                         for p in &list[1..] {
                             let pne = self.get_derived_function(p);
                             // token form: if child is a derived symbol keep it, otherwise append _PNE to its name
-                            let token = if pne.name.starts_with("derived!") { pne.name.clone() } else { format!("{}{}_PNE", pne.name, "") };
+                            let token = if pne.name.starts_with("derived!") {
+                                pne.name.clone()
+                            } else {
+                                format!("{}{}_PNE", pne.name, "")
+                            };
                             child_tokens.push(token);
                             // keep the underlying primitive name (without _PNE) as arg for effect representation
                             child_args.push(pne.name.clone());
@@ -59,15 +77,30 @@ impl DerivedFunctionAdministrator {
                             "/" => "derived!division_PNE",
                             _ => "derived!op_PNE",
                         };
-                        PrimitiveNumericExpression { name: op_name.to_string(), args: child_tokens }
+                        PrimitiveNumericExpression {
+                            name: op_name.to_string(),
+                            args: child_tokens,
+                        }
                     } else {
                         // treat as primitive PNE, name(args...)
-                        let args = list[1..].iter().filter_map(|x| match x { SExpr::Atom(a)=>Some(a.clone()), _=>None }).collect::<Vec<_>>();
+                        let args = list[1..]
+                            .iter()
+                            .filter_map(|x| match x {
+                                SExpr::Atom(a) => Some(a.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
                         let key = format!("{}({})", op, args.join(", "));
-                        PrimitiveNumericExpression { name: key.clone(), args }
+                        PrimitiveNumericExpression {
+                            name: key.clone(),
+                            args,
+                        }
                     }
                 } else {
-                    PrimitiveNumericExpression { name: Self::sexpr_to_string(exp), args: vec![] }
+                    PrimitiveNumericExpression {
+                        name: Self::sexpr_to_string(exp),
+                        args: vec![],
+                    }
                 }
             }
         }

@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Arg {
-    Var(usize),       // effect variable position index
-    FreeVar(String),  // projected variable like "?x"
-    Const(String),    // object name
+    Var(usize),      // effect variable position index
+    FreeVar(String), // projected variable like "?x"
+    Const(String),   // object name
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -14,39 +14,67 @@ pub struct Atom {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SymAtom { // symbolic: args are strings like "?x" or constants
+pub struct SymAtom {
+    // symbolic: args are strings like "?x" or constants
     pub predicate: String,
     pub args: Vec<String>,
 }
 
 impl SymAtom {
     pub fn new<S: Into<String>>(pred: S, args: Vec<S>) -> Self {
-        Self { predicate: pred.into(), args: args.into_iter().map(|s| s.into()).collect() }
+        Self {
+            predicate: pred.into(),
+            args: args.into_iter().map(|s| s.into()).collect(),
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct RuleSpec {
-    pub rtype: String,               // "join" | "product" | "project"
+    pub rtype: String, // "join" | "product" | "project"
     pub effect: SymAtom,
     pub conditions: Vec<SymAtom>,
 }
 
 pub fn variables_to_numbers(effect: &SymAtom, conditions: &[SymAtom]) -> (Atom, Vec<Atom>) {
     let mut rename_map: HashMap<String, usize> = HashMap::new();
-    let mut new_effect_args: Vec<Arg> = effect.args.iter().enumerate().map(|(i, a)| {
-        if a.starts_with('?') { rename_map.insert(a.clone(), i); Arg::Var(i) } else { Arg::Const(a.clone()) }
-    }).collect();
+    let mut new_effect_args: Vec<Arg> = effect
+        .args
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            if a.starts_with('?') {
+                rename_map.insert(a.clone(), i);
+                Arg::Var(i)
+            } else {
+                Arg::Const(a.clone())
+            }
+        })
+        .collect();
     // new_effect_args is constructed; in Python they overwrite, but we already set.
-    let new_effect = Atom { predicate: effect.predicate.clone(), args: new_effect_args.drain(..).collect() };
+    let new_effect = Atom {
+        predicate: effect.predicate.clone(),
+        args: new_effect_args.drain(..).collect(),
+    };
     let mut new_conditions: Vec<Atom> = Vec::new();
     for cond in conditions {
-        let new_args: Vec<Arg> = cond.args.iter().map(|a| {
-            if let Some(&idx) = rename_map.get(a) { Arg::Var(idx) }
-            else if a.starts_with('?') { Arg::FreeVar(a.clone()) }
-            else { Arg::Const(a.clone()) }
-        }).collect();
-        new_conditions.push(Atom { predicate: cond.predicate.clone(), args: new_args });
+        let new_args: Vec<Arg> = cond
+            .args
+            .iter()
+            .map(|a| {
+                if let Some(&idx) = rename_map.get(a) {
+                    Arg::Var(idx)
+                } else if a.starts_with('?') {
+                    Arg::FreeVar(a.clone())
+                } else {
+                    Arg::Const(a.clone())
+                }
+            })
+            .collect();
+        new_conditions.push(Atom {
+            predicate: cond.predicate.clone(),
+            args: new_args,
+        });
     }
     (new_effect, new_conditions)
 }
@@ -72,33 +100,63 @@ impl JoinRule {
         assert_eq!(conditions.len(), 2);
         let left = &conditions[0];
         let right = &conditions[1];
-        let left_vars: HashSet<usize> = left.args.iter().filter_map(|a| match a { Arg::Var(i)=>Some(*i), _=>None }).collect();
-        let right_vars: HashSet<usize> = right.args.iter().filter_map(|a| match a { Arg::Var(i)=>Some(*i), _=>None }).collect();
+        let left_vars: HashSet<usize> = left
+            .args
+            .iter()
+            .filter_map(|a| match a {
+                Arg::Var(i) => Some(*i),
+                _ => None,
+            })
+            .collect();
+        let right_vars: HashSet<usize> = right
+            .args
+            .iter()
+            .filter_map(|a| match a {
+                Arg::Var(i) => Some(*i),
+                _ => None,
+            })
+            .collect();
         let mut common: Vec<usize> = left_vars.intersection(&right_vars).cloned().collect();
         common.sort();
         let positions_for = |cond: &Atom, commons: &Vec<usize>| -> Vec<usize> {
             let mut pos = Vec::new();
             for c in commons {
-                let idx = cond.args.iter().position(|a| matches!(a, Arg::Var(v) if v==c)).expect("var must appear in cond");
+                let idx = cond
+                    .args
+                    .iter()
+                    .position(|a| matches!(a, Arg::Var(v) if v==c))
+                    .expect("var must appear in cond");
                 pos.push(idx);
             }
             pos
         };
         let common_var_positions = [positions_for(left, &common), positions_for(right, &common)];
         let atoms_by_key = [HashMap::new(), HashMap::new()];
-        Self { effect, conditions, common_var_positions, atoms_by_key }
+        Self {
+            effect,
+            conditions,
+            common_var_positions,
+            atoms_by_key,
+        }
     }
     fn prepare_effect(&self, new_atom: &Atom, cond_index: usize) -> Vec<String> {
         let cond = &self.conditions[cond_index];
-        let mut eff_args: Vec<String> = self.effect.args.iter().map(|a| match a {
-            Arg::Var(_)=>"".to_string(),
-            Arg::Const(c)=>c.clone(),
-            Arg::FreeVar(_)=>"".to_string(),
-        }).collect();
+        let mut eff_args: Vec<String> = self
+            .effect
+            .args
+            .iter()
+            .map(|a| match a {
+                Arg::Var(_) => "".to_string(),
+                Arg::Const(c) => c.clone(),
+                Arg::FreeVar(_) => "".to_string(),
+            })
+            .collect();
         for (arg_pos, arg) in cond.args.iter().enumerate() {
             if let Arg::Var(var_no) = arg {
                 // copy over the const at this position from new_atom
-                if let Arg::Const(ref obj) = new_atom.args[arg_pos] { eff_args[*var_no] = obj.clone(); }
+                if let Arg::Const(ref obj) = new_atom.args[arg_pos] {
+                    eff_args[*var_no] = obj.clone();
+                }
             }
         }
         eff_args
@@ -108,36 +166,77 @@ impl JoinRule {
 impl BuildRule for JoinRule {
     fn validate(&self) {
         assert_eq!(self.conditions.len(), 2, "JoinRule must have 2 conditions");
-        let left_vars: HashSet<_> = self.conditions[0].args.iter().filter_map(|a| match a { Arg::Var(i)=>Some(*i), Arg::FreeVar(s)=>Some(usize::MAX), _=>None }).collect();
-        let right_vars: HashSet<_> = self.conditions[1].args.iter().filter_map(|a| match a { Arg::Var(i)=>Some(*i), Arg::FreeVar(s)=>Some(usize::MAX), _=>None }).collect();
-        assert!(!left_vars.is_empty() && !right_vars.is_empty(), "JoinRule needs shared variables");
+        let left_vars: HashSet<_> = self.conditions[0]
+            .args
+            .iter()
+            .filter_map(|a| match a {
+                Arg::Var(i) => Some(*i),
+                Arg::FreeVar(s) => Some(usize::MAX),
+                _ => None,
+            })
+            .collect();
+        let right_vars: HashSet<_> = self.conditions[1]
+            .args
+            .iter()
+            .filter_map(|a| match a {
+                Arg::Var(i) => Some(*i),
+                Arg::FreeVar(s) => Some(usize::MAX),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !left_vars.is_empty() && !right_vars.is_empty(),
+            "JoinRule needs shared variables"
+        );
     }
     fn update_index(&mut self, new_atom: &Atom, cond_index: usize) {
         let positions = &self.common_var_positions[cond_index];
         let mut key: Vec<String> = Vec::with_capacity(positions.len());
-        for &p in positions { if let Arg::Const(ref v) = new_atom.args[p] { key.push(v.clone()); } }
-        self.atoms_by_key[cond_index].entry(key).or_default().push(new_atom.clone());
+        for &p in positions {
+            if let Arg::Const(ref v) = new_atom.args[p] {
+                key.push(v.clone());
+            }
+        }
+        self.atoms_by_key[cond_index]
+            .entry(key)
+            .or_default()
+            .push(new_atom.clone());
     }
-    fn fire(&self, new_atom: &Atom, cond_index: usize, enqueue: &mut dyn FnMut(&str, &Vec<String>)) {
+    fn fire(
+        &self,
+        new_atom: &Atom,
+        cond_index: usize,
+        enqueue: &mut dyn FnMut(&str, &Vec<String>),
+    ) {
         let mut eff_args = self.prepare_effect(new_atom, cond_index);
         let positions = &self.common_var_positions[cond_index];
         let mut key: Vec<String> = Vec::with_capacity(positions.len());
-        for &p in positions { if let Arg::Const(ref v) = new_atom.args[p] { key.push(v.clone()); } }
+        for &p in positions {
+            if let Arg::Const(ref v) = new_atom.args[p] {
+                key.push(v.clone());
+            }
+        }
         let other = 1 - cond_index;
         if let Some(list) = self.atoms_by_key[other].get(&key) {
             let other_cond = &self.conditions[other];
             for atom in list {
                 for (i, a) in other_cond.args.iter().enumerate() {
                     if let Arg::Var(var_no) = a {
-                        if let Arg::Const(ref obj) = atom.args[i] { eff_args[*var_no] = obj.clone(); }
+                        if let Arg::Const(ref obj) = atom.args[i] {
+                            eff_args[*var_no] = obj.clone();
+                        }
                     }
                 }
                 enqueue(&self.effect.predicate, &eff_args);
             }
         }
     }
-    fn conditions(&self) -> &Vec<Atom> { &self.conditions }
-    fn effect(&self) -> &Atom { &self.effect }
+    fn conditions(&self) -> &Vec<Atom> {
+        &self.conditions
+    }
+    fn effect(&self) -> &Atom {
+        &self.effect
+    }
 }
 
 #[derive(Clone)]
@@ -151,27 +250,41 @@ pub struct ProductRule {
 impl ProductRule {
     pub fn new(effect: Atom, conditions: Vec<Atom>) -> Self {
         let k = conditions.len();
-        Self { effect, conditions, atoms_by_index: vec![Vec::new(); k], empty_atom_list_no: k }
+        Self {
+            effect,
+            conditions,
+            atoms_by_index: vec![Vec::new(); k],
+            empty_atom_list_no: k,
+        }
     }
     fn bindings_for(atom: &Atom, cond: &Atom) -> Vec<(usize, String)> {
         let mut out = Vec::new();
         for (i, a) in cond.args.iter().enumerate() {
             if let Arg::Var(var_no) = a {
-                if let Arg::Const(ref obj) = atom.args[i] { out.push((*var_no, obj.clone())); }
+                if let Arg::Const(ref obj) = atom.args[i] {
+                    out.push((*var_no, obj.clone()));
+                }
             }
         }
         out
     }
     fn prepare_effect(&self, new_atom: &Atom, cond_index: usize) -> Vec<String> {
         let cond = &self.conditions[cond_index];
-        let mut eff_args: Vec<String> = self.effect.args.iter().map(|a| match a {
-            Arg::Var(_)=>"".to_string(),
-            Arg::Const(c)=>c.clone(),
-            Arg::FreeVar(_)=>"".to_string(),
-        }).collect();
+        let mut eff_args: Vec<String> = self
+            .effect
+            .args
+            .iter()
+            .map(|a| match a {
+                Arg::Var(_) => "".to_string(),
+                Arg::Const(c) => c.clone(),
+                Arg::FreeVar(_) => "".to_string(),
+            })
+            .collect();
         for (i, a) in cond.args.iter().enumerate() {
             if let Arg::Var(var_no) = a {
-                if let Arg::Const(ref obj) = new_atom.args[i] { eff_args[*var_no] = obj.clone(); }
+                if let Arg::Const(ref obj) = new_atom.args[i] {
+                    eff_args[*var_no] = obj.clone();
+                }
             }
         }
         eff_args
@@ -180,46 +293,100 @@ impl ProductRule {
 
 impl BuildRule for ProductRule {
     fn validate(&self) {
-        assert!(self.conditions.len() >= 2, "ProductRule needs >=2 conditions");
+        assert!(
+            self.conditions.len() >= 2,
+            "ProductRule needs >=2 conditions"
+        );
         // Lightweight validation: ensure effect vars cover all condition Vars
-        let eff_vars: HashSet<_> = self.effect.args.iter().filter_map(|a| match a { Arg::Var(i)=>Some(*i), _=>None }).collect();
+        let eff_vars: HashSet<_> = self
+            .effect
+            .args
+            .iter()
+            .filter_map(|a| match a {
+                Arg::Var(i) => Some(*i),
+                _ => None,
+            })
+            .collect();
         let mut cond_vars: HashSet<usize> = HashSet::new();
-        for c in &self.conditions { for a in &c.args { if let Arg::Var(i) = a { cond_vars.insert(*i); } } }
-        assert_eq!(eff_vars, cond_vars, "Effect vars must equal union of cond vars");
+        for c in &self.conditions {
+            for a in &c.args {
+                if let Arg::Var(i) = a {
+                    cond_vars.insert(*i);
+                }
+            }
+        }
+        assert_eq!(
+            eff_vars, cond_vars,
+            "Effect vars must equal union of cond vars"
+        );
     }
     fn update_index(&mut self, new_atom: &Atom, cond_index: usize) {
         let list = &mut self.atoms_by_index[cond_index];
-        if list.is_empty() { self.empty_atom_list_no = self.empty_atom_list_no.saturating_sub(1); }
+        if list.is_empty() {
+            self.empty_atom_list_no = self.empty_atom_list_no.saturating_sub(1);
+        }
         list.push(new_atom.clone());
     }
-    fn fire(&self, new_atom: &Atom, cond_index: usize, enqueue: &mut dyn FnMut(&str, &Vec<String>)) {
-        if self.empty_atom_list_no > 0 { return; }
+    fn fire(
+        &self,
+        new_atom: &Atom,
+        cond_index: usize,
+        enqueue: &mut dyn FnMut(&str, &Vec<String>),
+    ) {
+        if self.empty_atom_list_no > 0 {
+            return;
+        }
         // Build binding factors for all other conditions
         let mut factors: Vec<Vec<(usize, String)>> = Vec::new();
         for (pos, cond) in self.conditions.iter().enumerate() {
-            if pos == cond_index { continue; }
+            if pos == cond_index {
+                continue;
+            }
             let atoms = &self.atoms_by_index[pos];
-            if atoms.is_empty() { return; }
+            if atoms.is_empty() {
+                return;
+            }
             let mut factor: Vec<(usize, String)> = Vec::new();
-            for a in atoms { for (vn, obj) in Self::bindings_for(a, cond) { factor.push((vn, obj)); } }
+            for a in atoms {
+                for (vn, obj) in Self::bindings_for(a, cond) {
+                    factor.push((vn, obj));
+                }
+            }
             factors.push(factor);
         }
         let mut eff_args = self.prepare_effect(new_atom, cond_index);
         // Cartesian product: for simplicity, assign in nested loops by recursive helper
-        fn product_apply(factors: &[Vec<(usize, String)>], acc: &mut Vec<(usize, String)>, emit: &mut dyn FnMut(&Vec<(usize, String)>)) {
-            if factors.is_empty() { emit(acc); return; }
+        fn product_apply(
+            factors: &[Vec<(usize, String)>],
+            acc: &mut Vec<(usize, String)>,
+            emit: &mut dyn FnMut(&Vec<(usize, String)>),
+        ) {
+            if factors.is_empty() {
+                emit(acc);
+                return;
+            }
             let (first, rest) = factors.split_first().unwrap();
-            for b in first { acc.push(b.clone()); product_apply(rest, acc, emit); acc.pop(); }
+            for b in first {
+                acc.push(b.clone());
+                product_apply(rest, acc, emit);
+                acc.pop();
+            }
         }
         let mut tmp_acc: Vec<(usize, String)> = Vec::new();
         product_apply(&factors, &mut tmp_acc, &mut |bindings| {
             let mut filled = eff_args.clone();
-            for (var_no, obj) in bindings { filled[*var_no] = obj.clone(); }
+            for (var_no, obj) in bindings {
+                filled[*var_no] = obj.clone();
+            }
             enqueue(&self.effect.predicate, &filled);
         });
     }
-    fn conditions(&self) -> &Vec<Atom> { &self.conditions }
-    fn effect(&self) -> &Atom { &self.effect }
+    fn conditions(&self) -> &Vec<Atom> {
+        &self.conditions
+    }
+    fn effect(&self) -> &Atom {
+        &self.effect
+    }
 }
 
 #[derive(Clone)]
@@ -229,17 +396,26 @@ pub struct ProjectRule {
 }
 
 impl ProjectRule {
-    pub fn new(effect: Atom, conditions: Vec<Atom>) -> Self { Self { effect, conditions } }
+    pub fn new(effect: Atom, conditions: Vec<Atom>) -> Self {
+        Self { effect, conditions }
+    }
     fn prepare_effect(&self, new_atom: &Atom, cond_index: usize) -> Vec<String> {
         let cond = &self.conditions[cond_index];
-        let mut eff_args: Vec<String> = self.effect.args.iter().map(|a| match a {
-            Arg::Var(_)=>"".to_string(),
-            Arg::Const(c)=>c.clone(),
-            Arg::FreeVar(_)=>"".to_string(),
-        }).collect();
+        let mut eff_args: Vec<String> = self
+            .effect
+            .args
+            .iter()
+            .map(|a| match a {
+                Arg::Var(_) => "".to_string(),
+                Arg::Const(c) => c.clone(),
+                Arg::FreeVar(_) => "".to_string(),
+            })
+            .collect();
         for (i, a) in cond.args.iter().enumerate() {
             if let Arg::Var(var_no) = a {
-                if let Arg::Const(ref obj) = new_atom.args[i] { eff_args[*var_no] = obj.clone(); }
+                if let Arg::Const(ref obj) = new_atom.args[i] {
+                    eff_args[*var_no] = obj.clone();
+                }
             }
         }
         eff_args
@@ -247,14 +423,25 @@ impl ProjectRule {
 }
 
 impl BuildRule for ProjectRule {
-    fn validate(&self) { assert_eq!(self.conditions.len(), 1, "ProjectRule needs 1 condition"); }
+    fn validate(&self) {
+        assert_eq!(self.conditions.len(), 1, "ProjectRule needs 1 condition");
+    }
     fn update_index(&mut self, _new_atom: &Atom, _cond_index: usize) {}
-    fn fire(&self, new_atom: &Atom, cond_index: usize, enqueue: &mut dyn FnMut(&str, &Vec<String>)) {
+    fn fire(
+        &self,
+        new_atom: &Atom,
+        cond_index: usize,
+        enqueue: &mut dyn FnMut(&str, &Vec<String>),
+    ) {
         let eff_args = self.prepare_effect(new_atom, cond_index);
         enqueue(&self.effect.predicate, &eff_args);
     }
-    fn conditions(&self) -> &Vec<Atom> { &self.conditions }
-    fn effect(&self) -> &Atom { &self.effect }
+    fn conditions(&self) -> &Vec<Atom> {
+        &self.conditions
+    }
+    fn effect(&self) -> &Atom {
+        &self.effect
+    }
 }
 
 pub enum RuleKind {
@@ -264,15 +451,27 @@ pub enum RuleKind {
 }
 
 impl RuleKind {
-    pub fn as_rule(&self) -> &dyn BuildRule { match self { RuleKind::Join(r)=>r, RuleKind::Product(r)=>r, RuleKind::Project(r)=>r } }
-    pub fn as_rule_mut(&mut self) -> &mut dyn BuildRule { match self { RuleKind::Join(r)=>r, RuleKind::Product(r)=>r, RuleKind::Project(r)=>r } }
+    pub fn as_rule(&self) -> &dyn BuildRule {
+        match self {
+            RuleKind::Join(r) => r,
+            RuleKind::Product(r) => r,
+            RuleKind::Project(r) => r,
+        }
+    }
+    pub fn as_rule_mut(&mut self) -> &mut dyn BuildRule {
+        match self {
+            RuleKind::Join(r) => r,
+            RuleKind::Product(r) => r,
+            RuleKind::Project(r) => r,
+        }
+    }
 }
 
 pub fn convert_rules(specs: &[RuleSpec]) -> Vec<RuleKind> {
     let mut rules = Vec::new();
     for spec in specs {
         let (eff, conds) = variables_to_numbers(&spec.effect, &spec.conditions);
-    let rk = match spec.rtype.as_str() {
+        let rk = match spec.rtype.as_str() {
             "join" => RuleKind::Join(JoinRule::new(eff, conds)),
             "product" => RuleKind::Product(ProductRule::new(eff, conds)),
             "project" => RuleKind::Project(ProjectRule::new(eff, conds)),
@@ -287,18 +486,36 @@ pub fn convert_rules(specs: &[RuleSpec]) -> Vec<RuleKind> {
 // Unifier machinery
 #[derive(Clone)]
 enum GenNode {
-    Leaf { matches: Vec<(usize, usize)> },
-    Match { index: usize, matches: Vec<(usize, usize)>, map: HashMap<String, Box<GenNode>>, next: Box<GenNode> },
+    Leaf {
+        matches: Vec<(usize, usize)>,
+    },
+    Match {
+        index: usize,
+        matches: Vec<(usize, usize)>,
+        map: HashMap<String, Box<GenNode>>,
+        next: Box<GenNode>,
+    },
 }
 
 impl GenNode {
     // helper methods for generator tree
     fn generate(&self, atom: &Atom, result: &mut Vec<(usize, usize)>) {
         match self {
-            GenNode::Leaf { matches } => { result.extend_from_slice(matches); }
-            GenNode::Match { index, matches, map, next } => {
+            GenNode::Leaf { matches } => {
                 result.extend_from_slice(matches);
-                if let Arg::Const(ref c) = atom.args[*index] { if let Some(node) = map.get(c) { node.generate(atom, result); } }
+            }
+            GenNode::Match {
+                index,
+                matches,
+                map,
+                next,
+            } => {
+                result.extend_from_slice(matches);
+                if let Arg::Const(ref c) = atom.args[*index] {
+                    if let Some(node) = map.get(c) {
+                        node.generate(atom, result);
+                    }
+                }
                 next.generate(atom, result);
             }
         }
@@ -306,8 +523,24 @@ impl GenNode {
     fn insert(self, args: &[(usize, String)], value: (usize, usize)) -> GenNode {
         if args.is_empty() {
             return match self {
-                GenNode::Leaf { mut matches } => { matches.push(value); GenNode::Leaf { matches } }
-                GenNode::Match { index, mut matches, map, next } => { matches.push(value); GenNode::Match { index, matches, map, next } }
+                GenNode::Leaf { mut matches } => {
+                    matches.push(value);
+                    GenNode::Leaf { matches }
+                }
+                GenNode::Match {
+                    index,
+                    mut matches,
+                    map,
+                    next,
+                } => {
+                    matches.push(value);
+                    GenNode::Match {
+                        index,
+                        matches,
+                        map,
+                        next,
+                    }
+                }
             };
         }
         match self {
@@ -317,28 +550,78 @@ impl GenNode {
                 for (arg_index, arg) in args.iter().rev() {
                     let mut map = HashMap::new();
                     map.insert(arg.clone(), Box::new(root));
-                    root = GenNode::Match { index: *arg_index, matches: Vec::new(), map, next: Box::new(GenNode::Leaf { matches: Vec::new() }) };
+                    root = GenNode::Match {
+                        index: *arg_index,
+                        matches: Vec::new(),
+                        map,
+                        next: Box::new(GenNode::Leaf {
+                            matches: Vec::new(),
+                        }),
+                    };
                 }
                 // insert value at top
                 match root {
-                    GenNode::Match { index, mut matches, map, next } => { matches.push(value); GenNode::Match { index, matches, map, next } }
+                    GenNode::Match {
+                        index,
+                        mut matches,
+                        map,
+                        next,
+                    } => {
+                        matches.push(value);
+                        GenNode::Match {
+                            index,
+                            matches,
+                            map,
+                            next,
+                        }
+                    }
                     _ => unreachable!(),
                 }
             }
-        GenNode::Match { index, matches, mut map, mut next } => {
+            GenNode::Match {
+                index,
+                matches,
+                mut map,
+                mut next,
+            } => {
                 let (arg_index, arg) = args[0].clone();
                 if index < arg_index {
                     *next = next.insert(args, value);
-            GenNode::Match { index, matches, map, next }
+                    GenNode::Match {
+                        index,
+                        matches,
+                        map,
+                        next,
+                    }
                 } else if index > arg_index {
-                    let new_branch = GenNode::Leaf { matches: Vec::new() }.insert(&args[1..], value);
+                    let new_branch = GenNode::Leaf {
+                        matches: Vec::new(),
+                    }
+                    .insert(&args[1..], value);
                     map.insert(arg, Box::new(new_branch));
-            GenNode::Match { index, matches, map, next }
+                    GenNode::Match {
+                        index,
+                        matches,
+                        map,
+                        next,
+                    }
                 } else {
                     let entry = map.remove(&arg);
-                    let child = if let Some(node) = entry { node.insert(&args[1..], value) } else { GenNode::Leaf { matches: Vec::new() }.insert(&args[1..], value) };
+                    let child = if let Some(node) = entry {
+                        node.insert(&args[1..], value)
+                    } else {
+                        GenNode::Leaf {
+                            matches: Vec::new(),
+                        }
+                        .insert(&args[1..], value)
+                    };
                     map.insert(arg, Box::new(child));
-            GenNode::Match { index, matches, map, next }
+                    GenNode::Match {
+                        index,
+                        matches,
+                        map,
+                        next,
+                    }
                 }
             }
         }
@@ -355,11 +638,17 @@ impl Unifier {
         for (ri, rk) in rules.iter().enumerate() {
             let conds = rk.as_rule().conditions().clone();
             for (ci, cond) in conds.iter().enumerate() {
-                let entry = root_by_pred.remove(&cond.predicate).unwrap_or(GenNode::Leaf { matches: Vec::new() });
+                let entry = root_by_pred
+                    .remove(&cond.predicate)
+                    .unwrap_or(GenNode::Leaf {
+                        matches: Vec::new(),
+                    });
                 // constant arguments to index on
                 let mut const_args: Vec<(usize, String)> = Vec::new();
                 for (i, a) in cond.args.iter().enumerate() {
-                    if let Arg::Const(ref s) = a { const_args.push((i, s.clone())); }
+                    if let Arg::Const(ref s) = a {
+                        const_args.push((i, s.clone()));
+                    }
                 }
                 let newroot = entry.insert(&const_args, (ri, ci));
                 root_by_pred.insert(cond.predicate.clone(), newroot);
@@ -369,7 +658,9 @@ impl Unifier {
     }
     pub fn unify(&self, atom: &Atom) -> Vec<(usize, usize)> {
         let mut res = Vec::new();
-        if let Some(root) = self.root_by_pred.get(&atom.predicate) { root.generate(atom, &mut res); }
+        if let Some(root) = self.root_by_pred.get(&atom.predicate) {
+            root.generate(atom, &mut res);
+        }
         res
     }
 }
@@ -385,19 +676,36 @@ impl Queue {
     pub fn new(atoms: Vec<Atom>) -> Self {
         let mut enq: HashSet<(String, Vec<String>)> = HashSet::new();
         for a in &atoms {
-            let args = a.args.iter().map(|x| match x { Arg::Const(s)=>s.clone(), _=>String::new() }).collect();
+            let args = a
+                .args
+                .iter()
+                .map(|x| match x {
+                    Arg::Const(s) => s.clone(),
+                    _ => String::new(),
+                })
+                .collect();
             enq.insert((a.predicate.clone(), args));
         }
         let num_pushes = atoms.len();
-        Self { queue: atoms, queue_pos: 0, enqueued: enq, num_pushes }
+        Self {
+            queue: atoms,
+            queue_pos: 0,
+            enqueued: enq,
+            num_pushes,
+        }
     }
-    pub fn has_next(&self) -> bool { self.queue_pos < self.queue.len() }
+    pub fn has_next(&self) -> bool {
+        self.queue_pos < self.queue.len()
+    }
     pub fn push(&mut self, predicate: &str, args: &Vec<String>) {
         self.num_pushes += 1;
         let key = (predicate.to_string(), args.clone());
         if !self.enqueued.contains(&key) {
             self.enqueued.insert(key);
-            let atom = Atom { predicate: predicate.to_string(), args: args.iter().map(|s| Arg::Const(s.clone())).collect() };
+            let atom = Atom {
+                predicate: predicate.to_string(),
+                args: args.iter().map(|s| Arg::Const(s.clone())).collect(),
+            };
             self.queue.push(atom);
         }
     }
@@ -417,7 +725,9 @@ pub fn compute_model(rules: &mut Vec<RuleKind>, facts: &[Atom]) -> Vec<Atom> {
         for (ri, ci) in matches {
             let rule = rules.get_mut(ri).unwrap();
             rule.as_rule_mut().update_index(&next, ci);
-            let mut push = |pred: &str, args: &Vec<String>| { queue.push(pred, args); };
+            let mut push = |pred: &str, args: &Vec<String>| {
+                queue.push(pred, args);
+            };
             rule.as_rule().fire(&next, ci, &mut push);
         }
     }
@@ -429,24 +739,37 @@ mod tests {
     use super::*;
 
     fn const_atom(pred: &str, args: &[&str]) -> Atom {
-        Atom { predicate: pred.to_string(), args: args.iter().map(|s| Arg::Const((*s).to_string())).collect() }
+        Atom {
+            predicate: pred.to_string(),
+            args: args.iter().map(|s| Arg::Const((*s).to_string())).collect(),
+        }
     }
 
     #[test]
     fn join_rule_produces_effect() {
         // r(X) :- p(X), q(X) with facts p(a), q(a) -> r(a)
         let facts = vec![const_atom("p", &["a"]), const_atom("q", &["a"])];
-        let spec = RuleSpec { rtype: "join".to_string(), effect: SymAtom::new("r", vec!["?x"]), conditions: vec![SymAtom::new("p", vec!["?x"]), SymAtom::new("q", vec!["?x"]) ] };
+        let spec = RuleSpec {
+            rtype: "join".to_string(),
+            effect: SymAtom::new("r", vec!["?x"]),
+            conditions: vec![SymAtom::new("p", vec!["?x"]), SymAtom::new("q", vec!["?x"])],
+        };
         let mut rules = convert_rules(&[spec]);
         let model = compute_model(&mut rules, &facts);
-        assert!(model.iter().any(|a| a.predicate=="r" && matches!(&a.args[0], Arg::Const(s) if s=="a")));
+        assert!(model
+            .iter()
+            .any(|a| a.predicate == "r" && matches!(&a.args[0], Arg::Const(s) if s=="a")));
     }
 
     #[test]
     fn product_rule_crosses_bindings() {
         // r(X,Y) :- p(X), q(Y) with p(a), q(b) -> r(a,b)
         let facts = vec![const_atom("p", &["a"]), const_atom("q", &["b"])];
-        let spec = RuleSpec { rtype: "product".to_string(), effect: SymAtom::new("r", vec!["?x","?y"]), conditions: vec![SymAtom::new("p", vec!["?x"]), SymAtom::new("q", vec!["?y"]) ] };
+        let spec = RuleSpec {
+            rtype: "product".to_string(),
+            effect: SymAtom::new("r", vec!["?x", "?y"]),
+            conditions: vec![SymAtom::new("p", vec!["?x"]), SymAtom::new("q", vec!["?y"])],
+        };
         let mut rules = convert_rules(&[spec]);
         let model = compute_model(&mut rules, &facts);
         assert!(model.iter().any(|a| a.predicate=="r" && matches!((&a.args[0], &a.args[1]), (Arg::Const(x), Arg::Const(y)) if x=="a" && y=="b")));
@@ -455,11 +778,17 @@ mod tests {
     #[test]
     fn project_rule_projects() {
         // r(X) :- p(X, ?z) with p(a,b) -> r(a)
-        let facts = vec![const_atom("p", &["a","b"])];
-        let spec = RuleSpec { rtype: "project".to_string(), effect: SymAtom::new("r", vec!["?x"]), conditions: vec![SymAtom::new("p", vec!["?x","?z"]) ] };
+        let facts = vec![const_atom("p", &["a", "b"])];
+        let spec = RuleSpec {
+            rtype: "project".to_string(),
+            effect: SymAtom::new("r", vec!["?x"]),
+            conditions: vec![SymAtom::new("p", vec!["?x", "?z"])],
+        };
         let mut rules = convert_rules(&[spec]);
         let model = compute_model(&mut rules, &facts);
-        assert!(model.iter().any(|a| a.predicate=="r" && matches!(&a.args[0], Arg::Const(s) if s=="a")));
+        assert!(model
+            .iter()
+            .any(|a| a.predicate == "r" && matches!(&a.args[0], Arg::Const(s) if s=="a")));
     }
 }
 // End of build_model.rs

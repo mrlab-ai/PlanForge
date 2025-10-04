@@ -1,8 +1,8 @@
+use planners::translate::pddl_ast::{Domain, Problem};
+use planners::translate::pddl_parser::parse_sexprs;
+use serde_json::json;
 use std::fs::File;
 use std::io::Read;
-use serde_json::json;
-use planners::translate::pddl_parser::parse_sexprs;
-use planners::translate::pddl_ast::{Domain, Problem};
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();

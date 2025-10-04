@@ -1,5 +1,5 @@
-use crate::translate::pddl_ast::{Domain, Problem, Condition, Effect};
 use crate::translate::derived_function_admin::DerivedFunctionAdministrator;
+use crate::translate::pddl_ast::{Condition, Domain, Effect, Problem};
 
 #[derive(Debug, Clone)]
 pub struct GroundedOp {
@@ -58,16 +58,25 @@ pub fn ground(domain: &Domain, problem: &Problem) -> Vec<GroundedOp> {
                 mapping.insert(pname.clone(), args[idx].clone());
             }
             // parse pre/effect into Condition/Effect when possible
-            let pre_cond = action.precond.as_ref().map(|s| {
-                crate::translate::pddl_ast::sexpr_to_condition(s)
-            });
-            let eff_e = action.effect.as_ref().map(|s| {
-                crate::translate::pddl_ast::sexpr_to_effect(s)
-            });
+            let pre_cond = action
+                .precond
+                .as_ref()
+                .map(|s| crate::translate::pddl_ast::sexpr_to_condition(s));
+            let eff_e = action
+                .effect
+                .as_ref()
+                .map(|s| crate::translate::pddl_ast::sexpr_to_effect(s));
             // substitute variables
-            let pre_sub = pre_cond.map(|c| crate::translate::pddl_ast::substitute_condition(&c, &mapping));
-            let eff_sub = eff_e.map(|e| crate::translate::pddl_ast::substitute_effect(&e, &mapping));
-            result.push(GroundedOp { name, args: args.clone(), pre: pre_sub, eff: eff_sub });
+            let pre_sub =
+                pre_cond.map(|c| crate::translate::pddl_ast::substitute_condition(&c, &mapping));
+            let eff_sub =
+                eff_e.map(|e| crate::translate::pddl_ast::substitute_effect(&e, &mapping));
+            result.push(GroundedOp {
+                name,
+                args: args.clone(),
+                pre: pre_sub,
+                eff: eff_sub,
+            });
         }
     }
 
@@ -75,7 +84,13 @@ pub fn ground(domain: &Domain, problem: &Problem) -> Vec<GroundedOp> {
 }
 
 /// New API: ground the task and also return instantiated numeric axioms discovered
-pub fn ground_with_numeric_axioms(domain: &Domain, problem: &Problem) -> (Vec<GroundedOp>, Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>) {
+pub fn ground_with_numeric_axioms(
+    domain: &Domain,
+    problem: &Problem,
+) -> (
+    Vec<GroundedOp>,
+    Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
+) {
     // For now reuse the same grounding and produce instantiated numeric axioms
     // for numeric init facts. Use the DerivedFunctionAdministrator so the
     // produced PNE names follow the same canonicalization that will be used
@@ -83,7 +98,8 @@ pub fn ground_with_numeric_axioms(domain: &Domain, problem: &Problem) -> (Vec<Gr
     let ops = ground(domain, problem);
     let mut df_admin = DerivedFunctionAdministrator::new();
     // Build simple instantiated numeric axioms from numeric init facts in the problem.
-    let mut inst_axioms: Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom> = Vec::new();
+    let mut inst_axioms: Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom> =
+        Vec::new();
     for sexpr in &problem.init {
         // look for forms like (= (f a b) 42)
         if let crate::translate::pddl_parser::SExpr::List(list) = sexpr {
@@ -92,7 +108,8 @@ pub fn ground_with_numeric_axioms(domain: &Domain, problem: &Problem) -> (Vec<Gr
                     if eq == "=" {
                         if let crate::translate::pddl_parser::SExpr::List(lhs_vec) = &list[1] {
                             // construct an SExpr::List to pass into df_admin
-                            let lhs_sexpr = crate::translate::pddl_parser::SExpr::List(lhs_vec.clone());
+                            let lhs_sexpr =
+                                crate::translate::pddl_parser::SExpr::List(lhs_vec.clone());
                             // get canonicalized PNE description (derived! tokens)
                             let pne = df_admin.get_derived_function(&lhs_sexpr);
                             // parse rhs as integer constant if possible

@@ -63,11 +63,11 @@ impl Default for Options {
             domain: String::new(),
             task: String::new(),
             generate_relaxed_task: false,
-            full_encoding: false,  // Default false means use_partial_encoding = true
+            full_encoding: false, // Default false means use_partial_encoding = true
             invariant_generation_max_candidates: 100000,
             invariant_generation_max_time: 300,
             add_implied_preconditions: false,
-            keep_unreachable_facts: false,  // Default false means filter_unreachable_facts = true
+            keep_unreachable_facts: false, // Default false means filter_unreachable_facts = true
             dump_task: false,
         }
     }

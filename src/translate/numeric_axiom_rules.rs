@@ -22,7 +22,9 @@ impl PartialEq for PrimitiveNumericExpression {
 impl Hash for PrimitiveNumericExpression {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
-        for a in &self.args { a.hash(state); }
+        for a in &self.args {
+            a.hash(state);
+        }
     }
 }
 
@@ -47,7 +49,10 @@ pub struct InstantiatedNumericAxiom {
 
 impl PartialEq for InstantiatedNumericAxiom {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.parts == other.parts && self.op == other.op && self.effect == other.effect
+        self.name == other.name
+            && self.parts == other.parts
+            && self.op == other.op
+            && self.effect == other.effect
     }
 }
 impl Eq for InstantiatedNumericAxiom {}
@@ -56,14 +61,18 @@ impl Hash for InstantiatedNumericAxiom {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
         self.op.hash(state);
-        for p in &self.parts { p.hash(state); }
+        for p in &self.parts {
+            p.hash(state);
+        }
         self.effect.hash(state);
     }
 }
 
 /// Build a map from effect (PrimitiveNumericExpression) to the axiom that
 /// produces it, similar to python's axiom_by_PNE
-pub fn axiom_by_pne(axioms: &[InstantiatedNumericAxiom]) -> HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom> {
+pub fn axiom_by_pne(
+    axioms: &[InstantiatedNumericAxiom],
+) -> HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom> {
     let mut m = HashMap::new();
     for ax in axioms {
         m.insert(ax.effect.clone(), ax.clone());
@@ -73,8 +82,14 @@ pub fn axiom_by_pne(axioms: &[InstantiatedNumericAxiom]) -> HashMap<PrimitiveNum
 
 /// Identify constant axioms: axioms whose computation reduces to a numeric constant.
 /// Mirrors identify_constants in Python file.
-pub fn identify_constants(axioms: &[InstantiatedNumericAxiom], axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>) -> Vec<InstantiatedNumericAxiom> {
-    fn is_constant(ax: &InstantiatedNumericAxiom, ax_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>) -> Option<i64> {
+pub fn identify_constants(
+    axioms: &[InstantiatedNumericAxiom],
+    axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
+) -> Vec<InstantiatedNumericAxiom> {
+    fn is_constant(
+        ax: &InstantiatedNumericAxiom,
+        ax_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
+    ) -> Option<i64> {
         // Recursive helper. If the axiom can be reduced to a single numeric constant,
         // return Some(value), otherwise None.
         if ax.op.is_none() && ax.parts.len() == 1 {
@@ -99,7 +114,11 @@ pub fn identify_constants(axioms: &[InstantiatedNumericAxiom], axiom_by_pne: &Ha
                     }
                 }
                 NumericPart::Axiom(boxed) => {
-                    if let Some(v) = is_constant(boxed, ax_by_pne) { values.push(v); } else { return None; }
+                    if let Some(v) = is_constant(boxed, ax_by_pne) {
+                        values.push(v);
+                    } else {
+                        return None;
+                    }
                 }
             }
         }
@@ -118,7 +137,13 @@ pub fn identify_constants(axioms: &[InstantiatedNumericAxiom], axiom_by_pne: &Ha
                             "+" => acc = acc + v,
                             "-" => acc = acc - v,
                             "*" => acc = acc * v,
-                            "/" => if v != 0 { acc = acc / v } else { return None; },
+                            "/" => {
+                                if v != 0 {
+                                    acc = acc / v
+                                } else {
+                                    return None;
+                                }
+                            }
                             _ => return None,
                         }
                     }
@@ -126,7 +151,9 @@ pub fn identify_constants(axioms: &[InstantiatedNumericAxiom], axiom_by_pne: &Ha
                 }
             } else {
                 // no op and single value was handled earlier; but if multiple values and no op, can't combine
-                if values.len() == 1 { return Some(values[0]); }
+                if values.len() == 1 {
+                    return Some(values[0]);
+                }
                 return None;
             }
         }
@@ -143,7 +170,11 @@ pub fn identify_constants(axioms: &[InstantiatedNumericAxiom], axiom_by_pne: &Ha
 }
 
 /// Compute axiom layers (dependency depth), similar to compute_axiom_layers in Python.
-pub fn compute_axiom_layers(axioms: &[InstantiatedNumericAxiom], constant_axioms: &[InstantiatedNumericAxiom], _axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>) -> (HashMap<i32, Vec<InstantiatedNumericAxiom>>, i32) {
+pub fn compute_axiom_layers(
+    axioms: &[InstantiatedNumericAxiom],
+    constant_axioms: &[InstantiatedNumericAxiom],
+    _axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
+) -> (HashMap<i32, Vec<InstantiatedNumericAxiom>>, i32) {
     const CONSTANT_OR_NO_AXIOM: i32 = -1;
     const UNKNOWN_LAYER: i32 = -2;
 
@@ -156,7 +187,7 @@ pub fn compute_axiom_layers(axioms: &[InstantiatedNumericAxiom], constant_axioms
             match part {
                 NumericPart::Primitive(p) => deps.push(format!("PNE:{}", p.name)),
                 NumericPart::Axiom(boxed) => deps.push(format!("AX:{}", boxed.name)),
-                NumericPart::Constant(_) => {},
+                NumericPart::Constant(_) => {}
             }
         }
         depends_on.insert(key, deps);
@@ -169,7 +200,12 @@ pub fn compute_axiom_layers(axioms: &[InstantiatedNumericAxiom], constant_axioms
 
     let const_set: HashSet<String> = constant_axioms.iter().map(|a| a.name.clone()).collect();
 
-    fn compute_layer_rec(name: &str, depends_on: &HashMap<String, Vec<String>>, layers: &mut HashMap<String, i32>, const_set: &HashSet<String>) -> i32 {
+    fn compute_layer_rec(
+        name: &str,
+        depends_on: &HashMap<String, Vec<String>>,
+        layers: &mut HashMap<String, i32>,
+        const_set: &HashSet<String>,
+    ) -> i32 {
         const CONSTANT_OR_NO_AXIOM: i32 = -1;
         const UNKNOWN_LAYER: i32 = -2;
         let layer = *layers.get(name).unwrap_or(&CONSTANT_OR_NO_AXIOM);
@@ -221,10 +257,16 @@ pub fn compute_axiom_layers(axioms: &[InstantiatedNumericAxiom], constant_axioms
 }
 
 /// Identify equivalent axioms within each layer.
-pub fn identify_equivalent_axioms(axioms_by_layer: &HashMap<i32, Vec<InstantiatedNumericAxiom>>, _axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>) -> HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom> {
+pub fn identify_equivalent_axioms(
+    axioms_by_layer: &HashMap<i32, Vec<InstantiatedNumericAxiom>>,
+    _axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
+) -> HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom> {
     let mut axiom_map: HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom> = HashMap::new();
     for (_layer, axioms) in axioms_by_layer {
-        let mut key_to_unique: HashMap<(Option<String>, Vec<PrimitiveNumericExpression>), InstantiatedNumericAxiom> = HashMap::new();
+        let mut key_to_unique: HashMap<
+            (Option<String>, Vec<PrimitiveNumericExpression>),
+            InstantiatedNumericAxiom,
+        > = HashMap::new();
         for ax in axioms {
             // mapped_args: translate parts to either the mapped effect or the primitive expression
             let mut mapped_args: Vec<PrimitiveNumericExpression> = Vec::new();
@@ -240,7 +282,10 @@ pub fn identify_equivalent_axioms(axioms_by_layer: &HashMap<i32, Vec<Instantiate
                     }
                     NumericPart::Constant(c) => {
                         // represent constant as a PrimitiveNumericExpression with special name
-                        mapped_args.push(PrimitiveNumericExpression { name: format!("const:{}", c.0), args: vec![] });
+                        mapped_args.push(PrimitiveNumericExpression {
+                            name: format!("const:{}", c.0),
+                            args: vec![],
+                        });
                     }
                 }
             }
@@ -256,10 +301,18 @@ pub fn identify_equivalent_axioms(axioms_by_layer: &HashMap<i32, Vec<Instantiate
 }
 
 /// Top-level handler matching the Python API: returns (axioms_by_layer, max_layer, axiom_map, constant_axioms)
-pub fn handle_axioms(axioms: &[InstantiatedNumericAxiom]) -> (HashMap<i32, Vec<InstantiatedNumericAxiom>>, i32, HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom>, Vec<InstantiatedNumericAxiom>) {
+pub fn handle_axioms(
+    axioms: &[InstantiatedNumericAxiom],
+) -> (
+    HashMap<i32, Vec<InstantiatedNumericAxiom>>,
+    i32,
+    HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom>,
+    Vec<InstantiatedNumericAxiom>,
+) {
     let axiom_by_pne = axiom_by_pne(axioms);
     let constant_axioms = identify_constants(axioms, &axiom_by_pne);
-    let (axioms_by_layer, max_layer) = compute_axiom_layers(axioms, &constant_axioms, &axiom_by_pne);
+    let (axioms_by_layer, max_layer) =
+        compute_axiom_layers(axioms, &constant_axioms, &axiom_by_pne);
     let axiom_map = identify_equivalent_axioms(&axioms_by_layer, &axiom_by_pne);
     (axioms_by_layer, max_layer, axiom_map, constant_axioms)
 }

@@ -1,6 +1,6 @@
-use std::path::Path;
 use std::fs::File;
 use std::io::Read;
+use std::path::Path;
 
 use crate::translate::pddl_parser::{parse_sexprs, SExpr};
 
@@ -19,16 +19,25 @@ impl PddlTask {
         let mut p = String::new();
         File::open(domain)?.read_to_string(&mut d)?;
         File::open(problem)?.read_to_string(&mut p)?;
-    let domain_forms = parse_sexprs(&d).map_err(|e| anyhow::anyhow!(e))?;
-    let problem_forms = parse_sexprs(&p).map_err(|e| anyhow::anyhow!(e))?;
-    Ok(PddlTask { domain_text: d, problem_text: p, domain_forms, problem_forms })
+        let domain_forms = parse_sexprs(&d).map_err(|e| anyhow::anyhow!(e))?;
+        let problem_forms = parse_sexprs(&p).map_err(|e| anyhow::anyhow!(e))?;
+        Ok(PddlTask {
+            domain_text: d,
+            problem_text: p,
+            domain_forms,
+            problem_forms,
+        })
     }
 
     /// Helper: return a small summary of the task for smoke-tests.
     pub fn summary(&self) -> String {
-    format!("domain={} bytes ({} forms), problem={} bytes ({} forms)",
-        self.domain_text.len(), self.domain_forms.len(),
-        self.problem_text.len(), self.problem_forms.len())
+        format!(
+            "domain={} bytes ({} forms), problem={} bytes ({} forms)",
+            self.domain_text.len(),
+            self.domain_forms.len(),
+            self.problem_text.len(),
+            self.problem_forms.len()
+        )
     }
 }
 
@@ -39,7 +48,11 @@ mod tests {
 
     #[test]
     fn build_ast_smoke() {
-        let task = PddlTask::from_files(std::path::Path::new("pddl/domain.pddl"), std::path::Path::new("pddl/pfile1.pddl")).unwrap();
+        let task = PddlTask::from_files(
+            std::path::Path::new("pddl/domain.pddl"),
+            std::path::Path::new("pddl/pfile1.pddl"),
+        )
+        .unwrap();
         // attempt to build Domain and Problem ASTs
         let dom = Domain::from_sexprs(&task.domain_forms).expect("domain parsed");
         let prob = Problem::from_sexprs(&task.problem_forms).expect("problem parsed");

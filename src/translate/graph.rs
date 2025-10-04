@@ -15,13 +15,19 @@ where
     T: Clone + Eq + std::hash::Hash,
 {
     pub fn new() -> Self {
-        Self { nodes: HashSet::new(), edges: HashMap::new() }
+        Self {
+            nodes: HashSet::new(),
+            edges: HashMap::new(),
+        }
     }
 
     pub fn add_edge(&mut self, from: T, to: T) {
         self.nodes.insert(from.clone());
         self.nodes.insert(to.clone());
-        self.edges.entry(from).or_insert_with(HashSet::new).insert(to);
+        self.edges
+            .entry(from)
+            .or_insert_with(HashSet::new)
+            .insert(to);
     }
 
     pub fn successors(&self, node: &T) -> Option<&HashSet<T>> {
@@ -40,7 +46,9 @@ where
                     if visited.insert(n.clone()) {
                         comp.push(n.clone());
                         if let Some(succ) = self.edges.get(&n) {
-                            for v in succ { stack.push(v.clone()); }
+                            for v in succ {
+                                stack.push(v.clone());
+                            }
                         }
                     }
                 }

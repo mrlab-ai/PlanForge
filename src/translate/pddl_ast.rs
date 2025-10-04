@@ -58,7 +58,9 @@ pub fn sexpr_to_condition(s: &SExpr) -> Condition {
     match s {
         SExpr::Atom(a) => Condition::Atom(a.clone(), vec![]),
         SExpr::List(list) => {
-            if list.is_empty() { return Condition::True; }
+            if list.is_empty() {
+                return Condition::True;
+            }
             if let SExpr::Atom(k) = &list[0] {
                 match k.to_lowercase().as_str() {
                     "and" => {
@@ -71,25 +73,37 @@ pub fn sexpr_to_condition(s: &SExpr) -> Condition {
                     "not" => {
                         if list.len() >= 2 {
                             Condition::Not(Box::new(sexpr_to_condition(&list[1])))
-                        } else { Condition::True }
+                        } else {
+                            Condition::True
+                        }
                     }
                     "<=" | ">=" | "<" | ">" | "=" => {
                         if list.len() >= 3 {
                             // store raw SExprs for richer parsing later
-                            return Condition::Comparison(k.clone(), list[1].clone(), list[2].clone());
-                        } else { return Condition::True }
+                            return Condition::Comparison(
+                                k.clone(),
+                                list[1].clone(),
+                                list[2].clone(),
+                            );
+                        } else {
+                            return Condition::True;
+                        }
                     }
                     _ => {
                         // atom-like: predicate name followed by args
                         let name = k.clone();
                         let mut args = Vec::new();
                         for a in &list[1..] {
-                            if let SExpr::Atom(arg) = a { args.push(arg.clone()); }
+                            if let SExpr::Atom(arg) = a {
+                                args.push(arg.clone());
+                            }
                         }
                         Condition::Atom(name, args)
                     }
                 }
-            } else { Condition::True }
+            } else {
+                Condition::True
+            }
         }
     }
 }
@@ -98,12 +112,16 @@ pub fn sexpr_to_effect(s: &SExpr) -> Effect {
     match s {
         SExpr::Atom(a) => Effect::Add(a.clone(), vec![]),
         SExpr::List(list) => {
-            if list.is_empty() { return Effect::And(vec![]); }
+            if list.is_empty() {
+                return Effect::And(vec![]);
+            }
             if let SExpr::Atom(k) = &list[0] {
                 match k.to_lowercase().as_str() {
                     "and" => {
                         let mut es = Vec::new();
-                        for item in &list[1..] { es.push(sexpr_to_effect(item)); }
+                        for item in &list[1..] {
+                            es.push(sexpr_to_effect(item));
+                        }
                         Effect::And(es)
                     }
                     "not" => {
@@ -111,7 +129,13 @@ pub fn sexpr_to_effect(s: &SExpr) -> Effect {
                         if list.len() >= 2 {
                             if let SExpr::List(inner) = &list[1] {
                                 if let SExpr::Atom(name) = &inner[0] {
-                                    let args = inner[1..].iter().filter_map(|x| match x { SExpr::Atom(a)=>Some(a.clone()), _ => None }).collect();
+                                    let args = inner[1..]
+                                        .iter()
+                                        .filter_map(|x| match x {
+                                            SExpr::Atom(a) => Some(a.clone()),
+                                            _ => None,
+                                        })
+                                        .collect();
                                     return Effect::Del(name.clone(), args);
                                 }
                             }
@@ -122,10 +146,18 @@ pub fn sexpr_to_effect(s: &SExpr) -> Effect {
                         // (increase (f) val)
                         if list.len() >= 3 {
                             let func = if let SExpr::List(inner) = &list[1] {
-                                if let SExpr::Atom(name) = &inner[0] { name.clone() } else { "".to_string() }
-                            } else { "".to_string() };
+                                if let SExpr::Atom(name) = &inner[0] {
+                                    name.clone()
+                                } else {
+                                    "".to_string()
+                                }
+                            } else {
+                                "".to_string()
+                            };
                             if let SExpr::Atom(v) = &list[2] {
-                                if let Ok(n) = v.parse::<i64>() { return Effect::Increase(func, vec![], n); }
+                                if let Ok(n) = v.parse::<i64>() {
+                                    return Effect::Increase(func, vec![], n);
+                                }
                             }
                         }
                         Effect::And(vec![])
@@ -133,10 +165,18 @@ pub fn sexpr_to_effect(s: &SExpr) -> Effect {
                     "decrease" => {
                         if list.len() >= 3 {
                             let func = if let SExpr::List(inner) = &list[1] {
-                                if let SExpr::Atom(name) = &inner[0] { name.clone() } else { "".to_string() }
-                            } else { "".to_string() };
+                                if let SExpr::Atom(name) = &inner[0] {
+                                    name.clone()
+                                } else {
+                                    "".to_string()
+                                }
+                            } else {
+                                "".to_string()
+                            };
                             if let SExpr::Atom(v) = &list[2] {
-                                if let Ok(n) = v.parse::<i64>() { return Effect::Decrease(func, vec![], n); }
+                                if let Ok(n) = v.parse::<i64>() {
+                                    return Effect::Decrease(func, vec![], n);
+                                }
                             }
                         }
                         Effect::And(vec![])
@@ -144,11 +184,19 @@ pub fn sexpr_to_effect(s: &SExpr) -> Effect {
                     _ => {
                         // treat as add
                         let name = k.clone();
-                        let args = list[1..].iter().filter_map(|x| match x { SExpr::Atom(a)=>Some(a.clone()), _=>None }).collect();
+                        let args = list[1..]
+                            .iter()
+                            .filter_map(|x| match x {
+                                SExpr::Atom(a) => Some(a.clone()),
+                                _ => None,
+                            })
+                            .collect();
                         Effect::Add(name, args)
                     }
                 }
-            } else { Effect::And(vec![]) }
+            } else {
+                Effect::And(vec![])
+            }
         }
     }
 }
@@ -177,7 +225,9 @@ fn parse_typed_list(list: &[SExpr]) -> Vec<(String, Option<String>)> {
                 buffer.push(a.clone());
                 i += 1;
             }
-            _ => { i += 1; }
+            _ => {
+                i += 1;
+            }
         }
     }
     for name in buffer.drain(..) {
@@ -213,13 +263,22 @@ impl Domain {
                                                             if !list.is_empty() {
                                                                 if let SExpr::Atom(k) = &list[0] {
                                                                     let key = k.clone();
-                                                                    let content = list[1..].to_vec();
-                                                                    match key.to_lowercase().as_str() {
-                                                                        ":predicates" | "predicates" => {
+                                                                    let content =
+                                                                        list[1..].to_vec();
+                                                                    match key
+                                                                        .to_lowercase()
+                                                                        .as_str()
+                                                                    {
+                                                                        ":predicates"
+                                                                        | "predicates" => {
                                                                             // each content item may be a predicate list
                                                                             for item in &content {
-                                                                                if let SExpr::List(p) = item {
-                                                                                    if !p.is_empty() {
+                                                                                if let SExpr::List(
+                                                                                    p,
+                                                                                ) = item
+                                                                                {
+                                                                                    if !p.is_empty()
+                                                                                    {
                                                                                         if let SExpr::Atom(nm) = &p[0] {
                                                                                             let params = parse_typed_list(&p[1..]);
                                                                                             predicates.push((nm.clone(), params));
@@ -228,10 +287,15 @@ impl Domain {
                                                                                 }
                                                                             }
                                                                         }
-                                                                        ":functions" | "functions" => {
+                                                                        ":functions"
+                                                                        | "functions" => {
                                                                             for item in &content {
-                                                                                if let SExpr::List(p) = item {
-                                                                                    if !p.is_empty() {
+                                                                                if let SExpr::List(
+                                                                                    p,
+                                                                                ) = item
+                                                                                {
+                                                                                    if !p.is_empty()
+                                                                                    {
                                                                                         if let SExpr::Atom(nm) = &p[0] {
                                                                                             let params = parse_typed_list(&p[1..]);
                                                                                             functions.push((nm.clone(), params));
@@ -241,7 +305,11 @@ impl Domain {
                                                                             }
                                                                         }
                                                                         ":action" | "action" => {
-                                                                            if let Some(act) = Action::from_section(&content) {
+                                                                            if let Some(act) =
+                                                                                Action::from_section(
+                                                                                    &content,
+                                                                                )
+                                                                            {
                                                                                 actions.push(act);
                                                                             }
                                                                         }
@@ -253,7 +321,12 @@ impl Domain {
                                                         _ => {}
                                                     }
                                                 }
-                                                return Some(Domain { name, predicates, functions, actions });
+                                                return Some(Domain {
+                                                    name,
+                                                    predicates,
+                                                    functions,
+                                                    actions,
+                                                });
                                             }
                                         }
                                     }
@@ -281,7 +354,7 @@ impl Action {
                 name = a.clone();
             }
         }
-    // scan for keywords
+        // scan for keywords
         let mut i = 1;
         while i < content.len() {
             match &content[i] {
@@ -326,43 +399,96 @@ impl Action {
             }
             i += 1;
         }
-        Some(Action { name, parameters: params, precond: pre, effect: eff })
+        Some(Action {
+            name,
+            parameters: params,
+            precond: pre,
+            effect: eff,
+        })
     }
 }
 
 // Substitute variable tokens like "?x" in a Condition according to mapping
-pub fn substitute_condition(cond: &Condition, mapping: &std::collections::HashMap<String, String>) -> Condition {
+pub fn substitute_condition(
+    cond: &Condition,
+    mapping: &std::collections::HashMap<String, String>,
+) -> Condition {
     match cond {
         Condition::Atom(name, args) => {
-            let args2 = args.iter().map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone())).collect();
+            let args2 = args
+                .iter()
+                .map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
+                .collect();
             Condition::Atom(name.clone(), args2)
         }
         Condition::Not(c) => Condition::Not(Box::new(substitute_condition(c, mapping))),
-        Condition::And(v) => Condition::And(v.iter().map(|c| substitute_condition(c, mapping)).collect()),
+        Condition::And(v) => {
+            Condition::And(v.iter().map(|c| substitute_condition(c, mapping)).collect())
+        }
         Condition::Comparison(op, l, r) => {
-                // comparisons store raw SExprs; substitute variable tokens inside them
-                fn substitute_sexpr(sex: &SExpr, mapping: &std::collections::HashMap<String, String>) -> SExpr {
-                    match sex {
-                        SExpr::Atom(a) => {
-                            if a.starts_with('?') {
-                                if let Some(v) = mapping.get(a) { SExpr::Atom(v.clone()) } else { SExpr::Atom(a.clone()) }
-                            } else { SExpr::Atom(a.clone()) }
+            // comparisons store raw SExprs; substitute variable tokens inside them
+            fn substitute_sexpr(
+                sex: &SExpr,
+                mapping: &std::collections::HashMap<String, String>,
+            ) -> SExpr {
+                match sex {
+                    SExpr::Atom(a) => {
+                        if a.starts_with('?') {
+                            if let Some(v) = mapping.get(a) {
+                                SExpr::Atom(v.clone())
+                            } else {
+                                SExpr::Atom(a.clone())
+                            }
+                        } else {
+                            SExpr::Atom(a.clone())
                         }
-                        SExpr::List(list) => SExpr::List(list.iter().map(|s| substitute_sexpr(s, mapping)).collect()),
+                    }
+                    SExpr::List(list) => {
+                        SExpr::List(list.iter().map(|s| substitute_sexpr(s, mapping)).collect())
                     }
                 }
-                Condition::Comparison(op.clone(), substitute_sexpr(l, mapping), substitute_sexpr(r, mapping))
+            }
+            Condition::Comparison(
+                op.clone(),
+                substitute_sexpr(l, mapping),
+                substitute_sexpr(r, mapping),
+            )
         }
         Condition::True => Condition::True,
     }
 }
 
-pub fn substitute_effect(eff: &Effect, mapping: &std::collections::HashMap<String, String>) -> Effect {
+pub fn substitute_effect(
+    eff: &Effect,
+    mapping: &std::collections::HashMap<String, String>,
+) -> Effect {
     match eff {
-        Effect::Add(n, args) => Effect::Add(n.clone(), args.iter().map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone())).collect()),
-        Effect::Del(n, args) => Effect::Del(n.clone(), args.iter().map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone())).collect()),
-        Effect::Increase(n, args, v) => Effect::Increase(n.clone(), args.iter().map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone())).collect(), *v),
-        Effect::Decrease(n, args, v) => Effect::Decrease(n.clone(), args.iter().map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone())).collect(), *v),
+        Effect::Add(n, args) => Effect::Add(
+            n.clone(),
+            args.iter()
+                .map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
+                .collect(),
+        ),
+        Effect::Del(n, args) => Effect::Del(
+            n.clone(),
+            args.iter()
+                .map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
+                .collect(),
+        ),
+        Effect::Increase(n, args, v) => Effect::Increase(
+            n.clone(),
+            args.iter()
+                .map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
+                .collect(),
+            *v,
+        ),
+        Effect::Decrease(n, args, v) => Effect::Decrease(
+            n.clone(),
+            args.iter()
+                .map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
+                .collect(),
+            *v,
+        ),
         Effect::And(v) => Effect::And(v.iter().map(|e| substitute_effect(e, mapping)).collect()),
     }
 }
@@ -382,7 +508,9 @@ impl Problem {
                             for part in &items[1..] {
                                 match part {
                                     SExpr::List(inner) => {
-                                        if inner.is_empty() { continue; }
+                                        if inner.is_empty() {
+                                            continue;
+                                        }
                                         if let SExpr::Atom(atom0) = &inner[0] {
                                             match atom0.to_lowercase().as_str() {
                                                 ":problem" | "problem" => {
@@ -416,7 +544,12 @@ impl Problem {
                                     _ => {}
                                 }
                             }
-                            return Some(Problem { name, objects, init, goal });
+                            return Some(Problem {
+                                name,
+                                objects,
+                                init,
+                                goal,
+                            });
                         }
                     }
                 }
@@ -433,13 +566,21 @@ mod instantiate_tests {
 
     #[test]
     fn ground_smoke() {
-        let task = crate::translate::pddl::PddlTask::from_files(std::path::Path::new("pddl/domain.pddl"), std::path::Path::new("pddl/pfile1.pddl")).unwrap();
+        let task = crate::translate::pddl::PddlTask::from_files(
+            std::path::Path::new("pddl/domain.pddl"),
+            std::path::Path::new("pddl/pfile1.pddl"),
+        )
+        .unwrap();
         let dom = Domain::from_sexprs(&task.domain_forms).expect("domain parsed");
         let prob = Problem::from_sexprs(&task.problem_forms).expect("problem parsed");
         let ops = instantiate::ground(&dom, &prob);
         // grounding may produce many ops; check it's non-empty
         if ops.is_empty() {
-            panic!("grounding produced zero ops; domain.actions={}, problem.objects={}", dom.actions.len(), prob.objects.len());
+            panic!(
+                "grounding produced zero ops; domain.actions={}, problem.objects={}",
+                dom.actions.len(),
+                prob.objects.len()
+            );
         }
     }
 }

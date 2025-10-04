@@ -1,8 +1,8 @@
-use std::fs::File;
-use std::io::Write;
 use anyhow::Context;
 use planners::translate::pddl::PddlTask;
 use planners::translate::pddl_ast::{Domain, Problem};
+use std::fs::File;
+use std::io::Write;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -24,8 +24,14 @@ fn main() -> anyhow::Result<()> {
     writeln!(f, "grounded_ops: {}", ops.len())?;
     for op in ops {
         // name(args) pre_count eff_count
-        let pre_count = match &op.pre { Some(p) => format!("{:?}", p), None => "".to_string() };
-        let eff_count = match &op.eff { Some(e) => format!("{:?}", e), None => "".to_string() };
+        let pre_count = match &op.pre {
+            Some(p) => format!("{:?}", p),
+            None => "".to_string(),
+        };
+        let eff_count = match &op.eff {
+            Some(e) => format!("{:?}", e),
+            None => "".to_string(),
+        };
         writeln!(f, "{}\tpre={}\teff={}", op.name, pre_count, eff_count)?;
     }
     println!("WROTE {}", out);

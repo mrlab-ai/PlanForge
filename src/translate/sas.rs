@@ -5,6 +5,44 @@ pub struct Variable {
 }
 
 #[derive(Debug, Clone)]
+pub struct CanonicalVariable {
+    pub name: String,
+    pub axiom_layer: i32,
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CanonicalEffect {
+    pub var: usize,
+    pub pre: Option<usize>,
+    pub post: usize,
+    pub condition: Vec<(usize, usize)>,
+}
+
+#[derive(Debug, Clone)]
+pub enum CanonicalAssignRhs {
+    Variable(usize),
+    Constant(i64),
+}
+
+#[derive(Debug, Clone)]
+pub struct CanonicalAssignEffect {
+    pub target: usize,
+    pub op: String,
+    pub rhs: CanonicalAssignRhs,
+    pub condition: Vec<(usize, usize)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CanonicalOperator {
+    pub name: String,
+    pub prevail: Vec<(usize, usize)>,
+    pub pre_post: Vec<CanonicalEffect>,
+    pub assign_effects: Vec<CanonicalAssignEffect>,
+    pub cost: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct NumericVariable {
     pub name: String,
     pub initial: Option<i64>,
@@ -41,6 +79,11 @@ pub struct SASTask {
     pub init: Vec<i32>,
     // goal as (var, value) pairs
     pub goal: Vec<(usize, usize)>,
+    // Canonical descriptors mirroring the Python translator output
+    pub canonical_variables: Vec<CanonicalVariable>,
+    pub canonical_operators: Vec<CanonicalOperator>,
+    pub canonical_metric: Option<(String, isize)>,
+    pub global_constraint: Option<(usize, usize)>,
 }
 
 #[derive(Debug, Clone)]

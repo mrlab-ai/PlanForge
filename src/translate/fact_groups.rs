@@ -1,11 +1,13 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::cell::RefCell;
 
 /// Simplified fact grouping: group grounded atoms by predicate and first argument
 /// for common binary predicates like at(item, place) -> group all at(item, *)
 /// Falls back to singleton groups for anything else.
-pub fn compute_groups_from_atoms(atoms: &Vec<String>) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
+pub fn compute_groups_from_atoms(
+    atoms: &Vec<String>,
+) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
     // groups, mutex_groups (same as groups here), translation_key (list of value names per group)
     let mut by_key: HashMap<String, Vec<String>> = HashMap::new();
     let mut remaining: HashSet<String> = atoms.iter().cloned().collect();
@@ -15,7 +17,7 @@ pub fn compute_groups_from_atoms(atoms: &Vec<String>) -> (Vec<Vec<String>>, Vec<
         if let Some(open) = atom.find('(') {
             if let Some(close) = atom.rfind(')') {
                 let pred = &atom[..open];
-                let args = &atom[open+1..close];
+                let args = &atom[open + 1..close];
                 let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
                 if parts.len() >= 2 {
                     let key = format!("{}({})", pred, parts[0]);
@@ -31,13 +33,16 @@ pub fn compute_groups_from_atoms(atoms: &Vec<String>) -> (Vec<Vec<String>>, Vec<
     }
 
     // build groups list, deduplicate and sort each group for determinism
-    let mut groups: Vec<Vec<String>> = by_key.into_iter().map(|(_k,v)| {
-        let mut set: std::collections::HashSet<String> = v.into_iter().collect();
-        let mut vec: Vec<String> = set.drain().collect();
-        vec.sort();
-        vec
-    }).collect();
-    groups.sort_by(|a,b| a.len().cmp(&b.len()).reverse());
+    let mut groups: Vec<Vec<String>> = by_key
+        .into_iter()
+        .map(|(_k, v)| {
+            let mut set: std::collections::HashSet<String> = v.into_iter().collect();
+            let mut vec: Vec<String> = set.drain().collect();
+            vec.sort();
+            vec
+        })
+        .collect();
+    groups.sort_by(|a, b| a.len().cmp(&b.len()).reverse());
     // mutex_groups: for now same as groups
     let mutex_groups = groups.clone();
 
@@ -48,7 +53,12 @@ pub fn compute_groups_from_atoms(atoms: &Vec<String>) -> (Vec<Vec<String>>, Vec<
 }
 
 // Expand a group with ?X into concrete atoms present in reachable_facts
-fn expand_group(group: &Vec<String>, _domain: &crate::translate::pddl_ast::Domain, problem: &crate::translate::pddl_ast::Problem, reachable_facts: &HashSet<String>) -> Vec<String> {
+fn expand_group(
+    group: &Vec<String>,
+    _domain: &crate::translate::pddl_ast::Domain,
+    problem: &crate::translate::pddl_ast::Problem,
+    reachable_facts: &HashSet<String>,
+) -> Vec<String> {
     let mut result: Vec<String> = Vec::new();
     for fact in group {
         if fact.contains("?X") {
@@ -66,8 +76,16 @@ fn expand_group(group: &Vec<String>, _domain: &crate::translate::pddl_ast::Domai
     result
 }
 
-pub fn instantiate_groups(groups: &Vec<Vec<String>>, domain: &crate::translate::pddl_ast::Domain, problem: &crate::translate::pddl_ast::Problem, reachable_facts: &HashSet<String>) -> Vec<Vec<String>> {
-    groups.iter().map(|g| expand_group(g, domain, problem, reachable_facts)).collect()
+pub fn instantiate_groups(
+    groups: &Vec<Vec<String>>,
+    domain: &crate::translate::pddl_ast::Domain,
+    problem: &crate::translate::pddl_ast::Problem,
+    reachable_facts: &HashSet<String>,
+) -> Vec<Vec<String>> {
+    groups
+        .iter()
+        .map(|g| expand_group(g, domain, problem, reachable_facts))
+        .collect()
 }
 
 pub struct GroupCoverQueue {
@@ -80,20 +98,34 @@ pub struct GroupCoverQueue {
 impl GroupCoverQueue {
     pub fn new(groups: Vec<HashSet<String>>) -> Self {
         if groups.is_empty() {
-            return GroupCoverQueue { groups_by_size: Vec::new(), groups_by_fact: HashMap::new(), max_size: 0, top: None };
+            return GroupCoverQueue {
+                groups_by_size: Vec::new(),
+                groups_by_fact: HashMap::new(),
+                max_size: 0,
+                top: None,
+            };
         }
         let max_size = groups.iter().map(|g| g.len()).max().unwrap_or(0);
-        let mut groups_by_size: Vec<Vec<Rc<RefCell<HashSet<String>>>>> = vec![Vec::new(); max_size + 1];
+        let mut groups_by_size: Vec<Vec<Rc<RefCell<HashSet<String>>>>> =
+            vec![Vec::new(); max_size + 1];
         let mut groups_by_fact: HashMap<String, Vec<Rc<RefCell<HashSet<String>>>>> = HashMap::new();
         for g in groups.into_iter() {
             let sz = g.len();
             let rc = Rc::new(RefCell::new(g));
             for fact in rc.borrow().iter() {
-                groups_by_fact.entry(fact.clone()).or_default().push(rc.clone());
+                groups_by_fact
+                    .entry(fact.clone())
+                    .or_default()
+                    .push(rc.clone());
             }
             groups_by_size[sz].push(rc);
         }
-        let mut qc = GroupCoverQueue { groups_by_size, groups_by_fact, max_size, top: None };
+        let mut qc = GroupCoverQueue {
+            groups_by_size,
+            groups_by_fact,
+            max_size,
+            top: None,
+        };
         qc.update_top();
         qc
     }
@@ -137,20 +169,35 @@ impl GroupCoverQueue {
         None
     }
 
-    pub fn is_empty(&self) -> bool { self.top.is_none() }
+    pub fn is_empty(&self) -> bool {
+        self.top.is_none()
+    }
 }
 
-pub fn choose_groups(groups: Vec<Vec<String>>, _domain: &crate::translate::pddl_ast::Domain, _problem: &crate::translate::pddl_ast::Problem, reachable_facts: &HashSet<String>, use_partial_encoding: bool) -> Vec<Vec<String>> {
+pub fn choose_groups(
+    groups: Vec<Vec<String>>,
+    _domain: &crate::translate::pddl_ast::Domain,
+    _problem: &crate::translate::pddl_ast::Problem,
+    reachable_facts: &HashSet<String>,
+    use_partial_encoding: bool,
+) -> Vec<Vec<String>> {
     // convert groups to HashSet forms
-    let mutable_groups: Vec<HashSet<String>> = groups.into_iter().map(|g| g.into_iter().collect()).collect();
+    let mutable_groups: Vec<HashSet<String>> = groups
+        .into_iter()
+        .map(|g| g.into_iter().collect())
+        .collect();
     let mut queue = GroupCoverQueue::new(mutable_groups);
     let mut uncovered: HashSet<String> = reachable_facts.clone();
     let mut result: Vec<Vec<String>> = Vec::new();
     while !queue.is_empty() {
         if let Some(group) = queue.pop(use_partial_encoding) {
-            for f in &group { uncovered.remove(f); }
+            for f in &group {
+                uncovered.remove(f);
+            }
             result.push(group);
-        } else { break; }
+        } else {
+            break;
+        }
     }
     // leftover uncovered facts become singleton groups
     for fact in uncovered {
@@ -160,34 +207,45 @@ pub fn choose_groups(groups: Vec<Vec<String>>, _domain: &crate::translate::pddl_
 }
 
 pub fn build_translation_key(groups: &Vec<Vec<String>>) -> Vec<Vec<String>> {
-    groups.iter().map(|group| {
-        // For multi-valued groups we return exactly the positive atom strings
-        // (matching the reference SAS output). For singleton groups, return
-        // the positive atom followed by its NegatedAtom counterpart.
-        if group.len() == 1 {
-            vec![group[0].clone(), format!("NegatedAtom {}", group[0])]
-        } else {
-            group.clone()
-        }
-    }).collect()
+    groups
+        .iter()
+        .map(|group| {
+            if group.len() == 1 {
+                vec![group[0].clone(), format!("NegatedAtom {}", group[0])]
+            } else {
+                let mut values = group.clone();
+                values.push("<none of those>".to_string());
+                values
+            }
+        })
+        .collect()
 }
 
-pub fn collect_all_mutex_groups(groups: &Vec<Vec<String>>, atoms: &HashSet<String>) -> Vec<Vec<String>> {
+pub fn collect_all_mutex_groups(
+    groups: &Vec<Vec<String>>,
+    atoms: &HashSet<String>,
+) -> Vec<Vec<String>> {
     let mut all_groups: Vec<Vec<String>> = Vec::new();
     let mut uncovered: HashSet<String> = atoms.clone();
     for group in groups {
         let gset: HashSet<String> = group.iter().cloned().collect();
-        for fact in &gset { uncovered.remove(fact); }
+        for fact in &gset {
+            uncovered.remove(fact);
+        }
         all_groups.push(group.clone());
     }
-    for fact in uncovered { all_groups.push(vec![fact]); }
+    for fact in uncovered {
+        all_groups.push(vec![fact]);
+    }
     all_groups
 }
 
 pub fn sort_groups(groups: Vec<Vec<String>>) -> Vec<Vec<String>> {
     let mut g = groups;
     // sort elements in each group lexicographically
-    for group in &mut g { group.sort(); }
+    for group in &mut g {
+        group.sort();
+    }
     // sort groups lexicographically by their sequence of strings (like Python repr(list))
     g.sort_by(|a, b| {
         let mut it_a = a.iter();
@@ -196,7 +254,9 @@ pub fn sort_groups(groups: Vec<Vec<String>>) -> Vec<Vec<String>> {
             match (it_a.next(), it_b.next()) {
                 (Some(sa), Some(sb)) => {
                     let c = sa.cmp(sb);
-                    if c != std::cmp::Ordering::Equal { return c; }
+                    if c != std::cmp::Ordering::Equal {
+                        return c;
+                    }
                 }
                 (None, Some(_)) => return std::cmp::Ordering::Less,
                 (Some(_), None) => return std::cmp::Ordering::Greater,
@@ -207,7 +267,12 @@ pub fn sort_groups(groups: Vec<Vec<String>>) -> Vec<Vec<String>> {
     g
 }
 
-pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &crate::translate::pddl_ast::Problem, atoms: &Vec<String>, _reachable_action_params: Option<HashMap<String, Vec<Vec<String>>>>) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
+pub fn compute_groups(
+    domain: &crate::translate::pddl_ast::Domain,
+    problem: &crate::translate::pddl_ast::Problem,
+    atoms: &Vec<String>,
+    _reachable_action_params: Option<HashMap<String, Vec<Vec<String>>>>,
+) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
     // ask invariant_finder for abstract groups (with ?X placeholders)
     let groups = crate::translate::invariant_finder::get_groups(domain, problem);
     // instantiate groups using atoms set
@@ -229,20 +294,29 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
         if let Some(open) = a.find('(') {
             if let Some(close) = a.rfind(')') {
                 let pred = a[..open].trim().to_string();
-                if func_names.contains(&pred) { continue; }
-                if !pred_index.contains_key(&pred) { continue; }
-                let args = &a[open+1..close];
+                if func_names.contains(&pred) {
+                    continue;
+                }
+                if !pred_index.contains_key(&pred) {
+                    continue;
+                }
+                let args = &a[open + 1..close];
                 let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
                 if !parts.is_empty() {
                     let first = parts[0].trim().to_string();
-                    by_first.entry((pred.clone(), first)).or_default().push(a.clone());
+                    by_first
+                        .entry((pred.clone(), first))
+                        .or_default()
+                        .push(a.clone());
                 }
             }
         }
     }
     // incorporate first-arg groups if they look multi-valued and are not duplicates
     for ((_pred, _first), group) in by_first.into_iter() {
-        if group.len() <= 1 { continue; }
+        if group.len() <= 1 {
+            continue;
+        }
         // create deduped vector
         let mut gset: HashSet<String> = group.into_iter().collect();
         let mut gvec: Vec<String> = gset.drain().collect();
@@ -252,7 +326,9 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
             let b_pred = b.split('(').next().unwrap_or("").to_string();
             let ai = pred_index.get(&a_pred).cloned().unwrap_or(usize::MAX);
             let bi = pred_index.get(&b_pred).cloned().unwrap_or(usize::MAX);
-            if ai != bi { return ai.cmp(&bi); }
+            if ai != bi {
+                return ai.cmp(&bi);
+            }
             a.cmp(b)
         });
         // check if already present (by equality of sets)
@@ -260,7 +336,10 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
         for ex in &augmented {
             let exset: HashSet<String> = ex.iter().cloned().collect();
             let gset2: HashSet<String> = gvec.iter().cloned().collect();
-            if exset == gset2 { exists = true; break; }
+            if exset == gset2 {
+                exists = true;
+                break;
+            }
         }
         if !exists {
             augmented.push(gvec);
@@ -272,7 +351,10 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
     // across predicates into a single group per object. We approximate by merging for types
     // that appear as the first parameter type of any of the following predicates: at, in-arm, in-tray.
     // Build set of candidate predicate names present in the domain
-    let multi_pred_candidates: std::collections::HashSet<String> = ["at", "in-arm", "in-tray"].iter().map(|s| s.to_string()).collect();
+    let multi_pred_candidates: std::collections::HashSet<String> = ["at", "in-arm", "in-tray"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     // Map predicate -> first parameter type (if any)
     let mut pred_first_type: HashMap<String, String> = HashMap::new();
     for (pname, params) in &domain.predicates {
@@ -289,9 +371,14 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
             // if any candidate predicate has this first type, we consider this object
             let mut used = false;
             for (pname, ftp) in &pred_first_type {
-                if multi_pred_candidates.contains(pname) && ftp == t { used = true; break; }
+                if multi_pred_candidates.contains(pname) && ftp == t {
+                    used = true;
+                    break;
+                }
             }
-            if used { candidate_objects.insert(obj.clone()); }
+            if used {
+                candidate_objects.insert(obj.clone());
+            }
         }
     }
     // For each candidate object, collect all atoms whose first argument is the object
@@ -301,13 +388,18 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
         if let Some(open) = a.find('(') {
             if let Some(close) = a.rfind(')') {
                 let pred = a[..open].trim();
-                if !multi_pred_candidates.contains(pred) { continue; }
-                let args = &a[open+1..close];
+                if !multi_pred_candidates.contains(pred) {
+                    continue;
+                }
+                let args = &a[open + 1..close];
                 let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
                 if !parts.is_empty() {
                     let first = parts[0].trim();
                     if candidate_objects.contains(first) {
-                        merged_by_object.entry(first.to_string()).or_default().push(a.clone());
+                        merged_by_object
+                            .entry(first.to_string())
+                            .or_default()
+                            .push(a.clone());
                     }
                 }
             }
@@ -320,12 +412,17 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
             let b_pred = b.split('(').next().unwrap_or("").to_string();
             let ai = pred_index.get(&a_pred).cloned().unwrap_or(usize::MAX);
             let bi = pred_index.get(&b_pred).cloned().unwrap_or(usize::MAX);
-            if ai != bi { return ai.cmp(&bi); }
+            if ai != bi {
+                return ai.cmp(&bi);
+            }
             a.cmp(b)
         });
         // Only add if it actually merges more than one predicate or introduces in-tray/in-arm with at
-        let mut preds_included: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for f in &facts { preds_included.insert(f.split('(').next().unwrap_or("").to_string()); }
+        let mut preds_included: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for f in &facts {
+            preds_included.insert(f.split('(').next().unwrap_or("").to_string());
+        }
         if facts.len() > 1 && preds_included.len() > 1 {
             augmented.push(facts);
         }
@@ -344,10 +441,12 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
         if let Some(first_atom) = g.get(0) {
             if let Some(open) = first_atom.find('(') {
                 if let Some(close) = first_atom.rfind(')') {
-                    let args = &first_atom[open+1..close];
+                    let args = &first_atom[open + 1..close];
                     let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
                     if !parts.is_empty() {
-                        if let Some(&idx) = object_index.get(parts[0]) { key = Some(idx); }
+                        if let Some(&idx) = object_index.get(parts[0]) {
+                            key = Some(idx);
+                        }
                     }
                 }
             }
@@ -357,7 +456,9 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
     groups_with_key.sort_by(|(ka, a), (kb, b)| {
         match (ka, kb) {
             (Some(ai), Some(bi)) => {
-                if ai != bi { return ai.cmp(bi); }
+                if ai != bi {
+                    return ai.cmp(bi);
+                }
             }
             (Some(_), None) => return std::cmp::Ordering::Less,
             (None, Some(_)) => return std::cmp::Ordering::Greater,
@@ -366,28 +467,47 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
         // fall back to lexicographic compare of the group contents
         a.cmp(b)
     });
-    let sorted: Vec<Vec<String>> = groups_with_key.into_iter().map(|(_k,g)| g).collect();
+    let sorted: Vec<Vec<String>> = groups_with_key.into_iter().map(|(_k, g)| g).collect();
     let mutex_groups = collect_all_mutex_groups(&sorted, &reachable);
     let chosen = choose_groups(sorted.clone(), domain, problem, &reachable, true);
     // normalize ordering inside each chosen group: lexicographic sort of atom strings
     let mut chosen_sorted = chosen.clone();
-    for group in &mut chosen_sorted { group.sort(); }
+    for group in &mut chosen_sorted {
+        group.sort();
+    }
     // Now sort groups deterministically: category (item-group, at-bot, free, other),
     // then by first-argument object index from problem.objects.
     let group_category = |g: &Vec<String>| -> i32 {
-        if g.iter().any(|s| s.starts_with("at(") || s.starts_with("in-arm(") || s.starts_with("in-tray(")) { 0 }
-        else if g.iter().any(|s| s.starts_with("at-bot(")) { 1 }
-        else if g.iter().any(|s| s.starts_with("free(")) { 2 }
-        else { 3 }
+        if g.iter()
+            .any(|s| s.starts_with("at(") || s.starts_with("in-arm(") || s.starts_with("in-tray("))
+        {
+            0
+        } else if g.iter().any(|s| s.starts_with("at-bot(")) {
+            1
+        } else if g.iter().any(|s| s.starts_with("free(")) {
+            2
+        } else {
+            3
+        }
     };
     chosen_sorted.sort_by(|a, b| {
         let ca = group_category(a);
         let cb = group_category(b);
-        if ca != cb { return ca.cmp(&cb); }
+        if ca != cb {
+            return ca.cmp(&cb);
+        }
         let fa = a.get(0).cloned().unwrap_or_default();
         let fb = b.get(0).cloned().unwrap_or_default();
         let farg = |s: &String| -> Option<String> {
-            if let Some(open) = s.find('(') { if let Some(close) = s.rfind(')') { let args = &s[open+1..close]; let parts: Vec<&str> = args.split(',').map(|x| x.trim()).collect(); if let Some(first) = parts.get(0) { return Some(first.to_string()); } } }
+            if let Some(open) = s.find('(') {
+                if let Some(close) = s.rfind(')') {
+                    let args = &s[open + 1..close];
+                    let parts: Vec<&str> = args.split(',').map(|x| x.trim()).collect();
+                    if let Some(first) = parts.get(0) {
+                        return Some(first.to_string());
+                    }
+                }
+            }
             None
         };
         match (farg(&fa), farg(&fb)) {

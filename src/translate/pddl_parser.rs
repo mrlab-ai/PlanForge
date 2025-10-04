@@ -1,5 +1,5 @@
 use nom::branch::alt;
-use nom::bytes::complete::{take_while1, take_while};
+use nom::bytes::complete::{take_while, take_while1};
 use nom::character::complete::{char, multispace1};
 use nom::combinator::{map, recognize};
 use nom::error::VerboseError;
@@ -18,7 +18,10 @@ fn is_atom_char(c: char) -> bool {
 }
 
 fn ws<'a>(input: &'a str) -> IResult<&'a str, (), VerboseError<&'a str>> {
-    let (i, _) = many0(alt((multispace1, map(preceded(char(';'), take_while(|c| c != '\n')), |_| ""))))(input)?;
+    let (i, _) = many0(alt((
+        multispace1,
+        map(preceded(char(';'), take_while(|c| c != '\n')), |_| ""),
+    )))(input)?;
     Ok((i, ()))
 }
 
@@ -57,7 +60,13 @@ pub fn parse_sexprs(input: &str) -> Result<Vec<SExpr>, String> {
                 out.push(s);
                 rest = i;
             }
-            Err(e) => return Err(format!("parse error: {:?}\nnear: {}", e, &rest[..rest.len().min(80)])),
+            Err(e) => {
+                return Err(format!(
+                    "parse error: {:?}\nnear: {}",
+                    e,
+                    &rest[..rest.len().min(80)]
+                ))
+            }
         }
     }
     Ok(out)
@@ -75,12 +84,10 @@ mod tests {
         assert!(!sexprs.is_empty());
         // first form should be (define ...)
         match &sexprs[0] {
-            SExpr::List(items) => {
-                match &items[0] {
-                    SExpr::Atom(a) => assert_eq!(a.to_lowercase(), "define"),
-                    _ => panic!("expected atom define"),
-                }
-            }
+            SExpr::List(items) => match &items[0] {
+                SExpr::Atom(a) => assert_eq!(a.to_lowercase(), "define"),
+                _ => panic!("expected atom define"),
+            },
             _ => panic!("expected list"),
         }
     }
