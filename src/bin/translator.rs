@@ -30,14 +30,6 @@ enum Commands {
         #[clap(short, long)]
         output: Option<PathBuf>,
     },
-    /// Transform a simple numeric SAS+ task into a restricted numeric task
-    RestrictedTransform {
-        /// SAS input file
-        input: PathBuf,
-        /// Optional output file (default: output.sas)
-        #[clap(short, long)]
-        output: Option<PathBuf>,
-    },
     /// Preprocess: read SAS+ from stdin and write a preprocessed search input (writes to stdout or file)
     Preprocess {
         /// Optional output file (default: output)
@@ -84,26 +76,9 @@ fn main() -> anyhow::Result<()> {
             planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
             eprintln!("translator: wrote {}", out_path.display());
         }
-        Commands::RestrictedTransform { input, output } => {
-            eprintln!("restricted transform: reading {:?}", input);
-            let mut s = String::new();
-            File::open(&input)?.read_to_string(&mut s)?;
-            let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
-            let mut f = File::create(&out_path)?;
-            writeln!(f, "# restricted-transform placeholder")?;
-            writeln!(f, "# original-size: {}", s.len())?;
-            eprintln!("restricted transform: wrote {}", out_path.display());
-        }
         Commands::Preprocess { output } => {
-            eprintln!("preprocess: reading SAS+ from stdin");
-            let mut stdin = String::new();
-            io::stdin().read_to_string(&mut stdin)?;
-            let out_path = output.unwrap_or_else(|| PathBuf::from("output"));
-            let mut f = File::create(&out_path)?;
-            // In a real implementation, preprocessing would convert the SAS+ into
-            // the binary 'output' directory format. Here we pass-through.
-            f.write_all(stdin.as_bytes())?;
-            eprintln!("preprocess: wrote {}", out_path.display());
+            //not implemented yet, raise error
+            todo!("Preprocess command not implemented yet");
         }
     }
 

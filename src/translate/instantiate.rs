@@ -1,5 +1,9 @@
+use crate::translate::build_model;
 use crate::translate::derived_function_admin::DerivedFunctionAdministrator;
+use crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom;
+use crate::translate::pddl::PddlTask;
 use crate::translate::pddl_ast::{Condition, Domain, Effect, Problem};
+use crate::translate::pddl_to_prolog;
 
 #[derive(Debug, Clone)]
 pub struct GroundedOp {
@@ -128,4 +132,42 @@ pub fn ground_with_numeric_axioms(
     }
 
     (ops, inst_axioms)
+}
+
+#[derive(Debug, Clone)]
+pub struct ExploreResult {
+    pub relaxed_reachable: bool,
+    pub model: Vec<build_model::Atom>,
+    pub grounded_ops: Vec<GroundedOp>,
+    pub numeric_axioms: Vec<InstantiatedNumericAxiom>,
+}
+
+/// High-level exploration step mirroring python/translate/instantiate.py::explore.
+///
+/// 1. Translate the normalized task into a datalog-style program.
+/// 2. Compute its model to discover reachable facts and action instances.
+/// 3. Ground operators and numeric axioms using the current Rust substitutes.
+pub fn explore(task: &PddlTask) -> ExploreResult {
+    // Step 1: translate domain/problem forms to a prolog-style program.
+    let prog = pddl_to_prolog::translate_from_ast(&task.domain_forms, &task.problem_forms);
+
+    // Step 2: compute the datalog model (facts reachable under the relaxed semantics).
+    let mut rules = build_model::convert_rules(&prog.model_rules);
+    let model = build_model::compute_model(&mut rules, &prog.model_facts);
+
+    // Step 3: ground operators and numeric axioms using our current Rust logic.
+    let domain =
+        Domain::from_sexprs(&task.domain_forms).expect("domain parsing failed during explore");
+    let problem =
+        Problem::from_sexprs(&task.problem_forms).expect("problem parsing failed during explore");
+    let (ops, num_axioms) = ground_with_numeric_axioms(&domain, &problem);
+
+    let relaxed_reachable = model.iter().any(|atom| atom.predicate == "@goal-reachable");
+
+    ExploreResult {
+        relaxed_reachable,
+        model,
+        grounded_ops: ops,
+        numeric_axioms: num_axioms,
+    }
 }

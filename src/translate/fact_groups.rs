@@ -213,8 +213,7 @@ pub fn build_translation_key(groups: &Vec<Vec<String>>) -> Vec<Vec<String>> {
             if group.len() == 1 {
                 vec![group[0].clone(), format!("NegatedAtom {}", group[0])]
             } else {
-                let mut values = group.clone();
-                values.push("<none of those>".to_string());
+                let values = group.clone();
                 values
             }
         })
