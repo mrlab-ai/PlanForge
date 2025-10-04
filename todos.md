@@ -3,6 +3,8 @@
 ### Notes from the Author
 
 pfile1_python.sas is the reference translation for pddl/pfile1.pddl.
+ALWAYS make sure that when a file is in focus, it is SEMANTICALLY EQUAL. 
+ALWAYS write a comprehensive test to GUARANTEE SEMANTICALLY EQUIVALENCE to python corresponding files. 
 
 ## Project Goal
 
@@ -19,63 +21,154 @@ The Python Fast Downward translator (`python/translate/`) converts PDDL domain a
 
 ### Python to Rust Module Mapping
 
-| Python File | Rust File | Dependency Level | Compiled | TODOs | Functions Tested |
-|-------------|-----------|------------------|----------|-------|------------------|
-| **Core Infrastructure** | | | | | |
-| `pddl/` | `pddl/` | Level 0 | ✅ | None | ✅ **SEMANTICALLY COMPLETE & VERIFIED** - Full Python equivalence + comprehensive testing |
-| `pddl_parser/` | `pddl_parser/` | Level 0 | ✅ | None | ✅ **VALIDATED** - Case sensitivity fixed |
-| `sas_tasks.py` | `sas_tasks.rs` + `sas.rs` | Level 0 | ✅ | Writer integration | ⚠️ **PARTIAL** - Core works, fields missing |
-| `constraints.py` | `constraints.rs` | Level 0 | ✅ | None | ✅ **VALIDATED** - Union-Find equivalent |
-| `tools.py` | `tools.rs` | Level 0 | ✅ | None | ✅ **VALIDATED** - Semantics fixed |
-| `options.py` | `options.rs` | Level 0 | ✅ | None | ✅ **VALIDATED** - API equivalent |
-| `timers.py` | `timers.rs` | Level 0 | ✅ | Memory tracking | ✅ **VALIDATED** - API compatibility |
-| **Numeric Planning** | | | | | |
-| `numeric_axiom_rules.py` | `numeric_axiom_rules.rs` | Level 1 | ✅ | Equivalence detection | ✅ All 5 core functions |
-| **Axiom Processing** | | | | | |
-| `axiom_rules.py` | `axiom_rules.rs` | Level 2 | ✅ | Layer computation | ❌ Needs validation |
-| `invariants.py` | `invariants.rs` | Level 2 | ✅ | None | ❌ Needs validation |
-| **Grounding & Analysis** | | | | | |
-| `fact_groups.py` | `fact_groups.rs` | Level 2 | ❌ | Needs invariant_finder | ❌ Blocked |
-| `invariant_finder.py` | `invariant_finder.rs` | Level 3 | ❌ | API compatibility | ❌ Blocked |
-| `instantiate.py` | `instantiate.rs` | Level 3 | ✅ | Variable substitution, Literal→SExpr | ❌ Basic grounding only |
-| **Task Processing** | | | | | |
-| `normalize.py` | `normalize.rs` | Level 3 | ✅ | Full normalization | ❌ Needs validation |
-| `simplify.py` | `simplify.rs` | Level 3 | ✅ | DTG logic | ❌ Needs validation |
-| **High-Level Orchestration** | | | | | |
-| `build_model.py` | `build_model.rs` | Level 4 | ❌ | Prolog integration | ❌ Not started |
-| `translate.py` | `translate.rs` | Level 4 | ❌ | Main pipeline | ❌ Not started |
-| **Support Modules** | | | | | |
-| *(derived functions)* | `derived_function_admin.rs` | Support | ✅ | Placeholder naming | ❌ Needs validation |
-| *(SAS writing)* | `sas_writer.rs` + `to_sas.rs` | Support | ❌ | Integration | ❌ Not started |
-| `graph.py` | `graph.rs` | Support | ❌ | Implementation | ❌ Not started |
-| `greedy_join.py` | `greedy_join.rs` | Support | ❌ | Implementation | ❌ Not started |
-| `pddl_to_prolog.py` | `pddl_to_prolog.rs` | Support | ❌ | Implementation | ❌ Not started |
-| `simple_to_restricted_task.py` | `simple_to_restricted_task.rs` | Support | ❌ | Implementation | ❌ Not started |
-| `split_rules.py` | `split_rules.rs` | Support | ❌ | Implementation | ❌ Not started |
+# Python to Rust Translation Project: Fast Downward Numeric PDDL Translator
 
-### Current Status Summary
+### Notes from the Author
 
-- **✅ Working Modules**: 12/25 (48% complete) - **🎉 MILESTONE: Level 3b Complete!**
-- **✅ Tested Functions**: 6/25 modules fully validated (`numeric_axiom_rules`, `pddl_parser`, `tools`, `timers`, `options`, `constraints`)
-- **🔧 Compilation Issues**: 1 module needs API fixes (`invariant_finder`)
-- **⏳ Dependency Blocked**: 1 module (`fact_groups`)
-- **❌ Not Started**: 11 modules
+pfile1_python.sas is the reference translation for pddl/pfile1.pddl.
+ALWAYS make sure that when a file is in focus, it is SEMANTICALLY EQUAL. 
+ALWAYS write a comprehensive test to GUARANTEE SEMANTICALLY EQUIVALENCE to python corresponding files. 
 
-## Immediate Priorities
+## Project Goal
 
-### Phase 1: Fix Remaining API Compatibility Issues ⏱️ ALMOST COMPLETE
-1. **✅ `instantiate.rs`** - FIXED: Basic grounding working (TODOs: variable substitution, numeric axioms)
-2. **🔧 `invariant_finder.rs`** - Fix pattern matching, predicate iteration, SExpr handling
-3. **⏳ `fact_groups.rs`** - Re-enable once `invariant_finder` is working
+**Complete 1:1 port of the Python `translate` module to Rust with identical semantics.**
 
-### Phase 2: Create Comprehensive Test Suite 🎯 NEXT PRIORITY
-1. **Function-level testing** - Each Rust function must be validated against Python equivalent
-2. **Integration testing** - Module combinations must produce identical output
-3. **Regression testing** - All PDDL test domains must produce identical SAS+ files
+The Python Fast Downward translator (`python/translate/`) converts PDDL domain and problem files into SAS+ format for planning. This project aims to create a functionally identical Rust implementation that:
 
-### Phase 3: Complete Core Translation Pipeline
-1. **Enable remaining Level 3-4 modules** - `build_model`, `translate`, support modules
-2. **End-to-end validation** - Full translator pipeline working identically to Python
+1. **Semantic Equivalence**: Produces identical SAS+ output for all test cases
+2. **Complete Feature Parity**: Supports all Python translator capabilities including numeric planning
+3. **Zero Python Dependencies**: Standalone Rust implementation requiring no Python runtime
+4. **Validated Correctness**: Every function/method tested against Python reference implementation
+
+## Implementation Status
+
+### Python to Rust Module Mapping
+
+| Python File | Rust File | Dependency Level | Compiled | TODOs | Difficulty | Functions Tested |
+|-------------|-----------|------------------|----------|-------|------------|------------------|
+| **Core Infrastructure** | | | | | | |
+| `pddl/` | `pddl/` | Level 0 | ✅ | 8 TODOs | MEDIUM | ✅ **SEMANTICALLY COMPLETE & VERIFIED** - Full Python equivalence + comprehensive testing |
+| `pddl_parser/` | `pddl_parser/` | Level 0 | ✅ | None | - | ✅ **VALIDATED** - Case sensitivity fixed |
+| `sas_tasks.py` | `sas_tasks.rs` + `sas.rs` | Level 0 | ✅ | Major gaps | HIGH | ⚠️ **PARTIAL** - Basic compilation working |
+| `constraints.py` | `constraints.rs` | Level 0 | ✅ | None | - | ✅ **VALIDATED** - Union-Find equivalent |
+| `tools.py` | `tools.rs` | Level 0 | ✅ | None | - | ✅ **VALIDATED** - Semantics fixed |
+| `options.py` | `options.rs` | Level 0 | ✅ | None | - | ✅ **VALIDATED** - API equivalent |
+| `timers.py` | `timers.rs` | Level 0 | ✅ | Memory tracking | LOW | ✅ **VALIDATED** - API compatibility |
+| **Numeric Planning** | | | | | | |
+| `numeric_axiom_rules.py` | `numeric_axiom_rules.rs` | Level 1 | ✅ | Equivalence detection | MEDIUM | ✅ All 5 core functions |
+| **Axiom Processing** | | | | | | |
+| `axiom_rules.py` | `axiom_rules.rs` | Level 2 | ✅ | 2 TODOs | HIGH | ❌ Needs validation |
+| `invariants.py` | `invariants.rs` | Level 2 | ✅ | None | - | ❌ Needs validation |
+| **Grounding & Analysis** | | | | | | |
+| `fact_groups.py` | `fact_groups.rs` | Level 2 | ❌ | Needs invariant_finder | HIGH | ❌ Blocked |
+| `invariant_finder.py` | `invariant_finder.rs` | Level 3 | ❌ | API compatibility | VERY HIGH | ❌ Blocked |
+| `instantiate.py` | `instantiate.rs` | Level 3 | ✅ | Variable substitution, Literal→SExpr | HIGH | ❌ Basic grounding only |
+| **Task Processing** | | | | | | |
+| `normalize.py` | `normalize.rs` | Level 3 | ✅ | Full normalization | HIGH | ❌ Needs validation |
+| `simplify.py` | `simplify.rs` | Level 3 | ✅ | 2 TODOs | HIGH | ❌ Needs validation |
+| **High-Level Orchestration** | | | | | | |
+| `build_model.py` | `build_model.rs` | Level 4 | ❌ | Prolog integration | VERY HIGH | ❌ Not started |
+| `translate.py` | `translate.rs` | Level 4 | ❌ | Main pipeline | VERY HIGH | ❌ Not started |
+| **Support Modules** | | | | | | |
+| *(derived functions)* | `derived_function_admin.rs` | Support | ✅ | Placeholder naming | LOW | ❌ Needs validation |
+| *(SAS writing)* | `sas_writer.rs` + `to_sas.rs` | Support | ❌ | Integration | HIGH | ❌ Not started |
+| `graph.py` | `graph.rs` | Support | ❌ | Implementation | MEDIUM | ❌ Not started |
+| `greedy_join.py` | `greedy_join.rs` | Support | ❌ | 3 TODOs | MEDIUM | ❌ Not started |
+| `pddl_to_prolog.py` | `pddl_to_prolog.rs` | Support | ✅ | None | - | ✅ **COMPLETED** - All condition types implemented |
+| `simple_to_restricted_task.py` | `simple_to_restricted_task.rs` | Support | ❌ | 5 TODOs | HIGH | ❌ Not started |
+| `split_rules.py` | `split_rules.rs` | Support | ❌ | Implementation | HIGH | ❌ Not started |
+
+## Outstanding TODOs by Priority and Difficulty
+
+### 🔴 CRITICAL: SAS Tasks Module (HIGH Difficulty)
+**File**: `src/translate/sas.rs`, `src/translate/sas_tasks.rs`
+- **TODO**: Complete SAS task output method - Python sas_tasks.py has 600+ lines of functionality
+- **TODO**: Implement all Python SASTask methods (validate, dump, output, get_encoding_size)
+- **TODO**: Implement all Python SAS component classes (SASVariables, SASOperator, etc.)
+- **Current State**: Basic compilation working, but missing 90% of Python functionality
+- **Python Reference**: 607 lines with 10+ classes, comprehensive validation and output
+- **Effort**: 3-4 days of focused work
+
+### 🟠 HIGH PRIORITY: PDDL Module Gaps (MEDIUM Difficulty)
+**File**: `src/translate/pddl/`
+1. **`functions.rs`** (2 TODOs):
+   - Function parsing from lisp
+   - Argument parsing
+2. **`f_expression.rs`** (2 TODOs):
+   - Expression simplification  
+   - Variable substitution
+3. **`predicates.rs`** (2 TODOs):
+   - Predicate parsing from lisp
+   - Argument parsing
+4. **`pddl_types.rs`** (1 TODO):
+   - Subtype checking
+5. **`mod.rs`** (2 TODOs):
+   - Domain parsing implementation
+   - Problem parsing implementation
+
+### 🟡 MEDIUM PRIORITY: Algorithm Implementation (HIGH Difficulty)
+1. **`axiom_rules.rs`** (2 TODOs):
+   - Axiom layer computation
+   - Proper layer computation based on dependencies
+2. **`simplify.rs`** (2 TODOs):
+   - DTG-based reachability analysis
+   - Complete DTG logic implementation
+3. **`simple_to_restricted_task.rs`** (5 TODOs):
+   - Task conversion
+   - Action conversion  
+   - Restriction checking (2 instances)
+4. **`greedy_join.rs`** (3 TODOs):
+   - Greedy join algorithm
+   - Join compatibility check
+   - Actual group formation
+
+### 🟢 LOW PRIORITY: Minor Enhancements (LOW-MEDIUM Difficulty)
+1. **✅ `pddl_to_prolog.rs`** - COMPLETED: All condition types implemented with comprehensive tests
+2. **`timers.rs`**:
+   - Memory tracking enhancement
+
+## Difficulty Assessment Key
+
+- **LOW**: Simple implementation, clear Python reference, 1-2 hours
+- **MEDIUM**: Moderate complexity, some algorithm understanding needed, 4-8 hours  
+- **HIGH**: Complex algorithms, deep Python analysis required, 1-3 days
+- **VERY HIGH**: Core translation logic, extensive testing needed, 1+ weeks
+
+## Immediate Action Plan
+
+### Step 1: Fix SAS Module (HIGH Priority - 3-4 days)
+1. **Complete SAS structure enhancement** - Add all missing Python methods
+2. **Implement comprehensive output** - Match Python SAS+ file format exactly
+3. **Add validation methods** - Port all Python validation logic
+4. **Create test suite** - Validate against Python sas_tasks.py output
+
+### Step 2: Complete PDDL Module (MEDIUM Priority - 2-3 days)  
+1. **Implement parsing TODOs** - Functions, predicates, types parsing
+2. **Add expression handling** - Simplification and substitution
+3. **Validate semantic equivalence** - Test against Python PDDL module
+
+### Step 3: Algorithm Implementation (HIGH Priority - 1-2 weeks)
+1. **Axiom processing** - Layer computation and dependencies
+2. **Simplification logic** - DTG analysis and reachability
+3. **Task conversion** - Restriction and transformation logic
+
+---
+
+## Testing Requirements
+
+Every module must have:
+1. **Comparison scripts** - `scripts/compare_[module]_rust.py` validating against Python
+2. **Function tests** - Each public function tested with representative inputs
+3. **Integration tests** - Module interactions validated
+4. **Regression tests** - Standard PDDL benchmarks producing identical output
+
+## Success Criteria
+
+- [ ] **Perfect Semantic Equivalence**: All test domains produce byte-identical SAS+ output
+- [ ] **Complete Function Coverage**: Every Python function has tested Rust equivalent  
+- [ ] **Zero Python Dependencies**: Translator runs without Python installation
+- [ ] **Performance Parity**: Rust version matches or exceeds Python performance
+- [ ] **Code Quality**: Clean, maintainable Rust code with comprehensive documentation
 
 ## Testing Requirements
 

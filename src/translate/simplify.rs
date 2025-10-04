@@ -33,7 +33,7 @@ impl std::error::Error for TriviallySolvable {}
 pub fn filter_unreachable_propositions(sas_task: &mut SASTask) -> Result<(), Box<dyn std::error::Error>> {
     // For now, just do basic validation
     println!("Simplify: filtering unreachable propositions for {} variables, {} operators", 
-             sas_task.variables.len(), sas_task.operators.len());
+             sas_task.variables.ranges.len(), sas_task.operators.len());
     
     // TODO: Implement:
     // 1. Build Domain Transition Graphs (DTGs) for each variable

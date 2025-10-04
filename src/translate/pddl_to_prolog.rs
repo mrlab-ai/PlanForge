@@ -46,7 +46,45 @@ impl PrologConverter {
             Condition::Not(inner) => {
                 format!("\\+ ({})", self.condition_to_prolog(inner))
             }
-            _ => "true".to_string(), // TODO: Handle other condition types
+            Condition::Imply(antecedent, consequent) => {
+                // In Prolog: A -> B is equivalent to \+ A ; B
+                format!("(\\+ ({}) ; ({}))", 
+                    self.condition_to_prolog(antecedent),
+                    self.condition_to_prolog(consequent))
+            }
+            Condition::Exists(_existential) => {
+                // Existential quantification - simplified as true for now
+                // TODO: Implement proper existential handling with variable scoping
+                "true".to_string()
+            }
+            Condition::Forall(_universal) => {
+                // Universal quantification - simplified as true for now
+                // TODO: Implement proper universal handling with variable scoping  
+                "true".to_string()
+            }
+            Condition::FunctionComparison(_func_comp) => {
+                // Function comparison like (> (fuel) 10)
+                format!("comparison({}, {}, {})", 
+                    "comparator",
+                    "left_expr", // TODO: Convert function expression
+                    "right_expr") // TODO: Convert function expression
+            }
+            Condition::Truth => {
+                "true".to_string()
+            }
+            Condition::Atom(predicate, args) => {
+                // Backward compatibility - convert to literal-like format
+                if args.is_empty() {
+                    predicate.clone()
+                } else {
+                    format!("{}({})", predicate, args.join(", "))
+                }
+            }
+            Condition::Comparison(op, _left, _right) => {
+                // Numeric comparison
+                format!("comparison({}, {}, {})", op, "left_sexpr", "right_sexpr")
+                // TODO: Convert SExpr to proper Prolog representation
+            }
         }
     }
 
@@ -101,5 +139,116 @@ mod tests {
         
         let prolog = converter.literal_to_prolog(&literal);
         assert_eq!(prolog, "at(robot, room1)");
+    }
+
+    #[test]
+    fn test_negated_literal() {
+        let converter = PrologConverter::new();
+        let literal = Literal {
+            predicate: "empty".to_string(),
+            args: vec!["box1".to_string()],
+            negated: true,
+        };
+        
+        let prolog = converter.literal_to_prolog(&literal);
+        assert_eq!(prolog, "\\+ empty(box1)");
+    }
+
+    #[test]
+    fn test_and_condition() {
+        let converter = PrologConverter::new();
+        let lit1 = Literal::new("at".to_string(), vec!["robot".to_string(), "room1".to_string()]);
+        let lit2 = Literal::new("holding".to_string(), vec!["robot".to_string(), "box".to_string()]);
+        
+        let and_condition = Condition::And(vec![
+            Condition::Literal(lit1),
+            Condition::Literal(lit2)
+        ]);
+        
+        let prolog = converter.condition_to_prolog(&and_condition);
+        assert_eq!(prolog, "at(robot, room1), holding(robot, box)");
+    }
+
+    #[test]
+    fn test_or_condition() {
+        let converter = PrologConverter::new();
+        let lit1 = Literal::new("at".to_string(), vec!["robot".to_string(), "room1".to_string()]);
+        let lit2 = Literal::new("at".to_string(), vec!["robot".to_string(), "room2".to_string()]);
+        
+        let or_condition = Condition::Or(vec![
+            Condition::Literal(lit1),
+            Condition::Literal(lit2)
+        ]);
+        
+        let prolog = converter.condition_to_prolog(&or_condition);
+        assert_eq!(prolog, "(at(robot, room1); at(robot, room2))");
+    }
+
+    #[test]
+    fn test_not_condition() {
+        let converter = PrologConverter::new();
+        let lit = Literal::new("empty".to_string(), vec!["box1".to_string()]);
+        let not_condition = Condition::Not(Box::new(Condition::Literal(lit)));
+        
+        let prolog = converter.condition_to_prolog(&not_condition);
+        assert_eq!(prolog, "\\+ (empty(box1))");
+    }
+
+    #[test]
+    fn test_imply_condition() {
+        let converter = PrologConverter::new();
+        let antecedent = Literal::new("holding".to_string(), vec!["robot".to_string(), "box".to_string()]);
+        let consequent = Literal::new("not_empty".to_string(), vec!["robot".to_string()]);
+        
+        let imply = Condition::Imply(
+            Box::new(Condition::Literal(antecedent)),
+            Box::new(Condition::Literal(consequent))
+        );
+        
+        let prolog = converter.condition_to_prolog(&imply);
+        assert_eq!(prolog, "(\\+ (holding(robot, box)) ; (not_empty(robot)))");
+    }
+
+    #[test]
+    fn test_truth_condition() {
+        let converter = PrologConverter::new();
+        let prolog = converter.condition_to_prolog(&Condition::Truth);
+        assert_eq!(prolog, "true");
+    }
+
+    #[test]
+    fn test_atom_condition() {
+        let converter = PrologConverter::new();
+        let atom = Condition::Atom("goal".to_string(), vec!["robot".to_string(), "room3".to_string()]);
+        let prolog = converter.condition_to_prolog(&atom);
+        assert_eq!(prolog, "goal(robot, room3)");
+    }
+
+    #[test]
+    fn test_atom_condition_no_args() {
+        let converter = PrologConverter::new();
+        let atom = Condition::Atom("finished".to_string(), vec![]);
+        let prolog = converter.condition_to_prolog(&atom);
+        assert_eq!(prolog, "finished");
+    }
+
+    #[test]
+    fn test_nested_conditions() {
+        let converter = PrologConverter::new();
+        let lit1 = Literal::new("at".to_string(), vec!["robot".to_string(), "room1".to_string()]);
+        let lit2 = Literal::new("empty".to_string(), vec!["box1".to_string()]);
+        let lit3 = Literal::new("goal".to_string(), vec!["room3".to_string()]);
+        
+        // (at(robot, room1) AND empty(box1)) OR goal(room3)
+        let nested = Condition::Or(vec![
+            Condition::And(vec![
+                Condition::Literal(lit1),
+                Condition::Literal(lit2)
+            ]),
+            Condition::Literal(lit3)
+        ]);
+        
+        let prolog = converter.condition_to_prolog(&nested);
+        assert_eq!(prolog, "(at(robot, room1), empty(box1); goal(room3))");
     }
 }
