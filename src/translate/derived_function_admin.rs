@@ -6,6 +6,7 @@ use std::collections::HashMap;
 /// expressions and generate derived PNE names. This is a light-weight
 /// helper to start matching Python behavior.
 
+#[derive(Debug, Clone)]
 pub struct DerivedFunctionAdministrator {
     // map from canonical key -> (symbol, args)
     pub functions: HashMap<String, (String, Vec<String>)>,

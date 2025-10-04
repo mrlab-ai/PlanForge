@@ -1,5 +1,5 @@
 use crate::translate::constraints::ConstraintSystem;
-use crate::translate::pddl_ast::Condition;
+use crate::translate::pddl::Condition;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -12,7 +12,7 @@ pub struct InvariantPart {
 impl InvariantPart {
     pub fn new(predicate: String, order: Vec<usize>, omitted_pos: i32) -> Self { Self { predicate, order, omitted_pos } }
     pub fn arity(&self) -> usize { self.order.len() }
-    pub fn get_parameters(&self, atom: &crate::translate::pddl_ast::Condition) -> Vec<String> {
+    pub fn get_parameters(&self, atom: &crate::translate::pddl::Condition) -> Vec<String> {
         // expect atom to be Condition::Atom(name, args)
         if let Condition::Atom(_, args) = atom {
             self.order.iter().map(|&p| args[p].clone()).collect()
@@ -23,7 +23,7 @@ impl InvariantPart {
         for (arg, &pos) in parameters.iter().zip(self.order.iter()) { args[pos] = arg.clone(); }
         format!("{}({})", self.predicate, args.join(", "))
     }
-    pub fn get_assignment(&self, parameters: &[String], literal: &crate::translate::pddl_ast::Condition) -> crate::translate::constraints::Assignment {
+    pub fn get_assignment(&self, parameters: &[String], literal: &crate::translate::pddl::Condition) -> crate::translate::constraints::Assignment {
         // Build equalities: [(param_name, literal_arg_at_position), ...]
         let mut equalities: Vec<(String, String)> = Vec::new();
         if let Condition::Atom(_, args) = literal {
@@ -38,12 +38,12 @@ impl InvariantPart {
     // Placeholder for possible_matches: returns empty list until full mapping
     // logic is implemented. Signature mirrors Python: given another literal,
     // produce InvariantPart candidates that would match the other literal.
-    pub fn possible_matches(&self, _own_literal: &crate::translate::pddl_ast::Condition, _other_literal: &crate::translate::pddl_ast::Condition) -> Vec<InvariantPart> {
+    pub fn possible_matches(&self, _own_literal: &crate::translate::pddl::Condition, _other_literal: &crate::translate::pddl::Condition) -> Vec<InvariantPart> {
         Vec::new()
     }
 
     // Rough equality check used in some refinement heuristics: compare parameters
-    pub fn matches(&self, other: &InvariantPart, own_literal: &crate::translate::pddl_ast::Condition, other_literal: &crate::translate::pddl_ast::Condition) -> bool {
+    pub fn matches(&self, other: &InvariantPart, own_literal: &crate::translate::pddl::Condition, other_literal: &crate::translate::pddl::Condition) -> bool {
         self.get_parameters(own_literal) == other.get_parameters(other_literal)
     }
 }
@@ -60,7 +60,7 @@ impl Invariant {
         for p in &parts { preds.insert(p.predicate.clone()); }
         Invariant { parts, predicates: preds }
     }
-    pub fn get_parameters_for_atom(&self, atom: &crate::translate::pddl_ast::Condition) -> Vec<String> {
+    pub fn get_parameters_for_atom(&self, atom: &crate::translate::pddl::Condition) -> Vec<String> {
         // find the part corresponding to atom.predicate and return parameters
         if let Condition::Atom(pred, _args) = atom {
             for part in &self.parts {
@@ -71,7 +71,7 @@ impl Invariant {
         }
         Vec::new()
     }
-    pub fn get_covering_assignments(&self, parameters: &[String], atom: &crate::translate::pddl_ast::Condition) -> Vec<crate::translate::constraints::Assignment> {
+    pub fn get_covering_assignments(&self, parameters: &[String], atom: &crate::translate::pddl::Condition) -> Vec<crate::translate::constraints::Assignment> {
         // assume each predicate appears at most once in invariant.parts
         if let Condition::Atom(pred, _args) = atom {
             for part in &self.parts {
@@ -135,7 +135,7 @@ pub fn ensure_conjunction_sat(_system: &mut ConstraintSystem, parts: &[Vec<Condi
     // these into ConstraintSystem negative clauses and assignments.
 }
 
-pub fn ensure_cover(system: &mut ConstraintSystem, literal: &crate::translate::pddl_ast::Condition, invariant: &Invariant, inv_vars: &[String]) {
+pub fn ensure_cover(system: &mut ConstraintSystem, literal: &crate::translate::pddl::Condition, invariant: &Invariant, inv_vars: &[String]) {
     // Convert to assignment(s) and add to the system.
     let assignments = invariant.get_covering_assignments(inv_vars, literal);
     for a in assignments {
@@ -143,7 +143,7 @@ pub fn ensure_cover(system: &mut ConstraintSystem, literal: &crate::translate::p
     }
 }
 
-pub fn ensure_inequality(system: &mut ConstraintSystem, lit1: &crate::translate::pddl_ast::Condition, lit2: &crate::translate::pddl_ast::Condition) {
+pub fn ensure_inequality(system: &mut ConstraintSystem, lit1: &crate::translate::pddl::Condition, lit2: &crate::translate::pddl::Condition) {
     // If both are atoms and have parts, add a NegativeClause with paired positions
     if let (Condition::Atom(_, args1), Condition::Atom(_, args2)) = (lit1, lit2) {
         let mut parts: Vec<(String, String)> = Vec::new();

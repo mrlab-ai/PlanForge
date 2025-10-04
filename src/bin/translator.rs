@@ -50,16 +50,28 @@ fn main() -> anyhow::Result<()> {
             eprintln!("translator: reading domain {:?} and problem {:?}", domain, problem);
             let task = PddlTask::from_files(&domain, &problem)?;
             eprintln!("translator: parsed forms: {} domain / {} problem", task.domain_forms.len(), task.problem_forms.len());
-            let dom = planners::translate::pddl_ast::Domain::from_sexprs(&task.domain_forms).expect("domain parse");
-            let prob = planners::translate::pddl_ast::Problem::from_sexprs(&task.problem_forms).expect("problem parse");
-            let (ops, instantiated_num_axioms) = planners::translate::instantiate::ground_with_numeric_axioms(&dom, &prob);
-            eprintln!("translator: grounded {} operators", ops.len());
+            
+            // TODO: Re-enable once Level 1+ modules are working
+            // let dom = planners::translate::pddl::Domain::from_sexprs(&task.domain_forms).expect("domain parse");
+            // let prob = planners::translate::pddl::Problem::from_sexprs(&task.problem_forms).expect("problem parse");
+            // let (ops, instantiated_num_axioms) = planners::translate::instantiate::ground_with_numeric_axioms(&dom, &prob);
+            // eprintln!("translator: grounded {} operators", ops.len());
             // Use Rust-only grouping implementation (no Python helper)
-            let py_groups: Option<Vec<Vec<String>>> = None;
-            let sastask = planners::translate::to_sas::build_sas(&ops, &dom, &prob, &instantiated_num_axioms, py_groups);
+            // let py_groups: Option<Vec<Vec<String>>> = None;
+            // let sastask = planners::translate::to_sas::build_sas(&ops, &dom, &prob, &instantiated_num_axioms, py_groups);
+            // let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
+            // planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
+            // eprintln!("translator: wrote {}", out_path.display());
+            
+            // For now, just demonstrate Level 0 functionality is working
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
-            planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
-            eprintln!("translator: wrote {}", out_path.display());
+            let mut f = std::fs::File::create(&out_path)?;
+            use std::io::Write;
+            writeln!(f, "# Level 0 translator - parsing successful")?;
+            writeln!(f, "# Domain forms: {}", task.domain_forms.len())?;
+            writeln!(f, "# Problem forms: {}", task.problem_forms.len())?;
+            writeln!(f, "# TODO: Re-enable full translation once higher level modules are working")?;
+            eprintln!("translator: wrote Level 0 output to {}", out_path.display());
         }
         Commands::RestrictedTransform { input, output } => {
             eprintln!("restricted transform: reading {:?}", input);

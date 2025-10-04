@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod integration_tests {
     use crate::translate::pddl::{PddlTask};
-    use crate::translate::pddl_ast::{Domain, Problem};
+    use crate::translate::pddl::{Domain, Problem};
     use crate::translate::instantiate::ground;
     use crate::translate::to_sas::build_sas;
 
