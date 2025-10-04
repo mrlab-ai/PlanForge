@@ -2,7 +2,7 @@ use crate::translate::pddl_parser::SExpr;
 use std::collections::{HashMap, HashSet};
 use crate::translate::pddl_ast::Condition;
 use crate::translate::build_model as bm;
-use crate::translate::pddl_ast::{Domain, Problem};
+use crate::translate::normalize::normalize_rules;
 
 // Minimal, compiling placeholder. We'll expand to mirror python/translate/pddl_to_prolog.py
 
@@ -316,6 +316,8 @@ pub struct PrologProgram {
     pub facts: Vec<String>,
     pub rules: Vec<String>,
     pub objects: HashSet<String>,
+    fact_set: HashSet<String>,
+    model_fact_set: HashSet<bm::Atom>,
     counter: usize,
     // Structured representation for Rust model building
     pub model_facts: Vec<bm::Atom>,
@@ -323,11 +325,31 @@ pub struct PrologProgram {
 }
 
 impl PrologProgram {
-    pub fn new() -> Self { Self { facts: vec![], rules: vec![], objects: HashSet::new(), counter: 0, model_facts: vec![], model_rules: vec![] } }
+    pub fn new() -> Self {
+        Self {
+            facts: vec![],
+            rules: vec![],
+            objects: HashSet::new(),
+            fact_set: HashSet::new(),
+            model_fact_set: HashSet::new(),
+            counter: 0,
+            model_facts: vec![],
+            model_rules: vec![],
+        }
+    }
     pub fn new_name(&mut self) -> String { let n = self.counter; self.counter += 1; format!("p${}", n) }
-    pub fn add_fact<S: Into<String>>(&mut self, atom: S) { let a = atom.into(); self.facts.push(a.clone()); }
+    pub fn add_fact<S: Into<String>>(&mut self, atom: S) {
+        let a = atom.into();
+        if self.fact_set.insert(a.clone()) {
+            self.facts.push(a);
+        }
+    }
     pub fn add_rule<S: Into<String>>(&mut self, rule: S) { self.rules.push(rule.into()); }
-    pub fn add_model_fact(&mut self, atom: bm::Atom) { self.model_facts.push(atom); }
+    pub fn add_model_fact(&mut self, atom: bm::Atom) {
+        if self.model_fact_set.insert(atom.clone()) {
+            self.model_facts.push(atom);
+        }
+    }
     pub fn add_model_rule(&mut self, rule: bm::RuleSpec) { self.model_rules.push(rule); }
     pub fn dump(&self) -> String {
         let mut out = String::new();
@@ -338,8 +360,26 @@ impl PrologProgram {
         out
     }
     pub fn normalize(&mut self) {
-        // Placeholder: in Python this removes free effect variables, splits duplicate args, converts trivial rules.
-        // We don't build rules yet, so nothing to do here.
+        let outcome = normalize_rules(&mut self.model_rules);
+        for fact in outcome.new_facts {
+            if let Some(fact_str) = model_atom_to_fact(&fact) {
+                self.add_fact(fact_str);
+            }
+            self.add_model_fact(fact);
+        }
+        if outcome.object_predicate_required {
+            let snapshot: Vec<String> = self.objects.iter().cloned().collect();
+            for obj in snapshot {
+                let atom = bm::Atom {
+                    predicate: "@object".to_string(),
+                    args: vec![bm::Arg::Const(obj.clone())],
+                };
+                if let Some(fact_str) = model_atom_to_fact(&atom) {
+                    self.add_fact(fact_str);
+                }
+                self.add_model_fact(atom);
+            }
+        }
     }
 }
 
@@ -349,6 +389,7 @@ fn atom_to_string(pred: &str, args: &[String]) -> String {
 
 fn translate_typed_object(prog: &mut PrologProgram, obj: &(String, Option<String>), _type_hierarchy: &HashMap<String, Vec<String>>) {
     let (name, ty) = obj;
+    prog.objects.insert(name.clone());
     if let Some(t) = ty {
         // add fact type(name).
         prog.add_fact(atom_to_string(t, &[name.clone()]));
@@ -382,6 +423,17 @@ fn sexpr_atom_to_model_atom(sexpr: &SExpr) -> Option<bm::Atom> {
             } else { None }
         }
     }
+}
+
+fn model_atom_to_fact(atom: &bm::Atom) -> Option<String> {
+    let mut args: Vec<String> = Vec::new();
+    for arg in &atom.args {
+        match arg {
+            bm::Arg::Const(val) => args.push(val.clone()),
+            _ => return None,
+        }
+    }
+    Some(atom_to_string(&atom.predicate, &args))
 }
 
 fn cond_to_symatoms(cond: &Condition) -> Option<Vec<bm::SymAtom>> {
@@ -480,5 +532,44 @@ mod tests {
         assert!(has_at);
         let has_move = model.iter().any(|m| m.predicate=="move" && matches!(&m.args[0], bm::Arg::Const(s) if s=="a1"));
         assert!(has_move);
+    }
+
+    #[test]
+    fn normalize_adds_object_guard_and_fact() {
+        let mut prog = PrologProgram::new();
+        prog.objects.insert("a1".to_string());
+        prog.add_model_rule(bm::RuleSpec {
+            rtype: "project".to_string(),
+            effect: bm::SymAtom::new("move", vec!["?x"]),
+            conditions: vec![],
+        });
+
+        prog.normalize();
+
+        assert_eq!(prog.model_rules.len(), 1);
+        let conds = &prog.model_rules[0].conditions;
+        assert!(conds.iter().any(|c| c.predicate == "@object" && c.args == vec!["?x".to_string()]));
+        let has_object_fact = prog
+            .model_facts
+            .iter()
+            .any(|a| a.predicate == "@object" && matches!(a.args.get(0), Some(bm::Arg::Const(val)) if val == "a1"));
+        assert!(has_object_fact);
+        assert!(prog.facts.iter().any(|f| f == "@object(a1)."));
+    }
+
+    #[test]
+    fn normalize_converts_trivial_rule_to_fact() {
+        let mut prog = PrologProgram::new();
+        prog.add_model_rule(bm::RuleSpec {
+            rtype: "project".to_string(),
+            effect: bm::SymAtom::new("ready", vec![]),
+            conditions: vec![],
+        });
+
+        prog.normalize();
+
+        assert!(prog.model_rules.is_empty());
+        assert!(prog.model_facts.iter().any(|a| a.predicate == "ready"));
+        assert!(prog.facts.iter().any(|f| f == "ready."));
     }
 }

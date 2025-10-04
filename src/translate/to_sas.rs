@@ -520,13 +520,6 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
 
     // Build propositional init vector aligned to variables using problem.init
     let mut prop_init: Vec<i32> = vec![-1; vars.len()];
-    // map from variable index -> map value string -> value index
-    let mut val_index_maps: Vec<std::collections::HashMap<String, usize>> = Vec::new();
-    for v in &vars {
-        let mut m = std::collections::HashMap::new();
-        for (i, name) in v.value_names.iter().enumerate() { m.insert(name.clone(), i); }
-        val_index_maps.push(m);
-    }
     for sexpr in &prob.init {
         if let crate::translate::pddl_parser::SExpr::List(list) = sexpr {
             if list.is_empty() { continue; }
@@ -535,6 +528,17 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
                 let args: Vec<String> = list[1..].iter().filter_map(|x| match x { crate::translate::pddl_parser::SExpr::Atom(a)=>Some(a.clone()), _=>None }).collect();
                 let atom = format!("{}({})", pred, args.join(", "));
                 if let Some(&(v, val)) = atom_to_fdr.get(&atom) { prop_init[v] = val as i32; }
+            }
+        }
+    }
+    for (v_idx, init_val) in prop_init.iter_mut().enumerate() {
+        if *init_val == -1 {
+            if let Some(idx) = vars[v_idx].value_names.iter().position(|name| name == "<none of those>") {
+                *init_val = idx as i32;
+            } else if let Some(idx) = vars[v_idx].value_names.iter().position(|name| name.starts_with("NegatedAtom ")) {
+                *init_val = idx as i32;
+            } else {
+                *init_val = 0;
             }
         }
     }

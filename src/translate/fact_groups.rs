@@ -167,8 +167,7 @@ pub fn build_translation_key(groups: &Vec<Vec<String>>) -> Vec<Vec<String>> {
         if group.len() == 1 {
             vec![group[0].clone(), format!("NegatedAtom {}", group[0])]
         } else {
-            let key = group.clone();
-            key
+            group.clone()
         }
     }).collect()
 }
@@ -273,7 +272,7 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
     // across predicates into a single group per object. We approximate by merging for types
     // that appear as the first parameter type of any of the following predicates: at, in-arm, in-tray.
     // Build set of candidate predicate names present in the domain
-    let mut multi_pred_candidates: std::collections::HashSet<String> = ["at", "in-arm", "in-tray"].iter().map(|s| s.to_string()).collect();
+    let multi_pred_candidates: std::collections::HashSet<String> = ["at", "in-arm", "in-tray"].iter().map(|s| s.to_string()).collect();
     // Map predicate -> first parameter type (if any)
     let mut pred_first_type: HashMap<String, String> = HashMap::new();
     for (pname, params) in &domain.predicates {
