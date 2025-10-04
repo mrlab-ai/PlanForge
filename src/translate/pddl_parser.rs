@@ -7,40 +7,10 @@ use nom::multi::{many0, many1};
 use nom::sequence::{delimited, preceded};
 use nom::IResult;
 
-// Re-export all modules
-pub mod lisp_parser;
-pub mod parsing_functions;
-pub mod pddl_file;
-pub mod pretty_print;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SExpr {
     Atom(String),
     List(Vec<SExpr>),
-}
-
-impl SExpr {
-    pub fn is_atom(&self) -> bool {
-        matches!(self, SExpr::Atom(_))
-    }
-    
-    pub fn is_list(&self) -> bool {
-        matches!(self, SExpr::List(_))
-    }
-    
-    pub fn as_atom(&self) -> Option<&String> {
-        match self {
-            SExpr::Atom(s) => Some(s),
-            _ => None,
-        }
-    }
-    
-    pub fn as_list(&self) -> Option<&Vec<SExpr>> {
-        match self {
-            SExpr::List(v) => Some(v),
-            _ => None,
-        }
-    }
 }
 
 fn is_atom_char(c: char) -> bool {
@@ -54,7 +24,7 @@ fn ws<'a>(input: &'a str) -> IResult<&'a str, (), VerboseError<&'a str>> {
 
 fn atom(input: &str) -> IResult<&str, SExpr, VerboseError<&str>> {
     let (i, s) = recognize(many1(take_while1(is_atom_char)))(input)?;
-    Ok((i, SExpr::Atom(s.to_lowercase())))  // Convert to lowercase to match Python behavior
+    Ok((i, SExpr::Atom(s.to_string())))
 }
 
 fn list(input: &str) -> IResult<&str, SExpr, VerboseError<&str>> {
@@ -92,12 +62,6 @@ pub fn parse_sexprs(input: &str) -> Result<Vec<SExpr>, String> {
     }
     Ok(out)
 }
-
-// Re-export from submodules - these will be empty for now
-pub use lisp_parser::{parse_lisp, LispParser};
-pub use parsing_functions::*;
-pub use pddl_file::*;
-pub use pretty_print::*;
 
 #[cfg(test)]
 mod tests {

@@ -1,4 +1,4 @@
-use crate::translate::pddl::{Domain, Problem, Condition, Effect};
+use crate::translate::pddl_ast::{Domain, Problem, Condition, Effect};
 use crate::translate::derived_function_admin::DerivedFunctionAdministrator;
 
 #[derive(Debug, Clone)]
@@ -16,16 +16,16 @@ pub fn ground(domain: &Domain, problem: &Problem) -> Vec<GroundedOp> {
     // prepare objects by type
     use std::collections::HashMap;
     let mut by_type: HashMap<Option<String>, Vec<String>> = HashMap::new();
-    for (name, type_str) in &problem.objects {
-        by_type.entry(Some(type_str.clone())).or_default().push(name.clone());
+    for (name, t) in &problem.objects {
+        by_type.entry(t.clone()).or_default().push(name.clone());
         by_type.entry(None).or_default().push(name.clone());
     }
 
     for action in &domain.actions {
         // for each parameter produce candidate lists
         let mut choices: Vec<Vec<String>> = Vec::new();
-        for param in &action.parameters {
-            let cands = by_type.get(&param.type_name).cloned().unwrap_or_default();
+        for (_pname, ptype) in &action.parameters {
+            let cands = by_type.get(ptype).cloned().unwrap_or_default();
             if cands.is_empty() {
                 choices.push(vec![]);
             } else {
@@ -54,24 +54,20 @@ pub fn ground(domain: &Domain, problem: &Problem) -> Vec<GroundedOp> {
             // build mapping from parameter names to concrete object names
             use std::collections::HashMap;
             let mut mapping: HashMap<String, String> = HashMap::new();
-            for (idx, param) in action.parameters.iter().enumerate() {
-                mapping.insert(param.name.clone(), args[idx].clone());
+            for (idx, (pname, _)) in action.parameters.iter().enumerate() {
+                mapping.insert(pname.clone(), args[idx].clone());
             }
             // parse pre/effect into Condition/Effect when possible
-            let pre_cond = Some(&action.precondition);
-            let eff_e = if action.effects.is_empty() { 
-                None 
-            } else { 
-                Some(&action.effects[0]) 
-            };
-            // TODO: Implement variable substitution
-            // For now, create basic grounded operations without substitution
-            result.push(GroundedOp { 
-                name, 
-                args: args.clone(), 
-                pre: pre_cond.cloned(), 
-                eff: eff_e.cloned() 
+            let pre_cond = action.precond.as_ref().map(|s| {
+                crate::translate::pddl_ast::sexpr_to_condition(s)
             });
+            let eff_e = action.effect.as_ref().map(|s| {
+                crate::translate::pddl_ast::sexpr_to_effect(s)
+            });
+            // substitute variables
+            let pre_sub = pre_cond.map(|c| crate::translate::pddl_ast::substitute_condition(&c, &mapping));
+            let eff_sub = eff_e.map(|e| crate::translate::pddl_ast::substitute_effect(&e, &mapping));
+            result.push(GroundedOp { name, args: args.clone(), pre: pre_sub, eff: eff_sub });
         }
     }
 
@@ -85,11 +81,34 @@ pub fn ground_with_numeric_axioms(domain: &Domain, problem: &Problem) -> (Vec<Gr
     // produced PNE names follow the same canonicalization that will be used
     // later during derived-function handling.
     let ops = ground(domain, problem);
-    let _df_admin = DerivedFunctionAdministrator::new();
-    
-    // TODO: Build simple instantiated numeric axioms from numeric init facts
-    // This requires converting Literal to SExpr format, which is complex
-    let inst_axioms: Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom> = Vec::new();
+    let mut df_admin = DerivedFunctionAdministrator::new();
+    // Build simple instantiated numeric axioms from numeric init facts in the problem.
+    let mut inst_axioms: Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom> = Vec::new();
+    for sexpr in &problem.init {
+        // look for forms like (= (f a b) 42)
+        if let crate::translate::pddl_parser::SExpr::List(list) = sexpr {
+            if list.len() >= 3 {
+                if let crate::translate::pddl_parser::SExpr::Atom(eq) = &list[0] {
+                    if eq == "=" {
+                        if let crate::translate::pddl_parser::SExpr::List(lhs_vec) = &list[1] {
+                            // construct an SExpr::List to pass into df_admin
+                            let lhs_sexpr = crate::translate::pddl_parser::SExpr::List(lhs_vec.clone());
+                            // get canonicalized PNE description (derived! tokens)
+                            let pne = df_admin.get_derived_function(&lhs_sexpr);
+                            // parse rhs as integer constant if possible
+                            if let crate::translate::pddl_parser::SExpr::Atom(rhs) = &list[2] {
+                                if let Ok(n) = rhs.parse::<i64>() {
+                                    let part = crate::translate::numeric_axiom_rules::NumericPart::Constant(crate::translate::numeric_axiom_rules::NumericConstant(n));
+                                    let ax = crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom { name: pne.name.clone(), op: None, parts: vec![part], effect: pne };
+                                    inst_axioms.push(ax);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     (ops, inst_axioms)
 }

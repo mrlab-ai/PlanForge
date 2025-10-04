@@ -48,7 +48,7 @@ pub fn compute_groups_from_atoms(atoms: &Vec<String>) -> (Vec<Vec<String>>, Vec<
 }
 
 // Expand a group with ?X into concrete atoms present in reachable_facts
-fn expand_group(group: &Vec<String>, _domain: &crate::translate::pddl::Domain, problem: &crate::translate::pddl::Problem, reachable_facts: &HashSet<String>) -> Vec<String> {
+fn expand_group(group: &Vec<String>, _domain: &crate::translate::pddl_ast::Domain, problem: &crate::translate::pddl_ast::Problem, reachable_facts: &HashSet<String>) -> Vec<String> {
     let mut result: Vec<String> = Vec::new();
     for fact in group {
         if fact.contains("?X") {
@@ -66,7 +66,7 @@ fn expand_group(group: &Vec<String>, _domain: &crate::translate::pddl::Domain, p
     result
 }
 
-pub fn instantiate_groups(groups: &Vec<Vec<String>>, domain: &crate::translate::pddl::Domain, problem: &crate::translate::pddl::Problem, reachable_facts: &HashSet<String>) -> Vec<Vec<String>> {
+pub fn instantiate_groups(groups: &Vec<Vec<String>>, domain: &crate::translate::pddl_ast::Domain, problem: &crate::translate::pddl_ast::Problem, reachable_facts: &HashSet<String>) -> Vec<Vec<String>> {
     groups.iter().map(|g| expand_group(g, domain, problem, reachable_facts)).collect()
 }
 
@@ -140,7 +140,7 @@ impl GroupCoverQueue {
     pub fn is_empty(&self) -> bool { self.top.is_none() }
 }
 
-pub fn choose_groups(groups: Vec<Vec<String>>, _domain: &crate::translate::pddl::Domain, _problem: &crate::translate::pddl::Problem, reachable_facts: &HashSet<String>, use_partial_encoding: bool) -> Vec<Vec<String>> {
+pub fn choose_groups(groups: Vec<Vec<String>>, _domain: &crate::translate::pddl_ast::Domain, _problem: &crate::translate::pddl_ast::Problem, reachable_facts: &HashSet<String>, use_partial_encoding: bool) -> Vec<Vec<String>> {
     // convert groups to HashSet forms
     let mutable_groups: Vec<HashSet<String>> = groups.into_iter().map(|g| g.into_iter().collect()).collect();
     let mut queue = GroupCoverQueue::new(mutable_groups);
@@ -208,7 +208,7 @@ pub fn sort_groups(groups: Vec<Vec<String>>) -> Vec<Vec<String>> {
     g
 }
 
-pub fn compute_groups(domain: &crate::translate::pddl::Domain, problem: &crate::translate::pddl::Problem, atoms: &Vec<String>, _reachable_action_params: Option<HashMap<String, Vec<Vec<String>>>>) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
+pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &crate::translate::pddl_ast::Problem, atoms: &Vec<String>, _reachable_action_params: Option<HashMap<String, Vec<Vec<String>>>>) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
     // ask invariant_finder for abstract groups (with ?X placeholders)
     let groups = crate::translate::invariant_finder::get_groups(domain, problem);
     // instantiate groups using atoms set

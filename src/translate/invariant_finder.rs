@@ -1,4 +1,4 @@
-use crate::translate::pddl::{Domain, Problem, Condition};
+use crate::translate::pddl_ast::{Domain, Problem, Condition};
 use crate::translate::invariants::{Invariant, InvariantPart};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Instant};
@@ -18,15 +18,15 @@ impl BalanceChecker {
         for act in &domain.actions {
             if let Some(eff_s) = &act.effect {
                 // parse SExpr into Effect
-                let eff = crate::translate::pddl::sexpr_to_effect(eff_s);
+                let eff = crate::translate::pddl_ast::sexpr_to_effect(eff_s);
                 match eff {
-                    crate::translate::pddl::Effect::Add(pred, _args) => {
+                    crate::translate::pddl_ast::Effect::Add(pred, _args) => {
                         predicates_to_add_actions.entry(pred.clone()).or_default().insert(act.name.clone());
                     }
-                    crate::translate::pddl::Effect::And(v) => {
+                    crate::translate::pddl_ast::Effect::And(v) => {
                         for sub in v {
                             match sub {
-                                crate::translate::pddl::Effect::Add(pred, _args) => { predicates_to_add_actions.entry(pred.clone()).or_default().insert(act.name.clone()); }
+                                crate::translate::pddl_ast::Effect::Add(pred, _args) => { predicates_to_add_actions.entry(pred.clone()).or_default().insert(act.name.clone()); }
                                 _ => {}
                             }
                         }
@@ -48,12 +48,12 @@ fn get_fluent_predicates(domain: &Domain) -> HashSet<String> {
     let mut fluents: HashSet<String> = HashSet::new();
     for act in &domain.actions {
         if let Some(eff_s) = &act.effect {
-            let eff = crate::translate::pddl::sexpr_to_effect(eff_s);
-            fn collect(eff: &crate::translate::pddl::Effect, fluents: &mut HashSet<String>) {
+            let eff = crate::translate::pddl_ast::sexpr_to_effect(eff_s);
+            fn collect(eff: &crate::translate::pddl_ast::Effect, fluents: &mut HashSet<String>) {
                 match eff {
-                    crate::translate::pddl::Effect::Add(name, _)
-                    | crate::translate::pddl::Effect::Del(name, _) => { fluents.insert(name.clone()); }
-                    crate::translate::pddl::Effect::And(list) => {
+                    crate::translate::pddl_ast::Effect::Add(name, _)
+                    | crate::translate::pddl_ast::Effect::Del(name, _) => { fluents.insert(name.clone()); }
+                    crate::translate::pddl_ast::Effect::And(list) => {
                         for sub in list { collect(sub, fluents); }
                     }
                     _ => {}
@@ -86,7 +86,7 @@ fn get_initial_invariants(domain: &Domain) -> Vec<Invariant> {
 }
 
 // Generate unique variable names for an invariant relative to an action's parameters
-fn find_unique_variables(action: &crate::translate::pddl::Action, invariant: &Invariant) -> Vec<String> {
+fn find_unique_variables(action: &crate::translate::pddl_ast::Action, invariant: &Invariant) -> Vec<String> {
     let mut params: HashSet<String> = HashSet::new();
     for (p, _t) in &action.parameters { params.insert(p.clone()); }
     // also collect any names in the effect SExpr if possible (conservative: none)
@@ -130,18 +130,18 @@ pub fn get_groups(domain: &Domain, problem: &Problem) -> Vec<Vec<String>> {
         for act in &domain.actions {
             // parse effect SExpr into structured Effect
             if let Some(eff_s) = &act.effect {
-                let eff = crate::translate::pddl::sexpr_to_effect(eff_s);
+                let eff = crate::translate::pddl_ast::sexpr_to_effect(eff_s);
                 // collect add effects whose predicate is part of the candidate
                 let mut add_effects: Vec<(String, Vec<String>)> = Vec::new();
                 match eff {
-                    crate::translate::pddl::Effect::Add(ref name, ref args) => {
+                    crate::translate::pddl_ast::Effect::Add(ref name, ref args) => {
                         if candidate.predicates.contains(name) {
                             add_effects.push((name.clone(), args.clone()));
                         }
                     }
-                    crate::translate::pddl::Effect::And(ref vec_eff) => {
+                    crate::translate::pddl_ast::Effect::And(ref vec_eff) => {
                         for sub in vec_eff {
-                            if let crate::translate::pddl::Effect::Add(ref name, ref args) = sub {
+                            if let crate::translate::pddl_ast::Effect::Add(ref name, ref args) = sub {
                                 if candidate.predicates.contains(name) {
                                     add_effects.push((name.clone(), args.clone()));
                                 }

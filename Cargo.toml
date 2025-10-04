@@ -8,7 +8,6 @@ nom = "7"
 ordered-float = "5.1.0"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
-scryer-prolog = "0.9"
 
 [profile.release]
 debug = true
