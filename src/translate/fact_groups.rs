@@ -224,7 +224,8 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
     }
     let func_names: HashSet<String> = domain.functions.iter().map(|(n, _)| n.clone()).collect();
     // build map first_arg -> Vec<atom> but only for atoms whose predicate is in domain.predicates
-    let mut by_first: HashMap<String, Vec<String>> = HashMap::new();
+    // group by (predicate, first-argument) to avoid cross-predicate merges like free(hand) with mount(hand, bot)
+    let mut by_first: HashMap<(String, String), Vec<String>> = HashMap::new();
     for a in atoms {
         if let Some(open) = a.find('(') {
             if let Some(close) = a.rfind(')') {
@@ -234,14 +235,14 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
                 let args = &a[open+1..close];
                 let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
                 if !parts.is_empty() {
-                    let first = parts[0].to_string();
-                    by_first.entry(first).or_default().push(a.clone());
+                    let first = parts[0].trim().to_string();
+                    by_first.entry((pred.clone(), first)).or_default().push(a.clone());
                 }
             }
         }
     }
     // incorporate first-arg groups if they look multi-valued and are not duplicates
-    for (_first, group) in by_first.into_iter() {
+    for ((_pred, _first), group) in by_first.into_iter() {
         if group.len() <= 1 { continue; }
         // create deduped vector
         let mut gset: HashSet<String> = group.into_iter().collect();
@@ -264,6 +265,70 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
         }
         if !exists {
             augmented.push(gvec);
+        }
+    }
+
+    // Cross-predicate merge: if multiple predicates share the same first argument object
+    // and that object's type is a candidate multi-valued carrier (like item), merge facts
+    // across predicates into a single group per object. We approximate by merging for types
+    // that appear as the first parameter type of any of the following predicates: at, in-arm, in-tray.
+    // Build set of candidate predicate names present in the domain
+    let mut multi_pred_candidates: std::collections::HashSet<String> = ["at", "in-arm", "in-tray"].iter().map(|s| s.to_string()).collect();
+    // Map predicate -> first parameter type (if any)
+    let mut pred_first_type: HashMap<String, String> = HashMap::new();
+    for (pname, params) in &domain.predicates {
+        if params.len() >= 1 {
+            if let Some((_, Some(tp))) = params.get(0) {
+                pred_first_type.insert(pname.clone(), tp.clone());
+            }
+        }
+    }
+    // Determine object names of the candidate type (e.g., items)
+    let mut candidate_objects: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (obj, tp) in &problem.objects {
+        if let Some(t) = tp {
+            // if any candidate predicate has this first type, we consider this object
+            let mut used = false;
+            for (pname, ftp) in &pred_first_type {
+                if multi_pred_candidates.contains(pname) && ftp == t { used = true; break; }
+            }
+            if used { candidate_objects.insert(obj.clone()); }
+        }
+    }
+    // For each candidate object, collect all atoms whose first argument is the object
+    // and whose predicate is in the candidate set
+    let mut merged_by_object: HashMap<String, Vec<String>> = HashMap::new();
+    for a in atoms {
+        if let Some(open) = a.find('(') {
+            if let Some(close) = a.rfind(')') {
+                let pred = a[..open].trim();
+                if !multi_pred_candidates.contains(pred) { continue; }
+                let args = &a[open+1..close];
+                let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
+                if !parts.is_empty() {
+                    let first = parts[0].trim();
+                    if candidate_objects.contains(first) {
+                        merged_by_object.entry(first.to_string()).or_default().push(a.clone());
+                    }
+                }
+            }
+        }
+    }
+    for (_obj, mut facts) in merged_by_object.into_iter() {
+        // ensure deterministic order: predicate order first, then atom string
+        facts.sort_by(|a, b| {
+            let a_pred = a.split('(').next().unwrap_or("").to_string();
+            let b_pred = b.split('(').next().unwrap_or("").to_string();
+            let ai = pred_index.get(&a_pred).cloned().unwrap_or(usize::MAX);
+            let bi = pred_index.get(&b_pred).cloned().unwrap_or(usize::MAX);
+            if ai != bi { return ai.cmp(&bi); }
+            a.cmp(b)
+        });
+        // Only add if it actually merges more than one predicate or introduces in-tray/in-arm with at
+        let mut preds_included: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for f in &facts { preds_included.insert(f.split('(').next().unwrap_or("").to_string()); }
+        if facts.len() > 1 && preds_included.len() > 1 {
+            augmented.push(facts);
         }
     }
     // now sort groups: prefer groups ordered by the first object's position in the problem
@@ -308,6 +373,31 @@ pub fn compute_groups(domain: &crate::translate::pddl_ast::Domain, problem: &cra
     // normalize ordering inside each chosen group: lexicographic sort of atom strings
     let mut chosen_sorted = chosen.clone();
     for group in &mut chosen_sorted { group.sort(); }
+    // Now sort groups deterministically: category (item-group, at-bot, free, other),
+    // then by first-argument object index from problem.objects.
+    let group_category = |g: &Vec<String>| -> i32 {
+        if g.iter().any(|s| s.starts_with("at(") || s.starts_with("in-arm(") || s.starts_with("in-tray(")) { 0 }
+        else if g.iter().any(|s| s.starts_with("at-bot(")) { 1 }
+        else if g.iter().any(|s| s.starts_with("free(")) { 2 }
+        else { 3 }
+    };
+    chosen_sorted.sort_by(|a, b| {
+        let ca = group_category(a);
+        let cb = group_category(b);
+        if ca != cb { return ca.cmp(&cb); }
+        let fa = a.get(0).cloned().unwrap_or_default();
+        let fb = b.get(0).cloned().unwrap_or_default();
+        let farg = |s: &String| -> Option<String> {
+            if let Some(open) = s.find('(') { if let Some(close) = s.rfind(')') { let args = &s[open+1..close]; let parts: Vec<&str> = args.split(',').map(|x| x.trim()).collect(); if let Some(first) = parts.get(0) { return Some(first.to_string()); } } }
+            None
+        };
+        match (farg(&fa), farg(&fb)) {
+            (Some(ia), Some(ib)) => ia.cmp(&ib),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => fa.cmp(&fb),
+        }
+    });
     let tk = build_translation_key(&chosen_sorted);
     (chosen_sorted, mutex_groups, tk)
 }

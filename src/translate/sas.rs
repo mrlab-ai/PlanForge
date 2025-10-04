@@ -37,6 +37,10 @@ pub struct SASTask {
     pub numeric_init: Vec<i64>,
     // mutex groups over propositional variables as pairs (var, val)
     pub mutex_groups: Vec<Vec<(usize, usize)>>,
+    // initial state for propositional variables (index into value_names, or -1)
+    pub init: Vec<i32>,
+    // goal as (var, value) pairs
+    pub goal: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, Clone)]

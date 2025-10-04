@@ -8,9 +8,16 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
     writeln!(f, "begin_version")?;
     writeln!(f, "4")?; // match python/translate/sas_tasks.SAS_FILE_VERSION
     writeln!(f, "end_version")?;
+    // Metric: try to find a numeric variable named 'total-cost()' or 'cost()'; if none, use -1
     writeln!(f, "begin_metric")?;
-    // Use a minimization metric placeholder. The numeric parser expects '< N'.
-    writeln!(f, "< 0")?;
+    let mut metric_idx: isize = -1;
+    // prefer total-cost(), else cost()
+    for (i, nv) in task.numeric_variables.iter().enumerate() {
+        if nv.name == "total-cost()" { metric_idx = i as isize; break; }
+        if metric_idx == -1 && nv.name == "cost()" { metric_idx = i as isize; }
+    }
+    // Python prints '< idx' where idx is -1 for unit-cost, else the numeric var index
+    writeln!(f, "< {}", metric_idx)?;
     writeln!(f, "end_metric")?;
     // Emit full begin_variable blocks for each variable. We don't yet compute axiom layers here so use -1.
     writeln!(f, "{}", task.variables.len())?;
@@ -65,6 +72,20 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
         }
     }
     writeln!(f, "end_numeric_axioms")?;
+    // Initial propositional and numeric states
+    writeln!(f, "begin_state")?;
+    for v in &task.init { writeln!(f, "{}", v)?; }
+    writeln!(f, "end_state")?;
+    writeln!(f, "begin_numeric_state")?;
+    for v in &task.numeric_init { writeln!(f, "{}.0", v)?; }
+    writeln!(f, "end_numeric_state")?;
+
+    // Goal
+    writeln!(f, "begin_goal")?;
+    writeln!(f, "{}", task.goal.len())?;
+    for (v, val) in &task.goal { writeln!(f, "{} {}", v, val)?; }
+    writeln!(f, "end_goal")?;
+
     writeln!(f, "# operators: {}", task.operators.len())?;
     for (oi, op) in task.operators.iter().enumerate() {
         writeln!(f, "begin_operator")?;

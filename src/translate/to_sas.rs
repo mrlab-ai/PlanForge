@@ -94,9 +94,6 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
     // Map of derived expression name -> index into instantiated_num_axioms
     let mut derived_axiom_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
-    // Derived function canonicalizer
-    let mut df_admin = crate::translate::derived_function_admin::DerivedFunctionAdministrator::new();
-
     // recursive helper: ensure a numeric variable exists for the expression; returns its canonical name
     let mut df_admin = crate::translate::derived_function_admin::DerivedFunctionAdministrator::new();
     let mut ensure_expr_var = |sexpr: &crate::translate::pddl_parser::SExpr,
@@ -108,7 +105,24 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
                                -> Option<String> {
         ensure_expr_var_visit(sexpr, &mut df_admin, num_index, numeric_list, numeric_init_vec, instantiated_num_axioms, derived_axiom_index)
     };
-    // collect numeric inits and boolean init atoms
+    // Determine fluent predicates (those that appear in add/del effects) so we can
+    // exclude static predicates like door/mount from variables and prevails.
+    let mut fluent_preds: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for act in &dom.actions {
+        if let Some(eff_s) = &act.effect {
+            let eff = crate::translate::pddl_ast::sexpr_to_effect(eff_s);
+            fn collect(e: &crate::translate::pddl_ast::Effect, set: &mut std::collections::HashSet<String>) {
+                match e {
+                    crate::translate::pddl_ast::Effect::Add(n, _) | crate::translate::pddl_ast::Effect::Del(n, _) => { set.insert(n.clone()); }
+                    crate::translate::pddl_ast::Effect::And(v) => { for sub in v { collect(sub, set); } }
+                    _ => {}
+                }
+            }
+            collect(&eff, &mut fluent_preds);
+        }
+    }
+
+    // collect numeric inits and boolean init atoms (fluent only)
     let mut numeric_inits: Vec<(String, i64)> = Vec::new();
     // temporary set of grounded boolean atoms encountered
     let mut grounded_atoms: Vec<String> = Vec::new();
@@ -140,8 +154,10 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
                     } else {
                         // boolean init atom
                         if let crate::translate::pddl_parser::SExpr::Atom(name) = &list[0] {
+                            if fluent_preds.contains(name) {
                                 let atom = format!("{}({})", name, list[1..].iter().filter_map(|x| match x { crate::translate::pddl_parser::SExpr::Atom(s)=>Some(s.clone()), _=>None }).collect::<Vec<_>>().join(", "));
-                            grounded_atoms.push(atom.clone());
+                                grounded_atoms.push(atom.clone());
+                            }
                         }
                     }
                 }
@@ -151,6 +167,10 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
 
     // First pass: collect atoms from ops and numeric var effect hints
     let mut numeric_vars: Vec<(String, i64)> = Vec::new();
+    // helper to canonicalize numeric variable names to the PNE format used elsewhere
+    let canon_num = |name: &str| -> String {
+        if name.contains('(') { name.to_string() } else { format!("{}()", name) }
+    };
     for op in ops {
         if let Some(eff) = &op.eff {
             match eff {
@@ -161,20 +181,20 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
                         match sub {
                             crate::translate::pddl_ast::Effect::Add(name,args) => { grounded_atoms.push(format!("{}({})", name, args.join(", "))); }
                             crate::translate::pddl_ast::Effect::Del(name,args) => { grounded_atoms.push(format!("{}({})", name, args.join(", "))); }
-                            crate::translate::pddl_ast::Effect::Increase(name, _args, val) => { numeric_vars.push((name.clone(), *val)); }
-                            crate::translate::pddl_ast::Effect::Decrease(name, _args, val) => { numeric_vars.push((name.clone(), -*val)); }
+                            crate::translate::pddl_ast::Effect::Increase(name, _args, val) => { numeric_vars.push((canon_num(name), *val)); }
+                            crate::translate::pddl_ast::Effect::Decrease(name, _args, val) => { numeric_vars.push((canon_num(name), -*val)); }
                             crate::translate::pddl_ast::Effect::And(_) => { /* nested And - ignore for now */ }
                         }
                     }
                 }
-                crate::translate::pddl_ast::Effect::Increase(name, _args, v) => { numeric_vars.push((name.clone(), *v)); }
-                crate::translate::pddl_ast::Effect::Decrease(name, _args, v) => { numeric_vars.push((name.clone(), -*v)); }
+                crate::translate::pddl_ast::Effect::Increase(name, _args, v) => { numeric_vars.push((canon_num(name), *v)); }
+                crate::translate::pddl_ast::Effect::Decrease(name, _args, v) => { numeric_vars.push((canon_num(name), -*v)); }
             }
         }
-        if let Some(pre) = &op.pre {
+    if let Some(pre) = &op.pre {
             match pre {
-                crate::translate::pddl_ast::Condition::Atom(name,args) => { grounded_atoms.push(format!("{}({})", name, args.join(", "))); }
-                crate::translate::pddl_ast::Condition::And(v) => { for c in v { match c { crate::translate::pddl_ast::Condition::Atom(name,args) => { grounded_atoms.push(format!("{}({})", name, args.join(", "))); }, crate::translate::pddl_ast::Condition::Comparison(_,_,_) => {}, crate::translate::pddl_ast::Condition::Not(_) => {}, crate::translate::pddl_ast::Condition::And(_) => {}, crate::translate::pddl_ast::Condition::True => {}, } } }
+        crate::translate::pddl_ast::Condition::Atom(name,args) => { if fluent_preds.contains(name) { grounded_atoms.push(format!("{}({})", name, args.join(", "))); } }
+        crate::translate::pddl_ast::Condition::And(v) => { for c in v { match c { crate::translate::pddl_ast::Condition::Atom(name,args) => { if fluent_preds.contains(name) { grounded_atoms.push(format!("{}({})", name, args.join(", "))); } }, crate::translate::pddl_ast::Condition::Comparison(_,_,_) => {}, crate::translate::pddl_ast::Condition::Not(_) => {}, crate::translate::pddl_ast::Condition::And(_) => {}, crate::translate::pddl_ast::Condition::True => {}, } } }
                 crate::translate::pddl_ast::Condition::Comparison(_, _, _) => { /* handled later */ }
                 crate::translate::pddl_ast::Condition::Not(_) => { /* ignore */ }
                 crate::translate::pddl_ast::Condition::True => { /* ignore */ }
@@ -229,16 +249,23 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
     for (k, v) in numeric_inits.into_iter() {
         num_map.insert(k, v);
     }
+    // Ensure cost() exists (initialize to 0 if absent) and total-cost() exists for metric
+    num_map.entry("cost()".to_string()).or_insert(0);
+    num_map.entry("total-cost()".to_string()).or_insert(0);
 
     let mut numeric_list: Vec<crate::translate::sas::NumericVariable> = Vec::new();
     let mut numeric_init_vec: Vec<i64> = Vec::new();
-    for (n, v) in num_map.iter() {
+    // deterministic ordering of numeric variables: sort by name
+    let mut num_entries: Vec<(String, i64)> = num_map.iter().map(|(k,v)| (k.clone(), *v)).collect();
+    num_entries.sort_by(|a,b| a.0.cmp(&b.0));
+    for (n, v) in num_entries.iter() {
         // heuristically classify numeric variable type: constants 'C', derived 'D' if expression or contains '+'/'-' or 'derived' patterns, regular 'R', instrumentation 'I'
-        let ntype = if n.contains("derived!") || n.contains('+') || n.contains('-') && n.contains('(') { "D".to_string() }
+        let ntype = if n == "total-cost()" { "I".to_string() }
+                    else if n.contains("derived!") || (n.contains('+') || n.contains('-')) && n.contains('(') { "D".to_string() }
                     else if n.starts_with("const:") { "C".to_string() }
-                    else if n == "cost" || n.ends_with("cost") { "R".to_string() }
+                    else if n == "cost()" || n.ends_with("cost()") { "R".to_string() }
                     else { "R".to_string() };
-    numeric_list.push(crate::translate::sas::NumericVariable { name: n.clone(), initial: Some(*v), ntype, axiom_layer: -1 });
+        numeric_list.push(crate::translate::sas::NumericVariable { name: n.clone(), initial: Some(*v), ntype, axiom_layer: -1 });
         numeric_init_vec.push(*v);
     }
 
@@ -460,7 +487,7 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
     // InstantiatedNumericAxiom objects that numeric_axiom_rules can consume to detect
     // constant axioms and compute layers. We'll extend this to full arithmetic
     // expression trees later.
-    for (n, init_val) in num_map.iter() {
+    for (n, init_val) in num_entries.iter() {
         // n is like "fname(arg1,arg2)"
         if let Some(open) = n.find('(') {
             if let Some(close) = n.rfind(')') {
@@ -491,6 +518,47 @@ pub fn build_sas(ops: &[GroundedOp], dom: &Domain, prob: &Problem, external_inst
         }
     }
 
+    // Build propositional init vector aligned to variables using problem.init
+    let mut prop_init: Vec<i32> = vec![-1; vars.len()];
+    // map from variable index -> map value string -> value index
+    let mut val_index_maps: Vec<std::collections::HashMap<String, usize>> = Vec::new();
+    for v in &vars {
+        let mut m = std::collections::HashMap::new();
+        for (i, name) in v.value_names.iter().enumerate() { m.insert(name.clone(), i); }
+        val_index_maps.push(m);
+    }
+    for sexpr in &prob.init {
+        if let crate::translate::pddl_parser::SExpr::List(list) = sexpr {
+            if list.is_empty() { continue; }
+            if let crate::translate::pddl_parser::SExpr::Atom(pred) = &list[0] {
+                if pred == "=" { continue; }
+                let args: Vec<String> = list[1..].iter().filter_map(|x| match x { crate::translate::pddl_parser::SExpr::Atom(a)=>Some(a.clone()), _=>None }).collect();
+                let atom = format!("{}({})", pred, args.join(", "));
+                if let Some(&(v, val)) = atom_to_fdr.get(&atom) { prop_init[v] = val as i32; }
+            }
+        }
+    }
+
+    // Build goal pairs from problem.goal Condition::Atom list
+    let mut goal_pairs: Vec<(usize, usize)> = Vec::new();
+    if let Some(g) = &prob.goal {
+        match crate::translate::pddl_ast::sexpr_to_condition(g) {
+            crate::translate::pddl_ast::Condition::Atom(name,args) => {
+                let atom = format!("{}({})", name, args.join(", "));
+                if let Some(&(v, val)) = atom_to_fdr.get(&atom) { goal_pairs.push((v, val)); }
+            }
+            crate::translate::pddl_ast::Condition::And(list) => {
+                for c in list {
+                    if let crate::translate::pddl_ast::Condition::Atom(name,args) = c {
+                        let atom = format!("{}({})", name, args.join(", "));
+                        if let Some(&(v, val)) = atom_to_fdr.get(&atom) { goal_pairs.push((v, val)); }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     // We don't yet populate comparison axioms from other sources here; leave empty for now.
-    SASTask { variables: vars, operators, numeric_variables: numeric_list, numeric_axioms, comparison_axioms: comp_axioms, numeric_init: numeric_init_vec, mutex_groups: mutex_groups_pairs }
+    SASTask { variables: vars, operators, numeric_variables: numeric_list, numeric_axioms, comparison_axioms: comp_axioms, numeric_init: numeric_init_vec, mutex_groups: mutex_groups_pairs, init: prop_init, goal: goal_pairs }
 }
