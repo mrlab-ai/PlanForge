@@ -431,6 +431,85 @@ fn convert_trivial_rules(rules: &mut Vec<bm::RuleSpec>) -> Vec<bm::Atom> {
     produced
 }
 
+/// Get predicates that can change during plan execution (fluent predicates).
+/// 
+/// A predicate is fluent if it appears in:
+/// - Action effects (add or delete)
+/// - Axiom heads (derived predicates)
+/// 
+/// This mirrors Python's normalize.get_fluent_predicates().
+pub fn get_fluent_predicates(task: &NormalizableTask) -> HashSet<String> {
+    let mut fluent_predicates = HashSet::new();
+    
+    // Collect predicates from action effects
+    for action in &task.actions {
+        for effect in &action.effects {
+            // Extract predicate from effect SExpr
+            if let Some(pred) = extract_effect_predicate(&effect.effect) {
+                fluent_predicates.insert(pred);
+            }
+        }
+    }
+    
+    // Collect predicates from axiom heads
+    for axiom in &task.axioms {
+        fluent_predicates.insert(axiom.name.clone());
+    }
+    
+    fluent_predicates
+}
+
+/// Extract the predicate name from an effect SExpr.
+/// Handles: (predicate args...), (not (predicate args...)), (increase/decrease/assign ...)
+fn extract_effect_predicate(effect: &SExpr) -> Option<String> {
+    match effect {
+        SExpr::List(items) if items.is_empty() => None,
+        SExpr::List(items) => {
+            if let SExpr::Atom(op) = &items[0] {
+                match op.as_str() {
+                    "not" => {
+                        // (not (predicate args...))
+                        if items.len() >= 2 {
+                            if let SExpr::List(inner) = &items[1] {
+                                if !inner.is_empty() {
+                                    if let SExpr::Atom(pred) = &inner[0] {
+                                        return Some(pred.clone());
+                                    }
+                                }
+                            }
+                        }
+                        None
+                    }
+                    "increase" | "decrease" | "assign" | "scale-up" | "scale-down" => {
+                        // Numeric effect: (increase (function-name args...) value)
+                        // Extract the function name
+                        if items.len() >= 2 {
+                            if let SExpr::List(func_items) = &items[1] {
+                                if !func_items.is_empty() {
+                                    if let SExpr::Atom(func_name) = &func_items[0] {
+                                        return Some(func_name.clone());
+                                    }
+                                }
+                            }
+                        }
+                        None
+                    }
+                    _ => {
+                        // Simple positive effect: (predicate args...)
+                        Some(op.clone())
+                    }
+                }
+            } else {
+                None
+            }
+        }
+        SExpr::Atom(pred) => {
+            // Single atom predicate with no args
+            Some(pred.clone())
+        }
+    }
+}
+
 pub fn normalize_rules(rules: &mut Vec<bm::RuleSpec>) -> NormalizationOutcome {
     let mut outcome = NormalizationOutcome::default();
     outcome.object_predicate_required = remove_free_effect_variables(rules);

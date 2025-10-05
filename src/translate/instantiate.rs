@@ -1,9 +1,8 @@
 use crate::translate::build_model;
 use crate::translate::derived_function_admin::DerivedFunctionAdministrator;
 use crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom;
-use crate::translate::pddl::PddlTask;
 use crate::translate::pddl_ast::{Condition, Domain, Effect, Problem};
-use crate::translate::pddl_to_prolog;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct GroundedOp {
@@ -15,6 +14,10 @@ pub struct GroundedOp {
 
 /// Naive grounding: for each action, produce substitutions where each parameter
 /// is replaced by any object of the matching type (or any object for untyped).
+/// 
+/// **DEPRECATED**: Use `explore_normalized()` instead for model-guided grounding.
+/// This function performs cartesian product grounding which is inefficient.
+#[deprecated(note = "Use explore_normalized() for model-guided grounding")]
 pub fn ground(domain: &Domain, problem: &Problem) -> Vec<GroundedOp> {
     let mut result = Vec::new();
     // prepare objects by type
@@ -88,6 +91,11 @@ pub fn ground(domain: &Domain, problem: &Problem) -> Vec<GroundedOp> {
 }
 
 /// New API: ground the task and also return instantiated numeric axioms discovered
+/// 
+/// **DEPRECATED**: Use `explore_normalized()` instead for model-guided grounding.
+/// This function performs cartesian product grounding which is inefficient.
+#[deprecated(note = "Use explore_normalized() for model-guided grounding")]
+#[allow(deprecated)]
 pub fn ground_with_numeric_axioms(
     domain: &Domain,
     problem: &Problem,
@@ -140,6 +148,18 @@ pub struct ExploreResult {
     pub model: Vec<build_model::Atom>,
     pub grounded_ops: Vec<GroundedOp>,
     pub numeric_axioms: Vec<InstantiatedNumericAxiom>,
+    /// Fluent facts - facts that can change during plan execution
+    pub fluent_facts: Vec<build_model::Atom>,
+    /// Fluent functions - numeric functions that can change
+    pub fluent_functions: Vec<String>, // For now, store function names
+    /// Initial values for numeric functions: (function_name, args) -> value
+    pub init_function_values: HashMap<(String, Vec<String>), f64>,
+    /// Constant predicate facts - predicate facts in init that are not fluent
+    pub init_constant_predicate_facts: Vec<build_model::Atom>,
+    /// Constant numeric facts - numeric function assignments in init that are not fluent
+    pub init_constant_numeric_facts: HashMap<(String, Vec<String>), f64>,
+    /// Objects grouped by type (type_name -> list of object names)
+    pub type_to_objects: HashMap<String, Vec<String>>,
 }
 
 /// Split a rule with >2 conditions into a chain of binary join/project rules.
@@ -370,12 +390,162 @@ pub fn explore_normalized(norm_task: &crate::translate::normalize::NormalizableT
     
     let relaxed_reachable = model.iter().any(|atom| atom.predicate == "@goal-reachable");
     
+    eprintln!("DEBUG: explore_normalized() Step 5: extract fluent facts and functions");
+    // Step 5: Extract fluent facts and functions from model
+    let fluent_facts = get_fluent_facts(norm_task, &model);
+    let fluent_functions = get_fluent_functions(&model);
+    eprintln!("  Fluent facts: {}, fluent functions: {}", fluent_facts.len(), fluent_functions.len());
+    
+    eprintln!("DEBUG: explore_normalized() Step 6: separate init state into constants and fluents");
+    // Step 6: Extract init function values and separate constant facts
+    let init_function_values = extract_init_function_values(&init_facts);
+    let init_constant_numeric_facts = extract_constant_numeric_facts(&init_function_values, &fluent_functions);
+    let init_constant_predicate_facts = extract_constant_predicate_facts(&init_facts, &fluent_facts);
+    let type_to_objects = get_objects_by_type(&norm_task.objects);
+    eprintln!("  Init function values: {}, constant numeric: {}, constant predicates: {}", 
+              init_function_values.len(), init_constant_numeric_facts.len(), init_constant_predicate_facts.len());
+    eprintln!("  Type-to-objects mapping: {} types", type_to_objects.len());
+    
     ExploreResult {
         relaxed_reachable,
         model,
         grounded_ops: ops,
         numeric_axioms: num_axioms,
+        fluent_facts,
+        fluent_functions,
+        init_function_values,
+        init_constant_predicate_facts,
+        init_constant_numeric_facts,
+        type_to_objects,
     }
+}
+
+/// Extract fluent facts from model based on fluent predicates.
+/// Fluent facts are facts whose predicate can change during plan execution.
+fn get_fluent_facts(
+    norm_task: &crate::translate::normalize::NormalizableTask,
+    model: &[build_model::Atom],
+) -> Vec<build_model::Atom> {
+    use crate::translate::normalize;
+    
+    let fluent_predicates = normalize::get_fluent_predicates(norm_task);
+    
+    model
+        .iter()
+        .filter(|atom| fluent_predicates.contains(&atom.predicate))
+        .cloned()
+        .collect()
+}
+
+/// Extract fluent functions (numeric functions) from model.
+/// These are numeric functions that can change during plan execution.
+fn get_fluent_functions(model: &[build_model::Atom]) -> Vec<String> {
+    // For now, extract function names from numeric predicates in the model
+    // In Python, this checks for PrimitiveNumericExpression type
+    // We'll identify numeric functions by checking if predicate starts with common numeric names
+    // This is a simplified version - full implementation would need type information
+    
+    let mut fluent_functions = std::collections::HashSet::new();
+    
+    for atom in model {
+        // Numeric effects show up as predicates like "increase", "decrease", etc.
+        // or as derived function names
+        if is_numeric_function(&atom.predicate) {
+            fluent_functions.insert(atom.predicate.clone());
+        }
+    }
+    
+    fluent_functions.into_iter().collect()
+}
+
+/// Check if a predicate represents a numeric function.
+fn is_numeric_function(predicate: &str) -> bool {
+    // Common numeric effect predicates
+    matches!(
+        predicate,
+        "increase" | "decrease" | "assign" | "scale-up" | "scale-down"
+    ) || predicate.starts_with("f#") // derived function prefix (if used)
+}
+
+/// Extract initial values for all numeric functions from init facts.
+/// Returns a map from (function_name, args) to initial value.
+fn extract_init_function_values(_init_facts: &[build_model::Atom]) -> HashMap<(String, Vec<String>), f64> {
+    let init_values = HashMap::new();
+    
+    // Numeric function assignments in init are represented as atoms with a special predicate
+    // or with a numeric value. For now, we'll check if the predicate looks like a numeric function
+    // and extract the value from the args (if it's the last arg as a number)
+    
+    // In SAS format, numeric init facts are like: (= (function-name obj1 obj2) value)
+    // This gets parsed as an atom. We need to identify these.
+    // For now, skip this - we'll handle it when we have concrete numeric examples
+    // The model atoms don't directly contain numeric values, those come from init SExprs
+    
+    // TODO: This needs to parse norm_task.init SExprs directly to extract numeric assignments
+    // For now, return empty map
+    
+    init_values
+}
+
+/// Extract constant numeric facts - numeric functions in init that are not fluent.
+/// These are numeric functions whose values never change during plan execution.
+fn extract_constant_numeric_facts(
+    init_function_values: &HashMap<(String, Vec<String>), f64>,
+    fluent_functions: &[String],
+) -> HashMap<(String, Vec<String>), f64> {
+    let fluent_set: std::collections::HashSet<_> = fluent_functions.iter().collect();
+    
+    init_function_values
+        .iter()
+        .filter(|((func_name, _args), _value)| !fluent_set.contains(func_name))
+        .map(|(k, v)| (k.clone(), *v))
+        .collect()
+}
+
+/// Extract constant predicate facts - predicate facts in init that are not fluent.
+/// These are facts that never change during plan execution.
+fn extract_constant_predicate_facts(
+    init_facts: &[build_model::Atom],
+    fluent_facts: &[build_model::Atom],
+) -> Vec<build_model::Atom> {
+    // Convert fluent_facts to a set for efficient lookup
+    let fluent_set: std::collections::HashSet<_> = fluent_facts.iter().collect();
+    
+    init_facts
+        .iter()
+        .filter(|atom| {
+            // Only consider regular predicate atoms (not type facts, not "=" intermediate facts)
+            !fluent_set.contains(atom) && atom.predicate != "="
+        })
+        .cloned()
+        .collect()
+}
+
+/// Get objects grouped by type.
+/// Returns a map from type name to list of object names of that type.
+/// 
+/// Note: This is a simplified version that doesn't handle type hierarchies yet.
+/// Python version includes supertype relationships, but for now we just map objects to their direct types.
+/// TODO: Add type hierarchy support when needed (requires tracking Type basetype_name and supertypes).
+fn get_objects_by_type(objects: &[(String, Option<String>)]) -> HashMap<String, Vec<String>> {
+    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+    
+    for (obj_name, obj_type) in objects {
+        if let Some(type_name) = obj_type {
+            result
+                .entry(type_name.clone())
+                .or_insert_with(Vec::new)
+                .push(obj_name.clone());
+        } else {
+            // Untyped objects go into "object" type
+            result
+                .entry("object".to_string())
+                .or_insert_with(Vec::new)
+                .push(obj_name.clone());
+        }
+    }
+    
+    result
 }
 
 /// Ground actions from model using normalized task actions.
@@ -418,6 +588,41 @@ fn ground_from_normalized_model(
     let num_axioms = Vec::new();
 
     (grounded_ops, num_axioms)
+}
+
+/// Extract grounded (constant) arguments from model atom args.
+fn extract_grounded_args(args: &[build_model::Arg]) -> Vec<String> {
+    args.iter()
+        .map(|arg| match arg {
+            build_model::Arg::Const(s) => s.clone(),
+            build_model::Arg::FreeVar(s) => s.clone(),
+            build_model::Arg::Var(_) => {
+                // Model should only contain constants after grounding
+                eprintln!("Warning: Found Var in model atom, treating as placeholder");
+                "?unknown".to_string()
+            }
+        })
+        .collect()
+}
+
+/// Create variable mapping from action parameters to grounded arguments.
+fn create_variable_mapping(
+    parameters: &[(String, Option<String>)],
+    grounded_args: &[String],
+) -> std::collections::HashMap<String, String> {
+    parameters
+        .iter()
+        .zip(grounded_args.iter())
+        .map(|((param_name, _type), obj)| {
+            // Remove '?' prefix from parameter if present
+            let clean_param = if param_name.starts_with('?') {
+                param_name[1..].to_string()
+            } else {
+                param_name.clone()
+            };
+            (format!("?{}", clean_param), obj.clone())
+        })
+        .collect()
 }
 
 /// Instantiate a normalized action with specific grounded arguments.
@@ -506,192 +711,5 @@ fn sexpr_to_atom(sexpr: &crate::translate::pddl_parser::SExpr) -> Option<build_m
             }
         }
         _ => None,
-    }
-}
-
-pub fn explore(task: &PddlTask) -> ExploreResult {
-    eprintln!("DEBUG: explore() Step 1: translate to prolog");
-    // Step 1: translate domain/problem forms to a prolog-style program.
-    let prog = pddl_to_prolog::translate_from_ast(&task.domain_forms, &task.problem_forms);
-
-    eprintln!("DEBUG: explore() Step 2: compute model");
-    // Step 2: compute the datalog model (facts reachable under the relaxed semantics).
-    let mut rules = build_model::convert_rules(&prog.model_rules);
-    let model = build_model::compute_model(&mut rules, &prog.model_facts);
-    eprintln!("DEBUG: computed model with {} atoms", model.len());
-    eprintln!("DEBUG: model facts (first 50):");
-    for (i, atom) in model.iter().take(50).enumerate() {
-        eprintln!("  {}: {}({:?})", i + 1, atom.predicate, atom.args);
-    }
-    eprintln!("DEBUG: checking for @action- prefixed atoms:");
-    let action_atoms: Vec<_> = model.iter()
-        .filter(|a| a.predicate.starts_with("@action-"))
-        .collect();
-    eprintln!("  Found {} action atoms", action_atoms.len());
-    for atom in &action_atoms {
-        eprintln!("    - {}({:?})", atom.predicate, atom.args);
-    }
-
-    eprintln!("DEBUG: explore() Step 3: parse domain and problem");
-    // Step 3: Parse domain and problem for action definitions
-    let domain =
-        Domain::from_sexprs(&task.domain_forms).expect("domain parsing failed during explore");
-    let problem =
-        Problem::from_sexprs(&task.problem_forms).expect("problem parsing failed during explore");
-    eprintln!("DEBUG: parsed {} actions", domain.actions.len());
-
-    eprintln!("DEBUG: explore() Step 4: model-guided grounding");
-    // Step 4: Model-guided grounding - instantiate actions from model atoms
-    let (ops, num_axioms) = ground_from_model(&model, &domain, &problem);
-    eprintln!("DEBUG: grounded {} operators", ops.len());
-
-    let relaxed_reachable = model.iter().any(|atom| atom.predicate == "@goal-reachable");
-
-    ExploreResult {
-        relaxed_reachable,
-        model,
-        grounded_ops: ops,
-        numeric_axioms: num_axioms,
-    }
-}
-
-/// Ground actions from model atoms (model-guided instantiation).
-/// This replaces the naive cartesian product approach.
-fn ground_from_model(
-    model: &[build_model::Atom],
-    domain: &Domain,
-    problem: &Problem,
-) -> (Vec<GroundedOp>, Vec<InstantiatedNumericAxiom>) {
-    use std::collections::HashMap;
-
-    // Build action lookup map
-    let mut action_map: HashMap<String, &crate::translate::pddl_ast::Action> = HashMap::new();
-    for action in &domain.actions {
-        action_map.insert(action.name.clone(), action);
-    }
-
-    let mut grounded_ops = Vec::new();
-
-    // Iterate model atoms and extract action instantiations
-    for atom in model {
-        // Check if this atom represents an action (predicate starts with @action-)
-        if atom.predicate.starts_with("@action-") {
-            let action_name = &atom.predicate["@action-".len()..];
-            
-            if let Some(action) = action_map.get(action_name) {
-                // Extract grounded arguments from atom
-                let grounded_args = extract_grounded_args(&atom.args);
-                
-                // Create variable mapping: parameter name -> grounded object
-                let variable_mapping = create_variable_mapping(&action.parameters, &grounded_args);
-                
-                // Instantiate this specific action with these parameters
-                let grounded_op = instantiate_action_simple(action, &grounded_args, &variable_mapping);
-                
-                grounded_ops.push(grounded_op);
-            }
-        }
-    }
-
-    // Build numeric axioms from problem init (same as before)
-    let mut df_admin = DerivedFunctionAdministrator::new();
-    let mut inst_axioms: Vec<InstantiatedNumericAxiom> = Vec::new();
-    
-    for sexpr in &problem.init {
-        if let crate::translate::pddl_parser::SExpr::List(list) = sexpr {
-            if list.len() >= 3 {
-                if let crate::translate::pddl_parser::SExpr::Atom(eq) = &list[0] {
-                    if eq == "=" {
-                        if let crate::translate::pddl_parser::SExpr::List(lhs_vec) = &list[1] {
-                            let lhs_sexpr = crate::translate::pddl_parser::SExpr::List(lhs_vec.clone());
-                            let pne = df_admin.get_derived_function(&lhs_sexpr);
-                            
-                            if let crate::translate::pddl_parser::SExpr::Atom(rhs) = &list[2] {
-                                if let Ok(n) = rhs.parse::<i64>() {
-                                    let part = crate::translate::numeric_axiom_rules::NumericPart::Constant(
-                                        crate::translate::numeric_axiom_rules::NumericConstant(n)
-                                    );
-                                    let ax = InstantiatedNumericAxiom {
-                                        name: pne.name.clone(),
-                                        op: None,
-                                        parts: vec![part],
-                                        effect: pne,
-                                    };
-                                    inst_axioms.push(ax);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    (grounded_ops, inst_axioms)
-}
-
-/// Extract grounded (constant) arguments from model atom args.
-fn extract_grounded_args(args: &[build_model::Arg]) -> Vec<String> {
-    args.iter()
-        .map(|arg| match arg {
-            build_model::Arg::Const(s) => s.clone(),
-            build_model::Arg::FreeVar(s) => s.clone(),
-            build_model::Arg::Var(_) => {
-                // Model should only contain constants after grounding
-                eprintln!("Warning: Found Var in model atom, treating as placeholder");
-                "?unknown".to_string()
-            }
-        })
-        .collect()
-}
-
-/// Create variable mapping from action parameters to grounded arguments.
-fn create_variable_mapping(
-    parameters: &[(String, Option<String>)],
-    grounded_args: &[String],
-) -> std::collections::HashMap<String, String> {
-    parameters
-        .iter()
-        .zip(grounded_args.iter())
-        .map(|((param_name, _type), obj)| {
-            // Remove '?' prefix from parameter if present
-            let clean_param = if param_name.starts_with('?') {
-                param_name[1..].to_string()
-            } else {
-                param_name.clone()
-            };
-            (format!("?{}", clean_param), obj.clone())
-        })
-        .collect()
-}
-
-/// Instantiate an action with specific grounded arguments (simple version for Phase 1).
-/// This performs basic variable substitution. Phase 3 will add proper condition evaluation.
-fn instantiate_action_simple(
-    action: &crate::translate::pddl_ast::Action,
-    grounded_args: &[String],
-    variable_mapping: &std::collections::HashMap<String, String>,
-) -> GroundedOp {
-    let name = format!("{}({})", action.name, grounded_args.join(","));
-    
-    // Substitute variables in precondition
-    let pre_cond = action
-        .precond
-        .as_ref()
-        .map(|s| crate::translate::pddl_ast::sexpr_to_condition(s));
-    let pre_sub = pre_cond.map(|c| crate::translate::pddl_ast::substitute_condition(&c, variable_mapping));
-    
-    // Substitute variables in effects
-    let eff_e = action
-        .effect
-        .as_ref()
-        .map(|s| crate::translate::pddl_ast::sexpr_to_effect(s));
-    let eff_sub = eff_e.map(|e| crate::translate::pddl_ast::substitute_effect(&e, variable_mapping));
-    
-    GroundedOp {
-        name,
-        args: grounded_args.to_vec(),
-        pre: pre_sub,
-        eff: eff_sub,
     }
 }
