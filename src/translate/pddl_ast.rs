@@ -31,8 +31,118 @@ pub enum Condition {
     Atom(String, Vec<String>), // predicate name and args
     Not(Box<Condition>),
     And(Vec<Condition>),
-    Comparison(String, SExpr, SExpr), // op, left, right as raw SExprs
+    Or(Vec<Condition>),
+    Forall(Vec<(String, Option<String>)>, Box<Condition>), // parameters and condition
+    Exists(Vec<(String, Option<String>)>, Box<Condition>), // parameters and condition
+    Comparison(String, SExpr, SExpr), // op, left, right as raw SExprs (not Hash-able)
     True,
+}
+
+impl Condition {
+    /// Check if this condition contains a universal quantifier anywhere in the tree
+    pub fn has_universal_part(&self) -> bool {
+        match self {
+            Condition::Forall(_, _) => true,
+            Condition::Not(c) => c.has_universal_part(),
+            Condition::And(parts) | Condition::Or(parts) => {
+                parts.iter().any(|p| p.has_universal_part())
+            }
+            Condition::Exists(_, c) => c.has_universal_part(),
+            _ => false,
+        }
+    }
+
+    /// Collect all free variables (variables not bound by quantifiers)
+    pub fn free_variables(&self) -> std::collections::HashSet<String> {
+        use std::collections::HashSet;
+        match self {
+            Condition::Atom(_, args) => args
+                .iter()
+                .filter(|a| a.starts_with('?'))
+                .cloned()
+                .collect(),
+            Condition::Not(c) => c.free_variables(),
+            Condition::And(parts) | Condition::Or(parts) => {
+                parts.iter().flat_map(|p| p.free_variables()).collect()
+            }
+            Condition::Forall(params, c) | Condition::Exists(params, c) => {
+                let mut vars = c.free_variables();
+                for (name, _) in params {
+                    vars.remove(name);
+                }
+                vars
+            }
+            Condition::Comparison(_, _, _) => HashSet::new(), // simplified
+            Condition::True => HashSet::new(),
+        }
+    }
+
+    /// Negate this condition (De Morgan's laws + quantifier duality)
+    pub fn negate(&self) -> Condition {
+        match self {
+            Condition::Atom(_, _) => Condition::Not(Box::new(self.clone())),
+            Condition::Not(c) => (**c).clone(),
+            Condition::And(parts) => {
+                Condition::Or(parts.iter().map(|p| p.negate()).collect())
+            }
+            Condition::Or(parts) => {
+                Condition::And(parts.iter().map(|p| p.negate()).collect())
+            }
+            Condition::Forall(params, c) => {
+                // ¬∀x.φ ≡ ∃x.¬φ
+                Condition::Exists(params.clone(), Box::new(c.negate()))
+            }
+            Condition::Exists(params, c) => {
+                // ¬∃x.φ ≡ ∀x.¬φ
+                Condition::Forall(params.clone(), Box::new(c.negate()))
+            }
+            Condition::Comparison(_, _, _) => {
+                // For simplicity, wrap in Not
+                Condition::Not(Box::new(self.clone()))
+            }
+            Condition::True => Condition::Not(Box::new(Condition::True)),
+        }
+    }
+
+    /// Replace the sub-parts of this condition with new parts
+    pub fn change_parts(&self, new_parts: Vec<Condition>) -> Condition {
+        match self {
+            Condition::And(_) => Condition::And(new_parts),
+            Condition::Or(_) => Condition::Or(new_parts),
+            Condition::Not(_) => {
+                if new_parts.len() == 1 {
+                    Condition::Not(Box::new(new_parts[0].clone()))
+                } else {
+                    self.clone()
+                }
+            }
+            Condition::Forall(params, _) => {
+                if new_parts.len() == 1 {
+                    Condition::Forall(params.clone(), Box::new(new_parts[0].clone()))
+                } else {
+                    self.clone()
+                }
+            }
+            Condition::Exists(params, _) => {
+                if new_parts.len() == 1 {
+                    Condition::Exists(params.clone(), Box::new(new_parts[0].clone()))
+                } else {
+                    self.clone()
+                }
+            }
+            _ => self.clone(),
+        }
+    }
+
+    /// Get sub-conditions for recursive processing
+    pub fn parts(&self) -> Vec<Condition> {
+        match self {
+            Condition::Not(c) => vec![(**c).clone()],
+            Condition::And(parts) | Condition::Or(parts) => parts.clone(),
+            Condition::Forall(_, c) | Condition::Exists(_, c) => vec![(**c).clone()],
+            _ => vec![],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -424,6 +534,15 @@ pub fn substitute_condition(
         Condition::Not(c) => Condition::Not(Box::new(substitute_condition(c, mapping))),
         Condition::And(v) => {
             Condition::And(v.iter().map(|c| substitute_condition(c, mapping)).collect())
+        }
+        Condition::Or(v) => {
+            Condition::Or(v.iter().map(|c| substitute_condition(c, mapping)).collect())
+        }
+        Condition::Forall(params, c) => {
+            Condition::Forall(params.clone(), Box::new(substitute_condition(c, mapping)))
+        }
+        Condition::Exists(params, c) => {
+            Condition::Exists(params.clone(), Box::new(substitute_condition(c, mapping)))
         }
         Condition::Comparison(op, l, r) => {
             // comparisons store raw SExprs; substitute variable tokens inside them

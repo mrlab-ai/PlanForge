@@ -330,6 +330,9 @@ pub fn build_sas(
                             crate::translate::pddl_ast::Condition::Comparison(_, _, _) => {}
                             crate::translate::pddl_ast::Condition::Not(_) => {}
                             crate::translate::pddl_ast::Condition::And(_) => {}
+                            crate::translate::pddl_ast::Condition::Or(_) => {}
+                            crate::translate::pddl_ast::Condition::Forall(_, _) => {}
+                            crate::translate::pddl_ast::Condition::Exists(_, _) => {}
                             crate::translate::pddl_ast::Condition::True => {}
                         }
                     }
@@ -337,6 +340,9 @@ pub fn build_sas(
                 crate::translate::pddl_ast::Condition::Comparison(_, _, _) => { /* handled later */
                 }
                 crate::translate::pddl_ast::Condition::Not(_) => { /* ignore */ }
+                crate::translate::pddl_ast::Condition::Or(_) => { /* should be normalized */ }
+                crate::translate::pddl_ast::Condition::Forall(_, _) => { /* should be normalized */ }
+                crate::translate::pddl_ast::Condition::Exists(_, _) => { /* should be normalized */ }
                 crate::translate::pddl_ast::Condition::True => { /* ignore */ }
             }
         }
@@ -688,6 +694,9 @@ pub fn build_sas(
                             }
                             crate::translate::pddl_ast::Condition::Not(_) => { /* ignore */ }
                             crate::translate::pddl_ast::Condition::And(_) => { /* ignore */ }
+                            crate::translate::pddl_ast::Condition::Or(_) => { /* should be normalized */ }
+                            crate::translate::pddl_ast::Condition::Forall(_, _) => { /* should be normalized */ }
+                            crate::translate::pddl_ast::Condition::Exists(_, _) => { /* should be normalized */ }
                             crate::translate::pddl_ast::Condition::True => { /* ignore */ }
                         }
                     }

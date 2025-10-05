@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use planners::translate::pddl::PddlTask;
+use planners::translate::normalize;
 
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
 #[derive(Parser)]

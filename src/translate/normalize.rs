@@ -1,5 +1,6 @@
 use crate::translate::build_model as bm;
-use std::collections::HashSet;
+use crate::translate::pddl_ast::Condition;
+use std::collections::{HashMap, HashSet};
 
 const OBJECT_PREDICATE: &str = "@object";
 
@@ -161,5 +162,224 @@ mod tests {
         assert!(outcome.new_facts.is_empty());
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].conditions.len(), 1);
+    }
+}
+
+/// Axiom generated during universal quantifier removal.
+#[derive(Debug, Clone)]
+pub struct NormalizationAxiom {
+    pub name: String,
+    pub parameters: Vec<(String, Option<String>)>, // (name, type)
+    pub condition: Condition,
+}
+
+/// Context for managing axioms and type maps during normalization.
+#[derive(Debug, Clone)]
+pub struct NormalizationContext {
+    pub axioms: Vec<NormalizationAxiom>,
+    axiom_counter: usize,
+}
+
+impl NormalizationContext {
+    pub fn new() -> Self {
+        Self {
+            axioms: Vec::new(),
+            axiom_counter: 0,
+        }
+    }
+
+    /// Create a new axiom with the given parameters and condition.
+    /// Returns the axiom name.
+    pub fn add_axiom(
+        &mut self,
+        parameters: Vec<(String, Option<String>)>,
+        condition: Condition,
+    ) -> String {
+        let name = format!("new-axiom@{}", self.axiom_counter);
+        self.axiom_counter += 1;
+        self.axioms.push(NormalizationAxiom {
+            name: name.clone(),
+            parameters,
+            condition,
+        });
+        name
+    }
+}
+
+/// Remove universal quantifiers from a condition.
+///
+/// This function implements the normalization step [1] from Python's normalize.py:
+/// Replace, in a top-down fashion, <forall(vars, phi)> by <not(not-all-phi)>,
+/// where <not-all-phi> is a new axiom.
+///
+/// The negation of forall(vars, phi) becomes exists(vars, not(phi)),
+/// and we create an axiom for that existential condition.
+///
+/// Note: Python version includes caching of axioms by condition. For simplicity,
+/// we skip caching here since Condition contains SExpr which doesn't implement Hash.
+/// This may create duplicate axioms but maintains functional correctness.
+pub fn remove_universal_quantifiers(
+    condition: &Condition,
+    type_map: &HashMap<String, String>,
+    ctx: &mut NormalizationContext,
+) -> Condition {
+    match condition {
+        Condition::Forall(_params, _inner) => {
+            // Negate to get exists(params, not(inner))
+            // Note: negate() recursively negates, so forall becomes exists,
+            // and nested foralls also get negated
+            let axiom_condition = condition.negate();
+
+            // Collect free variables (parameters for the new axiom)
+            let mut free_vars: Vec<String> = axiom_condition.free_variables().into_iter().collect();
+            free_vars.sort();
+
+            // Create typed parameters from free variables
+            let typed_params: Vec<(String, Option<String>)> = free_vars
+                .iter()
+                .map(|v| {
+                    let ty = type_map.get(v).cloned();
+                    (v.clone(), ty)
+                })
+                .collect();
+
+            // Recursively process the axiom condition to handle any nested foralls
+            // that might appear after negation
+            let processed_condition = remove_universal_quantifiers(&axiom_condition, type_map, ctx);
+
+            // Add the axiom
+            let axiom_name = ctx.add_axiom(typed_params, processed_condition);
+
+            // Return a negated atom referencing the axiom
+            Condition::Not(Box::new(Condition::Atom(axiom_name, free_vars)))
+        }
+        // For Exists, recursively process the inner condition
+        Condition::Exists(params, inner) => {
+            let processed_inner = remove_universal_quantifiers(inner, type_map, ctx);
+            Condition::Exists(params.clone(), Box::new(processed_inner))
+        }
+        // For all other conditions, recursively process sub-parts
+        _ => {
+            let parts = condition.parts();
+            if parts.is_empty() {
+                condition.clone()
+            } else {
+                let new_parts: Vec<Condition> = parts
+                    .iter()
+                    .map(|p| remove_universal_quantifiers(p, type_map, ctx))
+                    .collect();
+                condition.change_parts(new_parts)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod quantifier_tests {
+    use super::*;
+
+    #[test]
+    fn test_remove_simple_forall() {
+        // forall(?x, at(?x, loc1)) becomes not(new-axiom@0())
+        // where new-axiom@0 is exists(?x, not(at(?x, loc1)))
+        // Since ?x is bound by the forall and has no free variables from outside,
+        // the axiom has no parameters
+        let mut ctx = NormalizationContext::new();
+        let mut type_map = HashMap::new();
+        type_map.insert("?x".to_string(), "object".to_string());
+
+        let forall_cond = Condition::Forall(
+            vec![("?x".to_string(), Some("object".to_string()))],
+            Box::new(Condition::Atom("at".to_string(), vec!["?x".to_string(), "loc1".to_string()])),
+        );
+
+        let result = remove_universal_quantifiers(&forall_cond, &type_map, &mut ctx);
+
+        // Should produce Not(Atom("new-axiom@0", []))
+        assert!(matches!(result, Condition::Not(_)));
+        if let Condition::Not(inner) = result {
+            if let Condition::Atom(name, args) = &*inner {
+                assert_eq!(name, "new-axiom@0");
+                assert_eq!(args.len(), 0, "Axiom should have no parameters");
+            } else {
+                panic!("Expected Atom inside Not");
+            }
+        }
+
+        // Check that one axiom was created
+        assert_eq!(ctx.axioms.len(), 1);
+        assert_eq!(ctx.axioms[0].name, "new-axiom@0");
+        // The axiom's condition should be exists(?x, not(at(?x, loc1)))
+        assert!(matches!(ctx.axioms[0].condition, Condition::Exists(_, _)));
+    }
+
+    #[test]
+    fn test_nested_forall() {
+        // forall(?x, forall(?y, connected(?x, ?y)))
+        // When negated, this becomes: exists(?x, exists(?y, not(connected(?x, ?y))))
+        // This creates one axiom with no parameters (both vars are bound)
+        let mut ctx = NormalizationContext::new();
+        let mut type_map = HashMap::new();
+        type_map.insert("?x".to_string(), "loc".to_string());
+        type_map.insert("?y".to_string(), "loc".to_string());
+
+        let inner_forall = Condition::Forall(
+            vec![("?y".to_string(), Some("loc".to_string()))],
+            Box::new(Condition::Atom(
+                "connected".to_string(),
+                vec!["?x".to_string(), "?y".to_string()],
+            )),
+        );
+
+        let outer_forall = Condition::Forall(
+            vec![("?x".to_string(), Some("loc".to_string()))],
+            Box::new(inner_forall),
+        );
+
+        let result = remove_universal_quantifiers(&outer_forall, &type_map, &mut ctx);
+
+        // The nested foralls are negated together, creating one axiom
+        assert!(matches!(result, Condition::Not(_)));
+        assert_eq!(ctx.axioms.len(), 1);
+        // The axiom should have nested Exists conditions
+        assert!(matches!(ctx.axioms[0].condition, Condition::Exists(_, _)));
+    }
+
+    #[test]
+    fn test_forall_with_free_variable() {
+        // forall(?y, connected(?x, ?y)) where ?x is free
+        // This should create an axiom with parameter ?x
+        let mut ctx = NormalizationContext::new();
+        let mut type_map = HashMap::new();
+        type_map.insert("?x".to_string(), "loc".to_string());
+        type_map.insert("?y".to_string(), "loc".to_string());
+
+        let forall_cond = Condition::Forall(
+            vec![("?y".to_string(), Some("loc".to_string()))],
+            Box::new(Condition::Atom(
+                "connected".to_string(),
+                vec!["?x".to_string(), "?y".to_string()],
+            )),
+        );
+
+        let result = remove_universal_quantifiers(&forall_cond, &type_map, &mut ctx);
+
+        // Should produce Not(Atom("new-axiom@0", ["?x"]))
+        // because ?x is a free variable in the forall
+        assert!(matches!(result, Condition::Not(_)));
+        if let Condition::Not(inner) = result {
+            if let Condition::Atom(name, args) = &*inner {
+                assert_eq!(name, "new-axiom@0");
+                assert_eq!(args, &vec!["?x".to_string()]);
+            } else {
+                panic!("Expected Atom inside Not");
+            }
+        }
+
+        // Check that one axiom was created with one parameter
+        assert_eq!(ctx.axioms.len(), 1);
+        assert_eq!(ctx.axioms[0].name, "new-axiom@0");
+        assert_eq!(ctx.axioms[0].parameters.len(), 1);
+        assert_eq!(ctx.axioms[0].parameters[0].0, "?x");
     }
 }
