@@ -2885,7 +2885,12 @@ pub fn build_exploration_rules(task: &NormalizableTask) -> Vec<(Vec<bm::SymAtom>
         // Also create rules for effects (both unconditional and conditional)
         // effect-atom :- @action-name(?params), effect-condition
         for effect in &action.effects {
-            let effect_head = get_effect_head(effect);
+            // Get all variables: action parameters + effect forall parameters
+            let mut all_params = action.parameters.clone();
+            all_params.extend(effect.parameters.clone());
+            
+            let effect_head = get_effect_head(effect, &all_params);
+            
             if let Some(head) = effect_head {
                 let mut effect_body = vec![get_action_predicate(action)];
                 // Add effect condition atoms (if not trivially true)
@@ -2919,12 +2924,9 @@ pub fn build_exploration_rules(task: &NormalizableTask) -> Vec<(Vec<bm::SymAtom>
     }
     
     // Goal reachability rule: @goal-reachable :- goal-atoms
-    // TODO: Fix this - goal atoms have constants, not variables, which creates
-    // rules that only match specific groundings and pollute the unifier index
-    // For now, skip the goal rule as it's not essential for action grounding
-    // let goal_rule_head = bm::SymAtom::new("@goal-reachable", vec![]);
-    // let goal_rule_body = condition_to_rule_body(&[], &task.goal);
-    // rules.push((goal_rule_body, goal_rule_head));
+    let goal_rule_head = bm::SymAtom::new("@goal-reachable".to_string(), vec![]);
+    let goal_rule_body = condition_to_rule_body(&[], &task.goal);
+    rules.push((goal_rule_body, goal_rule_head));
     
     // TODO: Add numeric axiom rules for function tracking
     // For now, skip these as they're not needed for basic action grounding
@@ -2952,18 +2954,46 @@ fn get_action_predicate(action: &TaskAction) -> bm::SymAtom {
 
 /// Get the effect head atom for a conditional effect.
 /// Returns None for negated atoms or unsupported effects.
-fn get_effect_head(effect: &TaskEffect) -> Option<bm::SymAtom> {
+fn get_effect_head(effect: &TaskEffect, _all_params: &[(String, Option<String>)]) -> Option<bm::SymAtom> {
     use crate::translate::pddl_parser::SExpr;
     
     // The effect is stored as SExpr - parse it
     // Positive effects: (predicate arg1 arg2 ...)
     // Negative effects: (not (predicate arg1 arg2 ...))
+    // Numeric effects: (increase/decrease/assign (function arg1...) value)
     match &effect.effect {
         SExpr::List(items) if !items.is_empty() => {
             // Check if it's a (not ...) form
             if let SExpr::Atom(op) = &items[0] {
                 if op == "not" {
-                    // Delete effect - skip in relaxed semantics
+                    // Delete effect - skip (we ignore delete effects in model-guided grounding)
+                    return None;
+                }
+                
+                // Check if it's a numeric effect (increase/decrease/assign/scale-up/scale-down)
+                if op == "increase" || op == "decrease" || op == "assign" || op == "scale-up" || op == "scale-down" {
+                    // Numeric effect - extract the function and create a predicate for it
+                    // Format: (increase (function-name arg1 arg2) value)
+                    if items.len() >= 2 {
+                        if let SExpr::List(func_items) = &items[1] {
+                            if !func_items.is_empty() {
+                                if let SExpr::Atom(_func_name) = &func_items[0] {
+                                    let args: Vec<String> = func_items[1..]
+                                        .iter()
+                                        .filter_map(|item| {
+                                            if let SExpr::Atom(s) = item {
+                                                Some(s.clone())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect();
+                                    // Return predicate for numeric fluent effect
+                                    return Some(bm::SymAtom::new(op.clone(), args));
+                                }
+                            }
+                        }
+                    }
                     return None;
                 }
             }

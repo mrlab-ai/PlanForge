@@ -337,7 +337,9 @@ impl BuildRule for ProductRule {
             return;
         }
         // Build binding factors for all other conditions
-        let mut factors: Vec<Vec<(usize, String)>> = Vec::new();
+        // factors: Vec of (one Vec of bindings per atom)
+        // Each inner Vec represents the bindings from one atom matching the condition
+        let mut factors: Vec<Vec<Vec<(usize, String)>>> = Vec::new();
         for (pos, cond) in self.conditions.iter().enumerate() {
             if pos == cond_index {
                 continue;
@@ -346,37 +348,44 @@ impl BuildRule for ProductRule {
             if atoms.is_empty() {
                 return;
             }
-            let mut factor: Vec<(usize, String)> = Vec::new();
-            for a in atoms {
-                for (vn, obj) in Self::bindings_for(a, cond) {
-                    factor.push((vn, obj));
-                }
-            }
+            // Build a factor: one binding list per matching atom
+            let factor: Vec<Vec<(usize, String)>> = atoms
+                .iter()
+                .map(|a| Self::bindings_for(a, cond))
+                .collect();
             factors.push(factor);
         }
-        let mut eff_args = self.prepare_effect(new_atom, cond_index);
-        // Cartesian product: for simplicity, assign in nested loops by recursive helper
+        let eff_args = self.prepare_effect(new_atom, cond_index);
+        
+        // Cartesian product: pick one atom from each condition, combine their bindings
+        // factors[i] is a Vec of binding-lists, one per atom matching condition i
+        // We want to iterate over all combinations, picking one binding-list from each factor
         fn product_apply(
-            factors: &[Vec<(usize, String)>],
-            acc: &mut Vec<(usize, String)>,
-            emit: &mut dyn FnMut(&Vec<(usize, String)>),
+            factors: &[Vec<Vec<(usize, String)>>],
+            acc: &mut Vec<Vec<(usize, String)>>,
+            emit: &mut dyn FnMut(&[Vec<(usize, String)>]),
         ) {
             if factors.is_empty() {
                 emit(acc);
                 return;
             }
             let (first, rest) = factors.split_first().unwrap();
-            for b in first {
-                acc.push(b.clone());
+            // first is a Vec<Vec<(usize, String)>> - one binding-list per atom
+            for bindings in first {
+                acc.push(bindings.clone());
                 product_apply(rest, acc, emit);
                 acc.pop();
             }
         }
-        let mut tmp_acc: Vec<(usize, String)> = Vec::new();
-        product_apply(&factors, &mut tmp_acc, &mut |bindings| {
+        let mut tmp_acc: Vec<Vec<(usize, String)>> = Vec::new();
+        product_apply(&factors, &mut tmp_acc, &mut |bindings_list| {
             let mut filled = eff_args.clone();
-            for (var_no, obj) in bindings {
-                filled[*var_no] = obj.clone();
+            // bindings_list is a slice of binding-lists, one from each condition
+            // Flatten all bindings and apply them
+            for bindings in bindings_list {
+                for (var_no, obj) in bindings {
+                    filled[*var_no] = obj.clone();
+                }
             }
             enqueue(&self.effect.predicate, &filled);
         });
@@ -471,8 +480,10 @@ pub fn convert_rules(specs: &[RuleSpec]) -> Vec<RuleKind> {
     eprintln!("DEBUG convert_rules: Converting {} rule specs", specs.len());
     let mut rules = Vec::new();
     for (i, spec) in specs.iter().enumerate() {
-        eprintln!("  Rule {}: {} :- {:?}", i, spec.effect.predicate, 
-                 spec.conditions.iter().map(|c| &c.predicate).collect::<Vec<_>>());
+        eprintln!("  Rule {}: {}({}) :- [{}]", i, 
+                 spec.effect.predicate, 
+                 spec.effect.args.join(","),
+                 spec.conditions.iter().map(|c| format!("{}({})", c.predicate, c.args.join(","))).collect::<Vec<_>>().join(", "));
         let (eff, conds) = variables_to_numbers(&spec.effect, &spec.conditions);
         
         // Debug: show rule 8 in detail
@@ -557,8 +568,12 @@ impl GenNode {
         }
         match self {
             GenNode::Leaf { matches } => {
+                // Important: preserve matches from the old Leaf at the TOP level
+                // These are rules with no constants that should match ANY atom
+                let preserved_matches = matches.clone();
+                
                 // build a chain: for each (arg_index, arg) reversed
-                let mut root = GenNode::Leaf { matches };
+                let mut root = GenNode::Leaf { matches: Vec::new() };  // Empty leaf at bottom
                 for (arg_index, arg) in args.iter().rev() {
                     let mut map = HashMap::new();
                     map.insert(arg.clone(), Box::new(root));
@@ -571,7 +586,7 @@ impl GenNode {
                         }),
                     };
                 }
-                // insert value at top
+                // insert value at top AND preserve old matches
                 match root {
                     GenNode::Match {
                         index,
@@ -579,6 +594,9 @@ impl GenNode {
                         map,
                         next,
                     } => {
+                        // Add preserved matches (rules with no constants)
+                        matches.extend(preserved_matches);
+                        // Add new value (rule with constants)
                         matches.push(value);
                         GenNode::Match {
                             index,
