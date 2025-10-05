@@ -2232,6 +2232,111 @@ pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
     //     metric_expression = admin.get_derived_function(metric_expression)
 }
 
+/// Verify that derived predicates are not used in :init or action effects.
+///
+/// This function implements normalization step [11] from Python's normalize.py.
+/// It validates that axiom predicates (derived predicates) do not appear in:
+/// - The initial state (:init)
+/// - Action effects
+///
+/// Derived predicates should only appear in axiom heads and in conditions.
+/// If a derived predicate appears in :init or effects, the task is invalid.
+///
+/// From Python's normalize.py:
+/// ```python
+/// def verify_axiom_predicates(task):
+///     axiom_names = set()
+///     for axiom in task.axioms:
+///         axiom_names.add(axiom.name)
+///
+///     for fact in task.init:
+///         if getattr(fact, "predicate", None) in axiom_names:
+///             raise SystemExit("error: derived predicate %r appears in :init fact '%s'" %
+///                 (fact.predicate, fact))
+///
+///     for action in task.actions:
+///         for effect in action.effects:
+///             if isinstance(effect.peffect, pddl.Literal) and effect.peffect.predicate in axiom_names:
+///                 raise SystemExit("error: derived predicate %r appears in effect of action %r" %
+///                     (effect.peffect.predicate, action.name))
+/// ```
+pub fn task_verify_axiom_predicates(task: &NormalizableTask) -> Result<(), String> {
+    use std::collections::HashSet;
+    
+    // Collect all axiom predicate names
+    let axiom_names: HashSet<String> = task.axioms.iter().map(|ax| ax.name.clone()).collect();
+    
+    // Check that derived predicates don't appear in :init
+    for init_fact in &task.init {
+        // Extract predicate name from init fact
+        // Init facts can be atoms like (at robot loc1) or assignments like (= (fuel) 10)
+        if let Some(predicate) = extract_predicate_from_sexpr(init_fact) {
+            if axiom_names.contains(&predicate) {
+                return Err(format!(
+                    "error: derived predicate '{}' appears in :init fact '{:?}'",
+                    predicate, init_fact
+                ));
+            }
+        }
+    }
+    
+    // Check that derived predicates don't appear in action effects
+    for action in &task.actions {
+        for effect in &action.effects {
+            // Extract predicate from effect
+            // Effects can be atoms, negated atoms, or assignments
+            if let Some(predicate) = extract_predicate_from_sexpr(&effect.effect) {
+                if axiom_names.contains(&predicate) {
+                    return Err(format!(
+                        "error: derived predicate '{}' appears in effect of action '{}'",
+                        predicate, action.name
+                    ));
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Helper function to extract predicate name from an SExpr.
+///
+/// Handles various forms:
+/// - (at robot loc1) -> "at"
+/// - (not (clear block)) -> "clear"
+/// - (= (fuel) 10) -> None (assignment, not a predicate)
+fn extract_predicate_from_sexpr(expr: &SExpr) -> Option<String> {
+    match expr {
+        SExpr::Atom(_) => None,
+        SExpr::List(items) => {
+            if items.is_empty() {
+                return None;
+            }
+            
+            // Check first element
+            match &items[0] {
+                SExpr::Atom(op) => {
+                    match op.as_str() {
+                        // Negation: (not <atom>)
+                        "not" => {
+                            if items.len() >= 2 {
+                                extract_predicate_from_sexpr(&items[1])
+                            } else {
+                                None
+                            }
+                        }
+                        // Assignment operators: (= ...), (assign ...), etc.
+                        "=" | "assign" | "increase" | "decrease" | "scale-up" | "scale-down" => None,
+                        // Regular predicate
+                        _ => Some(op.clone()),
+                    }
+                }
+                _ => None,
+            }
+        }
+    }
+}
+
 /// Placeholder for the old standalone function (kept for compatibility)
 #[allow(dead_code)]
 pub fn verify_and_fix_arithmetic_expressions_placeholder() {
@@ -2537,10 +2642,11 @@ pub fn task_eliminate_existential_quantifiers_from_conditional_effects(task: &mu
 /// 7. Eliminate existential quantifiers from preconditions (5b)
 /// 8. Eliminate existential quantifiers from conditional effects (5c)
 /// 9. Verify and fix arithmetic expressions
-/// 10. Remove arithmetic expressions (placeholder)
+/// 10. Remove arithmetic expressions
+/// 11. Verify axiom predicates
 ///
-/// Note: verify_axiom_predicates is not yet implemented.
-pub fn normalize(task: &mut NormalizableTask) {
+/// Returns an error if validation fails (e.g., derived predicates in :init or effects).
+pub fn normalize(task: &mut NormalizableTask) -> Result<(), String> {
     task_remove_universal_quantifiers(task);
     task_substitute_complicated_goal(task);
     task_build_dnf(task);
@@ -2551,7 +2657,8 @@ pub fn normalize(task: &mut NormalizableTask) {
     task_eliminate_existential_quantifiers_from_conditional_effects(task);
     task_verify_and_fix_arithmetic_expressions(task);
     task_remove_arithmetic_expressions(task);
-    // TODO: verify_axiom_predicates(task);
+    task_verify_axiom_predicates(task)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2608,7 +2715,8 @@ mod task_normalization_tests {
         );
         
         // Run normalization
-        normalize(&mut task);
+        let result = normalize(&mut task);
+        assert!(result.is_ok());
         
         // After normalization, the forall should be converted to axiom
         // and goal should reference that axiom
@@ -2896,5 +3004,228 @@ mod task_normalization_tests {
         } else {
             panic!("Expected And condition");
         }
+    }
+    
+    #[test]
+    fn test_verify_axiom_predicates_valid_task() {
+        // Test that a valid task passes verification
+        let domain = Domain {
+            name: "test-domain".to_string(),
+            predicates: vec![
+                ("at".to_string(), vec![]),
+                ("clear".to_string(), vec![]),
+            ],
+            functions: vec![],
+            actions: vec![],
+        };
+        
+        let problem = Problem {
+            name: "test-problem".to_string(),
+            objects: vec![],
+            init: vec![
+                SExpr::List(vec![SExpr::Atom("at".to_string()), SExpr::Atom("robot".to_string())]),
+                SExpr::List(vec![SExpr::Atom("clear".to_string()), SExpr::Atom("table".to_string())]),
+            ],
+            goal: Some(SExpr::Atom("true".to_string())),
+        };
+        
+        let mut task = NormalizableTask::from_ast(&domain, &problem);
+        
+        // Add an axiom with a different predicate
+        task.axioms.push(TaskAxiom {
+            name: "reachable".to_string(),
+            parameters: vec![("?x".to_string(), Some("loc".to_string()))],
+            condition: Condition::Atom("at".to_string(), vec!["?x".to_string()]),
+            num_external_parameters: 0,
+        });
+        
+        // Add an action that uses regular predicates in effects
+        task.actions.push(TaskAction {
+            name: "move".to_string(),
+            parameters: vec![],
+            precondition: Condition::True,
+            effects: vec![TaskEffect {
+                parameters: vec![],
+                condition: Condition::True,
+                effect: SExpr::List(vec![
+                    SExpr::Atom("at".to_string()),
+                    SExpr::Atom("robot".to_string()),
+                    SExpr::Atom("loc2".to_string()),
+                ]),
+            }],
+        });
+        
+        // Verification should pass
+        let result = task_verify_axiom_predicates(&task);
+        assert!(result.is_ok());
+    }
+    
+    #[test]
+    fn test_verify_axiom_predicates_derived_in_init() {
+        // Test that derived predicates in :init are caught
+        let domain = Domain {
+            name: "test-domain".to_string(),
+            predicates: vec![("reachable".to_string(), vec![])],
+            functions: vec![],
+            actions: vec![],
+        };
+        
+        let problem = Problem {
+            name: "test-problem".to_string(),
+            objects: vec![],
+            init: vec![
+                // This is invalid: reachable is a derived predicate
+                SExpr::List(vec![SExpr::Atom("reachable".to_string()), SExpr::Atom("loc1".to_string())]),
+            ],
+            goal: Some(SExpr::Atom("true".to_string())),
+        };
+        
+        let mut task = NormalizableTask::from_ast(&domain, &problem);
+        
+        // Add an axiom that makes "reachable" a derived predicate
+        task.axioms.push(TaskAxiom {
+            name: "reachable".to_string(),
+            parameters: vec![("?x".to_string(), Some("loc".to_string()))],
+            condition: Condition::Atom("connected".to_string(), vec!["start".to_string(), "?x".to_string()]),
+            num_external_parameters: 0,
+        });
+        
+        // Verification should fail
+        let result = task_verify_axiom_predicates(&task);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("derived predicate"));
+        assert!(err.contains(":init"));
+    }
+    
+    #[test]
+    fn test_verify_axiom_predicates_derived_in_effect() {
+        // Test that derived predicates in action effects are caught
+        let domain = Domain {
+            name: "test-domain".to_string(),
+            predicates: vec![("reachable".to_string(), vec![])],
+            functions: vec![],
+            actions: vec![],
+        };
+        
+        let problem = Problem {
+            name: "test-problem".to_string(),
+            objects: vec![],
+            init: vec![],
+            goal: Some(SExpr::Atom("true".to_string())),
+        };
+        
+        let mut task = NormalizableTask::from_ast(&domain, &problem);
+        
+        // Add an axiom that makes "reachable" a derived predicate
+        task.axioms.push(TaskAxiom {
+            name: "reachable".to_string(),
+            parameters: vec![("?x".to_string(), Some("loc".to_string()))],
+            condition: Condition::Atom("connected".to_string(), vec!["start".to_string(), "?x".to_string()]),
+            num_external_parameters: 0,
+        });
+        
+        // Add an action that tries to set a derived predicate in effects (INVALID!)
+        task.actions.push(TaskAction {
+            name: "teleport".to_string(),
+            parameters: vec![],
+            precondition: Condition::True,
+            effects: vec![TaskEffect {
+                parameters: vec![],
+                condition: Condition::True,
+                effect: SExpr::List(vec![
+                    SExpr::Atom("reachable".to_string()),
+                    SExpr::Atom("far-away".to_string()),
+                ]),
+            }],
+        });
+        
+        // Verification should fail
+        let result = task_verify_axiom_predicates(&task);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("derived predicate"));
+        assert!(err.contains("effect"));
+    }
+    
+    #[test]
+    fn test_verify_axiom_predicates_negated_effect() {
+        // Test that derived predicates in negated effects are also caught
+        let domain = Domain {
+            name: "test-domain".to_string(),
+            predicates: vec![("derived-pred".to_string(), vec![])],
+            functions: vec![],
+            actions: vec![],
+        };
+        
+        let problem = Problem {
+            name: "test-problem".to_string(),
+            objects: vec![],
+            init: vec![],
+            goal: Some(SExpr::Atom("true".to_string())),
+        };
+        
+        let mut task = NormalizableTask::from_ast(&domain, &problem);
+        
+        // Add an axiom
+        task.axioms.push(TaskAxiom {
+            name: "derived-pred".to_string(),
+            parameters: vec![],
+            condition: Condition::Atom("base-pred".to_string(), vec![]),
+            num_external_parameters: 0,
+        });
+        
+        // Add an action with negated effect
+        task.actions.push(TaskAction {
+            name: "test-action".to_string(),
+            parameters: vec![],
+            precondition: Condition::True,
+            effects: vec![TaskEffect {
+                parameters: vec![],
+                condition: Condition::True,
+                effect: SExpr::List(vec![
+                    SExpr::Atom("not".to_string()),
+                    SExpr::List(vec![
+                        SExpr::Atom("derived-pred".to_string()),
+                    ]),
+                ]),
+            }],
+        });
+        
+        // Verification should fail
+        let result = task_verify_axiom_predicates(&task);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("derived predicate"));
+    }
+    
+    #[test]
+    fn test_verify_axiom_predicates_ignores_assignments() {
+        // Test that numeric assignments are not mistaken for predicates
+        let domain = Domain {
+            name: "test-domain".to_string(),
+            predicates: vec![],
+            functions: vec![("fuel".to_string(), vec![])],
+            actions: vec![],
+        };
+        
+        let problem = Problem {
+            name: "test-problem".to_string(),
+            objects: vec![],
+            init: vec![
+                SExpr::List(vec![
+                    SExpr::Atom("=".to_string()),
+                    SExpr::List(vec![SExpr::Atom("fuel".to_string())]),
+                    SExpr::Atom("100".to_string()),
+                ]),
+            ],
+            goal: Some(SExpr::Atom("true".to_string())),
+        };
+        
+        let task = NormalizableTask::from_ast(&domain, &problem);
+        
+        // Even if we had an axiom named "fuel" or "=", assignments should be ignored
+        // Verification should pass (no derived predicates)
+        let result = task_verify_axiom_predicates(&task);
+        assert!(result.is_ok());
     }
 }
