@@ -648,7 +648,11 @@ pub fn translate_from_ast(domain_forms: &[SExpr], problem_forms: &[SExpr]) -> Pr
             if let Some(pre) = &action.precond {
                 let cond = crate::translate::pddl_ast::sexpr_to_condition(pre);
                 if let Some(conds) = cond_to_symatoms(&cond) {
-                    // Head predicate name: action name. Ensure params are proper var tokens (don't double-prefix '?').
+                    // Head predicate name: @action-{name} to distinguish action atoms in model
+                    // This allows instantiate.rs to identify which atoms represent actions
+                    let action_predicate = format!("@action-{}", action.name);
+                    
+                    // Ensure params are proper var tokens (don't double-prefix '?').
                     let head_args: Vec<String> = action
                         .parameters
                         .iter()
@@ -660,7 +664,7 @@ pub fn translate_from_ast(domain_forms: &[SExpr], problem_forms: &[SExpr]) -> Pr
                             }
                         })
                         .collect();
-                    let head = bm::SymAtom::new(action.name.clone(), head_args);
+                    let head = bm::SymAtom::new(action_predicate, head_args);
                     let rtype = match conds.len() {
                         0 => "project", // trivial; will turn into facts after convert_trivial_rules in Python; we keep project
                         1 => "project",

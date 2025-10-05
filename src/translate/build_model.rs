@@ -468,9 +468,21 @@ impl RuleKind {
 }
 
 pub fn convert_rules(specs: &[RuleSpec]) -> Vec<RuleKind> {
+    eprintln!("DEBUG convert_rules: Converting {} rule specs", specs.len());
     let mut rules = Vec::new();
-    for spec in specs {
+    for (i, spec) in specs.iter().enumerate() {
+        eprintln!("  Rule {}: {} :- {:?}", i, spec.effect.predicate, 
+                 spec.conditions.iter().map(|c| &c.predicate).collect::<Vec<_>>());
         let (eff, conds) = variables_to_numbers(&spec.effect, &spec.conditions);
+        
+        // Debug: show rule 8 in detail
+        if i == 8 {
+            eprintln!("    DEBUG Rule 8 after variables_to_numbers:");
+            eprintln!("      Effect: {}({:?})", eff.predicate, eff.args);
+            for (ci, cond) in conds.iter().enumerate() {
+                eprintln!("      Condition {}: {}({:?})", ci, cond.predicate, cond.args);
+            }
+        }
         let rk = match spec.rtype.as_str() {
             "join" => RuleKind::Join(JoinRule::new(eff, conds)),
             "product" => RuleKind::Product(ProductRule::new(eff, conds)),
@@ -650,10 +662,32 @@ impl Unifier {
                         const_args.push((i, s.clone()));
                     }
                 }
+                
+                // Debug: print at conditions
+                if cond.predicate == "at" {
+                    eprintln!("    DEBUG Unifier: Adding rule {} cond {} predicate {} with {:?} const_args, arity {}",
+                             ri, ci, cond.predicate, const_args, cond.args.len());
+                }
+                
                 let newroot = entry.insert(&const_args, (ri, ci));
                 root_by_pred.insert(cond.predicate.clone(), newroot);
             }
         }
+        
+        // Debug: show what's in the at predicate index
+        if let Some(at_root) = root_by_pred.get("at") {
+            eprintln!("DEBUG Unifier built for 'at' predicate:");
+            let mut test_matches = Vec::new();
+            at_root.generate(&Atom { 
+                predicate: "at".to_string(), 
+                args: vec![Arg::Const("test1".to_string()), Arg::Const("test2".to_string())]
+            }, &mut test_matches);
+            eprintln!("  Total rules that would match at(test1, test2): {}", test_matches.len());
+            if test_matches.len() < 20 {
+                eprintln!("  Matches: {:?}", test_matches);
+            }
+        }
+        
         Self { root_by_pred }
     }
     pub fn unify(&self, atom: &Atom) -> Vec<(usize, usize)> {
@@ -661,6 +695,15 @@ impl Unifier {
         if let Some(root) = self.root_by_pred.get(&atom.predicate) {
             root.generate(atom, &mut res);
         }
+        
+        // Debug: if it's an at or item atom, show what we found
+        if atom.predicate == "at" || atom.predicate == "item" {
+            if res.len() < 3 {
+                eprintln!("    DEBUG Unify {}({:?}): found {} matches: {:?}", 
+                         atom.predicate, atom.args, res.len(), res);
+            }
+        }
+        
         res
     }
 }
@@ -717,11 +760,30 @@ impl Queue {
 }
 
 pub fn compute_model(rules: &mut Vec<RuleKind>, facts: &[Atom]) -> Vec<Atom> {
+    eprintln!("DEBUG build_model: Starting with {} rules and {} facts", rules.len(), facts.len());
     let mut queue = Queue::new(facts.to_vec());
     let unifier = Unifier::new(rules);
+    
+    let mut iterations = 0;
     while queue.has_next() {
+        iterations += 1;
         let next = queue.pop();
         let matches = unifier.unify(&next);
+        
+        // Extra debug for item and at predicates
+        if next.predicate == "item" || next.predicate == "at" {
+            eprintln!("  DEBUG: Processing {}({:?}), {} rule matches", 
+                     next.predicate, next.args, matches.len());
+            for (ri, ci) in &matches {
+                eprintln!("    Match: rule {} condition {}", ri, ci);
+            }
+        }
+        
+        if iterations <= 5 || iterations % 100 == 0 {
+            eprintln!("  Iteration {}: Processing {}({:?}), {} matches", 
+                     iterations, next.predicate, next.args, matches.len());
+        }
+        
         for (ri, ci) in matches {
             let rule = rules.get_mut(ri).unwrap();
             rule.as_rule_mut().update_index(&next, ci);
@@ -731,6 +793,17 @@ pub fn compute_model(rules: &mut Vec<RuleKind>, facts: &[Atom]) -> Vec<Atom> {
             rule.as_rule().fire(&next, ci, &mut push);
         }
     }
+    
+    eprintln!("DEBUG build_model: Completed after {} iterations", iterations);
+    eprintln!("  Final queue length: {}", queue.queue.len());
+    eprintln!("  Total pushes: {}", queue.num_pushes);
+    
+    // Print all model atoms for debugging
+    eprintln!("  All {} model atoms:", queue.queue.len());
+    for (i, atom) in queue.queue.iter().enumerate() {
+        eprintln!("    {}: {}/{:?}", i+1, atom.predicate, atom.args);
+    }
+    
     queue.queue
 }
 

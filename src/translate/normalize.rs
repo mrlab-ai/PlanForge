@@ -2211,11 +2211,23 @@ pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
         }
     }
     
-    // Collect all function symbols used in effects
+    // Collect all function symbols used in numeric effects (not predicate effects)
     let mut used_symbols = HashSet::new();
     for action in &task.actions {
         for effect in &action.effects {
-            find_function_symbols(&effect.effect, &mut used_symbols);
+            // Only check numeric effects (increase, decrease, assign)
+            // Skip regular predicate effects like (at ?i ?x) or (free ?a)
+            if let SExpr::List(items) = &effect.effect {
+                if !items.is_empty() {
+                    if let SExpr::Atom(op) = &items[0] {
+                        // Only scan numeric operators
+                        if matches!(op.as_str(), "increase" | "decrease" | "assign" | "scale-up" | "scale-down") {
+                            find_function_symbols(&effect.effect, &mut used_symbols);
+                        }
+                        // Skip predicate effects (anything else)
+                    }
+                }
+            }
         }
     }
     
@@ -2855,6 +2867,228 @@ pub fn normalize(task: &mut NormalizableTask) -> Result<(), String> {
     task_remove_arithmetic_expressions(task);
     task_verify_axiom_predicates(task)?;
     Ok(())
+}
+
+/// Build exploration rules from normalized task for instantiation.
+/// This converts normalized actions and axioms into datalog-style rules for model computation.
+/// Mirrors Python's normalize.build_exploration_rules().
+pub fn build_exploration_rules(task: &NormalizableTask) -> Vec<(Vec<bm::SymAtom>, bm::SymAtom)> {
+    let mut rules = Vec::new();
+    
+    // For each action, create a rule for the precondition
+    // @action-name(?params) :- precondition-atoms
+    for action in &task.actions {
+        let rule_head = get_action_predicate(action);
+        let rule_body = condition_to_rule_body(&action.parameters, &action.precondition);
+        rules.push((rule_body, rule_head));
+        
+        // Also create rules for effects (both unconditional and conditional)
+        // effect-atom :- @action-name(?params), effect-condition
+        for effect in &action.effects {
+            let effect_head = get_effect_head(effect);
+            if let Some(head) = effect_head {
+                let mut effect_body = vec![get_action_predicate(action)];
+                // Add effect condition atoms (if not trivially true)
+                if !matches!(&effect.condition, Condition::True) {
+                    let cond_atoms = condition_to_rule_body(&[], &effect.condition);
+                    effect_body.extend(cond_atoms);
+                }
+                rules.push((effect_body, head));
+            }
+        }
+    }
+    
+    // For each axiom, create rules
+    for axiom in &task.axioms {
+        // Application rule: @axiom(?params) :- axiom-condition
+        let app_rule_head = get_axiom_predicate(axiom);
+        let app_rule_body = condition_to_rule_body(&axiom.parameters, &axiom.condition);
+        rules.push((app_rule_body, app_rule_head.clone()));
+        
+        // Effect rule: axiom-name(?external-params) :- @axiom(?params)
+        // Python: params = axiom.parameters[:axiom.num_external_parameters]
+        // For now, use all parameters (proper handling needs num_external_parameters)
+        let eff_rule_head = bm::SymAtom::new(
+            axiom.name.clone(),
+            axiom.parameters.iter().map(|(name, _)| {
+                if name.starts_with('?') { name.clone() } else { format!("?{}", name) }
+            }).collect()
+        );
+        let eff_rule_body = vec![app_rule_head];
+        rules.push((eff_rule_body, eff_rule_head));
+    }
+    
+    // Goal reachability rule: @goal-reachable :- goal-atoms
+    // TODO: Fix this - goal atoms have constants, not variables, which creates
+    // rules that only match specific groundings and pollute the unifier index
+    // For now, skip the goal rule as it's not essential for action grounding
+    // let goal_rule_head = bm::SymAtom::new("@goal-reachable", vec![]);
+    // let goal_rule_body = condition_to_rule_body(&[], &task.goal);
+    // rules.push((goal_rule_body, goal_rule_head));
+    
+    // TODO: Add numeric axiom rules for function tracking
+    // For now, skip these as they're not needed for basic action grounding
+    
+    rules
+}
+
+/// Get the action predicate atom for use in exploration rules.
+/// Creates an atom like @action-move(?bot, ?from, ?to)
+fn get_action_predicate(action: &TaskAction) -> bm::SymAtom {
+    let predicate = format!("@action-{}", action.name);
+    let args: Vec<String> = action
+        .parameters
+        .iter()
+        .map(|(name, _type)| {
+            if name.starts_with('?') {
+                name.clone()
+            } else {
+                format!("?{}", name)
+            }
+        })
+        .collect();
+    bm::SymAtom::new(predicate, args)
+}
+
+/// Get the effect head atom for a conditional effect.
+/// Returns None for negated atoms or unsupported effects.
+fn get_effect_head(effect: &TaskEffect) -> Option<bm::SymAtom> {
+    use crate::translate::pddl_parser::SExpr;
+    
+    // The effect is stored as SExpr - parse it
+    // Positive effects: (predicate arg1 arg2 ...)
+    // Negative effects: (not (predicate arg1 arg2 ...))
+    match &effect.effect {
+        SExpr::List(items) if !items.is_empty() => {
+            // Check if it's a (not ...) form
+            if let SExpr::Atom(op) = &items[0] {
+                if op == "not" {
+                    // Delete effect - skip in relaxed semantics
+                    return None;
+                }
+            }
+            
+            // It's a positive effect - extract predicate and args
+            if let SExpr::Atom(predicate) = &items[0] {
+                let args: Vec<String> = items[1..]
+                    .iter()
+                    .filter_map(|item| {
+                        if let SExpr::Atom(s) = item {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                return Some(bm::SymAtom::new(predicate.clone(), args));
+            }
+            None
+        }
+        SExpr::Atom(_) => {
+            // Single atom - probably a predicate with no args
+            // This shouldn't normally happen for effects
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Get the axiom predicate atom for use in exploration rules.
+/// Creates an atom using the axiom's name
+fn get_axiom_predicate(axiom: &TaskAxiom) -> bm::SymAtom {
+    let args: Vec<String> = axiom
+        .parameters
+        .iter()
+        .map(|(name, _type)| {
+            if name.starts_with('?') {
+                name.clone()
+            } else {
+                format!("?{}", name)
+            }
+        })
+        .collect();
+    bm::SymAtom::new(axiom.name.clone(), args)
+}
+
+/// Convert a condition to a rule body (list of positive atoms).
+/// Extracts parameter type predicates and positive literals from the condition.
+fn condition_to_rule_body(
+    parameters: &[(String, Option<String>)],
+    condition: &Condition,
+) -> Vec<bm::SymAtom> {
+    let mut result = Vec::new();
+    
+    // Add type predicates for parameters
+    for (param_name, param_type) in parameters {
+        if let Some(type_name) = param_type {
+            let param_var = if param_name.starts_with('?') {
+                param_name.clone()
+            } else {
+                format!("?{}", param_name)
+            };
+            result.push(bm::SymAtom::new(type_name.clone(), vec![param_var]));
+        }
+    }
+    
+    // Extract positive literals from condition
+    extract_positive_literals(condition, &mut result);
+    
+    result
+}
+
+/// Recursively extract positive (non-negated) literals from a condition.
+fn extract_positive_literals(condition: &Condition, result: &mut Vec<bm::SymAtom>) {
+    match condition {
+        Condition::True => {
+            // True condition adds no atoms
+        }
+        Condition::Atom(predicate, args) => {
+            // Positive atom - add it
+            result.push(bm::SymAtom::new(predicate.clone(), args.clone()));
+        }
+        Condition::And(conditions) => {
+            // Conjunction - extract from all subconditions
+            for cond in conditions {
+                extract_positive_literals(cond, result);
+            }
+        }
+        Condition::Or(_conditions) => {
+            // Disjunction - after normalization, this shouldn't appear in simple preconditions
+            // but if it does, we skip it (can't easily represent in datalog)
+        }
+        Condition::Not(cond) => {
+            // Check if it's a negated atom (negative precondition)
+            // In relaxed semantics, we ignore negative preconditions
+            // But if it's not(not(X)), we should handle the inner part
+            if let Condition::Not(inner) = cond.as_ref() {
+                // Double negation - extract from inner
+                extract_positive_literals(inner, result);
+            }
+            // Otherwise skip (negative literal)
+        }
+        Condition::Exists(params, cond) => {
+            // Existential - add parameter types and extract from body
+            for (param_name, param_type) in params {
+                if let Some(type_name) = param_type {
+                    let param_var = if param_name.starts_with('?') {
+                        param_name.clone()
+                    } else {
+                        format!("?{}", param_name)
+                    };
+                    result.push(bm::SymAtom::new(type_name.clone(), vec![param_var]));
+                }
+            }
+            extract_positive_literals(cond, result);
+        }
+        Condition::Forall(_params, _cond) => {
+            // Universal quantifier - shouldn't appear after normalization
+            // Skip if it does
+        }
+        Condition::Comparison(_op, _left, _right) => {
+            // Numeric comparison - not handled in basic exploration rules
+            // Skip for now (proper handling requires function tracking)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -62,20 +62,56 @@ fn main() -> anyhow::Result<()> {
                 .expect("domain parse");
             let prob = planners::translate::pddl_ast::Problem::from_sexprs(&task.problem_forms)
                 .expect("problem parse");
-            let (ops, instantiated_num_axioms) =
-                planners::translate::instantiate::ground_with_numeric_axioms(&dom, &prob);
-            eprintln!("translator: grounded {} operators", ops.len());
-            let py_groups: Option<Vec<Vec<String>>> = None;
-            let sastask = planners::translate::to_sas::build_sas(
-                &ops,
-                &dom,
-                &prob,
-                &instantiated_num_axioms,
-                py_groups,
+
+            // Create normalizable task and run normalization
+            eprintln!("translator: normalizing task...");
+            let mut norm_task = normalize::NormalizableTask::from_ast(&dom, &prob);
+            normalize::normalize(&mut norm_task).expect("normalization failed");
+            eprintln!(
+                "translator: normalized - {} actions, {} axioms, {} numeric axioms",
+                norm_task.actions.len(),
+                norm_task.axioms.len(),
+                norm_task.numeric_axioms.len()
             );
-            let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
-            planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
-            eprintln!("translator: wrote {}", out_path.display());
+
+            // Run instantiation (Phase 1: model-guided grounding)
+            // Use the normalized task for proper exploration rule generation
+            eprintln!("\ntranslator: running instantiation...");
+            let result = planners::translate::instantiate::explore_normalized(&norm_task);
+            eprintln!(
+                "translator: instantiated {} grounded operators (model-guided)",
+                result.grounded_ops.len()
+            );
+            eprintln!("translator: relaxed reachable: {}", result.relaxed_reachable);
+            eprintln!("translator: model size: {} atoms", result.model.len());
+            
+            // Debug: print action breakdown
+            eprintln!("\nAction breakdown:");
+            let mut action_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            for op in &result.grounded_ops {
+                let action_type = op.name.split('(').next().unwrap_or("unknown");
+                *action_counts.entry(action_type.to_string()).or_insert(0) += 1;
+            }
+            for (action_type, count) in action_counts.iter() {
+                eprintln!("  {}: {}", action_type, count);
+            }
+            
+            eprintln!("\nFirst 20 grounded actions:");
+            for (i, op) in result.grounded_ops.iter().take(20).enumerate() {
+                eprintln!("  {}: {}", i + 1, op.name);
+            }
+
+            //let py_groups: Option<Vec<Vec<String>>> = None;
+            //let sastask = planners::translate::to_sas::build_sas(
+            //    &ops,
+            //    &dom,
+            //    &prob,
+            //    &instantiated_num_axioms,
+            //    py_groups,
+            //);
+            //let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
+            //planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
+            //eprintln!("translator: wrote {}", out_path.display());
         }
         Commands::Preprocess { output } => {
             //not implemented yet, raise error
