@@ -2096,88 +2096,140 @@ pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
 ///         metric_expression = admin.get_derived_function(metric_expression)
 ///     task.metric = (opt_dir, metric_expression)
 /// ```
-///
-/// Note: This is a placeholder implementation. The full implementation requires:
-/// 1. A FunctionAdministrator that manages derived functions and axioms
-/// 2. Logic to identify complex arithmetic expressions in conditions
-/// 3. Logic to replace them with derived function references
-/// 4. Handling of metric expressions
-///
-/// For now, this function processes conditions to identify where transformations
-/// would occur, but doesn't actually perform the replacements since we don't yet
-/// have the FunctionAdministrator infrastructure.
 pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
+    use crate::translate::function_expression::parse_functional_expression;
+    use crate::translate::normalization_function_admin::pne_to_sexpr;
+    
     // Helper to process comparison conditions and replace arithmetic expressions
-    fn process_condition(cond: &Condition) -> Condition {
+    fn process_condition(
+        cond: &Condition,
+        admin: &mut crate::translate::normalization_function_admin::NormalizationFunctionAdministrator,
+    ) -> Condition {
         match cond {
             Condition::Comparison(comparator, left, right) => {
-                // In the full implementation, we would:
-                // 1. Check if left or right are complex arithmetic expressions
-                // 2. Get or create derived functions for them via function_administrator
-                // 3. Replace with references to those derived functions
-                // For now, we just return the condition as-is
-                Condition::Comparison(comparator.clone(), left.clone(), right.clone())
+                // Parse both sides as functional expressions
+                let left_result = if let Some(left_expr) = parse_functional_expression(left) {
+                    // Process through function administrator
+                    let pne = admin.get_derived_function(&left_expr);
+                    pne_to_sexpr(&pne)
+                } else {
+                    // If parsing fails, keep original
+                    left.clone()
+                };
+                
+                let right_result = if let Some(right_expr) = parse_functional_expression(right) {
+                    // Process through function administrator
+                    let pne = admin.get_derived_function(&right_expr);
+                    pne_to_sexpr(&pne)
+                } else {
+                    // If parsing fails, keep original
+                    right.clone()
+                };
+                
+                Condition::Comparison(comparator.clone(), left_result, right_result)
             }
             Condition::And(parts) => {
-                Condition::And(parts.iter().map(process_condition).collect())
+                Condition::And(parts.iter().map(|p| process_condition(p, admin)).collect())
             }
             Condition::Or(parts) => {
-                Condition::Or(parts.iter().map(process_condition).collect())
+                Condition::Or(parts.iter().map(|p| process_condition(p, admin)).collect())
             }
             Condition::Not(inner) => {
-                Condition::Not(Box::new(process_condition(inner)))
+                Condition::Not(Box::new(process_condition(inner, admin)))
             }
             Condition::Exists(params, inner) => {
-                Condition::Exists(params.clone(), Box::new(process_condition(inner)))
+                Condition::Exists(params.clone(), Box::new(process_condition(inner, admin)))
             }
             Condition::Forall(params, inner) => {
-                Condition::Forall(params.clone(), Box::new(process_condition(inner)))
+                Condition::Forall(params.clone(), Box::new(process_condition(inner, admin)))
             }
             // Atoms and True are unchanged
             _ => cond.clone(),
         }
     }
     
+    // Helper to process effect expressions
+    fn process_effect_expr(
+        effect_sexpr: &SExpr,
+        admin: &mut crate::translate::normalization_function_admin::NormalizationFunctionAdministrator,
+    ) -> SExpr {
+        match effect_sexpr {
+            SExpr::List(items) if items.len() >= 3 => {
+                // Check if this is an assignment-like effect
+                if let SExpr::Atom(op) = &items[0] {
+                    if matches!(op.as_str(), "assign" | "increase" | "decrease" | "scale-up" | "scale-down") {
+                        // Pattern: (op fluent expression)
+                        // Process the expression (items[2..])
+                        let fluent = items[1].clone();
+                        
+                        // Build expression SExpr from remaining items
+                        let expr_sexpr = if items.len() == 3 {
+                            items[2].clone()
+                        } else {
+                            // Multiple items, wrap in a list if needed
+                            items[2].clone()
+                        };
+                        
+                        // Try to parse and process
+                        let processed_expr = if let Some(func_expr) = parse_functional_expression(&expr_sexpr) {
+                            let pne = admin.get_derived_function(&func_expr);
+                            pne_to_sexpr(&pne)
+                        } else {
+                            expr_sexpr
+                        };
+                        
+                        // Reconstruct effect
+                        return SExpr::List(vec![
+                            SExpr::Atom(op.clone()),
+                            fluent,
+                            processed_expr,
+                        ]);
+                    }
+                }
+                effect_sexpr.clone()
+            }
+            _ => effect_sexpr.clone(),
+        }
+    }
+    
     // Process all action preconditions
-    for action in &mut task.actions {
-        action.precondition = process_condition(&action.precondition);
+    for i in 0..task.actions.len() {
+        let precond = task.actions[i].precondition.clone();
+        task.actions[i].precondition = process_condition(&precond, &mut task.function_administrator);
     }
     
     // Process all effect conditions
-    for action in &mut task.actions {
-        for effect in &mut action.effects {
-            effect.condition = process_condition(&effect.condition);
+    for i in 0..task.actions.len() {
+        for j in 0..task.actions[i].effects.len() {
+            let cond = task.actions[i].effects[j].condition.clone();
+            task.actions[i].effects[j].condition = process_condition(&cond, &mut task.function_administrator);
+            
+            // Also process the effect expression itself
+            let effect_expr = task.actions[i].effects[j].effect.clone();
+            task.actions[i].effects[j].effect = process_effect_expr(&effect_expr, &mut task.function_administrator);
         }
     }
     
     // Process all axiom conditions
-    for axiom in &mut task.axioms {
-        axiom.condition = process_condition(&axiom.condition);
+    for i in 0..task.axioms.len() {
+        let cond = task.axioms[i].condition.clone();
+        task.axioms[i].condition = process_condition(&cond, &mut task.function_administrator);
     }
     
     // Process goal
-    task.goal = process_condition(&task.goal);
+    let goal = task.goal.clone();
+    task.goal = process_condition(&goal, &mut task.function_administrator);
     
-    // TODO: Process action effect expressions (currently stored as SExpr)
-    // For each action.effects[i].effect:
-    //   If it's an assignment (assign, increase, decrease, etc.):
-    //     Replace the expression with a derived function reference
-    //   This would require:
-    //     - Parsing the SExpr to identify the assignment type and expression
-    //     - Calling function_administrator.get_derived_function(expression)
-    //     - Replacing the expression in the SExpr
+    // Collect all generated numeric axioms
+    let numeric_axioms = task.function_administrator.get_all_axioms();
+    task.numeric_axioms = numeric_axioms;
     
-    // TODO: Process metric expression
-    // This would require:
-    //   - Adding a metric field to NormalizableTask (opt_dir: String, metric_expr: Option<SExpr>)
-    //   - If metric_expr is None and opt_dir is '<': set to constant -1
-    //   - Otherwise: replace with function_administrator.get_derived_function(metric_expr)
-    
-    // Note: The full implementation would require:
-    // - A FunctionAdministrator to manage derived functions and create axioms
-    // - Logic to identify and extract complex arithmetic subexpressions
-    // - Creation of new derived functions for each unique complex expression
-    // - Proper handling of numeric effect expressions in various forms
+    // Note: Metric expression handling would go here if we had a metric field
+    // opt_dir, metric_expression = task.metric
+    // if metric_expression is None:
+    //     metric_expression = -1
+    // else:
+    //     metric_expression = admin.get_derived_function(metric_expression)
 }
 
 /// Placeholder for the old standalone function (kept for compatibility)
@@ -2662,10 +2714,8 @@ mod task_normalization_tests {
     }
     
     #[test]
-    fn test_remove_arithmetic_expressions() {
-        // Test that the function processes conditions without errors
-        // Note: This is a placeholder test since the full implementation
-        // requires FunctionAdministrator infrastructure
+    fn test_remove_arithmetic_expressions_simple_comparison() {
+        // Test that simple comparisons with primitives are handled correctly
         let domain = Domain {
             name: "arithmetic-domain".to_string(),
             predicates: vec![("at".to_string(), vec![])],
@@ -2684,7 +2734,7 @@ mod task_normalization_tests {
         
         let mut task = NormalizableTask::from_ast(&domain, &problem);
         
-        // Add an action with a comparison in the precondition
+        // Add an action with a simple comparison
         task.actions.push(TaskAction {
             name: "move".to_string(),
             parameters: vec![],
@@ -2696,12 +2746,108 @@ mod task_normalization_tests {
             effects: vec![],
         });
         
-        // Run the function - it should not panic
         task_remove_arithmetic_expressions(&mut task);
         
-        // Verify the structure is still intact
+        // Verify the structure is intact
         assert_eq!(task.actions.len(), 1);
         assert!(matches!(task.actions[0].precondition, Condition::Comparison(..)));
+        
+        // Constant should have generated a derived function
+        assert!(!task.numeric_axioms.is_empty());
+    }
+    
+    #[test]
+    fn test_remove_arithmetic_expressions_complex() {
+        // Test with actual arithmetic expressions
+        let domain = Domain {
+            name: "arithmetic-domain".to_string(),
+            predicates: vec![],
+            functions: vec![("fuel".to_string(), vec![]), ("distance".to_string(), vec![])],
+            actions: vec![],
+        };
+        
+        let problem = Problem {
+            name: "arithmetic-problem".to_string(),
+            objects: vec![],
+            init: vec![],
+            goal: Some(SExpr::Atom("true".to_string())),
+        };
+        
+        let mut task = NormalizableTask::from_ast(&domain, &problem);
+        
+        // Add an action with arithmetic in precondition: (>= (+ fuel distance) 20)
+        task.actions.push(TaskAction {
+            name: "move".to_string(),
+            parameters: vec![],
+            precondition: Condition::Comparison(
+                ">=".to_string(),
+                SExpr::List(vec![
+                    SExpr::Atom("+".to_string()),
+                    SExpr::Atom("fuel".to_string()),
+                    SExpr::Atom("distance".to_string()),
+                ]),
+                SExpr::Atom("20".to_string()),
+            ),
+            effects: vec![],
+        });
+        
+        task_remove_arithmetic_expressions(&mut task);
+        
+        // Should have created derived functions for the sum and the constant
+        assert!(!task.numeric_axioms.is_empty());
+        
+        // Check that at least one axiom has "sum" in its name
+        let has_sum_axiom = task.numeric_axioms.iter().any(|ax| ax.name.contains("sum"));
+        assert!(has_sum_axiom, "Should have created a sum derived function");
+    }
+    
+    #[test]
+    fn test_remove_arithmetic_expressions_effects() {
+        // Test processing of effect expressions
+        let domain = Domain {
+            name: "effect-domain".to_string(),
+            predicates: vec![],
+            functions: vec![("fuel".to_string(), vec![]), ("distance".to_string(), vec![])],
+            actions: vec![],
+        };
+        
+        let problem = Problem {
+            name: "effect-problem".to_string(),
+            objects: vec![],
+            init: vec![],
+            goal: Some(SExpr::Atom("true".to_string())),
+        };
+        
+        let mut task = NormalizableTask::from_ast(&domain, &problem);
+        
+        // Add an action with arithmetic in effect: (decrease fuel (* distance 2))
+        task.actions.push(TaskAction {
+            name: "move".to_string(),
+            parameters: vec![],
+            precondition: Condition::True,
+            effects: vec![TaskEffect {
+                parameters: vec![],
+                condition: Condition::True,
+                effect: SExpr::List(vec![
+                    SExpr::Atom("decrease".to_string()),
+                    SExpr::Atom("fuel".to_string()),
+                    SExpr::List(vec![
+                        SExpr::Atom("*".to_string()),
+                        SExpr::Atom("distance".to_string()),
+                        SExpr::Atom("2".to_string()),
+                    ]),
+                ]),
+            }],
+        });
+        
+        task_remove_arithmetic_expressions(&mut task);
+        
+        // Should have created derived functions
+        assert!(!task.numeric_axioms.is_empty());
+        
+        // Check that a product axiom was created
+        let has_product_axiom = task.numeric_axioms.iter().any(|ax| ax.name.contains("product"));
+        assert!(has_product_axiom, "Should have created a product derived function");
     }
     
     #[test]
