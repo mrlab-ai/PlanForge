@@ -1,8 +1,141 @@
 use crate::translate::build_model as bm;
-use crate::translate::pddl_ast::Condition;
+use crate::translate::pddl_ast::{Condition, Domain, Problem};
+use crate::translate::pddl_parser::SExpr;
 use std::collections::{HashMap, HashSet};
 
 const OBJECT_PREDICATE: &str = "@object";
+
+/// A PDDL task structure suitable for normalization.
+/// This contains the parsed domain and problem in a form where conditions
+/// are already converted from SExpr to Condition, and actions/axioms can be
+/// mutated during the normalization process.
+#[derive(Debug, Clone)]
+pub struct NormalizableTask {
+    /// Domain name
+    pub domain_name: String,
+    /// Problem name  
+    pub problem_name: String,
+    /// Predicate definitions from domain
+    pub predicates: Vec<(String, Vec<(String, Option<String>)>)>,
+    /// Function (numeric fluent) definitions from domain
+    pub functions: Vec<(String, Vec<(String, Option<String>)>)>,
+    /// Actions with parsed preconditions (as Condition) and raw effects (as SExpr for now)
+    pub actions: Vec<TaskAction>,
+    /// Axioms generated during normalization
+    pub axioms: Vec<TaskAxiom>,
+    /// Objects from problem
+    pub objects: Vec<(String, Option<String>)>,
+    /// Initial state atoms (as SExpr for now)
+    pub init: Vec<SExpr>,
+    /// Goal condition (parsed as Condition)
+    pub goal: Condition,
+    /// Counter for generating unique axiom names
+    axiom_counter: usize,
+}
+
+/// Action in the normalizable task with parsed precondition
+#[derive(Debug, Clone)]
+pub struct TaskAction {
+    pub name: String,
+    pub parameters: Vec<(String, Option<String>)>,
+    pub precondition: Condition,
+    /// Effects as conditional effects with parsed conditions
+    pub effects: Vec<TaskEffect>,
+}
+
+/// Conditional effect with parsed condition
+#[derive(Debug, Clone)]
+pub struct TaskEffect {
+    /// Forall parameters for the effect
+    pub parameters: Vec<(String, Option<String>)>,
+    /// Condition for when the effect applies
+    pub condition: Condition,
+    /// The actual effect (add/delete/assign) - kept as SExpr for now
+    pub effect: SExpr,
+}
+
+/// Axiom in the normalizable task
+#[derive(Debug, Clone)]
+pub struct TaskAxiom {
+    pub name: String,
+    pub parameters: Vec<(String, Option<String>)>,
+    pub condition: Condition,
+    /// Number of external parameters (used for rule generation)
+    pub num_external_parameters: usize,
+}
+
+impl NormalizableTask {
+    /// Create a normalizable task from parsed Domain and Problem ASTs
+    pub fn from_ast(domain: &Domain, problem: &Problem) -> Self {
+        use crate::translate::pddl_ast::sexpr_to_condition;
+        
+        // Convert actions: parse preconditions from SExpr to Condition
+        let actions: Vec<TaskAction> = domain
+            .actions
+            .iter()
+            .map(|action| {
+                let precondition = action
+                    .precond
+                    .as_ref()
+                    .map(|s| sexpr_to_condition(s))
+                    .unwrap_or(Condition::True);
+                
+                // For now, effects are not fully parsed - we'll handle them in later steps
+                // In a full implementation, we'd parse conditional effects here
+                TaskAction {
+                    name: action.name.clone(),
+                    parameters: action.parameters.clone(),
+                    precondition,
+                    effects: vec![], // TODO: Parse effects properly
+                }
+            })
+            .collect();
+        
+        // Convert goal from SExpr to Condition
+        let goal = problem
+            .goal
+            .as_ref()
+            .map(|s| sexpr_to_condition(s))
+            .unwrap_or(Condition::True);
+        
+        NormalizableTask {
+            domain_name: domain.name.clone(),
+            problem_name: problem.name.clone(),
+            predicates: domain.predicates.clone(),
+            functions: domain.functions.clone(),
+            actions,
+            axioms: vec![],
+            objects: problem.objects.clone(),
+            init: problem.init.clone(),
+            goal,
+            axiom_counter: 0,
+        }
+    }
+    
+    /// Add a new axiom to the task and return its name
+    pub fn add_axiom(&mut self, parameters: Vec<(String, Option<String>)>, condition: Condition) -> String {
+        let axiom_name = format!("@axiom-{}", self.axiom_counter);
+        self.axiom_counter += 1;
+        
+        self.axioms.push(TaskAxiom {
+            name: axiom_name.clone(),
+            parameters: parameters.clone(),
+            condition,
+            num_external_parameters: parameters.len(),
+        });
+        
+        axiom_name
+    }
+    
+    /// Get a type map for a given set of parameters
+    /// This is used when creating axioms to track variable types
+    pub fn build_type_map(parameters: &[(String, Option<String>)]) -> HashMap<String, String> {
+        parameters
+            .iter()
+            .filter_map(|(name, typ)| typ.as_ref().map(|t| (name.clone(), t.clone())))
+            .collect()
+    }
+}
 
 #[derive(Default, Debug, PartialEq)]
 pub struct NormalizationOutcome {
@@ -1839,34 +1972,557 @@ mod effect_elimination_tests {
 /// - For ArithmeticExpressions: recursively verify all parts
 /// - For AdditiveInverse: verify the single part
 ///
-/// **Note**: This is a placeholder for full task-level validation.
-/// Current Rust architecture uses building-block functions on conditions rather than
-/// full task mutation. To implement this properly, we would need:
-///
-/// 1. A complete Task structure with:
-///    - Mutable functions list: Vec<(String, Vec<(String, Option<String>)>, String)>
-///    - Mutable num_init list: Vec<Assignment>
-///    - Actions with typed Effect structures (not raw SExpr)
-///    - Metric: (String, Option<NumericExpression>)
-///
-/// 2. NumericExpression enum with variants:
-///    - PrimitiveNumericExpression { symbol: String, args: Vec<String> }
-///    - NumericConstant(f64)
-///    - ArithmeticExpression { op: String, parts: Vec<NumericExpression> }
-///    - AdditiveInverse(Box<NumericExpression>)
-///
-/// 3. Function to recursively extract and validate expressions from SExpr
-///
-/// 4. Mutation capabilities to add functions and initial assignments
-///
-/// This function would be called after eliminate_existential_quantifiers_from_conditional_effects
-/// and before remove_arithmetic_expressions in the normalization pipeline.
-///
-/// For now, this validation is deferred to the Python translator or would be
-/// implemented when porting the full Task structure and numeric expression handling.
+/// Note: This implementation works with SExpr-based effects. A full implementation
+/// would require typed NumericExpression structures, but this provides basic validation
+/// for function symbols found in effect expressions.
+pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
+    use std::collections::HashSet;
+    
+    // Collect all defined function names
+    let mut function_names: HashSet<String> = task.functions.iter().map(|(name, _)| name.clone()).collect();
+    
+    // Helper to recursively scan SExpr for function symbols
+    fn find_function_symbols(expr: &SExpr, symbols: &mut HashSet<String>) {
+        match expr {
+            SExpr::Atom(_) => {}, // Constants or variables, not functions
+            SExpr::List(items) => {
+                if items.is_empty() {
+                    return;
+                }
+                // First element might be a function/operator
+                if let SExpr::Atom(op) = &items[0] {
+                    // Check if it looks like a function call (not a standard operator)
+                    // Standard operators: +, -, *, /, =, <, >, <=, >=, etc.
+                    if !matches!(op.as_str(), "+" | "-" | "*" | "/" | "=" | "<" | ">" | "<=" | ">=" | "and" | "or" | "not" | "increase" | "decrease" | "assign") {
+                        // This might be a function symbol
+                        symbols.insert(op.clone());
+                    }
+                }
+                // Recursively check all sub-expressions
+                for item in items {
+                    find_function_symbols(item, symbols);
+                }
+            }
+        }
+    }
+    
+    // Collect all function symbols used in effects
+    let mut used_symbols = HashSet::new();
+    for action in &task.actions {
+        for effect in &action.effects {
+            find_function_symbols(&effect.effect, &mut used_symbols);
+        }
+    }
+    
+    // Check for undefined functions
+    let mut undefined_functions = Vec::new();
+    for symbol in &used_symbols {
+        if !function_names.contains(symbol) {
+            undefined_functions.push(symbol.clone());
+        }
+    }
+    
+    // Add undefined 0-arity functions with warning
+    for symbol in undefined_functions {
+        eprintln!(
+            "WARNING: Function symbol '{}' appears in a numeric expression but is not defined in domain file.",
+            symbol
+        );
+        eprintln!("Adding new symbol '{}' with arity 0.", symbol);
+        
+        // Add to functions list
+        task.functions.push((symbol.clone(), vec![]));
+        function_names.insert(symbol.clone());
+        
+        // Note: Initial value assignment would be added to task.init here
+        // Format: (= (symbol) 0)
+        // For now, we just add the function definition
+        let init_expr = SExpr::List(vec![
+            SExpr::Atom("=".to_string()),
+            SExpr::List(vec![SExpr::Atom(symbol)]),
+            SExpr::Atom("0".to_string()),
+        ]);
+        task.init.push(init_expr);
+    }
+}
+
+/// Placeholder for the old standalone function (kept for compatibility)
 #[allow(dead_code)]
 pub fn verify_and_fix_arithmetic_expressions_placeholder() {
-    // TODO: Implement when full Task structure is available
-    // See detailed requirements in the function documentation above
-    unimplemented!("verify_and_fix_arithmetic_expressions requires full Task structure with mutable functions/num_init lists")
+    // This is now replaced by task_verify_and_fix_arithmetic_expressions
+    unimplemented!("Use task_verify_and_fix_arithmetic_expressions instead")
+}
+
+// ============================================================================
+// Task-based normalization functions
+// ============================================================================
+//
+// These functions operate on NormalizableTask and implement the full
+// normalization pipeline from Python's normalize.py
+
+/// Remove universal quantifiers from all conditions in the task.
+///
+/// This implements step [1] of normalization: for each action precondition,
+/// axiom condition, effect condition, and the goal, replace forall quantifiers
+/// with axioms.
+pub fn task_remove_universal_quantifiers(task: &mut NormalizableTask) {
+    // Process action preconditions
+    for i in 0..task.actions.len() {
+        if task.actions[i].precondition.has_universal_part() {
+            let type_map = NormalizableTask::build_type_map(&task.actions[i].parameters);
+            let condition = task.actions[i].precondition.clone();
+            let new_condition = remove_universal_quantifiers_impl(&condition, &type_map, task);
+            task.actions[i].precondition = new_condition;
+        }
+    }
+    
+    // Process axiom conditions
+    let mut i = 0;
+    while i < task.axioms.len() {
+        if task.axioms[i].condition.has_universal_part() {
+            let type_map = NormalizableTask::build_type_map(&task.axioms[i].parameters);
+            let condition = task.axioms[i].condition.clone();
+            let new_condition = remove_universal_quantifiers_impl(&condition, &type_map, task);
+            task.axioms[i].condition = new_condition;
+        }
+        i += 1;
+    }
+    
+    // Process effect conditions
+    for i in 0..task.actions.len() {
+        for j in 0..task.actions[i].effects.len() {
+            if task.actions[i].effects[j].condition.has_universal_part() {
+                let mut combined_params = task.actions[i].parameters.clone();
+                combined_params.extend(task.actions[i].effects[j].parameters.clone());
+                let type_map = NormalizableTask::build_type_map(&combined_params);
+                let condition = task.actions[i].effects[j].condition.clone();
+                let new_condition = remove_universal_quantifiers_impl(&condition, &type_map, task);
+                task.actions[i].effects[j].condition = new_condition;
+            }
+        }
+    }
+    
+    // Process goal
+    if task.goal.has_universal_part() {
+        let type_map = HashMap::new(); // Goal has no parameters typically
+        let goal = task.goal.clone();
+        task.goal = remove_universal_quantifiers_impl(&goal, &type_map, task);
+    }
+}
+
+/// Helper function for remove_universal_quantifiers that recursively processes a condition
+fn remove_universal_quantifiers_impl(
+    condition: &Condition,
+    type_map: &HashMap<String, String>,
+    task: &mut NormalizableTask,
+) -> Condition {
+    match condition {
+        Condition::Forall(_params, inner) => {
+            // Create axiom for negation of the forall
+            let negated = inner.negate();
+            let free_vars: Vec<_> = negated.free_variables().into_iter().collect();
+            let mut axiom_params: Vec<(String, Option<String>)> = free_vars
+                .iter()
+                .map(|v| (v.clone(), type_map.get(v).cloned()))
+                .collect();
+            axiom_params.sort_by(|a, b| a.0.cmp(&b.0));
+            
+            let axiom_name = task.add_axiom(axiom_params.clone(), negated);
+            let axiom_args: Vec<String> = axiom_params.iter().map(|(n, _)| n.clone()).collect();
+            Condition::Not(Box::new(Condition::Atom(axiom_name, axiom_args)))
+        }
+        Condition::Not(c) => {
+            Condition::Not(Box::new(remove_universal_quantifiers_impl(c, type_map, task)))
+        }
+        Condition::And(parts) => {
+            let new_parts: Vec<_> = parts
+                .iter()
+                .map(|p| remove_universal_quantifiers_impl(p, type_map, task))
+                .collect();
+            Condition::And(new_parts)
+        }
+        Condition::Or(parts) => {
+            let new_parts: Vec<_> = parts
+                .iter()
+                .map(|p| remove_universal_quantifiers_impl(p, type_map, task))
+                .collect();
+            Condition::Or(new_parts)
+        }
+        Condition::Exists(params, c) => {
+            let new_inner = remove_universal_quantifiers_impl(c, type_map, task);
+            Condition::Exists(params.clone(), Box::new(new_inner))
+        }
+        _ => condition.clone(),
+    }
+}
+
+/// Substitute complicated goal with an axiom reference.
+///
+/// This implements step [2] of normalization for the goal specifically.
+pub fn task_substitute_complicated_goal(task: &mut NormalizableTask) {
+    let goal = task.goal.clone();
+    task.goal = substitute_complicated_goal_impl(&goal, task);
+}
+
+/// Helper that can add axioms to task
+fn substitute_complicated_goal_impl(goal: &Condition, task: &mut NormalizableTask) -> Condition {
+    // Check if goal is a simple literal or conjunction of literals
+    match goal {
+        Condition::Atom(_, _) => return goal.clone(),
+        Condition::Not(inner) => {
+            if matches!(**inner, Condition::Atom(_, _)) {
+                return goal.clone();
+            }
+        }
+        Condition::And(parts) => {
+            let all_literals = parts.iter().all(|p| match p {
+                Condition::Atom(_, _) => true,
+                Condition::Not(inner) => matches!(**inner, Condition::Atom(_, _)),
+                _ => false,
+            });
+            if all_literals {
+                return goal.clone();
+            }
+        }
+        _ => {}
+    }
+    
+    // Goal is complicated - create axiom
+    let axiom_name = task.add_axiom(vec![], goal.clone());
+    Condition::Atom(axiom_name, vec![])
+}
+
+/// Convert all conditions in the task to DNF.
+///
+/// This implements step [3] of normalization.
+pub fn task_build_dnf(task: &mut NormalizableTask) {
+    // Process action preconditions
+    for action in task.actions.iter_mut() {
+        if action.precondition.has_disjunction() {
+            action.precondition = build_dnf(&action.precondition);
+        }
+    }
+    
+    // Process axiom conditions
+    for axiom in task.axioms.iter_mut() {
+        if axiom.condition.has_disjunction() {
+            axiom.condition = build_dnf(&axiom.condition);
+        }
+    }
+    
+    // Process effect conditions
+    for action in task.actions.iter_mut() {
+        for effect in action.effects.iter_mut() {
+            if effect.condition.has_disjunction() {
+                effect.condition = build_dnf(&effect.condition);
+            }
+        }
+    }
+    
+    // Process goal
+    if task.goal.has_disjunction() {
+        task.goal = build_dnf(&task.goal);
+    }
+}
+
+/// Split disjunctions in the task, creating multiple copies of actions/axioms.
+///
+/// This implements step [4] of normalization.
+pub fn task_split_disjunctions(task: &mut NormalizableTask) {
+    // Split action preconditions
+    let mut new_actions = Vec::new();
+    let mut actions_to_remove = Vec::new();
+    
+    for (idx, action) in task.actions.iter().enumerate() {
+        if let Some(parts) = split_disjunction(&action.precondition) {
+            // Create a copy of the action for each disjunct
+            for part in parts {
+                let mut new_action = action.clone();
+                new_action.precondition = part;
+                new_actions.push(new_action);
+            }
+            actions_to_remove.push(idx);
+        }
+    }
+    
+    // Remove original actions (in reverse order to maintain indices)
+    for idx in actions_to_remove.iter().rev() {
+        task.actions.remove(*idx);
+    }
+    task.actions.extend(new_actions);
+    
+    // Split axiom conditions
+    let mut new_axioms = Vec::new();
+    let mut axioms_to_remove = Vec::new();
+    
+    for (idx, axiom) in task.axioms.iter().enumerate() {
+        if let Some(parts) = split_disjunction(&axiom.condition) {
+            for part in parts {
+                let mut new_axiom = axiom.clone();
+                new_axiom.condition = part;
+                new_axioms.push(new_axiom);
+            }
+            axioms_to_remove.push(idx);
+        }
+    }
+    
+    for idx in axioms_to_remove.iter().rev() {
+        task.axioms.remove(*idx);
+    }
+    task.axioms.extend(new_axioms);
+    
+    // Note: Goal disjunctions should have been converted to axioms in substitute_complicated_goal
+}
+
+/// Move existential quantifiers in all conditions.
+///
+/// This implements step [5] of normalization.
+pub fn task_move_existential_quantifiers(task: &mut NormalizableTask) {
+    // Process action preconditions
+    for action in task.actions.iter_mut() {
+        if action.precondition.has_existential_part() {
+            action.precondition = move_existential_quantifiers(&action.precondition);
+        }
+    }
+    
+    // Process axiom conditions
+    for axiom in task.axioms.iter_mut() {
+        if axiom.condition.has_existential_part() {
+            axiom.condition = move_existential_quantifiers(&axiom.condition);
+        }
+    }
+    
+    // Process effect conditions
+    for action in task.actions.iter_mut() {
+        for effect in action.effects.iter_mut() {
+            if effect.condition.has_existential_part() {
+                effect.condition = move_existential_quantifiers(&effect.condition);
+            }
+        }
+    }
+    
+    // Process goal
+    if task.goal.has_existential_part() {
+        task.goal = move_existential_quantifiers(&task.goal);
+    }
+}
+
+/// Eliminate existential quantifiers from axioms (step 5a).
+pub fn task_eliminate_existential_quantifiers_from_axioms(task: &mut NormalizableTask) {
+    for axiom in task.axioms.iter_mut() {
+        if let Condition::Exists(params, inner) = &axiom.condition {
+            axiom.parameters.extend(params.clone());
+            axiom.condition = (**inner).clone();
+        }
+    }
+}
+
+/// Eliminate existential quantifiers from action preconditions (step 5b).
+pub fn task_eliminate_existential_quantifiers_from_preconditions(task: &mut NormalizableTask) {
+    for action in task.actions.iter_mut() {
+        if let Condition::Exists(params, inner) = &action.precondition {
+            action.parameters.extend(params.clone());
+            action.precondition = (**inner).clone();
+        }
+    }
+}
+
+/// Eliminate existential quantifiers from effect conditions (step 5c).
+pub fn task_eliminate_existential_quantifiers_from_conditional_effects(task: &mut NormalizableTask) {
+    for action in task.actions.iter_mut() {
+        for effect in action.effects.iter_mut() {
+            if let Condition::Exists(params, inner) = &effect.condition {
+                effect.parameters.extend(params.clone());
+                effect.condition = (**inner).clone();
+            }
+        }
+    }
+}
+
+/// Main normalization function that applies all normalization steps.
+///
+/// This matches the Python normalize() function and applies the following steps:
+/// 1. Remove universal quantifiers
+/// 2. Substitute complicated goal
+/// 3. Build DNF
+/// 4. Split disjunctions
+/// 5. Move existential quantifiers
+/// 6. Eliminate existential quantifiers from axioms (5a)
+/// 7. Eliminate existential quantifiers from preconditions (5b)
+/// 8. Eliminate existential quantifiers from conditional effects (5c)
+/// 9. Verify and fix arithmetic expressions
+///
+/// Note: remove_arithmetic_expressions and verify_axiom_predicates are not yet implemented.
+pub fn normalize(task: &mut NormalizableTask) {
+    task_remove_universal_quantifiers(task);
+    task_substitute_complicated_goal(task);
+    task_build_dnf(task);
+    task_split_disjunctions(task);
+    task_move_existential_quantifiers(task);
+    task_eliminate_existential_quantifiers_from_axioms(task);
+    task_eliminate_existential_quantifiers_from_preconditions(task);
+    task_eliminate_existential_quantifiers_from_conditional_effects(task);
+    task_verify_and_fix_arithmetic_expressions(task);
+    // TODO: remove_arithmetic_expressions(task);
+    // TODO: verify_axiom_predicates(task);
+}
+
+#[cfg(test)]
+mod task_normalization_tests {
+    use super::*;
+    
+    #[test]
+    fn test_task_from_ast() {
+        // Simple smoke test for task creation
+        let domain = Domain {
+            name: "test-domain".to_string(),
+            predicates: vec![("at".to_string(), vec![("?x".to_string(), Some("obj".to_string()))])],
+            functions: vec![],
+            actions: vec![],
+        };
+        
+        let problem = Problem {
+            name: "test-problem".to_string(),
+            objects: vec![("a".to_string(), Some("obj".to_string()))],
+            init: vec![],
+            goal: None,
+        };
+        
+        let task = NormalizableTask::from_ast(&domain, &problem);
+        assert_eq!(task.domain_name, "test-domain");
+        assert_eq!(task.problem_name, "test-problem");
+        assert_eq!(task.actions.len(), 0);
+        assert_eq!(task.axioms.len(), 0);
+    }
+    
+    #[test]
+    fn test_normalize_simple_task() {
+        // Create a simple task with a forall in the goal
+        let domain = Domain {
+            name: "blocks".to_string(),
+            predicates: vec![("clear".to_string(), vec![("?x".to_string(), Some("block".to_string()))])],
+            functions: vec![],
+            actions: vec![],
+        };
+        
+        let problem = Problem {
+            name: "blocks-problem".to_string(),
+            objects: vec![("a".to_string(), Some("block".to_string()))],
+            init: vec![],
+            goal: None,
+        };
+        
+        let mut task = NormalizableTask::from_ast(&domain, &problem);
+        
+        // Set a goal with a forall
+        task.goal = Condition::Forall(
+            vec![("?x".to_string(), Some("block".to_string()))],
+            Box::new(Condition::Atom("clear".to_string(), vec!["?x".to_string()])),
+        );
+        
+        // Run normalization
+        normalize(&mut task);
+        
+        // After normalization, the forall should be converted to axiom
+        // and goal should reference that axiom
+        assert!(matches!(task.goal, Condition::Not(_)) || matches!(task.goal, Condition::Atom(_, _)));
+        // Should have created at least one axiom
+        assert!(!task.axioms.is_empty());
+    }
+    
+    #[test]
+    fn test_verify_and_fix_arithmetic_expressions() {
+        // Test that undefined function symbols are detected and added
+        let domain = Domain {
+            name: "numeric-domain".to_string(),
+            predicates: vec![],
+            functions: vec![("fuel".to_string(), vec![])], // Only fuel is defined
+            actions: vec![],
+        };
+        
+        let problem = Problem {
+            name: "numeric-problem".to_string(),
+            objects: vec![],
+            init: vec![],
+            goal: None,
+        };
+        
+        let mut task = NormalizableTask::from_ast(&domain, &problem);
+        
+        // Add an action with an effect that uses an undefined function "distance"
+        task.actions.push(TaskAction {
+            name: "move".to_string(),
+            parameters: vec![],
+            precondition: Condition::True,
+            effects: vec![TaskEffect {
+                parameters: vec![],
+                condition: Condition::True,
+                effect: SExpr::List(vec![
+                    SExpr::Atom("decrease".to_string()),
+                    SExpr::List(vec![SExpr::Atom("fuel".to_string())]),
+                    SExpr::List(vec![SExpr::Atom("distance".to_string())]), // undefined!
+                ]),
+            }],
+        });
+        
+        // Initially, only fuel is defined
+        assert_eq!(task.functions.len(), 1);
+        
+        // Run verification
+        task_verify_and_fix_arithmetic_expressions(&mut task);
+        
+        // After verification, distance should be added
+        assert_eq!(task.functions.len(), 2);
+        assert!(task.functions.iter().any(|(name, _)| name == "distance"));
+        
+        // An initialization should be added
+        assert!(!task.init.is_empty());
+    }
+    
+    #[test]
+    fn test_verify_does_not_add_defined_functions() {
+        // Test that already-defined functions are not added again
+        let domain = Domain {
+            name: "numeric-domain".to_string(),
+            predicates: vec![],
+            functions: vec![
+                ("fuel".to_string(), vec![]),
+                ("distance".to_string(), vec![]),
+            ],
+            actions: vec![],
+        };
+        
+        let problem = Problem {
+            name: "numeric-problem".to_string(),
+            objects: vec![],
+            init: vec![],
+            goal: None,
+        };
+        
+        let mut task = NormalizableTask::from_ast(&domain, &problem);
+        
+        // Add an action that uses the defined functions
+        task.actions.push(TaskAction {
+            name: "move".to_string(),
+            parameters: vec![],
+            precondition: Condition::True,
+            effects: vec![TaskEffect {
+                parameters: vec![],
+                condition: Condition::True,
+                effect: SExpr::List(vec![
+                    SExpr::Atom("decrease".to_string()),
+                    SExpr::List(vec![SExpr::Atom("fuel".to_string())]),
+                    SExpr::List(vec![SExpr::Atom("distance".to_string())]),
+                ]),
+            }],
+        });
+        
+        let initial_function_count = task.functions.len();
+        
+        // Run verification
+        task_verify_and_fix_arithmetic_expressions(&mut task);
+        
+        // Function count should remain the same
+        assert_eq!(task.functions.len(), initial_function_count);
+    }
 }
