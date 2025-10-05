@@ -52,6 +52,17 @@ impl Condition {
         }
     }
 
+    /// Check if this condition contains a disjunction anywhere in the tree
+    pub fn has_disjunction(&self) -> bool {
+        match self {
+            Condition::Or(_) => true,
+            Condition::Not(c) => c.has_disjunction(),
+            Condition::And(parts) => parts.iter().any(|p| p.has_disjunction()),
+            Condition::Exists(_, c) | Condition::Forall(_, c) => c.has_disjunction(),
+            _ => false,
+        }
+    }
+
     /// Collect all free variables (variables not bound by quantifiers)
     pub fn free_variables(&self) -> std::collections::HashSet<String> {
         use std::collections::HashSet;

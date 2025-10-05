@@ -383,3 +383,356 @@ mod quantifier_tests {
         assert_eq!(ctx.axioms[0].parameters[0].0, "?x");
     }
 }
+
+/// Substitute complicated goal conditions with axioms.
+///
+/// This function implements the goal normalization from Python's normalize.py.
+/// If the goal is:
+/// - A simple literal (Atom or Not(Atom)): leave as-is
+/// - A conjunction of only literals: leave as-is
+/// - Otherwise: create an axiom for the goal and replace it with an atom referencing that axiom
+///
+/// This simplifies goal handling in the rest of the translation pipeline.
+pub fn substitute_complicated_goal(
+    goal: &Condition,
+    ctx: &mut NormalizationContext,
+) -> Condition {
+    // Check if goal is a simple literal (Atom or Not(Atom))
+    match goal {
+        Condition::Atom(_, _) => return goal.clone(),
+        Condition::Not(inner) => {
+            if matches!(**inner, Condition::Atom(_, _)) {
+                return goal.clone();
+            }
+        }
+        Condition::And(parts) => {
+            // Check if all parts are literals
+            let all_literals = parts.iter().all(|part| match part {
+                Condition::Atom(_, _) => true,
+                Condition::Not(inner) => matches!(**inner, Condition::Atom(_, _)),
+                _ => false,
+            });
+            if all_literals {
+                return goal.clone();
+            }
+        }
+        _ => {}
+    }
+
+    // Goal is complicated - create an axiom for it
+    let axiom_name = ctx.add_axiom(vec![], goal.clone());
+    Condition::Atom(axiom_name, vec![])
+}
+
+#[cfg(test)]
+mod goal_tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_atom_goal_unchanged() {
+        let mut ctx = NormalizationContext::new();
+        let goal = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]);
+        let result = substitute_complicated_goal(&goal, &mut ctx);
+        
+        assert_eq!(result, goal);
+        assert_eq!(ctx.axioms.len(), 0, "No axiom should be created");
+    }
+
+    #[test]
+    fn test_negated_atom_goal_unchanged() {
+        let mut ctx = NormalizationContext::new();
+        let goal = Condition::Not(Box::new(Condition::Atom(
+            "blocked".to_string(),
+            vec!["door1".to_string()],
+        )));
+        let result = substitute_complicated_goal(&goal, &mut ctx);
+        
+        assert_eq!(result, goal);
+        assert_eq!(ctx.axioms.len(), 0, "No axiom should be created");
+    }
+
+    #[test]
+    fn test_conjunction_of_literals_unchanged() {
+        let mut ctx = NormalizationContext::new();
+        let goal = Condition::And(vec![
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
+            Condition::Not(Box::new(Condition::Atom(
+                "blocked".to_string(),
+                vec!["door1".to_string()],
+            ))),
+        ]);
+        let result = substitute_complicated_goal(&goal, &mut ctx);
+        
+        assert_eq!(result, goal);
+        assert_eq!(ctx.axioms.len(), 0, "No axiom should be created");
+    }
+
+    #[test]
+    fn test_disjunctive_goal_creates_axiom() {
+        let mut ctx = NormalizationContext::new();
+        let goal = Condition::Or(vec![
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc2".to_string()]),
+        ]);
+        let result = substitute_complicated_goal(&goal, &mut ctx);
+        
+        // Should create an axiom and return an atom referencing it
+        assert!(matches!(result, Condition::Atom(_, _)));
+        if let Condition::Atom(name, args) = result {
+            assert_eq!(name, "new-axiom@0");
+            assert_eq!(args.len(), 0, "Goal axiom should have no parameters");
+        }
+        assert_eq!(ctx.axioms.len(), 1);
+        assert_eq!(ctx.axioms[0].name, "new-axiom@0");
+    }
+
+    #[test]
+    fn test_existential_goal_creates_axiom() {
+        let mut ctx = NormalizationContext::new();
+        let goal = Condition::Exists(
+            vec![("?x".to_string(), Some("location".to_string()))],
+            Box::new(Condition::Atom(
+                "at".to_string(),
+                vec!["robot".to_string(), "?x".to_string()],
+            )),
+        );
+        let result = substitute_complicated_goal(&goal, &mut ctx);
+        
+        assert!(matches!(result, Condition::Atom(_, _)));
+        assert_eq!(ctx.axioms.len(), 1);
+    }
+
+    #[test]
+    fn test_conjunction_with_nested_condition_creates_axiom() {
+        let mut ctx = NormalizationContext::new();
+        let goal = Condition::And(vec![
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
+            Condition::Or(vec![
+                Condition::Atom("open".to_string(), vec!["door1".to_string()]),
+                Condition::Atom("open".to_string(), vec!["door2".to_string()]),
+            ]),
+        ]);
+        let result = substitute_complicated_goal(&goal, &mut ctx);
+        
+        // Contains a disjunction, so should create an axiom
+        assert!(matches!(result, Condition::Atom(_, _)));
+        assert_eq!(ctx.axioms.len(), 1);
+    }
+}
+
+/// Convert condition to Disjunctive Normal Form (DNF).
+///
+/// This function implements the DNF transformation from Python's normalize.py.
+/// After removing universal quantifiers, the following rules are applied:
+/// (1) or(phi, or(psi, psi'))      ==  or(phi, psi, psi')         [Associativity]
+/// (2) exists(vars, or(phi, psi))  ==  or(exists(vars, phi), exists(vars, psi)) [Distribution]
+/// (3) and(phi, or(psi, psi'))     ==  or(and(phi, psi), and(phi, psi'))        [Distribution]
+///
+/// This pulls all disjunctions to the outermost level of the condition.
+pub fn build_dnf(condition: &Condition) -> Condition {
+    // Recursively process all parts first
+    let processed_parts: Vec<Condition> = condition
+        .parts()
+        .iter()
+        .map(|part| build_dnf(part))
+        .collect();
+
+    // If no parts, return as-is
+    if processed_parts.is_empty() {
+        return condition.clone();
+    }
+
+    // Separate disjunctive parts from other parts
+    let mut disjunctive_parts: Vec<Condition> = Vec::new();
+    let mut other_parts: Vec<Condition> = Vec::new();
+
+    for part in processed_parts {
+        if matches!(part, Condition::Or(_)) {
+            disjunctive_parts.push(part);
+        } else {
+            other_parts.push(part);
+        }
+    }
+
+    // If no disjunctive parts, just reconstruct with processed parts
+    if disjunctive_parts.is_empty() {
+        let all_parts: Vec<Condition> = condition
+            .parts()
+            .iter()
+            .map(|part| build_dnf(part))
+            .collect();
+        return condition.change_parts(all_parts);
+    }
+
+    // Apply transformation rules based on the condition type
+    match condition {
+        // Rule (1): Associativity of disjunction
+        // or(phi, or(psi, psi')) → or(phi, psi, psi')
+        Condition::Or(_) => {
+            let mut result_parts = other_parts;
+            for part in disjunctive_parts {
+                if let Condition::Or(inner_parts) = part {
+                    result_parts.extend(inner_parts);
+                }
+            }
+            Condition::Or(result_parts)
+        }
+
+        // Rule (2): Distributivity disjunction/existential quantification
+        // exists(vars, or(phi, psi)) → or(exists(vars, phi), exists(vars, psi))
+        Condition::Exists(params, _) => {
+            if let Some(Condition::Or(or_parts)) = disjunctive_parts.first() {
+                let result_parts: Vec<Condition> = or_parts
+                    .iter()
+                    .map(|part| Condition::Exists(params.clone(), Box::new(part.clone())))
+                    .collect();
+                Condition::Or(result_parts)
+            } else {
+                // Fallback - shouldn't happen
+                condition.change_parts(
+                    other_parts
+                        .into_iter()
+                        .chain(disjunctive_parts)
+                        .collect(),
+                )
+            }
+        }
+
+        // Rule (3): Distributivity disjunction/conjunction
+        // and(phi, or(psi, psi')) → or(and(phi, psi), and(phi, psi'))
+        Condition::And(_) => {
+            // Start with conjunction of non-disjunctive parts
+            let mut result_parts = vec![Condition::And(other_parts.clone())];
+
+            // Distribute each disjunctive part
+            while let Some(disj) = disjunctive_parts.pop() {
+                let previous_result_parts = result_parts;
+                result_parts = Vec::new();
+
+                if let Condition::Or(parts_to_distribute) = disj {
+                    for part1 in &previous_result_parts {
+                        for part2 in &parts_to_distribute {
+                            // Create conjunction of part1 and part2
+                            let new_conj = match part1 {
+                                Condition::And(conj_parts) => {
+                                    let mut new_parts = conj_parts.clone();
+                                    new_parts.push(part2.clone());
+                                    Condition::And(new_parts)
+                                }
+                                _ => Condition::And(vec![part1.clone(), part2.clone()]),
+                            };
+                            result_parts.push(new_conj);
+                        }
+                    }
+                }
+            }
+
+            Condition::Or(result_parts)
+        }
+
+        // For other condition types, just return with processed parts
+        _ => condition.change_parts(
+            other_parts
+                .into_iter()
+                .chain(disjunctive_parts)
+                .collect(),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod dnf_tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_condition_unchanged() {
+        let cond = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]);
+        let result = build_dnf(&cond);
+        assert_eq!(result, cond);
+    }
+
+    #[test]
+    fn test_nested_disjunctions_flattened() {
+        // or(A, or(B, C)) → or(A, B, C)
+        let cond = Condition::Or(vec![
+            Condition::Atom("a".to_string(), vec![]),
+            Condition::Or(vec![
+                Condition::Atom("b".to_string(), vec![]),
+                Condition::Atom("c".to_string(), vec![]),
+            ]),
+        ]);
+        let result = build_dnf(&cond);
+        
+        if let Condition::Or(parts) = result {
+            assert_eq!(parts.len(), 3);
+        } else {
+            panic!("Expected Or condition");
+        }
+    }
+
+    #[test]
+    fn test_conjunction_with_disjunction_distributed() {
+        // and(A, or(B, C)) → or(and(A, B), and(A, C))
+        let cond = Condition::And(vec![
+            Condition::Atom("a".to_string(), vec![]),
+            Condition::Or(vec![
+                Condition::Atom("b".to_string(), vec![]),
+                Condition::Atom("c".to_string(), vec![]),
+            ]),
+        ]);
+        let result = build_dnf(&cond);
+        
+        if let Condition::Or(parts) = result {
+            assert_eq!(parts.len(), 2);
+            // Each part should be a conjunction
+            assert!(matches!(parts[0], Condition::And(_)));
+            assert!(matches!(parts[1], Condition::And(_)));
+        } else {
+            panic!("Expected Or condition, got: {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_exists_with_disjunction_distributed() {
+        // exists(?x, or(A(?x), B(?x))) → or(exists(?x, A(?x)), exists(?x, B(?x)))
+        let cond = Condition::Exists(
+            vec![("?x".to_string(), Some("obj".to_string()))],
+            Box::new(Condition::Or(vec![
+                Condition::Atom("a".to_string(), vec!["?x".to_string()]),
+                Condition::Atom("b".to_string(), vec!["?x".to_string()]),
+            ])),
+        );
+        let result = build_dnf(&cond);
+        
+        if let Condition::Or(parts) = result {
+            assert_eq!(parts.len(), 2);
+            assert!(matches!(parts[0], Condition::Exists(_, _)));
+            assert!(matches!(parts[1], Condition::Exists(_, _)));
+        } else {
+            panic!("Expected Or condition");
+        }
+    }
+
+    #[test]
+    fn test_multiple_disjunctions_in_conjunction() {
+        // and(or(A, B), or(C, D)) → or(and(A, C), and(A, D), and(B, C), and(B, D))
+        let cond = Condition::And(vec![
+            Condition::Or(vec![
+                Condition::Atom("a".to_string(), vec![]),
+                Condition::Atom("b".to_string(), vec![]),
+            ]),
+            Condition::Or(vec![
+                Condition::Atom("c".to_string(), vec![]),
+                Condition::Atom("d".to_string(), vec![]),
+            ]),
+        ]);
+        let result = build_dnf(&cond);
+        
+        if let Condition::Or(parts) = result {
+            // Should create all combinations: 2 * 2 = 4
+            assert_eq!(parts.len(), 4);
+        } else {
+            panic!("Expected Or condition");
+        }
+    }
+}
