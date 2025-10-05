@@ -213,11 +213,25 @@ pub fn sexpr_to_condition(s: &SExpr) -> Condition {
                     }
                     "<=" | ">=" | "<" | ">" | "=" => {
                         if list.len() >= 3 {
-                            // store raw SExprs for richer parsing later
+                            // Transform to "compare_to_zero" form: (<= A B) becomes (<= (- A B) 0)
+                            // This matches Python's FunctionComparison(compare_to_zero=True)
+                            let left = list[1].clone();
+                            let right = list[2].clone();
+                            
+                            // Create (- left right)
+                            let difference = SExpr::List(vec![
+                                SExpr::Atom("-".to_string()),
+                                left,
+                                right,
+                            ]);
+                            
+                            // Create constant 0
+                            let zero = SExpr::Atom("0".to_string());
+                            
                             return Condition::Comparison(
                                 k.clone(),
-                                list[1].clone(),
-                                list[2].clone(),
+                                difference,
+                                zero,
                             );
                         } else {
                             return Condition::True;

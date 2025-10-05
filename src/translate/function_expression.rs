@@ -123,11 +123,9 @@ impl std::fmt::Display for FunctionalExpression {
 pub fn parse_functional_expression(sexpr: &SExpr) -> Option<FunctionalExpression> {
     match sexpr {
         SExpr::Atom(a) => {
-            // Try to parse as number
-            if let Ok(value) = a.parse::<i64>() {
-                Some(FunctionalExpression::Constant(NumericConstant::new(value)))
-            } else if let Ok(value) = a.parse::<f64>() {
-                // Handle floating point by converting to integer
+            // Try to parse as number (try float first to handle both "3" and "3.0")
+            if let Ok(value) = a.parse::<f64>() {
+                // Store as integer representation (Fast Downward uses integer math)
                 Some(FunctionalExpression::Constant(NumericConstant::new(value as i64)))
             } else {
                 // Treat as primitive numeric expression (0-arity function)

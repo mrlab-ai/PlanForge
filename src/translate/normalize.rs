@@ -76,7 +76,7 @@ impl NormalizableTask {
     pub fn from_ast(domain: &Domain, problem: &Problem) -> Self {
         use crate::translate::pddl_ast::sexpr_to_condition;
         
-        // Convert actions: parse preconditions from SExpr to Condition
+        // Convert actions: parse preconditions and effects from SExpr
         let actions: Vec<TaskAction> = domain
             .actions
             .iter()
@@ -87,13 +87,18 @@ impl NormalizableTask {
                     .map(|s| sexpr_to_condition(s))
                     .unwrap_or(Condition::True);
                 
-                // For now, effects are not fully parsed - we'll handle them in later steps
-                // In a full implementation, we'd parse conditional effects here
+                // Parse effects: convert conditional effects to TaskEffect structures
+                let effects = if let Some(effect_sexpr) = &action.effect {
+                    Self::parse_effects(effect_sexpr)
+                } else {
+                    vec![]
+                };
+                
                 TaskAction {
                     name: action.name.clone(),
                     parameters: action.parameters.clone(),
                     precondition,
-                    effects: vec![], // TODO: Parse effects properly
+                    effects,
                 }
             })
             .collect();
@@ -119,6 +124,130 @@ impl NormalizableTask {
             axiom_counter: 0,
             function_administrator: NormalizationFunctionAdministrator::new(),
         }
+    }
+    
+    /// Parse effects from an SExpr into a list of TaskEffect structures.
+    /// Handles conditional effects with forall, when, and nested structures.
+    fn parse_effects(effect_sexpr: &SExpr) -> Vec<TaskEffect> {
+        use crate::translate::pddl_ast::sexpr_to_condition;
+        
+        // Helper to parse parameters from typed list
+        fn parse_params(params_sexpr: &SExpr) -> Vec<(String, Option<String>)> {
+            match params_sexpr {
+                SExpr::List(items) => {
+                    let mut result = vec![];
+                    let mut i = 0;
+                    let mut pending_names = vec![];
+                    
+                    while i < items.len() {
+                        if let SExpr::Atom(atom) = &items[i] {
+                            if atom == "-" {
+                                // Next item is the type
+                                if i + 1 < items.len() {
+                                    if let SExpr::Atom(type_name) = &items[i + 1] {
+                                        // Assign type to all pending names
+                                        for name in pending_names.drain(..) {
+                                            result.push((name, Some(type_name.clone())));
+                                        }
+                                        i += 2;
+                                        continue;
+                                    }
+                                }
+                            } else {
+                                // Variable name
+                                pending_names.push(atom.clone());
+                            }
+                        }
+                        i += 1;
+                    }
+                    
+                    // Any remaining names without types
+                    for name in pending_names {
+                        result.push((name, None));
+                    }
+                    
+                    result
+                }
+                _ => vec![],
+            }
+        }
+        
+        fn parse_effect_helper(s: &SExpr) -> Vec<TaskEffect> {
+            match s {
+                SExpr::List(items) if !items.is_empty() => {
+                    if let SExpr::Atom(keyword) = &items[0] {
+                        match keyword.to_lowercase().as_str() {
+                            "and" => {
+                                // (and effect1 effect2 ...) - flatten all effects
+                                let mut all_effects = vec![];
+                                for item in &items[1..] {
+                                    all_effects.extend(parse_effect_helper(item));
+                                }
+                                all_effects
+                            }
+                            "forall" => {
+                                // (forall (?v - type) effect) - effect with parameters
+                                if items.len() >= 3 {
+                                    let params = parse_params(&items[1]);
+                                    let inner_effects = parse_effect_helper(&items[2]);
+                                    // Add parameters to each inner effect
+                                    inner_effects.into_iter().map(|mut eff| {
+                                        eff.parameters.extend(params.clone());
+                                        eff
+                                    }).collect()
+                                } else {
+                                    vec![]
+                                }
+                            }
+                            "when" => {
+                                // (when condition effect) - conditional effect
+                                if items.len() >= 3 {
+                                    let cond = sexpr_to_condition(&items[1]);
+                                    let inner_effects = parse_effect_helper(&items[2]);
+                                    // Add condition to each inner effect
+                                    inner_effects.into_iter().map(|mut eff| {
+                                        // Combine conditions if effect already has one
+                                        eff.condition = if matches!(eff.condition, Condition::True) {
+                                            cond.clone()
+                                        } else {
+                                            Condition::And(vec![cond.clone(), eff.condition.clone()])
+                                        };
+                                        eff
+                                    }).collect()
+                                } else {
+                                    vec![]
+                                }
+                            }
+                            _ => {
+                                // Simple effect (add, del, increase, decrease, assign, etc.)
+                                vec![TaskEffect {
+                                    parameters: vec![],
+                                    condition: Condition::True,
+                                    effect: s.clone(),
+                                }]
+                            }
+                        }
+                    } else {
+                        // Unexpected structure, treat as simple effect
+                        vec![TaskEffect {
+                            parameters: vec![],
+                            condition: Condition::True,
+                            effect: s.clone(),
+                        }]
+                    }
+                }
+                _ => {
+                    // Atom or empty list - treat as simple effect
+                    vec![TaskEffect {
+                        parameters: vec![],
+                        condition: Condition::True,
+                        effect: s.clone(),
+                    }]
+                }
+            }
+        }
+        
+        parse_effect_helper(effect_sexpr)
     }
     
     /// Add a new axiom to the task and return its name
@@ -3227,5 +3356,97 @@ mod task_normalization_tests {
         // Verification should pass (no derived predicates)
         let result = task_verify_axiom_predicates(&task);
         assert!(result.is_ok());
+    }
+    
+    #[test]
+    #[ignore] // Run with: cargo test test_normalize_dump_for_comparison -- --ignored --nocapture
+    fn test_normalize_dump_for_comparison() {
+        // Test for comparing Python vs Rust normalization
+        use crate::translate::pddl::PddlTask;
+        use std::path::Path;
+        
+        let domain_path = Path::new("pddl/domain.pddl");
+        let problem_path = Path::new("pddl/pfile1.pddl");
+        
+        if !domain_path.exists() || !problem_path.exists() {
+            eprintln!("PDDL files not found, skipping comparison test");
+            return;
+        }
+        
+        let pddl = match PddlTask::from_files(domain_path, problem_path) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Failed to parse PDDL: {}", e);
+                return;
+            }
+        };
+        
+        let domain = Domain::from_sexprs(&pddl.domain_forms).expect("domain parse");
+        let problem = Problem::from_sexprs(&pddl.problem_forms).expect("problem parse");
+        
+        let mut task = NormalizableTask::from_ast(&domain, &problem);
+        
+        println!("\n========== NORMALIZE_DUMP ==========");
+        println!("Before normalization:");
+        println!("  Actions: {}", task.actions.len());
+        println!("  Axioms: {}", task.axioms.len());
+        
+        // Show first few actions
+        println!("\nFirst 3 actions before:");
+        for (i, action) in task.actions.iter().take(3).enumerate() {
+            println!("  {}. {}", i + 1, action.name);
+            println!("     Parameters: {}", action.parameters.len());
+            println!("     Effects: {}", action.effects.len());
+        }
+        
+        // Normalize
+        match normalize(&mut task) {
+            Ok(()) => println!("\nNormalization succeeded!"),
+            Err(e) => {
+                println!("\nNormalization failed: {}", e);
+                return;
+            }
+        }
+        
+        println!("\nAfter normalization:");
+        println!("  Actions: {}", task.actions.len());
+        println!("  Axioms: {}", task.axioms.len());
+        println!("  Numeric axioms: {}", task.numeric_axioms.len());
+        
+        // Show first few actions after
+        println!("\nFirst 3 actions after:");
+        for (i, action) in task.actions.iter().take(3).enumerate() {
+            println!("  {}. {}", i + 1, action.name);
+            println!("     Parameters: {}", action.parameters.len());
+            println!("     Effects: {}", action.effects.len());
+        }
+        
+        // Show axioms
+        println!("\nFirst 5 axioms:");
+        for (i, axiom) in task.axioms.iter().take(5).enumerate() {
+            println!("  {}. {}", i + 1, axiom.name);
+            println!("     Parameters: {}", axiom.parameters.len());
+        }
+        if task.axioms.len() > 5 {
+            println!("  ... and {} more axioms", task.axioms.len() - 5);
+        }
+        
+        // Show numeric axioms
+        println!("\nFirst 5 numeric axioms:");
+        for (i, axiom) in task.numeric_axioms.iter().take(5).enumerate() {
+            println!("  {}. {}", i + 1, axiom.name);
+            println!("     Parameters: {}", axiom.parameters.len());
+            println!("     Operator: {}", axiom.op.as_ref().unwrap_or(&"constant".to_string()));
+            println!("     Parts: {}", axiom.parts.len());
+        }
+        if task.numeric_axioms.len() > 5 {
+            println!("  ... and {} more numeric axioms", task.numeric_axioms.len() - 5);
+        }
+        
+        // Show goal
+        println!("\nGoal:");
+        println!("  Type: {:?}", task.goal);
+        
+        println!("\n========== END NORMALIZE_DUMP ==========");
     }
 }
