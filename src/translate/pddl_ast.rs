@@ -63,6 +63,19 @@ impl Condition {
         }
     }
 
+    /// Check if this condition contains an existential quantifier anywhere in the tree
+    pub fn has_existential_part(&self) -> bool {
+        match self {
+            Condition::Exists(_, _) => true,
+            Condition::Not(c) => c.has_existential_part(),
+            Condition::And(parts) | Condition::Or(parts) => {
+                parts.iter().any(|p| p.has_existential_part())
+            }
+            Condition::Forall(_, c) => c.has_existential_part(),
+            _ => false,
+        }
+    }
+
     /// Collect all free variables (variables not bound by quantifiers)
     pub fn free_variables(&self) -> std::collections::HashSet<String> {
         use std::collections::HashSet;

@@ -173,6 +173,25 @@ pub struct NormalizationAxiom {
     pub condition: Condition,
 }
 
+/// Action with normalized condition for use during normalization.
+#[derive(Debug, Clone)]
+pub struct NormalizationAction {
+    pub name: String,
+    pub parameters: Vec<(String, Option<String>)>, // (name, type)
+    pub precondition: Condition,
+    // Note: effects are not included here as they're handled separately
+}
+
+/// Conditional effect with normalized condition for use during normalization.
+/// Represents "when <condition> then <effect>"
+#[derive(Debug, Clone)]
+pub struct ConditionalEffect {
+    pub parameters: Vec<(String, Option<String>)>, // (name, type) - forall parameters
+    pub condition: Condition,
+    // Note: the actual effect (add/delete/assign) is not included here
+    // as we only need to normalize the condition
+}
+
 /// Context for managing axioms and type maps during normalization.
 #[derive(Debug, Clone)]
 pub struct NormalizationContext {
@@ -735,4 +754,1119 @@ mod dnf_tests {
             panic!("Expected Or condition");
         }
     }
+}
+
+/// Check if a condition is a top-level disjunction.
+///
+/// This is used to identify conditions that should be split.
+pub fn is_disjunction(condition: &Condition) -> bool {
+    matches!(condition, Condition::Or(_))
+}
+
+/// Split a disjunctive condition into its parts.
+///
+/// This function implements the split_disjunctions step from Python's normalize.py.
+/// After build_DNF, conditions are in the form or(phi, psi, ...).
+/// This step splits such conditions into multiple copies, one for each disjunct.
+///
+/// In the Python version, this operates on a task structure with proxies that can
+/// clone actions/axioms/goals. In this Rust version, we provide the building block
+/// that extracts the disjunctive parts that would be used to create separate entities.
+///
+/// For integration with a full task structure, each part returned by this function
+/// would be used to create a copy of the original action/axiom/goal.
+///
+/// Returns:
+/// - `Some(Vec<Condition>)` - The individual disjuncts if the condition is a disjunction
+/// - `None` - If the condition is not a disjunction
+pub fn split_disjunction(condition: &Condition) -> Option<Vec<Condition>> {
+    match condition {
+        Condition::Or(parts) => Some(parts.clone()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    #[test]
+    fn test_non_disjunction_returns_none() {
+        let cond = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]);
+        assert!(split_disjunction(&cond).is_none());
+    }
+
+    #[test]
+    fn test_conjunction_returns_none() {
+        let cond = Condition::And(vec![
+            Condition::Atom("a".to_string(), vec![]),
+            Condition::Atom("b".to_string(), vec![]),
+        ]);
+        assert!(split_disjunction(&cond).is_none());
+    }
+
+    #[test]
+    fn test_disjunction_splits_into_parts() {
+        let cond = Condition::Or(vec![
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc2".to_string()]),
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc3".to_string()]),
+        ]);
+        
+        let parts = split_disjunction(&cond).expect("Should return Some for disjunction");
+        assert_eq!(parts.len(), 3);
+        
+        // Each part should be an atom
+        for part in &parts {
+            assert!(matches!(part, Condition::Atom(_, _)));
+        }
+    }
+
+    #[test]
+    fn test_split_complex_disjunction() {
+        // or(and(A, B), and(C, D))
+        let cond = Condition::Or(vec![
+            Condition::And(vec![
+                Condition::Atom("a".to_string(), vec![]),
+                Condition::Atom("b".to_string(), vec![]),
+            ]),
+            Condition::And(vec![
+                Condition::Atom("c".to_string(), vec![]),
+                Condition::Atom("d".to_string(), vec![]),
+            ]),
+        ]);
+        
+        let parts = split_disjunction(&cond).expect("Should return Some");
+        assert_eq!(parts.len(), 2);
+        assert!(matches!(parts[0], Condition::And(_)));
+        assert!(matches!(parts[1], Condition::And(_)));
+    }
+
+    #[test]
+    fn test_is_disjunction_check() {
+        let disj = Condition::Or(vec![
+            Condition::Atom("a".to_string(), vec![]),
+            Condition::Atom("b".to_string(), vec![]),
+        ]);
+        assert!(is_disjunction(&disj));
+        
+        let conj = Condition::And(vec![
+            Condition::Atom("a".to_string(), vec![]),
+            Condition::Atom("b".to_string(), vec![]),
+        ]);
+        assert!(!is_disjunction(&conj));
+        
+        let atom = Condition::Atom("a".to_string(), vec![]);
+        assert!(!is_disjunction(&atom));
+    }
+
+    #[test]
+    fn test_split_and_build_dnf_workflow() {
+        // Simulate the workflow: start with nested disjunction, build DNF, then split
+        
+        // Input: and(A, or(B, C))
+        let input = Condition::And(vec![
+            Condition::Atom("a".to_string(), vec![]),
+            Condition::Or(vec![
+                Condition::Atom("b".to_string(), vec![]),
+                Condition::Atom("c".to_string(), vec![]),
+            ]),
+        ]);
+        
+        // Step 1: Build DNF → or(and(A, B), and(A, C))
+        let dnf = build_dnf(&input);
+        assert!(is_disjunction(&dnf));
+        
+        // Step 2: Split the disjunction
+        let parts = split_disjunction(&dnf).expect("Should be disjunction after DNF");
+        assert_eq!(parts.len(), 2);
+        
+        // Each part should be and(A, ...)
+        for part in parts {
+            assert!(matches!(part, Condition::And(_)));
+        }
+    }
+
+    #[test]
+    fn test_split_preserves_parts_correctly() {
+        // Verify that split returns exact copies of the disjuncts
+        let a = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]);
+        let b = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc2".to_string()]);
+        let c = Condition::Not(Box::new(Condition::Atom("blocked".to_string(), vec![])));
+        
+        let disj = Condition::Or(vec![a.clone(), b.clone(), c.clone()]);
+        let parts = split_disjunction(&disj).expect("Should split");
+        
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], a);
+        assert_eq!(parts[1], b);
+        assert_eq!(parts[2], c);
+    }
+
+    #[test]
+    fn test_empty_disjunction() {
+        // Edge case: empty disjunction (shouldn't occur in practice, but handle gracefully)
+        let empty_disj = Condition::Or(vec![]);
+        let parts = split_disjunction(&empty_disj).expect("Should return Some for Or");
+        assert_eq!(parts.len(), 0);
+    }
+
+    #[test]
+    fn test_single_disjunct() {
+        // A disjunction with only one part
+        let single_disj = Condition::Or(vec![
+            Condition::Atom("goal".to_string(), vec![]),
+        ]);
+        let parts = split_disjunction(&single_disj).expect("Should split");
+        assert_eq!(parts.len(), 1);
+        assert!(matches!(parts[0], Condition::Atom(_, _)));
+    }
+}
+
+/// Move existential quantifiers out of conjunctions and group them.
+///
+/// This function implements the quantifier movement step from Python's normalize.py.
+/// After removing universal quantifiers and creating the disjunctive form,
+/// the following rules are applied:
+/// (1) exists(vars, exists(vars', phi))  ==  exists(vars + vars', phi)
+/// (2) and(phi, exists(vars, psi))       ==  exists(vars, and(phi, psi)),
+///       if var does not occur in phi as a free variable.
+///
+/// This pulls existential quantifiers outward and combines them, preparing
+/// for the elimination step that follows.
+pub fn move_existential_quantifiers(condition: &Condition) -> Condition {
+    // Recursively process all parts first
+    let processed_parts: Vec<Condition> = condition
+        .parts()
+        .iter()
+        .map(|p| move_existential_quantifiers(p))
+        .collect();
+
+    // If no parts, return as-is
+    if processed_parts.is_empty() {
+        return condition.clone();
+    }
+
+    // Separate existential parts from other parts
+    let mut existential_parts: Vec<Condition> = Vec::new();
+    let mut other_parts: Vec<Condition> = Vec::new();
+
+    for part in processed_parts {
+        if matches!(part, Condition::Exists(_, _)) {
+            existential_parts.push(part);
+        } else {
+            other_parts.push(part);
+        }
+    }
+
+    // If no existential parts, just reconstruct with processed parts
+    if existential_parts.is_empty() {
+        return condition.change_parts(other_parts);
+    }
+
+    // Apply transformation rules based on the condition type
+    match condition {
+        // Rule (1): Combine nested quantifiers
+        // exists(vars, exists(vars', phi)) → exists(vars + vars', phi)
+        Condition::Exists(params, _) => {
+            if let Some(Condition::Exists(inner_params, inner_cond)) = existential_parts.first() {
+                // Combine parameters from outer and inner exists
+                let mut new_parameters = params.clone();
+                new_parameters.extend(inner_params.clone());
+                
+                // The new condition is the inner condition's parts
+                // (which should be a single condition)
+                Condition::Exists(new_parameters, inner_cond.clone())
+            } else {
+                // No nested exists, return as-is
+                condition.change_parts({
+                    let mut all = other_parts;
+                    all.extend(existential_parts);
+                    all
+                })
+            }
+        }
+
+        // Rule (2): Pull quantifiers out of conjunctions
+        // and(phi, exists(vars, psi)) → exists(vars, and(phi, psi))
+        Condition::And(_) => {
+            // Collect all parameters from existential parts
+            let mut new_parameters: Vec<(String, Option<String>)> = Vec::new();
+            let mut new_conjunction_parts = other_parts;
+            
+            for part in existential_parts {
+                if let Condition::Exists(params, inner) = part {
+                    new_parameters.extend(params);
+                    // Extract the parts from the inner condition
+                    // If it's a conjunction, add all its parts
+                    // Otherwise, add the condition itself
+                    match *inner {
+                        Condition::And(inner_parts) => {
+                            new_conjunction_parts.extend(inner_parts);
+                        }
+                        other => {
+                            new_conjunction_parts.push(other);
+                        }
+                    }
+                }
+            }
+            
+            let new_conjunction = Condition::And(new_conjunction_parts);
+            Condition::Exists(new_parameters, Box::new(new_conjunction))
+        }
+
+        // For other condition types, just reconstruct with processed parts
+        _ => condition.change_parts({
+            let mut all = other_parts;
+            all.extend(existential_parts);
+            all
+        }),
+    }
+}
+
+#[cfg(test)]
+mod existential_tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_condition_unchanged() {
+        // Simple atoms and conjunctions without exists remain unchanged
+        let cond = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]);
+        let result = move_existential_quantifiers(&cond);
+        assert_eq!(result, cond);
+    }
+
+    #[test]
+    fn test_nested_existential_combined() {
+        // exists(?x, exists(?y, at(?x, ?y))) → exists(?x, ?y, at(?x, ?y))
+        let cond = Condition::Exists(
+            vec![("?x".to_string(), Some("loc".to_string()))],
+            Box::new(Condition::Exists(
+                vec![("?y".to_string(), Some("loc".to_string()))],
+                Box::new(Condition::Atom(
+                    "connected".to_string(),
+                    vec!["?x".to_string(), "?y".to_string()],
+                )),
+            )),
+        );
+        
+        let result = move_existential_quantifiers(&cond);
+        
+        // Should combine into exists(?x, ?y, connected(?x, ?y))
+        if let Condition::Exists(params, inner) = result {
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0].0, "?x");
+            assert_eq!(params[1].0, "?y");
+            if let Condition::Atom(pred, args) = &*inner {
+                assert_eq!(pred, "connected");
+                assert_eq!(args.len(), 2);
+            } else {
+                panic!("Expected Atom inside Exists");
+            }
+        } else {
+            panic!("Expected Exists condition");
+        }
+    }
+
+    #[test]
+    fn test_existential_pulled_from_conjunction() {
+        // and(at(robot, loc1), exists(?x, holding(?x))) 
+        // → exists(?x, and(at(robot, loc1), holding(?x)))
+        let cond = Condition::And(vec![
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
+            Condition::Exists(
+                vec![("?x".to_string(), Some("obj".to_string()))],
+                Box::new(Condition::Atom("holding".to_string(), vec!["?x".to_string()])),
+            ),
+        ]);
+        
+        let result = move_existential_quantifiers(&cond);
+        
+        // Should become exists(?x, and(at(robot, loc1), holding(?x)))
+        if let Condition::Exists(params, inner) = result {
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].0, "?x");
+            if let Condition::And(parts) = &*inner {
+                assert_eq!(parts.len(), 2);
+                assert!(matches!(parts[0], Condition::Atom(_, _)));
+                assert!(matches!(parts[1], Condition::Atom(_, _)));
+            } else {
+                panic!("Expected And inside Exists");
+            }
+        } else {
+            panic!("Expected Exists condition");
+        }
+    }
+
+    #[test]
+    fn test_multiple_existentials_pulled_and_combined() {
+        // and(exists(?x, p(?x)), exists(?y, q(?y))) 
+        // → exists(?x, ?y, and(p(?x), q(?y)))
+        let cond = Condition::And(vec![
+            Condition::Exists(
+                vec![("?x".to_string(), Some("t".to_string()))],
+                Box::new(Condition::Atom("p".to_string(), vec!["?x".to_string()])),
+            ),
+            Condition::Exists(
+                vec![("?y".to_string(), Some("t".to_string()))],
+                Box::new(Condition::Atom("q".to_string(), vec!["?y".to_string()])),
+            ),
+        ]);
+        
+        let result = move_existential_quantifiers(&cond);
+        
+        if let Condition::Exists(params, inner) = result {
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0].0, "?x");
+            assert_eq!(params[1].0, "?y");
+            if let Condition::And(parts) = &*inner {
+                assert_eq!(parts.len(), 2);
+            } else {
+                panic!("Expected And inside Exists");
+            }
+        } else {
+            panic!("Expected Exists condition");
+        }
+    }
+
+    #[test]
+    fn test_conjunction_without_existentials_unchanged() {
+        // and(at(robot, loc1), holding(obj1)) remains unchanged
+        let cond = Condition::And(vec![
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
+            Condition::Atom("holding".to_string(), vec!["obj1".to_string()]),
+        ]);
+        
+        let result = move_existential_quantifiers(&cond);
+        assert_eq!(result, cond);
+    }
+
+    #[test]
+    fn test_mixed_conjunction_with_existentials() {
+        // and(at(robot, loc1), exists(?x, p(?x)), clear(table))
+        // → exists(?x, and(at(robot, loc1), p(?x), clear(table)))
+        let cond = Condition::And(vec![
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
+            Condition::Exists(
+                vec![("?x".to_string(), Some("obj".to_string()))],
+                Box::new(Condition::Atom("p".to_string(), vec!["?x".to_string()])),
+            ),
+            Condition::Atom("clear".to_string(), vec!["table".to_string()]),
+        ]);
+        
+        let result = move_existential_quantifiers(&cond);
+        
+        if let Condition::Exists(params, inner) = result {
+            assert_eq!(params.len(), 1);
+            if let Condition::And(parts) = &*inner {
+                assert_eq!(parts.len(), 3);
+            } else {
+                panic!("Expected And inside Exists");
+            }
+        } else {
+            panic!("Expected Exists condition");
+        }
+    }
+}
+
+/// Eliminate existential quantifiers from axioms by turning them into parameters.
+///
+/// This function implements normalization step [5a] from Python's normalize.py.
+/// After move_existential_quantifiers, axiom conditions may be in the form:
+/// `exists(?x, ?y, phi)`. This step converts them to axiom parameters:
+///
+/// Before: axiom(a, b) with condition exists(?x, ?y, phi(?x, ?y, a, b))
+/// After:  axiom(a, b, ?x, ?y) with condition phi(?x, ?y, a, b)
+///
+/// This is done in-place by modifying the axiom's parameters and condition.
+/// The existential quantifiers are "dropped" by moving their parameters to
+/// the axiom's parameter list.
+pub fn eliminate_existential_quantifiers_from_axioms(
+    axioms: &mut [NormalizationAxiom],
+) {
+    for axiom in axioms.iter_mut() {
+        if let Condition::Exists(params, inner) = &axiom.condition {
+            // Extend the axiom's parameters with the existential parameters
+            axiom.parameters.extend(params.clone());
+            
+            // Replace the condition with the inner condition (first part)
+            // In Python, precond.parts[0] is used, and parts is a tuple with one element
+            axiom.condition = (**inner).clone();
+        }
+    }
+}
+
+#[cfg(test)]
+mod elimination_tests {
+    use super::*;
+
+    #[test]
+    fn test_eliminate_existential_from_axiom() {
+        // Axiom with exists(?x, at(?x, loc1))
+        // Should become axiom with parameter ?x and condition at(?x, loc1)
+        let mut axioms = vec![NormalizationAxiom {
+            name: "axiom1".to_string(),
+            parameters: vec![("?y".to_string(), Some("obj".to_string()))],
+            condition: Condition::Exists(
+                vec![("?x".to_string(), Some("loc".to_string()))],
+                Box::new(Condition::Atom(
+                    "at".to_string(),
+                    vec!["?x".to_string(), "loc1".to_string()],
+                )),
+            ),
+        }];
+
+        eliminate_existential_quantifiers_from_axioms(&mut axioms);
+
+        assert_eq!(axioms[0].parameters.len(), 2);
+        assert_eq!(axioms[0].parameters[0].0, "?y");
+        assert_eq!(axioms[0].parameters[1].0, "?x");
+        
+        // Condition should now be just the atom
+        assert!(matches!(axioms[0].condition, Condition::Atom(_, _)));
+        if let Condition::Atom(pred, args) = &axioms[0].condition {
+            assert_eq!(pred, "at");
+            assert_eq!(args.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_eliminate_multiple_existentials() {
+        // Axiom with exists(?x, ?y, connected(?x, ?y))
+        // Should add both ?x and ?y to parameters
+        let mut axioms = vec![NormalizationAxiom {
+            name: "axiom1".to_string(),
+            parameters: vec![],
+            condition: Condition::Exists(
+                vec![
+                    ("?x".to_string(), Some("loc".to_string())),
+                    ("?y".to_string(), Some("loc".to_string())),
+                ],
+                Box::new(Condition::Atom(
+                    "connected".to_string(),
+                    vec!["?x".to_string(), "?y".to_string()],
+                )),
+            ),
+        }];
+
+        eliminate_existential_quantifiers_from_axioms(&mut axioms);
+
+        assert_eq!(axioms[0].parameters.len(), 2);
+        assert_eq!(axioms[0].parameters[0].0, "?x");
+        assert_eq!(axioms[0].parameters[1].0, "?y");
+        
+        assert!(matches!(axioms[0].condition, Condition::Atom(_, _)));
+    }
+
+    #[test]
+    fn test_no_existential_unchanged() {
+        // Axiom without existential quantifier should remain unchanged
+        let mut axioms = vec![NormalizationAxiom {
+            name: "axiom1".to_string(),
+            parameters: vec![("?x".to_string(), Some("obj".to_string()))],
+            condition: Condition::Atom("at".to_string(), vec!["?x".to_string(), "loc1".to_string()]),
+        }];
+
+        let original_params_len = axioms[0].parameters.len();
+        let original_condition = axioms[0].condition.clone();
+
+        eliminate_existential_quantifiers_from_axioms(&mut axioms);
+
+        assert_eq!(axioms[0].parameters.len(), original_params_len);
+        assert_eq!(axioms[0].condition, original_condition);
+    }
+
+    #[test]
+    fn test_eliminate_with_conjunction_inside() {
+        // exists(?x, and(at(?x, loc1), clear(?x)))
+        // Should add ?x to parameters and set condition to the conjunction
+        let mut axioms = vec![NormalizationAxiom {
+            name: "axiom1".to_string(),
+            parameters: vec![],
+            condition: Condition::Exists(
+                vec![("?x".to_string(), Some("obj".to_string()))],
+                Box::new(Condition::And(vec![
+                    Condition::Atom("at".to_string(), vec!["?x".to_string(), "loc1".to_string()]),
+                    Condition::Atom("clear".to_string(), vec!["?x".to_string()]),
+                ])),
+            ),
+        }];
+
+        eliminate_existential_quantifiers_from_axioms(&mut axioms);
+
+        assert_eq!(axioms[0].parameters.len(), 1);
+        assert_eq!(axioms[0].parameters[0].0, "?x");
+        
+        // Condition should be the conjunction
+        assert!(matches!(axioms[0].condition, Condition::And(_)));
+        if let Condition::And(parts) = &axioms[0].condition {
+            assert_eq!(parts.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_multiple_axioms_processed_independently() {
+        // Multiple axioms should each be processed
+        let mut axioms = vec![
+            NormalizationAxiom {
+                name: "axiom1".to_string(),
+                parameters: vec![],
+                condition: Condition::Exists(
+                    vec![("?x".to_string(), Some("obj".to_string()))],
+                    Box::new(Condition::Atom("p".to_string(), vec!["?x".to_string()])),
+                ),
+            },
+            NormalizationAxiom {
+                name: "axiom2".to_string(),
+                parameters: vec![("?a".to_string(), Some("t".to_string()))],
+                condition: Condition::Atom("q".to_string(), vec!["?a".to_string()]),
+            },
+        ];
+
+        eliminate_existential_quantifiers_from_axioms(&mut axioms);
+
+        // First axiom should have existential eliminated
+        assert_eq!(axioms[0].parameters.len(), 1);
+        assert_eq!(axioms[0].parameters[0].0, "?x");
+        assert!(matches!(axioms[0].condition, Condition::Atom(_, _)));
+
+        // Second axiom should be unchanged
+        assert_eq!(axioms[1].parameters.len(), 1);
+        assert_eq!(axioms[1].parameters[0].0, "?a");
+        assert!(matches!(axioms[1].condition, Condition::Atom(_, _)));
+    }
+
+    #[test]
+    fn test_integration_with_move_existential_quantifiers() {
+        // Integration test: move_existential_quantifiers followed by elimination
+        // Start: and(at(robot, loc1), exists(?x, holding(?x)))
+        // After move: exists(?x, and(at(robot, loc1), holding(?x)))
+        // After eliminate: axiom params = [?x], condition = and(at(robot, loc1), holding(?x))
+        
+        let initial_condition = Condition::And(vec![
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
+            Condition::Exists(
+                vec![("?x".to_string(), Some("obj".to_string()))],
+                Box::new(Condition::Atom("holding".to_string(), vec!["?x".to_string()])),
+            ),
+        ]);
+
+        // Step 1: Move existential quantifiers
+        let moved = move_existential_quantifiers(&initial_condition);
+        
+        // Create an axiom with the moved condition
+        let mut axioms = vec![NormalizationAxiom {
+            name: "test-axiom".to_string(),
+            parameters: vec![],
+            condition: moved,
+        }];
+
+        // Step 2: Eliminate existential quantifiers
+        eliminate_existential_quantifiers_from_axioms(&mut axioms);
+
+        // Verify: axiom should now have ?x as parameter
+        assert_eq!(axioms[0].parameters.len(), 1);
+        assert_eq!(axioms[0].parameters[0].0, "?x");
+        
+        // Condition should be the conjunction without exists
+        if let Condition::And(parts) = &axioms[0].condition {
+            assert_eq!(parts.len(), 2);
+            assert!(matches!(parts[0], Condition::Atom(_, _)));
+            assert!(matches!(parts[1], Condition::Atom(_, _)));
+        } else {
+            panic!("Expected And condition after elimination");
+        }
+    }
+}
+
+/// Eliminate existential quantifiers from action preconditions by turning them into parameters.
+///
+/// This function implements normalization step [5b] from Python's normalize.py.
+/// After move_existential_quantifiers, action preconditions may be in the form:
+/// `exists(?x, ?y, phi)`. This step converts them to action parameters:
+///
+/// Before: action(a, b) with precondition exists(?x, ?y, phi(?x, ?y, a, b))
+/// After:  action(a, b, ?x, ?y) with precondition phi(?x, ?y, a, b)
+///
+/// Note: The additional parameters don't form part of the action name - they're
+/// used during grounding but not for action identification.
+///
+/// This is done in-place by modifying the action's parameters and precondition.
+/// The existential quantifiers are "dropped" by moving their parameters to
+/// the action's parameter list.
+pub fn eliminate_existential_quantifiers_from_preconditions(
+    actions: &mut [NormalizationAction],
+) {
+    for action in actions.iter_mut() {
+        if let Condition::Exists(params, inner) = &action.precondition {
+            // Extend the action's parameters with the existential parameters
+            action.parameters.extend(params.clone());
+            
+            // Replace the precondition with the inner condition (first part)
+            // In Python, precond.parts[0] is used, and parts is a tuple with one element
+            action.precondition = (**inner).clone();
+        }
+    }
+}
+
+#[cfg(test)]
+mod precondition_elimination_tests {
+    use super::*;
+
+    #[test]
+    fn test_eliminate_existential_from_precondition() {
+        // Action with exists(?x, at(?x, loc1))
+        // Should become action with parameter ?x and precondition at(?x, loc1)
+        let mut actions = vec![NormalizationAction {
+            name: "move".to_string(),
+            parameters: vec![("?from".to_string(), Some("loc".to_string()))],
+            precondition: Condition::Exists(
+                vec![("?to".to_string(), Some("loc".to_string()))],
+                Box::new(Condition::Atom(
+                    "connected".to_string(),
+                    vec!["?from".to_string(), "?to".to_string()],
+                )),
+            ),
+        }];
+
+        eliminate_existential_quantifiers_from_preconditions(&mut actions);
+
+        assert_eq!(actions[0].parameters.len(), 2);
+        assert_eq!(actions[0].parameters[0].0, "?from");
+        assert_eq!(actions[0].parameters[1].0, "?to");
+        
+        // Precondition should now be just the atom
+        assert!(matches!(actions[0].precondition, Condition::Atom(_, _)));
+        if let Condition::Atom(pred, args) = &actions[0].precondition {
+            assert_eq!(pred, "connected");
+            assert_eq!(args.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_eliminate_multiple_existentials_from_precondition() {
+        // Action with exists(?x, ?y, connected(?x, ?y))
+        // Should add both ?x and ?y to parameters
+        let mut actions = vec![NormalizationAction {
+            name: "teleport".to_string(),
+            parameters: vec![],
+            precondition: Condition::Exists(
+                vec![
+                    ("?from".to_string(), Some("loc".to_string())),
+                    ("?to".to_string(), Some("loc".to_string())),
+                ],
+                Box::new(Condition::Atom(
+                    "valid-teleport".to_string(),
+                    vec!["?from".to_string(), "?to".to_string()],
+                )),
+            ),
+        }];
+
+        eliminate_existential_quantifiers_from_preconditions(&mut actions);
+
+        assert_eq!(actions[0].parameters.len(), 2);
+        assert_eq!(actions[0].parameters[0].0, "?from");
+        assert_eq!(actions[0].parameters[1].0, "?to");
+        
+        assert!(matches!(actions[0].precondition, Condition::Atom(_, _)));
+    }
+
+    #[test]
+    fn test_no_existential_in_precondition_unchanged() {
+        // Action without existential quantifier should remain unchanged
+        let mut actions = vec![NormalizationAction {
+            name: "pickup".to_string(),
+            parameters: vec![("?obj".to_string(), Some("object".to_string()))],
+            precondition: Condition::Atom("clear".to_string(), vec!["?obj".to_string()]),
+        }];
+
+        let original_params_len = actions[0].parameters.len();
+        let original_precondition = actions[0].precondition.clone();
+
+        eliminate_existential_quantifiers_from_preconditions(&mut actions);
+
+        assert_eq!(actions[0].parameters.len(), original_params_len);
+        assert_eq!(actions[0].precondition, original_precondition);
+    }
+
+    #[test]
+    fn test_eliminate_with_conjunction_in_precondition() {
+        // exists(?x, and(at(?x, loc1), clear(?x)))
+        // Should add ?x to parameters and set precondition to the conjunction
+        let mut actions = vec![NormalizationAction {
+            name: "grasp".to_string(),
+            parameters: vec![],
+            precondition: Condition::Exists(
+                vec![("?obj".to_string(), Some("object".to_string()))],
+                Box::new(Condition::And(vec![
+                    Condition::Atom("at".to_string(), vec!["?obj".to_string(), "table".to_string()]),
+                    Condition::Atom("clear".to_string(), vec!["?obj".to_string()]),
+                ])),
+            ),
+        }];
+
+        eliminate_existential_quantifiers_from_preconditions(&mut actions);
+
+        assert_eq!(actions[0].parameters.len(), 1);
+        assert_eq!(actions[0].parameters[0].0, "?obj");
+        
+        // Precondition should be the conjunction
+        assert!(matches!(actions[0].precondition, Condition::And(_)));
+        if let Condition::And(parts) = &actions[0].precondition {
+            assert_eq!(parts.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_multiple_actions_processed_independently() {
+        // Multiple actions should each be processed
+        let mut actions = vec![
+            NormalizationAction {
+                name: "action1".to_string(),
+                parameters: vec![],
+                precondition: Condition::Exists(
+                    vec![("?x".to_string(), Some("obj".to_string()))],
+                    Box::new(Condition::Atom("p".to_string(), vec!["?x".to_string()])),
+                ),
+            },
+            NormalizationAction {
+                name: "action2".to_string(),
+                parameters: vec![("?a".to_string(), Some("t".to_string()))],
+                precondition: Condition::Atom("q".to_string(), vec!["?a".to_string()]),
+            },
+        ];
+
+        eliminate_existential_quantifiers_from_preconditions(&mut actions);
+
+        // First action should have existential eliminated
+        assert_eq!(actions[0].parameters.len(), 1);
+        assert_eq!(actions[0].parameters[0].0, "?x");
+        assert!(matches!(actions[0].precondition, Condition::Atom(_, _)));
+
+        // Second action should be unchanged
+        assert_eq!(actions[1].parameters.len(), 1);
+        assert_eq!(actions[1].parameters[0].0, "?a");
+        assert!(matches!(actions[1].precondition, Condition::Atom(_, _)));
+    }
+
+    #[test]
+    fn test_integration_with_move_existential_quantifiers() {
+        // Integration test: move_existential_quantifiers followed by elimination
+        // Start: and(at(robot, loc1), exists(?obj, holding(?obj)))
+        // After move: exists(?obj, and(at(robot, loc1), holding(?obj)))
+        // After eliminate: action params = [?obj], precondition = and(at(robot, loc1), holding(?obj))
+        
+        let initial_precondition = Condition::And(vec![
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
+            Condition::Exists(
+                vec![("?obj".to_string(), Some("object".to_string()))],
+                Box::new(Condition::Atom("holding".to_string(), vec!["?obj".to_string()])),
+            ),
+        ]);
+
+        // Step 1: Move existential quantifiers
+        let moved = move_existential_quantifiers(&initial_precondition);
+        
+        // Create an action with the moved precondition
+        let mut actions = vec![NormalizationAction {
+            name: "test-action".to_string(),
+            parameters: vec![],
+            precondition: moved,
+        }];
+
+        // Step 2: Eliminate existential quantifiers
+        eliminate_existential_quantifiers_from_preconditions(&mut actions);
+
+        // Verify: action should now have ?obj as parameter
+        assert_eq!(actions[0].parameters.len(), 1);
+        assert_eq!(actions[0].parameters[0].0, "?obj");
+        
+        // Precondition should be the conjunction without exists
+        if let Condition::And(parts) = &actions[0].precondition {
+            assert_eq!(parts.len(), 2);
+            assert!(matches!(parts[0], Condition::Atom(_, _)));
+            assert!(matches!(parts[1], Condition::Atom(_, _)));
+        } else {
+            panic!("Expected And condition after elimination");
+        }
+    }
+}
+
+/// Eliminate existential quantifiers from conditional effect conditions.
+///
+/// This function implements normalization step [5c] from Python's normalize.py.
+/// For effect conditions, we replace "when exists(x, phi) then e" with
+/// "forall(x): when phi then e".
+///
+/// This is done by moving the existential parameters to the effect's parameter list.
+/// The existential becomes a universal quantifier over the effect.
+///
+/// Before: effect with condition exists(?x, ?y, phi(?x, ?y)) and parameters []
+/// After:  effect with condition phi(?x, ?y) and parameters [?x, ?y]
+///
+/// Note: The effect parameters represent forall quantification over the effect,
+/// not existential quantification. The transformation converts the existential
+/// in the condition to universal quantification over the entire conditional effect.
+pub fn eliminate_existential_quantifiers_from_conditional_effects(
+    effects: &mut [ConditionalEffect],
+) {
+    for effect in effects.iter_mut() {
+        if let Condition::Exists(params, inner) = &effect.condition {
+            // Extend the effect's parameters with the existential parameters
+            effect.parameters.extend(params.clone());
+            
+            // Replace the condition with the inner condition (first part)
+            effect.condition = (**inner).clone();
+        }
+    }
+}
+
+#[cfg(test)]
+mod effect_elimination_tests {
+    use super::*;
+
+    #[test]
+    fn test_eliminate_existential_from_effect_condition() {
+        // Effect with condition exists(?obj, clear(?obj))
+        // Should become effect with parameter ?obj and condition clear(?obj)
+        let mut effects = vec![ConditionalEffect {
+            parameters: vec![],
+            condition: Condition::Exists(
+                vec![("?obj".to_string(), Some("object".to_string()))],
+                Box::new(Condition::Atom("clear".to_string(), vec!["?obj".to_string()])),
+            ),
+        }];
+
+        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
+
+        assert_eq!(effects[0].parameters.len(), 1);
+        assert_eq!(effects[0].parameters[0].0, "?obj");
+        
+        // Condition should now be just the atom
+        assert!(matches!(effects[0].condition, Condition::Atom(_, _)));
+        if let Condition::Atom(pred, args) = &effects[0].condition {
+            assert_eq!(pred, "clear");
+            assert_eq!(args.len(), 1);
+            assert_eq!(args[0], "?obj");
+        }
+    }
+
+    #[test]
+    fn test_eliminate_multiple_existentials_from_effect() {
+        // Effect with exists(?x, ?y, at(?x, ?y))
+        // Should add both ?x and ?y to parameters
+        let mut effects = vec![ConditionalEffect {
+            parameters: vec![],
+            condition: Condition::Exists(
+                vec![
+                    ("?from".to_string(), Some("loc".to_string())),
+                    ("?to".to_string(), Some("loc".to_string())),
+                ],
+                Box::new(Condition::Atom(
+                    "path-clear".to_string(),
+                    vec!["?from".to_string(), "?to".to_string()],
+                )),
+            ),
+        }];
+
+        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
+
+        assert_eq!(effects[0].parameters.len(), 2);
+        assert_eq!(effects[0].parameters[0].0, "?from");
+        assert_eq!(effects[0].parameters[1].0, "?to");
+        
+        assert!(matches!(effects[0].condition, Condition::Atom(_, _)));
+    }
+
+    #[test]
+    fn test_no_existential_in_effect_unchanged() {
+        // Effect without existential quantifier should remain unchanged
+        let mut effects = vec![ConditionalEffect {
+            parameters: vec![],
+            condition: Condition::Atom("holding".to_string(), vec!["obj1".to_string()]),
+        }];
+
+        let original_params_len = effects[0].parameters.len();
+        let original_condition = effects[0].condition.clone();
+
+        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
+
+        assert_eq!(effects[0].parameters.len(), original_params_len);
+        assert_eq!(effects[0].condition, original_condition);
+    }
+
+    #[test]
+    fn test_effect_with_existing_parameters() {
+        // Effect already has forall parameters, add existential params to them
+        // forall(?x): when exists(?y, connected(?x, ?y)) then ...
+        // Should become: forall(?x, ?y): when connected(?x, ?y) then ...
+        let mut effects = vec![ConditionalEffect {
+            parameters: vec![("?x".to_string(), Some("loc".to_string()))],
+            condition: Condition::Exists(
+                vec![("?y".to_string(), Some("loc".to_string()))],
+                Box::new(Condition::Atom(
+                    "connected".to_string(),
+                    vec!["?x".to_string(), "?y".to_string()],
+                )),
+            ),
+        }];
+
+        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
+
+        assert_eq!(effects[0].parameters.len(), 2);
+        assert_eq!(effects[0].parameters[0].0, "?x");
+        assert_eq!(effects[0].parameters[1].0, "?y");
+        
+        assert!(matches!(effects[0].condition, Condition::Atom(_, _)));
+    }
+
+    #[test]
+    fn test_eliminate_with_conjunction_in_effect() {
+        // exists(?obj, and(at(?obj, table), clear(?obj)))
+        // Should add ?obj to parameters and set condition to the conjunction
+        let mut effects = vec![ConditionalEffect {
+            parameters: vec![],
+            condition: Condition::Exists(
+                vec![("?obj".to_string(), Some("object".to_string()))],
+                Box::new(Condition::And(vec![
+                    Condition::Atom("at".to_string(), vec!["?obj".to_string(), "table".to_string()]),
+                    Condition::Atom("clear".to_string(), vec!["?obj".to_string()]),
+                ])),
+            ),
+        }];
+
+        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
+
+        assert_eq!(effects[0].parameters.len(), 1);
+        assert_eq!(effects[0].parameters[0].0, "?obj");
+        
+        // Condition should be the conjunction
+        assert!(matches!(effects[0].condition, Condition::And(_)));
+        if let Condition::And(parts) = &effects[0].condition {
+            assert_eq!(parts.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_multiple_effects_processed_independently() {
+        // Multiple effects should each be processed
+        let mut effects = vec![
+            ConditionalEffect {
+                parameters: vec![],
+                condition: Condition::Exists(
+                    vec![("?x".to_string(), Some("obj".to_string()))],
+                    Box::new(Condition::Atom("p".to_string(), vec!["?x".to_string()])),
+                ),
+            },
+            ConditionalEffect {
+                parameters: vec![("?a".to_string(), Some("t".to_string()))],
+                condition: Condition::Atom("q".to_string(), vec!["?a".to_string()]),
+            },
+        ];
+
+        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
+
+        // First effect should have existential eliminated
+        assert_eq!(effects[0].parameters.len(), 1);
+        assert_eq!(effects[0].parameters[0].0, "?x");
+        assert!(matches!(effects[0].condition, Condition::Atom(_, _)));
+
+        // Second effect should be unchanged
+        assert_eq!(effects[1].parameters.len(), 1);
+        assert_eq!(effects[1].parameters[0].0, "?a");
+        assert!(matches!(effects[1].condition, Condition::Atom(_, _)));
+    }
+
+    #[test]
+    fn test_integration_with_move_existential_quantifiers() {
+        // Integration test: move_existential_quantifiers followed by elimination
+        // This shows the semantic transformation from exists to forall
+        
+        let initial_condition = Condition::And(vec![
+            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
+            Condition::Exists(
+                vec![("?obj".to_string(), Some("object".to_string()))],
+                Box::new(Condition::Atom("blocking".to_string(), vec!["?obj".to_string(), "loc1".to_string()])),
+            ),
+        ]);
+
+        // Step 1: Move existential quantifiers
+        let moved = move_existential_quantifiers(&initial_condition);
+        
+        // Create an effect with the moved condition
+        let mut effects = vec![ConditionalEffect {
+            parameters: vec![],
+            condition: moved,
+        }];
+
+        // Step 2: Eliminate existential quantifiers (converts to forall over effect)
+        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
+
+        // Verify: effect should now have ?obj as a forall parameter
+        assert_eq!(effects[0].parameters.len(), 1);
+        assert_eq!(effects[0].parameters[0].0, "?obj");
+        
+        // Condition should be the conjunction without exists
+        // Semantics: forall ?obj: when (at(robot, loc1) and blocking(?obj, loc1)) then <effect>
+        if let Condition::And(parts) = &effects[0].condition {
+            assert_eq!(parts.len(), 2);
+            assert!(matches!(parts[0], Condition::Atom(_, _)));
+            assert!(matches!(parts[1], Condition::Atom(_, _)));
+        } else {
+            panic!("Expected And condition after elimination");
+        }
+    }
+}
+
+/// Verify and fix arithmetic expressions in the task.
+///
+/// This function implements verification from Python's normalize.py.
+/// It validates that all function symbols used in numeric expressions are properly
+/// defined in the domain. If undefined functions are found, it adds them to the
+/// domain with default initialization.
+///
+/// From Python's normalize.py:
+/// - Collects all defined function names from task.functions
+/// - Recursively validates expressions in:
+///   * Action effect assignments (peffect.expression)
+///   * Metric expression (task.metric)
+/// - For each PrimitiveNumericExpression found:
+///   * If function symbol not in function_names:
+///     - Print warning to stderr
+///     - Add new Function with arity matching the expression
+///     - For 0-arity functions: add to functions list and initialize to 0.0
+///     - For higher-arity: raise error (would need parameter types)
+/// - For ArithmeticExpressions: recursively verify all parts
+/// - For AdditiveInverse: verify the single part
+///
+/// **Note**: This is a placeholder for full task-level validation.
+/// Current Rust architecture uses building-block functions on conditions rather than
+/// full task mutation. To implement this properly, we would need:
+///
+/// 1. A complete Task structure with:
+///    - Mutable functions list: Vec<(String, Vec<(String, Option<String>)>, String)>
+///    - Mutable num_init list: Vec<Assignment>
+///    - Actions with typed Effect structures (not raw SExpr)
+///    - Metric: (String, Option<NumericExpression>)
+///
+/// 2. NumericExpression enum with variants:
+///    - PrimitiveNumericExpression { symbol: String, args: Vec<String> }
+///    - NumericConstant(f64)
+///    - ArithmeticExpression { op: String, parts: Vec<NumericExpression> }
+///    - AdditiveInverse(Box<NumericExpression>)
+///
+/// 3. Function to recursively extract and validate expressions from SExpr
+///
+/// 4. Mutation capabilities to add functions and initial assignments
+///
+/// This function would be called after eliminate_existential_quantifiers_from_conditional_effects
+/// and before remove_arithmetic_expressions in the normalization pipeline.
+///
+/// For now, this validation is deferred to the Python translator or would be
+/// implemented when porting the full Task structure and numeric expression handling.
+#[allow(dead_code)]
+pub fn verify_and_fix_arithmetic_expressions_placeholder() {
+    // TODO: Implement when full Task structure is available
+    // See detailed requirements in the function documentation above
+    unimplemented!("verify_and_fix_arithmetic_expressions requires full Task structure with mutable functions/num_init lists")
 }
