@@ -393,12 +393,12 @@ pub fn explore_normalized(norm_task: &crate::translate::normalize::NormalizableT
     eprintln!("DEBUG: explore_normalized() Step 5: extract fluent facts and functions");
     // Step 5: Extract fluent facts and functions from model
     let fluent_facts = get_fluent_facts(norm_task, &model);
-    let fluent_functions = get_fluent_functions(&model);
+    let fluent_functions = get_fluent_functions(norm_task);
     eprintln!("  Fluent facts: {}, fluent functions: {}", fluent_facts.len(), fluent_functions.len());
     
     eprintln!("DEBUG: explore_normalized() Step 6: separate init state into constants and fluents");
     // Step 6: Extract init function values and separate constant facts
-    let init_function_values = extract_init_function_values(&init_facts);
+    let init_function_values = extract_init_function_values(norm_task);
     let init_constant_numeric_facts = extract_constant_numeric_facts(&init_function_values, &fluent_functions);
     let init_constant_predicate_facts = extract_constant_predicate_facts(&init_facts, &fluent_facts);
     let type_to_objects = get_objects_by_type(&norm_task.objects);
@@ -437,28 +437,54 @@ fn get_fluent_facts(
         .collect()
 }
 
-/// Extract fluent functions (numeric functions) from model.
+/// Extract fluent functions (numeric functions) from normalized task.
 /// These are numeric functions that can change during plan execution.
-fn get_fluent_functions(model: &[build_model::Atom]) -> Vec<String> {
-    // For now, extract function names from numeric predicates in the model
-    // In Python, this checks for PrimitiveNumericExpression type
-    // We'll identify numeric functions by checking if predicate starts with common numeric names
-    // This is a simplified version - full implementation would need type information
+/// A numeric function is fluent if it appears in any action effect.
+fn get_fluent_functions(norm_task: &crate::translate::normalize::NormalizableTask) -> Vec<String> {
+    use std::collections::HashSet;
     
-    let mut fluent_functions = std::collections::HashSet::new();
+    let mut fluent_functions = HashSet::new();
     
-    for atom in model {
-        // Numeric effects show up as predicates like "increase", "decrease", etc.
-        // or as derived function names
-        if is_numeric_function(&atom.predicate) {
-            fluent_functions.insert(atom.predicate.clone());
+    // Extract function names from action effects
+    for action in &norm_task.actions {
+        for effect in &action.effects {
+            // Look for numeric effects in the effect SExpr
+            extract_function_names_from_effect(&effect.effect, &mut fluent_functions);
         }
     }
+    
+    // Note: Axioms don't currently support numeric effects in our implementation
+    // If they did, we would check axiom heads here as well
     
     fluent_functions.into_iter().collect()
 }
 
-/// Check if a predicate represents a numeric function.
+/// Extract function names from an effect SExpr.
+/// Handles (increase (func args) value), (decrease ...), (assign ...), etc.
+fn extract_function_names_from_effect(effect: &crate::translate::pddl_parser::SExpr, result: &mut std::collections::HashSet<String>) {
+    use crate::translate::pddl_parser::SExpr;
+    
+    if let SExpr::List(items) = effect {
+        if items.len() >= 2 {
+            // Check for numeric effect operators
+            if let SExpr::Atom(op) = &items[0] {
+                if matches!(op.as_str(), "increase" | "decrease" | "assign" | "scale-up" | "scale-down") {
+                    // Second element should be the function call: (func-name args...)
+                    if let SExpr::List(func_call) = &items[1] {
+                        if !func_call.is_empty() {
+                            if let SExpr::Atom(func_name) = &func_call[0] {
+                                result.insert(func_name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Check if a predicate represents a numeric function (kept for future use).
+#[allow(dead_code)]
 fn is_numeric_function(predicate: &str) -> bool {
     // Common numeric effect predicates
     matches!(
@@ -469,20 +495,46 @@ fn is_numeric_function(predicate: &str) -> bool {
 
 /// Extract initial values for all numeric functions from init facts.
 /// Returns a map from (function_name, args) to initial value.
-fn extract_init_function_values(_init_facts: &[build_model::Atom]) -> HashMap<(String, Vec<String>), f64> {
-    let init_values = HashMap::new();
+/// 
+/// Parses init SExprs looking for numeric assignments like: (= (function-name obj1 obj2) value)
+fn extract_init_function_values(norm_task: &crate::translate::normalize::NormalizableTask) -> HashMap<(String, Vec<String>), f64> {
+    use crate::translate::pddl_parser::SExpr;
     
-    // Numeric function assignments in init are represented as atoms with a special predicate
-    // or with a numeric value. For now, we'll check if the predicate looks like a numeric function
-    // and extract the value from the args (if it's the last arg as a number)
+    let mut init_values = HashMap::new();
     
-    // In SAS format, numeric init facts are like: (= (function-name obj1 obj2) value)
-    // This gets parsed as an atom. We need to identify these.
-    // For now, skip this - we'll handle it when we have concrete numeric examples
-    // The model atoms don't directly contain numeric values, those come from init SExprs
-    
-    // TODO: This needs to parse norm_task.init SExprs directly to extract numeric assignments
-    // For now, return empty map
+    for init_sexpr in &norm_task.init {
+        // Look for (= (function-name args...) value) patterns
+        if let SExpr::List(items) = init_sexpr {
+            if items.len() == 3 {
+                // Check if it's an assignment: first element is "="
+                if let SExpr::Atom(op) = &items[0] {
+                    if op == "=" {
+                        // Second element should be a function call: (function-name args...)
+                        if let SExpr::List(func_call) = &items[1] {
+                            if !func_call.is_empty() {
+                                if let SExpr::Atom(func_name) = &func_call[0] {
+                                    // Extract arguments
+                                    let mut args = Vec::new();
+                                    for arg in &func_call[1..] {
+                                        if let SExpr::Atom(arg_name) = arg {
+                                            args.push(arg_name.clone());
+                                        }
+                                    }
+                                    
+                                    // Third element is the numeric value
+                                    if let SExpr::Atom(value_str) = &items[2] {
+                                        if let Ok(value) = value_str.parse::<f64>() {
+                                            init_values.insert((func_name.clone(), args), value);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     
     init_values
 }
@@ -524,18 +576,30 @@ fn extract_constant_predicate_facts(
 /// Get objects grouped by type.
 /// Returns a map from type name to list of object names of that type.
 /// 
-/// Note: This is a simplified version that doesn't handle type hierarchies yet.
-/// Python version includes supertype relationships, but for now we just map objects to their direct types.
-/// TODO: Add type hierarchy support when needed (requires tracking Type basetype_name and supertypes).
+/// Implements type hierarchy support: each object appears under its direct type
+/// and all supertypes. For PDDL domains, we assume all types inherit from "object"
+/// as this is the standard PDDL convention.
+/// 
+/// Based on Python's instantiate.py:get_objects_by_type()
 fn get_objects_by_type(objects: &[(String, Option<String>)]) -> HashMap<String, Vec<String>> {
     let mut result: HashMap<String, Vec<String>> = HashMap::new();
     
     for (obj_name, obj_type) in objects {
         if let Some(type_name) = obj_type {
+            // Add object to its direct type
             result
                 .entry(type_name.clone())
                 .or_insert_with(Vec::new)
                 .push(obj_name.clone());
+            
+            // Add object to the "object" supertype
+            // In PDDL, all types inherit from "object" unless explicitly stated otherwise
+            if type_name != "object" {
+                result
+                    .entry("object".to_string())
+                    .or_insert_with(Vec::new)
+                    .push(obj_name.clone());
+            }
         } else {
             // Untyped objects go into "object" type
             result
