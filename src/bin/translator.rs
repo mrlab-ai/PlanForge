@@ -6,6 +6,39 @@ use clap::{Parser, Subcommand};
 
 use planners::translate::pddl::PddlTask;
 use planners::translate::normalize;
+use planners::translate::function_expression::FunctionalExpression;
+use planners::translate::numeric_axiom_rules::{NumericPart, PrimitiveNumericExpression as NARPNE, NumericConstant};
+
+/// Convert a FunctionalExpression to a NumericPart for numeric axiom processing
+fn convert_functional_expr_to_numeric_part(fe: &FunctionalExpression) -> NumericPart {
+    match fe {
+        FunctionalExpression::Primitive(pne) => {
+            NumericPart::Primitive(NARPNE {
+                name: pne.symbol.clone(),
+                args: pne.args.clone(),
+            })
+        }
+        FunctionalExpression::Constant(nc) => {
+            NumericPart::Constant(NumericConstant(nc.value))
+        }
+        FunctionalExpression::Arithmetic(ae) => {
+            // For arithmetic expressions, we would create a nested axiom
+            // For now, just flatten to a primitive with a derived name
+            let name = format!("derived!{}_{}", ae.op, 
+                ae.parts.iter().map(|p| match p {
+                    FunctionalExpression::Primitive(pne) => pne.symbol.clone(),
+                    FunctionalExpression::Constant(nc) => format!("{}", nc.value),
+                    _ => "expr".to_string(),
+                }).collect::<Vec<_>>().join("_")
+            );
+            NumericPart::Primitive(NARPNE { name, args: vec![] })
+        }
+        FunctionalExpression::AdditiveInverse(ai) => {
+            // Handle additive inverse by converting the inner expression
+            convert_functional_expr_to_numeric_part(&ai.part)
+        }
+    }
+}
 
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
 #[derive(Parser)]
@@ -101,17 +134,41 @@ fn main() -> anyhow::Result<()> {
                 eprintln!("  {}: {}", i + 1, op.name);
             }
 
-            //let py_groups: Option<Vec<Vec<String>>> = None;
-            //let sastask = planners::translate::to_sas::build_sas(
-            //    &ops,
-            //    &dom,
-            //    &prob,
-            //    &instantiated_num_axioms,
-            //    py_groups,
-            //);
-            //let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
-            //planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
-            //eprintln!("translator: wrote {}", out_path.display());
+            // Build SAS task
+            eprintln!("\ntranslator: building SAS task...");
+            
+            // Convert normalized numeric axioms to InstantiatedNumericAxiom format
+            eprintln!("translator: processing {} numeric axioms from normalization", norm_task.numeric_axioms.len());
+            let mut instantiated_num_axioms: Vec<planners::translate::numeric_axiom_rules::InstantiatedNumericAxiom> = Vec::new();
+            for nax in &norm_task.numeric_axioms {
+                // Convert FunctionalExpression parts to NumericPart
+                let parts: Vec<planners::translate::numeric_axiom_rules::NumericPart> = nax.parts.iter().map(|p| {
+                    convert_functional_expr_to_numeric_part(p)
+                }).collect();
+                
+                let effect = planners::translate::numeric_axiom_rules::PrimitiveNumericExpression {
+                    name: nax.name.clone(),
+                    args: nax.parameters.clone(),
+                };
+                instantiated_num_axioms.push(planners::translate::numeric_axiom_rules::InstantiatedNumericAxiom {
+                    name: nax.name.clone(),
+                    op: nax.op.clone(),
+                    parts,
+                    effect,
+                });
+            }
+            
+            let py_groups: Option<Vec<Vec<String>>> = None;
+            let sastask = planners::translate::to_sas::build_sas(
+                &result.grounded_ops,
+                &dom,
+                &prob,
+                &instantiated_num_axioms,
+                py_groups,
+            );
+            let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
+            planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
+            eprintln!("translator: wrote {}", out_path.display());
         }
         Commands::Preprocess { output } => {
             //not implemented yet, raise error

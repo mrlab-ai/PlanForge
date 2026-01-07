@@ -470,16 +470,15 @@ pub fn build_sas(
     // second pass: build operators with prevails/effects and numeric_effects
     let mut operators: Vec<crate::translate::sas::SASOperator> = Vec::new();
     let mut numeric_axioms: Vec<crate::translate::sas::NumericAxiom> = Vec::new();
-    let mut ax_index: std::collections::HashMap<crate::translate::sas::NumericAxiom, usize> =
-        std::collections::HashMap::new();
     let mut comp_axioms: Vec<crate::translate::sas::CompareAxiom> = Vec::new();
     let _comp_index: std::collections::HashMap<(String, Vec<usize>, usize), usize> =
         std::collections::HashMap::new();
     for op in ops {
         let mut prevails: Vec<(usize, usize)> = Vec::new();
-        let mut effects: Vec<(usize, Option<usize>, usize)> = Vec::new();
-        let mut op_numeric_effects: Vec<(usize, i64)> = Vec::new();
-        let mut op_numeric_preconds: Vec<crate::translate::sas::NumericPrecond> = Vec::new();
+        // effects: (var, pre, post, condition) where pre is -1 if no precondition
+        let mut effects: Vec<(usize, usize, usize, Vec<(usize, usize)>)> = Vec::new();
+        // numeric_effects: (nvar, op, rhs_var, condition)
+        let mut op_numeric_effects: Vec<(usize, String, usize, Vec<(usize, usize)>)> = Vec::new();
 
         if let Some(pre) = &op.pre {
             match pre {
@@ -548,13 +547,6 @@ pub fn build_sas(
                                     if let Some(fkey2) = try_parse_sexpr(r) {
                                         if let Some(&ni) = num_index.get(&derived_left) {
                                             if let Some(&nj) = num_index.get(&fkey2) {
-                                                op_numeric_preconds.push(
-                                                    crate::translate::sas::NumericPrecond::VarVar(
-                                                        ni,
-                                                        normalize_op(opstr),
-                                                        nj,
-                                                    ),
-                                                );
                                                 let left_s = derived_left.clone();
                                                 let right_s = fkey2.clone();
                                                 let comp_key =
@@ -585,20 +577,13 @@ pub fn build_sas(
                                                     crate::translate::sas::CompareAxiom {
                                                         comp: normalize_op(opstr),
                                                         parts: vec![ni, nj],
-                                                        effect: effect_idx,
+                                                        effect_var: effect_idx,
                                                     },
                                                 );
                                             }
                                         }
                                     } else if let Some(vval) = parse_int(r) {
                                         if let Some(&ni) = num_index.get(&derived_left) {
-                                            op_numeric_preconds.push(
-                                                crate::translate::sas::NumericPrecond::VarConst(
-                                                    ni,
-                                                    normalize_op(opstr),
-                                                    vval,
-                                                ),
-                                            );
                                         }
                                     }
                                 } else if let Some(derived_right) = ensure_expr_var(
@@ -611,36 +596,15 @@ pub fn build_sas(
                                 ) {
                                     if let Some(vval) = parse_int(l) {
                                         if let Some(&ni) = num_index.get(&derived_right) {
-                                            op_numeric_preconds.push(
-                                                crate::translate::sas::NumericPrecond::VarConst(
-                                                    ni,
-                                                    normalize_op(opstr),
-                                                    vval,
-                                                ),
-                                            );
                                         }
                                     }
                                 } else if let Some(fkey) = try_parse_sexpr(l) {
                                     if let Some(vval) = parse_int(r) {
                                         if let Some(&ni) = num_index.get(&fkey) {
-                                            op_numeric_preconds.push(
-                                                crate::translate::sas::NumericPrecond::VarConst(
-                                                    ni,
-                                                    normalize_op(opstr),
-                                                    vval,
-                                                ),
-                                            );
                                         }
                                     } else if let Some(fkey2) = try_parse_sexpr(r) {
                                         if let Some(&ni) = num_index.get(&fkey) {
                                             if let Some(&nj) = num_index.get(&fkey2) {
-                                                op_numeric_preconds.push(
-                                                    crate::translate::sas::NumericPrecond::VarVar(
-                                                        ni,
-                                                        normalize_op(opstr),
-                                                        nj,
-                                                    ),
-                                                );
                                                 // create comparison axiom variable and record CompareAxiom
                                                 let left_s = fkey.clone();
                                                 let right_s = fkey2.clone();
@@ -672,7 +636,7 @@ pub fn build_sas(
                                                     crate::translate::sas::CompareAxiom {
                                                         comp: normalize_op(opstr),
                                                         parts: vec![ni, nj],
-                                                        effect: effect_idx,
+                                                        effect_var: effect_idx,
                                                     },
                                                 );
                                             }
@@ -681,13 +645,6 @@ pub fn build_sas(
                                 } else if let Some(fkey) = try_parse_sexpr(r) {
                                     if let Some(vval) = parse_int(l) {
                                         if let Some(&ni) = num_index.get(&fkey) {
-                                            op_numeric_preconds.push(
-                                                crate::translate::sas::NumericPrecond::VarConst(
-                                                    ni,
-                                                    normalize_op(opstr),
-                                                    vval,
-                                                ),
-                                            );
                                         }
                                     }
                                 }
@@ -739,24 +696,10 @@ pub fn build_sas(
                     if let Some(fkey) = try_parse_sexpr(l) {
                         if let Some(vval) = parse_int(r) {
                             if let Some(&ni) = num_index.get(&fkey) {
-                                op_numeric_preconds.push(
-                                    crate::translate::sas::NumericPrecond::VarConst(
-                                        ni,
-                                        normalize_op(opstr),
-                                        vval,
-                                    ),
-                                );
                             }
                         } else if let Some(fkey2) = try_parse_sexpr(r) {
                             if let Some(&ni) = num_index.get(&fkey) {
                                 if let Some(&nj) = num_index.get(&fkey2) {
-                                    op_numeric_preconds.push(
-                                        crate::translate::sas::NumericPrecond::VarVar(
-                                            ni,
-                                            normalize_op(opstr),
-                                            nj,
-                                        ),
-                                    );
                                     // create comparison axiom variable and record CompareAxiom
                                     let left_s = fkey.clone();
                                     let right_s = fkey2.clone();
@@ -780,7 +723,7 @@ pub fn build_sas(
                                     comp_axioms.push(crate::translate::sas::CompareAxiom {
                                         comp: normalize_op(opstr),
                                         parts: vec![ni, nj],
-                                        effect: effect_idx,
+                                        effect_var: effect_idx,
                                     });
                                 }
                             }
@@ -788,13 +731,6 @@ pub fn build_sas(
                     } else if let Some(fkey) = try_parse_sexpr(r) {
                         if let Some(vval) = parse_int(l) {
                             if let Some(&ni) = num_index.get(&fkey) {
-                                op_numeric_preconds.push(
-                                    crate::translate::sas::NumericPrecond::VarConst(
-                                        ni,
-                                        normalize_op(opstr),
-                                        vval,
-                                    ),
-                                );
                             }
                         }
                     }
@@ -807,14 +743,18 @@ pub fn build_sas(
                 crate::translate::pddl_ast::Effect::Add(name, args) => {
                     let atom = format!("{}({})", name, args.join(", "));
                     if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
-                        effects.push((v, None, val));
+                        // effects tuple: (var, pre, post, condition)
+                        // For add effects, pre = range-1 (none of those) typically
+                        let pre = ranges.get(v).map(|r| r - 1).unwrap_or(0);
+                        effects.push((v, pre, val, vec![]));
                     }
                 }
                 crate::translate::pddl_ast::Effect::Del(name, args) => {
                     let atom = format!("{}({})", name, args.join(", "));
                     if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                         let none_idx = ranges[v] - 1;
-                        effects.push((v, Some(val), none_idx));
+                        // pre is the value being deleted, post is none_of_those
+                        effects.push((v, val, none_idx, vec![]));
                     }
                 }
                 crate::translate::pddl_ast::Effect::And(v) => {
@@ -823,24 +763,56 @@ pub fn build_sas(
                             crate::translate::pddl_ast::Effect::Add(name, args) => {
                                 let atom = format!("{}({})", name, args.join(", "));
                                 if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
-                                    effects.push((v, None, val));
+                                    let pre = ranges.get(v).map(|r| r - 1).unwrap_or(0);
+                                    effects.push((v, pre, val, vec![]));
                                 }
                             }
                             crate::translate::pddl_ast::Effect::Del(name, args) => {
                                 let atom = format!("{}({})", name, args.join(", "));
                                 if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                                     let none_idx = ranges[v] - 1;
-                                    effects.push((v, Some(val), none_idx));
+                                    effects.push((v, val, none_idx, vec![]));
                                 }
                             }
                             crate::translate::pddl_ast::Effect::Increase(nname, _args, val) => {
                                 if let Some(&ni) = num_index.get(nname) {
-                                    op_numeric_effects.push((ni, *val));
+                                    // For now, create a constant numeric variable for the value
+                                    let const_name = format!("const:{}", val);
+                                    let rhs_idx = if let Some(&idx) = num_index.get(&const_name) {
+                                        idx
+                                    } else {
+                                        let idx = numeric_list.len();
+                                        num_index.insert(const_name.clone(), idx);
+                                        numeric_list.push(crate::translate::sas::NumericVariable {
+                                            name: const_name,
+                                            initial: Some(*val),
+                                            ntype: "C".to_string(),
+                                            axiom_layer: -1,
+                                        });
+                                        numeric_init_vec.push(*val);
+                                        idx
+                                    };
+                                    op_numeric_effects.push((ni, "+".to_string(), rhs_idx, vec![]));
                                 }
                             }
                             crate::translate::pddl_ast::Effect::Decrease(nname, _args, val) => {
                                 if let Some(&ni) = num_index.get(nname) {
-                                    op_numeric_effects.push((ni, -*val));
+                                    let const_name = format!("const:{}", val);
+                                    let rhs_idx = if let Some(&idx) = num_index.get(&const_name) {
+                                        idx
+                                    } else {
+                                        let idx = numeric_list.len();
+                                        num_index.insert(const_name.clone(), idx);
+                                        numeric_list.push(crate::translate::sas::NumericVariable {
+                                            name: const_name,
+                                            initial: Some(*val),
+                                            ntype: "C".to_string(),
+                                            axiom_layer: -1,
+                                        });
+                                        numeric_init_vec.push(*val);
+                                        idx
+                                    };
+                                    op_numeric_effects.push((ni, "-".to_string(), rhs_idx, vec![]));
                                 }
                             }
                             crate::translate::pddl_ast::Effect::And(_) => { /* nested And - ignore */
@@ -850,46 +822,43 @@ pub fn build_sas(
                 }
                 crate::translate::pddl_ast::Effect::Increase(nname, _args, val) => {
                     if let Some(&ni) = num_index.get(nname) {
-                        op_numeric_effects.push((ni, *val));
+                        let const_name = format!("const:{}", val);
+                        let rhs_idx = if let Some(&idx) = num_index.get(&const_name) {
+                            idx
+                        } else {
+                            let idx = numeric_list.len();
+                            num_index.insert(const_name.clone(), idx);
+                            numeric_list.push(crate::translate::sas::NumericVariable {
+                                name: const_name,
+                                initial: Some(*val),
+                                ntype: "C".to_string(),
+                                axiom_layer: -1,
+                            });
+                            numeric_init_vec.push(*val);
+                            idx
+                        };
+                        op_numeric_effects.push((ni, "+".to_string(), rhs_idx, vec![]));
                     }
                 }
                 crate::translate::pddl_ast::Effect::Decrease(nname, _args, val) => {
                     if let Some(&ni) = num_index.get(nname) {
-                        op_numeric_effects.push((ni, -*val));
+                        let const_name = format!("const:{}", val);
+                        let rhs_idx = if let Some(&idx) = num_index.get(&const_name) {
+                            idx
+                        } else {
+                            let idx = numeric_list.len();
+                            num_index.insert(const_name.clone(), idx);
+                            numeric_list.push(crate::translate::sas::NumericVariable {
+                                name: const_name,
+                                initial: Some(*val),
+                                ntype: "C".to_string(),
+                                axiom_layer: -1,
+                            });
+                            numeric_init_vec.push(*val);
+                            idx
+                        };
+                        op_numeric_effects.push((ni, "-".to_string(), rhs_idx, vec![]));
                     }
-                }
-            }
-        }
-
-        // map op_numeric_preconds into indices in numeric_axioms and comparison axioms
-        let mut precond_idxs: Vec<usize> = Vec::new();
-        for np in op_numeric_preconds.into_iter() {
-            // convert NumericPrecond -> NumericAxiom
-            match np {
-                crate::translate::sas::NumericPrecond::VarConst(i, opstr, v) => {
-                    let ax = crate::translate::sas::NumericAxiom::VarConst(i, opstr.clone(), v);
-                    let idx = if let Some(&existing) = ax_index.get(&ax) {
-                        existing
-                    } else {
-                        let ni = numeric_axioms.len();
-                        numeric_axioms.push(ax.clone());
-                        ax_index.insert(ax.clone(), ni);
-                        ni
-                    };
-                    precond_idxs.push(idx);
-                }
-                crate::translate::sas::NumericPrecond::VarVar(i, opstr, j) => {
-                    // for simple comparisons between numeric variables store as CompareAxiom as well
-                    let ax = crate::translate::sas::NumericAxiom::VarVar(i, opstr.clone(), j);
-                    let idx = if let Some(&existing) = ax_index.get(&ax) {
-                        existing
-                    } else {
-                        let ni = numeric_axioms.len();
-                        numeric_axioms.push(ax.clone());
-                        ax_index.insert(ax.clone(), ni);
-                        ni
-                    };
-                    precond_idxs.push(idx);
                 }
             }
         }
@@ -899,7 +868,7 @@ pub fn build_sas(
             prevails,
             effects,
             numeric_effects: op_numeric_effects,
-            numeric_preconds: precond_idxs,
+            cost: 1.0,
         });
     }
     // Build simple instantiated numeric axioms from numeric init facts we collected.
@@ -1040,28 +1009,22 @@ pub fn build_sas(
             let pre_post = op
                 .effects
                 .iter()
-                .map(|(var, pre, post)| crate::translate::sas::CanonicalEffect {
+                .map(|(var, pre, post, cond)| crate::translate::sas::CanonicalEffect {
                     var: *var,
-                    pre: *pre,
+                    pre: Some(*pre),
                     post: *post,
-                    condition: Vec::new(),
+                    condition: cond.clone(),
                 })
                 .collect();
             let assign_effects = op
                 .numeric_effects
                 .iter()
-                .map(|(target, delta)| {
-                    let symbol = if *delta >= 0 {
-                        "+".to_string()
-                    } else {
-                        "-".to_string()
-                    };
-                    let amount = delta.abs();
+                .map(|(target, assign_op, rhs_var, cond)| {
                     crate::translate::sas::CanonicalAssignEffect {
                         target: *target,
-                        op: symbol,
-                        rhs: crate::translate::sas::CanonicalAssignRhs::Constant(amount),
-                        condition: Vec::new(),
+                        op: assign_op.clone(),
+                        rhs: crate::translate::sas::CanonicalAssignRhs::Variable(*rhs_var),
+                        condition: cond.clone(),
                     }
                 })
                 .collect();
@@ -1082,13 +1045,19 @@ pub fn build_sas(
         numeric_variables: numeric_list,
         numeric_axioms,
         comparison_axioms: comp_axioms,
-        numeric_init: numeric_init_vec,
+        axioms: Vec::new(),
+        numeric_init: numeric_init_vec.iter().map(|&v| v as f64).collect(),
         mutex_groups: mutex_groups_pairs,
+        ranges: ranges.clone(),
+        axiom_layers: vec![-1; ranges.len()],
         init: prop_init,
         goal: goal_pairs,
+        translation_key: translation_key.clone(),
         canonical_variables,
         canonical_operators,
         canonical_metric: Some(("<".to_string(), metric_idx)),
+        metric: ("<".to_string(), metric_idx),
         global_constraint: None,
+        comp_axiom_layer: 0,
     }
 }

@@ -20,4 +20,5 @@ pub mod pddl_to_prolog;
 pub mod sas;
 pub mod sas_tasks;
 pub mod sas_writer;
+pub mod simplify;
 pub mod to_sas;

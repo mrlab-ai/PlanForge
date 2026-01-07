@@ -78,11 +78,11 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
     writeln!(f, "{}", task.comparison_axioms.len())?;
     writeln!(f, "begin_comparison_axioms")?;
     for cax in &task.comparison_axioms {
-        // format: <effect> <comp> <part0> <part1>
+        // format: <effect_var> <comp> <part0> <part1>
         writeln!(
             f,
             "{} {} {} {}",
-            cax.effect, cax.comp, cax.parts[0], cax.parts[1]
+            cax.effect_var, cax.comp, cax.parts[0], cax.parts[1]
         )?;
     }
     writeln!(f, "end_comparison_axioms")?;
@@ -91,14 +91,9 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
     writeln!(f, "{}", task.numeric_axioms.len())?;
     writeln!(f, "begin_numeric_axioms")?;
     for ax in task.numeric_axioms.iter() {
-        match ax {
-            crate::translate::sas::NumericAxiom::VarConst(effect, opstr, val) => {
-                writeln!(f, "{} {} {} {}", effect, opstr, effect, val)?;
-            }
-            crate::translate::sas::NumericAxiom::VarVar(effect, opstr, other) => {
-                writeln!(f, "{} {} {} {}", effect, opstr, effect, other)?;
-            }
-        }
+        // format: <effect> <op> <part0> [part1]
+        let parts_str = ax.parts.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(" ");
+        writeln!(f, "{} {} {}", ax.effect, ax.op, parts_str)?;
     }
     writeln!(f, "end_numeric_axioms")?;
 
@@ -168,18 +163,23 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
             for (v, val) in &op.prevails {
                 writeln!(f, "{} {}", v, val)?;
             }
-            writeln!(f, "num_preconds {}", op.numeric_preconds.len())?;
-            for idx in &op.numeric_preconds {
-                writeln!(f, "pax {}", idx)?;
-            }
             writeln!(f, "effects {}", op.effects.len())?;
-            for (v, pre, post) in &op.effects {
-                writeln!(f, "{} {} {}", v, pre.map(|p| p as i64).unwrap_or(-1), post)?;
+            for (v, pre, post, cond) in &op.effects {
+                write!(f, "{} ", cond.len())?;
+                for (cv, cval) in cond {
+                    write!(f, "{} {} ", cv, cval)?;
+                }
+                writeln!(f, "{} {} {}", v, pre, post)?;
             }
             writeln!(f, "num_effects {}", op.numeric_effects.len())?;
-            for (ni, delta) in &op.numeric_effects {
-                writeln!(f, "{} {}", ni, delta)?;
+            for (nvar, assign_op, rhs_var, cond) in &op.numeric_effects {
+                write!(f, "{} ", cond.len())?;
+                for (cv, cval) in cond {
+                    write!(f, "{} {} ", cv, cval)?;
+                }
+                writeln!(f, "{} {} {}", nvar, assign_op, rhs_var)?;
             }
+            writeln!(f, "{}", op.cost)?;
             writeln!(f, "end_operator")?;
         }
     }

@@ -55,12 +55,19 @@ pub struct SASOperator {
     pub name: String,
     // prevail conditions (var->val)
     pub prevails: Vec<(usize, usize)>,
-    // effects (var, pre, post)
-    pub effects: Vec<(usize, Option<usize>, usize)>,
-    // numeric effects: (num_var_index, delta)
-    pub numeric_effects: Vec<(usize, i64)>,
-    // numeric preconditions: indices into SASTask.numeric_axioms
-    pub numeric_preconds: Vec<usize>,
+    // effects (var, pre, post, condition)
+    pub effects: Vec<(usize, usize, usize, Vec<(usize, usize)>)>,
+    // numeric effects: (num_var_index, op, rhs_var, condition)
+    pub numeric_effects: Vec<(usize, String, usize, Vec<(usize, usize)>)>,
+    // deprecated cost (from Python)
+    pub cost: f64,
+}
+
+/// Propositional axiom
+#[derive(Debug, Clone)]
+pub struct SASAxiom {
+    pub condition: Vec<(usize, usize)>,
+    pub effect: (usize, usize),
 }
 
 #[derive(Debug, Default)]
@@ -71,19 +78,31 @@ pub struct SASTask {
     pub numeric_axioms: Vec<NumericAxiom>,
     // comparison axioms (propositional encoding of comparisons)
     pub comparison_axioms: Vec<CompareAxiom>,
+    // propositional axioms
+    pub axioms: Vec<SASAxiom>,
     // initial values for numeric variables
-    pub numeric_init: Vec<i64>,
+    pub numeric_init: Vec<f64>,
     // mutex groups over propositional variables as pairs (var, val)
     pub mutex_groups: Vec<Vec<(usize, usize)>>,
-    // initial state for propositional variables (index into value_names, or -1)
+    // ranges for each propositional variable (domain size)
+    pub ranges: Vec<usize>,
+    // axiom layers for each variable (-1 for non-derived)
+    pub axiom_layers: Vec<i32>,
+    // initial state for propositional variables
     pub init: Vec<i32>,
     // goal as (var, value) pairs
     pub goal: Vec<(usize, usize)>,
+    // translation key: for each variable, list of value names
+    pub translation_key: Vec<Vec<String>>,
     // Canonical descriptors mirroring the Python translator output
     pub canonical_variables: Vec<CanonicalVariable>,
     pub canonical_operators: Vec<CanonicalOperator>,
     pub canonical_metric: Option<(String, isize)>,
+    // metric: (direction, variable_index) where direction is '<' (minimize) or '>' (maximize)
+    pub metric: (String, isize),
     pub global_constraint: Option<(usize, usize)>,
+    // Comparison axiom layer (the layer at which comparison axioms are evaluated)
+    pub comp_axiom_layer: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -93,14 +112,15 @@ pub enum NumericPrecond {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum NumericAxiom {
-    VarConst(usize, String, i64),
-    VarVar(usize, String, usize),
+pub struct NumericAxiom {
+    pub op: String,
+    pub parts: Vec<usize>,
+    pub effect: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct CompareAxiom {
     pub comp: String,
     pub parts: Vec<usize>,
-    pub effect: usize,
+    pub effect_var: usize,
 }
