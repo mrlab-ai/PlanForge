@@ -368,6 +368,39 @@ pub fn explore_normalized(norm_task: &crate::translate::normalize::NormalizableT
     for init_sexpr in &norm_task.init {
         if let Some(atom) = sexpr_to_atom(init_sexpr) {
             init_facts.push(atom);
+            
+            // For numeric function assignments (= (func args) val), also add defined!func(args)
+            // This is needed for numeric axiom rule matching
+            if let crate::translate::pddl_parser::SExpr::List(items) = init_sexpr {
+                if items.len() >= 3 {
+                    if let crate::translate::pddl_parser::SExpr::Atom(op) = &items[0] {
+                        if op == "=" {
+                            if let crate::translate::pddl_parser::SExpr::List(func_items) = &items[1] {
+                                if !func_items.is_empty() {
+                                    if let crate::translate::pddl_parser::SExpr::Atom(fname) = &func_items[0] {
+                                        // Add defined!func(args) fact
+                                        let defined_pred = format!("defined!{}", fname);
+                                        let args: Vec<build_model::Arg> = func_items[1..]
+                                            .iter()
+                                            .filter_map(|item| {
+                                                if let crate::translate::pddl_parser::SExpr::Atom(s) = item {
+                                                    Some(build_model::Arg::Const(s.clone()))
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect();
+                                        init_facts.push(build_model::Atom {
+                                            predicate: defined_pred,
+                                            args,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -617,7 +650,7 @@ fn ground_from_normalized_model(
     model: &[build_model::Atom],
     norm_task: &crate::translate::normalize::NormalizableTask,
 ) -> (Vec<GroundedOp>, Vec<InstantiatedNumericAxiom>) {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     // Build action lookup map
     let mut action_map: HashMap<String, &crate::translate::normalize::TaskAction> = HashMap::new();
@@ -625,10 +658,48 @@ fn ground_from_normalized_model(
         action_map.insert(action.name.clone(), action);
     }
 
+    // Build numeric axiom lookup map by name
+    let mut numeric_axiom_map: HashMap<String, &crate::translate::normalization_function_admin::NumericAxiom> = HashMap::new();
+    for axiom in &norm_task.numeric_axioms {
+        numeric_axiom_map.insert(axiom.name.clone(), axiom);
+    }
+
+    eprintln!("DEBUG: numeric_axiom_map keys: {:?}", numeric_axiom_map.keys().collect::<Vec<_>>());
+
     let mut grounded_ops = Vec::new();
+    let mut instantiated_numeric_axioms: HashSet<InstantiatedNumericAxiom> = HashSet::new();
+
+    // Track derived atoms found
+    let mut derived_atom_count = 0;
 
     // Iterate model atoms and extract action instantiations
     for atom in model {
+        if atom.predicate.starts_with("derived!") {
+            derived_atom_count += 1;
+            if derived_atom_count <= 5 {
+                eprintln!("DEBUG: Found derived atom: {} args={:?}", atom.predicate, atom.args);
+            }
+            // Also check if it's in the map
+            if let Some(axiom) = numeric_axiom_map.get(&atom.predicate) {
+                // Extract grounded arguments
+                let grounded_args = extract_grounded_args(&atom.args);
+                
+                // Build variable mapping from axiom parameters to grounded args
+                let variable_mapping: HashMap<String, String> = axiom.parameters.iter()
+                    .zip(grounded_args.iter())
+                    .map(|(param, obj)| (param.clone(), obj.clone()))
+                    .collect();
+                
+                // Instantiate the numeric axiom
+                if let Some(inst_axiom) = instantiate_numeric_axiom(axiom, &variable_mapping) {
+                    instantiated_numeric_axioms.insert(inst_axiom);
+                } else {
+                    eprintln!("DEBUG: instantiate_numeric_axiom returned None for {} with mapping {:?}", axiom.name, variable_mapping);
+                }
+            } else {
+                eprintln!("DEBUG: No axiom found for predicate {}", atom.predicate);
+            }
+        }
         // Check if this atom represents an action (predicate starts with @action-)
         if atom.predicate.starts_with("@action-") {
             let action_name = &atom.predicate["@action-".len()..];
@@ -648,10 +719,67 @@ fn ground_from_normalized_model(
         }
     }
 
-    // For now, return empty numeric axioms (will be filled in later phases)
-    let num_axioms = Vec::new();
+    eprintln!("DEBUG: total derived atoms found: {}, instantiated axioms: {}", derived_atom_count, instantiated_numeric_axioms.len());
+
+    let num_axioms: Vec<InstantiatedNumericAxiom> = instantiated_numeric_axioms.into_iter().collect();
 
     (grounded_ops, num_axioms)
+}
+
+/// Instantiate a numeric axiom with specific variable bindings.
+fn instantiate_numeric_axiom(
+    axiom: &crate::translate::normalization_function_admin::NumericAxiom,
+    variable_mapping: &std::collections::HashMap<String, String>,
+) -> Option<InstantiatedNumericAxiom> {
+    use crate::translate::function_expression::FunctionalExpression;
+    use crate::translate::numeric_axiom_rules::{NumericPart, PrimitiveNumericExpression, NumericConstant};
+    
+    // Build instantiated name: "(axiom-name arg1 arg2 ...)"
+    let arg_list: Vec<String> = axiom.parameters.iter()
+        .map(|p| variable_mapping.get(p).cloned().unwrap_or_else(|| p.clone()))
+        .collect();
+    let inst_name = format!("({} {})", axiom.name, arg_list.join(" "));
+    
+    // Instantiate each part
+    let mut inst_parts = Vec::new();
+    for part in &axiom.parts {
+        match part {
+            FunctionalExpression::Constant(nc) => {
+                inst_parts.push(NumericPart::Constant(NumericConstant(nc.value)));
+            }
+            FunctionalExpression::Primitive(pne) => {
+                // Substitute variables in args
+                let inst_args: Vec<String> = pne.args.iter()
+                    .map(|a| variable_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
+                    .collect();
+                let inst_pne = PrimitiveNumericExpression {
+                    name: pne.symbol.clone(),
+                    args: inst_args,
+                };
+                inst_parts.push(NumericPart::Primitive(inst_pne));
+            }
+            _ => {
+                // For nested arithmetic expressions, we'd need recursive instantiation
+                // For now, skip (normalization should have flattened these)
+            }
+        }
+    }
+    
+    // Build effect PNE
+    let effect_args: Vec<String> = axiom.parameters.iter()
+        .map(|p| variable_mapping.get(p).cloned().unwrap_or_else(|| p.clone()))
+        .collect();
+    let effect = PrimitiveNumericExpression {
+        name: axiom.name.clone(),
+        args: effect_args,
+    };
+    
+    Some(InstantiatedNumericAxiom {
+        name: inst_name,
+        op: axiom.op.clone(),
+        parts: inst_parts,
+        effect,
+    })
 }
 
 /// Extract grounded (constant) arguments from model atom args.

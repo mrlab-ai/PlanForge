@@ -106,6 +106,11 @@ fn main() -> anyhow::Result<()> {
                 norm_task.axioms.len(),
                 norm_task.numeric_axioms.len()
             );
+            // Debug: print axioms
+            for (i, ax) in norm_task.axioms.iter().enumerate() {
+                eprintln!("  axiom[{}]: name={}, condition={:?}", i, ax.name, ax.condition);
+            }
+            eprintln!("  goal={:?}", norm_task.goal);
 
             // Run instantiation (Phase 1: model-guided grounding)
             // Use the normalized task for proper exploration rule generation
@@ -137,26 +142,10 @@ fn main() -> anyhow::Result<()> {
             // Build SAS task
             eprintln!("\ntranslator: building SAS task...");
             
-            // Convert normalized numeric axioms to InstantiatedNumericAxiom format
-            eprintln!("translator: processing {} numeric axioms from normalization", norm_task.numeric_axioms.len());
-            let mut instantiated_num_axioms: Vec<planners::translate::numeric_axiom_rules::InstantiatedNumericAxiom> = Vec::new();
-            for nax in &norm_task.numeric_axioms {
-                // Convert FunctionalExpression parts to NumericPart
-                let parts: Vec<planners::translate::numeric_axiom_rules::NumericPart> = nax.parts.iter().map(|p| {
-                    convert_functional_expr_to_numeric_part(p)
-                }).collect();
-                
-                let effect = planners::translate::numeric_axiom_rules::PrimitiveNumericExpression {
-                    name: nax.name.clone(),
-                    args: nax.parameters.clone(),
-                };
-                instantiated_num_axioms.push(planners::translate::numeric_axiom_rules::InstantiatedNumericAxiom {
-                    name: nax.name.clone(),
-                    op: nax.op.clone(),
-                    parts,
-                    effect,
-                });
-            }
+            // Use the instantiated numeric axioms from the model-guided grounding
+            // These are the 60+ axioms that were instantiated from the 8 templates
+            eprintln!("translator: processing {} instantiated numeric axioms from model", result.numeric_axioms.len());
+            let instantiated_num_axioms = result.numeric_axioms;
             
             let py_groups: Option<Vec<Vec<String>>> = None;
             let sastask = planners::translate::to_sas::build_sas(
@@ -165,6 +154,8 @@ fn main() -> anyhow::Result<()> {
                 &prob,
                 &instantiated_num_axioms,
                 py_groups,
+                &norm_task.axioms,
+                &norm_task.goal,
             );
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
             planners::translate::sas_writer::write_sas(&sastask, &out_path)?;

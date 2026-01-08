@@ -74,40 +74,15 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
         }
         writeln!(f, "end_mutex_group")?;
     }
-    // comparison axioms block
-    writeln!(f, "{}", task.comparison_axioms.len())?;
-    writeln!(f, "begin_comparison_axioms")?;
-    for cax in &task.comparison_axioms {
-        // format: <effect_var> <comp> <part0> <part1>
-        writeln!(
-            f,
-            "{} {} {} {}",
-            cax.effect_var, cax.comp, cax.parts[0], cax.parts[1]
-        )?;
-    }
-    writeln!(f, "end_comparison_axioms")?;
 
-    // numeric axioms: emit in textual block format
-    writeln!(f, "{}", task.numeric_axioms.len())?;
-    writeln!(f, "begin_numeric_axioms")?;
-    for ax in task.numeric_axioms.iter() {
-        // format: <effect> <op> <part0> [part1]
-        let parts_str = ax.parts.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(" ");
-        writeln!(f, "{} {} {}", ax.effect, ax.op, parts_str)?;
-    }
-    writeln!(f, "end_numeric_axioms")?;
-
-    if let Some((var, val)) = task.global_constraint {
-        writeln!(f, "begin_global_constraint")?;
-        writeln!(f, "{} {}", var, val)?;
-        writeln!(f, "end_global_constraint")?;
-    }
-    // Initial propositional and numeric states
+    // Initial propositional state
     writeln!(f, "begin_state")?;
     for v in &task.init {
         writeln!(f, "{}", v)?;
     }
     writeln!(f, "end_state")?;
+
+    // Initial numeric state
     writeln!(f, "begin_numeric_state")?;
     for v in &task.numeric_init {
         writeln!(f, "{}.0", v)?;
@@ -121,6 +96,8 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
         writeln!(f, "{} {}", v, val)?;
     }
     writeln!(f, "end_goal")?;
+
+    // Operators
     if !task.canonical_operators.is_empty() {
         writeln!(f, "{}", task.canonical_operators.len())?;
         for op in &task.canonical_operators {
@@ -183,5 +160,52 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
             writeln!(f, "end_operator")?;
         }
     }
+
+    // Propositional axioms (rules)
+    writeln!(f, "{}", task.axioms.len())?;
+    for ax in &task.axioms {
+        writeln!(f, "begin_rule")?;
+        writeln!(f, "{}", ax.condition.len())?;
+        for (var, val) in &ax.condition {
+            writeln!(f, "{} {}", var, val)?;
+        }
+        let (eff_var, eff_val) = ax.effect;
+        writeln!(f, "{} {} {}", eff_var, 1 - eff_val, eff_val)?;
+        writeln!(f, "end_rule")?;
+    }
+
+    // comparison axioms block
+    writeln!(f, "{}", task.comparison_axioms.len())?;
+    writeln!(f, "begin_comparison_axioms")?;
+    for cax in &task.comparison_axioms {
+        // format: <effect_var> <comp> <part0> <part1>
+        writeln!(
+            f,
+            "{} {} {} {}",
+            cax.effect_var, cax.comp, cax.parts[0], cax.parts[1]
+        )?;
+    }
+    writeln!(f, "end_comparison_axioms")?;
+
+    // numeric axioms: emit in textual block format
+    writeln!(f, "{}", task.numeric_axioms.len())?;
+    writeln!(f, "begin_numeric_axioms")?;
+    for ax in task.numeric_axioms.iter() {
+        // format: <effect> <op> <part0> [part1]
+        let parts_str = ax.parts.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(" ");
+        writeln!(f, "{} {} {}", ax.effect, ax.op, parts_str)?;
+    }
+    writeln!(f, "end_numeric_axioms")?;
+
+    // Global constraint
+    writeln!(f, "begin_global_constraint")?;
+    if let Some((var, val)) = task.global_constraint {
+        writeln!(f, "{} {}", var, val)?;
+    } else {
+        // Write a dummy/no constraint marker
+        writeln!(f, "-1 -1")?;
+    }
+    writeln!(f, "end_global_constraint")?;
+
     Ok(())
 }

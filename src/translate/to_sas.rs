@@ -2,6 +2,16 @@ use crate::translate::instantiate::GroundedOp;
 use crate::translate::pddl_ast::{Domain, Problem};
 use crate::translate::sas::SASTask;
 
+/// Format a PrimitiveNumericExpression as a string for use as a numeric variable name.
+/// Matches Python's PNE formatting: "name(args)" or just "name()" if no args.
+fn format_pne(pne: &crate::translate::numeric_axiom_rules::PrimitiveNumericExpression) -> String {
+    if pne.args.is_empty() {
+        format!("{}()", pne.name)
+    } else {
+        format!("{}({})", pne.name, pne.args.join(", "))
+    }
+}
+
 // Helper to ensure a numeric variable exists for an expression. This is a
 // module-level function so we can pass a mutable DerivedFunctionAdministrator
 // reference without closure capture problems.
@@ -135,7 +145,19 @@ fn ensure_expr_var_visit(
                 }
                 Some(const_pne_name)
             } else {
-                None
+                // Non-numeric atom - could be a zero-argument function like 'derived!0' or 'funds'
+                // Try to look it up as a zero-argument function
+                let key = format!("{}()", a);
+                if num_index.contains_key(&key) {
+                    Some(key)
+                } else {
+                    // Not found with parentheses, maybe it's already in the right format
+                    if num_index.contains_key(a) {
+                        Some(a.clone())
+                    } else {
+                        None
+                    }
+                }
             }
         }
     }
@@ -150,16 +172,12 @@ pub fn build_sas(
         crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom,
     >,
     py_groups: Option<Vec<Vec<String>>>,
+    propositional_axioms: &[crate::translate::normalize::TaskAxiom],
+    normalized_goal: &crate::translate::pddl_ast::Condition,
 ) -> SASTask {
     fn normalize_op(op: &str) -> String {
-        match op {
-            "=" => "eq".to_string(),
-            "<=" => "le".to_string(),
-            ">=" => "ge".to_string(),
-            "<" => "lt".to_string(),
-            ">" => "gt".to_string(),
-            other => other.to_string(),
-        }
+        // Keep the operator as-is for Python compatibility
+        op.to_string()
     }
     use std::collections::HashMap;
     let mut var_index: HashMap<String, usize> = HashMap::new();
@@ -422,6 +440,24 @@ pub fn build_sas(
             value_names: value_names.clone(),
         });
     }
+
+    // Create propositional variables for axiom atoms (like @axiom-0)
+    // These are derived variables with axiom layer > comparison axiom layer
+    let mut axiom_atom_to_var: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let axiom_layer = 31; // Standard layer for propositional axioms (after comparisons)
+    for ax in propositional_axioms {
+        let atom = format!("{}()", ax.name); // e.g., "@axiom-0()"
+        let var_idx = vars.len();
+        axiom_atom_to_var.insert(atom.clone(), var_idx);
+        vars.push(crate::translate::sas::Variable {
+            value_names: vec![
+                format!("Atom {}", atom),
+                format!("NegatedAtom {}", atom),
+            ],
+        });
+        ranges.push(2); // Derived variables always have range 2
+    }
+
     // Build mutex groups from chosen_groups: each group is a list of facts (var,val)
     let mut mutex_groups_pairs: Vec<Vec<(usize, usize)>> = Vec::new();
     if !chosen_groups.is_empty() {
@@ -439,26 +475,116 @@ pub fn build_sas(
     }
     // numeric effect hints already collected above
 
-    // fold numeric vars into NumericVariable structs; prefer init values from problem init, otherwise use effect values
+    // Following Python's strips_to_sas_dictionary logic:
+    // 1. First add numeric variables for each instantiated numeric axiom's effect
+    // 2. Then add remaining fluents from numeric_inits that aren't already present
+    
+    let mut numeric_list: Vec<crate::translate::sas::NumericVariable> = Vec::new();
+    let mut numeric_init_vec: Vec<i64> = Vec::new();
+    let mut num_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    
+    // Process axiom_rules to get ntype and axiom_layer for each axiom
+    let axiom_by_pne = crate::translate::numeric_axiom_rules::axiom_by_pne(&instantiated_num_axioms);
+    let constant_axioms = crate::translate::numeric_axiom_rules::identify_constants(
+        &instantiated_num_axioms,
+        &axiom_by_pne,
+    );
+    let constant_effects: std::collections::HashSet<_> = constant_axioms.iter().map(|a| &a.effect).collect();
+    let (axioms_by_layer, _max_layer) = crate::translate::numeric_axiom_rules::compute_axiom_layers(
+        &instantiated_num_axioms,
+        &constant_axioms,
+        &axiom_by_pne,
+    );
+    
+    // Build axiom_map to identify redundant axioms
+    let axiom_map = crate::translate::numeric_axiom_rules::identify_equivalent_axioms(
+        &axioms_by_layer,
+        &axiom_by_pne,
+    );
+    
+    // First: add numeric variables for each axiom effect (matching Python's order)
+    // Python adds axioms first, then fluents, sorted by name
+    let mut axiom_effects_added: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut redundant_axioms: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    
+    // Sort axioms by effect name for deterministic ordering
+    let mut sorted_axioms: Vec<_> = instantiated_num_axioms.iter().collect();
+    sorted_axioms.sort_by(|a, b| {
+        let a_name = format_pne(&a.effect);
+        let b_name = format_pne(&b.effect);
+        a_name.cmp(&b_name)
+    });
+    
+    for axiom in sorted_axioms.iter() {
+        let effect_name = format_pne(&axiom.effect);
+        // Check if this axiom effect is mapped to another (redundant)
+        if let Some(mapped_axiom) = axiom_map.get(*axiom) {
+            let mapped_name = format_pne(&mapped_axiom.effect);
+            redundant_axioms.insert(effect_name.clone(), mapped_name);
+            continue;
+        }
+        
+        if !axiom_effects_added.contains(&effect_name) {
+            axiom_effects_added.insert(effect_name.clone());
+            
+            // Determine ntype: 'C' for constants, 'D' for derived
+            let ntype = if constant_effects.contains(&axiom.effect) {
+                "C".to_string()
+            } else {
+                "D".to_string()
+            };
+            
+            // Determine axiom_layer
+            let mut axiom_layer: i32 = -1;
+            for (layer, layer_axioms) in &axioms_by_layer {
+                if layer_axioms.iter().any(|a| format_pne(&a.effect) == effect_name) {
+                    axiom_layer = *layer;
+                    break;
+                }
+            }
+            
+            let idx = numeric_list.len();
+            num_index.insert(effect_name.clone(), idx);
+            numeric_list.push(crate::translate::sas::NumericVariable {
+                name: effect_name,
+                initial: Some(0),  // Will be updated for constants below
+                ntype,
+                axiom_layer,
+            });
+            numeric_init_vec.push(0);
+        }
+    }
+    
+    // Handle redundant axiom mappings: map them to the same index as their equivalent
+    for (redundant_name, target_name) in &redundant_axioms {
+        if let Some(&target_idx) = num_index.get(target_name) {
+            num_index.insert(redundant_name.clone(), target_idx);
+        }
+    }
+    
+    // Now add remaining fluents from numeric_inits that aren't already in the map
+    // Combine numeric_vars and numeric_inits, preferring init values
     let mut num_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for (n, v) in numeric_vars.into_iter() {
         num_map.entry(n).or_insert(v);
     }
-    // override with numeric_inits from problem init if present
     for (k, v) in numeric_inits.into_iter() {
         num_map.insert(k, v);
     }
     // Ensure cost() exists (initialize to 0 if absent) and total-cost() exists for metric
     num_map.entry("cost()".to_string()).or_insert(0);
     num_map.entry("total-cost()".to_string()).or_insert(0);
-
-    let mut numeric_list: Vec<crate::translate::sas::NumericVariable> = Vec::new();
-    let mut numeric_init_vec: Vec<i64> = Vec::new();
-    // deterministic ordering of numeric variables: sort by name
-    let mut num_entries: Vec<(String, i64)> =
+    
+    // Sort fluents by name and add those not already from axioms
+    let mut fluent_entries: Vec<(String, i64)> =
         num_map.iter().map(|(k, v)| (k.clone(), *v)).collect();
-    num_entries.sort_by(|a, b| a.0.cmp(&b.0));
-    for (n, v) in num_entries.iter() {
+    fluent_entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (n, v) in fluent_entries.iter() {
+        // Skip if already added from axioms
+        if num_index.contains_key(n) {
+            continue;
+        }
+        
         // heuristically classify numeric variable type: constants 'C', derived 'D' if expression or contains '+'/'-' or 'derived' patterns, regular 'R', instrumentation 'I'
         let ntype = if n == "total-cost()" {
             "I".to_string()
@@ -472,6 +598,8 @@ pub fn build_sas(
         } else {
             "R".to_string()
         };
+        let idx = numeric_list.len();
+        num_index.insert(n.clone(), idx);
         numeric_list.push(crate::translate::sas::NumericVariable {
             name: n.clone(),
             initial: Some(*v),
@@ -492,16 +620,14 @@ pub fn build_sas(
         }
     }
 
-    // build mapping from numeric name to index
-    let mut num_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    for (i, nv) in numeric_list.iter().enumerate() {
-        num_index.insert(nv.name.clone(), i);
-    }
+    // num_index is already built above, no need to rebuild
 
     // second pass: build operators with prevails/effects and numeric_effects
     let mut operators: Vec<crate::translate::sas::SASOperator> = Vec::new();
     let mut numeric_axioms: Vec<crate::translate::sas::NumericAxiom> = Vec::new();
     let mut comp_axioms: Vec<crate::translate::sas::CompareAxiom> = Vec::new();
+    // Track which comparison axioms have been added (by effect_var) to avoid duplicates
+    let mut comp_axiom_added: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let _comp_index: std::collections::HashMap<(String, Vec<usize>, usize), usize> =
         std::collections::HashMap::new();
     for op in ops {
@@ -563,11 +689,15 @@ pub fn build_sas(
                                             ranges.push(3);
                                             ei
                                         };
-                                        comp_axioms.push(crate::translate::sas::CompareAxiom {
-                                            comp: normalize_op(opstr),
-                                            parts: vec![ni, nj],
-                                            effect_var: effect_idx,
-                                        });
+                                        // Only add the comparison axiom if we haven't seen this effect_var yet
+                                        if !comp_axiom_added.contains(&effect_idx) {
+                                            comp_axiom_added.insert(effect_idx);
+                                            comp_axioms.push(crate::translate::sas::CompareAxiom {
+                                                comp: normalize_op(opstr),
+                                                parts: vec![ni, nj],
+                                                effect_var: effect_idx,
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -615,11 +745,15 @@ pub fn build_sas(
                                 ranges.push(3);
                                 ei
                             };
-                            comp_axioms.push(crate::translate::sas::CompareAxiom {
-                                comp: normalize_op(opstr),
-                                parts: vec![ni, nj],
-                                effect_var: effect_idx,
-                            });
+                            // Only add the comparison axiom if we haven't seen this effect_var yet
+                            if !comp_axiom_added.contains(&effect_idx) {
+                                comp_axiom_added.insert(effect_idx);
+                                comp_axioms.push(crate::translate::sas::CompareAxiom {
+                                    comp: normalize_op(opstr),
+                                    parts: vec![ni, nj],
+                                    effect_var: effect_idx,
+                                });
+                            }
                         }
                     }
                 }
@@ -759,39 +893,10 @@ pub fn build_sas(
             cost: 1.0,
         });
     }
-    // Build simple instantiated numeric axioms from numeric init facts we collected.
-    // Currently we only support Var = const forms (from problem init). This produces
-    // InstantiatedNumericAxiom objects that numeric_axiom_rules can consume to detect
-    // constant axioms and compute layers. We'll extend this to full arithmetic
-    // expression trees later.
-    for (n, init_val) in num_entries.iter() {
-        // n is like "fname(arg1,arg2)"
-        if let Some(open) = n.find('(') {
-            if let Some(close) = n.rfind(')') {
-                let fname = n[..open].to_string();
-                let args_str = &n[open + 1..close];
-                let args: Vec<String> = if args_str.is_empty() {
-                    Vec::new()
-                } else {
-                    args_str.split(',').map(|s| s.to_string()).collect()
-                };
-                let pne = crate::translate::numeric_axiom_rules::PrimitiveNumericExpression {
-                    name: fname.clone(),
-                    args: args.clone(),
-                };
-                let part = crate::translate::numeric_axiom_rules::NumericPart::Constant(
-                    crate::translate::numeric_axiom_rules::NumericConstant(*init_val),
-                );
-                let ax = crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom {
-                    name: n.clone(),
-                    op: None,
-                    parts: vec![part],
-                    effect: pne,
-                };
-                instantiated_num_axioms.push(ax);
-            }
-        }
-    }
+    
+    // Note: We used to build axioms from numeric init facts here, but now we receive
+    // the instantiated numeric axioms from the model-guided grounding process.
+    // The axiom layer computation is already done above when populating numeric_list.
 
     let (num_axioms_by_layer, _max_layer, _num_axiom_map, _const_num_axioms) =
         crate::translate::numeric_axiom_rules::handle_axioms(&instantiated_num_axioms);
@@ -807,6 +912,61 @@ pub fn build_sas(
     for nv in &mut numeric_list {
         if let Some(l) = axname_to_layer.get(&nv.name) {
             nv.axiom_layer = *l;
+        }
+    }
+
+    // Convert instantiated numeric axioms to SAS NumericAxiom format
+    // We need to map the axiom's effect and parts to numeric variable indices
+    for (_layer, axs) in &num_axioms_by_layer {
+        for ax in axs {
+            // Get the effect's numeric variable index
+            let effect_key = format!("{}()", ax.effect.name);
+            let effect_idx = match num_index.get(&effect_key) {
+                Some(&idx) => idx,
+                None => continue, // Skip if we can't find the effect
+            };
+            
+            // Get the parts' numeric variable indices
+            let mut part_indices: Vec<usize> = Vec::new();
+            let mut all_parts_found = true;
+            for part in &ax.parts {
+                let part_key = match part {
+                    crate::translate::numeric_axiom_rules::NumericPart::Primitive(pne) => {
+                        format!("{}()", pne.name)
+                    }
+                    crate::translate::numeric_axiom_rules::NumericPart::Constant(c) => {
+                        // Constants should have been converted to derived variables
+                        format!("derived!{}.0()", c.0)
+                    }
+                    crate::translate::numeric_axiom_rules::NumericPart::Axiom(ref_ax) => {
+                        // Reference to another axiom's effect
+                        format!("{}()", ref_ax.effect.name)
+                    }
+                };
+                match num_index.get(&part_key) {
+                    Some(&idx) => part_indices.push(idx),
+                    None => {
+                        all_parts_found = false;
+                        break;
+                    }
+                }
+            }
+            
+            if !all_parts_found {
+                continue;
+            }
+            
+            // Get the operator
+            let op = match &ax.op {
+                Some(op_str) => op_str.clone(),
+                None => continue, // Skip if no operator (shouldn't happen for derived axioms)
+            };
+            
+            numeric_axioms.push(crate::translate::sas::NumericAxiom {
+                op,
+                parts: part_indices,
+                effect: effect_idx,
+            });
         }
     }
 
@@ -857,13 +1017,13 @@ pub fn build_sas(
         }
     }
 
-    // Build goal pairs from problem.goal, handling comparisons
+    // Build goal pairs from normalized_goal (which may reference axiom atoms)
     let mut goal_pairs: Vec<(usize, usize)> = Vec::new();
-    if let Some(g) = &prob.goal {
-        let goal_cond = crate::translate::pddl_ast::sexpr_to_condition(g);
+    {
         fn handle_goal_cond(
             cond: &crate::translate::pddl_ast::Condition,
             atom_to_fdr: &std::collections::HashMap<String, (usize, usize)>,
+            axiom_atom_to_var: &std::collections::HashMap<String, usize>,
             goal_pairs: &mut Vec<(usize, usize)>,
             ensure_expr_var: &mut dyn FnMut(&crate::translate::pddl_parser::SExpr,
                 &mut std::collections::HashMap<String, usize>,
@@ -885,7 +1045,10 @@ pub fn build_sas(
             match cond {
                 crate::translate::pddl_ast::Condition::Atom(name, args) => {
                     let atom = format!("{}({})", name, args.join(", "));
-                    if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
+                    // First check if it's an axiom atom
+                    if let Some(&v) = axiom_atom_to_var.get(&atom) {
+                        goal_pairs.push((v, 0)); // value 0 = true for axiom atoms
+                    } else if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                         goal_pairs.push((v, val));
                     }
                 }
@@ -938,6 +1101,7 @@ pub fn build_sas(
                         handle_goal_cond(
                             c,
                             atom_to_fdr,
+                            axiom_atom_to_var,
                             goal_pairs,
                             ensure_expr_var,
                             num_index,
@@ -956,9 +1120,11 @@ pub fn build_sas(
                 _ => {}
             }
         }
+        // Use normalized_goal instead of parsing prob.goal
         handle_goal_cond(
-            &goal_cond,
+            normalized_goal,
             &atom_to_fdr,
+            &axiom_atom_to_var,
             &mut goal_pairs,
             &mut ensure_expr_var,
             &mut num_index,
@@ -972,6 +1138,118 @@ pub fn build_sas(
             &mut comp_axioms,
             &normalize_op,
         );
+    }
+
+    // Process axiom conditions to ensure comparison axiom variables are created
+    // This must happen BEFORE we try to look up comparison variables in collect_condition_pairs
+    {
+        fn ensure_axiom_comparison_vars(
+            cond: &crate::translate::pddl_ast::Condition,
+            ensure_expr_var: &mut dyn FnMut(&crate::translate::pddl_parser::SExpr,
+                &mut std::collections::HashMap<String, usize>,
+                &mut Vec<crate::translate::sas::NumericVariable>,
+                &mut Vec<i64>,
+                &mut Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
+                &mut std::collections::HashMap<String, usize>) -> Option<String>,
+            num_index: &mut std::collections::HashMap<String, usize>,
+            numeric_list: &mut Vec<crate::translate::sas::NumericVariable>,
+            numeric_init_vec: &mut Vec<i64>,
+            instantiated_num_axioms: &mut Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
+            derived_axiom_index: &mut std::collections::HashMap<String, usize>,
+            var_index: &mut std::collections::HashMap<String, usize>,
+            vars: &mut Vec<crate::translate::sas::Variable>,
+            ranges: &mut Vec<usize>,
+            comp_axioms: &mut Vec<crate::translate::sas::CompareAxiom>,
+            comp_axiom_added: &mut std::collections::HashSet<usize>,
+            normalize_op: &dyn Fn(&str) -> String,
+        ) {
+            match cond {
+                crate::translate::pddl_ast::Condition::Comparison(opstr, l, r) => {
+                    let left_name = ensure_expr_var(
+                        l,
+                        num_index,
+                        numeric_list,
+                        numeric_init_vec,
+                        instantiated_num_axioms,
+                        derived_axiom_index,
+                    );
+                    let right_name = ensure_expr_var(
+                        r,
+                        num_index,
+                        numeric_list,
+                        numeric_init_vec,
+                        instantiated_num_axioms,
+                        derived_axiom_index,
+                    );
+                    if let (Some(left_key), Some(right_key)) = (left_name, right_name) {
+                        if let (Some(&ni), Some(&nj)) = (num_index.get(&left_key), num_index.get(&right_key)) {
+                            let comp_key = format!("{} {} {}", opstr, left_key, right_key);
+                            let effect_idx = if let Some(&ei) = var_index.get(&comp_key) {
+                                ei
+                            } else {
+                                let ei = vars.len();
+                                var_index.insert(comp_key.clone(), ei);
+                                let pos = format!("{} {} {}", opstr, left_key, right_key);
+                                let neg = format!("not {} {} {}", opstr, left_key, right_key);
+                                vars.push(crate::translate::sas::Variable {
+                                    value_names: vec![pos, neg, "<none of those>".to_string()],
+                                });
+                                ranges.push(3);
+                                ei
+                            };
+                            // Only add the comparison axiom if we haven't seen this effect_var yet
+                            if !comp_axiom_added.contains(&effect_idx) {
+                                comp_axiom_added.insert(effect_idx);
+                                comp_axioms.push(crate::translate::sas::CompareAxiom {
+                                    comp: normalize_op(opstr),
+                                    parts: vec![ni, nj],
+                                    effect_var: effect_idx,
+                                });
+                            }
+                        }
+                    }
+                }
+                crate::translate::pddl_ast::Condition::And(list) => {
+                    for c in list {
+                        ensure_axiom_comparison_vars(
+                            c,
+                            ensure_expr_var,
+                            num_index,
+                            numeric_list,
+                            numeric_init_vec,
+                            instantiated_num_axioms,
+                            derived_axiom_index,
+                            var_index,
+                            vars,
+                            ranges,
+                            comp_axioms,
+                            comp_axiom_added,
+                            normalize_op,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        // Process all propositional axiom conditions
+        for ax in propositional_axioms {
+            ensure_axiom_comparison_vars(
+                &ax.condition,
+                &mut ensure_expr_var,
+                &mut num_index,
+                &mut numeric_list,
+                &mut numeric_init_vec,
+                &mut instantiated_num_axioms,
+                &mut derived_axiom_index,
+                &mut var_index,
+                &mut vars,
+                &mut ranges,
+                &mut comp_axioms,
+                &mut comp_axiom_added,
+                &normalize_op,
+            );
+        }
     }
 
     let canonical_variables: Vec<crate::translate::sas::CanonicalVariable> = vars
@@ -1019,6 +1297,93 @@ pub fn build_sas(
         })
         .collect();
 
+    // Build SASAxioms from propositional_axioms
+    // Each axiom has a condition that needs to be converted to (var, val) pairs
+    let mut sas_axioms: Vec<crate::translate::sas::SASAxiom> = Vec::new();
+    for ax in propositional_axioms {
+        let atom = format!("{}()", ax.name);
+        if let Some(&effect_var) = axiom_atom_to_var.get(&atom) {
+            // Convert the axiom's condition to (var, val) pairs
+            let mut condition_pairs: Vec<(usize, usize)> = Vec::new();
+            
+            fn collect_condition_pairs(
+                cond: &crate::translate::pddl_ast::Condition,
+                atom_to_fdr: &std::collections::HashMap<String, (usize, usize)>,
+                axiom_atom_to_var: &std::collections::HashMap<String, usize>,
+                var_index: &std::collections::HashMap<String, usize>,
+                ranges: &[usize],
+                condition_pairs: &mut Vec<(usize, usize)>,
+            ) {
+                match cond {
+                    crate::translate::pddl_ast::Condition::Atom(name, args) => {
+                        let atom = format!("{}({})", name, args.join(", "));
+                        if let Some(&v) = axiom_atom_to_var.get(&atom) {
+                            condition_pairs.push((v, 0)); // 0 = true
+                        } else if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
+                            condition_pairs.push((v, val));
+                        }
+                    }
+                    crate::translate::pddl_ast::Condition::Comparison(opstr, l, r) => {
+                        // The comparison should have been converted to a comparison axiom variable
+                        // Look it up by its string representation
+                        fn sexpr_to_name(s: &crate::translate::pddl_parser::SExpr) -> Option<String> {
+                            match s {
+                                crate::translate::pddl_parser::SExpr::Atom(a) => {
+                                    if a.starts_with("derived!") {
+                                        Some(format!("{}()", a))
+                                    } else {
+                                        Some(format!("{}()", a))
+                                    }
+                                }
+                                crate::translate::pddl_parser::SExpr::List(list) => {
+                                    if list.is_empty() { return None; }
+                                    if let crate::translate::pddl_parser::SExpr::Atom(name) = &list[0] {
+                                        let args: Vec<String> = list[1..].iter()
+                                            .filter_map(|s| if let crate::translate::pddl_parser::SExpr::Atom(a) = s { Some(a.clone()) } else { None })
+                                            .collect();
+                                        Some(format!("{}({})", name, args.join(", ")))
+                                    } else { None }
+                                }
+                            }
+                        }
+                        if let (Some(left_key), Some(right_key)) = (sexpr_to_name(l), sexpr_to_name(r)) {
+                            let comp_key = format!("{} {} {}", opstr, left_key, right_key);
+                            if let Some(&comp_var) = var_index.get(&comp_key) {
+                                condition_pairs.push((comp_var, 0)); // 0 = comparison true
+                            }
+                        }
+                    }
+                    crate::translate::pddl_ast::Condition::And(parts) => {
+                        for p in parts {
+                            collect_condition_pairs(p, atom_to_fdr, axiom_atom_to_var, var_index, ranges, condition_pairs);
+                        }
+                    }
+                    crate::translate::pddl_ast::Condition::Not(inner) => {
+                        // For negated atoms, value 1 = false
+                        if let crate::translate::pddl_ast::Condition::Atom(name, args) = &**inner {
+                            let atom = format!("{}({})", name, args.join(", "));
+                            if let Some(&v) = axiom_atom_to_var.get(&atom) {
+                                condition_pairs.push((v, 1)); // 1 = false/negated
+                            } else if let Some(&(v, _)) = atom_to_fdr.get(&atom) {
+                                // For regular atoms, we need to find the negated value
+                                // Typically the last value is "none of those"
+                                condition_pairs.push((v, ranges[v] - 1));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            
+            collect_condition_pairs(&ax.condition, &atom_to_fdr, &axiom_atom_to_var, &var_index, &ranges, &mut condition_pairs);
+            
+            sas_axioms.push(crate::translate::sas::SASAxiom {
+                condition: condition_pairs,
+                effect: (effect_var, 0), // effect_val 0 = true
+            });
+        }
+    }
+
     // We don't yet populate comparison axioms from other sources here; leave empty for now.
     SASTask {
         variables: vars,
@@ -1026,7 +1391,7 @@ pub fn build_sas(
         numeric_variables: numeric_list,
         numeric_axioms,
         comparison_axioms: comp_axioms,
-        axioms: Vec::new(),
+        axioms: sas_axioms,
         numeric_init: numeric_init_vec.iter().map(|&v| v as f64).collect(),
         mutex_groups: mutex_groups_pairs,
         ranges: ranges.clone(),

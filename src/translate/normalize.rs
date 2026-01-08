@@ -3007,10 +3007,60 @@ pub fn build_exploration_rules(task: &NormalizableTask) -> Vec<(Vec<bm::SymAtom>
     let goal_rule_body = condition_to_rule_body(&[], &task.goal);
     rules.push((goal_rule_body, goal_rule_head));
     
-    // TODO: Add numeric axiom rules for function tracking
-    // For now, skip these as they're not needed for basic action grounding
+    // Add numeric axiom rules for function tracking (matches Python)
+    // For each NumericAxiom from the function administrator:
+    // 1. Rule: @axiom(?params) :- defined!part1(?args), defined!part2(?args), ...
+    // 2. Rule: defined!axiom-head(?params) :- @axiom(?params)
+    // 3. Rule: fluent-head(?params) :- @axiom(?params), fluent!part(?args)  (for fluent tracking)
+    for axiom in &task.numeric_axioms {
+        // Rule 1: @axiom :- defined!parts...
+        // Head: atom representing the axiom application
+        let axiom_pred = get_numeric_axiom_predicate(axiom);
+        let mut rule_body = Vec::new();
+        for part in &axiom.parts {
+            if let crate::translate::function_expression::FunctionalExpression::Primitive(pne) = part {
+                // Create defined!symbol(args) predicate
+                let defined_pred = format!("defined!{}", pne.symbol);
+                rule_body.push(bm::SymAtom::new(defined_pred, pne.args.clone()));
+            }
+        }
+        rules.push((rule_body.clone(), axiom_pred.clone()));
+        
+        // Rule 2: defined!axiom-head :- @axiom
+        let head = axiom.get_head();
+        let defined_head = format!("defined!{}", head.symbol);
+        let head_args = axiom.parameters.clone();
+        let rule_2_head = bm::SymAtom::new(defined_head, head_args);
+        rules.push((vec![axiom_pred.clone()], rule_2_head));
+        
+        // Rule 3: For each primitive part, add fluent tracking rule
+        // fluent-head :- @axiom, fluent!part
+        let fluent_head_pred = bm::SymAtom::new(
+            head.symbol.clone(),
+            axiom.parameters.clone(),
+        );
+        for part in &axiom.parts {
+            if let crate::translate::function_expression::FunctionalExpression::Primitive(pne) = part {
+                let mut fluent_body = vec![axiom_pred.clone()];
+                let fluent_part = bm::SymAtom::new(
+                    pne.symbol.clone(),
+                    pne.args.clone(),
+                );
+                fluent_body.push(fluent_part);
+                rules.push((fluent_body, fluent_head_pred.clone()));
+            }
+        }
+    }
     
     rules
+}
+
+/// Get the axiom predicate atom for a numeric axiom
+fn get_numeric_axiom_predicate(axiom: &crate::translate::normalization_function_admin::NumericAxiom) -> bm::SymAtom {
+    // For the axiom predicate, use only the axiom's parameters
+    // This creates the rule head for @axiom(?params...)
+    // Part args are used in the body conditions, not in the head
+    bm::SymAtom::new(axiom.name.clone(), axiom.parameters.clone())
 }
 
 /// Get the action predicate atom for use in exploration rules.
