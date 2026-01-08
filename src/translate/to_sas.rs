@@ -102,7 +102,38 @@ fn ensure_expr_var_visit(
         }
         crate::translate::pddl_parser::SExpr::Atom(a) => {
             if let Ok(v) = a.parse::<i64>() {
-                Some(format!("const:{}", v))
+                // Create a derived constant PNE like Python does: derived!{value}.0()
+                // This ensures constants are registered as proper numeric variables
+                let const_pne_name = format!("derived!{}.0()", v);
+                if !num_index.contains_key(&const_pne_name) {
+                    let idx = numeric_list.len();
+                    num_index.insert(const_pne_name.clone(), idx);
+                    numeric_list.push(crate::translate::sas::NumericVariable {
+                        name: const_pne_name.clone(),
+                        initial: Some(v),
+                        ntype: "C".to_string(),
+                        axiom_layer: -1,
+                    });
+                    numeric_init_vec.push(v);
+                    // Create an InstantiatedNumericAxiom for the constant
+                    let pne = crate::translate::numeric_axiom_rules::PrimitiveNumericExpression {
+                        name: const_pne_name.clone(),
+                        args: vec![],
+                    };
+                    let part = crate::translate::numeric_axiom_rules::NumericPart::Constant(
+                        crate::translate::numeric_axiom_rules::NumericConstant(v),
+                    );
+                    let ax = crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom {
+                        name: const_pne_name.clone(),
+                        op: None,
+                        parts: vec![part],
+                        effect: pne,
+                    };
+                    let ai = instantiated_num_axioms.len();
+                    instantiated_num_axioms.push(ax);
+                    derived_axiom_index.insert(const_pne_name.clone(), ai);
+                }
+                Some(const_pne_name)
             } else {
                 None
             }
@@ -498,154 +529,45 @@ pub fn build_sas(
                                 }
                             }
                             crate::translate::pddl_ast::Condition::Comparison(opstr, l, r) => {
-                                // attempt to parse comparison where left or right is a numeric fluent,
-                                // or an arithmetic expression. We now support simple binary arithmetic
-                                // expressions like (+ (f ...) (g ...)).
-                                let try_parse_sexpr =
-                                    |s: &crate::translate::pddl_parser::SExpr| -> Option<String> {
-                                        match s {
-                                            crate::translate::pddl_parser::SExpr::List(inner)
-                                                if !inner.is_empty() =>
-                                            {
-                                                if let crate::translate::pddl_parser::SExpr::Atom(
-                                                    fname,
-                                                ) = &inner[0]
-                                                {
-                                                    // treat operator names differently; caller may handle
-                                                    if fname == "+"
-                                                        || fname == "-"
-                                                        || fname == "*"
-                                                        || fname == "/"
-                                                    {
-                                                        return None;
-                                                    }
-                                                    let args = inner[1..].iter().filter_map(|x| match x { crate::translate::pddl_parser::SExpr::Atom(a)=>Some(a.clone()), _=>None }).collect::<Vec<_>>().join(",");
-                                                    return Some(format!("{}({})", fname, args));
-                                                }
-                                                None
-                                            }
-                                            _ => None,
-                                        }
-                                    };
-                                let parse_int =
-                                    |s: &crate::translate::pddl_parser::SExpr| -> Option<i64> {
-                                        if let crate::translate::pddl_parser::SExpr::Atom(a) = s {
-                                            a.parse::<i64>().ok()
-                                        } else {
-                                            None
-                                        }
-                                    };
-                                // handle arithmetic expressions first
-                                if let Some(derived_left) = ensure_expr_var(
+                                // Use ensure_expr_var on both operands to get their numeric variable names
+                                // This handles PNEs, arithmetic expressions, and constants (which become derived!{v}.0())
+                                let left_name = ensure_expr_var(
                                     l,
                                     &mut num_index,
                                     &mut numeric_list,
                                     &mut numeric_init_vec,
                                     &mut instantiated_num_axioms,
                                     &mut derived_axiom_index,
-                                ) {
-                                    if let Some(fkey2) = try_parse_sexpr(r) {
-                                        if let Some(&ni) = num_index.get(&derived_left) {
-                                            if let Some(&nj) = num_index.get(&fkey2) {
-                                                let left_s = derived_left.clone();
-                                                let right_s = fkey2.clone();
-                                                let comp_key =
-                                                    format!("{} {} {}", opstr, left_s, right_s);
-                                                let effect_idx = if let Some(&ei) =
-                                                    var_index.get(&comp_key)
-                                                {
-                                                    ei
-                                                } else {
-                                                    let ei = vars.len();
-                                                    var_index.insert(comp_key.clone(), ei);
-                                                    let pos =
-                                                        format!("{} {} {}", opstr, left_s, right_s);
-                                                    let neg = format!(
-                                                        "not {} {} {}",
-                                                        opstr, left_s, right_s
-                                                    );
-                                                    vars.push(crate::translate::sas::Variable {
-                                                        value_names: vec![
-                                                            pos,
-                                                            neg,
-                                                            "<none of those>".to_string(),
-                                                        ],
-                                                    });
-                                                    ei
-                                                };
-                                                comp_axioms.push(
-                                                    crate::translate::sas::CompareAxiom {
-                                                        comp: normalize_op(opstr),
-                                                        parts: vec![ni, nj],
-                                                        effect_var: effect_idx,
-                                                    },
-                                                );
-                                            }
-                                        }
-                                    } else if let Some(vval) = parse_int(r) {
-                                        if let Some(&ni) = num_index.get(&derived_left) {
-                                        }
-                                    }
-                                } else if let Some(derived_right) = ensure_expr_var(
+                                );
+                                let right_name = ensure_expr_var(
                                     r,
                                     &mut num_index,
                                     &mut numeric_list,
                                     &mut numeric_init_vec,
                                     &mut instantiated_num_axioms,
                                     &mut derived_axiom_index,
-                                ) {
-                                    if let Some(vval) = parse_int(l) {
-                                        if let Some(&ni) = num_index.get(&derived_right) {
-                                        }
-                                    }
-                                } else if let Some(fkey) = try_parse_sexpr(l) {
-                                    if let Some(vval) = parse_int(r) {
-                                        if let Some(&ni) = num_index.get(&fkey) {
-                                        }
-                                    } else if let Some(fkey2) = try_parse_sexpr(r) {
-                                        if let Some(&ni) = num_index.get(&fkey) {
-                                            if let Some(&nj) = num_index.get(&fkey2) {
-                                                // create comparison axiom variable and record CompareAxiom
-                                                let left_s = fkey.clone();
-                                                let right_s = fkey2.clone();
-                                                let comp_key =
-                                                    format!("{} {} {}", opstr, left_s, right_s);
-                                                let effect_idx = if let Some(&ei) =
-                                                    var_index.get(&comp_key)
-                                                {
-                                                    ei
-                                                } else {
-                                                    let ei = vars.len();
-                                                    var_index.insert(comp_key.clone(), ei);
-                                                    let pos =
-                                                        format!("{} {} {}", opstr, left_s, right_s);
-                                                    let neg = format!(
-                                                        "not {} {} {}",
-                                                        opstr, left_s, right_s
-                                                    );
-                                                    vars.push(crate::translate::sas::Variable {
-                                                        value_names: vec![
-                                                            pos,
-                                                            neg,
-                                                            "<none of those>".to_string(),
-                                                        ],
-                                                    });
-                                                    ei
-                                                };
-                                                comp_axioms.push(
-                                                    crate::translate::sas::CompareAxiom {
-                                                        comp: normalize_op(opstr),
-                                                        parts: vec![ni, nj],
-                                                        effect_var: effect_idx,
-                                                    },
-                                                );
-                                            }
-                                        }
-                                    }
-                                } else if let Some(fkey) = try_parse_sexpr(r) {
-                                    if let Some(vval) = parse_int(l) {
-                                        if let Some(&ni) = num_index.get(&fkey) {
-                                        }
+                                );
+                                if let (Some(left_key), Some(right_key)) = (left_name, right_name) {
+                                    if let (Some(&ni), Some(&nj)) = (num_index.get(&left_key), num_index.get(&right_key)) {
+                                        let comp_key = format!("{} {} {}", opstr, left_key, right_key);
+                                        let effect_idx = if let Some(&ei) = var_index.get(&comp_key) {
+                                            ei
+                                        } else {
+                                            let ei = vars.len();
+                                            var_index.insert(comp_key.clone(), ei);
+                                            let pos = format!("{} {} {}", opstr, left_key, right_key);
+                                            let neg = format!("not {} {} {}", opstr, left_key, right_key);
+                                            vars.push(crate::translate::sas::Variable {
+                                                value_names: vec![pos, neg, "<none of those>".to_string()],
+                                            });
+                                            ranges.push(3);
+                                            ei
+                                        };
+                                        comp_axioms.push(crate::translate::sas::CompareAxiom {
+                                            comp: normalize_op(opstr),
+                                            parts: vec![ni, nj],
+                                            effect_var: effect_idx,
+                                        });
                                     }
                                 }
                             }
@@ -659,79 +581,45 @@ pub fn build_sas(
                     }
                 }
                 crate::translate::pddl_ast::Condition::Comparison(opstr, l, r) => {
-                    // top-level comparison (operands are SExpr)
-                    let try_parse_sexpr =
-                        |s: &crate::translate::pddl_parser::SExpr| -> Option<String> {
-                            match s {
-                                crate::translate::pddl_parser::SExpr::List(inner)
-                                    if !inner.is_empty() =>
-                                {
-                                    if let crate::translate::pddl_parser::SExpr::Atom(fname) =
-                                        &inner[0]
-                                    {
-                                        let args = inner[1..]
-                                            .iter()
-                                            .filter_map(|x| match x {
-                                                crate::translate::pddl_parser::SExpr::Atom(a) => {
-                                                    Some(a.clone())
-                                                }
-                                                _ => None,
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join(",");
-                                        return Some(format!("{}({})", fname, args));
-                                    }
-                                    None
-                                }
-                                _ => None,
-                            }
-                        };
-                    let parse_int = |s: &crate::translate::pddl_parser::SExpr| -> Option<i64> {
-                        if let crate::translate::pddl_parser::SExpr::Atom(a) = s {
-                            a.parse::<i64>().ok()
-                        } else {
-                            None
-                        }
-                    };
-                    if let Some(fkey) = try_parse_sexpr(l) {
-                        if let Some(vval) = parse_int(r) {
-                            if let Some(&ni) = num_index.get(&fkey) {
-                            }
-                        } else if let Some(fkey2) = try_parse_sexpr(r) {
-                            if let Some(&ni) = num_index.get(&fkey) {
-                                if let Some(&nj) = num_index.get(&fkey2) {
-                                    // create comparison axiom variable and record CompareAxiom
-                                    let left_s = fkey.clone();
-                                    let right_s = fkey2.clone();
-                                    let comp_key = format!("{} {} {}", opstr, left_s, right_s);
-                                    let effect_idx = if let Some(&ei) = var_index.get(&comp_key) {
-                                        ei
-                                    } else {
-                                        let ei = vars.len();
-                                        var_index.insert(comp_key.clone(), ei);
-                                        let pos = format!("{} {} {}", opstr, left_s, right_s);
-                                        let neg = format!("not {} {} {}", opstr, left_s, right_s);
-                                        vars.push(crate::translate::sas::Variable {
-                                            value_names: vec![
-                                                pos,
-                                                neg,
-                                                "<none of those>".to_string(),
-                                            ],
-                                        });
-                                        ei
-                                    };
-                                    comp_axioms.push(crate::translate::sas::CompareAxiom {
-                                        comp: normalize_op(opstr),
-                                        parts: vec![ni, nj],
-                                        effect_var: effect_idx,
-                                    });
-                                }
-                            }
-                        }
-                    } else if let Some(fkey) = try_parse_sexpr(r) {
-                        if let Some(vval) = parse_int(l) {
-                            if let Some(&ni) = num_index.get(&fkey) {
-                            }
+                    // Use ensure_expr_var on both operands to get their numeric variable names
+                    // This handles PNEs, arithmetic expressions, and constants (which become derived!{v}.0())
+                    let left_name = ensure_expr_var(
+                        l,
+                        &mut num_index,
+                        &mut numeric_list,
+                        &mut numeric_init_vec,
+                        &mut instantiated_num_axioms,
+                        &mut derived_axiom_index,
+                    );
+                    let right_name = ensure_expr_var(
+                        r,
+                        &mut num_index,
+                        &mut numeric_list,
+                        &mut numeric_init_vec,
+                        &mut instantiated_num_axioms,
+                        &mut derived_axiom_index,
+                    );
+                    if let (Some(left_key), Some(right_key)) = (left_name, right_name) {
+                        if let (Some(&ni), Some(&nj)) = (num_index.get(&left_key), num_index.get(&right_key)) {
+                            let comp_key = format!("{} {} {}", opstr, left_key, right_key);
+                            let effect_idx = if let Some(&ei) = var_index.get(&comp_key) {
+                                ei
+                            } else {
+                                let ei = vars.len();
+                                var_index.insert(comp_key.clone(), ei);
+                                let pos = format!("{} {} {}", opstr, left_key, right_key);
+                                let neg = format!("not {} {} {}", opstr, left_key, right_key);
+                                vars.push(crate::translate::sas::Variable {
+                                    value_names: vec![pos, neg, "<none of those>".to_string()],
+                                });
+                                ranges.push(3);
+                                ei
+                            };
+                            comp_axioms.push(crate::translate::sas::CompareAxiom {
+                                comp: normalize_op(opstr),
+                                parts: vec![ni, nj],
+                                effect_var: effect_idx,
+                            });
                         }
                     }
                 }
@@ -969,28 +857,121 @@ pub fn build_sas(
         }
     }
 
-    // Build goal pairs from problem.goal Condition::Atom list
+    // Build goal pairs from problem.goal, handling comparisons
     let mut goal_pairs: Vec<(usize, usize)> = Vec::new();
     if let Some(g) = &prob.goal {
-        match crate::translate::pddl_ast::sexpr_to_condition(g) {
-            crate::translate::pddl_ast::Condition::Atom(name, args) => {
-                let atom = format!("{}({})", name, args.join(", "));
-                if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
-                    goal_pairs.push((v, val));
+        let goal_cond = crate::translate::pddl_ast::sexpr_to_condition(g);
+        fn handle_goal_cond(
+            cond: &crate::translate::pddl_ast::Condition,
+            atom_to_fdr: &std::collections::HashMap<String, (usize, usize)>,
+            goal_pairs: &mut Vec<(usize, usize)>,
+            ensure_expr_var: &mut dyn FnMut(&crate::translate::pddl_parser::SExpr,
+                &mut std::collections::HashMap<String, usize>,
+                &mut Vec<crate::translate::sas::NumericVariable>,
+                &mut Vec<i64>,
+                &mut Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
+                &mut std::collections::HashMap<String, usize>) -> Option<String>,
+            num_index: &mut std::collections::HashMap<String, usize>,
+            numeric_list: &mut Vec<crate::translate::sas::NumericVariable>,
+            numeric_init_vec: &mut Vec<i64>,
+            instantiated_num_axioms: &mut Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
+            derived_axiom_index: &mut std::collections::HashMap<String, usize>,
+            var_index: &mut std::collections::HashMap<String, usize>,
+            vars: &mut Vec<crate::translate::sas::Variable>,
+            ranges: &mut Vec<usize>,
+            comp_axioms: &mut Vec<crate::translate::sas::CompareAxiom>,
+            normalize_op: &dyn Fn(&str) -> String,
+        ) {
+            match cond {
+                crate::translate::pddl_ast::Condition::Atom(name, args) => {
+                    let atom = format!("{}({})", name, args.join(", "));
+                    if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
+                        goal_pairs.push((v, val));
+                    }
                 }
-            }
-            crate::translate::pddl_ast::Condition::And(list) => {
-                for c in list {
-                    if let crate::translate::pddl_ast::Condition::Atom(name, args) = c {
-                        let atom = format!("{}({})", name, args.join(", "));
-                        if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
-                            goal_pairs.push((v, val));
+                crate::translate::pddl_ast::Condition::Comparison(opstr, l, r) => {
+                    // Use ensure_expr_var on both operands to get their numeric variable names
+                    // This handles both PNEs and constants (which become derived!{v}.0())
+                    let left_name = ensure_expr_var(
+                        l,
+                        num_index,
+                        numeric_list,
+                        numeric_init_vec,
+                        instantiated_num_axioms,
+                        derived_axiom_index,
+                    );
+                    let right_name = ensure_expr_var(
+                        r,
+                        num_index,
+                        numeric_list,
+                        numeric_init_vec,
+                        instantiated_num_axioms,
+                        derived_axiom_index,
+                    );
+                    if let (Some(left_key), Some(right_key)) = (left_name, right_name) {
+                        if let (Some(&ni), Some(&nj)) = (num_index.get(&left_key), num_index.get(&right_key)) {
+                            let comp_key = format!("{} {} {}", opstr, left_key, right_key);
+                            let effect_idx = if let Some(&ei) = var_index.get(&comp_key) {
+                                ei
+                            } else {
+                                let ei = vars.len();
+                                var_index.insert(comp_key.clone(), ei);
+                                let pos = format!("{} {} {}", opstr, left_key, right_key);
+                                let neg = format!("not {} {} {}", opstr, left_key, right_key);
+                                vars.push(crate::translate::sas::Variable {
+                                    value_names: vec![pos, neg, "<none of those>".to_string()],
+                                });
+                                ranges.push(3);
+                                ei
+                            };
+                            comp_axioms.push(crate::translate::sas::CompareAxiom {
+                                comp: normalize_op(opstr),
+                                parts: vec![ni, nj],
+                                effect_var: effect_idx,
+                            });
+                            goal_pairs.push((effect_idx, 0));
                         }
                     }
                 }
+                crate::translate::pddl_ast::Condition::And(list) => {
+                    for c in list {
+                        handle_goal_cond(
+                            c,
+                            atom_to_fdr,
+                            goal_pairs,
+                            ensure_expr_var,
+                            num_index,
+                            numeric_list,
+                            numeric_init_vec,
+                            instantiated_num_axioms,
+                            derived_axiom_index,
+                            var_index,
+                            vars,
+                            ranges,
+                            comp_axioms,
+                            normalize_op,
+                        );
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
+        handle_goal_cond(
+            &goal_cond,
+            &atom_to_fdr,
+            &mut goal_pairs,
+            &mut ensure_expr_var,
+            &mut num_index,
+            &mut numeric_list,
+            &mut numeric_init_vec,
+            &mut instantiated_num_axioms,
+            &mut derived_axiom_index,
+            &mut var_index,
+            &mut vars,
+            &mut ranges,
+            &mut comp_axioms,
+            &normalize_op,
+        );
     }
 
     let canonical_variables: Vec<crate::translate::sas::CanonicalVariable> = vars
