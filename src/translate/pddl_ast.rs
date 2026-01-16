@@ -275,11 +275,21 @@ pub fn sexpr_to_effect(s: &SExpr) -> Effect {
         if list.len() < 3 {
             return None;
         }
-        let func = match &list[1] {
-            SExpr::List(inner) => match inner.get(0) {
-                Some(SExpr::Atom(name)) => name.clone(),
-                _ => return None,
-            },
+        let (func, args) = match &list[1] {
+            SExpr::List(inner) => {
+                let name = match inner.get(0) {
+                    Some(SExpr::Atom(name)) => name.clone(),
+                    _ => return None,
+                };
+                let args = inner[1..]
+                    .iter()
+                    .filter_map(|x| match x {
+                        SExpr::Atom(a) => Some(a.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                (name, args)
+            }
             _ => return None,
         };
         let value = match &list[2] {
@@ -287,8 +297,8 @@ pub fn sexpr_to_effect(s: &SExpr) -> Effect {
             _ => return None,
         };
         match kind {
-            KW_INCREASE => Some(Effect::Increase(func, vec![], value)),
-            KW_DECREASE => Some(Effect::Decrease(func, vec![], value)),
+            KW_INCREASE => Some(Effect::Increase(func, args, value)),
+            KW_DECREASE => Some(Effect::Decrease(func, args, value)),
             _ => None,
         }
     }

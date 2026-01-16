@@ -143,27 +143,26 @@ impl JoinRule {
             atoms_by_key,
         }
     }
+    #[allow(dead_code)]
     fn prepare_effect(&self, new_atom: &Atom, cond_index: usize) -> Vec<String> {
         let cond = &self.conditions[cond_index];
-        let mut eff_args: Vec<String> = self
-            .effect
-            .args
-            .iter()
-            .map(|a| match a {
-                Arg::Var(_) => "".to_string(),
-                Arg::Const(c) => c.clone(),
-                Arg::FreeVar(_) => "".to_string(),
-            })
-            .collect();
+        let mut bindings: HashMap<usize, String> = HashMap::new();
         for (arg_pos, arg) in cond.args.iter().enumerate() {
             if let Arg::Var(var_no) = arg {
-                // copy over the const at this position from new_atom
                 if let Arg::Const(ref obj) = new_atom.args[arg_pos] {
-                    eff_args[*var_no] = obj.clone();
+                    bindings.insert(*var_no, obj.clone());
                 }
             }
         }
-        eff_args
+        self.effect
+            .args
+            .iter()
+            .map(|a| match a {
+                Arg::Var(var_no) => bindings.get(var_no).cloned().unwrap_or_default(),
+                Arg::Const(c) => c.clone(),
+                Arg::FreeVar(_) => "".to_string(),
+            })
+            .collect()
     }
 }
 
@@ -194,6 +193,9 @@ impl BuildRule for JoinRule {
         );
     }
     fn update_index(&mut self, new_atom: &Atom, cond_index: usize) {
+        if self.conditions[cond_index].args.len() != new_atom.args.len() {
+            return;
+        }
         let positions = &self.common_var_positions[cond_index];
         let mut key: Vec<String> = Vec::with_capacity(positions.len());
         for &p in positions {
@@ -212,7 +214,18 @@ impl BuildRule for JoinRule {
         cond_index: usize,
         enqueue: &mut dyn FnMut(&str, &Vec<String>),
     ) {
-        let mut eff_args = self.prepare_effect(new_atom, cond_index);
+        if self.conditions[cond_index].args.len() != new_atom.args.len() {
+            return;
+        }
+        let cond = &self.conditions[cond_index];
+        let mut bindings: HashMap<usize, String> = HashMap::new();
+        for (arg_pos, arg) in cond.args.iter().enumerate() {
+            if let Arg::Var(var_no) = arg {
+                if let Arg::Const(ref obj) = new_atom.args[arg_pos] {
+                    bindings.insert(*var_no, obj.clone());
+                }
+            }
+        }
         let positions = &self.common_var_positions[cond_index];
         let mut key: Vec<String> = Vec::with_capacity(positions.len());
         for &p in positions {
@@ -224,12 +237,26 @@ impl BuildRule for JoinRule {
         if let Some(list) = self.atoms_by_key[other].get(&key) {
             let other_cond = &self.conditions[other];
             for atom in list {
+                let mut local_bindings = bindings.clone();
                 for (i, a) in other_cond.args.iter().enumerate() {
                     if let Arg::Var(var_no) = a {
                         if let Arg::Const(ref obj) = atom.args[i] {
-                            eff_args[*var_no] = obj.clone();
+                            local_bindings.insert(*var_no, obj.clone());
                         }
                     }
+                }
+                let eff_args: Vec<String> = self
+                    .effect
+                    .args
+                    .iter()
+                    .map(|a| match a {
+                        Arg::Var(var_no) => local_bindings.get(var_no).cloned().unwrap_or_default(),
+                        Arg::Const(c) => c.clone(),
+                        Arg::FreeVar(_) => "".to_string(),
+                    })
+                    .collect();
+                if eff_args.iter().any(|a| a.is_empty()) {
+                    continue;
                 }
                 enqueue(&self.effect.predicate, &eff_args);
             }
@@ -262,6 +289,9 @@ impl ProductRule {
         }
     }
     fn bindings_for(atom: &Atom, cond: &Atom) -> Vec<(usize, String)> {
+        if cond.args.len() != atom.args.len() {
+            return Vec::new();
+        }
         let mut out = Vec::new();
         for (i, a) in cond.args.iter().enumerate() {
             if let Arg::Var(var_no) = a {
@@ -274,24 +304,23 @@ impl ProductRule {
     }
     fn prepare_effect(&self, new_atom: &Atom, cond_index: usize) -> Vec<String> {
         let cond = &self.conditions[cond_index];
-        let mut eff_args: Vec<String> = self
-            .effect
-            .args
-            .iter()
-            .map(|a| match a {
-                Arg::Var(_) => "".to_string(),
-                Arg::Const(c) => c.clone(),
-                Arg::FreeVar(_) => "".to_string(),
-            })
-            .collect();
+        let mut bindings: HashMap<usize, String> = HashMap::new();
         for (i, a) in cond.args.iter().enumerate() {
             if let Arg::Var(var_no) = a {
                 if let Arg::Const(ref obj) = new_atom.args[i] {
-                    eff_args[*var_no] = obj.clone();
+                    bindings.insert(*var_no, obj.clone());
                 }
             }
         }
-        eff_args
+        self.effect
+            .args
+            .iter()
+            .map(|a| match a {
+                Arg::Var(var_no) => bindings.get(var_no).cloned().unwrap_or_default(),
+                Arg::Const(c) => c.clone(),
+                Arg::FreeVar(_) => "".to_string(),
+            })
+            .collect()
     }
 }
 
@@ -325,6 +354,9 @@ impl BuildRule for ProductRule {
         );
     }
     fn update_index(&mut self, new_atom: &Atom, cond_index: usize) {
+        if self.conditions[cond_index].args.len() != new_atom.args.len() {
+            return;
+        }
         let list = &mut self.atoms_by_index[cond_index];
         if list.is_empty() {
             self.empty_atom_list_no = self.empty_atom_list_no.saturating_sub(1);
@@ -337,8 +369,20 @@ impl BuildRule for ProductRule {
         cond_index: usize,
         enqueue: &mut dyn FnMut(&str, &Vec<String>),
     ) {
+        if self.conditions[cond_index].args.len() != new_atom.args.len() {
+            return;
+        }
         if self.empty_atom_list_no > 0 {
             return;
+        }
+        let base_cond = &self.conditions[cond_index];
+        let mut base_bindings: HashMap<usize, String> = HashMap::new();
+        for (i, a) in base_cond.args.iter().enumerate() {
+            if let Arg::Var(var_no) = a {
+                if let Arg::Const(ref obj) = new_atom.args[i] {
+                    base_bindings.insert(*var_no, obj.clone());
+                }
+            }
         }
         // Build binding factors for all other conditions
         // factors: Vec of (one Vec of bindings per atom)
@@ -359,8 +403,6 @@ impl BuildRule for ProductRule {
                 .collect();
             factors.push(factor);
         }
-        let eff_args = self.prepare_effect(new_atom, cond_index);
-        
         // Cartesian product: pick one atom from each condition, combine their bindings
         // factors[i] is a Vec of binding-lists, one per atom matching condition i
         // We want to iterate over all combinations, picking one binding-list from each factor
@@ -383,15 +425,26 @@ impl BuildRule for ProductRule {
         }
         let mut tmp_acc: Vec<Vec<(usize, String)>> = Vec::new();
         product_apply(&factors, &mut tmp_acc, &mut |bindings_list| {
-            let mut filled = eff_args.clone();
-            // bindings_list is a slice of binding-lists, one from each condition
-            // Flatten all bindings and apply them
+            let mut local_bindings = base_bindings.clone();
             for bindings in bindings_list {
                 for (var_no, obj) in bindings {
-                    filled[*var_no] = obj.clone();
+                    local_bindings.insert(*var_no, obj.clone());
                 }
             }
-            enqueue(&self.effect.predicate, &filled);
+            let eff_args: Vec<String> = self
+                .effect
+                .args
+                .iter()
+                .map(|a| match a {
+                    Arg::Var(var_no) => local_bindings.get(var_no).cloned().unwrap_or_default(),
+                    Arg::Const(c) => c.clone(),
+                    Arg::FreeVar(_) => "".to_string(),
+                })
+                .collect();
+            if eff_args.iter().any(|a| a.is_empty()) {
+                return;
+            }
+            enqueue(&self.effect.predicate, &eff_args);
         });
     }
     fn conditions(&self) -> &Vec<Atom> {
@@ -446,6 +499,10 @@ impl BuildRule for ProjectRule {
         cond_index: usize,
         enqueue: &mut dyn FnMut(&str, &Vec<String>),
     ) {
+        let cond = &self.conditions[cond_index];
+        if cond.args.len() != new_atom.args.len() {
+            return;
+        }
         let eff_args = self.prepare_effect(new_atom, cond_index);
         enqueue(&self.effect.predicate, &eff_args);
     }

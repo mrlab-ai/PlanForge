@@ -35,7 +35,7 @@ impl DerivedFunctionAdministrator {
                         args: vec![],
                     }
                 } else {
-                    // plain atom treated as primitive PNE name (no args)
+                    // plain atom treated as primitive PNE name
                     PrimitiveNumericExpression {
                         name: a.clone(),
                         args: vec![],
@@ -54,34 +54,31 @@ impl DerivedFunctionAdministrator {
                     if op == "+" || op == "-" || op == "*" || op == "/" {
                         // collect child tokens using recursive calls
                         let mut child_tokens: Vec<String> = Vec::new();
-                        let mut child_args: Vec<String> = Vec::new();
                         for p in &list[1..] {
                             let pne = self.get_derived_function(p);
-                            // token form: if child is a derived symbol keep it, otherwise append _PNE to its name
-                            let token = if pne.name.starts_with("derived!") {
+                            let token = if pne.args.is_empty() {
                                 pne.name.clone()
                             } else {
-                                format!("{}{}_PNE", pne.name, "")
+                                format!("{}({})", pne.name, pne.args.join(", "))
                             };
                             child_tokens.push(token);
-                            // keep the underlying primitive name (without _PNE) as arg for effect representation
-                            child_args.push(pne.name.clone());
                         }
                         if op == "+" || op == "*" {
                             child_tokens.sort();
-                            child_args.sort();
                         }
                         let op_name = match op.as_str() {
-                            "+" => "derived!sum_PNE",
-                            "*" => "derived!product_PNE",
-                            "-" => "derived!difference_PNE",
-                            "/" => "derived!division_PNE",
-                            _ => "derived!op_PNE",
+                            "+" => "sum_PNE",
+                            "*" => "product_PNE",
+                            "-" => "difference_PNE",
+                            "/" => "quotient_PNE",
+                            _ => "op_PNE",
                         };
-                        PrimitiveNumericExpression {
-                            name: op_name.to_string(),
-                            args: child_tokens,
-                        }
+                        let name = if child_tokens.is_empty() {
+                            format!("derived!{}", op_name)
+                        } else {
+                            format!("derived!{} {}", op_name, child_tokens.join("_PNE "))
+                        };
+                        PrimitiveNumericExpression { name, args: vec![] }
                     } else {
                         // treat as primitive PNE, name(args...)
                         let args = list[1..]
@@ -92,10 +89,7 @@ impl DerivedFunctionAdministrator {
                             })
                             .collect::<Vec<_>>();
                         let key = format!("{}({})", op, args.join(", "));
-                        PrimitiveNumericExpression {
-                            name: key.clone(),
-                            args,
-                        }
+                        PrimitiveNumericExpression { name: key, args: vec![] }
                     }
                 } else {
                     PrimitiveNumericExpression {

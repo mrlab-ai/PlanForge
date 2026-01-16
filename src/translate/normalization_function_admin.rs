@@ -76,9 +76,9 @@ impl NumericAxiom {
 enum DerivedFunctionKey {
     /// Constant: (value,)
     Constant(i64),
-    /// Additive inverse: (op, symbol)
+    /// Additive inverse: (op, part_string)
     AdditiveInverse(String, String),
-    /// Arithmetic: (op, [pne_symbols...])
+    /// Arithmetic: (op, [part_strings...])
     Arithmetic(String, Vec<String>),
 }
 
@@ -98,6 +98,33 @@ impl NormalizationFunctionAdministrator {
         NormalizationFunctionAdministrator {
             functions: HashMap::new(),
             counter: 0,
+        }
+    }
+
+    fn pne_to_string(pne: &PrimitiveNumericExpression) -> String {
+        if pne.args.is_empty() {
+            pne.symbol.clone()
+        } else {
+            format!("{}({})", pne.symbol, pne.args.join(", "))
+        }
+    }
+
+    fn make_unique_symbol(&self, base: &str) -> String {
+        let used_names: std::collections::HashSet<String> = self
+            .functions
+            .values()
+            .map(|ax| ax.name.clone())
+            .collect();
+        if !used_names.contains(base) {
+            return base.to_string();
+        }
+        let mut counter = 2;
+        loop {
+            let candidate = format!("{}_{}", base, counter);
+            if !used_names.contains(&candidate) {
+                return candidate;
+            }
+            counter += 1;
         }
     }
 
@@ -125,7 +152,7 @@ impl NormalizationFunctionAdministrator {
                 let key = DerivedFunctionKey::Constant(nc.value);
                 
                 if !self.functions.contains_key(&key) {
-                    let symbol = self.get_new_symbol(&[nc.value.to_string()]);
+                    let symbol = format!("derived!{}.0()", nc.value);
                     let axiom = NumericAxiom::new(
                         symbol,
                         vec![],
@@ -142,10 +169,12 @@ impl NormalizationFunctionAdministrator {
             FunctionalExpression::AdditiveInverse(ai) => {
                 // Recursively process the sub-expression
                 let subexp = self.get_derived_function(&ai.part);
-                let key = DerivedFunctionKey::AdditiveInverse(ai.op.clone(), subexp.symbol.clone());
+                let subexp_str = Self::pne_to_string(&subexp);
+                let key = DerivedFunctionKey::AdditiveInverse(ai.op.clone(), subexp_str.clone());
                 
                 if !self.functions.contains_key(&key) {
-                    let symbol = self.get_new_symbol(&["-".to_string(), subexp.symbol.clone()]);
+                    let base = format!("derived!difference_PNE {}", subexp_str);
+                    let symbol = self.make_unique_symbol(&base);
                     
                     // Generate default variables for parameters
                     let default_args = self.get_default_variables(subexp.args.len());
@@ -183,13 +212,19 @@ impl NormalizationFunctionAdministrator {
                 }
                 
                 // For commutative operations, sort the parts for canonicalization
+                let mut part_pairs: Vec<(String, PrimitiveNumericExpression)> = df_parts
+                    .into_iter()
+                    .map(|p| (Self::pne_to_string(&p), p))
+                    .collect();
                 if ae.op == "+" || ae.op == "*" {
-                    df_parts.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+                    part_pairs.sort_by(|a, b| a.0.cmp(&b.0));
                 }
-                
-                // Build key: (op, [symbols...])
-                let symbols: Vec<String> = df_parts.iter().map(|p| p.symbol.clone()).collect();
-                let key = DerivedFunctionKey::Arithmetic(ae.op.clone(), symbols.clone());
+                let part_strings: Vec<String> = part_pairs.iter().map(|p| p.0.clone()).collect();
+                let df_parts: Vec<PrimitiveNumericExpression> =
+                    part_pairs.into_iter().map(|p| p.1).collect();
+
+                // Build key: (op, [part_strings...])
+                let key = DerivedFunctionKey::Arithmetic(ae.op.clone(), part_strings.clone());
                 
                 // Collect all args
                 let mut all_args = Vec::new();
@@ -198,10 +233,20 @@ impl NormalizationFunctionAdministrator {
                 }
                 
                 if !self.functions.contains_key(&key) {
-                    // Generate new symbol
-                    let mut key_parts = vec![ae.op.clone()];
-                    key_parts.extend(symbols.clone());
-                    let symbol = self.get_new_symbol(&key_parts);
+                    // Generate new symbol using PNE-style naming
+                    let op_name = match ae.op.as_str() {
+                        "+" => "sum_PNE",
+                        "-" => "difference_PNE",
+                        "*" => "product_PNE",
+                        "/" => "quotient_PNE",
+                        _ => "op_PNE",
+                    };
+                    let base = if part_strings.is_empty() {
+                        format!("derived!{}", op_name)
+                    } else {
+                        format!("derived!{} {}", op_name, part_strings.join("_PNE "))
+                    };
+                    let symbol = self.make_unique_symbol(&base);
                     
                     // Generate default variables
                     let default_args = self.get_default_variables(all_args.len());
@@ -244,17 +289,15 @@ impl NormalizationFunctionAdministrator {
     /// Generate a new unique symbol name
     /// Matches Python's get_new_symbol behavior
     fn get_new_symbol(&mut self, key_parts: &[String]) -> String {
-        let used_names: Vec<String> = self.functions.values()
-            .map(|ax| ax.name.clone())
-            .collect();
-        
+        let used_names: Vec<String> = self.functions.values().map(|ax| ax.name.clone()).collect();
+
         // Build addition string from key parts
         let addition = key_parts
             .iter()
             .map(|part| self.prettyprint(part))
             .collect::<Vec<_>>()
             .join("_");
-        
+
         let mut counter = 1;
         loop {
             let new_func_name = if counter == 1 {
@@ -262,7 +305,7 @@ impl NormalizationFunctionAdministrator {
             } else {
                 format!("derived!{}_{}", addition, counter)
             };
-            
+
             if !used_names.contains(&new_func_name) {
                 return new_func_name;
             }
