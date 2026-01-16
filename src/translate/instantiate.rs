@@ -65,129 +65,483 @@ impl std::fmt::Display for InstantiateError {
 
 impl std::error::Error for InstantiateError {}
 
-/// Split a rule with >2 conditions into a chain of binary join/project rules.
-/// Mirrors Python's split_rules.py and greedy_join.py logic.
-fn split_rule(
-    body: Vec<build_model::SymAtom>,
-    head: build_model::SymAtom,
-    counter: &mut usize,
-) -> Vec<(Vec<build_model::SymAtom>, build_model::SymAtom)> {
-    if body.len() <= 2 {
-        // No splitting needed
-        return vec![(body, head)];
-    }
-    
-    // Track which variables are still needed (effect variables + variables in remaining conditions)
-    let effect_vars: std::collections::HashSet<String> = 
-        head.args.iter().filter(|a| a.starts_with('?')).cloned().collect();
-    
-    // Greedy join algorithm: repeatedly join the two conditions with minimum cost
-    let mut remaining_conditions = body;
-    let mut result_rules = Vec::new();
-    
-    while remaining_conditions.len() > 2 {
-        // Find the pair with minimum join cost (most shared variables)
-        let (best_i, best_j, _cost) = find_best_join_pair(&remaining_conditions);
-        
-        // Get variables from the two conditions to join
-        let left = &remaining_conditions[best_i];
-        let right = &remaining_conditions[best_j];
-        let left_vars = get_variables(left);
-        let right_vars = get_variables(right);
-        let common_vars: std::collections::HashSet<String> = 
-            left_vars.iter().filter(|v| right_vars.contains(*v)).cloned().collect();
-        
-        // Calculate which variables from this join are still needed
-        // (needed for effect or for joining with remaining conditions)
-        let mut remaining_vars: std::collections::HashSet<String> = effect_vars.clone();
-        for (i, cond) in remaining_conditions.iter().enumerate() {
-            if i != best_i && i != best_j {
-                remaining_vars.extend(get_variables(cond));
-            }
-        }
-        
-        // The intermediate atom should only include variables that are still needed
-        let joined_vars: std::collections::HashSet<String> = 
-            left_vars.iter().chain(right_vars.iter()).cloned().collect();
-        let mut intermediate_vars: Vec<String> = joined_vars
-            .iter()
-            .filter(|v| remaining_vars.contains(*v) || common_vars.contains(*v))
-            .cloned()
-            .collect();
-        intermediate_vars.sort(); // Consistent ordering
-        
-        // Create intermediate predicate
-        let intermediate_name = format!("@new-atom-{}", counter);
-        *counter += 1;
-        let intermediate_atom = build_model::SymAtom::new(
-            intermediate_name,
-            intermediate_vars,
-        );
-        
-        // Create join rule for these two conditions
-        let join_body = vec![left.clone(), right.clone()];
-        result_rules.push((join_body, intermediate_atom.clone()));
-        
-        // Remove the two joined conditions and add the intermediate
-        let mut new_conditions = Vec::new();
-        for (i, cond) in remaining_conditions.iter().enumerate() {
-            if i != best_i && i != best_j {
-                new_conditions.push(cond.clone());
-            }
-        }
-        new_conditions.push(intermediate_atom);
-        remaining_conditions = new_conditions;
-    }
-    
-    // Final rule: combine last 2 conditions into the head
-    result_rules.push((remaining_conditions, head));
-    result_rules
+#[derive(Debug, Clone)]
+struct SymRule {
+    conditions: Vec<build_model::SymAtom>,
+    effect: build_model::SymAtom,
 }
 
-/// Find the pair of conditions with the best join cost (most shared variables).
-fn find_best_join_pair(conditions: &[build_model::SymAtom]) -> (usize, usize, i32) {
-    let mut best_i = 0;
-    let mut best_j = 1;
-    let mut best_cost = i32::MAX;
-    
-    for i in 0..conditions.len() {
-        for j in (i + 1)..conditions.len() {
-            let cost = compute_join_cost(&conditions[i], &conditions[j]);
-            if cost < best_cost {
-                best_cost = cost;
-                best_i = i;
-                best_j = j;
-            }
-        }
-    }
-    
-    (best_i, best_j, best_cost)
+#[derive(Debug, Clone)]
+struct RuleWithType {
+    rtype: String,
+    conditions: Vec<build_model::SymAtom>,
+    effect: build_model::SymAtom,
 }
 
-/// Compute join cost between two conditions.
-/// Lower cost = more shared variables (better to join).
-fn compute_join_cost(left: &build_model::SymAtom, right: &build_model::SymAtom) -> i32 {
-    let left_vars = get_variables(left);
-    let right_vars = get_variables(right);
-    let common_vars: Vec<_> = left_vars
-        .iter()
-        .filter(|v| right_vars.contains(*v))
-        .collect();
-    
-    // Cost: prefer joins with more shared variables (negative common count)
-    // and fewer unique variables
-    let unique_left = left_vars.len() - common_vars.len();
-    let unique_right = right_vars.len() - common_vars.len();
-    (unique_left + unique_right) as i32 - (common_vars.len() as i32 * 10)
+fn symatom_key(atom: &build_model::SymAtom) -> String {
+    let mut key = atom.predicate.clone();
+    key.push('(');
+    key.push_str(&atom.args.join(","));
+    key.push(')');
+    key
 }
 
-/// Get all variables (starting with '?') from an atom.
-fn get_variables(atom: &build_model::SymAtom) -> Vec<String> {
+fn get_variables(atom: &build_model::SymAtom) -> std::collections::HashSet<String> {
     atom.args
         .iter()
         .filter(|a| a.starts_with('?'))
         .cloned()
         .collect()
+}
+
+fn get_variables_in_atoms(atoms: &[build_model::SymAtom]) -> std::collections::HashSet<String> {
+    let mut result = std::collections::HashSet::new();
+    for atom in atoms {
+        result.extend(get_variables(atom));
+    }
+    result
+}
+
+fn split_duplicate_arguments(rule: &mut SymRule) {
+    fn rename_in_atom(
+        atom: &build_model::SymAtom,
+        extra_conditions: &mut Vec<build_model::SymAtom>,
+    ) -> build_model::SymAtom {
+        let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut new_args = atom.args.clone();
+        for (i, arg) in atom.args.iter().enumerate() {
+            if arg.starts_with('?') {
+                if used.contains(arg) {
+                    let new_var_name = format!("{}@{}", arg, extra_conditions.len());
+                    new_args[i] = new_var_name.clone();
+                    extra_conditions.push(build_model::SymAtom::new(
+                        "=".to_string(),
+                        vec![arg.clone(), new_var_name],
+                    ));
+                } else {
+                    used.insert(arg.clone());
+                }
+            }
+        }
+        build_model::SymAtom::new(atom.predicate.clone(), new_args)
+    }
+
+    let mut extra_conditions: Vec<build_model::SymAtom> = Vec::new();
+    rule.effect = rename_in_atom(&rule.effect, &mut extra_conditions);
+    let mut new_conditions = Vec::new();
+    for cond in &rule.conditions {
+        new_conditions.push(rename_in_atom(cond, &mut extra_conditions));
+    }
+    new_conditions.extend(extra_conditions);
+    rule.conditions = new_conditions;
+}
+
+fn add_object_conditions_to_rules(rules: &mut [SymRule]) -> bool {
+    let mut inserted = false;
+    for rule in rules.iter_mut() {
+        let mut bound_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for cond in &rule.conditions {
+            for arg in &cond.args {
+                if arg.starts_with('?') {
+                    bound_vars.insert(arg.clone());
+                }
+            }
+        }
+        let mut extra_conditions: Vec<build_model::SymAtom> = Vec::new();
+        for arg in &rule.effect.args {
+            if !arg.starts_with('?') || bound_vars.contains(arg) {
+                continue;
+            }
+            extra_conditions.push(build_model::SymAtom::new(
+                "@object".to_string(),
+                vec![arg.clone()],
+            ));
+            bound_vars.insert(arg.clone());
+        }
+        if !extra_conditions.is_empty() {
+            rule.conditions.extend(extra_conditions);
+            inserted = true;
+        }
+    }
+    inserted
+}
+
+fn convert_trivial_rules_to_facts(
+    rules: &[SymRule],
+) -> (Vec<SymRule>, Vec<build_model::Atom>) {
+    let mut new_rules = Vec::new();
+    let mut extra_facts = Vec::new();
+    for rule in rules {
+        if rule.conditions.is_empty() {
+            let has_vars = rule.effect.args.iter().any(|a| a.starts_with('?'));
+            if !has_vars {
+                extra_facts.push(build_model::Atom {
+                    predicate: rule.effect.predicate.clone(),
+                    args: rule
+                        .effect
+                        .args
+                        .iter()
+                        .map(|s| build_model::Arg::Const(s.clone()))
+                        .collect(),
+                });
+                continue;
+            }
+        }
+        new_rules.push(rule.clone());
+    }
+    (new_rules, extra_facts)
+}
+
+fn get_connected_conditions(
+    conditions: &[build_model::SymAtom],
+) -> Vec<Vec<build_model::SymAtom>> {
+    let mut var_to_conditions: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (idx, cond) in conditions.iter().enumerate() {
+        for var in cond.args.iter().filter(|a| a.starts_with('?')) {
+            var_to_conditions
+                .entry(var.clone())
+                .or_default()
+                .push(idx);
+        }
+    }
+
+    let mut adjacency: Vec<std::collections::HashSet<usize>> =
+        vec![std::collections::HashSet::new(); conditions.len()];
+    for indices in var_to_conditions.values() {
+        if indices.len() < 2 {
+            continue;
+        }
+        let first = indices[0];
+        for &other in &indices[1..] {
+            adjacency[first].insert(other);
+            adjacency[other].insert(first);
+        }
+    }
+
+    let mut visited = vec![false; conditions.len()];
+    let mut components: Vec<Vec<build_model::SymAtom>> = Vec::new();
+    for i in 0..conditions.len() {
+        if visited[i] {
+            continue;
+        }
+        let mut stack = vec![i];
+        let mut comp_indices = Vec::new();
+        visited[i] = true;
+        while let Some(node) = stack.pop() {
+            comp_indices.push(node);
+            for &nbr in &adjacency[node] {
+                if !visited[nbr] {
+                    visited[nbr] = true;
+                    stack.push(nbr);
+                }
+            }
+        }
+        comp_indices.sort();
+        let mut comp: Vec<build_model::SymAtom> =
+            comp_indices.iter().map(|&idx| conditions[idx].clone()).collect();
+        comp.sort_by_key(symatom_key);
+        components.push(comp);
+    }
+    components.sort_by(|a, b| symatom_key(&a[0]).cmp(&symatom_key(&b[0])));
+    components
+}
+
+fn project_rule(
+    rule: &SymRule,
+    conditions: Vec<build_model::SymAtom>,
+    counter: &mut usize,
+) -> SymRule {
+    let mut effect_vars: Vec<String> = rule
+        .effect
+        .args
+        .iter()
+        .filter(|a| a.starts_with('?'))
+        .cloned()
+        .collect();
+    let cond_vars = get_variables_in_atoms(&conditions);
+    effect_vars.retain(|v| cond_vars.contains(v));
+    effect_vars.sort();
+    let predicate = format!("p${}", counter);
+    *counter += 1;
+    let effect = build_model::SymAtom::new(predicate, effect_vars);
+    SymRule { conditions, effect }
+}
+
+#[derive(Clone)]
+struct OccurrencesTracker {
+    occurrences: std::collections::HashMap<String, i32>,
+}
+
+impl OccurrencesTracker {
+    fn new(rule: &SymRule) -> Self {
+        let mut tracker = Self {
+            occurrences: std::collections::HashMap::new(),
+        };
+        tracker.update(&rule.effect, 1);
+        for cond in &rule.conditions {
+            tracker.update(cond, 1);
+        }
+        tracker
+    }
+
+    fn update(&mut self, atom: &build_model::SymAtom, delta: i32) {
+        for var in atom.args.iter().filter(|a| a.starts_with('?')) {
+            let entry = self.occurrences.entry(var.clone()).or_insert(0);
+            *entry += delta;
+            if *entry == 0 {
+                self.occurrences.remove(var);
+            }
+        }
+    }
+
+    fn variables(&self) -> std::collections::HashSet<String> {
+        self.occurrences.keys().cloned().collect()
+    }
+}
+
+#[derive(Clone)]
+struct CostMatrix {
+    joinees: Vec<build_model::SymAtom>,
+    cost_matrix: Vec<Vec<(i32, i32, i32)>>,
+}
+
+impl CostMatrix {
+    fn new(joinees: Vec<build_model::SymAtom>) -> Self {
+        let mut cm = Self {
+            joinees: Vec::new(),
+            cost_matrix: Vec::new(),
+        };
+        for j in joinees {
+            cm.add_entry(j);
+        }
+        cm
+    }
+
+    fn add_entry(&mut self, joinee: build_model::SymAtom) {
+        let new_row: Vec<(i32, i32, i32)> = self
+            .joinees
+            .iter()
+            .map(|other| compute_join_cost(&joinee, other))
+            .collect();
+        self.cost_matrix.push(new_row);
+        self.joinees.push(joinee);
+    }
+
+    fn delete_entry(&mut self, index: usize) {
+        for row in self.cost_matrix.iter_mut().skip(index + 1) {
+            row.remove(index);
+        }
+        self.cost_matrix.remove(index);
+        self.joinees.remove(index);
+    }
+
+    fn find_min_pair(&self) -> (usize, usize) {
+        let mut best: Option<((i32, i32, i32), usize, usize)> = None;
+        for (i, row) in self.cost_matrix.iter().enumerate() {
+            for (j, entry) in row.iter().enumerate() {
+                if let Some((best_entry, _, _)) = &best {
+                    if entry < best_entry {
+                        best = Some((*entry, i, j));
+                    }
+                } else {
+                    best = Some((*entry, i, j));
+                }
+            }
+        }
+        let (_, i, j) = best.expect("at least one pair");
+        (i, j)
+    }
+
+    fn remove_min_pair(&mut self) -> (build_model::SymAtom, build_model::SymAtom) {
+        let (left_index, right_index) = self.find_min_pair();
+        let (li, ri) = if left_index > right_index {
+            (left_index, right_index)
+        } else {
+            (right_index, left_index)
+        };
+        let left = self.joinees[li].clone();
+        let right = self.joinees[ri].clone();
+        self.delete_entry(li);
+        self.delete_entry(ri);
+        (left, right)
+    }
+
+    fn can_join(&self) -> bool {
+        self.joinees.len() >= 2
+    }
+}
+
+fn compute_join_cost(
+    left: &build_model::SymAtom,
+    right: &build_model::SymAtom,
+) -> (i32, i32, i32) {
+    let left_vars = get_variables(left);
+    let right_vars = get_variables(right);
+    let (small, large) = if left_vars.len() <= right_vars.len() {
+        (left_vars, right_vars)
+    } else {
+        (right_vars, left_vars)
+    };
+    let common: std::collections::HashSet<String> =
+        small.intersection(&large).cloned().collect();
+    let common_len = common.len() as i32;
+    (
+        (small.len() as i32) - common_len,
+        (large.len() as i32) - common_len,
+        -common_len,
+    )
+}
+
+#[derive(Clone)]
+struct ResultList {
+    final_effect: build_model::SymAtom,
+    result: Vec<RuleWithType>,
+    counter: usize,
+}
+
+impl ResultList {
+    fn new(rule: &SymRule, counter: usize) -> Self {
+        Self {
+            final_effect: rule.effect.clone(),
+            result: Vec::new(),
+            counter,
+        }
+    }
+
+    fn next_name(&mut self) -> String {
+        let name = format!("p${}", self.counter);
+        self.counter += 1;
+        name
+    }
+
+    fn add_rule(
+        &mut self,
+        rtype: &str,
+        conditions: Vec<build_model::SymAtom>,
+        effect_vars: Vec<String>,
+    ) -> build_model::SymAtom {
+        let effect = build_model::SymAtom::new(self.next_name(), effect_vars);
+        self.result.push(RuleWithType {
+            rtype: rtype.to_string(),
+            conditions,
+            effect: effect.clone(),
+        });
+        effect
+    }
+
+    fn into_result(mut self) -> (Vec<RuleWithType>, usize) {
+        if let Some(last) = self.result.last_mut() {
+            last.effect = self.final_effect;
+        }
+        (self.result, self.counter)
+    }
+}
+
+fn greedy_join(rule: &SymRule, counter: &mut usize) -> Vec<RuleWithType> {
+    let mut cost_matrix = CostMatrix::new(rule.conditions.clone());
+    let mut occurrences = OccurrencesTracker::new(rule);
+    let mut result = ResultList::new(rule, *counter);
+
+    while cost_matrix.can_join() {
+        let (left, right) = cost_matrix.remove_min_pair();
+        for joinee in [&left, &right] {
+            occurrences.update(joinee, -1);
+        }
+
+        let left_vars = get_variables(&left);
+        let right_vars = get_variables(&right);
+        let common_vars: std::collections::HashSet<String> =
+            left_vars.intersection(&right_vars).cloned().collect();
+        let condition_vars: std::collections::HashSet<String> =
+            left_vars.union(&right_vars).cloned().collect();
+        let effect_vars_set: std::collections::HashSet<String> = occurrences
+            .variables()
+            .intersection(&condition_vars)
+            .cloned()
+            .collect();
+
+        let mut joinees = vec![left, right];
+        for joinee in joinees.iter_mut() {
+            let joinee_vars = get_variables(joinee);
+            let retained_vars: std::collections::HashSet<String> = joinee_vars
+                .intersection(&effect_vars_set)
+                .chain(joinee_vars.intersection(&common_vars))
+                .cloned()
+                .collect();
+            if retained_vars.len() != joinee_vars.len() {
+                let mut vars: Vec<String> = retained_vars.into_iter().collect();
+                vars.sort();
+                let proj_effect = result.add_rule("project", vec![joinee.clone()], vars);
+                *joinee = proj_effect;
+            }
+        }
+
+        let mut effect_vars: Vec<String> = effect_vars_set.into_iter().collect();
+        effect_vars.sort();
+        let joint = result.add_rule("join", joinees, effect_vars);
+        cost_matrix.add_entry(joint.clone());
+        occurrences.update(&joint, 1);
+    }
+
+    let (rules, new_counter) = result.into_result();
+    *counter = new_counter;
+    rules
+}
+
+fn split_into_binary_rules(rule: &SymRule, counter: &mut usize) -> Vec<RuleWithType> {
+    if rule.conditions.len() <= 1 {
+        return vec![RuleWithType {
+            rtype: "project".to_string(),
+            conditions: rule.conditions.clone(),
+            effect: rule.effect.clone(),
+        }];
+    }
+    greedy_join(rule, counter)
+}
+
+fn split_rule(rule: &SymRule, counter: &mut usize) -> Vec<RuleWithType> {
+    let mut important_conditions = Vec::new();
+    let mut trivial_conditions = Vec::new();
+    for cond in &rule.conditions {
+        if cond.args.iter().any(|a| a.starts_with('?')) {
+            important_conditions.push(cond.clone());
+        } else {
+            trivial_conditions.push(cond.clone());
+        }
+    }
+
+    let components = get_connected_conditions(&important_conditions);
+    if components.len() == 1 && trivial_conditions.is_empty() {
+        return split_into_binary_rules(rule, counter);
+    }
+
+    let mut result = Vec::new();
+    let mut projected_rules = Vec::new();
+    for conditions in components {
+        projected_rules.push(project_rule(rule, conditions, counter));
+    }
+
+    for proj in &projected_rules {
+        result.extend(split_into_binary_rules(proj, counter));
+    }
+
+    let mut combined_conditions: Vec<build_model::SymAtom> = projected_rules
+        .iter()
+        .map(|r| r.effect.clone())
+        .collect();
+    combined_conditions.extend(trivial_conditions);
+    let rtype = if combined_conditions.len() >= 2 {
+        "product".to_string()
+    } else {
+        "project".to_string()
+    };
+    result.push(RuleWithType {
+        rtype,
+        conditions: combined_conditions,
+        effect: rule.effect.clone(),
+    });
+    result
 }
 
 /// High-level exploration step mirroring python/translate/instantiate.py::explore.
@@ -205,78 +559,39 @@ pub fn explore_normalized(
     let exploration_rules = crate::translate::normalize::build_exploration_rules(norm_task)
         .map_err(InstantiateError::Normalize)?;
     eprintln!("  Built {} exploration rules", exploration_rules.len());
-    
-    // Debug: print first 10 rules with full details
-    for (i, (body, head)) in exploration_rules.iter().enumerate().take(10) {
-        eprintln!("  Rule {}: {}({}) :- [{}]", i, head.predicate, head.args.join(","),
-                  body.iter().map(|a| format!("{}({})", a.predicate, a.args.join(","))).collect::<Vec<_>>().join(", "));
+
+    let mut prolog_rules: Vec<SymRule> = exploration_rules
+        .into_iter()
+        .map(|(body, head)| SymRule {
+            conditions: body,
+            effect: head,
+        })
+        .collect();
+
+    for rule in prolog_rules.iter_mut() {
+        split_duplicate_arguments(rule);
     }
-    
-    eprintln!("DEBUG: explore_normalized() Step 1b: split multi-condition rules");
-    // Step 1b: Split rules with >2 conditions into chains of binary joins
-    let mut split_rules = Vec::new();
+
+    let object_predicate_required = add_object_conditions_to_rules(&mut prolog_rules);
+
+    let (prolog_rules, extra_facts) = convert_trivial_rules_to_facts(&prolog_rules);
+
+    eprintln!("DEBUG: explore_normalized() Step 1b: split rules");
+    let mut split_rules: Vec<RuleWithType> = Vec::new();
     let mut counter = 0;
-    for (body, head) in exploration_rules {
-        if body.len() > 2 {
-            let sub_rules = split_rule(body, head, &mut counter);
-            split_rules.extend(sub_rules);
-        } else {
-            split_rules.push((body, head));
-        }
+    for rule in &prolog_rules {
+        split_rules.extend(split_rule(rule, &mut counter));
     }
     eprintln!("  After splitting: {} rules", split_rules.len());
-    
-    // Debug: print first 25 split rules
-    for (i, (body, head)) in split_rules.iter().enumerate().take(25) {
-        eprintln!("  Split rule {}: {}({}) :- [{}]", i, head.predicate, head.args.join(","),
-                  body.iter().map(|a| format!("{}({})", a.predicate, a.args.join(","))).collect::<Vec<_>>().join(", "));
-    }
-    
-    // Convert to RuleSpec format, separating facts from rules
+
     let mut rule_specs: Vec<build_model::RuleSpec> = Vec::new();
-    let mut extra_facts: Vec<build_model::Atom> = Vec::new();
-    
-    for (body, head) in split_rules {
-        // Determine rule type based on body size and variable sharing
-        let rtype = determine_rule_type(&head, &body);
-        
-        if rtype == "fact" {
-            // This is a fact (no body) - add it directly to init facts
-            // Convert the head to an atom (no variables, just constants)
-            extra_facts.push(build_model::Atom {
-                predicate: head.predicate,
-                args: head.args.iter().map(|s| build_model::Arg::Const(s.clone())).collect(),
-            });
-        } else {
-            rule_specs.push(build_model::RuleSpec {
-                rtype,
-                effect: head,
-                conditions: body,
-            });
-        }
+    for rule in split_rules {
+        rule_specs.push(build_model::RuleSpec {
+            rtype: rule.rtype,
+            effect: rule.effect,
+            conditions: rule.conditions,
+        });
     }
-    
-    let object_predicate_required = add_object_conditions(&mut rule_specs);
-    // Recompute rule types after adding @object conditions
-    let mut normalized_specs: Vec<build_model::RuleSpec> = Vec::new();
-    for mut rule in rule_specs.into_iter() {
-        let rtype = determine_rule_type(&rule.effect, &rule.conditions);
-        if rtype == "fact" {
-            extra_facts.push(build_model::Atom {
-                predicate: rule.effect.predicate.clone(),
-                args: rule
-                    .effect
-                    .args
-                    .iter()
-                    .map(|s| build_model::Arg::Const(s.clone()))
-                    .collect(),
-            });
-        } else {
-            rule.rtype = rtype;
-            normalized_specs.push(rule);
-        }
-    }
-    rule_specs = normalized_specs;
 
     eprintln!("DEBUG: explore_normalized() Step 2: add init facts");
     // Step 2: Build init facts from problem
@@ -290,6 +605,16 @@ pub fn explore_normalized(
                 args: vec![build_model::Arg::Const(obj_name.clone())],
             });
         }
+    }
+    // Add equality facts for all objects: =(obj, obj)
+    for (obj_name, _) in &norm_task.objects {
+        init_facts.push(build_model::Atom {
+            predicate: "=".to_string(),
+            args: vec![
+                build_model::Arg::Const(obj_name.clone()),
+                build_model::Arg::Const(obj_name.clone()),
+            ],
+        });
     }
     if object_predicate_required {
         for (obj_name, _) in &norm_task.objects {
@@ -1321,71 +1646,6 @@ fn format_number(value: f64) -> String {
     }
 }
 
-/// Determine the rule type (join/product/project) based on conditions and effect.
-fn determine_rule_type(_head: &build_model::SymAtom, body: &[build_model::SymAtom]) -> String {
-    match body.len() {
-        0 => {
-            // No conditions - this becomes a fact
-            "fact".to_string()
-        }
-        1 => "project".to_string(), // Single condition - projection
-        2 => {
-            // For 2 conditions, check if there are shared variables
-            let vars_1: std::collections::HashSet<&String> = body[0]
-                .args
-                .iter()
-                .filter(|a| a.starts_with('?'))
-                .collect();
-            let vars_2: std::collections::HashSet<&String> = body[1]
-                .args
-                .iter()
-                .filter(|a| a.starts_with('?'))
-                .collect();
-            
-            if vars_1.intersection(&vars_2).count() > 0 {
-                "join".to_string()
-            } else {
-                "product".to_string()
-            }
-        }
-        _ => {
-            // For >2 conditions, use "product"
-            // Note: JoinRule only supports 2 conditions, so we can't use "join" here
-            // even if variables are shared. ProductRule will handle variable constraints.
-            "product".to_string()
-        }
-    }
-}
-
-fn add_object_conditions(rules: &mut [build_model::RuleSpec]) -> bool {
-    let mut inserted = false;
-    for rule in rules.iter_mut() {
-        let mut bound_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for cond in &rule.conditions {
-            for arg in &cond.args {
-                if arg.starts_with('?') {
-                    bound_vars.insert(arg.clone());
-                }
-            }
-        }
-        let mut extra_conditions: Vec<build_model::SymAtom> = Vec::new();
-        for arg in &rule.effect.args {
-            if !arg.starts_with('?') || bound_vars.contains(arg) {
-                continue;
-            }
-            extra_conditions.push(build_model::SymAtom::new(
-                "@object".to_string(),
-                vec![arg.clone()],
-            ));
-            bound_vars.insert(arg.clone());
-        }
-        if !extra_conditions.is_empty() {
-            rule.conditions.extend(extra_conditions);
-            inserted = true;
-        }
-    }
-    inserted
-}
 
 /// Convert a PDDL SExpr to a build_model Atom.
 fn sexpr_to_atom(sexpr: &crate::translate::pddl_parser::SExpr) -> Option<build_model::Atom> {
