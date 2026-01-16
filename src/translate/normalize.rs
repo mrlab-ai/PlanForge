@@ -512,12 +512,45 @@ fn remove_free_effect_variables(rules: &mut [bm::RuleSpec]) -> bool {
 
 /// Deduplicates identical conditions within each rule to keep the join queue small.
 fn split_duplicate_arguments(rules: &mut [bm::RuleSpec]) {
+    fn rename_duplicates_in_atom(
+        atom: &bm::SymAtom,
+        extra_conditions: &mut Vec<bm::SymAtom>,
+    ) -> bm::SymAtom {
+        let mut used: HashSet<String> = HashSet::new();
+        let mut new_args = atom.args.clone();
+        for (idx, arg) in atom.args.iter().enumerate() {
+            if !arg.starts_with('?') {
+                continue;
+            }
+            if used.contains(arg) {
+                let new_var = format!("{}@{}", arg, extra_conditions.len());
+                new_args[idx] = new_var.clone();
+                extra_conditions.push(bm::SymAtom::new(
+                    "=".to_string(),
+                    vec![arg.clone(), new_var],
+                ));
+            } else {
+                used.insert(arg.clone());
+            }
+        }
+        bm::SymAtom::new(atom.predicate.clone(), new_args)
+    }
+
     for rule in rules.iter_mut() {
+        let mut extra_conditions: Vec<bm::SymAtom> = Vec::new();
+        rule.effect = rename_duplicates_in_atom(&rule.effect, &mut extra_conditions);
+        let old_conditions = std::mem::take(&mut rule.conditions);
+        let mut new_conditions: Vec<bm::SymAtom> = old_conditions
+            .iter()
+            .map(|cond| rename_duplicates_in_atom(cond, &mut extra_conditions))
+            .collect();
+        new_conditions.extend(extra_conditions);
         let mut seen: HashSet<(String, Vec<String>)> = HashSet::new();
-        rule.conditions.retain(|cond| {
+        new_conditions.retain(|cond| {
             let key = (cond.predicate.clone(), cond.args.clone());
             seen.insert(key)
         });
+        rule.conditions = new_conditions;
     }
 }
 
@@ -2103,7 +2136,9 @@ pub fn normalize(task: &mut NormalizableTask) -> Result<(), String> {
 /// Build exploration rules from normalized task for instantiation.
 /// This converts normalized actions and axioms into datalog-style rules for model computation.
 /// Mirrors Python's normalize.build_exploration_rules().
-pub fn build_exploration_rules(task: &NormalizableTask) -> Vec<(Vec<bm::SymAtom>, bm::SymAtom)> {
+pub fn build_exploration_rules(
+    task: &NormalizableTask,
+) -> Result<Vec<(Vec<bm::SymAtom>, bm::SymAtom)>, String> {
     let mut rules = Vec::new();
     
     // For each action, create a rule for the precondition
@@ -2120,7 +2155,7 @@ pub fn build_exploration_rules(task: &NormalizableTask) -> Vec<(Vec<bm::SymAtom>
             let mut all_params = action.parameters.clone();
             all_params.extend(effect.parameters.clone());
             
-            let effect_heads = get_effect_rule_heads(effect);
+            let effect_heads = get_effect_rule_heads_checked(effect)?;
             
             if !effect_heads.is_empty() {
                 let mut effect_body = vec![get_action_predicate(action)];
@@ -2201,7 +2236,7 @@ pub fn build_exploration_rules(task: &NormalizableTask) -> Vec<(Vec<bm::SymAtom>
         }
     }
     
-    rules
+    Ok(rules)
 }
 
 /// Get the axiom predicate atom for a numeric axiom
@@ -2237,14 +2272,14 @@ fn get_action_predicate(action: &TaskAction) -> bm::SymAtom {
 
 /// Get the effect head atom for a conditional effect.
 /// Returns None for negated atoms or unsupported effects.
-fn get_effect_rule_heads(effect: &TaskEffect) -> Vec<bm::SymAtom> {
+fn get_effect_rule_heads_checked(effect: &TaskEffect) -> Result<Vec<bm::SymAtom>, String> {
     use crate::translate::pddl_parser::SExpr;
 
     match &effect.effect {
         SExpr::List(items) if !items.is_empty() => {
             if let SExpr::Atom(op) = &items[0] {
                 if op == "not" {
-                    return Vec::new();
+                    return Ok(Vec::new());
                 }
                 if matches!(op.as_str(), "increase" | "decrease" | "assign" | "scale-up" | "scale-down") {
                     if items.len() >= 2 {
@@ -2260,14 +2295,14 @@ fn get_effect_rule_heads(effect: &TaskEffect) -> Vec<bm::SymAtom> {
                                         }
                                     })
                                     .collect();
-                                return vec![
+                                return Ok(vec![
                                     get_defined_function_predicate(func_name, &args),
                                     bm::SymAtom::new(func_name.clone(), args),
-                                ];
+                                ]);
                             }
                         }
                     }
-                    return Vec::new();
+                    return Err("numeric effect missing function head".to_string());
                 }
             }
 
@@ -2282,11 +2317,11 @@ fn get_effect_rule_heads(effect: &TaskEffect) -> Vec<bm::SymAtom> {
                         }
                     })
                     .collect();
-                return vec![bm::SymAtom::new(predicate.clone(), args)];
+                return Ok(vec![bm::SymAtom::new(predicate.clone(), args)]);
             }
-            Vec::new()
+            Err("effect head is not an atom".to_string())
         }
-        _ => Vec::new(),
+        _ => Err("effect is not a non-empty list".to_string()),
     }
 }
 

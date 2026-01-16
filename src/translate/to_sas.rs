@@ -174,7 +174,7 @@ pub fn build_sas(
     py_groups: Option<Vec<Vec<String>>>,
     propositional_axioms: &[crate::translate::normalize::TaskAxiom],
     normalized_goal: &crate::translate::pddl_ast::Condition,
-) -> SASTask {
+) -> Result<SASTask, String> {
     fn normalize_op(op: &str) -> String {
         // Keep the operator as-is for Python compatibility
         op.to_string()
@@ -1054,7 +1054,8 @@ pub fn build_sas(
     // The axiom layer computation is already done above when populating numeric_list.
 
     let (num_axioms_by_layer, _max_layer, _num_axiom_map, _const_num_axioms) =
-        crate::translate::numeric_axiom_rules::handle_axioms(&instantiated_num_axioms);
+        crate::translate::numeric_axiom_rules::handle_axioms_checked(&instantiated_num_axioms)
+            .map_err(|err| format!("numeric axiom error: {}", err))?;
 
     // Propagate computed axiom layers back into numeric_list entries by matching axiom.name
     let mut axname_to_layer: std::collections::HashMap<String, i32> =
@@ -1072,43 +1073,27 @@ pub fn build_sas(
 
     // Convert instantiated numeric axioms to SAS NumericAxiom format
     // We need to map the axiom's effect and parts to numeric variable indices
+    let format_pne = |name: &str, args: &[String]| -> String {
+        if args.is_empty() {
+            format!("{}()", name)
+        } else {
+            format!("{}({})", name, args.join(", "))
+        }
+    };
     for (_layer, axs) in &num_axioms_by_layer {
         for ax in axs {
             // Get the effect's numeric variable index
-            let effect_key = format!("{}()", ax.effect.name);
-            if ax.effect.args.is_empty() {
-                // No args - use simple format
-            } else {
-                // Has args - need to include them
-                let effect_key_with_args = format!("{}({})", ax.effect.name, ax.effect.args.join(", "));
-                eprintln!("DEBUG: axiom effect has args: {:?} -> {:?}", effect_key, effect_key_with_args);
-            }
-            let effect_idx = match num_index.get(&effect_key) {
-                Some(&idx) => idx,
-                None => {
-                    // Try with args
-                    let effect_key_with_args = if ax.effect.args.is_empty() {
-                        effect_key.clone()
-                    } else {
-                        format!("{}({})", ax.effect.name, ax.effect.args.join(", "))
-                    };
-                    match num_index.get(&effect_key_with_args) {
-                        Some(&idx) => idx,
-                        None => {
-                            eprintln!("DEBUG: numeric axiom effect not found: {:?} (also tried {:?})", effect_key, effect_key_with_args);
-                            continue; // Skip if we can't find the effect
-                        }
-                    }
-                }
-            };
-            
+            let effect_key = format_pne(&ax.effect.name, &ax.effect.args);
+            let effect_idx = *num_index
+                .get(&effect_key)
+                .ok_or_else(|| format!("numeric axiom effect not found: {}", effect_key))?;
+
             // Get the parts' numeric variable indices
             let mut part_indices: Vec<usize> = Vec::new();
-            let mut all_parts_found = true;
             for part in &ax.parts {
                 let part_key = match part {
                     crate::translate::numeric_axiom_rules::NumericPart::Primitive(pne) => {
-                        format!("{}()", pne.name)
+                        format_pne(&pne.name, &pne.args)
                     }
                     crate::translate::numeric_axiom_rules::NumericPart::Constant(c) => {
                         // Constants are represented as derived!{value}()
@@ -1116,32 +1101,31 @@ pub fn build_sas(
                     }
                     crate::translate::numeric_axiom_rules::NumericPart::Axiom(ref_ax) => {
                         // Reference to another axiom's effect
-                        format!("{}()", ref_ax.effect.name)
+                        format_pne(&ref_ax.effect.name, &ref_ax.effect.args)
                     }
                 };
-                match num_index.get(&part_key) {
-                    Some(&idx) => part_indices.push(idx),
-                    None => {
-                        eprintln!("DEBUG: numeric axiom part not found: {:?} for axiom {:?}", part_key, ax.effect.name);
-                        all_parts_found = false;
-                        break;
-                    }
-                }
+                let idx = *num_index.get(&part_key).ok_or_else(|| {
+                    format!(
+                        "numeric axiom part not found: {} for axiom {}",
+                        part_key, ax.effect.name
+                    )
+                })?;
+                part_indices.push(idx);
             }
-            
-            if !all_parts_found {
-                continue;
-            }
-            
+
             // Get the operator
             let op = match &ax.op {
                 Some(op_str) => op_str.clone(),
                 None => {
-                    eprintln!("DEBUG: numeric axiom has no op: {:?}", ax.effect.name);
-                    continue; // Skip if no operator (shouldn't happen for derived axioms)
+                    let is_constant = ax.parts.len() == 1
+                        && matches!(ax.parts[0], crate::translate::numeric_axiom_rules::NumericPart::Constant(_));
+                    if is_constant {
+                        continue;
+                    }
+                    return Err(format!("numeric axiom has no op: {}", ax.effect.name));
                 }
             };
-            
+
             numeric_axioms.push(crate::translate::sas::NumericAxiom {
                 op,
                 parts: part_indices,
@@ -1565,7 +1549,7 @@ pub fn build_sas(
     }
 
     // We don't yet populate comparison axioms from other sources here; leave empty for now.
-    SASTask {
+    Ok(SASTask {
         variables: vars,
         operators,
         numeric_variables: numeric_list,
@@ -1585,5 +1569,5 @@ pub fn build_sas(
         metric: ("<".to_string(), metric_idx),
         global_constraint: None,
         comp_axiom_layer: 0,
-    }
+    })
 }

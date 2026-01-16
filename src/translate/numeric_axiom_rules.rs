@@ -38,6 +38,38 @@ pub enum NumericPart {
     Constant(NumericConstant),
 }
 
+#[derive(Debug)]
+pub enum NumericAxiomError {
+    DivideByZero {
+        axiom: String,
+    },
+    UnknownOperator {
+        axiom: String,
+        op: String,
+    },
+    NonConstantPart {
+        axiom: String,
+    },
+}
+
+impl std::fmt::Display for NumericAxiomError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NumericAxiomError::DivideByZero { axiom } => {
+                write!(f, "division by zero while evaluating {}", axiom)
+            }
+            NumericAxiomError::UnknownOperator { axiom, op } => {
+                write!(f, "unknown operator '{}' in {}", op, axiom)
+            }
+            NumericAxiomError::NonConstantPart { axiom } => {
+                write!(f, "non-constant part in {}", axiom)
+            }
+        }
+    }
+}
+
+impl std::error::Error for NumericAxiomError {}
+
 #[derive(Debug, Clone)]
 pub struct InstantiatedNumericAxiom {
     pub name: String,
@@ -82,19 +114,19 @@ pub fn axiom_by_pne(
 
 /// Identify constant axioms: axioms whose computation reduces to a numeric constant.
 /// Mirrors identify_constants in Python file.
-pub fn identify_constants(
+pub fn identify_constants_checked(
     axioms: &[InstantiatedNumericAxiom],
     axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
-) -> Vec<InstantiatedNumericAxiom> {
+) -> Result<Vec<InstantiatedNumericAxiom>, NumericAxiomError> {
     fn is_constant(
         ax: &InstantiatedNumericAxiom,
         ax_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
-    ) -> Option<i64> {
+    ) -> Result<Option<i64>, NumericAxiomError> {
         // Recursive helper. If the axiom can be reduced to a single numeric constant,
         // return Some(value), otherwise None.
         if ax.op.is_none() && ax.parts.len() == 1 {
             if let NumericPart::Constant(NumericConstant(v)) = &ax.parts[0] {
-                return Some(*v);
+                return Ok(Some(*v));
             }
         }
         // Otherwise, check if all parts are constants (recursively).
@@ -104,20 +136,20 @@ pub fn identify_constants(
                 NumericPart::Constant(NumericConstant(v)) => values.push(*v),
                 NumericPart::Primitive(pne) => {
                     if let Some(dep_ax) = ax_by_pne.get(pne) {
-                        if let Some(v) = is_constant(dep_ax, ax_by_pne) {
+                        if let Some(v) = is_constant(dep_ax, ax_by_pne)? {
                             values.push(v);
                         } else {
-                            return None;
+                            return Ok(None);
                         }
                     } else {
-                        return None;
+                        return Ok(None);
                     }
                 }
                 NumericPart::Axiom(boxed) => {
-                    if let Some(v) = is_constant(boxed, ax_by_pne) {
+                    if let Some(v) = is_constant(boxed, ax_by_pne)? {
                         values.push(v);
                     } else {
-                        return None;
+                        return Ok(None);
                     }
                 }
             }
@@ -130,7 +162,7 @@ pub fn identify_constants(
                 let mut iter = values.into_iter();
                 if let Some(mut acc) = iter.next() {
                     if op == "-" && ax.parts.len() == 1 {
-                        return Some(-acc);
+                        return Ok(Some(-acc));
                     }
                     for v in iter {
                         match op.as_str() {
@@ -141,32 +173,48 @@ pub fn identify_constants(
                                 if v != 0 {
                                     acc = acc / v
                                 } else {
-                                    return None;
+                                    return Err(NumericAxiomError::DivideByZero {
+                                        axiom: ax.name.clone(),
+                                    });
                                 }
                             }
-                            _ => return None,
+                            _ => {
+                                return Err(NumericAxiomError::UnknownOperator {
+                                    axiom: ax.name.clone(),
+                                    op: op.clone(),
+                                })
+                            }
                         }
                     }
-                    return Some(acc);
+                    return Ok(Some(acc));
                 }
             } else {
                 // no op and single value was handled earlier; but if multiple values and no op, can't combine
                 if values.len() == 1 {
-                    return Some(values[0]);
+                    return Ok(Some(values[0]));
                 }
-                return None;
+                return Err(NumericAxiomError::NonConstantPart {
+                    axiom: ax.name.clone(),
+                });
             }
         }
-        None
+        Ok(None)
     }
 
     let mut constants = Vec::new();
     for ax in axioms {
-        if let Some(_v) = is_constant(ax, axiom_by_pne) {
+        if let Some(_v) = is_constant(ax, axiom_by_pne)? {
             constants.push(ax.clone());
         }
     }
-    constants
+    Ok(constants)
+}
+
+pub fn identify_constants(
+    axioms: &[InstantiatedNumericAxiom],
+    axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
+) -> Vec<InstantiatedNumericAxiom> {
+    identify_constants_checked(axioms, axiom_by_pne).unwrap_or_else(|_| Vec::new())
 }
 
 /// Compute axiom layers (dependency depth), similar to compute_axiom_layers in Python.
@@ -315,4 +363,23 @@ pub fn handle_axioms(
         compute_axiom_layers(axioms, &constant_axioms, &axiom_by_pne);
     let axiom_map = identify_equivalent_axioms(&axioms_by_layer, &axiom_by_pne);
     (axioms_by_layer, max_layer, axiom_map, constant_axioms)
+}
+
+pub fn handle_axioms_checked(
+    axioms: &[InstantiatedNumericAxiom],
+) -> Result<
+    (
+        HashMap<i32, Vec<InstantiatedNumericAxiom>>,
+        i32,
+        HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom>,
+        Vec<InstantiatedNumericAxiom>,
+    ),
+    NumericAxiomError,
+> {
+    let axiom_by_pne = axiom_by_pne(axioms);
+    let constant_axioms = identify_constants_checked(axioms, &axiom_by_pne)?;
+    let (axioms_by_layer, max_layer) =
+        compute_axiom_layers(axioms, &constant_axioms, &axiom_by_pne);
+    let axiom_map = identify_equivalent_axioms(&axioms_by_layer, &axiom_by_pne);
+    Ok((axioms_by_layer, max_layer, axiom_map, constant_axioms))
 }

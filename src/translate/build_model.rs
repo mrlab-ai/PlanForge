@@ -44,8 +44,12 @@ pub fn variables_to_numbers(effect: &SymAtom, conditions: &[SymAtom]) -> (Atom, 
         .enumerate()
         .map(|(i, a)| {
             if a.starts_with('?') {
-                rename_map.insert(a.clone(), i);
-                Arg::Var(i)
+                if let Some(&idx) = rename_map.get(a) {
+                    Arg::Var(idx)
+                } else {
+                    rename_map.insert(a.clone(), i);
+                    Arg::Var(i)
+                }
             } else {
                 Arg::Const(a.clone())
             }

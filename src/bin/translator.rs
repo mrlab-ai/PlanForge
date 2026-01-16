@@ -117,7 +117,7 @@ fn main() -> anyhow::Result<()> {
             // Run instantiation (Phase 1: model-guided grounding)
             // Use the normalized task for proper exploration rule generation
             eprintln!("\ntranslator: running instantiation...");
-            let result = planners::translate::instantiate::explore_normalized(&norm_task);
+            let result = planners::translate::instantiate::explore_normalized(&norm_task)?;
             eprintln!(
                 "translator: instantiated {} grounded operators (model-guided)",
                 result.grounded_ops.len()

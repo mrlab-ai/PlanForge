@@ -168,6 +168,39 @@ pub struct ExploreResult {
     pub type_to_objects: HashMap<String, Vec<String>>,
 }
 
+#[derive(Debug)]
+pub enum InstantiateError {
+    EmptyParameterDomain { param: String, typ: String },
+    UnsupportedEffect(String),
+    NonFluentPredicate(String),
+    NonFluentFunction(String),
+    FailedSubstitution(String),
+    Normalize(String),
+}
+
+impl std::fmt::Display for InstantiateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InstantiateError::EmptyParameterDomain { param, typ } => {
+                write!(f, "empty domain for parameter {} of type {}", param, typ)
+            }
+            InstantiateError::UnsupportedEffect(msg) => write!(f, "unsupported effect: {}", msg),
+            InstantiateError::NonFluentPredicate(pred) => {
+                write!(f, "non-fluent predicate used in effect: {}", pred)
+            }
+            InstantiateError::NonFluentFunction(func) => {
+                write!(f, "non-fluent numeric function used in effect: {}", func)
+            }
+            InstantiateError::FailedSubstitution(msg) => {
+                write!(f, "failed to substitute effect expression: {}", msg)
+            }
+            InstantiateError::Normalize(msg) => write!(f, "normalize error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for InstantiateError {}
+
 /// Split a rule with >2 conditions into a chain of binary join/project rules.
 /// Mirrors Python's split_rules.py and greedy_join.py logic.
 fn split_rule(
@@ -300,10 +333,13 @@ fn get_variables(atom: &build_model::SymAtom) -> Vec<String> {
 /// 3. Ground operators from model atoms (model-guided, not cartesian product).
 /// Explore using a normalized task (preferred).
 /// This version builds proper exploration rules from normalized actions.
-pub fn explore_normalized(norm_task: &crate::translate::normalize::NormalizableTask) -> ExploreResult {
+pub fn explore_normalized(
+    norm_task: &crate::translate::normalize::NormalizableTask,
+) -> Result<ExploreResult, InstantiateError> {
     eprintln!("DEBUG: explore_normalized() Step 1: build exploration rules");
     // Step 1: Build exploration rules from normalized actions and axioms
-    let exploration_rules = crate::translate::normalize::build_exploration_rules(norm_task);
+    let exploration_rules = crate::translate::normalize::build_exploration_rules(norm_task)
+        .map_err(InstantiateError::Normalize)?;
     eprintln!("  Built {} exploration rules", exploration_rules.len());
     
     // Debug: print first 10 rules with full details
@@ -356,6 +392,28 @@ pub fn explore_normalized(norm_task: &crate::translate::normalize::NormalizableT
         }
     }
     
+    let object_predicate_required = add_object_conditions(&mut rule_specs);
+    // Recompute rule types after adding @object conditions
+    let mut normalized_specs: Vec<build_model::RuleSpec> = Vec::new();
+    for mut rule in rule_specs.into_iter() {
+        let rtype = determine_rule_type(&rule.effect, &rule.conditions);
+        if rtype == "fact" {
+            extra_facts.push(build_model::Atom {
+                predicate: rule.effect.predicate.clone(),
+                args: rule
+                    .effect
+                    .args
+                    .iter()
+                    .map(|s| build_model::Arg::Const(s.clone()))
+                    .collect(),
+            });
+        } else {
+            rule.rtype = rtype;
+            normalized_specs.push(rule);
+        }
+    }
+    rule_specs = normalized_specs;
+
     eprintln!("DEBUG: explore_normalized() Step 2: add init facts");
     // Step 2: Build init facts from problem
     let mut init_facts: Vec<build_model::Atom> = Vec::new();
@@ -369,7 +427,14 @@ pub fn explore_normalized(norm_task: &crate::translate::normalize::NormalizableT
             });
         }
     }
-    
+    if object_predicate_required {
+        for (obj_name, _) in &norm_task.objects {
+            init_facts.push(build_model::Atom {
+                predicate: "@object".to_string(),
+                args: vec![build_model::Arg::Const(obj_name.clone())],
+            });
+        }
+    }
     // Add init state atoms
     for init_sexpr in &norm_task.init {
         if let Some(atom) = sexpr_to_atom(init_sexpr) {
@@ -443,7 +508,7 @@ pub fn explore_normalized(norm_task: &crate::translate::normalize::NormalizableT
         &type_to_objects,
         &fluent_functions,
         &init_function_values,
-    );
+    )?;
     eprintln!("DEBUG: grounded {} operators", ops.len());
     
     let relaxed_reachable = model.iter().any(|atom| atom.predicate == "@goal-reachable");
@@ -456,7 +521,7 @@ pub fn explore_normalized(norm_task: &crate::translate::normalize::NormalizableT
               init_function_values.len(), init_constant_numeric_facts.len(), init_constant_predicate_facts.len());
     eprintln!("  Type-to-objects mapping: {} types", type_to_objects.len());
     
-    ExploreResult {
+    Ok(ExploreResult {
         relaxed_reachable,
         model,
         grounded_ops: ops,
@@ -467,7 +532,7 @@ pub fn explore_normalized(norm_task: &crate::translate::normalize::NormalizableT
         init_constant_predicate_facts,
         init_constant_numeric_facts,
         type_to_objects,
-    }
+    })
 }
 
 /// Extract fluent facts from model based on fluent predicates.
@@ -696,7 +761,7 @@ fn ground_from_normalized_model(
     type_to_objects: &std::collections::HashMap<String, Vec<String>>,
     fluent_functions: &[String],
     init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
-) -> (Vec<GroundedOp>, Vec<InstantiatedNumericAxiom>) {
+) -> Result<(Vec<GroundedOp>, Vec<InstantiatedNumericAxiom>), InstantiateError> {
     use std::collections::{HashMap, HashSet};
 
     // Build action lookup map
@@ -780,7 +845,7 @@ fn ground_from_normalized_model(
                     type_to_objects,
                     fluent_functions,
                     init_function_values,
-                );
+                )?;
                 if let Some(op) = grounded_op {
                     grounded_ops.push(op);
                 }
@@ -796,7 +861,7 @@ fn ground_from_normalized_model(
 
     let num_axioms: Vec<InstantiatedNumericAxiom> = instantiated_numeric_axioms.into_iter().collect();
 
-    (grounded_ops, num_axioms)
+    Ok((grounded_ops, num_axioms))
 }
 
 /// Instantiate a numeric axiom with specific variable bindings.
@@ -900,7 +965,7 @@ fn instantiate_normalized_action(
     type_to_objects: &std::collections::HashMap<String, Vec<String>>,
     fluent_functions: &[String],
     init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
-) -> Option<GroundedOp> {
+) -> Result<Option<GroundedOp>, InstantiateError> {
     use crate::translate::pddl_ast;
     
     let name = format!("{}({})", action.name, grounded_args.join(","));
@@ -917,10 +982,10 @@ fn instantiate_normalized_action(
         init_function_values,
     ) {
         Some(list) => list,
-        None => return None,
+        None => return Ok(None),
     };
     
-    let effects = match instantiate_effects(
+    let effects = instantiate_effects(
         action,
         variable_mapping,
         init_atom_set,
@@ -928,10 +993,11 @@ fn instantiate_normalized_action(
         type_to_objects,
         fluent_functions,
         init_function_values,
-    ) {
-        Some(effects) => effects,
-        None => return None,
-    };
+    )?;
+
+    if effects.is_empty() {
+        return Ok(None);
+    }
 
     let eff_sub = if effects.len() == 1 && effects[0].0.is_empty() {
         Some(effects[0].1.clone())
@@ -941,14 +1007,14 @@ fn instantiate_normalized_action(
         Some(pddl_ast::Effect::And(effects.iter().map(|(_, e)| e.clone()).collect()))
     };
 
-    Some(GroundedOp {
+    Ok(Some(GroundedOp {
         name,
         args: grounded_args.to_vec(),
         pre: Some(pre_sub),
         eff: eff_sub,
         effects,
     }
-    )
+    ))
 }
 
 fn instantiate_effects(
@@ -959,10 +1025,10 @@ fn instantiate_effects(
     type_to_objects: &std::collections::HashMap<String, Vec<String>>,
     fluent_functions: &[String],
     init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
-) -> Option<Vec<(Vec<Condition>, Effect)>> {
+) -> Result<Vec<(Vec<Condition>, Effect)>, InstantiateError> {
     let mut effects = Vec::new();
     for effect in &action.effects {
-        let ok = instantiate_effect_with_params(
+        instantiate_effect_with_params(
             effect,
             base_mapping,
             init_atom_set,
@@ -971,17 +1037,10 @@ fn instantiate_effects(
             fluent_functions,
             init_function_values,
             &mut effects,
-        );
-        if !ok {
-            return None;
-        }
+        )?;
     }
 
-    if effects.is_empty() {
-        None
-    } else {
-        Some(effects)
-    }
+    Ok(effects)
 }
 
 fn instantiate_effect_with_params(
@@ -993,16 +1052,22 @@ fn instantiate_effect_with_params(
     fluent_functions: &[String],
     init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
     out: &mut Vec<(Vec<Condition>, Effect)>,
-) -> bool {
+) -> Result<(), InstantiateError> {
     let parameter_lists = effect
         .parameters
         .iter()
         .map(|(name, typ)| {
             let key = typ.clone().unwrap_or_else(|| "object".to_string());
             let values = type_to_objects.get(&key).cloned().unwrap_or_default();
-            (name.clone(), values)
+            if values.is_empty() {
+                return Err(InstantiateError::EmptyParameterDomain {
+                    param: name.clone(),
+                    typ: key,
+                });
+            }
+            Ok((name.clone(), values))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, InstantiateError>>()?;
 
     let assignments = cartesian_assignments(&parameter_lists);
     let fluent_function_set: std::collections::HashSet<String> =
@@ -1033,7 +1098,12 @@ fn instantiate_effect_with_params(
             init_function_values,
         ) {
             Some(expr) => expr,
-            None => return false,
+            None => {
+                return Err(InstantiateError::FailedSubstitution(format!(
+                    "{:?}",
+                    effect.effect
+                )))
+            }
         };
         let parsed = crate::translate::pddl_ast::sexpr_to_effect(&substituted);
         match parsed {
@@ -1041,28 +1111,28 @@ fn instantiate_effect_with_params(
                 if fluent_predicates.contains(&name) {
                     out.push((cond_list, crate::translate::pddl_ast::Effect::Add(name, args)));
                 } else if !init_atom_set.contains(&(name.clone(), args.clone())) {
-                    return false;
+                    return Err(InstantiateError::NonFluentPredicate(name));
                 }
             }
             crate::translate::pddl_ast::Effect::Del(name, args) => {
                 if fluent_predicates.contains(&name) {
                     out.push((cond_list, crate::translate::pddl_ast::Effect::Del(name, args)));
                 } else if init_atom_set.contains(&(name.clone(), args.clone())) {
-                    return false;
+                    return Err(InstantiateError::NonFluentPredicate(name));
                 }
             }
             crate::translate::pddl_ast::Effect::Increase(name, args, val) => {
                 if fluent_function_set.contains(&name) {
                     out.push((cond_list, crate::translate::pddl_ast::Effect::Increase(name, args, val)));
                 } else {
-                    return false;
+                    return Err(InstantiateError::NonFluentFunction(name));
                 }
             }
             crate::translate::pddl_ast::Effect::Decrease(name, args, val) => {
                 if fluent_function_set.contains(&name) {
                     out.push((cond_list, crate::translate::pddl_ast::Effect::Decrease(name, args, val)));
                 } else {
-                    return false;
+                    return Err(InstantiateError::NonFluentFunction(name));
                 }
             }
             crate::translate::pddl_ast::Effect::And(v) => {
@@ -1072,7 +1142,7 @@ fn instantiate_effect_with_params(
             }
         }
     }
-    true
+    Ok(())
 }
 
 fn cartesian_assignments(
@@ -1293,12 +1363,45 @@ fn determine_rule_type(_head: &build_model::SymAtom, body: &[build_model::SymAto
     }
 }
 
+fn add_object_conditions(rules: &mut [build_model::RuleSpec]) -> bool {
+    let mut inserted = false;
+    for rule in rules.iter_mut() {
+        let mut bound_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for cond in &rule.conditions {
+            for arg in &cond.args {
+                if arg.starts_with('?') {
+                    bound_vars.insert(arg.clone());
+                }
+            }
+        }
+        let mut extra_conditions: Vec<build_model::SymAtom> = Vec::new();
+        for arg in &rule.effect.args {
+            if !arg.starts_with('?') || bound_vars.contains(arg) {
+                continue;
+            }
+            extra_conditions.push(build_model::SymAtom::new(
+                "@object".to_string(),
+                vec![arg.clone()],
+            ));
+            bound_vars.insert(arg.clone());
+        }
+        if !extra_conditions.is_empty() {
+            rule.conditions.extend(extra_conditions);
+            inserted = true;
+        }
+    }
+    inserted
+}
+
 /// Convert a PDDL SExpr to a build_model Atom.
 fn sexpr_to_atom(sexpr: &crate::translate::pddl_parser::SExpr) -> Option<build_model::Atom> {
     use crate::translate::pddl_parser::SExpr;
     match sexpr {
         SExpr::List(items) if !items.is_empty() => {
             if let SExpr::Atom(pred) = &items[0] {
+                if pred == "=" {
+                    return None;
+                }
                 let args: Vec<build_model::Arg> = items[1..]
                     .iter()
                     .filter_map(|item| {
