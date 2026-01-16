@@ -44,6 +44,9 @@ pub struct NormalizableTask {
     pub init: Vec<SExpr>,
     /// Goal condition (parsed as Condition)
     pub goal: Condition,
+    /// Optimization metric: (direction, expression)
+    /// Direction is "<" for minimize, ">" for maximize
+    pub metric: (String, Option<SExpr>),
     /// Counter for generating unique axiom names
     axiom_counter: usize,
     /// Function administrator for managing derived numeric functions (not Clone)
@@ -110,6 +113,11 @@ impl NormalizableTask {
             objects: problem.objects.clone(),
             init: problem.init.clone(),
             goal,
+            metric: problem
+                .metric
+                .as_ref()
+                .map(|(dir, expr)| (dir.clone(), Some(expr.clone())))
+                .unwrap_or_else(|| ("<".to_string(), None)),
             axiom_counter: 0,
             function_administrator: NormalizationFunctionAdministrator::new(),
         }
@@ -205,6 +213,13 @@ impl NormalizableTask {
         }
         out.push_str("\nGoal:\n  ");
         out.push_str(&fmt_condition(&self.goal));
+        out.push('\n');
+        out.push_str("\nMetric:\n  ");
+        if let Some(expr) = &self.metric.1 {
+            out.push_str(&format!("{} {}", self.metric.0, fmt_sexpr(expr)));
+        } else {
+            out.push_str(&format!("{} none", self.metric.0));
+        }
         out.push('\n');
         out
     }
@@ -588,12 +603,12 @@ fn extract_effect_predicate(effect: &SExpr) -> Option<String> {
                     }
                     _ if is_numeric_effect(op) => {
                         // Numeric effect: (increase (function-name args...) value)
-                        // Extract the function name
+                        // Extract the function name and return defined! predicate
                         if items.len() >= 2 {
                             if let SExpr::List(func_items) = &items[1] {
                                 if !func_items.is_empty() {
                                     if let SExpr::Atom(func_name) = &func_items[0] {
-                                        return Some(func_name.clone());
+                                        return Some(format!("defined!{}", func_name));
                                     }
                                 }
                             }
@@ -1026,6 +1041,61 @@ pub fn split_disjunction(condition: &Condition) -> Option<Vec<Condition>> {
     }
 }
 
+fn simplify_condition(condition: &Condition) -> Condition {
+    match condition {
+        Condition::And(parts) => {
+            let mut new_parts: Vec<Condition> = parts
+                .iter()
+                .map(simplify_condition)
+                .filter(|p| !matches!(p, Condition::True))
+                .collect();
+            let mut flattened = Vec::new();
+            for part in new_parts.drain(..) {
+                if let Condition::And(inner) = part {
+                    flattened.extend(inner);
+                } else {
+                    flattened.push(part);
+                }
+            }
+            match flattened.len() {
+                0 => Condition::True,
+                1 => flattened.into_iter().next().unwrap(),
+                _ => Condition::And(flattened),
+            }
+        }
+        Condition::Or(parts) => {
+            let mut new_parts: Vec<Condition> = parts
+                .iter()
+                .map(simplify_condition)
+                .collect();
+            if new_parts.iter().any(|p| matches!(p, Condition::True)) {
+                return Condition::True;
+            }
+            let mut flattened = Vec::new();
+            for part in new_parts.drain(..) {
+                if let Condition::Or(inner) = part {
+                    flattened.extend(inner);
+                } else {
+                    flattened.push(part);
+                }
+            }
+            match flattened.len() {
+                0 => Condition::True,
+                1 => flattened.into_iter().next().unwrap(),
+                _ => Condition::Or(flattened),
+            }
+        }
+        Condition::Not(inner) => Condition::Not(Box::new(simplify_condition(inner))),
+        Condition::Exists(params, inner) => {
+            Condition::Exists(params.clone(), Box::new(simplify_condition(inner)))
+        }
+        Condition::Forall(params, inner) => {
+            Condition::Forall(params.clone(), Box::new(simplify_condition(inner)))
+        }
+        _ => condition.clone(),
+    }
+}
+
 /// Move existential quantifiers out of conjunctions and group them.
 ///
 /// This function implements the quantifier movement step from Python's normalize.py.
@@ -1290,6 +1360,11 @@ pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
             }
         }
     }
+
+    // Collect symbols from metric expression (if any)
+    if let Some(metric_expr) = &task.metric.1 {
+        find_function_symbols(metric_expr, &mut used_symbols);
+    }
     
     // Check for undefined functions
     let mut undefined_functions = Vec::new();
@@ -1492,12 +1567,19 @@ pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
     let numeric_axioms = task.function_administrator.get_all_axioms();
     task.numeric_axioms = numeric_axioms;
     
-    // Note: Metric expression handling would go here if we had a metric field
-    // opt_dir, metric_expression = task.metric
-    // if metric_expression is None:
-    //     metric_expression = -1
-    // else:
-    //     metric_expression = admin.get_derived_function(metric_expression)
+    // Process metric expression
+    let metric_expr = task.metric.1.clone();
+    let new_metric_expr = if let Some(expr) = metric_expr {
+        if let Some(func_expr) = parse_functional_expression(&expr) {
+            let pne = task.function_administrator.get_derived_function(&func_expr);
+            Some(pne_to_sexpr(&pne))
+        } else {
+            Some(expr)
+        }
+    } else {
+        Some(SExpr::Atom("-1".to_string()))
+    };
+    task.metric.1 = new_metric_expr;
 }
 
 /// Verify that derived predicates are not used in :init or action effects.
@@ -1830,14 +1912,14 @@ pub fn task_build_dnf(task: &mut NormalizableTask) {
     // Process action preconditions
     for action in task.actions.iter_mut() {
         if action.precondition.has_disjunction() {
-            action.precondition = build_dnf(&action.precondition);
+            action.precondition = simplify_condition(&build_dnf(&action.precondition));
         }
     }
     
     // Process axiom conditions
     for axiom in task.axioms.iter_mut() {
         if axiom.condition.has_disjunction() {
-            axiom.condition = build_dnf(&axiom.condition);
+            axiom.condition = simplify_condition(&build_dnf(&axiom.condition));
         }
     }
     
@@ -1845,14 +1927,14 @@ pub fn task_build_dnf(task: &mut NormalizableTask) {
     for action in task.actions.iter_mut() {
         for effect in action.effects.iter_mut() {
             if effect.condition.has_disjunction() {
-                effect.condition = build_dnf(&effect.condition);
+                effect.condition = simplify_condition(&build_dnf(&effect.condition));
             }
         }
     }
     
     // Process goal
     if task.goal.has_disjunction() {
-        task.goal = build_dnf(&task.goal);
+        task.goal = simplify_condition(&build_dnf(&task.goal));
     }
 }
 
@@ -1901,6 +1983,23 @@ pub fn task_split_disjunctions(task: &mut NormalizableTask) {
         task.axioms.remove(*idx);
     }
     task.axioms.extend(new_axioms);
+
+    // Split conditional effect conditions
+    for action in task.actions.iter_mut() {
+        let mut new_effects = Vec::new();
+        for effect in action.effects.iter() {
+            if let Some(parts) = split_disjunction(&effect.condition) {
+                for part in parts {
+                    let mut new_effect = effect.clone();
+                    new_effect.condition = part;
+                    new_effects.push(new_effect);
+                }
+            } else {
+                new_effects.push(effect.clone());
+            }
+        }
+        action.effects = new_effects;
+    }
     
     // Note: Goal disjunctions should have been converted to axioms in substitute_complicated_goal
 }
@@ -2021,16 +2120,18 @@ pub fn build_exploration_rules(task: &NormalizableTask) -> Vec<(Vec<bm::SymAtom>
             let mut all_params = action.parameters.clone();
             all_params.extend(effect.parameters.clone());
             
-            let effect_head = get_effect_head(effect, &all_params);
+            let effect_heads = get_effect_rule_heads(effect);
             
-            if let Some(head) = effect_head {
+            if !effect_heads.is_empty() {
                 let mut effect_body = vec![get_action_predicate(action)];
                 // Add effect condition atoms (if not trivially true)
                 if !matches!(&effect.condition, Condition::True) {
                     let cond_atoms = condition_to_rule_body(&[], &effect.condition);
                     effect_body.extend(cond_atoms);
                 }
-                rules.push((effect_body, head));
+                for head in effect_heads {
+                    rules.push((effect_body.clone(), head));
+                }
             }
         }
     }
@@ -2047,9 +2148,14 @@ pub fn build_exploration_rules(task: &NormalizableTask) -> Vec<(Vec<bm::SymAtom>
         // For now, use all parameters (proper handling needs num_external_parameters)
         let eff_rule_head = bm::SymAtom::new(
             axiom.name.clone(),
-            axiom.parameters.iter().map(|(name, _)| {
-                if name.starts_with('?') { name.clone() } else { format!("?{}", name) }
-            }).collect()
+            axiom
+                .parameters
+                .iter()
+                .take(axiom.num_external_parameters)
+                .map(|(name, _)| {
+                    if name.starts_with('?') { name.clone() } else { format!("?{}", name) }
+                })
+                .collect(),
         );
         let eff_rule_body = vec![app_rule_head];
         rules.push((eff_rule_body, eff_rule_head));
@@ -2072,33 +2178,23 @@ pub fn build_exploration_rules(task: &NormalizableTask) -> Vec<(Vec<bm::SymAtom>
         let mut rule_body = Vec::new();
         for part in &axiom.parts {
             if let crate::translate::function_expression::FunctionalExpression::Primitive(pne) = part {
-                // Create defined!symbol(args) predicate
-                let defined_pred = format!("defined!{}", pne.symbol);
-                rule_body.push(bm::SymAtom::new(defined_pred, pne.args.clone()));
+                rule_body.push(get_defined_function_predicate(&pne.symbol, &pne.args));
             }
         }
         rules.push((rule_body.clone(), axiom_pred.clone()));
         
         // Rule 2: defined!axiom-head :- @axiom
         let head = axiom.get_head();
-        let defined_head = format!("defined!{}", head.symbol);
-        let head_args = axiom.parameters.clone();
-        let rule_2_head = bm::SymAtom::new(defined_head, head_args);
+        let rule_2_head = get_defined_function_predicate(&head.symbol, &axiom.parameters);
         rules.push((vec![axiom_pred.clone()], rule_2_head));
         
         // Rule 3: For each primitive part, add fluent tracking rule
         // fluent-head :- @axiom, fluent!part
-        let fluent_head_pred = bm::SymAtom::new(
-            head.symbol.clone(),
-            axiom.parameters.clone(),
-        );
+        let fluent_head_pred = bm::SymAtom::new(head.symbol.clone(), axiom.parameters.clone());
         for part in &axiom.parts {
             if let crate::translate::function_expression::FunctionalExpression::Primitive(pne) = part {
                 let mut fluent_body = vec![axiom_pred.clone()];
-                let fluent_part = bm::SymAtom::new(
-                    pne.symbol.clone(),
-                    pne.args.clone(),
-                );
+                let fluent_part = bm::SymAtom::new(pne.symbol.clone(), pne.args.clone());
                 fluent_body.push(fluent_part);
                 rules.push((fluent_body, fluent_head_pred.clone()));
             }
@@ -2109,11 +2205,16 @@ pub fn build_exploration_rules(task: &NormalizableTask) -> Vec<(Vec<bm::SymAtom>
 }
 
 /// Get the axiom predicate atom for a numeric axiom
-fn get_numeric_axiom_predicate(axiom: &crate::translate::normalization_function_admin::NumericAxiom) -> bm::SymAtom {
-    // For the axiom predicate, use only the axiom's parameters
-    // This creates the rule head for @axiom(?params...)
-    // Part args are used in the body conditions, not in the head
-    bm::SymAtom::new(axiom.name.clone(), axiom.parameters.clone())
+fn get_numeric_axiom_predicate(
+    axiom: &crate::translate::normalization_function_admin::NumericAxiom,
+) -> bm::SymAtom {
+    let mut args = axiom.parameters.clone();
+    for part in &axiom.parts {
+        if let crate::translate::function_expression::FunctionalExpression::Primitive(pne) = part {
+            args.extend(pne.args.clone());
+        }
+    }
+    bm::SymAtom::new(axiom.name.clone(), args)
 }
 
 /// Get the action predicate atom for use in exploration rules.
@@ -2136,51 +2237,40 @@ fn get_action_predicate(action: &TaskAction) -> bm::SymAtom {
 
 /// Get the effect head atom for a conditional effect.
 /// Returns None for negated atoms or unsupported effects.
-fn get_effect_head(effect: &TaskEffect, _all_params: &[(String, Option<String>)]) -> Option<bm::SymAtom> {
+fn get_effect_rule_heads(effect: &TaskEffect) -> Vec<bm::SymAtom> {
     use crate::translate::pddl_parser::SExpr;
-    
-    // The effect is stored as SExpr - parse it
-    // Positive effects: (predicate arg1 arg2 ...)
-    // Negative effects: (not (predicate arg1 arg2 ...))
-    // Numeric effects: (increase/decrease/assign (function arg1...) value)
+
     match &effect.effect {
         SExpr::List(items) if !items.is_empty() => {
-            // Check if it's a (not ...) form
             if let SExpr::Atom(op) = &items[0] {
                 if op == "not" {
-                    // Delete effect - skip (we ignore delete effects in model-guided grounding)
-                    return None;
+                    return Vec::new();
                 }
-                
-                // Check if it's a numeric effect (increase/decrease/assign/scale-up/scale-down)
-                if op == "increase" || op == "decrease" || op == "assign" || op == "scale-up" || op == "scale-down" {
-                    // Numeric effect - extract the function and create a predicate for it
-                    // Format: (increase (function-name arg1 arg2) value)
+                if matches!(op.as_str(), "increase" | "decrease" | "assign" | "scale-up" | "scale-down") {
                     if items.len() >= 2 {
                         if let SExpr::List(func_items) = &items[1] {
-                            if !func_items.is_empty() {
-                                if let SExpr::Atom(_func_name) = &func_items[0] {
-                                    let args: Vec<String> = func_items[1..]
-                                        .iter()
-                                        .filter_map(|item| {
-                                            if let SExpr::Atom(s) = item {
-                                                Some(s.clone())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect();
-                                    // Return predicate for numeric fluent effect
-                                    return Some(bm::SymAtom::new(op.clone(), args));
-                                }
+                            if let Some(SExpr::Atom(func_name)) = func_items.get(0) {
+                                let args: Vec<String> = func_items[1..]
+                                    .iter()
+                                    .filter_map(|item| {
+                                        if let SExpr::Atom(s) = item {
+                                            Some(s.clone())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                return vec![
+                                    get_defined_function_predicate(func_name, &args),
+                                    bm::SymAtom::new(func_name.clone(), args),
+                                ];
                             }
                         }
                     }
-                    return None;
+                    return Vec::new();
                 }
             }
-            
-            // It's a positive effect - extract predicate and args
+
             if let SExpr::Atom(predicate) = &items[0] {
                 let args: Vec<String> = items[1..]
                     .iter()
@@ -2192,16 +2282,11 @@ fn get_effect_head(effect: &TaskEffect, _all_params: &[(String, Option<String>)]
                         }
                     })
                     .collect();
-                return Some(bm::SymAtom::new(predicate.clone(), args));
+                return vec![bm::SymAtom::new(predicate.clone(), args)];
             }
-            None
+            Vec::new()
         }
-        SExpr::Atom(_) => {
-            // Single atom - probably a predicate with no args
-            // This shouldn't normally happen for effects
-            None
-        }
-        _ => None,
+        _ => Vec::new(),
     }
 }
 
@@ -2296,9 +2381,43 @@ fn extract_positive_literals(condition: &Condition, result: &mut Vec<bm::SymAtom
             // Universal quantifier - shouldn't appear after normalization
             // Skip if it does
         }
-        Condition::Comparison(_op, _left, _right) => {
-            // Numeric comparison - not handled in basic exploration rules
-            // Skip for now (proper handling requires function tracking)
+        Condition::Comparison(_op, left, right) => {
+            add_defined_function_predicates_from_sexpr(left, result);
+            add_defined_function_predicates_from_sexpr(right, result);
         }
     }
+}
+
+fn add_defined_function_predicates_from_sexpr(expr: &SExpr, result: &mut Vec<bm::SymAtom>) {
+    use crate::translate::function_expression::parse_functional_expression;
+
+    if let Some(func_expr) = parse_functional_expression(expr) {
+        let mut primitives = Vec::new();
+        collect_primitives(&func_expr, &mut primitives);
+        for pne in primitives {
+            result.push(get_defined_function_predicate(&pne.symbol, &pne.args));
+        }
+    }
+}
+
+fn collect_primitives(
+    expr: &crate::translate::function_expression::FunctionalExpression,
+    out: &mut Vec<crate::translate::function_expression::PrimitiveNumericExpression>,
+) {
+    use crate::translate::function_expression::FunctionalExpression;
+
+    match expr {
+        FunctionalExpression::Primitive(pne) => out.push(pne.clone()),
+        FunctionalExpression::Arithmetic(ae) => {
+            for part in &ae.parts {
+                collect_primitives(part, out);
+            }
+        }
+        FunctionalExpression::AdditiveInverse(ai) => collect_primitives(&ai.part, out),
+        FunctionalExpression::Constant(_) => {}
+    }
+}
+
+fn get_defined_function_predicate(symbol: &str, args: &[String]) -> bm::SymAtom {
+    bm::SymAtom::new(format!("defined!{}", symbol), args.to_vec())
 }

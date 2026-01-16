@@ -12,6 +12,7 @@ const KW_EFFECT: &str = ":effect";
 const KW_OBJECTS: &str = ":objects";
 const KW_INIT: &str = ":init";
 const KW_GOAL: &str = ":goal";
+const KW_METRIC: &str = ":metric";
 const KW_AND: &str = "and";
 const KW_NOT: &str = "not";
 const KW_INCREASE: &str = "increase";
@@ -35,6 +36,7 @@ pub struct Problem {
     pub objects: Vec<(String, Option<String>)>,
     pub init: Vec<SExpr>,
     pub goal: Option<SExpr>,
+    pub metric: Option<(String, SExpr)>,
 }
 
 #[derive(Debug, Clone)]
@@ -606,6 +608,7 @@ fn parse_problem_form(form: &SExpr) -> Option<Problem> {
     let mut objects = Vec::new();
     let mut init = Vec::new();
     let mut goal = None;
+    let mut metric = None;
 
     for part in &items[1..] {
         let inner = match part {
@@ -633,6 +636,18 @@ fn parse_problem_form(form: &SExpr) -> Option<Problem> {
                     goal = Some(goal_expr.clone());
                 }
             }
+            KW_METRIC | "metric" => {
+                if inner.len() >= 3 {
+                    if let SExpr::Atom(direction) = &inner[1] {
+                        let dir = match direction.to_lowercase().as_str() {
+                            "minimize" => "<".to_string(),
+                            "maximize" => ">".to_string(),
+                            _ => direction.clone(),
+                        };
+                        metric = inner.get(2).cloned().map(|expr| (dir, expr));
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -642,6 +657,7 @@ fn parse_problem_form(form: &SExpr) -> Option<Problem> {
         objects,
         init,
         goal,
+        metric,
     })
 }
 

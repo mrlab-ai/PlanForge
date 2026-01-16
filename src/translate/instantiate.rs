@@ -10,6 +10,7 @@ pub struct GroundedOp {
     pub args: Vec<String>,
     pub pre: Option<Condition>,
     pub eff: Option<Effect>,
+    pub effects: Vec<(Vec<Condition>, Effect)>,
 }
 
 /// Naive grounding: for each action, produce substitutions where each parameter
@@ -78,11 +79,16 @@ pub fn ground(domain: &Domain, problem: &Problem) -> Vec<GroundedOp> {
                 pre_cond.map(|c| crate::translate::pddl_ast::substitute_condition(&c, &mapping));
             let eff_sub =
                 eff_e.map(|e| crate::translate::pddl_ast::substitute_effect(&e, &mapping));
+            let mut effects = Vec::new();
+            if let Some(eff) = eff_sub.clone() {
+                effects.push((Vec::new(), eff));
+            }
             result.push(GroundedOp {
                 name,
                 args: args.clone(),
                 pre: pre_sub,
                 eff: eff_sub,
+                effects,
             });
         }
     }
@@ -416,25 +422,36 @@ pub fn explore_normalized(norm_task: &crate::translate::normalize::NormalizableT
     
     eprintln!("DEBUG: computed model with {} atoms", model.len());
     
-    eprintln!("DEBUG: explore_normalized() Step 4: ground actions from model");
-    // Step 4: Extract grounded actions from model
-    let (ops, num_axioms) = ground_from_normalized_model(&model, norm_task);
+    eprintln!("DEBUG: explore_normalized() Step 4: extract fluent facts and functions");
+    // Step 4: Extract fluent facts and functions from model
+    let fluent_facts = get_fluent_facts(norm_task, &model);
+    let fluent_functions = get_fluent_functions(norm_task, &model);
+    eprintln!("  Fluent facts: {}, fluent functions: {}", fluent_facts.len(), fluent_functions.len());
+
+    let fluent_predicates = crate::translate::normalize::get_fluent_predicates(norm_task);
+    let init_atom_set = build_init_atom_set(&init_facts);
+    let init_function_values = extract_init_function_values(norm_task);
+    let type_to_objects = get_objects_by_type(&norm_task.objects);
+
+    eprintln!("DEBUG: explore_normalized() Step 5: ground actions from model");
+    // Step 5: Extract grounded actions from model
+    let (ops, num_axioms) = ground_from_normalized_model(
+        &model,
+        norm_task,
+        &init_atom_set,
+        &fluent_predicates,
+        &type_to_objects,
+        &fluent_functions,
+        &init_function_values,
+    );
     eprintln!("DEBUG: grounded {} operators", ops.len());
     
     let relaxed_reachable = model.iter().any(|atom| atom.predicate == "@goal-reachable");
     
-    eprintln!("DEBUG: explore_normalized() Step 5: extract fluent facts and functions");
-    // Step 5: Extract fluent facts and functions from model
-    let fluent_facts = get_fluent_facts(norm_task, &model);
-    let fluent_functions = get_fluent_functions(norm_task);
-    eprintln!("  Fluent facts: {}, fluent functions: {}", fluent_facts.len(), fluent_functions.len());
-    
     eprintln!("DEBUG: explore_normalized() Step 6: separate init state into constants and fluents");
     // Step 6: Extract init function values and separate constant facts
-    let init_function_values = extract_init_function_values(norm_task);
     let init_constant_numeric_facts = extract_constant_numeric_facts(&init_function_values, &fluent_functions);
     let init_constant_predicate_facts = extract_constant_predicate_facts(&init_facts, &fluent_facts);
-    let type_to_objects = get_objects_by_type(&norm_task.objects);
     eprintln!("  Init function values: {}, constant numeric: {}, constant predicates: {}", 
               init_function_values.len(), init_constant_numeric_facts.len(), init_constant_predicate_facts.len());
     eprintln!("  Type-to-objects mapping: {} types", type_to_objects.len());
@@ -473,23 +490,48 @@ fn get_fluent_facts(
 /// Extract fluent functions (numeric functions) from normalized task.
 /// These are numeric functions that can change during plan execution.
 /// A numeric function is fluent if it appears in any action effect.
-fn get_fluent_functions(norm_task: &crate::translate::normalize::NormalizableTask) -> Vec<String> {
+fn get_fluent_functions(
+    norm_task: &crate::translate::normalize::NormalizableTask,
+    model: &[build_model::Atom],
+) -> Vec<String> {
     use std::collections::HashSet;
-    
+
+    let mut known_functions: HashSet<String> = norm_task
+        .functions
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect();
+    for axiom in &norm_task.numeric_axioms {
+        known_functions.insert(axiom.get_head().symbol);
+    }
+
     let mut fluent_functions = HashSet::new();
-    
-    // Extract function names from action effects
-    for action in &norm_task.actions {
-        for effect in &action.effects {
-            // Look for numeric effects in the effect SExpr
-            extract_function_names_from_effect(&effect.effect, &mut fluent_functions);
+    for atom in model {
+        if known_functions.contains(&atom.predicate) {
+            fluent_functions.insert(atom.predicate.clone());
         }
     }
-    
-    // Note: Axioms don't currently support numeric effects in our implementation
-    // If they did, we would check axiom heads here as well
-    
+
     fluent_functions.into_iter().collect()
+}
+
+fn build_init_atom_set(
+    init_facts: &[build_model::Atom],
+) -> std::collections::HashSet<(String, Vec<String>)> {
+    init_facts
+        .iter()
+        .map(|atom| {
+            let args = atom
+                .args
+                .iter()
+                .filter_map(|arg| match arg {
+                    build_model::Arg::Const(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            (atom.predicate.clone(), args)
+        })
+        .collect()
 }
 
 /// Extract function names from an effect SExpr.
@@ -649,6 +691,11 @@ fn get_objects_by_type(objects: &[(String, Option<String>)]) -> HashMap<String, 
 fn ground_from_normalized_model(
     model: &[build_model::Atom],
     norm_task: &crate::translate::normalize::NormalizableTask,
+    init_atom_set: &std::collections::HashSet<(String, Vec<String>)>,
+    fluent_predicates: &std::collections::HashSet<String>,
+    type_to_objects: &std::collections::HashMap<String, Vec<String>>,
+    fluent_functions: &[String],
+    init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
 ) -> (Vec<GroundedOp>, Vec<InstantiatedNumericAxiom>) {
     use std::collections::{HashMap, HashSet};
 
@@ -669,35 +716,47 @@ fn ground_from_normalized_model(
     let mut grounded_ops = Vec::new();
     let mut instantiated_numeric_axioms: HashSet<InstantiatedNumericAxiom> = HashSet::new();
 
-    // Track derived atoms found
-    let mut derived_atom_count = 0;
+    // Track numeric axiom atoms found
+    let mut numeric_axiom_atom_count = 0;
 
     // Iterate model atoms and extract action instantiations
     for atom in model {
-        if atom.predicate.starts_with("derived!") {
-            derived_atom_count += 1;
-            if derived_atom_count <= 5 {
-                eprintln!("DEBUG: Found derived atom: {} args={:?}", atom.predicate, atom.args);
+        if let Some(axiom) = numeric_axiom_map.get(&atom.predicate) {
+            numeric_axiom_atom_count += 1;
+            if numeric_axiom_atom_count <= 5 {
+                eprintln!(
+                    "DEBUG: Found numeric axiom atom: {} args={:?}",
+                    atom.predicate, atom.args
+                );
             }
-            // Also check if it's in the map
-            if let Some(axiom) = numeric_axiom_map.get(&atom.predicate) {
-                // Extract grounded arguments
-                let grounded_args = extract_grounded_args(&atom.args);
-                
-                // Build variable mapping from axiom parameters to grounded args
-                let variable_mapping: HashMap<String, String> = axiom.parameters.iter()
-                    .zip(grounded_args.iter())
-                    .map(|(param, obj)| (param.clone(), obj.clone()))
-                    .collect();
-                
-                // Instantiate the numeric axiom
-                if let Some(inst_axiom) = instantiate_numeric_axiom(axiom, &variable_mapping) {
-                    instantiated_numeric_axioms.insert(inst_axiom);
-                } else {
-                    eprintln!("DEBUG: instantiate_numeric_axiom returned None for {} with mapping {:?}", axiom.name, variable_mapping);
-                }
+            // Extract grounded arguments
+            let grounded_args = extract_grounded_args(&atom.args);
+            if grounded_args.len() < axiom.parameters.len() {
+                eprintln!(
+                    "DEBUG: Skipping numeric axiom {} due to arg mismatch: params={}, args={}",
+                    axiom.name,
+                    axiom.parameters.len(),
+                    grounded_args.len()
+                );
+                continue;
+            }
+
+            // Build variable mapping from axiom parameters to grounded args
+            let variable_mapping: HashMap<String, String> = axiom
+                .parameters
+                .iter()
+                .zip(grounded_args.iter().take(axiom.parameters.len()))
+                .map(|(param, obj)| (param.clone(), obj.clone()))
+                .collect();
+
+            // Instantiate the numeric axiom
+            if let Some(inst_axiom) = instantiate_numeric_axiom(axiom, &variable_mapping) {
+                instantiated_numeric_axioms.insert(inst_axiom);
             } else {
-                eprintln!("DEBUG: No axiom found for predicate {}", atom.predicate);
+                eprintln!(
+                    "DEBUG: instantiate_numeric_axiom returned None for {} with mapping {:?}",
+                    axiom.name, variable_mapping
+                );
             }
         }
         // Check if this atom represents an action (predicate starts with @action-)
@@ -712,14 +771,28 @@ fn ground_from_normalized_model(
                 let variable_mapping = create_variable_mapping(&action.parameters, &grounded_args);
                 
                 // Instantiate this specific action with these parameters
-                let grounded_op = instantiate_normalized_action(action, &grounded_args, &variable_mapping);
-                
-                grounded_ops.push(grounded_op);
+                let grounded_op = instantiate_normalized_action(
+                    action,
+                    &grounded_args,
+                    &variable_mapping,
+                    init_atom_set,
+                    fluent_predicates,
+                    type_to_objects,
+                    fluent_functions,
+                    init_function_values,
+                );
+                if let Some(op) = grounded_op {
+                    grounded_ops.push(op);
+                }
             }
         }
     }
 
-    eprintln!("DEBUG: total derived atoms found: {}, instantiated axioms: {}", derived_atom_count, instantiated_numeric_axioms.len());
+    eprintln!(
+        "DEBUG: total numeric axiom atoms found: {}, instantiated axioms: {}",
+        numeric_axiom_atom_count,
+        instantiated_numeric_axioms.len()
+    );
 
     let num_axioms: Vec<InstantiatedNumericAxiom> = instantiated_numeric_axioms.into_iter().collect();
 
@@ -822,23 +895,365 @@ fn instantiate_normalized_action(
     action: &crate::translate::normalize::TaskAction,
     grounded_args: &[String],
     variable_mapping: &std::collections::HashMap<String, String>,
-) -> GroundedOp {
+    init_atom_set: &std::collections::HashSet<(String, Vec<String>)>,
+    fluent_predicates: &std::collections::HashSet<String>,
+    type_to_objects: &std::collections::HashMap<String, Vec<String>>,
+    fluent_functions: &[String],
+    init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
+) -> Option<GroundedOp> {
     use crate::translate::pddl_ast;
     
     let name = format!("{}({})", action.name, grounded_args.join(","));
     
     // Substitute variables in precondition
     let pre_sub = pddl_ast::substitute_condition(&action.precondition, variable_mapping);
+    let fluent_function_set: std::collections::HashSet<String> =
+        fluent_functions.iter().cloned().collect();
+    let _preconditions = match instantiate_condition_list(
+        &pre_sub,
+        init_atom_set,
+        fluent_predicates,
+        &fluent_function_set,
+        init_function_values,
+    ) {
+        Some(list) => list,
+        None => return None,
+    };
     
-    // For effects, we need to convert from TaskEffect to Effect
-    // For now, use a simplified approach (will be enhanced in Phase 3)
-    let eff_sub = None; // Placeholder - full effect handling in Phase 3
-    
-    GroundedOp {
+    let effects = match instantiate_effects(
+        action,
+        variable_mapping,
+        init_atom_set,
+        fluent_predicates,
+        type_to_objects,
+        fluent_functions,
+        init_function_values,
+    ) {
+        Some(effects) => effects,
+        None => return None,
+    };
+
+    let eff_sub = if effects.len() == 1 && effects[0].0.is_empty() {
+        Some(effects[0].1.clone())
+    } else if effects.is_empty() {
+        None
+    } else {
+        Some(pddl_ast::Effect::And(effects.iter().map(|(_, e)| e.clone()).collect()))
+    };
+
+    Some(GroundedOp {
         name,
         args: grounded_args.to_vec(),
         pre: Some(pre_sub),
         eff: eff_sub,
+        effects,
+    }
+    )
+}
+
+fn instantiate_effects(
+    action: &crate::translate::normalize::TaskAction,
+    base_mapping: &std::collections::HashMap<String, String>,
+    init_atom_set: &std::collections::HashSet<(String, Vec<String>)>,
+    fluent_predicates: &std::collections::HashSet<String>,
+    type_to_objects: &std::collections::HashMap<String, Vec<String>>,
+    fluent_functions: &[String],
+    init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
+) -> Option<Vec<(Vec<Condition>, Effect)>> {
+    let mut effects = Vec::new();
+    for effect in &action.effects {
+        let ok = instantiate_effect_with_params(
+            effect,
+            base_mapping,
+            init_atom_set,
+            fluent_predicates,
+            type_to_objects,
+            fluent_functions,
+            init_function_values,
+            &mut effects,
+        );
+        if !ok {
+            return None;
+        }
+    }
+
+    if effects.is_empty() {
+        None
+    } else {
+        Some(effects)
+    }
+}
+
+fn instantiate_effect_with_params(
+    effect: &crate::translate::normalize::TaskEffect,
+    base_mapping: &std::collections::HashMap<String, String>,
+    init_atom_set: &std::collections::HashSet<(String, Vec<String>)>,
+    fluent_predicates: &std::collections::HashSet<String>,
+    type_to_objects: &std::collections::HashMap<String, Vec<String>>,
+    fluent_functions: &[String],
+    init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
+    out: &mut Vec<(Vec<Condition>, Effect)>,
+) -> bool {
+    let parameter_lists = effect
+        .parameters
+        .iter()
+        .map(|(name, typ)| {
+            let key = typ.clone().unwrap_or_else(|| "object".to_string());
+            let values = type_to_objects.get(&key).cloned().unwrap_or_default();
+            (name.clone(), values)
+        })
+        .collect::<Vec<_>>();
+
+    let assignments = cartesian_assignments(&parameter_lists);
+    let fluent_function_set: std::collections::HashSet<String> =
+        fluent_functions.iter().cloned().collect();
+
+    for assignment in assignments {
+        let mut mapping = base_mapping.clone();
+        for (param, value) in assignment {
+            mapping.insert(param, value);
+        }
+
+        let condition = crate::translate::pddl_ast::substitute_condition(&effect.condition, &mapping);
+        let cond_list = match instantiate_condition_list(
+            &condition,
+            init_atom_set,
+            fluent_predicates,
+            &fluent_function_set,
+            init_function_values,
+        ) {
+            Some(list) => list,
+            None => continue,
+        };
+
+        let substituted = match substitute_sexpr_with_numeric(
+            &effect.effect,
+            &mapping,
+            &fluent_function_set,
+            init_function_values,
+        ) {
+            Some(expr) => expr,
+            None => return false,
+        };
+        let parsed = crate::translate::pddl_ast::sexpr_to_effect(&substituted);
+        match parsed {
+            crate::translate::pddl_ast::Effect::Add(name, args) => {
+                if fluent_predicates.contains(&name) {
+                    out.push((cond_list, crate::translate::pddl_ast::Effect::Add(name, args)));
+                } else if !init_atom_set.contains(&(name.clone(), args.clone())) {
+                    return false;
+                }
+            }
+            crate::translate::pddl_ast::Effect::Del(name, args) => {
+                if fluent_predicates.contains(&name) {
+                    out.push((cond_list, crate::translate::pddl_ast::Effect::Del(name, args)));
+                } else if init_atom_set.contains(&(name.clone(), args.clone())) {
+                    return false;
+                }
+            }
+            crate::translate::pddl_ast::Effect::Increase(name, args, val) => {
+                if fluent_function_set.contains(&name) {
+                    out.push((cond_list, crate::translate::pddl_ast::Effect::Increase(name, args, val)));
+                } else {
+                    return false;
+                }
+            }
+            crate::translate::pddl_ast::Effect::Decrease(name, args, val) => {
+                if fluent_function_set.contains(&name) {
+                    out.push((cond_list, crate::translate::pddl_ast::Effect::Decrease(name, args, val)));
+                } else {
+                    return false;
+                }
+            }
+            crate::translate::pddl_ast::Effect::And(v) => {
+                for sub in v {
+                    out.push((cond_list.clone(), sub));
+                }
+            }
+        }
+    }
+    true
+}
+
+fn cartesian_assignments(
+    parameter_lists: &[(String, Vec<String>)],
+) -> Vec<Vec<(String, String)>> {
+    if parameter_lists.is_empty() {
+        return vec![Vec::new()];
+    }
+    let mut results: Vec<Vec<(String, String)>> = vec![Vec::new()];
+    for (name, values) in parameter_lists {
+        if values.is_empty() {
+            return Vec::new();
+        }
+        let mut next = Vec::new();
+        for prefix in &results {
+            for value in values {
+                let mut new_prefix = prefix.clone();
+                new_prefix.push((name.clone(), value.clone()));
+                next.push(new_prefix);
+            }
+        }
+        results = next;
+    }
+    results
+}
+
+fn substitute_sexpr_with_numeric(
+    sexpr: &crate::translate::pddl_parser::SExpr,
+    mapping: &std::collections::HashMap<String, String>,
+    fluent_function_set: &std::collections::HashSet<String>,
+    init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
+) -> Option<crate::translate::pddl_parser::SExpr> {
+    use crate::translate::pddl_parser::SExpr;
+
+    match sexpr {
+        SExpr::Atom(a) => {
+            if a.starts_with('?') {
+                if let Some(v) = mapping.get(a) {
+                    Some(SExpr::Atom(v.clone()))
+                } else {
+                    Some(SExpr::Atom(a.clone()))
+                }
+            } else {
+                if a.parse::<f64>().is_ok() {
+                    Some(SExpr::Atom(a.clone()))
+                } else if fluent_function_set.contains(a) {
+                    Some(SExpr::List(vec![SExpr::Atom(a.clone())]))
+                } else if let Some(val) = init_function_values.get(&(a.clone(), vec![])) {
+                    Some(SExpr::Atom(format_number(*val)))
+                } else {
+                    Some(SExpr::Atom(a.clone()))
+                }
+            }
+        }
+        SExpr::List(list) => {
+            if list.is_empty() {
+                return Some(SExpr::List(vec![]));
+            }
+            let op = match &list[0] {
+                SExpr::Atom(a) => a.as_str(),
+                _ => "",
+            };
+            if matches!(op, "+" | "-" | "*" | "/") {
+                let mut new_items = Vec::new();
+                for item in list {
+                    new_items.push(substitute_sexpr_with_numeric(
+                        item,
+                        mapping,
+                        fluent_function_set,
+                        init_function_values,
+                    )?);
+                }
+                return Some(SExpr::List(new_items));
+            }
+            if let SExpr::Atom(fname) = &list[0] {
+                let mut args = Vec::new();
+                for item in &list[1..] {
+                    if let SExpr::Atom(arg) = item {
+                        if arg.starts_with('?') {
+                            args.push(mapping.get(arg).cloned().unwrap_or_else(|| arg.clone()));
+                        } else {
+                            args.push(arg.clone());
+                        }
+                    }
+                }
+                if fluent_function_set.contains(fname) {
+                    let mut items = vec![SExpr::Atom(fname.clone())];
+                    items.extend(args.into_iter().map(SExpr::Atom));
+                    return Some(SExpr::List(items));
+                }
+                if let Some(val) = init_function_values.get(&(fname.clone(), args.clone())) {
+                    return Some(SExpr::Atom(format_number(*val)));
+                }
+            }
+            let mut new_items = Vec::new();
+            for item in list {
+                new_items.push(substitute_sexpr_with_numeric(
+                    item,
+                    mapping,
+                    fluent_function_set,
+                    init_function_values,
+                )?);
+            }
+            Some(SExpr::List(new_items))
+        }
+    }
+}
+
+fn instantiate_condition_list(
+    condition: &crate::translate::pddl_ast::Condition,
+    init_atom_set: &std::collections::HashSet<(String, Vec<String>)>,
+    fluent_predicates: &std::collections::HashSet<String>,
+    fluent_function_set: &std::collections::HashSet<String>,
+    init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
+) -> Option<Vec<Condition>> {
+    use crate::translate::pddl_ast::Condition;
+
+    match condition {
+        Condition::True => Some(Vec::new()),
+        Condition::Atom(pred, args) => {
+            if fluent_predicates.contains(pred) {
+                Some(vec![Condition::Atom(pred.clone(), args.clone())])
+            } else if init_atom_set.contains(&(pred.clone(), args.clone())) {
+                Some(Vec::new())
+            } else {
+                None
+            }
+        }
+        Condition::Not(inner) => match inner.as_ref() {
+            Condition::Atom(pred, args) => {
+                if fluent_predicates.contains(pred) {
+                    Some(vec![Condition::Not(Box::new(Condition::Atom(
+                        pred.clone(),
+                        args.clone(),
+                    )))])
+                } else if init_atom_set.contains(&(pred.clone(), args.clone())) {
+                    None
+                } else {
+                    Some(Vec::new())
+                }
+            }
+            _ => Some(vec![condition.clone()]),
+        },
+        Condition::And(parts) => {
+            let mut result = Vec::new();
+            for part in parts {
+                let mut part_list = instantiate_condition_list(
+                    part,
+                    init_atom_set,
+                    fluent_predicates,
+                    fluent_function_set,
+                    init_function_values,
+                )?;
+                result.append(&mut part_list);
+            }
+            Some(result)
+        }
+        Condition::Comparison(op, left, right) => {
+            let left_sub = substitute_sexpr_with_numeric(
+                left,
+                &std::collections::HashMap::new(),
+                fluent_function_set,
+                init_function_values,
+            )?;
+            let right_sub = substitute_sexpr_with_numeric(
+                right,
+                &std::collections::HashMap::new(),
+                fluent_function_set,
+                init_function_values,
+            )?;
+            Some(vec![Condition::Comparison(op.clone(), left_sub, right_sub)])
+        }
+        _ => Some(vec![condition.clone()]),
+    }
+}
+
+fn format_number(value: f64) -> String {
+    if value.fract() == 0.0 {
+        format!("{}", value as i64)
+    } else {
+        value.to_string()
     }
 }
 
