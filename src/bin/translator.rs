@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 
@@ -81,6 +82,7 @@ fn main() -> anyhow::Result<()> {
             problem,
             output,
         } => {
+            let start = Instant::now();
             eprintln!(
                 "translator: reading domain {:?} and problem {:?}",
                 domain, problem
@@ -148,18 +150,24 @@ fn main() -> anyhow::Result<()> {
             let instantiated_num_axioms = result.numeric_axioms;
             
             let py_groups: Option<Vec<Vec<String>>> = None;
-            let sastask = planners::translate::to_sas::build_sas(
-                &result.grounded_ops,
-                &dom,
-                &prob,
-                &instantiated_num_axioms,
-                py_groups,
-                &norm_task.axioms,
-                &norm_task.goal,
+            //let sastask = planners::translate::to_sas::build_sas(
+            //    &result.grounded_ops,
+            //    &dom,
+            //    &prob,
+            //    &instantiated_num_axioms,
+            //    py_groups,
+            //    &norm_task.axioms,
+            //    &norm_task.goal,
+            //);
+            //let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
+            //planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
+            //eprintln!("translator: wrote {}", out_path.display());
+
+            let duration = start.elapsed();
+            eprintln!(
+                "translator: completed in {:.2?} seconds",
+                duration
             );
-            let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
-            planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
-            eprintln!("translator: wrote {}", out_path.display());
         }
         Commands::Preprocess { output } => {
             //not implemented yet, raise error

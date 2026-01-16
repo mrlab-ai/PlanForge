@@ -1,5 +1,24 @@
 use crate::translate::pddl_parser::SExpr;
 
+const KW_DEFINE: &str = "define";
+const KW_DOMAIN: &str = "domain";
+const KW_PROBLEM: &str = "problem";
+const KW_PREDICATES: &str = ":predicates";
+const KW_FUNCTIONS: &str = ":functions";
+const KW_ACTION: &str = ":action";
+const KW_PARAMETERS: &str = ":parameters";
+const KW_PRECONDITION: &str = ":precondition";
+const KW_EFFECT: &str = ":effect";
+const KW_OBJECTS: &str = ":objects";
+const KW_INIT: &str = ":init";
+const KW_GOAL: &str = ":goal";
+const KW_AND: &str = "and";
+const KW_NOT: &str = "not";
+const KW_INCREASE: &str = "increase";
+const KW_DECREASE: &str = "decrease";
+const KW_EQUAL: &str = "=";
+const TYPE_MARKER: &str = "-";
+
 #[derive(Debug, Clone)]
 pub struct Domain {
     pub name: String,
@@ -189,6 +208,24 @@ fn sexpr_to_string(s: &SExpr) -> String {
 }
 
 pub fn sexpr_to_condition(s: &SExpr) -> Condition {
+    fn parse_atom(name: &str, args: &[SExpr]) -> Condition {
+        let parsed_args = args
+            .iter()
+            .filter_map(|a| if let SExpr::Atom(arg) = a { Some(arg.clone()) } else { None })
+            .collect();
+        Condition::Atom(name.to_string(), parsed_args)
+    }
+
+    fn build_compare_to_zero(op: &str, left: &SExpr, right: &SExpr) -> Condition {
+        let difference = SExpr::List(vec![
+            SExpr::Atom("-".to_string()),
+            left.clone(),
+            right.clone(),
+        ]);
+        let zero = SExpr::Atom("0".to_string());
+        Condition::Comparison(op.to_string(), difference, zero)
+    }
+
     match s {
         SExpr::Atom(a) => Condition::Atom(a.clone(), vec![]),
         SExpr::List(list) => {
@@ -196,58 +233,17 @@ pub fn sexpr_to_condition(s: &SExpr) -> Condition {
                 return Condition::True;
             }
             if let SExpr::Atom(k) = &list[0] {
-                match k.to_lowercase().as_str() {
-                    "and" => {
-                        let mut cs = Vec::new();
-                        for item in &list[1..] {
-                            cs.push(sexpr_to_condition(item));
-                        }
-                        Condition::And(cs)
-                    }
-                    "not" => {
-                        if list.len() >= 2 {
-                            Condition::Not(Box::new(sexpr_to_condition(&list[1])))
-                        } else {
-                            Condition::True
-                        }
-                    }
-                    "<=" | ">=" | "<" | ">" | "=" => {
-                        if list.len() >= 3 {
-                            // Transform to "compare_to_zero" form: (<= A B) becomes (<= (- A B) 0)
-                            // This matches Python's FunctionComparison(compare_to_zero=True)
-                            let left = list[1].clone();
-                            let right = list[2].clone();
-                            
-                            // Create (- left right)
-                            let difference = SExpr::List(vec![
-                                SExpr::Atom("-".to_string()),
-                                left,
-                                right,
-                            ]);
-                            
-                            // Create constant 0
-                            let zero = SExpr::Atom("0".to_string());
-                            
-                            return Condition::Comparison(
-                                k.clone(),
-                                difference,
-                                zero,
-                            );
-                        } else {
-                            return Condition::True;
-                        }
-                    }
-                    _ => {
-                        // atom-like: predicate name followed by args
-                        let name = k.clone();
-                        let mut args = Vec::new();
-                        for a in &list[1..] {
-                            if let SExpr::Atom(arg) = a {
-                                args.push(arg.clone());
-                            }
-                        }
-                        Condition::Atom(name, args)
-                    }
+                let key = k.to_lowercase();
+                match key.as_str() {
+                    KW_AND => Condition::And(list[1..].iter().map(sexpr_to_condition).collect()),
+                    KW_NOT => list.get(1)
+                        .map(|inner| Condition::Not(Box::new(sexpr_to_condition(inner))))
+                        .unwrap_or(Condition::True),
+                    "<=" | ">=" | "<" | ">" | KW_EQUAL => list
+                        .get(1)
+                        .and_then(|left| list.get(2).map(|right| build_compare_to_zero(k, left, right)))
+                        .unwrap_or(Condition::True),
+                    _ => parse_atom(k, &list[1..]),
                 }
             } else {
                 Condition::True
@@ -257,6 +253,43 @@ pub fn sexpr_to_condition(s: &SExpr) -> Condition {
 }
 
 pub fn sexpr_to_effect(s: &SExpr) -> Effect {
+    fn parse_name_and_args(list: &[SExpr]) -> Option<(String, Vec<String>)> {
+        let name = match list.get(0) {
+            Some(SExpr::Atom(n)) => n.clone(),
+            _ => return None,
+        };
+        let args = list[1..]
+            .iter()
+            .filter_map(|x| match x {
+                SExpr::Atom(a) => Some(a.clone()),
+                _ => None,
+            })
+            .collect();
+        Some((name, args))
+    }
+
+    fn parse_numeric_effect(list: &[SExpr], kind: &str) -> Option<Effect> {
+        if list.len() < 3 {
+            return None;
+        }
+        let func = match &list[1] {
+            SExpr::List(inner) => match inner.get(0) {
+                Some(SExpr::Atom(name)) => name.clone(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let value = match &list[2] {
+            SExpr::Atom(v) => v.parse::<i64>().ok()?,
+            _ => return None,
+        };
+        match kind {
+            KW_INCREASE => Some(Effect::Increase(func, vec![], value)),
+            KW_DECREASE => Some(Effect::Decrease(func, vec![], value)),
+            _ => None,
+        }
+    }
+
     match s {
         SExpr::Atom(a) => Effect::Add(a.clone(), vec![]),
         SExpr::List(list) => {
@@ -264,83 +297,21 @@ pub fn sexpr_to_effect(s: &SExpr) -> Effect {
                 return Effect::And(vec![]);
             }
             if let SExpr::Atom(k) = &list[0] {
-                match k.to_lowercase().as_str() {
-                    "and" => {
-                        let mut es = Vec::new();
-                        for item in &list[1..] {
-                            es.push(sexpr_to_effect(item));
-                        }
-                        Effect::And(es)
-                    }
-                    "not" => {
-                        // not (atom) interpreted as delete
-                        if list.len() >= 2 {
-                            if let SExpr::List(inner) = &list[1] {
-                                if let SExpr::Atom(name) = &inner[0] {
-                                    let args = inner[1..]
-                                        .iter()
-                                        .filter_map(|x| match x {
-                                            SExpr::Atom(a) => Some(a.clone()),
-                                            _ => None,
-                                        })
-                                        .collect();
-                                    return Effect::Del(name.clone(), args);
-                                }
-                            }
-                        }
-                        Effect::And(vec![])
-                    }
-                    "increase" => {
-                        // (increase (f) val)
-                        if list.len() >= 3 {
-                            let func = if let SExpr::List(inner) = &list[1] {
-                                if let SExpr::Atom(name) = &inner[0] {
-                                    name.clone()
-                                } else {
-                                    "".to_string()
-                                }
-                            } else {
-                                "".to_string()
-                            };
-                            if let SExpr::Atom(v) = &list[2] {
-                                if let Ok(n) = v.parse::<i64>() {
-                                    return Effect::Increase(func, vec![], n);
-                                }
-                            }
-                        }
-                        Effect::And(vec![])
-                    }
-                    "decrease" => {
-                        if list.len() >= 3 {
-                            let func = if let SExpr::List(inner) = &list[1] {
-                                if let SExpr::Atom(name) = &inner[0] {
-                                    name.clone()
-                                } else {
-                                    "".to_string()
-                                }
-                            } else {
-                                "".to_string()
-                            };
-                            if let SExpr::Atom(v) = &list[2] {
-                                if let Ok(n) = v.parse::<i64>() {
-                                    return Effect::Decrease(func, vec![], n);
-                                }
-                            }
-                        }
-                        Effect::And(vec![])
-                    }
-                    _ => {
-                        // treat as add
-                        let name = k.clone();
-                        let args = list[1..]
-                            .iter()
-                            .filter_map(|x| match x {
-                                SExpr::Atom(a) => Some(a.clone()),
-                                _ => None,
-                            })
-                            .collect();
-                        Effect::Add(name, args)
-                    }
+                let key = k.to_lowercase();
+                match key.as_str() {
+                    KW_AND => Effect::And(list[1..].iter().map(sexpr_to_effect).collect()),
+                    KW_NOT => list.get(1)
+                        .and_then(|inner| match inner {
+                            SExpr::List(items) => parse_name_and_args(items)
+                                .map(|(name, args)| Effect::Del(name, args)),
+                            _ => None,
+                        })
+                        .unwrap_or(Effect::And(vec![])),
+                    KW_INCREASE | KW_DECREASE => parse_numeric_effect(&list, key.as_str())
+                        .unwrap_or(Effect::And(vec![])),
+                    _ => parse_name_and_args(list)
+                        .map(|(name, args)| Effect::Add(name, args))
+                        .unwrap_or(Effect::And(vec![])),
                 }
             } else {
                 Effect::And(vec![])
@@ -356,8 +327,7 @@ fn parse_typed_list(list: &[SExpr]) -> Vec<(String, Option<String>)> {
     let mut i = 0;
     while i < list.len() {
         match &list[i] {
-            SExpr::Atom(a) if a == "-" => {
-                // next token is type
+            SExpr::Atom(a) if a == TYPE_MARKER => {
                 if i + 1 < list.len() {
                     if let SExpr::Atom(t) = &list[i + 1] {
                         for name in buffer.drain(..) {
@@ -373,9 +343,7 @@ fn parse_typed_list(list: &[SExpr]) -> Vec<(String, Option<String>)> {
                 buffer.push(a.clone());
                 i += 1;
             }
-            _ => {
-                i += 1;
-            }
+            _ => i += 1,
         }
     }
     for name in buffer.drain(..) {
@@ -386,167 +354,132 @@ fn parse_typed_list(list: &[SExpr]) -> Vec<(String, Option<String>)> {
 
 impl Domain {
     pub fn from_sexprs(forms: &[SExpr]) -> Option<Self> {
-        for f in forms {
-            if let SExpr::List(items) = f {
-                if items.len() >= 2 {
-                    if let SExpr::Atom(a) = &items[0] {
-                        if a.to_lowercase() == "define" {
-                            // second element usually (domain NAME)
-                            if items.len() >= 2 {
-                                if let SExpr::List(domain_spec) = &items[1] {
-                                    if domain_spec.len() >= 2 {
-                                        if let SExpr::Atom(domain_kw) = &domain_spec[0] {
-                                            if domain_kw.to_lowercase() == "domain" {
-                                                let name = match &domain_spec[1] {
-                                                    SExpr::Atom(n) => n.clone(),
-                                                    _ => "".to_string(),
-                                                };
-                                                // collect sections and actions from the rest
-                                                let mut predicates = Vec::new();
-                                                let mut functions = Vec::new();
-                                                let mut actions = Vec::new();
-                                                for section in &items[2..] {
-                                                    match section {
-                                                        SExpr::List(list) => {
-                                                            if !list.is_empty() {
-                                                                if let SExpr::Atom(k) = &list[0] {
-                                                                    let key = k.clone();
-                                                                    let content =
-                                                                        list[1..].to_vec();
-                                                                    match key
-                                                                        .to_lowercase()
-                                                                        .as_str()
-                                                                    {
-                                                                        ":predicates"
-                                                                        | "predicates" => {
-                                                                            // each content item may be a predicate list
-                                                                            for item in &content {
-                                                                                if let SExpr::List(
-                                                                                    p,
-                                                                                ) = item
-                                                                                {
-                                                                                    if !p.is_empty()
-                                                                                    {
-                                                                                        if let SExpr::Atom(nm) = &p[0] {
-                                                                                            let params = parse_typed_list(&p[1..]);
-                                                                                            predicates.push((nm.clone(), params));
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        ":functions"
-                                                                        | "functions" => {
-                                                                            for item in &content {
-                                                                                if let SExpr::List(
-                                                                                    p,
-                                                                                ) = item
-                                                                                {
-                                                                                    if !p.is_empty()
-                                                                                    {
-                                                                                        if let SExpr::Atom(nm) = &p[0] {
-                                                                                            let params = parse_typed_list(&p[1..]);
-                                                                                            functions.push((nm.clone(), params));
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        ":action" | "action" => {
-                                                                            if let Some(act) =
-                                                                                Action::from_section(
-                                                                                    &content,
-                                                                                )
-                                                                            {
-                                                                                actions.push(act);
-                                                                            }
-                                                                        }
-                                                                        _ => {}
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        _ => {}
-                                                    }
-                                                }
-                                                return Some(Domain {
-                                                    name,
-                                                    predicates,
-                                                    functions,
-                                                    actions,
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+        forms.iter().find_map(parse_domain_form)
+    }
+}
+
+fn parse_domain_form(form: &SExpr) -> Option<Domain> {
+    let items = match form {
+        SExpr::List(items) => items,
+        _ => return None,
+    };
+    if items.len() < 2 {
+        return None;
+    }
+    let keyword = match &items[0] {
+        SExpr::Atom(a) if a.to_lowercase() == KW_DEFINE => a,
+        _ => return None,
+    };
+    let _ = keyword;
+    let domain_spec = match &items[1] {
+        SExpr::List(domain_spec) if domain_spec.len() >= 2 => domain_spec,
+        _ => return None,
+    };
+    let domain_kw = match &domain_spec[0] {
+        SExpr::Atom(k) if k.to_lowercase() == KW_DOMAIN => k,
+        _ => return None,
+    };
+    let _ = domain_kw;
+    let name = match &domain_spec[1] {
+        SExpr::Atom(n) => n.clone(),
+        _ => String::new(),
+    };
+
+    let mut predicates = Vec::new();
+    let mut functions = Vec::new();
+    let mut actions = Vec::new();
+
+    for section in &items[2..] {
+        let list = match section {
+            SExpr::List(list) if !list.is_empty() => list,
+            _ => continue,
+        };
+        let key = match &list[0] {
+            SExpr::Atom(k) => k.to_lowercase(),
+            _ => continue,
+        };
+        let content = &list[1..];
+        match key.as_str() {
+            KW_PREDICATES | "predicates" => parse_predicates(content, &mut predicates),
+            KW_FUNCTIONS | "functions" => parse_functions(content, &mut functions),
+            KW_ACTION | "action" => {
+                if let Some(act) = Action::from_section(content) {
+                    actions.push(act);
                 }
             }
+            _ => {}
         }
-        None
+    }
+
+    Some(Domain {
+        name,
+        predicates,
+        functions,
+        actions,
+    })
+}
+
+fn parse_predicates(content: &[SExpr], predicates: &mut Vec<(String, Vec<(String, Option<String>)>)>) {
+    for item in content {
+        if let SExpr::List(p) = item {
+            if let Some(SExpr::Atom(nm)) = p.get(0) {
+                let params = parse_typed_list(&p[1..]);
+                predicates.push((nm.clone(), params));
+            }
+        }
+    }
+}
+
+fn parse_functions(content: &[SExpr], functions: &mut Vec<(String, Vec<(String, Option<String>)>)>) {
+    for item in content {
+        if let SExpr::List(p) = item {
+            if let Some(SExpr::Atom(nm)) = p.get(0) {
+                let params = parse_typed_list(&p[1..]);
+                functions.push((nm.clone(), params));
+            }
+        }
     }
 }
 
 impl Action {
     fn from_section(content: &[SExpr]) -> Option<Self> {
         // content normally: (name) :parameters (...) :precondition (...) :effect (...)
-        let mut name = "".to_string();
+        let name = match content.get(0) {
+            Some(SExpr::Atom(a)) => a.clone(),
+            _ => String::new(),
+        };
         let mut params = Vec::new();
         let mut pre = None;
         let mut eff = None;
-        // First element might be the action name as Atom
-        if !content.is_empty() {
-            if let SExpr::Atom(a) = &content[0] {
-                name = a.clone();
-            }
-        }
-        // scan for keywords
+
         let mut i = 1;
         while i < content.len() {
-            match &content[i] {
-                SExpr::Atom(k) => {
-                    let key = k.to_lowercase();
-                    if key == ":parameters" && i + 1 < content.len() {
-                        if let SExpr::List(list) = &content[i + 1] {
-                            // parameters are atoms and typed segments; keep raw atom names
-                            let mut j = 0;
-                            while j < list.len() {
-                                if let SExpr::Atom(p) = &list[j] {
-                                    // lookahead for type marker '-'
-                                    if j + 2 < list.len() {
-                                        if let SExpr::Atom(dash) = &list[j + 1] {
-                                            if dash == "-" {
-                                                if let SExpr::Atom(t) = &list[j + 2] {
-                                                    params.push((p.clone(), Some(t.clone())));
-                                                    j += 3;
-                                                    continue;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    params.push((p.clone(), None));
-                                }
-                                j += 1;
-                            }
-                        }
-                        i += 2;
-                        continue;
-                    } else if key == ":precondition" && i + 1 < content.len() {
-                        pre = Some(content[i + 1].clone());
-                        i += 2;
-                        continue;
-                    } else if key == ":effect" && i + 1 < content.len() {
-                        eff = Some(content[i + 1].clone());
-                        i += 2;
-                        continue;
-                    }
+            let key = match &content[i] {
+                SExpr::Atom(k) => k.to_lowercase(),
+                _ => {
+                    i += 1;
+                    continue;
                 }
-                _ => {}
+            };
+            match key.as_str() {
+                KW_PARAMETERS if i + 1 < content.len() => {
+                    if let SExpr::List(list) = &content[i + 1] {
+                        params = parse_typed_list(list);
+                    }
+                    i += 2;
+                }
+                KW_PRECONDITION if i + 1 < content.len() => {
+                    pre = Some(content[i + 1].clone());
+                    i += 2;
+                }
+                KW_EFFECT if i + 1 < content.len() => {
+                    eff = Some(content[i + 1].clone());
+                    i += 2;
+                }
+                _ => i += 1,
             }
-            i += 1;
         }
+
         Some(Action {
             name,
             parameters: params,
@@ -652,68 +585,64 @@ pub fn substitute_effect(
 
 impl Problem {
     pub fn from_sexprs(forms: &[SExpr]) -> Option<Self> {
-        for f in forms {
-            if let SExpr::List(items) = f {
-                if items.len() >= 2 {
-                    if let SExpr::Atom(a) = &items[0] {
-                        if a.to_lowercase() == "define" {
-                            // find (:problem NAME) or (:problem ...)
-                            let mut name = String::new();
-                            let mut objects = Vec::new();
-                            let mut init = Vec::new();
-                            let mut goal = None;
-                            for part in &items[1..] {
-                                match part {
-                                    SExpr::List(inner) => {
-                                        if inner.is_empty() {
-                                            continue;
-                                        }
-                                        if let SExpr::Atom(atom0) = &inner[0] {
-                                            match atom0.to_lowercase().as_str() {
-                                                ":problem" | "problem" => {
-                                                    if inner.len() >= 2 {
-                                                        if let SExpr::Atom(n) = &inner[1] {
-                                                            name = n.clone();
-                                                        }
-                                                    }
-                                                }
-                                                ":objects" | "objects" => {
-                                                    // parse typed object lists like a b c - type
-                                                    let typed = parse_typed_list(&inner[1..]);
-                                                    for (name, tp) in typed {
-                                                        objects.push((name, tp));
-                                                    }
-                                                }
-                                                ":init" | "init" => {
-                                                    for token in &inner[1..] {
-                                                        init.push(token.clone());
-                                                    }
-                                                }
-                                                ":goal" | "goal" => {
-                                                    if inner.len() >= 2 {
-                                                        goal = Some(inner[1].clone());
-                                                    }
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            return Some(Problem {
-                                name,
-                                objects,
-                                init,
-                                goal,
-                            });
-                        }
-                    }
+        forms.iter().find_map(parse_problem_form)
+    }
+}
+
+fn parse_problem_form(form: &SExpr) -> Option<Problem> {
+    let items = match form {
+        SExpr::List(items) => items,
+        _ => return None,
+    };
+    if items.len() < 2 {
+        return None;
+    }
+    let key = match &items[0] {
+        SExpr::Atom(a) if a.to_lowercase() == KW_DEFINE => a,
+        _ => return None,
+    };
+    let _ = key;
+    let mut name = String::new();
+    let mut objects = Vec::new();
+    let mut init = Vec::new();
+    let mut goal = None;
+
+    for part in &items[1..] {
+        let inner = match part {
+            SExpr::List(inner) if !inner.is_empty() => inner,
+            _ => continue,
+        };
+        let section = match &inner[0] {
+            SExpr::Atom(atom0) => atom0.to_lowercase(),
+            _ => continue,
+        };
+        match section.as_str() {
+            KW_PROBLEM => {
+                if let Some(SExpr::Atom(n)) = inner.get(1) {
+                    name = n.clone();
                 }
             }
+            KW_OBJECTS | "objects" => {
+                objects.extend(parse_typed_list(&inner[1..]));
+            }
+            KW_INIT | "init" => {
+                init.extend(inner[1..].iter().cloned());
+            }
+            KW_GOAL | "goal" => {
+                if let Some(goal_expr) = inner.get(1) {
+                    goal = Some(goal_expr.clone());
+                }
+            }
+            _ => {}
         }
-        None
     }
+
+    Some(Problem {
+        name,
+        objects,
+        init,
+        goal,
+    })
 }
 
 #[cfg(test)]
@@ -724,8 +653,8 @@ mod instantiate_tests {
     #[test]
     fn ground_smoke() {
         let task = crate::translate::pddl::PddlTask::from_files(
-            std::path::Path::new("pddl/domain.pddl"),
-            std::path::Path::new("pddl/pfile1.pddl"),
+            std::path::Path::new("misc/plant-watering/domain.pddl"),
+            std::path::Path::new("misc/plant-watering/prob_4_1_1.pddl"),
         )
         .unwrap();
         let dom = Domain::from_sexprs(&task.domain_forms).expect("domain parsed");

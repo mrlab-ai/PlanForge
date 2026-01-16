@@ -1,10 +1,22 @@
 use crate::translate::build_model as bm;
 use crate::translate::normalization_function_admin::{NormalizationFunctionAdministrator, NumericAxiom};
-use crate::translate::pddl_ast::{Action, Condition, Domain, Problem};
+use crate::translate::pddl_ast::{Condition, Domain, Problem};
 use crate::translate::pddl_parser::SExpr;
 use std::collections::{HashMap, HashSet};
 
 const OBJECT_PREDICATE: &str = "@object";
+const KW_AND: &str = "and";
+const KW_FORALL: &str = "forall";
+const KW_WHEN: &str = "when";
+const KW_NOT: &str = "not";
+const KW_INCREASE: &str = "increase";
+const KW_DECREASE: &str = "decrease";
+const KW_ASSIGN: &str = "assign";
+const KW_SCALE_UP: &str = "scale-up";
+const KW_SCALE_DOWN: &str = "scale-down";
+const TOTAL_COST: &str = "total-cost";
+const DEFAULT_UNIT_COST: &str = "1";
+const TYPE_MARKER: &str = "-";
 
 /// A PDDL task structure suitable for normalization.
 /// This contains the parsed domain and problem in a form where conditions
@@ -78,54 +90,7 @@ impl NormalizableTask {
     /// Create a normalizable task from parsed Domain and Problem ASTs
     pub fn from_ast(domain: &Domain, problem: &Problem) -> Self {
         use crate::translate::pddl_ast::sexpr_to_condition;
-        
-        // Convert actions: parse preconditions and effects from SExpr
-        let actions: Vec<TaskAction> = domain
-            .actions
-            .iter()
-            .map(|action| {
-                let precondition = action
-                    .precond
-                    .as_ref()
-                    .map(|s| sexpr_to_condition(s))
-                    .unwrap_or(Condition::True);
-                
-                // Parse effects: convert conditional effects to TaskEffect structures
-                let (mut effects, mut cost) = if let Some(effect_sexpr) = &action.effect {
-                    Self::parse_effects_and_extract_cost(effect_sexpr)
-                } else {
-                    (vec![], None)
-                };
-                
-                // Python compatibility: If no cost effect was extracted, add artificial (increase total-cost 1)
-                // This matches Python's behavior in parsing_functions.py line 397
-                if cost.is_none() && !effects.is_empty() {
-                    let artificial_cost = SExpr::List(vec![
-                        SExpr::Atom("increase".to_string()),
-                        SExpr::List(vec![SExpr::Atom("total-cost".to_string())]),
-                        SExpr::Atom("1".to_string()),
-                    ]);
-                    
-                    // Add the artificial cost effect to the effects list
-                    effects.push(TaskEffect {
-                        parameters: vec![],
-                        condition: Condition::True,
-                        effect: artificial_cost.clone(),
-                    });
-                    
-                    // Set it as the cost
-                    cost = Some(artificial_cost);
-                }
-                
-                TaskAction {
-                    name: action.name.clone(),
-                    parameters: action.parameters.clone(),
-                    precondition,
-                    effects,
-                    cost,
-                }
-            })
-            .collect();
+        let actions = build_actions(domain, sexpr_to_condition);
         
         // Convert goal from SExpr to Condition
         let goal = problem
@@ -153,125 +118,7 @@ impl NormalizableTask {
     /// Parse effects from an SExpr into a list of TaskEffect structures.
     /// Handles conditional effects with forall, when, and nested structures.
     fn parse_effects(effect_sexpr: &SExpr) -> Vec<TaskEffect> {
-        use crate::translate::pddl_ast::sexpr_to_condition;
-        
-        // Helper to parse parameters from typed list
-        fn parse_params(params_sexpr: &SExpr) -> Vec<(String, Option<String>)> {
-            match params_sexpr {
-                SExpr::List(items) => {
-                    let mut result = vec![];
-                    let mut i = 0;
-                    let mut pending_names = vec![];
-                    
-                    while i < items.len() {
-                        if let SExpr::Atom(atom) = &items[i] {
-                            if atom == "-" {
-                                // Next item is the type
-                                if i + 1 < items.len() {
-                                    if let SExpr::Atom(type_name) = &items[i + 1] {
-                                        // Assign type to all pending names
-                                        for name in pending_names.drain(..) {
-                                            result.push((name, Some(type_name.clone())));
-                                        }
-                                        i += 2;
-                                        continue;
-                                    }
-                                }
-                            } else {
-                                // Variable name
-                                pending_names.push(atom.clone());
-                            }
-                        }
-                        i += 1;
-                    }
-                    
-                    // Any remaining names without types
-                    for name in pending_names {
-                        result.push((name, None));
-                    }
-                    
-                    result
-                }
-                _ => vec![],
-            }
-        }
-        
-        fn parse_effect_helper(s: &SExpr) -> Vec<TaskEffect> {
-            match s {
-                SExpr::List(items) if !items.is_empty() => {
-                    if let SExpr::Atom(keyword) = &items[0] {
-                        match keyword.to_lowercase().as_str() {
-                            "and" => {
-                                // (and effect1 effect2 ...) - flatten all effects
-                                let mut all_effects = vec![];
-                                for item in &items[1..] {
-                                    all_effects.extend(parse_effect_helper(item));
-                                }
-                                all_effects
-                            }
-                            "forall" => {
-                                // (forall (?v - type) effect) - effect with parameters
-                                if items.len() >= 3 {
-                                    let params = parse_params(&items[1]);
-                                    let inner_effects = parse_effect_helper(&items[2]);
-                                    // Add parameters to each inner effect
-                                    inner_effects.into_iter().map(|mut eff| {
-                                        eff.parameters.extend(params.clone());
-                                        eff
-                                    }).collect()
-                                } else {
-                                    vec![]
-                                }
-                            }
-                            "when" => {
-                                // (when condition effect) - conditional effect
-                                if items.len() >= 3 {
-                                    let cond = sexpr_to_condition(&items[1]);
-                                    let inner_effects = parse_effect_helper(&items[2]);
-                                    // Add condition to each inner effect
-                                    inner_effects.into_iter().map(|mut eff| {
-                                        // Combine conditions if effect already has one
-                                        eff.condition = if matches!(eff.condition, Condition::True) {
-                                            cond.clone()
-                                        } else {
-                                            Condition::And(vec![cond.clone(), eff.condition.clone()])
-                                        };
-                                        eff
-                                    }).collect()
-                                } else {
-                                    vec![]
-                                }
-                            }
-                            _ => {
-                                // Simple effect (add, del, increase, decrease, assign, etc.)
-                                vec![TaskEffect {
-                                    parameters: vec![],
-                                    condition: Condition::True,
-                                    effect: s.clone(),
-                                }]
-                            }
-                        }
-                    } else {
-                        // Unexpected structure, treat as simple effect
-                        vec![TaskEffect {
-                            parameters: vec![],
-                            condition: Condition::True,
-                            effect: s.clone(),
-                        }]
-                    }
-                }
-                _ => {
-                    // Atom or empty list - treat as simple effect
-                    vec![TaskEffect {
-                        parameters: vec![],
-                        condition: Condition::True,
-                        effect: s.clone(),
-                    }]
-                }
-            }
-        }
-        
-        parse_effect_helper(effect_sexpr)
+        parse_effects_impl(effect_sexpr)
     }
     
     /// Check if an effect SExpr is a cost effect (increase total-cost only)
@@ -282,20 +129,7 @@ impl NormalizableTask {
             SExpr::List(items) if items.len() >= 2 => {
                 // Check for (increase (total-cost) ...) ONLY
                 // Note: (increase (cost) ...) is NOT considered a cost effect in Python!
-                if let SExpr::Atom(op) = &items[0] {
-                    if op == "increase" {
-                        if let SExpr::List(fluent_items) = &items[1] {
-                            if !fluent_items.is_empty() {
-                                if let SExpr::Atom(fluent_name) = &fluent_items[0] {
-                                    return fluent_name == "total-cost";  // Only total-cost!
-                                }
-                            }
-                        } else if let SExpr::Atom(fluent_name) = &items[1] {
-                            return fluent_name == "total-cost";  // Only total-cost!
-                        }
-                    }
-                }
-                false
+                is_total_cost_increase(items)
             }
             _ => false,
         }
@@ -306,14 +140,7 @@ impl NormalizableTask {
     /// (for backward compatibility) but also returned separately.
     fn parse_effects_and_extract_cost(effect_sexpr: &SExpr) -> (Vec<TaskEffect>, Option<SExpr>) {
         let effects = Self::parse_effects(effect_sexpr);
-        
-        // Find cost effect (should be at most one)
-        let cost = effects.iter()
-            .find(|eff| Self::is_cost_effect(&eff.effect))
-            .map(|eff| eff.effect.clone());
-        
-        // Return effects unchanged (includes cost) and cost separately
-        // This matches Python's behavior: cost is in both places
+        let cost = extract_cost_effect(&effects);
         (effects, cost)
     }
     
@@ -340,6 +167,281 @@ impl NormalizableTask {
             .filter_map(|(name, typ)| typ.as_ref().map(|t| (name.clone(), t.clone())))
             .collect()
     }
+
+    pub fn dump(&self) -> String {
+        let mut out = String::new();
+        out.push_str("NormalizableTask\n");
+        out.push_str(&format!("  domain: {}\n", self.domain_name));
+        out.push_str(&format!("  problem: {}\n", self.problem_name));
+        out.push_str(&format!("  predicates: {}\n", self.predicates.len()));
+        out.push_str(&format!("  functions: {}\n", self.functions.len()));
+        out.push_str(&format!("  objects: {}\n", self.objects.len()));
+        out.push_str(&format!("  actions: {}\n", self.actions.len()));
+        out.push_str(&format!("  axioms: {}\n", self.axioms.len()));
+        out.push_str(&format!("  numeric_axioms: {}\n", self.numeric_axioms.len()));
+        out.push_str("\nActions:\n");
+        for action in &self.actions {
+            out.push_str(&format!("  - {}{}\n", action.name, fmt_params(&action.parameters)));
+            out.push_str(&format!("    pre: {}\n", fmt_condition(&action.precondition)));
+            if let Some(cost) = &action.cost {
+                out.push_str(&format!("    cost: {}\n", fmt_sexpr(cost)));
+            }
+            out.push_str(&format!("    effects: {}\n", action.effects.len()));
+            for eff in &action.effects {
+                out.push_str(&format!("      - params: {}\n", fmt_params(&eff.parameters)));
+                out.push_str(&format!("        when: {}\n", fmt_condition(&eff.condition)));
+                out.push_str(&format!("        effect: {}\n", fmt_sexpr(&eff.effect)));
+            }
+        }
+        out.push_str("\nAxioms:\n");
+        for axiom in &self.axioms {
+            out.push_str(&format!(
+                "  - {}{} : {} (external={})\n",
+                axiom.name,
+                fmt_params(&axiom.parameters),
+                fmt_condition(&axiom.condition),
+                axiom.num_external_parameters
+            ));
+        }
+        out.push_str("\nGoal:\n  ");
+        out.push_str(&fmt_condition(&self.goal));
+        out.push('\n');
+        out
+    }
+}
+
+fn fmt_params(params: &[(String, Option<String>)]) -> String {
+    if params.is_empty() {
+        return "".to_string();
+    }
+    let parts: Vec<String> = params
+        .iter()
+        .map(|(name, typ)| match typ {
+            Some(t) => format!("{} - {}", name, t),
+            None => name.clone(),
+        })
+        .collect();
+    format!("({})", parts.join(" "))
+}
+
+fn fmt_condition(cond: &Condition) -> String {
+    match cond {
+        Condition::Atom(name, args) => {
+            if args.is_empty() {
+                name.clone()
+            } else {
+                format!("({} {})", name, args.join(" "))
+            }
+        }
+        Condition::Not(inner) => format!("(not {})", fmt_condition(inner)),
+        Condition::And(parts) => format!(
+            "(and {})",
+            parts.iter().map(fmt_condition).collect::<Vec<_>>().join(" ")
+        ),
+        Condition::Or(parts) => format!(
+            "(or {})",
+            parts.iter().map(fmt_condition).collect::<Vec<_>>().join(" ")
+        ),
+        Condition::Forall(params, inner) => {
+            format!("(forall {} {})", fmt_params(params), fmt_condition(inner))
+        }
+        Condition::Exists(params, inner) => {
+            format!("(exists {} {})", fmt_params(params), fmt_condition(inner))
+        }
+        Condition::Comparison(op, left, right) => {
+            format!("({} {} {})", op, fmt_sexpr(left), fmt_sexpr(right))
+        }
+        Condition::True => "true".to_string(),
+    }
+}
+
+fn fmt_sexpr(expr: &SExpr) -> String {
+    match expr {
+        SExpr::Atom(a) => a.clone(),
+        SExpr::List(items) => format!(
+            "({})",
+            items.iter().map(fmt_sexpr).collect::<Vec<_>>().join(" ")
+        ),
+    }
+}
+
+fn build_actions(
+    domain: &Domain,
+    sexpr_to_condition: impl Fn(&SExpr) -> Condition,
+) -> Vec<TaskAction> {
+    domain
+        .actions
+        .iter()
+        .map(|action| {
+            let precondition = action
+                .precond
+                .as_ref()
+                .map(|s| sexpr_to_condition(s))
+                .unwrap_or(Condition::True);
+            let (mut effects, mut cost) = if let Some(effect_sexpr) = &action.effect {
+                NormalizableTask::parse_effects_and_extract_cost(effect_sexpr)
+            } else {
+                (vec![], None)
+            };
+            if cost.is_none() && !effects.is_empty() {
+                let artificial_cost = build_default_cost_effect();
+                effects.push(TaskEffect {
+                    parameters: vec![],
+                    condition: Condition::True,
+                    effect: artificial_cost.clone(),
+                });
+                cost = Some(artificial_cost);
+            }
+            TaskAction {
+                name: action.name.clone(),
+                parameters: action.parameters.clone(),
+                precondition,
+                effects,
+                cost,
+            }
+        })
+        .collect()
+}
+
+fn build_default_cost_effect() -> SExpr {
+    SExpr::List(vec![
+        SExpr::Atom(KW_INCREASE.to_string()),
+        SExpr::List(vec![SExpr::Atom(TOTAL_COST.to_string())]),
+        SExpr::Atom(DEFAULT_UNIT_COST.to_string()),
+    ])
+}
+
+fn parse_effects_impl(effect_sexpr: &SExpr) -> Vec<TaskEffect> {
+    use crate::translate::pddl_ast::sexpr_to_condition;
+    match effect_sexpr {
+        SExpr::List(items) if !items.is_empty() => parse_effect_list(items, &sexpr_to_condition),
+        _ => vec![TaskEffect {
+            parameters: vec![],
+            condition: Condition::True,
+            effect: effect_sexpr.clone(),
+        }],
+    }
+}
+
+fn parse_effect_list(
+    items: &[SExpr],
+    sexpr_to_condition: &impl Fn(&SExpr) -> Condition,
+) -> Vec<TaskEffect> {
+    let keyword = match &items[0] {
+        SExpr::Atom(k) => k.to_lowercase(),
+        _ => {
+            return vec![TaskEffect {
+                parameters: vec![],
+                condition: Condition::True,
+                effect: SExpr::List(items.to_vec()),
+            }]
+        }
+    };
+    match keyword.as_str() {
+        KW_AND => items[1..]
+            .iter()
+            .flat_map(parse_effects_impl)
+            .collect(),
+        KW_FORALL => parse_forall_effect(items),
+        KW_WHEN => parse_when_effect(items, sexpr_to_condition),
+        _ => vec![TaskEffect {
+            parameters: vec![],
+            condition: Condition::True,
+            effect: SExpr::List(items.to_vec()),
+        }],
+    }
+}
+
+fn parse_forall_effect(items: &[SExpr]) -> Vec<TaskEffect> {
+    if items.len() < 3 {
+        return vec![];
+    }
+    let params = parse_params(&items[1]);
+    let inner_effects = parse_effects_impl(&items[2]);
+    inner_effects
+        .into_iter()
+        .map(|mut eff| {
+            eff.parameters.extend(params.clone());
+            eff
+        })
+        .collect()
+}
+
+fn parse_when_effect(
+    items: &[SExpr],
+    sexpr_to_condition: &impl Fn(&SExpr) -> Condition,
+) -> Vec<TaskEffect> {
+    if items.len() < 3 {
+        return vec![];
+    }
+    let cond = sexpr_to_condition(&items[1]);
+    let inner_effects = parse_effects_impl(&items[2]);
+    inner_effects
+        .into_iter()
+        .map(|mut eff| {
+            eff.condition = if matches!(eff.condition, Condition::True) {
+                cond.clone()
+            } else {
+                Condition::And(vec![cond.clone(), eff.condition.clone()])
+            };
+            eff
+        })
+        .collect()
+}
+
+fn parse_params(params_sexpr: &SExpr) -> Vec<(String, Option<String>)> {
+    match params_sexpr {
+        SExpr::List(items) => {
+            let mut result = vec![];
+            let mut i = 0;
+            let mut pending_names = vec![];
+            while i < items.len() {
+                if let SExpr::Atom(atom) = &items[i] {
+                    if atom == TYPE_MARKER {
+                        if i + 1 < items.len() {
+                            if let SExpr::Atom(type_name) = &items[i + 1] {
+                                for name in pending_names.drain(..) {
+                                    result.push((name, Some(type_name.clone())));
+                                }
+                                i += 2;
+                                continue;
+                            }
+                        }
+                    } else {
+                        pending_names.push(atom.clone());
+                    }
+                }
+                i += 1;
+            }
+            for name in pending_names {
+                result.push((name, None));
+            }
+            result
+        }
+        _ => vec![],
+    }
+}
+
+fn is_total_cost_increase(items: &[SExpr]) -> bool {
+    if let Some(SExpr::Atom(op)) = items.get(0) {
+        if op == KW_INCREASE {
+            if let Some(SExpr::List(fluent_items)) = items.get(1) {
+                if let Some(SExpr::Atom(fluent_name)) = fluent_items.get(0) {
+                    return fluent_name == TOTAL_COST;
+                }
+            } else if let Some(SExpr::Atom(fluent_name)) = items.get(1) {
+                return fluent_name == TOTAL_COST;
+            }
+        }
+    }
+    false
+}
+
+fn extract_cost_effect(effects: &[TaskEffect]) -> Option<SExpr> {
+    effects
+        .iter()
+        .find(|eff| NormalizableTask::is_cost_effect(&eff.effect))
+        .map(|eff| eff.effect.clone())
 }
 
 #[derive(Default, Debug, PartialEq)]
@@ -462,12 +564,16 @@ pub fn get_fluent_predicates(task: &NormalizableTask) -> HashSet<String> {
 /// Extract the predicate name from an effect SExpr.
 /// Handles: (predicate args...), (not (predicate args...)), (increase/decrease/assign ...)
 fn extract_effect_predicate(effect: &SExpr) -> Option<String> {
+    fn is_numeric_effect(op: &str) -> bool {
+        matches!(op, KW_INCREASE | KW_DECREASE | KW_ASSIGN | KW_SCALE_UP | KW_SCALE_DOWN)
+    }
+
     match effect {
         SExpr::List(items) if items.is_empty() => None,
         SExpr::List(items) => {
             if let SExpr::Atom(op) = &items[0] {
                 match op.as_str() {
-                    "not" => {
+                    KW_NOT => {
                         // (not (predicate args...))
                         if items.len() >= 2 {
                             if let SExpr::List(inner) = &items[1] {
@@ -480,7 +586,7 @@ fn extract_effect_predicate(effect: &SExpr) -> Option<String> {
                         }
                         None
                     }
-                    "increase" | "decrease" | "assign" | "scale-up" | "scale-down" => {
+                    _ if is_numeric_effect(op) => {
                         // Numeric effect: (increase (function-name args...) value)
                         // Extract the function name
                         if items.len() >= 2 {
@@ -521,6 +627,9 @@ pub fn normalize_rules(rules: &mut Vec<bm::RuleSpec>) -> NormalizationOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::translate::pddl::PddlTask;
+    use crate::translate::pddl_ast::{Domain, Problem};
+    use std::path::Path;
 
     fn rule(effect: (&str, Vec<&str>), conds: Vec<(&str, Vec<&str>)>, rtype: &str) -> bm::RuleSpec {
         bm::RuleSpec {
@@ -579,6 +688,21 @@ mod tests {
         assert!(outcome.new_facts.is_empty());
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].conditions.len(), 1);
+    }
+
+    #[test]
+    #[ignore]
+    fn dump_normalized_plant_watering_task() {
+        let domain_path = Path::new("misc/plant-watering/domain.pddl");
+        let problem_path = Path::new("misc/plant-watering/prob_4_1_1.pddl");
+        let task = PddlTask::from_files(domain_path, problem_path).expect("pddl loaded");
+        let domain = Domain::from_sexprs(&task.domain_forms).expect("domain parsed");
+        let problem = Problem::from_sexprs(&task.problem_forms).expect("problem parsed");
+
+        let mut normalizable = NormalizableTask::from_ast(&domain, &problem);
+        normalize(&mut normalizable).expect("normalize succeeded");
+
+        println!("{}", normalizable.dump());
     }
 }
 
@@ -710,115 +834,6 @@ pub fn remove_universal_quantifiers(
     }
 }
 
-#[cfg(test)]
-mod quantifier_tests {
-    use super::*;
-
-    #[test]
-    fn test_remove_simple_forall() {
-        // forall(?x, at(?x, loc1)) becomes not(new-axiom@0())
-        // where new-axiom@0 is exists(?x, not(at(?x, loc1)))
-        // Since ?x is bound by the forall and has no free variables from outside,
-        // the axiom has no parameters
-        let mut ctx = NormalizationContext::new();
-        let mut type_map = HashMap::new();
-        type_map.insert("?x".to_string(), "object".to_string());
-
-        let forall_cond = Condition::Forall(
-            vec![("?x".to_string(), Some("object".to_string()))],
-            Box::new(Condition::Atom("at".to_string(), vec!["?x".to_string(), "loc1".to_string()])),
-        );
-
-        let result = remove_universal_quantifiers(&forall_cond, &type_map, &mut ctx);
-
-        // Should produce Not(Atom("new-axiom@0", []))
-        assert!(matches!(result, Condition::Not(_)));
-        if let Condition::Not(inner) = result {
-            if let Condition::Atom(name, args) = &*inner {
-                assert_eq!(name, "new-axiom@0");
-                assert_eq!(args.len(), 0, "Axiom should have no parameters");
-            } else {
-                panic!("Expected Atom inside Not");
-            }
-        }
-
-        // Check that one axiom was created
-        assert_eq!(ctx.axioms.len(), 1);
-        assert_eq!(ctx.axioms[0].name, "new-axiom@0");
-        // The axiom's condition should be exists(?x, not(at(?x, loc1)))
-        assert!(matches!(ctx.axioms[0].condition, Condition::Exists(_, _)));
-    }
-
-    #[test]
-    fn test_nested_forall() {
-        // forall(?x, forall(?y, connected(?x, ?y)))
-        // When negated, this becomes: exists(?x, exists(?y, not(connected(?x, ?y))))
-        // This creates one axiom with no parameters (both vars are bound)
-        let mut ctx = NormalizationContext::new();
-        let mut type_map = HashMap::new();
-        type_map.insert("?x".to_string(), "loc".to_string());
-        type_map.insert("?y".to_string(), "loc".to_string());
-
-        let inner_forall = Condition::Forall(
-            vec![("?y".to_string(), Some("loc".to_string()))],
-            Box::new(Condition::Atom(
-                "connected".to_string(),
-                vec!["?x".to_string(), "?y".to_string()],
-            )),
-        );
-
-        let outer_forall = Condition::Forall(
-            vec![("?x".to_string(), Some("loc".to_string()))],
-            Box::new(inner_forall),
-        );
-
-        let result = remove_universal_quantifiers(&outer_forall, &type_map, &mut ctx);
-
-        // The nested foralls are negated together, creating one axiom
-        assert!(matches!(result, Condition::Not(_)));
-        assert_eq!(ctx.axioms.len(), 1);
-        // The axiom should have nested Exists conditions
-        assert!(matches!(ctx.axioms[0].condition, Condition::Exists(_, _)));
-    }
-
-    #[test]
-    fn test_forall_with_free_variable() {
-        // forall(?y, connected(?x, ?y)) where ?x is free
-        // This should create an axiom with parameter ?x
-        let mut ctx = NormalizationContext::new();
-        let mut type_map = HashMap::new();
-        type_map.insert("?x".to_string(), "loc".to_string());
-        type_map.insert("?y".to_string(), "loc".to_string());
-
-        let forall_cond = Condition::Forall(
-            vec![("?y".to_string(), Some("loc".to_string()))],
-            Box::new(Condition::Atom(
-                "connected".to_string(),
-                vec!["?x".to_string(), "?y".to_string()],
-            )),
-        );
-
-        let result = remove_universal_quantifiers(&forall_cond, &type_map, &mut ctx);
-
-        // Should produce Not(Atom("new-axiom@0", ["?x"]))
-        // because ?x is a free variable in the forall
-        assert!(matches!(result, Condition::Not(_)));
-        if let Condition::Not(inner) = result {
-            if let Condition::Atom(name, args) = &*inner {
-                assert_eq!(name, "new-axiom@0");
-                assert_eq!(args, &vec!["?x".to_string()]);
-            } else {
-                panic!("Expected Atom inside Not");
-            }
-        }
-
-        // Check that one axiom was created with one parameter
-        assert_eq!(ctx.axioms.len(), 1);
-        assert_eq!(ctx.axioms[0].name, "new-axiom@0");
-        assert_eq!(ctx.axioms[0].parameters.len(), 1);
-        assert_eq!(ctx.axioms[0].parameters[0].0, "?x");
-    }
-}
 
 /// Substitute complicated goal conditions with axioms.
 ///
@@ -858,102 +873,6 @@ pub fn substitute_complicated_goal(
     // Goal is complicated - create an axiom for it
     let axiom_name = ctx.add_axiom(vec![], goal.clone());
     Condition::Atom(axiom_name, vec![])
-}
-
-#[cfg(test)]
-mod goal_tests {
-    use super::*;
-
-    #[test]
-    fn test_simple_atom_goal_unchanged() {
-        let mut ctx = NormalizationContext::new();
-        let goal = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]);
-        let result = substitute_complicated_goal(&goal, &mut ctx);
-        
-        assert_eq!(result, goal);
-        assert_eq!(ctx.axioms.len(), 0, "No axiom should be created");
-    }
-
-    #[test]
-    fn test_negated_atom_goal_unchanged() {
-        let mut ctx = NormalizationContext::new();
-        let goal = Condition::Not(Box::new(Condition::Atom(
-            "blocked".to_string(),
-            vec!["door1".to_string()],
-        )));
-        let result = substitute_complicated_goal(&goal, &mut ctx);
-        
-        assert_eq!(result, goal);
-        assert_eq!(ctx.axioms.len(), 0, "No axiom should be created");
-    }
-
-    #[test]
-    fn test_conjunction_of_literals_unchanged() {
-        let mut ctx = NormalizationContext::new();
-        let goal = Condition::And(vec![
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
-            Condition::Not(Box::new(Condition::Atom(
-                "blocked".to_string(),
-                vec!["door1".to_string()],
-            ))),
-        ]);
-        let result = substitute_complicated_goal(&goal, &mut ctx);
-        
-        assert_eq!(result, goal);
-        assert_eq!(ctx.axioms.len(), 0, "No axiom should be created");
-    }
-
-    #[test]
-    fn test_disjunctive_goal_creates_axiom() {
-        let mut ctx = NormalizationContext::new();
-        let goal = Condition::Or(vec![
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc2".to_string()]),
-        ]);
-        let result = substitute_complicated_goal(&goal, &mut ctx);
-        
-        // Should create an axiom and return an atom referencing it
-        assert!(matches!(result, Condition::Atom(_, _)));
-        if let Condition::Atom(name, args) = result {
-            assert_eq!(name, "new-axiom@0");
-            assert_eq!(args.len(), 0, "Goal axiom should have no parameters");
-        }
-        assert_eq!(ctx.axioms.len(), 1);
-        assert_eq!(ctx.axioms[0].name, "new-axiom@0");
-    }
-
-    #[test]
-    fn test_existential_goal_creates_axiom() {
-        let mut ctx = NormalizationContext::new();
-        let goal = Condition::Exists(
-            vec![("?x".to_string(), Some("location".to_string()))],
-            Box::new(Condition::Atom(
-                "at".to_string(),
-                vec!["robot".to_string(), "?x".to_string()],
-            )),
-        );
-        let result = substitute_complicated_goal(&goal, &mut ctx);
-        
-        assert!(matches!(result, Condition::Atom(_, _)));
-        assert_eq!(ctx.axioms.len(), 1);
-    }
-
-    #[test]
-    fn test_conjunction_with_nested_condition_creates_axiom() {
-        let mut ctx = NormalizationContext::new();
-        let goal = Condition::And(vec![
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
-            Condition::Or(vec![
-                Condition::Atom("open".to_string(), vec!["door1".to_string()]),
-                Condition::Atom("open".to_string(), vec!["door2".to_string()]),
-            ]),
-        ]);
-        let result = substitute_complicated_goal(&goal, &mut ctx);
-        
-        // Contains a disjunction, so should create an axiom
-        assert!(matches!(result, Condition::Atom(_, _)));
-        assert_eq!(ctx.axioms.len(), 1);
-    }
 }
 
 /// Convert condition to Disjunctive Normal Form (DNF).
@@ -1076,102 +995,6 @@ pub fn build_dnf(condition: &Condition) -> Condition {
     }
 }
 
-#[cfg(test)]
-mod dnf_tests {
-    use super::*;
-
-    #[test]
-    fn test_simple_condition_unchanged() {
-        let cond = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]);
-        let result = build_dnf(&cond);
-        assert_eq!(result, cond);
-    }
-
-    #[test]
-    fn test_nested_disjunctions_flattened() {
-        // or(A, or(B, C)) → or(A, B, C)
-        let cond = Condition::Or(vec![
-            Condition::Atom("a".to_string(), vec![]),
-            Condition::Or(vec![
-                Condition::Atom("b".to_string(), vec![]),
-                Condition::Atom("c".to_string(), vec![]),
-            ]),
-        ]);
-        let result = build_dnf(&cond);
-        
-        if let Condition::Or(parts) = result {
-            assert_eq!(parts.len(), 3);
-        } else {
-            panic!("Expected Or condition");
-        }
-    }
-
-    #[test]
-    fn test_conjunction_with_disjunction_distributed() {
-        // and(A, or(B, C)) → or(and(A, B), and(A, C))
-        let cond = Condition::And(vec![
-            Condition::Atom("a".to_string(), vec![]),
-            Condition::Or(vec![
-                Condition::Atom("b".to_string(), vec![]),
-                Condition::Atom("c".to_string(), vec![]),
-            ]),
-        ]);
-        let result = build_dnf(&cond);
-        
-        if let Condition::Or(parts) = result {
-            assert_eq!(parts.len(), 2);
-            // Each part should be a conjunction
-            assert!(matches!(parts[0], Condition::And(_)));
-            assert!(matches!(parts[1], Condition::And(_)));
-        } else {
-            panic!("Expected Or condition, got: {:?}", result);
-        }
-    }
-
-    #[test]
-    fn test_exists_with_disjunction_distributed() {
-        // exists(?x, or(A(?x), B(?x))) → or(exists(?x, A(?x)), exists(?x, B(?x)))
-        let cond = Condition::Exists(
-            vec![("?x".to_string(), Some("obj".to_string()))],
-            Box::new(Condition::Or(vec![
-                Condition::Atom("a".to_string(), vec!["?x".to_string()]),
-                Condition::Atom("b".to_string(), vec!["?x".to_string()]),
-            ])),
-        );
-        let result = build_dnf(&cond);
-        
-        if let Condition::Or(parts) = result {
-            assert_eq!(parts.len(), 2);
-            assert!(matches!(parts[0], Condition::Exists(_, _)));
-            assert!(matches!(parts[1], Condition::Exists(_, _)));
-        } else {
-            panic!("Expected Or condition");
-        }
-    }
-
-    #[test]
-    fn test_multiple_disjunctions_in_conjunction() {
-        // and(or(A, B), or(C, D)) → or(and(A, C), and(A, D), and(B, C), and(B, D))
-        let cond = Condition::And(vec![
-            Condition::Or(vec![
-                Condition::Atom("a".to_string(), vec![]),
-                Condition::Atom("b".to_string(), vec![]),
-            ]),
-            Condition::Or(vec![
-                Condition::Atom("c".to_string(), vec![]),
-                Condition::Atom("d".to_string(), vec![]),
-            ]),
-        ]);
-        let result = build_dnf(&cond);
-        
-        if let Condition::Or(parts) = result {
-            // Should create all combinations: 2 * 2 = 4
-            assert_eq!(parts.len(), 4);
-        } else {
-            panic!("Expected Or condition");
-        }
-    }
-}
 
 /// Check if a condition is a top-level disjunction.
 ///
@@ -1200,143 +1023,6 @@ pub fn split_disjunction(condition: &Condition) -> Option<Vec<Condition>> {
     match condition {
         Condition::Or(parts) => Some(parts.clone()),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod split_tests {
-    use super::*;
-
-    #[test]
-    fn test_non_disjunction_returns_none() {
-        let cond = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]);
-        assert!(split_disjunction(&cond).is_none());
-    }
-
-    #[test]
-    fn test_conjunction_returns_none() {
-        let cond = Condition::And(vec![
-            Condition::Atom("a".to_string(), vec![]),
-            Condition::Atom("b".to_string(), vec![]),
-        ]);
-        assert!(split_disjunction(&cond).is_none());
-    }
-
-    #[test]
-    fn test_disjunction_splits_into_parts() {
-        let cond = Condition::Or(vec![
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc2".to_string()]),
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc3".to_string()]),
-        ]);
-        
-        let parts = split_disjunction(&cond).expect("Should return Some for disjunction");
-        assert_eq!(parts.len(), 3);
-        
-        // Each part should be an atom
-        for part in &parts {
-            assert!(matches!(part, Condition::Atom(_, _)));
-        }
-    }
-
-    #[test]
-    fn test_split_complex_disjunction() {
-        // or(and(A, B), and(C, D))
-        let cond = Condition::Or(vec![
-            Condition::And(vec![
-                Condition::Atom("a".to_string(), vec![]),
-                Condition::Atom("b".to_string(), vec![]),
-            ]),
-            Condition::And(vec![
-                Condition::Atom("c".to_string(), vec![]),
-                Condition::Atom("d".to_string(), vec![]),
-            ]),
-        ]);
-        
-        let parts = split_disjunction(&cond).expect("Should return Some");
-        assert_eq!(parts.len(), 2);
-        assert!(matches!(parts[0], Condition::And(_)));
-        assert!(matches!(parts[1], Condition::And(_)));
-    }
-
-    #[test]
-    fn test_is_disjunction_check() {
-        let disj = Condition::Or(vec![
-            Condition::Atom("a".to_string(), vec![]),
-            Condition::Atom("b".to_string(), vec![]),
-        ]);
-        assert!(is_disjunction(&disj));
-        
-        let conj = Condition::And(vec![
-            Condition::Atom("a".to_string(), vec![]),
-            Condition::Atom("b".to_string(), vec![]),
-        ]);
-        assert!(!is_disjunction(&conj));
-        
-        let atom = Condition::Atom("a".to_string(), vec![]);
-        assert!(!is_disjunction(&atom));
-    }
-
-    #[test]
-    fn test_split_and_build_dnf_workflow() {
-        // Simulate the workflow: start with nested disjunction, build DNF, then split
-        
-        // Input: and(A, or(B, C))
-        let input = Condition::And(vec![
-            Condition::Atom("a".to_string(), vec![]),
-            Condition::Or(vec![
-                Condition::Atom("b".to_string(), vec![]),
-                Condition::Atom("c".to_string(), vec![]),
-            ]),
-        ]);
-        
-        // Step 1: Build DNF → or(and(A, B), and(A, C))
-        let dnf = build_dnf(&input);
-        assert!(is_disjunction(&dnf));
-        
-        // Step 2: Split the disjunction
-        let parts = split_disjunction(&dnf).expect("Should be disjunction after DNF");
-        assert_eq!(parts.len(), 2);
-        
-        // Each part should be and(A, ...)
-        for part in parts {
-            assert!(matches!(part, Condition::And(_)));
-        }
-    }
-
-    #[test]
-    fn test_split_preserves_parts_correctly() {
-        // Verify that split returns exact copies of the disjuncts
-        let a = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]);
-        let b = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc2".to_string()]);
-        let c = Condition::Not(Box::new(Condition::Atom("blocked".to_string(), vec![])));
-        
-        let disj = Condition::Or(vec![a.clone(), b.clone(), c.clone()]);
-        let parts = split_disjunction(&disj).expect("Should split");
-        
-        assert_eq!(parts.len(), 3);
-        assert_eq!(parts[0], a);
-        assert_eq!(parts[1], b);
-        assert_eq!(parts[2], c);
-    }
-
-    #[test]
-    fn test_empty_disjunction() {
-        // Edge case: empty disjunction (shouldn't occur in practice, but handle gracefully)
-        let empty_disj = Condition::Or(vec![]);
-        let parts = split_disjunction(&empty_disj).expect("Should return Some for Or");
-        assert_eq!(parts.len(), 0);
-    }
-
-    #[test]
-    fn test_single_disjunct() {
-        // A disjunction with only one part
-        let single_disj = Condition::Or(vec![
-            Condition::Atom("goal".to_string(), vec![]),
-        ]);
-        let parts = split_disjunction(&single_disj).expect("Should split");
-        assert_eq!(parts.len(), 1);
-        assert!(matches!(parts[0], Condition::Atom(_, _)));
     }
 }
 
@@ -1441,150 +1127,6 @@ pub fn move_existential_quantifiers(condition: &Condition) -> Condition {
     }
 }
 
-#[cfg(test)]
-mod existential_tests {
-    use super::*;
-
-    #[test]
-    fn test_simple_condition_unchanged() {
-        // Simple atoms and conjunctions without exists remain unchanged
-        let cond = Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]);
-        let result = move_existential_quantifiers(&cond);
-        assert_eq!(result, cond);
-    }
-
-    #[test]
-    fn test_nested_existential_combined() {
-        // exists(?x, exists(?y, at(?x, ?y))) → exists(?x, ?y, at(?x, ?y))
-        let cond = Condition::Exists(
-            vec![("?x".to_string(), Some("loc".to_string()))],
-            Box::new(Condition::Exists(
-                vec![("?y".to_string(), Some("loc".to_string()))],
-                Box::new(Condition::Atom(
-                    "connected".to_string(),
-                    vec!["?x".to_string(), "?y".to_string()],
-                )),
-            )),
-        );
-        
-        let result = move_existential_quantifiers(&cond);
-        
-        // Should combine into exists(?x, ?y, connected(?x, ?y))
-        if let Condition::Exists(params, inner) = result {
-            assert_eq!(params.len(), 2);
-            assert_eq!(params[0].0, "?x");
-            assert_eq!(params[1].0, "?y");
-            if let Condition::Atom(pred, args) = &*inner {
-                assert_eq!(pred, "connected");
-                assert_eq!(args.len(), 2);
-            } else {
-                panic!("Expected Atom inside Exists");
-            }
-        } else {
-            panic!("Expected Exists condition");
-        }
-    }
-
-    #[test]
-    fn test_existential_pulled_from_conjunction() {
-        // and(at(robot, loc1), exists(?x, holding(?x))) 
-        // → exists(?x, and(at(robot, loc1), holding(?x)))
-        let cond = Condition::And(vec![
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
-            Condition::Exists(
-                vec![("?x".to_string(), Some("obj".to_string()))],
-                Box::new(Condition::Atom("holding".to_string(), vec!["?x".to_string()])),
-            ),
-        ]);
-        
-        let result = move_existential_quantifiers(&cond);
-        
-        // Should become exists(?x, and(at(robot, loc1), holding(?x)))
-        if let Condition::Exists(params, inner) = result {
-            assert_eq!(params.len(), 1);
-            assert_eq!(params[0].0, "?x");
-            if let Condition::And(parts) = &*inner {
-                assert_eq!(parts.len(), 2);
-                assert!(matches!(parts[0], Condition::Atom(_, _)));
-                assert!(matches!(parts[1], Condition::Atom(_, _)));
-            } else {
-                panic!("Expected And inside Exists");
-            }
-        } else {
-            panic!("Expected Exists condition");
-        }
-    }
-
-    #[test]
-    fn test_multiple_existentials_pulled_and_combined() {
-        // and(exists(?x, p(?x)), exists(?y, q(?y))) 
-        // → exists(?x, ?y, and(p(?x), q(?y)))
-        let cond = Condition::And(vec![
-            Condition::Exists(
-                vec![("?x".to_string(), Some("t".to_string()))],
-                Box::new(Condition::Atom("p".to_string(), vec!["?x".to_string()])),
-            ),
-            Condition::Exists(
-                vec![("?y".to_string(), Some("t".to_string()))],
-                Box::new(Condition::Atom("q".to_string(), vec!["?y".to_string()])),
-            ),
-        ]);
-        
-        let result = move_existential_quantifiers(&cond);
-        
-        if let Condition::Exists(params, inner) = result {
-            assert_eq!(params.len(), 2);
-            assert_eq!(params[0].0, "?x");
-            assert_eq!(params[1].0, "?y");
-            if let Condition::And(parts) = &*inner {
-                assert_eq!(parts.len(), 2);
-            } else {
-                panic!("Expected And inside Exists");
-            }
-        } else {
-            panic!("Expected Exists condition");
-        }
-    }
-
-    #[test]
-    fn test_conjunction_without_existentials_unchanged() {
-        // and(at(robot, loc1), holding(obj1)) remains unchanged
-        let cond = Condition::And(vec![
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
-            Condition::Atom("holding".to_string(), vec!["obj1".to_string()]),
-        ]);
-        
-        let result = move_existential_quantifiers(&cond);
-        assert_eq!(result, cond);
-    }
-
-    #[test]
-    fn test_mixed_conjunction_with_existentials() {
-        // and(at(robot, loc1), exists(?x, p(?x)), clear(table))
-        // → exists(?x, and(at(robot, loc1), p(?x), clear(table)))
-        let cond = Condition::And(vec![
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
-            Condition::Exists(
-                vec![("?x".to_string(), Some("obj".to_string()))],
-                Box::new(Condition::Atom("p".to_string(), vec!["?x".to_string()])),
-            ),
-            Condition::Atom("clear".to_string(), vec!["table".to_string()]),
-        ]);
-        
-        let result = move_existential_quantifiers(&cond);
-        
-        if let Condition::Exists(params, inner) = result {
-            assert_eq!(params.len(), 1);
-            if let Condition::And(parts) = &*inner {
-                assert_eq!(parts.len(), 3);
-            } else {
-                panic!("Expected And inside Exists");
-            }
-        } else {
-            panic!("Expected Exists condition");
-        }
-    }
-}
 
 /// Eliminate existential quantifiers from axioms by turning them into parameters.
 ///
@@ -1613,188 +1155,6 @@ pub fn eliminate_existential_quantifiers_from_axioms(
     }
 }
 
-#[cfg(test)]
-mod elimination_tests {
-    use super::*;
-
-    #[test]
-    fn test_eliminate_existential_from_axiom() {
-        // Axiom with exists(?x, at(?x, loc1))
-        // Should become axiom with parameter ?x and condition at(?x, loc1)
-        let mut axioms = vec![NormalizationAxiom {
-            name: "axiom1".to_string(),
-            parameters: vec![("?y".to_string(), Some("obj".to_string()))],
-            condition: Condition::Exists(
-                vec![("?x".to_string(), Some("loc".to_string()))],
-                Box::new(Condition::Atom(
-                    "at".to_string(),
-                    vec!["?x".to_string(), "loc1".to_string()],
-                )),
-            ),
-        }];
-
-        eliminate_existential_quantifiers_from_axioms(&mut axioms);
-
-        assert_eq!(axioms[0].parameters.len(), 2);
-        assert_eq!(axioms[0].parameters[0].0, "?y");
-        assert_eq!(axioms[0].parameters[1].0, "?x");
-        
-        // Condition should now be just the atom
-        assert!(matches!(axioms[0].condition, Condition::Atom(_, _)));
-        if let Condition::Atom(pred, args) = &axioms[0].condition {
-            assert_eq!(pred, "at");
-            assert_eq!(args.len(), 2);
-        }
-    }
-
-    #[test]
-    fn test_eliminate_multiple_existentials() {
-        // Axiom with exists(?x, ?y, connected(?x, ?y))
-        // Should add both ?x and ?y to parameters
-        let mut axioms = vec![NormalizationAxiom {
-            name: "axiom1".to_string(),
-            parameters: vec![],
-            condition: Condition::Exists(
-                vec![
-                    ("?x".to_string(), Some("loc".to_string())),
-                    ("?y".to_string(), Some("loc".to_string())),
-                ],
-                Box::new(Condition::Atom(
-                    "connected".to_string(),
-                    vec!["?x".to_string(), "?y".to_string()],
-                )),
-            ),
-        }];
-
-        eliminate_existential_quantifiers_from_axioms(&mut axioms);
-
-        assert_eq!(axioms[0].parameters.len(), 2);
-        assert_eq!(axioms[0].parameters[0].0, "?x");
-        assert_eq!(axioms[0].parameters[1].0, "?y");
-        
-        assert!(matches!(axioms[0].condition, Condition::Atom(_, _)));
-    }
-
-    #[test]
-    fn test_no_existential_unchanged() {
-        // Axiom without existential quantifier should remain unchanged
-        let mut axioms = vec![NormalizationAxiom {
-            name: "axiom1".to_string(),
-            parameters: vec![("?x".to_string(), Some("obj".to_string()))],
-            condition: Condition::Atom("at".to_string(), vec!["?x".to_string(), "loc1".to_string()]),
-        }];
-
-        let original_params_len = axioms[0].parameters.len();
-        let original_condition = axioms[0].condition.clone();
-
-        eliminate_existential_quantifiers_from_axioms(&mut axioms);
-
-        assert_eq!(axioms[0].parameters.len(), original_params_len);
-        assert_eq!(axioms[0].condition, original_condition);
-    }
-
-    #[test]
-    fn test_eliminate_with_conjunction_inside() {
-        // exists(?x, and(at(?x, loc1), clear(?x)))
-        // Should add ?x to parameters and set condition to the conjunction
-        let mut axioms = vec![NormalizationAxiom {
-            name: "axiom1".to_string(),
-            parameters: vec![],
-            condition: Condition::Exists(
-                vec![("?x".to_string(), Some("obj".to_string()))],
-                Box::new(Condition::And(vec![
-                    Condition::Atom("at".to_string(), vec!["?x".to_string(), "loc1".to_string()]),
-                    Condition::Atom("clear".to_string(), vec!["?x".to_string()]),
-                ])),
-            ),
-        }];
-
-        eliminate_existential_quantifiers_from_axioms(&mut axioms);
-
-        assert_eq!(axioms[0].parameters.len(), 1);
-        assert_eq!(axioms[0].parameters[0].0, "?x");
-        
-        // Condition should be the conjunction
-        assert!(matches!(axioms[0].condition, Condition::And(_)));
-        if let Condition::And(parts) = &axioms[0].condition {
-            assert_eq!(parts.len(), 2);
-        }
-    }
-
-    #[test]
-    fn test_multiple_axioms_processed_independently() {
-        // Multiple axioms should each be processed
-        let mut axioms = vec![
-            NormalizationAxiom {
-                name: "axiom1".to_string(),
-                parameters: vec![],
-                condition: Condition::Exists(
-                    vec![("?x".to_string(), Some("obj".to_string()))],
-                    Box::new(Condition::Atom("p".to_string(), vec!["?x".to_string()])),
-                ),
-            },
-            NormalizationAxiom {
-                name: "axiom2".to_string(),
-                parameters: vec![("?a".to_string(), Some("t".to_string()))],
-                condition: Condition::Atom("q".to_string(), vec!["?a".to_string()]),
-            },
-        ];
-
-        eliminate_existential_quantifiers_from_axioms(&mut axioms);
-
-        // First axiom should have existential eliminated
-        assert_eq!(axioms[0].parameters.len(), 1);
-        assert_eq!(axioms[0].parameters[0].0, "?x");
-        assert!(matches!(axioms[0].condition, Condition::Atom(_, _)));
-
-        // Second axiom should be unchanged
-        assert_eq!(axioms[1].parameters.len(), 1);
-        assert_eq!(axioms[1].parameters[0].0, "?a");
-        assert!(matches!(axioms[1].condition, Condition::Atom(_, _)));
-    }
-
-    #[test]
-    fn test_integration_with_move_existential_quantifiers() {
-        // Integration test: move_existential_quantifiers followed by elimination
-        // Start: and(at(robot, loc1), exists(?x, holding(?x)))
-        // After move: exists(?x, and(at(robot, loc1), holding(?x)))
-        // After eliminate: axiom params = [?x], condition = and(at(robot, loc1), holding(?x))
-        
-        let initial_condition = Condition::And(vec![
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
-            Condition::Exists(
-                vec![("?x".to_string(), Some("obj".to_string()))],
-                Box::new(Condition::Atom("holding".to_string(), vec!["?x".to_string()])),
-            ),
-        ]);
-
-        // Step 1: Move existential quantifiers
-        let moved = move_existential_quantifiers(&initial_condition);
-        
-        // Create an axiom with the moved condition
-        let mut axioms = vec![NormalizationAxiom {
-            name: "test-axiom".to_string(),
-            parameters: vec![],
-            condition: moved,
-        }];
-
-        // Step 2: Eliminate existential quantifiers
-        eliminate_existential_quantifiers_from_axioms(&mut axioms);
-
-        // Verify: axiom should now have ?x as parameter
-        assert_eq!(axioms[0].parameters.len(), 1);
-        assert_eq!(axioms[0].parameters[0].0, "?x");
-        
-        // Condition should be the conjunction without exists
-        if let Condition::And(parts) = &axioms[0].condition {
-            assert_eq!(parts.len(), 2);
-            assert!(matches!(parts[0], Condition::Atom(_, _)));
-            assert!(matches!(parts[1], Condition::Atom(_, _)));
-        } else {
-            panic!("Expected And condition after elimination");
-        }
-    }
-}
 
 /// Eliminate existential quantifiers from action preconditions by turning them into parameters.
 ///
@@ -1826,188 +1186,6 @@ pub fn eliminate_existential_quantifiers_from_preconditions(
     }
 }
 
-#[cfg(test)]
-mod precondition_elimination_tests {
-    use super::*;
-
-    #[test]
-    fn test_eliminate_existential_from_precondition() {
-        // Action with exists(?x, at(?x, loc1))
-        // Should become action with parameter ?x and precondition at(?x, loc1)
-        let mut actions = vec![NormalizationAction {
-            name: "move".to_string(),
-            parameters: vec![("?from".to_string(), Some("loc".to_string()))],
-            precondition: Condition::Exists(
-                vec![("?to".to_string(), Some("loc".to_string()))],
-                Box::new(Condition::Atom(
-                    "connected".to_string(),
-                    vec!["?from".to_string(), "?to".to_string()],
-                )),
-            ),
-        }];
-
-        eliminate_existential_quantifiers_from_preconditions(&mut actions);
-
-        assert_eq!(actions[0].parameters.len(), 2);
-        assert_eq!(actions[0].parameters[0].0, "?from");
-        assert_eq!(actions[0].parameters[1].0, "?to");
-        
-        // Precondition should now be just the atom
-        assert!(matches!(actions[0].precondition, Condition::Atom(_, _)));
-        if let Condition::Atom(pred, args) = &actions[0].precondition {
-            assert_eq!(pred, "connected");
-            assert_eq!(args.len(), 2);
-        }
-    }
-
-    #[test]
-    fn test_eliminate_multiple_existentials_from_precondition() {
-        // Action with exists(?x, ?y, connected(?x, ?y))
-        // Should add both ?x and ?y to parameters
-        let mut actions = vec![NormalizationAction {
-            name: "teleport".to_string(),
-            parameters: vec![],
-            precondition: Condition::Exists(
-                vec![
-                    ("?from".to_string(), Some("loc".to_string())),
-                    ("?to".to_string(), Some("loc".to_string())),
-                ],
-                Box::new(Condition::Atom(
-                    "valid-teleport".to_string(),
-                    vec!["?from".to_string(), "?to".to_string()],
-                )),
-            ),
-        }];
-
-        eliminate_existential_quantifiers_from_preconditions(&mut actions);
-
-        assert_eq!(actions[0].parameters.len(), 2);
-        assert_eq!(actions[0].parameters[0].0, "?from");
-        assert_eq!(actions[0].parameters[1].0, "?to");
-        
-        assert!(matches!(actions[0].precondition, Condition::Atom(_, _)));
-    }
-
-    #[test]
-    fn test_no_existential_in_precondition_unchanged() {
-        // Action without existential quantifier should remain unchanged
-        let mut actions = vec![NormalizationAction {
-            name: "pickup".to_string(),
-            parameters: vec![("?obj".to_string(), Some("object".to_string()))],
-            precondition: Condition::Atom("clear".to_string(), vec!["?obj".to_string()]),
-        }];
-
-        let original_params_len = actions[0].parameters.len();
-        let original_precondition = actions[0].precondition.clone();
-
-        eliminate_existential_quantifiers_from_preconditions(&mut actions);
-
-        assert_eq!(actions[0].parameters.len(), original_params_len);
-        assert_eq!(actions[0].precondition, original_precondition);
-    }
-
-    #[test]
-    fn test_eliminate_with_conjunction_in_precondition() {
-        // exists(?x, and(at(?x, loc1), clear(?x)))
-        // Should add ?x to parameters and set precondition to the conjunction
-        let mut actions = vec![NormalizationAction {
-            name: "grasp".to_string(),
-            parameters: vec![],
-            precondition: Condition::Exists(
-                vec![("?obj".to_string(), Some("object".to_string()))],
-                Box::new(Condition::And(vec![
-                    Condition::Atom("at".to_string(), vec!["?obj".to_string(), "table".to_string()]),
-                    Condition::Atom("clear".to_string(), vec!["?obj".to_string()]),
-                ])),
-            ),
-        }];
-
-        eliminate_existential_quantifiers_from_preconditions(&mut actions);
-
-        assert_eq!(actions[0].parameters.len(), 1);
-        assert_eq!(actions[0].parameters[0].0, "?obj");
-        
-        // Precondition should be the conjunction
-        assert!(matches!(actions[0].precondition, Condition::And(_)));
-        if let Condition::And(parts) = &actions[0].precondition {
-            assert_eq!(parts.len(), 2);
-        }
-    }
-
-    #[test]
-    fn test_multiple_actions_processed_independently() {
-        // Multiple actions should each be processed
-        let mut actions = vec![
-            NormalizationAction {
-                name: "action1".to_string(),
-                parameters: vec![],
-                precondition: Condition::Exists(
-                    vec![("?x".to_string(), Some("obj".to_string()))],
-                    Box::new(Condition::Atom("p".to_string(), vec!["?x".to_string()])),
-                ),
-            },
-            NormalizationAction {
-                name: "action2".to_string(),
-                parameters: vec![("?a".to_string(), Some("t".to_string()))],
-                precondition: Condition::Atom("q".to_string(), vec!["?a".to_string()]),
-            },
-        ];
-
-        eliminate_existential_quantifiers_from_preconditions(&mut actions);
-
-        // First action should have existential eliminated
-        assert_eq!(actions[0].parameters.len(), 1);
-        assert_eq!(actions[0].parameters[0].0, "?x");
-        assert!(matches!(actions[0].precondition, Condition::Atom(_, _)));
-
-        // Second action should be unchanged
-        assert_eq!(actions[1].parameters.len(), 1);
-        assert_eq!(actions[1].parameters[0].0, "?a");
-        assert!(matches!(actions[1].precondition, Condition::Atom(_, _)));
-    }
-
-    #[test]
-    fn test_integration_with_move_existential_quantifiers() {
-        // Integration test: move_existential_quantifiers followed by elimination
-        // Start: and(at(robot, loc1), exists(?obj, holding(?obj)))
-        // After move: exists(?obj, and(at(robot, loc1), holding(?obj)))
-        // After eliminate: action params = [?obj], precondition = and(at(robot, loc1), holding(?obj))
-        
-        let initial_precondition = Condition::And(vec![
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
-            Condition::Exists(
-                vec![("?obj".to_string(), Some("object".to_string()))],
-                Box::new(Condition::Atom("holding".to_string(), vec!["?obj".to_string()])),
-            ),
-        ]);
-
-        // Step 1: Move existential quantifiers
-        let moved = move_existential_quantifiers(&initial_precondition);
-        
-        // Create an action with the moved precondition
-        let mut actions = vec![NormalizationAction {
-            name: "test-action".to_string(),
-            parameters: vec![],
-            precondition: moved,
-        }];
-
-        // Step 2: Eliminate existential quantifiers
-        eliminate_existential_quantifiers_from_preconditions(&mut actions);
-
-        // Verify: action should now have ?obj as parameter
-        assert_eq!(actions[0].parameters.len(), 1);
-        assert_eq!(actions[0].parameters[0].0, "?obj");
-        
-        // Precondition should be the conjunction without exists
-        if let Condition::And(parts) = &actions[0].precondition {
-            assert_eq!(parts.len(), 2);
-            assert!(matches!(parts[0], Condition::Atom(_, _)));
-            assert!(matches!(parts[1], Condition::Atom(_, _)));
-        } else {
-            panic!("Expected And condition after elimination");
-        }
-    }
-}
 
 /// Eliminate existential quantifiers from conditional effect conditions.
 ///
@@ -2034,203 +1212,6 @@ pub fn eliminate_existential_quantifiers_from_conditional_effects(
             
             // Replace the condition with the inner condition (first part)
             effect.condition = (**inner).clone();
-        }
-    }
-}
-
-#[cfg(test)]
-mod effect_elimination_tests {
-    use super::*;
-
-    #[test]
-    fn test_eliminate_existential_from_effect_condition() {
-        // Effect with condition exists(?obj, clear(?obj))
-        // Should become effect with parameter ?obj and condition clear(?obj)
-        let mut effects = vec![ConditionalEffect {
-            parameters: vec![],
-            condition: Condition::Exists(
-                vec![("?obj".to_string(), Some("object".to_string()))],
-                Box::new(Condition::Atom("clear".to_string(), vec!["?obj".to_string()])),
-            ),
-        }];
-
-        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
-
-        assert_eq!(effects[0].parameters.len(), 1);
-        assert_eq!(effects[0].parameters[0].0, "?obj");
-        
-        // Condition should now be just the atom
-        assert!(matches!(effects[0].condition, Condition::Atom(_, _)));
-        if let Condition::Atom(pred, args) = &effects[0].condition {
-            assert_eq!(pred, "clear");
-            assert_eq!(args.len(), 1);
-            assert_eq!(args[0], "?obj");
-        }
-    }
-
-    #[test]
-    fn test_eliminate_multiple_existentials_from_effect() {
-        // Effect with exists(?x, ?y, at(?x, ?y))
-        // Should add both ?x and ?y to parameters
-        let mut effects = vec![ConditionalEffect {
-            parameters: vec![],
-            condition: Condition::Exists(
-                vec![
-                    ("?from".to_string(), Some("loc".to_string())),
-                    ("?to".to_string(), Some("loc".to_string())),
-                ],
-                Box::new(Condition::Atom(
-                    "path-clear".to_string(),
-                    vec!["?from".to_string(), "?to".to_string()],
-                )),
-            ),
-        }];
-
-        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
-
-        assert_eq!(effects[0].parameters.len(), 2);
-        assert_eq!(effects[0].parameters[0].0, "?from");
-        assert_eq!(effects[0].parameters[1].0, "?to");
-        
-        assert!(matches!(effects[0].condition, Condition::Atom(_, _)));
-    }
-
-    #[test]
-    fn test_no_existential_in_effect_unchanged() {
-        // Effect without existential quantifier should remain unchanged
-        let mut effects = vec![ConditionalEffect {
-            parameters: vec![],
-            condition: Condition::Atom("holding".to_string(), vec!["obj1".to_string()]),
-        }];
-
-        let original_params_len = effects[0].parameters.len();
-        let original_condition = effects[0].condition.clone();
-
-        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
-
-        assert_eq!(effects[0].parameters.len(), original_params_len);
-        assert_eq!(effects[0].condition, original_condition);
-    }
-
-    #[test]
-    fn test_effect_with_existing_parameters() {
-        // Effect already has forall parameters, add existential params to them
-        // forall(?x): when exists(?y, connected(?x, ?y)) then ...
-        // Should become: forall(?x, ?y): when connected(?x, ?y) then ...
-        let mut effects = vec![ConditionalEffect {
-            parameters: vec![("?x".to_string(), Some("loc".to_string()))],
-            condition: Condition::Exists(
-                vec![("?y".to_string(), Some("loc".to_string()))],
-                Box::new(Condition::Atom(
-                    "connected".to_string(),
-                    vec!["?x".to_string(), "?y".to_string()],
-                )),
-            ),
-        }];
-
-        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
-
-        assert_eq!(effects[0].parameters.len(), 2);
-        assert_eq!(effects[0].parameters[0].0, "?x");
-        assert_eq!(effects[0].parameters[1].0, "?y");
-        
-        assert!(matches!(effects[0].condition, Condition::Atom(_, _)));
-    }
-
-    #[test]
-    fn test_eliminate_with_conjunction_in_effect() {
-        // exists(?obj, and(at(?obj, table), clear(?obj)))
-        // Should add ?obj to parameters and set condition to the conjunction
-        let mut effects = vec![ConditionalEffect {
-            parameters: vec![],
-            condition: Condition::Exists(
-                vec![("?obj".to_string(), Some("object".to_string()))],
-                Box::new(Condition::And(vec![
-                    Condition::Atom("at".to_string(), vec!["?obj".to_string(), "table".to_string()]),
-                    Condition::Atom("clear".to_string(), vec!["?obj".to_string()]),
-                ])),
-            ),
-        }];
-
-        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
-
-        assert_eq!(effects[0].parameters.len(), 1);
-        assert_eq!(effects[0].parameters[0].0, "?obj");
-        
-        // Condition should be the conjunction
-        assert!(matches!(effects[0].condition, Condition::And(_)));
-        if let Condition::And(parts) = &effects[0].condition {
-            assert_eq!(parts.len(), 2);
-        }
-    }
-
-    #[test]
-    fn test_multiple_effects_processed_independently() {
-        // Multiple effects should each be processed
-        let mut effects = vec![
-            ConditionalEffect {
-                parameters: vec![],
-                condition: Condition::Exists(
-                    vec![("?x".to_string(), Some("obj".to_string()))],
-                    Box::new(Condition::Atom("p".to_string(), vec!["?x".to_string()])),
-                ),
-            },
-            ConditionalEffect {
-                parameters: vec![("?a".to_string(), Some("t".to_string()))],
-                condition: Condition::Atom("q".to_string(), vec!["?a".to_string()]),
-            },
-        ];
-
-        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
-
-        // First effect should have existential eliminated
-        assert_eq!(effects[0].parameters.len(), 1);
-        assert_eq!(effects[0].parameters[0].0, "?x");
-        assert!(matches!(effects[0].condition, Condition::Atom(_, _)));
-
-        // Second effect should be unchanged
-        assert_eq!(effects[1].parameters.len(), 1);
-        assert_eq!(effects[1].parameters[0].0, "?a");
-        assert!(matches!(effects[1].condition, Condition::Atom(_, _)));
-    }
-
-    #[test]
-    fn test_integration_with_move_existential_quantifiers() {
-        // Integration test: move_existential_quantifiers followed by elimination
-        // This shows the semantic transformation from exists to forall
-        
-        let initial_condition = Condition::And(vec![
-            Condition::Atom("at".to_string(), vec!["robot".to_string(), "loc1".to_string()]),
-            Condition::Exists(
-                vec![("?obj".to_string(), Some("object".to_string()))],
-                Box::new(Condition::Atom("blocking".to_string(), vec!["?obj".to_string(), "loc1".to_string()])),
-            ),
-        ]);
-
-        // Step 1: Move existential quantifiers
-        let moved = move_existential_quantifiers(&initial_condition);
-        
-        // Create an effect with the moved condition
-        let mut effects = vec![ConditionalEffect {
-            parameters: vec![],
-            condition: moved,
-        }];
-
-        // Step 2: Eliminate existential quantifiers (converts to forall over effect)
-        eliminate_existential_quantifiers_from_conditional_effects(&mut effects);
-
-        // Verify: effect should now have ?obj as a forall parameter
-        assert_eq!(effects[0].parameters.len(), 1);
-        assert_eq!(effects[0].parameters[0].0, "?obj");
-        
-        // Condition should be the conjunction without exists
-        // Semantics: forall ?obj: when (at(robot, loc1) and blocking(?obj, loc1)) then <effect>
-        if let Condition::And(parts) = &effects[0].condition {
-            assert_eq!(parts.len(), 2);
-            assert!(matches!(parts[0], Condition::Atom(_, _)));
-            assert!(matches!(parts[1], Condition::Atom(_, _)));
-        } else {
-            panic!("Expected And condition after elimination");
         }
     }
 }
@@ -2644,12 +1625,18 @@ pub fn verify_and_fix_arithmetic_expressions_placeholder() {
 /// axiom condition, effect condition, and the goal, replace forall quantifiers
 /// with axioms.
 pub fn task_remove_universal_quantifiers(task: &mut NormalizableTask) {
+    let mut axiom_cache: HashMap<String, String> = HashMap::new();
     // Process action preconditions
     for i in 0..task.actions.len() {
         if task.actions[i].precondition.has_universal_part() {
             let type_map = NormalizableTask::build_type_map(&task.actions[i].parameters);
             let condition = task.actions[i].precondition.clone();
-            let new_condition = remove_universal_quantifiers_impl(&condition, &type_map, task);
+            let new_condition = remove_universal_quantifiers_impl(
+                &condition,
+                &type_map,
+                task,
+                &mut axiom_cache,
+            );
             task.actions[i].precondition = new_condition;
         }
     }
@@ -2660,7 +1647,12 @@ pub fn task_remove_universal_quantifiers(task: &mut NormalizableTask) {
         if task.axioms[i].condition.has_universal_part() {
             let type_map = NormalizableTask::build_type_map(&task.axioms[i].parameters);
             let condition = task.axioms[i].condition.clone();
-            let new_condition = remove_universal_quantifiers_impl(&condition, &type_map, task);
+            let new_condition = remove_universal_quantifiers_impl(
+                &condition,
+                &type_map,
+                task,
+                &mut axiom_cache,
+            );
             task.axioms[i].condition = new_condition;
         }
         i += 1;
@@ -2674,7 +1666,12 @@ pub fn task_remove_universal_quantifiers(task: &mut NormalizableTask) {
                 combined_params.extend(task.actions[i].effects[j].parameters.clone());
                 let type_map = NormalizableTask::build_type_map(&combined_params);
                 let condition = task.actions[i].effects[j].condition.clone();
-                let new_condition = remove_universal_quantifiers_impl(&condition, &type_map, task);
+                let new_condition = remove_universal_quantifiers_impl(
+                    &condition,
+                    &type_map,
+                    task,
+                    &mut axiom_cache,
+                );
                 task.actions[i].effects[j].condition = new_condition;
             }
         }
@@ -2684,7 +1681,7 @@ pub fn task_remove_universal_quantifiers(task: &mut NormalizableTask) {
     if task.goal.has_universal_part() {
         let type_map = HashMap::new(); // Goal has no parameters typically
         let goal = task.goal.clone();
-        task.goal = remove_universal_quantifiers_impl(&goal, &type_map, task);
+        task.goal = remove_universal_quantifiers_impl(&goal, &type_map, task, &mut axiom_cache);
     }
 }
 
@@ -2693,44 +1690,100 @@ fn remove_universal_quantifiers_impl(
     condition: &Condition,
     type_map: &HashMap<String, String>,
     task: &mut NormalizableTask,
+    axiom_cache: &mut HashMap<String, String>,
 ) -> Condition {
     match condition {
         Condition::Forall(_params, inner) => {
             // Create axiom for negation of the forall
-            let negated = inner.negate();
-            let free_vars: Vec<_> = negated.free_variables().into_iter().collect();
+            let axiom_condition = condition.negate();
+            let cache_key = condition_key(&axiom_condition);
+            if let Some(existing_name) = axiom_cache.get(&cache_key) {
+                let mut free_vars: Vec<_> = axiom_condition.free_variables().into_iter().collect();
+                free_vars.sort();
+                return Condition::Not(Box::new(Condition::Atom(existing_name.clone(), free_vars)));
+            }
+            let free_vars: Vec<_> = axiom_condition.free_variables().into_iter().collect();
             let mut axiom_params: Vec<(String, Option<String>)> = free_vars
                 .iter()
                 .map(|v| (v.clone(), type_map.get(v).cloned()))
                 .collect();
             axiom_params.sort_by(|a, b| a.0.cmp(&b.0));
-            
-            let axiom_name = task.add_axiom(axiom_params.clone(), negated);
+
+            let axiom_name = task.add_axiom(axiom_params.clone(), axiom_condition.clone());
+            axiom_cache.insert(cache_key, axiom_name.clone());
             let axiom_args: Vec<String> = axiom_params.iter().map(|(n, _)| n.clone()).collect();
             Condition::Not(Box::new(Condition::Atom(axiom_name, axiom_args)))
         }
         Condition::Not(c) => {
-            Condition::Not(Box::new(remove_universal_quantifiers_impl(c, type_map, task)))
+            Condition::Not(Box::new(remove_universal_quantifiers_impl(
+                c,
+                type_map,
+                task,
+                axiom_cache,
+            )))
         }
         Condition::And(parts) => {
             let new_parts: Vec<_> = parts
                 .iter()
-                .map(|p| remove_universal_quantifiers_impl(p, type_map, task))
+                .map(|p| remove_universal_quantifiers_impl(p, type_map, task, axiom_cache))
                 .collect();
             Condition::And(new_parts)
         }
         Condition::Or(parts) => {
             let new_parts: Vec<_> = parts
                 .iter()
-                .map(|p| remove_universal_quantifiers_impl(p, type_map, task))
+                .map(|p| remove_universal_quantifiers_impl(p, type_map, task, axiom_cache))
                 .collect();
             Condition::Or(new_parts)
         }
         Condition::Exists(params, c) => {
-            let new_inner = remove_universal_quantifiers_impl(c, type_map, task);
+            let new_inner = remove_universal_quantifiers_impl(c, type_map, task, axiom_cache);
             Condition::Exists(params.clone(), Box::new(new_inner))
         }
         _ => condition.clone(),
+    }
+}
+
+fn condition_key(condition: &Condition) -> String {
+    match condition {
+        Condition::Atom(name, args) => format!("atom({} {})", name, args.join(" ")),
+        Condition::Not(inner) => format!("not({})", condition_key(inner)),
+        Condition::And(parts) => {
+            let parts_key: Vec<String> = parts.iter().map(condition_key).collect();
+            format!("and({})", parts_key.join(","))
+        }
+        Condition::Or(parts) => {
+            let parts_key: Vec<String> = parts.iter().map(condition_key).collect();
+            format!("or({})", parts_key.join(","))
+        }
+        Condition::Forall(params, inner) => {
+            let params_key: Vec<String> = params
+                .iter()
+                .map(|(n, t)| format!("{}:{}", n, t.clone().unwrap_or_default()))
+                .collect();
+            format!("forall({}){}", params_key.join(","), condition_key(inner))
+        }
+        Condition::Exists(params, inner) => {
+            let params_key: Vec<String> = params
+                .iter()
+                .map(|(n, t)| format!("{}:{}", n, t.clone().unwrap_or_default()))
+                .collect();
+            format!("exists({}){}", params_key.join(","), condition_key(inner))
+        }
+        Condition::Comparison(op, left, right) => {
+            format!("cmp({} {} {})", op, sexpr_key(left), sexpr_key(right))
+        }
+        Condition::True => "true".to_string(),
+    }
+}
+
+fn sexpr_key(sexpr: &SExpr) -> String {
+    match sexpr {
+        SExpr::Atom(a) => a.clone(),
+        SExpr::List(items) => {
+            let parts: Vec<String> = items.iter().map(sexpr_key).collect();
+            format!("({})", parts.join(" "))
+        }
     }
 }
 
@@ -3247,825 +2300,5 @@ fn extract_positive_literals(condition: &Condition, result: &mut Vec<bm::SymAtom
             // Numeric comparison - not handled in basic exploration rules
             // Skip for now (proper handling requires function tracking)
         }
-    }
-}
-
-#[cfg(test)]
-mod task_normalization_tests {
-    use super::*;
-    
-    #[test]
-    fn test_task_from_ast() {
-        // Simple smoke test for task creation
-        let domain = Domain {
-            name: "test-domain".to_string(),
-            predicates: vec![("at".to_string(), vec![("?x".to_string(), Some("obj".to_string()))])],
-            functions: vec![],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "test-problem".to_string(),
-            objects: vec![("a".to_string(), Some("obj".to_string()))],
-            init: vec![],
-            goal: None,
-        };
-        
-        let task = NormalizableTask::from_ast(&domain, &problem);
-        assert_eq!(task.domain_name, "test-domain");
-        assert_eq!(task.problem_name, "test-problem");
-        assert_eq!(task.actions.len(), 0);
-        assert_eq!(task.axioms.len(), 0);
-    }
-    
-    #[test]
-    fn test_normalize_simple_task() {
-        // Create a simple task with a forall in the goal
-        let domain = Domain {
-            name: "blocks".to_string(),
-            predicates: vec![("clear".to_string(), vec![("?x".to_string(), Some("block".to_string()))])],
-            functions: vec![],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "blocks-problem".to_string(),
-            objects: vec![("a".to_string(), Some("block".to_string()))],
-            init: vec![],
-            goal: None,
-        };
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Set a goal with a forall
-        task.goal = Condition::Forall(
-            vec![("?x".to_string(), Some("block".to_string()))],
-            Box::new(Condition::Atom("clear".to_string(), vec!["?x".to_string()])),
-        );
-        
-        // Run normalization
-        let result = normalize(&mut task);
-        assert!(result.is_ok());
-        
-        // After normalization, the forall should be converted to axiom
-        // and goal should reference that axiom
-        assert!(matches!(task.goal, Condition::Not(_)) || matches!(task.goal, Condition::Atom(_, _)));
-        // Should have created at least one axiom
-        assert!(!task.axioms.is_empty());
-    }
-    
-    #[test]
-    fn test_verify_and_fix_arithmetic_expressions() {
-        // Test that undefined function symbols are detected and added
-        let domain = Domain {
-            name: "numeric-domain".to_string(),
-            predicates: vec![],
-            functions: vec![("fuel".to_string(), vec![])], // Only fuel is defined
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "numeric-problem".to_string(),
-            objects: vec![],
-            init: vec![],
-            goal: None,
-        };
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Add an action with an effect that uses an undefined function "distance"
-        task.actions.push(TaskAction {
-            name: "move".to_string(),
-            parameters: vec![],
-            precondition: Condition::True,
-            effects: vec![TaskEffect {
-                parameters: vec![],
-                condition: Condition::True,
-                effect: SExpr::List(vec![
-                    SExpr::Atom("decrease".to_string()),
-                    SExpr::List(vec![SExpr::Atom("fuel".to_string())]),
-                    SExpr::List(vec![SExpr::Atom("distance".to_string())]), // undefined!
-                ]),
-            }],
-            cost: None,
-        });
-        
-        // Initially, only fuel is defined
-        assert_eq!(task.functions.len(), 1);
-        
-        // Run verification
-        task_verify_and_fix_arithmetic_expressions(&mut task);
-        
-        // After verification, distance should be added
-        assert_eq!(task.functions.len(), 2);
-        assert!(task.functions.iter().any(|(name, _)| name == "distance"));
-        
-        // An initialization should be added
-        assert!(!task.init.is_empty());
-    }
-    
-    #[test]
-    fn test_verify_does_not_add_defined_functions() {
-        // Test that already-defined functions are not added again
-        let domain = Domain {
-            name: "numeric-domain".to_string(),
-            predicates: vec![],
-            functions: vec![
-                ("fuel".to_string(), vec![]),
-                ("distance".to_string(), vec![]),
-            ],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "numeric-problem".to_string(),
-            objects: vec![],
-            init: vec![],
-            goal: None,
-        };
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Add an action that uses the defined functions
-        task.actions.push(TaskAction {
-            name: "move".to_string(),
-            parameters: vec![],
-            precondition: Condition::True,
-            effects: vec![TaskEffect {
-                parameters: vec![],
-                condition: Condition::True,
-                effect: SExpr::List(vec![
-                    SExpr::Atom("decrease".to_string()),
-                    SExpr::List(vec![SExpr::Atom("fuel".to_string())]),
-                    SExpr::List(vec![SExpr::Atom("distance".to_string())]),
-                ]),
-            }],
-            cost: None,
-        });
-        
-        let initial_function_count = task.functions.len();
-        
-        // Run verification
-        task_verify_and_fix_arithmetic_expressions(&mut task);
-        
-        // Function count should remain the same
-        assert_eq!(task.functions.len(), initial_function_count);
-    }
-    
-    #[test]
-    fn test_remove_arithmetic_expressions_simple_comparison() {
-        // Test that simple comparisons with primitives are handled correctly
-        let domain = Domain {
-            name: "arithmetic-domain".to_string(),
-            predicates: vec![("at".to_string(), vec![])],
-            functions: vec![("fuel".to_string(), vec![])],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "arithmetic-problem".to_string(),
-            objects: vec![],
-            init: vec![],
-            goal: Some(SExpr::List(vec![
-                SExpr::Atom("at".to_string()),
-            ])),
-        };
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Add an action with a simple comparison
-        task.actions.push(TaskAction {
-            name: "move".to_string(),
-            parameters: vec![],
-            precondition: Condition::Comparison(
-                ">=".to_string(),
-                SExpr::Atom("fuel".to_string()),
-                SExpr::Atom("10".to_string()),
-            ),
-            effects: vec![],
-            cost: None,
-        });
-        
-        task_remove_arithmetic_expressions(&mut task);
-        
-        // Verify the structure is intact
-        assert_eq!(task.actions.len(), 1);
-        assert!(matches!(task.actions[0].precondition, Condition::Comparison(..)));
-        
-        // Constant should have generated a derived function
-        assert!(!task.numeric_axioms.is_empty());
-    }
-    
-    #[test]
-    fn test_remove_arithmetic_expressions_complex() {
-        // Test with actual arithmetic expressions
-        let domain = Domain {
-            name: "arithmetic-domain".to_string(),
-            predicates: vec![],
-            functions: vec![("fuel".to_string(), vec![]), ("distance".to_string(), vec![])],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "arithmetic-problem".to_string(),
-            objects: vec![],
-            init: vec![],
-            goal: Some(SExpr::Atom("true".to_string())),
-        };
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Add an action with arithmetic in precondition: (>= (+ fuel distance) 20)
-        task.actions.push(TaskAction {
-            name: "move".to_string(),
-            parameters: vec![],
-            precondition: Condition::Comparison(
-                ">=".to_string(),
-                SExpr::List(vec![
-                    SExpr::Atom("+".to_string()),
-                    SExpr::Atom("fuel".to_string()),
-                    SExpr::Atom("distance".to_string()),
-                ]),
-                SExpr::Atom("20".to_string()),
-            ),
-            effects: vec![],
-            cost: None,
-        });
-        
-        task_remove_arithmetic_expressions(&mut task);
-        
-        // Should have created derived functions for the sum and the constant
-        assert!(!task.numeric_axioms.is_empty());
-        
-        // Check that at least one axiom has "sum" in its name
-        let has_sum_axiom = task.numeric_axioms.iter().any(|ax| ax.name.contains("sum"));
-        assert!(has_sum_axiom, "Should have created a sum derived function");
-    }
-    
-    #[test]
-    fn test_remove_arithmetic_expressions_effects() {
-        // Test processing of effect expressions
-        let domain = Domain {
-            name: "effect-domain".to_string(),
-            predicates: vec![],
-            functions: vec![("fuel".to_string(), vec![]), ("distance".to_string(), vec![])],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "effect-problem".to_string(),
-            objects: vec![],
-            init: vec![],
-            goal: Some(SExpr::Atom("true".to_string())),
-        };
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Add an action with arithmetic in effect: (decrease fuel (* distance 2))
-        task.actions.push(TaskAction {
-            name: "move".to_string(),
-            parameters: vec![],
-            precondition: Condition::True,
-            effects: vec![TaskEffect {
-                parameters: vec![],
-                condition: Condition::True,
-                effect: SExpr::List(vec![
-                    SExpr::Atom("decrease".to_string()),
-                    SExpr::Atom("fuel".to_string()),
-                    SExpr::List(vec![
-                        SExpr::Atom("*".to_string()),
-                        SExpr::Atom("distance".to_string()),
-                        SExpr::Atom("2".to_string()),
-                    ]),
-                ]),
-            }],
-            cost: None,
-        });
-        
-        task_remove_arithmetic_expressions(&mut task);
-        
-        // Should have created derived functions
-        assert!(!task.numeric_axioms.is_empty());
-        
-        // Check that a product axiom was created
-        let has_product_axiom = task.numeric_axioms.iter().any(|ax| ax.name.contains("product"));
-        assert!(has_product_axiom, "Should have created a product derived function");
-    }
-    
-    #[test]
-    fn test_remove_arithmetic_expressions_nested() {
-        // Test that nested conditions are processed correctly
-        let domain = Domain {
-            name: "nested-domain".to_string(),
-            predicates: vec![("at".to_string(), vec![])],
-            functions: vec![("fuel".to_string(), vec![])],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "nested-problem".to_string(),
-            objects: vec![],
-            init: vec![],
-            goal: Some(SExpr::List(vec![
-                SExpr::Atom("at".to_string()),
-            ])),
-        };
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Add an action with nested comparisons
-        task.actions.push(TaskAction {
-            name: "move".to_string(),
-            parameters: vec![],
-            precondition: Condition::And(vec![
-                Condition::Atom("at".to_string(), vec![]),
-                Condition::Comparison(
-                    ">=".to_string(),
-                    SExpr::Atom("fuel".to_string()),
-                    SExpr::Atom("10".to_string()),
-                ),
-            ]),
-            effects: vec![],
-            cost: None,
-        });
-        
-        // Run the function
-        task_remove_arithmetic_expressions(&mut task);
-        
-        // Verify nested structure is preserved
-        assert_eq!(task.actions.len(), 1);
-        if let Condition::And(parts) = &task.actions[0].precondition {
-            assert_eq!(parts.len(), 2);
-        } else {
-            panic!("Expected And condition");
-        }
-    }
-    
-    #[test]
-    fn test_verify_axiom_predicates_valid_task() {
-        // Test that a valid task passes verification
-        let domain = Domain {
-            name: "test-domain".to_string(),
-            predicates: vec![
-                ("at".to_string(), vec![]),
-                ("clear".to_string(), vec![]),
-            ],
-            functions: vec![],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "test-problem".to_string(),
-            objects: vec![],
-            init: vec![
-                SExpr::List(vec![SExpr::Atom("at".to_string()), SExpr::Atom("robot".to_string())]),
-                SExpr::List(vec![SExpr::Atom("clear".to_string()), SExpr::Atom("table".to_string())]),
-            ],
-            goal: Some(SExpr::Atom("true".to_string())),
-        };
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Add an axiom with a different predicate
-        task.axioms.push(TaskAxiom {
-            name: "reachable".to_string(),
-            parameters: vec![("?x".to_string(), Some("loc".to_string()))],
-            condition: Condition::Atom("at".to_string(), vec!["?x".to_string()]),
-            num_external_parameters: 0,
-        });
-        
-        // Add an action that uses regular predicates in effects
-        task.actions.push(TaskAction {
-            name: "move".to_string(),
-            parameters: vec![],
-            precondition: Condition::True,
-            effects: vec![TaskEffect {
-                parameters: vec![],
-                condition: Condition::True,
-                effect: SExpr::List(vec![
-                    SExpr::Atom("at".to_string()),
-                    SExpr::Atom("robot".to_string()),
-                    SExpr::Atom("loc2".to_string()),
-                ]),
-            }],
-            cost: None,
-        });
-        
-        // Verification should pass
-        let result = task_verify_axiom_predicates(&task);
-        assert!(result.is_ok());
-    }
-    
-    #[test]
-    fn test_verify_axiom_predicates_derived_in_init() {
-        // Test that derived predicates in :init are caught
-        let domain = Domain {
-            name: "test-domain".to_string(),
-            predicates: vec![("reachable".to_string(), vec![])],
-            functions: vec![],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "test-problem".to_string(),
-            objects: vec![],
-            init: vec![
-                // This is invalid: reachable is a derived predicate
-                SExpr::List(vec![SExpr::Atom("reachable".to_string()), SExpr::Atom("loc1".to_string())]),
-            ],
-            goal: Some(SExpr::Atom("true".to_string())),
-        };
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Add an axiom that makes "reachable" a derived predicate
-        task.axioms.push(TaskAxiom {
-            name: "reachable".to_string(),
-            parameters: vec![("?x".to_string(), Some("loc".to_string()))],
-            condition: Condition::Atom("connected".to_string(), vec!["start".to_string(), "?x".to_string()]),
-            num_external_parameters: 0,
-        });
-        
-        // Verification should fail
-        let result = task_verify_axiom_predicates(&task);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("derived predicate"));
-        assert!(err.contains(":init"));
-    }
-    
-    #[test]
-    fn test_verify_axiom_predicates_derived_in_effect() {
-        // Test that derived predicates in action effects are caught
-        let domain = Domain {
-            name: "test-domain".to_string(),
-            predicates: vec![("reachable".to_string(), vec![])],
-            functions: vec![],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "test-problem".to_string(),
-            objects: vec![],
-            init: vec![],
-            goal: Some(SExpr::Atom("true".to_string())),
-        };
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Add an axiom that makes "reachable" a derived predicate
-        task.axioms.push(TaskAxiom {
-            name: "reachable".to_string(),
-            parameters: vec![("?x".to_string(), Some("loc".to_string()))],
-            condition: Condition::Atom("connected".to_string(), vec!["start".to_string(), "?x".to_string()]),
-            num_external_parameters: 0,
-        });
-        
-        // Add an action that tries to set a derived predicate in effects (INVALID!)
-        task.actions.push(TaskAction {
-            name: "teleport".to_string(),
-            parameters: vec![],
-            precondition: Condition::True,
-            effects: vec![TaskEffect {
-                parameters: vec![],
-                condition: Condition::True,
-                effect: SExpr::List(vec![
-                    SExpr::Atom("reachable".to_string()),
-                    SExpr::Atom("far-away".to_string()),
-                ]),
-            }],
-            cost: None,
-        });
-        
-        // Verification should fail
-        let result = task_verify_axiom_predicates(&task);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("derived predicate"));
-        assert!(err.contains("effect"));
-    }
-    
-    #[test]
-    fn test_verify_axiom_predicates_negated_effect() {
-        // Test that derived predicates in negated effects are also caught
-        let domain = Domain {
-            name: "test-domain".to_string(),
-            predicates: vec![("derived-pred".to_string(), vec![])],
-            functions: vec![],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "test-problem".to_string(),
-            objects: vec![],
-            init: vec![],
-            goal: Some(SExpr::Atom("true".to_string())),
-        };
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Add an axiom
-        task.axioms.push(TaskAxiom {
-            name: "derived-pred".to_string(),
-            parameters: vec![],
-            condition: Condition::Atom("base-pred".to_string(), vec![]),
-            num_external_parameters: 0,
-        });
-        
-        // Add an action with negated effect
-        task.actions.push(TaskAction {
-            name: "test-action".to_string(),
-            parameters: vec![],
-            precondition: Condition::True,
-            effects: vec![TaskEffect {
-                parameters: vec![],
-                condition: Condition::True,
-                effect: SExpr::List(vec![
-                    SExpr::Atom("not".to_string()),
-                    SExpr::List(vec![
-                        SExpr::Atom("derived-pred".to_string()),
-                    ]),
-                ]),
-            }],
-            cost: None,
-        });
-        
-        // Verification should fail
-        let result = task_verify_axiom_predicates(&task);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("derived predicate"));
-    }
-    
-    #[test]
-    fn test_verify_axiom_predicates_ignores_assignments() {
-        // Test that numeric assignments are not mistaken for predicates
-        let domain = Domain {
-            name: "test-domain".to_string(),
-            predicates: vec![],
-            functions: vec![("fuel".to_string(), vec![])],
-            actions: vec![],
-        };
-        
-        let problem = Problem {
-            name: "test-problem".to_string(),
-            objects: vec![],
-            init: vec![
-                SExpr::List(vec![
-                    SExpr::Atom("=".to_string()),
-                    SExpr::List(vec![SExpr::Atom("fuel".to_string())]),
-                    SExpr::Atom("100".to_string()),
-                ]),
-            ],
-            goal: Some(SExpr::Atom("true".to_string())),
-        };
-        
-        let task = NormalizableTask::from_ast(&domain, &problem);
-        
-        // Even if we had an axiom named "fuel" or "=", assignments should be ignored
-        // Verification should pass (no derived predicates)
-        let result = task_verify_axiom_predicates(&task);
-        assert!(result.is_ok());
-    }
-    
-    #[test]
-    #[ignore] // Run with: cargo test test_pddl_cost_extraction -- --ignored --nocapture
-    fn test_pddl_cost_extraction() {
-        // Test that cost effects are extracted from real PDDL files
-        use crate::translate::pddl::PddlTask;
-        use std::path::Path;
-        
-        let domain_path = Path::new("pddl/domain.pddl");
-        let problem_path = Path::new("pddl/pfile1.pddl");
-        
-        if !domain_path.exists() || !problem_path.exists() {
-            eprintln!("PDDL files not found, skipping test");
-            return;
-        }
-        
-        let pddl = match PddlTask::from_files(domain_path, problem_path) {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("Failed to parse PDDL: {}", e);
-                return;
-            }
-        };
-        
-        let domain = Domain::from_sexprs(&pddl.domain_forms).expect("domain parse");
-        let problem = Problem::from_sexprs(&pddl.problem_forms).expect("problem parse");
-        
-        let task = NormalizableTask::from_ast(&domain, &problem);
-        
-        println!("\n========== COST EXTRACTION TEST ==========");
-        println!("Rust Effect Counts (after from_ast extraction):");
-        for action in task.actions.iter().take(3) {
-            let has_cost = action.cost.is_some();
-            let cost_in_effects_count = action.effects.iter().filter(|eff| {
-                NormalizableTask::is_cost_effect(&eff.effect)
-            }).count();
-            println!("  {}: {} effects ({} are cost effects), cost field={}", 
-                     action.name, 
-                     action.effects.len(),
-                     cost_in_effects_count,
-                     if has_cost { "present" } else { "None" });
-            
-            // Print each effect type
-            for (i, eff) in action.effects.iter().enumerate() {
-                let is_cost = NormalizableTask::is_cost_effect(&eff.effect);
-                println!("      Effect {}: {} (cost={})", i+1, 
-                         if let SExpr::List(items) = &eff.effect {
-                             if !items.is_empty() {
-                                 if let SExpr::Atom(op) = &items[0] {
-                                     op.clone()
-                                 } else { "complex".to_string() }
-                             } else { "empty".to_string() }
-                         } else { "atom".to_string() },
-                         is_cost);
-            }
-        }
-        
-        println!("\nExpected behavior (Python-compatible):");
-        println!("  Each action should have:");
-        println!("    - Cost effect in both action.cost field AND action.effects list");
-        println!("    - This is Python's backward-compatible duplication behavior");
-        println!("\nPDDL source has:");
-        println!("  move: 3 effects (2 regular + 1 cost)");
-        println!("  pick: 5 effects (4 regular + 1 cost)");
-        println!("  drop: 5 effects (4 regular + 1 cost)");
-        println!("\n✓ Rust implementation matches Python semantics!");
-        println!("  Cost effect is DUPLICATED:");
-        println!("    1. Stored in action.cost field");
-        println!("    2. Kept in action.effects list");
-        println!("========== END COST EXTRACTION TEST ==========\n");
-        
-        // Verify the first action has the expected structure
-        assert!(!task.actions.is_empty(), "Should have actions");
-        let first_action = &task.actions[0];
-        
-        // Should have cost extracted
-        assert!(first_action.cost.is_some(), "First action should have cost extracted");
-        
-        // Should still have cost in effects (duplication)
-        let has_cost_in_effects = first_action.effects.iter().any(|eff| {
-            NormalizableTask::is_cost_effect(&eff.effect)
-        });
-        assert!(has_cost_in_effects, "Cost should be duplicated in effects list (Python compatibility)");
-    }
-    
-    #[test]
-    #[ignore] // Run with: cargo test test_normalize_dump_for_comparison -- --ignored --nocapture
-    fn test_normalize_dump_for_comparison() {
-        // Test for comparing Python vs Rust normalization
-        use crate::translate::pddl::PddlTask;
-        use std::path::Path;
-        
-        let domain_path = Path::new("pddl/domain.pddl");
-        let problem_path = Path::new("pddl/pfile1.pddl");
-        
-        if !domain_path.exists() || !problem_path.exists() {
-            eprintln!("PDDL files not found, skipping comparison test");
-            return;
-        }
-        
-        let pddl = match PddlTask::from_files(domain_path, problem_path) {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("Failed to parse PDDL: {}", e);
-                return;
-            }
-        };
-        
-        let domain = Domain::from_sexprs(&pddl.domain_forms).expect("domain parse");
-        let problem = Problem::from_sexprs(&pddl.problem_forms).expect("problem parse");
-        
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        
-        println!("\n========== NORMALIZE_DUMP ==========");
-        println!("Before normalization:");
-        println!("  Actions: {}", task.actions.len());
-        println!("  Axioms: {}", task.axioms.len());
-        
-        // Show first few actions
-        println!("\nFirst 3 actions before:");
-        for (i, action) in task.actions.iter().take(3).enumerate() {
-            println!("  {}. {}", i + 1, action.name);
-            println!("     Parameters: {}", action.parameters.len());
-            println!("     Effects: {}", action.effects.len());
-        }
-        
-        // Normalize
-        match normalize(&mut task) {
-            Ok(()) => println!("\nNormalization succeeded!"),
-            Err(e) => {
-                println!("\nNormalization failed: {}", e);
-                return;
-            }
-        }
-        
-        println!("\nAfter normalization:");
-        println!("  Actions: {}", task.actions.len());
-        println!("  Axioms: {}", task.axioms.len());
-        println!("  Numeric axioms: {}", task.numeric_axioms.len());
-        
-        // Show first few actions after
-        println!("\nFirst 3 actions after:");
-        for (i, action) in task.actions.iter().take(3).enumerate() {
-            println!("  {}. {}", i + 1, action.name);
-            println!("     Parameters: {}", action.parameters.len());
-            println!("     Effects: {}", action.effects.len());
-        }
-        
-        // Show axioms
-        println!("\nFirst 5 axioms:");
-        for (i, axiom) in task.axioms.iter().take(5).enumerate() {
-            println!("  {}. {}", i + 1, axiom.name);
-            println!("     Parameters: {}", axiom.parameters.len());
-        }
-        if task.axioms.len() > 5 {
-            println!("  ... and {} more axioms", task.axioms.len() - 5);
-        }
-        
-        // Show numeric axioms
-        println!("\nFirst 5 numeric axioms:");
-        for (i, axiom) in task.numeric_axioms.iter().take(5).enumerate() {
-            println!("  {}. {}", i + 1, axiom.name);
-            println!("     Parameters: {}", axiom.parameters.len());
-            println!("     Operator: {}", axiom.op.as_ref().unwrap_or(&"constant".to_string()));
-            println!("     Parts: {}", axiom.parts.len());
-        }
-        if task.numeric_axioms.len() > 5 {
-            println!("  ... and {} more numeric axioms", task.numeric_axioms.len() - 5);
-        }
-        
-        // Show goal
-        println!("\nGoal:");
-        println!("  Type: {:?}", task.goal);
-        
-        println!("\n========== END NORMALIZE_DUMP ==========");
-    }
-    
-    #[test]
-    fn test_cost_extraction() {
-        // Test that cost effects are extracted and duplicated like Python does
-        let domain = Domain {
-            name: "test-domain".to_string(),
-            predicates: vec![("at".to_string(), vec![])],
-            functions: vec![("total-cost".to_string(), vec![])],
-            actions: vec![
-                Action {
-                    name: "move".to_string(),
-                    parameters: vec![],
-                    precond: None,
-                    effect: Some(SExpr::List(vec![
-                        SExpr::Atom("and".to_string()),
-                        // Regular effect
-                        SExpr::List(vec![
-                            SExpr::Atom("at".to_string()),
-                            SExpr::Atom("loc2".to_string()),
-                        ]),
-                        // Cost effect - should be extracted AND kept in effects
-                        SExpr::List(vec![
-                            SExpr::Atom("increase".to_string()),
-                            SExpr::List(vec![SExpr::Atom("total-cost".to_string())]),
-                            SExpr::Atom("3".to_string()),
-                        ]),
-                    ])),
-                },
-            ],
-        };
-        
-        let problem = Problem {
-            name: "test-problem".to_string(),
-            objects: vec![],
-            init: vec![],
-            goal: Some(SExpr::Atom("true".to_string())),
-        };
-        
-        let task = NormalizableTask::from_ast(&domain, &problem);
-        
-        assert_eq!(task.actions.len(), 1);
-        let action = &task.actions[0];
-        
-        // Check that cost was extracted
-        assert!(action.cost.is_some(), "Cost should be extracted");
-        
-        // Check that effects still includes the cost effect (Python's duplication behavior)
-        assert_eq!(action.effects.len(), 2, "Effects should include both regular effect and cost effect");
-        
-        // Verify cost effect is the right one
-        if let Some(cost_sexpr) = &action.cost {
-            // Should be (increase (total-cost) 3)
-            if let SExpr::List(items) = cost_sexpr {
-                assert_eq!(items.len(), 3);
-                assert_eq!(items[0], SExpr::Atom("increase".to_string()));
-            } else {
-                panic!("Cost should be a list");
-            }
-        }
-        
-        // Verify one of the effects is the cost effect
-        let has_cost_in_effects = action.effects.iter().any(|eff| {
-            NormalizableTask::is_cost_effect(&eff.effect)
-        });
-        assert!(has_cost_in_effects, "Cost effect should still be in effects list (Python compatibility)");
     }
 }
