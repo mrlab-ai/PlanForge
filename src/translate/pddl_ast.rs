@@ -5,6 +5,7 @@ const KW_DOMAIN: &str = "domain";
 const KW_PROBLEM: &str = "problem";
 const KW_PREDICATES: &str = ":predicates";
 const KW_FUNCTIONS: &str = ":functions";
+const KW_TYPES: &str = ":types";
 const KW_ACTION: &str = ":action";
 const KW_PARAMETERS: &str = ":parameters";
 const KW_PRECONDITION: &str = ":precondition";
@@ -27,6 +28,8 @@ pub struct Domain {
     pub predicates: Vec<(String, Vec<(String, Option<String>)>)>,
     /// functions (numeric fluents): name -> params
     pub functions: Vec<(String, Vec<(String, Option<String>)>)>,
+    /// types: (type_name, supertype)
+    pub types: Vec<(String, Option<String>)>,
     pub actions: Vec<Action>,
 }
 
@@ -400,6 +403,7 @@ fn parse_domain_form(form: &SExpr) -> Option<Domain> {
 
     let mut predicates = Vec::new();
     let mut functions = Vec::new();
+    let mut types = Vec::new();
     let mut actions = Vec::new();
 
     for section in &items[2..] {
@@ -413,6 +417,9 @@ fn parse_domain_form(form: &SExpr) -> Option<Domain> {
         };
         let content = &list[1..];
         match key.as_str() {
+            KW_TYPES | "types" => {
+                types.extend(parse_typed_list(content));
+            }
             KW_PREDICATES | "predicates" => parse_predicates(content, &mut predicates),
             KW_FUNCTIONS | "functions" => parse_functions(content, &mut functions),
             KW_ACTION | "action" => {
@@ -428,6 +435,7 @@ fn parse_domain_form(form: &SExpr) -> Option<Domain> {
         name,
         predicates,
         functions,
+        types,
         actions,
     })
 }

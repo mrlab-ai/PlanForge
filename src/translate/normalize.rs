@@ -32,6 +32,8 @@ pub struct NormalizableTask {
     pub predicates: Vec<(String, Vec<(String, Option<String>)>)>,
     /// Function (numeric fluent) definitions from domain
     pub functions: Vec<(String, Vec<(String, Option<String>)>)>,
+    /// Type definitions from domain (type -> supertype)
+    pub types: Vec<(String, Option<String>)>,
     /// Actions with parsed preconditions (as Condition) and raw effects (as SExpr for now)
     pub actions: Vec<TaskAction>,
     /// Axioms generated during normalization
@@ -107,6 +109,7 @@ impl NormalizableTask {
             problem_name: problem.name.clone(),
             predicates: domain.predicates.clone(),
             functions: domain.functions.clone(),
+            types: domain.types.clone(),
             actions,
             axioms: vec![],
             numeric_axioms: vec![],

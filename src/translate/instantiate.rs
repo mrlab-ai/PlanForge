@@ -166,6 +166,34 @@ fn add_object_conditions_to_rules(rules: &mut [SymRule]) -> bool {
     inserted
 }
 
+fn build_type_hierarchy(
+    types: &[(String, Option<String>)],
+) -> std::collections::HashMap<String, Vec<String>> {
+    let mut parent_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for (t, parent) in types {
+        if let Some(p) = parent {
+            parent_map.insert(t.clone(), p.clone());
+        }
+    }
+
+    let mut hierarchy: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for (t, _) in types {
+        let mut chain = Vec::new();
+        let mut current = t.clone();
+        while let Some(parent) = parent_map.get(&current) {
+            chain.push(parent.clone());
+            if parent == "object" {
+                break;
+            }
+            current = parent.clone();
+        }
+        hierarchy.insert(t.clone(), chain);
+    }
+    hierarchy
+}
+
 fn convert_trivial_rules_to_facts(
     rules: &[SymRule],
 ) -> (Vec<SymRule>, Vec<build_model::Atom>) {
@@ -596,12 +624,25 @@ pub fn explore_normalized(
     eprintln!("DEBUG: explore_normalized() Step 2: add init facts");
     // Step 2: Build init facts from problem
     let mut init_facts: Vec<build_model::Atom> = Vec::new();
+    let type_hierarchy = build_type_hierarchy(&norm_task.types);
     
-    // Add type facts for all objects
+    // Add type facts for all objects (direct type and all supertypes)
     for (obj_name, obj_type) in &norm_task.objects {
-        if let Some(type_name) = obj_type {
+        let type_name = obj_type.clone().unwrap_or_else(|| "object".to_string());
+        init_facts.push(build_model::Atom {
+            predicate: type_name.clone(),
+            args: vec![build_model::Arg::Const(obj_name.clone())],
+        });
+        if let Some(supertypes) = type_hierarchy.get(&type_name) {
+            for supertype in supertypes {
+                init_facts.push(build_model::Atom {
+                    predicate: supertype.clone(),
+                    args: vec![build_model::Arg::Const(obj_name.clone())],
+                });
+            }
+        } else if type_name != "object" {
             init_facts.push(build_model::Atom {
-                predicate: type_name.clone(),
+                predicate: "object".to_string(),
                 args: vec![build_model::Arg::Const(obj_name.clone())],
             });
         }
@@ -689,7 +730,7 @@ pub fn explore_normalized(
     let init_atom_set = build_init_atom_set(&init_facts);
     let model_atom_set = build_model_atom_set(&model);
     let init_function_values = extract_init_function_values(norm_task);
-    let type_to_objects = get_objects_by_type(&norm_task.objects);
+    let type_to_objects = get_objects_by_type(&norm_task.objects, &type_hierarchy);
 
     eprintln!("DEBUG: explore_normalized() Step 5: ground actions from model");
     // Step 5: Extract grounded actions from model
@@ -949,27 +990,27 @@ fn extract_constant_predicate_facts(
 /// as this is the standard PDDL convention.
 /// 
 /// Based on Python's instantiate.py:get_objects_by_type()
-fn get_objects_by_type(objects: &[(String, Option<String>)]) -> HashMap<String, Vec<String>> {
+fn get_objects_by_type(
+    objects: &[(String, Option<String>)],
+    type_hierarchy: &std::collections::HashMap<String, Vec<String>>,
+) -> HashMap<String, Vec<String>> {
     let mut result: HashMap<String, Vec<String>> = HashMap::new();
     
     for (obj_name, obj_type) in objects {
-        if let Some(type_name) = obj_type {
-            // Add object to its direct type
-            result
-                .entry(type_name.clone())
-                .or_insert_with(Vec::new)
-                .push(obj_name.clone());
-            
-            // Add object to the "object" supertype
-            // In PDDL, all types inherit from "object" unless explicitly stated otherwise
-            if type_name != "object" {
+        let type_name = obj_type.clone().unwrap_or_else(|| "object".to_string());
+        result
+            .entry(type_name.clone())
+            .or_insert_with(Vec::new)
+            .push(obj_name.clone());
+
+        if let Some(supertypes) = type_hierarchy.get(&type_name) {
+            for supertype in supertypes {
                 result
-                    .entry("object".to_string())
+                    .entry(supertype.clone())
                     .or_insert_with(Vec::new)
                     .push(obj_name.clone());
             }
-        } else {
-            // Untyped objects go into "object" type
+        } else if type_name != "object" {
             result
                 .entry("object".to_string())
                 .or_insert_with(Vec::new)
