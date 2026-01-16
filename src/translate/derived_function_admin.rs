@@ -9,6 +9,7 @@ use std::collections::HashMap;
 pub struct DerivedFunctionAdministrator {
     // map from canonical key -> (symbol, args)
     pub functions: HashMap<String, (String, Vec<String>)>,
+    #[allow(dead_code)]
     counter: usize,
 }
 

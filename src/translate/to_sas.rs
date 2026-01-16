@@ -462,7 +462,7 @@ pub fn build_sas(
     // Create propositional variables for axiom atoms (like @axiom-0)
     // These are derived variables with axiom layer > comparison axiom layer
     let mut axiom_atom_to_var: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let axiom_layer = 31; // Standard layer for propositional axioms (after comparisons)
+    let _axiom_layer = 31; // Standard layer for propositional axioms (after comparisons)
     for ax in propositional_axioms {
         let atom = format!("{}()", ax.name); // e.g., "@axiom-0()"
         let var_idx = vars.len();

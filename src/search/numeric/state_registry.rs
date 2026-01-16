@@ -374,7 +374,6 @@ impl<'a> StateRegistry<'a> {
             .get_initial_propositional_state_values()
             .len();
         let mut constant_index = 0;
-        let mut derived_count = 0;
         let mut cost_variables = Vec::new();
 
         for (i, &value) in initial_numeric_values.iter().enumerate() {
@@ -391,7 +390,6 @@ impl<'a> StateRegistry<'a> {
                     constant_index += 1;
                 }
                 NumericType::Derived => {
-                    derived_count += 1;
                     // Derived variables don't get indices as they're computed by axioms
                 }
                 NumericType::Regular => {

@@ -1,7 +1,6 @@
 use crate::translate::build_model;
-use crate::translate::derived_function_admin::DerivedFunctionAdministrator;
 use crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom;
-use crate::translate::pddl_ast::{Condition, Domain, Effect, Problem};
+use crate::translate::pddl_ast::{Condition, Effect};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -11,141 +10,6 @@ pub struct GroundedOp {
     pub pre: Option<Condition>,
     pub eff: Option<Effect>,
     pub effects: Vec<(Vec<Condition>, Effect)>,
-}
-
-/// Naive grounding: for each action, produce substitutions where each parameter
-/// is replaced by any object of the matching type (or any object for untyped).
-/// 
-/// **DEPRECATED**: Use `explore_normalized()` instead for model-guided grounding.
-/// This function performs cartesian product grounding which is inefficient.
-#[deprecated(note = "Use explore_normalized() for model-guided grounding")]
-pub fn ground(domain: &Domain, problem: &Problem) -> Vec<GroundedOp> {
-    let mut result = Vec::new();
-    // prepare objects by type
-    use std::collections::HashMap;
-    let mut by_type: HashMap<Option<String>, Vec<String>> = HashMap::new();
-    for (name, t) in &problem.objects {
-        by_type.entry(t.clone()).or_default().push(name.clone());
-        by_type.entry(None).or_default().push(name.clone());
-    }
-
-    for action in &domain.actions {
-        // for each parameter produce candidate lists
-        let mut choices: Vec<Vec<String>> = Vec::new();
-        for (_pname, ptype) in &action.parameters {
-            let cands = by_type.get(ptype).cloned().unwrap_or_default();
-            if cands.is_empty() {
-                choices.push(vec![]);
-            } else {
-                choices.push(cands);
-            }
-        }
-        // produce cartesian product
-        fn cartesian(v: &[Vec<String>]) -> Vec<Vec<String>> {
-            let mut res: Vec<Vec<String>> = vec![Vec::new()];
-            for list in v {
-                let mut new = Vec::new();
-                for prefix in &res {
-                    for item in list {
-                        let mut np = prefix.clone();
-                        np.push(item.clone());
-                        new.push(np);
-                    }
-                }
-                res = new;
-            }
-            res
-        }
-
-        for args in cartesian(&choices) {
-            let name = format!("{}({})", action.name, args.join(","));
-            // build mapping from parameter names to concrete object names
-            use std::collections::HashMap;
-            let mut mapping: HashMap<String, String> = HashMap::new();
-            for (idx, (pname, _)) in action.parameters.iter().enumerate() {
-                mapping.insert(pname.clone(), args[idx].clone());
-            }
-            // parse pre/effect into Condition/Effect when possible
-            let pre_cond = action
-                .precond
-                .as_ref()
-                .map(|s| crate::translate::pddl_ast::sexpr_to_condition(s));
-            let eff_e = action
-                .effect
-                .as_ref()
-                .map(|s| crate::translate::pddl_ast::sexpr_to_effect(s));
-            // substitute variables
-            let pre_sub =
-                pre_cond.map(|c| crate::translate::pddl_ast::substitute_condition(&c, &mapping));
-            let eff_sub =
-                eff_e.map(|e| crate::translate::pddl_ast::substitute_effect(&e, &mapping));
-            let mut effects = Vec::new();
-            if let Some(eff) = eff_sub.clone() {
-                effects.push((Vec::new(), eff));
-            }
-            result.push(GroundedOp {
-                name,
-                args: args.clone(),
-                pre: pre_sub,
-                eff: eff_sub,
-                effects,
-            });
-        }
-    }
-
-    result
-}
-
-/// New API: ground the task and also return instantiated numeric axioms discovered
-/// 
-/// **DEPRECATED**: Use `explore_normalized()` instead for model-guided grounding.
-/// This function performs cartesian product grounding which is inefficient.
-#[deprecated(note = "Use explore_normalized() for model-guided grounding")]
-#[allow(deprecated)]
-pub fn ground_with_numeric_axioms(
-    domain: &Domain,
-    problem: &Problem,
-) -> (
-    Vec<GroundedOp>,
-    Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
-) {
-    // For now reuse the same grounding and produce instantiated numeric axioms
-    // for numeric init facts. Use the DerivedFunctionAdministrator so the
-    // produced PNE names follow the same canonicalization that will be used
-    // later during derived-function handling.
-    let ops = ground(domain, problem);
-    let mut df_admin = DerivedFunctionAdministrator::new();
-    // Build simple instantiated numeric axioms from numeric init facts in the problem.
-    let mut inst_axioms: Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom> =
-        Vec::new();
-    for sexpr in &problem.init {
-        // look for forms like (= (f a b) 42)
-        if let crate::translate::pddl_parser::SExpr::List(list) = sexpr {
-            if list.len() >= 3 {
-                if let crate::translate::pddl_parser::SExpr::Atom(eq) = &list[0] {
-                    if eq == "=" {
-                        if let crate::translate::pddl_parser::SExpr::List(lhs_vec) = &list[1] {
-                            // construct an SExpr::List to pass into df_admin
-                            let lhs_sexpr =
-                                crate::translate::pddl_parser::SExpr::List(lhs_vec.clone());
-                            // get canonicalized PNE description (derived! tokens)
-                            let pne = df_admin.get_derived_function(&lhs_sexpr);
-                            // parse rhs as integer constant if possible
-                            if let crate::translate::pddl_parser::SExpr::Atom(rhs) = &list[2] {
-                                if let Ok(n) = rhs.parse::<i64>() {
-                                    let part = crate::translate::numeric_axiom_rules::NumericPart::Constant(crate::translate::numeric_axiom_rules::NumericConstant(n));
-                                    let ax = crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom { name: pne.name.clone(), op: None, parts: vec![part], effect: pne };
-                                    inst_axioms.push(ax);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    (ops, inst_axioms)
 }
 
 #[derive(Debug, Clone)]
@@ -601,6 +465,7 @@ fn build_init_atom_set(
 
 /// Extract function names from an effect SExpr.
 /// Handles (increase (func args) value), (decrease ...), (assign ...), etc.
+#[allow(dead_code)]
 fn extract_function_names_from_effect(effect: &crate::translate::pddl_parser::SExpr, result: &mut std::collections::HashSet<String>) {
     use crate::translate::pddl_parser::SExpr;
     

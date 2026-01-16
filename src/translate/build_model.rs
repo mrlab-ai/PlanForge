@@ -175,7 +175,7 @@ impl BuildRule for JoinRule {
             .iter()
             .filter_map(|a| match a {
                 Arg::Var(i) => Some(*i),
-                Arg::FreeVar(s) => Some(usize::MAX),
+                Arg::FreeVar(_s) => Some(usize::MAX),
                 _ => None,
             })
             .collect();
@@ -184,7 +184,7 @@ impl BuildRule for JoinRule {
             .iter()
             .filter_map(|a| match a {
                 Arg::Var(i) => Some(*i),
-                Arg::FreeVar(s) => Some(usize::MAX),
+                Arg::FreeVar(_s) => Some(usize::MAX),
                 _ => None,
             })
             .collect();

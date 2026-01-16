@@ -1,46 +1,10 @@
-use std::fs::File;
-use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
 use planners::translate::pddl::PddlTask;
 use planners::translate::normalize;
-use planners::translate::function_expression::FunctionalExpression;
-use planners::translate::numeric_axiom_rules::{NumericPart, PrimitiveNumericExpression as NARPNE, NumericConstant};
-
-/// Convert a FunctionalExpression to a NumericPart for numeric axiom processing
-fn convert_functional_expr_to_numeric_part(fe: &FunctionalExpression) -> NumericPart {
-    match fe {
-        FunctionalExpression::Primitive(pne) => {
-            NumericPart::Primitive(NARPNE {
-                name: pne.symbol.clone(),
-                args: pne.args.clone(),
-            })
-        }
-        FunctionalExpression::Constant(nc) => {
-            NumericPart::Constant(NumericConstant(nc.value))
-        }
-        FunctionalExpression::Arithmetic(ae) => {
-            // For arithmetic expressions, we would create a nested axiom
-            // For now, just flatten to a primitive with a derived name
-            let name = format!("derived!{}_{}", ae.op, 
-                ae.parts.iter().map(|p| match p {
-                    FunctionalExpression::Primitive(pne) => pne.symbol.clone(),
-                    FunctionalExpression::Constant(nc) => format!("{}", nc.value),
-                    _ => "expr".to_string(),
-                }).collect::<Vec<_>>().join("_")
-            );
-            NumericPart::Primitive(NARPNE { name, args: vec![] })
-        }
-        FunctionalExpression::AdditiveInverse(ai) => {
-            // Handle additive inverse by converting the inner expression
-            convert_functional_expr_to_numeric_part(&ai.part)
-        }
-    }
-}
-
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
 #[derive(Parser)]
 #[clap(
@@ -150,18 +114,19 @@ fn main() -> anyhow::Result<()> {
             let instantiated_num_axioms = result.numeric_axioms;
             
             let py_groups: Option<Vec<Vec<String>>> = None;
-            //let sastask = planners::translate::to_sas::build_sas(
-            //    &result.grounded_ops,
-            //    &dom,
-            //    &prob,
-            //    &instantiated_num_axioms,
-            //    py_groups,
-            //    &norm_task.axioms,
-            //    &norm_task.goal,
-            //);
-            //let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
-            //planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
-            //eprintln!("translator: wrote {}", out_path.display());
+            let sastask = planners::translate::to_sas::build_sas(
+                &result.grounded_ops,
+                &dom,
+                &prob,
+                &instantiated_num_axioms,
+                py_groups,
+                &norm_task.axioms,
+                &norm_task.goal,
+            )
+            .map_err(|err| anyhow::anyhow!(err))?;
+            let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
+            planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
+            eprintln!("translator: wrote {}", out_path.display());
 
             let duration = start.elapsed();
             eprintln!(
@@ -169,7 +134,7 @@ fn main() -> anyhow::Result<()> {
                 duration
             );
         }
-        Commands::Preprocess { output } => {
+        Commands::Preprocess { output: _output } => {
             //not implemented yet, raise error
             todo!("Preprocess command not implemented yet");
         }

@@ -1808,7 +1808,7 @@ fn remove_universal_quantifiers_impl(
     axiom_cache: &mut HashMap<String, String>,
 ) -> Condition {
     match condition {
-        Condition::Forall(_params, inner) => {
+        Condition::Forall(_params, _inner) => {
             // Create axiom for negation of the forall
             let axiom_condition = condition.negate();
             let cache_key = condition_key(&axiom_condition);

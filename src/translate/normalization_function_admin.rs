@@ -89,6 +89,7 @@ pub struct NormalizationFunctionAdministrator {
     /// Maps expression keys to NumericAxiom objects
     functions: HashMap<DerivedFunctionKey, NumericAxiom>,
     /// Counter for generating unique names if needed
+    #[allow(dead_code)]
     counter: usize,
 }
 

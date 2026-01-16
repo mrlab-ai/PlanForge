@@ -199,6 +199,7 @@ pub enum Effect {
     And(Vec<Effect>),
 }
 
+#[allow(dead_code)]
 fn sexpr_to_string(s: &SExpr) -> String {
     match s {
         SExpr::Atom(a) => a.clone(),
@@ -665,6 +666,7 @@ fn parse_problem_form(form: &SExpr) -> Option<Problem> {
 mod instantiate_tests {
     use super::*;
     use crate::translate::instantiate;
+    use crate::translate::normalize;
 
     #[test]
     fn ground_smoke() {
@@ -675,9 +677,11 @@ mod instantiate_tests {
         .unwrap();
         let dom = Domain::from_sexprs(&task.domain_forms).expect("domain parsed");
         let prob = Problem::from_sexprs(&task.problem_forms).expect("problem parsed");
-        let ops = instantiate::ground(&dom, &prob);
+        let mut norm_task = normalize::NormalizableTask::from_ast(&dom, &prob);
+        normalize::normalize(&mut norm_task).expect("normalization failed");
+        let result = instantiate::explore_normalized(&norm_task).expect("instantiation failed");
         // grounding may produce many ops; check it's non-empty
-        if ops.is_empty() {
+        if result.grounded_ops.is_empty() {
             panic!(
                 "grounding produced zero ops; domain.actions={}, problem.objects={}",
                 dom.actions.len(),

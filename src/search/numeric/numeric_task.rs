@@ -50,11 +50,11 @@ pub trait AbstractNumericTask {
     fn get_num_goals(&self) -> i32;
     fn get_goal_fact(&self, index: i32) -> &Fact;
 
-    fn get_initial_propositional_state_values(&self) -> Ref<Vec<i32>>;
-    fn get_initial_numeric_state_values(&self) -> Ref<Vec<f64>>;
+    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<i32>>;
+    fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>>;
 
-    fn get_initial_propositional_state_values_mut(&self) -> RefMut<Vec<i32>>;
-    fn get_initial_numeric_state_values_mut(&self) -> RefMut<Vec<f64>>;
+    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<i32>>;
+    fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>>;
 
     fn set_initial_numeric_state_values(&self, values: Vec<f64>);
     fn set_initial_propositional_state_values(&self, values: Vec<i32>);
@@ -571,19 +571,19 @@ impl AbstractNumericTask for NumericRootTask {
         &self.goals[index as usize]
     }
 
-    fn get_initial_propositional_state_values(&self) -> Ref<Vec<i32>> {
+    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<i32>> {
         self.state.borrow()
     }
 
-    fn get_initial_numeric_state_values(&self) -> Ref<Vec<f64>> {
+    fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>> {
         self.numeric_state.borrow()
     }
 
-    fn get_initial_propositional_state_values_mut(&self) -> RefMut<Vec<i32>> {
+    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<i32>> {
         self.state.borrow_mut()
     }
 
-    fn get_initial_numeric_state_values_mut(&self) -> RefMut<Vec<f64>> {
+    fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>> {
         self.numeric_state.borrow_mut()
     }
 

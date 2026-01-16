@@ -151,7 +151,7 @@ fn compute_necessary_axiom_literals(
     let mut queue: Vec<Literal> = Vec::new();
     
     // Helper to register literals
-    let mut register_literals = |literals: &[Literal], negated: bool, necessary: &mut HashSet<Literal>, q: &mut Vec<Literal>| {
+    let register_literals = |literals: &[Literal], negated: bool, necessary: &mut HashSet<Literal>, q: &mut Vec<Literal>| {
         for literal in literals {
             let key = literal.positive().atom_key();
             if axioms_by_atom.contains_key(&key) {
@@ -296,7 +296,7 @@ fn simplify(axioms: &[PropositionalAxiom]) -> Vec<PropositionalAxiom> {
     }
     
     // Remove duplicates from axiom conditions
-    let mut processed_axioms: Vec<PropositionalAxiom> = axioms.iter().map(|ax| {
+    let processed_axioms: Vec<PropositionalAxiom> = axioms.iter().map(|ax| {
         let mut new_ax = ax.clone();
         // Sort conditions by their string representation for consistent ordering
         new_ax.condition.sort_by(|a, b| format!("{}", a).cmp(&format!("{}", b)));

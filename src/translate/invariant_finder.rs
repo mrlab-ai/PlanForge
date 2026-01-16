@@ -9,6 +9,7 @@ use std::time::Instant;
 // - produce useful_groups by instantiating found invariants over init facts
 
 struct BalanceChecker {
+    #[allow(dead_code)]
     predicates_to_add_actions: HashMap<String, HashSet<String>>, // predicate -> set of action names
 }
 
@@ -51,6 +52,7 @@ impl BalanceChecker {
         }
     }
 
+    #[allow(dead_code)]
     fn get_threats(&self, predicate: &str) -> HashSet<String> {
         self.predicates_to_add_actions
             .get(predicate)
