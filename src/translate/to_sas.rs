@@ -176,7 +176,7 @@ pub fn build_sas(
         crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom,
     >,
     py_groups: Option<Vec<Vec<String>>>,
-    propositional_axioms: &[crate::translate::normalize::TaskAxiom],
+    grounded_axioms: &[crate::translate::instantiate::GroundedAxiom],
     normalized_goal: &crate::translate::pddl_ast::Condition,
     norm_task: &crate::translate::normalize::NormalizableTask,
 ) -> Result<SASTask, String> {
@@ -440,6 +440,34 @@ pub fn build_sas(
         }
     }
 
+    fn collect_atoms_from_condition(
+        cond: &crate::translate::pddl_ast::Condition,
+        grounded_atoms: &mut Vec<String>,
+        fluent_preds: &std::collections::HashSet<String>,
+    ) {
+        match cond {
+            crate::translate::pddl_ast::Condition::Atom(name, args) => {
+                if fluent_preds.contains(name.as_str()) {
+                    grounded_atoms.push(format!("{}({})", name, args.join(", ")));
+                }
+            }
+            crate::translate::pddl_ast::Condition::Not(inner) => {
+                collect_atoms_from_condition(inner, grounded_atoms, fluent_preds);
+            }
+            crate::translate::pddl_ast::Condition::And(list) => {
+                for c in list {
+                    collect_atoms_from_condition(c, grounded_atoms, fluent_preds);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for ax in grounded_axioms {
+        collect_atoms_from_condition(&ax.condition, &mut grounded_atoms, &fluent_preds);
+        grounded_atoms.push(ax.effect_atom.clone());
+    }
+
     // Compute fact groups: prefer externally provided Python groups for faithful semantics,
     // otherwise use the Rust port of invariant-based grouping.
     let (chosen_groups, _mutex_groups, translation_key) = if let Some(pg) = py_groups {
@@ -484,36 +512,7 @@ pub fn build_sas(
         });
     }
 
-    // Create propositional variables for axioms (Python uses new-axiom@N naming)
-    let mut axiom_atom_to_var: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
-    let mut axiom_name_map: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    let _axiom_layer = 31; // Standard layer for propositional axioms (after comparisons)
-    for (idx, ax) in propositional_axioms.iter().enumerate() {
-        let ax_name = format!("new-axiom@{}", idx);
-        axiom_name_map.insert(ax.name.clone(), ax_name.clone());
-        let atom = format!("{}()", ax_name);
-        let var_idx = vars.len();
-        axiom_atom_to_var.insert(atom.clone(), var_idx);
-        vars.push(crate::translate::sas::Variable {
-            value_names: vec![format!("Atom {}", atom), format!("NegatedAtom {}", atom)],
-        });
-        ranges.push(2); // Derived variables always have range 2
-    }
-
-    // Add a dedicated goal axiom variable (Python uses the next new-axiom@N slot)
-    let goal_axiom_name = format!("new-axiom@{}", propositional_axioms.len());
-    let goal_axiom_atom = format!("{}()", goal_axiom_name);
-    let goal_axiom_var = vars.len();
-    axiom_atom_to_var.insert(goal_axiom_atom.clone(), goal_axiom_var);
-    vars.push(crate::translate::sas::Variable {
-        value_names: vec![
-            format!("Atom {}", goal_axiom_atom),
-            format!("NegatedAtom {}", goal_axiom_atom),
-        ],
-    });
-    ranges.push(2);
+    // Grounded propositional axioms use existing fact variables; no extra axiom vars here.
 
     // Build mutex groups from chosen_groups: each group is a list of facts (var,val)
     let mut mutex_groups_pairs: Vec<Vec<(usize, usize)>> = Vec::new();
@@ -1372,9 +1371,6 @@ pub fn build_sas(
         }
     }
 
-    // Goal is represented by a dedicated goal axiom variable
-    let goal_pairs: Vec<(usize, usize)> = vec![(goal_axiom_var, 0)];
-
     // Process axiom conditions to ensure comparison axiom variables are created
     // This must happen BEFORE we try to look up comparison variables in collect_condition_pairs
     {
@@ -1476,8 +1472,8 @@ pub fn build_sas(
             }
         }
 
-        // Process all propositional axiom conditions
-        for ax in propositional_axioms {
+        // Process all grounded propositional axiom conditions
+        for ax in grounded_axioms {
             ensure_axiom_comparison_vars(
                 &ax.condition,
                 &mut ensure_expr_var,
@@ -1564,20 +1560,12 @@ pub fn build_sas(
 
     let comp_var_set: std::collections::HashSet<usize> =
         comp_axioms.iter().map(|c| c.effect_var).collect();
-    let axiom_var_set: std::collections::HashSet<usize> =
-        axiom_atom_to_var.values().copied().collect();
 
     let canonical_variables: Vec<crate::translate::sas::CanonicalVariable> = vars
         .iter()
         .enumerate()
         .map(|(idx, v)| {
-            let axiom_layer = if axiom_var_set.contains(&idx) {
-                30
-            } else if comp_var_set.contains(&idx) {
-                29
-            } else {
-                -1
-            };
+            let axiom_layer = if comp_var_set.contains(&idx) { 29 } else { -1 };
             crate::translate::sas::CanonicalVariable {
                 name: format!("var{}", idx),
                 axiom_layer,
@@ -1623,13 +1611,12 @@ pub fn build_sas(
         })
         .collect();
 
-    // Build SASAxioms from propositional_axioms
+    // Build SASAxioms from grounded_axioms
     // Each axiom has a condition that needs to be converted to (var, val) pairs
     let mut sas_axioms: Vec<crate::translate::sas::SASAxiom> = Vec::new();
     fn collect_condition_pairs(
         cond: &crate::translate::pddl_ast::Condition,
         atom_to_fdr: &std::collections::HashMap<String, (usize, usize)>,
-        axiom_atom_to_var: &std::collections::HashMap<String, usize>,
         var_index: &std::collections::HashMap<String, usize>,
         num_index: &std::collections::HashMap<String, usize>,
         ranges: &[usize],
@@ -1639,9 +1626,7 @@ pub fn build_sas(
         match cond {
             crate::translate::pddl_ast::Condition::Atom(name, args) => {
                 let atom = format!("{}({})", name, args.join(", "));
-                if let Some(&v) = axiom_atom_to_var.get(&atom) {
-                    condition_pairs.push((v, 0)); // 0 = true
-                } else if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
+                if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                     condition_pairs.push((v, val));
                 }
             }
@@ -1696,7 +1681,6 @@ pub fn build_sas(
                     collect_condition_pairs(
                         p,
                         atom_to_fdr,
-                        axiom_atom_to_var,
                         var_index,
                         num_index,
                         ranges,
@@ -1709,9 +1693,7 @@ pub fn build_sas(
                 // For negated atoms, value 1 = false
                 if let crate::translate::pddl_ast::Condition::Atom(name, args) = &**inner {
                     let atom = format!("{}({})", name, args.join(", "));
-                    if let Some(&v) = axiom_atom_to_var.get(&atom) {
-                        condition_pairs.push((v, 1)); // 1 = false/negated
-                    } else if let Some(&(v, _)) = atom_to_fdr.get(&atom) {
+                    if let Some(&(v, _)) = atom_to_fdr.get(&atom) {
                         // For regular atoms, we need to find the negated value
                         // Typically the last value is "none of those"
                         condition_pairs.push((v, ranges[v] - 1));
@@ -1722,18 +1704,23 @@ pub fn build_sas(
         }
     }
 
-    for ax in propositional_axioms {
-        let ax_name = axiom_name_map
-            .get(&ax.name)
-            .cloned()
-            .unwrap_or_else(|| ax.name.clone());
-        let atom = format!("{}()", ax_name);
-        if let Some(&effect_var) = axiom_atom_to_var.get(&atom) {
+    let mut goal_pairs: Vec<(usize, usize)> = Vec::new();
+    collect_condition_pairs(
+        normalized_goal,
+        &atom_to_fdr,
+        &var_index,
+        &num_index,
+        &ranges,
+        &mut goal_pairs,
+        &normalize_op,
+    );
+
+    for ax in grounded_axioms {
+        if let Some(&(effect_var, effect_val)) = atom_to_fdr.get(&ax.effect_atom) {
             let mut condition_pairs: Vec<(usize, usize)> = Vec::new();
             collect_condition_pairs(
                 &ax.condition,
                 &atom_to_fdr,
-                &axiom_atom_to_var,
                 &var_index,
                 &num_index,
                 &ranges,
@@ -1742,44 +1729,21 @@ pub fn build_sas(
             );
             sas_axioms.push(crate::translate::sas::SASAxiom {
                 condition: condition_pairs,
-                effect: (effect_var, 0), // effect_val 0 = true
+                effect: (effect_var, effect_val),
             });
         }
-    }
-
-    // Add goal axiom using the normalized goal condition
-    {
-        let mut goal_condition_pairs: Vec<(usize, usize)> = Vec::new();
-        collect_condition_pairs(
-            normalized_goal,
-            &atom_to_fdr,
-            &axiom_atom_to_var,
-            &var_index,
-            &num_index,
-            &ranges,
-            &mut goal_condition_pairs,
-            &normalize_op,
-        );
-        sas_axioms.push(crate::translate::sas::SASAxiom {
-            condition: goal_condition_pairs,
-            effect: (goal_axiom_var, 0),
-        });
     }
 
     // We don't yet populate comparison axioms from other sources here; leave empty for now.
     let global_constraint = match norm_task.global_constraint.as_ref() {
         None => None,
         Some(name) => {
-            let mapped = axiom_name_map
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| name.clone());
-            let atom = format!("{}()", mapped);
-            let var = axiom_atom_to_var
+            let atom = format!("{}()", name);
+            let (var, val) = atom_to_fdr
                 .get(&atom)
                 .copied()
-                .ok_or_else(|| format!("global constraint axiom not found: {}", atom))?;
-            Some((var, 0))
+                .ok_or_else(|| format!("global constraint atom not found: {}", atom))?;
+            Some((var, val))
         }
     };
     Ok(SASTask {

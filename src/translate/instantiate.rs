@@ -13,10 +13,17 @@ pub struct GroundedOp {
 }
 
 #[derive(Debug, Clone)]
+pub struct GroundedAxiom {
+    pub condition: Condition,
+    pub effect_atom: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct ExploreResult {
     pub relaxed_reachable: bool,
     pub model: Vec<build_model::Atom>,
     pub grounded_ops: Vec<GroundedOp>,
+    pub grounded_axioms: Vec<GroundedAxiom>,
     pub numeric_axioms: Vec<InstantiatedNumericAxiom>,
     /// Fluent facts - facts that can change during plan execution
     pub fluent_facts: Vec<build_model::Atom>,
@@ -731,7 +738,7 @@ pub fn explore_normalized(
 
     eprintln!("DEBUG: explore_normalized() Step 5: ground actions from model");
     // Step 5: Extract grounded actions from model
-    let (ops, num_axioms) = ground_from_normalized_model(
+    let (ops, num_axioms, grounded_axioms) = ground_from_normalized_model(
         &model,
         norm_task,
         &init_atom_set,
@@ -763,6 +770,7 @@ pub fn explore_normalized(
         relaxed_reachable,
         model,
         grounded_ops: ops,
+        grounded_axioms,
         numeric_axioms: num_axioms,
         fluent_facts,
         fluent_functions,
@@ -1040,13 +1048,19 @@ fn ground_from_normalized_model(
     type_to_objects: &std::collections::HashMap<String, Vec<String>>,
     fluent_functions: &[String],
     init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
-) -> Result<(Vec<GroundedOp>, Vec<InstantiatedNumericAxiom>), InstantiateError> {
+) -> Result<(Vec<GroundedOp>, Vec<InstantiatedNumericAxiom>, Vec<GroundedAxiom>), InstantiateError> {
     use std::collections::{HashMap, HashSet};
 
     // Build action lookup map
     let mut action_map: HashMap<String, &crate::translate::normalize::TaskAction> = HashMap::new();
     for action in &norm_task.actions {
         action_map.insert(action.name.clone(), action);
+    }
+
+    // Build propositional axiom lookup map by name
+    let mut axiom_map: HashMap<String, &crate::translate::normalize::TaskAxiom> = HashMap::new();
+    for axiom in &norm_task.axioms {
+        axiom_map.insert(axiom.name.clone(), axiom);
     }
 
     // Build numeric axiom lookup map by name
@@ -1064,6 +1078,8 @@ fn ground_from_normalized_model(
     );
 
     let mut grounded_ops = Vec::new();
+    let mut grounded_axioms: Vec<GroundedAxiom> = Vec::new();
+    let mut grounded_axiom_atoms: HashSet<String> = HashSet::new();
     let mut instantiated_numeric_axioms: HashSet<InstantiatedNumericAxiom> = HashSet::new();
 
     // Track numeric axiom atoms found
@@ -1199,6 +1215,40 @@ fn ground_from_normalized_model(
         }
     }
 
+    // Third pass: instantiate propositional axioms from the model
+    for atom in model {
+        if let Some(axiom) = axiom_map.get(&atom.predicate) {
+            let grounded_args = extract_grounded_args(&atom.args);
+            if grounded_args.len() < axiom.parameters.len() {
+                eprintln!(
+                    "DEBUG: Skipping axiom {} due to arg mismatch: params={}, args={}",
+                    axiom.name,
+                    axiom.parameters.len(),
+                    grounded_args.len()
+                );
+                continue;
+            }
+
+            let used_args: Vec<String> = grounded_args
+                .iter()
+                .take(axiom.parameters.len())
+                .cloned()
+                .collect();
+            let variable_mapping = create_variable_mapping(&axiom.parameters, &used_args);
+            let condition = crate::translate::pddl_ast::substitute_condition(
+                &axiom.condition,
+                &variable_mapping,
+            );
+            let effect_atom = format!("{}({})", axiom.name, used_args.join(", "));
+            if grounded_axiom_atoms.insert(effect_atom.clone()) {
+                grounded_axioms.push(GroundedAxiom {
+                    condition,
+                    effect_atom,
+                });
+            }
+        }
+    }
+
     eprintln!(
         "DEBUG: total numeric axiom atoms found: {}, instantiated axioms: {}",
         numeric_axiom_atom_count,
@@ -1208,7 +1258,7 @@ fn ground_from_normalized_model(
     let num_axioms: Vec<InstantiatedNumericAxiom> =
         instantiated_numeric_axioms.into_iter().collect();
 
-    Ok((grounded_ops, num_axioms))
+    Ok((grounded_ops, num_axioms, grounded_axioms))
 }
 
 /// Instantiate a numeric axiom with specific variable bindings.

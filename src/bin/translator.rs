@@ -131,7 +131,7 @@ fn main() -> anyhow::Result<()> {
                 &prob,
                 &instantiated_num_axioms,
                 py_groups,
-                &norm_task.axioms,
+                &result.grounded_axioms,
                 &norm_task.goal,
                 &norm_task,
             )
