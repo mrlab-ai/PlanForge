@@ -7,6 +7,9 @@ const KW_PREDICATES: &str = ":predicates";
 const KW_FUNCTIONS: &str = ":functions";
 const KW_TYPES: &str = ":types";
 const KW_ACTION: &str = ":action";
+const KW_DERIVED: &str = ":derived";
+const KW_CONSTRAINT: &str = ":constraint";
+const KW_CONDITION: &str = ":condition";
 const KW_PARAMETERS: &str = ":parameters";
 const KW_PRECONDITION: &str = ":precondition";
 const KW_EFFECT: &str = ":effect";
@@ -31,6 +34,15 @@ pub struct Domain {
     /// types: (type_name, supertype)
     pub types: Vec<(String, Option<String>)>,
     pub actions: Vec<Action>,
+    pub axioms: Vec<DerivedAxiom>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DerivedAxiom {
+    pub name: String,
+    pub parameters: Vec<(String, Option<String>)>,
+    pub condition: SExpr,
+    pub is_global_constraint: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -413,6 +425,7 @@ fn parse_domain_form(form: &SExpr) -> Option<Domain> {
     let mut functions = Vec::new();
     let mut types = Vec::new();
     let mut actions = Vec::new();
+    let mut axioms = Vec::new();
 
     for section in &items[2..] {
         let list = match section {
@@ -435,6 +448,16 @@ fn parse_domain_form(form: &SExpr) -> Option<Domain> {
                     actions.push(act);
                 }
             }
+            KW_DERIVED | "derived" => {
+                if let Some(ax) = parse_derived_axiom(list) {
+                    axioms.push(ax);
+                }
+            }
+            KW_CONSTRAINT | "constraint" => {
+                if let Some(ax) = parse_constraint_axiom(list) {
+                    axioms.push(ax);
+                }
+            }
             _ => {}
         }
     }
@@ -445,7 +468,79 @@ fn parse_domain_form(form: &SExpr) -> Option<Domain> {
         functions,
         types,
         actions,
+        axioms,
     })
+}
+
+fn parse_derived_axiom(list: &[SExpr]) -> Option<DerivedAxiom> {
+    if list.len() < 3 {
+        return None;
+    }
+    let head = match &list[1] {
+        SExpr::List(head) => head,
+        _ => return None,
+    };
+    let (name, params) = parse_predicate_head(head)?;
+    let condition = list[2].clone();
+    Some(DerivedAxiom {
+        name,
+        parameters: params,
+        condition,
+        is_global_constraint: false,
+    })
+}
+
+fn parse_constraint_axiom(list: &[SExpr]) -> Option<DerivedAxiom> {
+    if list.len() < 3 {
+        return None;
+    }
+    let name = match &list[1] {
+        SExpr::Atom(n) => n.clone(),
+        _ => return None,
+    };
+    let mut params: Vec<(String, Option<String>)> = Vec::new();
+    let mut condition: Option<SExpr> = None;
+    let mut i = 2;
+    while i < list.len() {
+        let key = match &list[i] {
+            SExpr::Atom(k) => k.to_lowercase(),
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        match key.as_str() {
+            KW_PARAMETERS | "parameters" => {
+                if let Some(SExpr::List(p)) = list.get(i + 1) {
+                    params = parse_typed_list(p);
+                }
+                i += 2;
+            }
+            KW_CONDITION | "condition" => {
+                if let Some(expr) = list.get(i + 1) {
+                    condition = Some(expr.clone());
+                }
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+    let condition = condition?;
+    Some(DerivedAxiom {
+        name,
+        parameters: params,
+        condition,
+        is_global_constraint: true,
+    })
+}
+
+fn parse_predicate_head(list: &[SExpr]) -> Option<(String, Vec<(String, Option<String>)>)> {
+    let name = match list.get(0) {
+        Some(SExpr::Atom(n)) => n.clone(),
+        _ => return None,
+    };
+    let params = parse_typed_list(&list[1..]);
+    Some((name, params))
 }
 
 fn parse_predicates(

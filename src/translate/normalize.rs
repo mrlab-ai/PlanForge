@@ -48,6 +48,8 @@ pub struct NormalizableTask {
     pub init: Vec<SExpr>,
     /// Goal condition (parsed as Condition)
     pub goal: Condition,
+    /// Global constraint axiom name (if any)
+    pub global_constraint: Option<String>,
     /// Optimization metric: (direction, expression)
     /// Direction is "<" for minimize, ">" for maximize
     pub metric: (String, Option<SExpr>),
@@ -91,6 +93,7 @@ pub struct TaskAxiom {
     pub condition: Condition,
     /// Number of external parameters (used for rule generation)
     pub num_external_parameters: usize,
+    pub is_global_constraint: bool,
 }
 
 impl NormalizableTask {
@@ -98,6 +101,17 @@ impl NormalizableTask {
     pub fn from_ast(domain: &Domain, problem: &Problem) -> Self {
         use crate::translate::pddl_ast::sexpr_to_condition;
         let actions = build_actions(domain, sexpr_to_condition);
+        let axioms = domain
+            .axioms
+            .iter()
+            .map(|ax| TaskAxiom {
+                name: ax.name.clone(),
+                parameters: ax.parameters.clone(),
+                condition: sexpr_to_condition(&ax.condition),
+                num_external_parameters: ax.parameters.len(),
+                is_global_constraint: ax.is_global_constraint,
+            })
+            .collect::<Vec<_>>();
 
         // Convert goal from SExpr to Condition
         let goal = problem
@@ -113,11 +127,12 @@ impl NormalizableTask {
             functions: domain.functions.clone(),
             types: domain.types.clone(),
             actions,
-            axioms: vec![],
+            axioms,
             numeric_axioms: vec![],
             objects: problem.objects.clone(),
             init: problem.init.clone(),
             goal,
+            global_constraint: None,
             metric: problem
                 .metric
                 .as_ref()
@@ -166,14 +181,46 @@ impl NormalizableTask {
         let axiom_name = format!("@axiom-{}", self.axiom_counter);
         self.axiom_counter += 1;
 
+        if !self
+            .predicates
+            .iter()
+            .any(|(name, params)| *name == axiom_name && params.len() == parameters.len())
+        {
+            self.predicates
+                .push((axiom_name.clone(), parameters.clone()));
+        }
+
         self.axioms.push(TaskAxiom {
             name: axiom_name.clone(),
             parameters: parameters.clone(),
             condition,
             num_external_parameters: parameters.len(),
+            is_global_constraint: false,
         });
 
         axiom_name
+    }
+
+    /// Add global constraints as a single derived axiom and store its name.
+    /// Mirrors Python's Task.add_global_constraints.
+    pub fn add_global_constraints(&mut self) {
+        let mut universals: Vec<Condition> = Vec::new();
+        for ax in &mut self.axioms {
+            if ax.is_global_constraint {
+                ax.is_global_constraint = false;
+                let forall = Condition::Forall(ax.parameters.clone(), Box::new(ax.condition.clone()));
+                universals.push(forall);
+            }
+        }
+        let constraint_condition = if universals.is_empty() {
+            Condition::True
+        } else if universals.len() == 1 {
+            universals.remove(0)
+        } else {
+            Condition::And(universals)
+        };
+        let axiom_name = self.add_axiom(vec![], constraint_condition);
+        self.global_constraint = Some(axiom_name);
     }
 
     /// Get a type map for a given set of parameters
@@ -2145,6 +2192,9 @@ pub fn task_eliminate_existential_quantifiers_from_conditional_effects(
 ///
 /// Returns an error if validation fails (e.g., derived predicates in :init or effects).
 pub fn normalize(task: &mut NormalizableTask) -> Result<(), String> {
+    if task.global_constraint.is_none() {
+        task.add_global_constraints();
+    }
     task_remove_universal_quantifiers(task);
     task_substitute_complicated_goal(task);
     task_build_dnf(task);

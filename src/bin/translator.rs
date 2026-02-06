@@ -65,6 +65,7 @@ fn main() -> anyhow::Result<()> {
             // Create normalizable task and run normalization
             eprintln!("translator: normalizing task...");
             let mut norm_task = normalize::NormalizableTask::from_ast(&dom, &prob);
+            norm_task.add_global_constraints();
             normalize::normalize(&mut norm_task).expect("normalization failed");
             eprintln!(
                 "translator: normalized - {} actions, {} axioms, {} numeric axioms",

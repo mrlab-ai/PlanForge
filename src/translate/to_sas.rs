@@ -1890,6 +1890,21 @@ pub fn build_sas(
     }
 
     // We don't yet populate comparison axioms from other sources here; leave empty for now.
+    let global_constraint = match norm_task.global_constraint.as_ref() {
+        None => None,
+        Some(name) => {
+            let mapped = axiom_name_map
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| name.clone());
+            let atom = format!("{}()", mapped);
+            let var = axiom_atom_to_var
+                .get(&atom)
+                .copied()
+                .ok_or_else(|| format!("global constraint axiom not found: {}", atom))?;
+            Some((var, 0))
+        }
+    };
     Ok(SASTask {
         variables: vars,
         operators,
@@ -1908,7 +1923,7 @@ pub fn build_sas(
         canonical_operators,
         canonical_metric: Some(("<".to_string(), metric_idx)),
         metric: ("<".to_string(), metric_idx),
-        global_constraint: None,
+        global_constraint,
         comp_axiom_layer: 0,
     })
 }
