@@ -1068,12 +1068,141 @@ impl SimpleToRestrictedTask {
         self.prune_irrelevant_numeric_variables();
         Ok(())
     }
+
+    pub fn write_result(&self, output_path: &Path) -> Result<(), String> {
+        let mut out = String::new();
+        let version = self.parsed.version.unwrap_or(4);
+        out.push_str("begin_version\n");
+        out.push_str(&format!("{}\n", version));
+        out.push_str("end_version\n");
+
+        out.push_str("begin_metric\n");
+        out.push_str(&format!(
+            "{} {}\n",
+            self.parsed.metric_criterion, self.parsed.metric_index
+        ));
+        out.push_str("end_metric\n");
+
+        out.push_str(&format!("{}\n", self.parsed.variables.len()));
+        for (varname, varblock) in &self.parsed.variables {
+            out.push_str("begin_variable\n");
+            out.push_str(&format!("{}\n", varname));
+            out.push_str(&format!("{}\n", varblock.axiom_layer));
+            out.push_str(&format!("{}\n", varblock.range));
+            for value in &varblock.values {
+                out.push_str(&format!("{}\n", value));
+            }
+            out.push_str("end_variable\n");
+        }
+
+        out.push_str(&format!("{}\n", self.parsed.numeric_variables.len()));
+        out.push_str("begin_numeric_variables\n");
+        for entry in &self.parsed.numeric_variables {
+            out.push_str(&format!("{}\n", entry));
+        }
+        out.push_str("end_numeric_variables\n");
+
+        out.push_str("0\n");
+        out.push_str("begin_state\n");
+        for val in &self.parsed.initial_state {
+            out.push_str(&format!("{}\n", val));
+        }
+        out.push_str("end_state\n");
+
+        out.push_str("begin_numeric_state\n");
+        for val in &self.parsed.initial_numeric_state {
+            out.push_str(&format!("{}\n", val));
+        }
+        out.push_str("end_numeric_state\n");
+
+        out.push_str("begin_goal\n");
+        for g in &self.parsed.goal {
+            out.push_str(&format!("{}\n", g));
+        }
+        out.push_str("end_goal\n");
+
+        out.push_str(&format!("{}\n", self.parsed.operators.len()));
+        for op in &self.parsed.operators {
+            out.push_str("begin_operator\n");
+            out.push_str(&format!("{}\n", op.name));
+            out.push_str(&format!("{}\n", op.num_preconditions));
+            for pr in &op.preconditions {
+                out.push_str(&format!("{}\n", pr));
+            }
+            out.push_str(&format!("{}\n", op.num_ass_effects));
+            for eff in &op.ass_effects {
+                out.push_str(&format!("{}\n", eff));
+            }
+            out.push_str(&format!("{}\n", op.num_effects));
+            for eff in &op.effects {
+                out.push_str(&format!("{}\n", eff));
+            }
+            out.push_str(&format!("{}\n", op.cost));
+            out.push_str("end_operator\n");
+        }
+
+        out.push_str(&format!("{}\n", self.parsed.rules.len()));
+        for rule in &self.parsed.rules {
+            out.push_str("begin_rule\n");
+            let count = rule
+                .first()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            out.push_str(&format!("{}\n", count));
+            for i in 0..count {
+                if let Some(line) = rule.get(1 + i) {
+                    out.push_str(&format!("{}\n", line));
+                }
+            }
+            if let Some(last) = rule.last() {
+                out.push_str(&format!("{}\n", last));
+            }
+            out.push_str("end_rule\n");
+        }
+
+        out.push_str(&format!("{}\n", self.parsed.comparison_axioms.len()));
+        out.push_str("begin_comparison_axioms\n");
+        for ax in &self.parsed.comparison_axioms {
+            out.push_str(&format!("{}\n", ax));
+        }
+        out.push_str("end_comparison_axioms\n");
+
+        out.push_str("0\nbegin_numeric_axioms\nend_numeric_axioms\n");
+
+        out.push_str("begin_global_constraint\n");
+        for gc in &self.parsed.global_constraints {
+            out.push_str(&format!("{}\n", gc));
+        }
+        out.push_str("end_global_constraint\n");
+
+        fs::write(output_path, out)
+            .map_err(|err| format!("failed to write {}: {}", output_path.display(), err))
+    }
 }
 
 pub fn parse_file(path: &Path) -> Result<SasParsedOutput, String> {
     let contents = fs::read_to_string(path)
         .map_err(|err| format!("failed to read SAS file {}: {}", path.display(), err))?;
     parse_sas_output(&contents)
+}
+
+pub fn process_file(input_path: &Path, output_path: &Path) -> Result<(), String> {
+    let parsed = parse_file(input_path)?;
+    let mut task = SimpleToRestrictedTask::new(parsed);
+    task.run_transforms()?;
+    task.write_result(output_path)
+}
+
+pub fn process_file_dual_output(
+    input_path: &Path,
+    output_path: &Path,
+    secondary_path: &Path,
+) -> Result<(), String> {
+    let parsed = parse_file(input_path)?;
+    let mut task = SimpleToRestrictedTask::new(parsed);
+    task.run_transforms()?;
+    task.write_result(output_path)?;
+    task.write_result(secondary_path)
 }
 
 pub fn parse_sas_output(sas_output: &str) -> Result<SasParsedOutput, String> {
