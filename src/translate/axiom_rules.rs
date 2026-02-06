@@ -231,8 +231,8 @@ fn compute_necessary_axiom_literals(
 }
 
 /// Convert a Condition to a list of Literals
-fn condition_to_literals(cond: &crate::translate::pddl_ast::Condition) -> Vec<Literal> {
-    use crate::translate::pddl_ast::Condition;
+fn condition_to_literals(cond: &crate::translate::pddl::Condition) -> Vec<Literal> {
+    use crate::translate::pddl::Condition;
 
     match cond {
         Condition::Atom(name, args) => {

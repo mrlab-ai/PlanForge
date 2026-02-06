@@ -1,6 +1,6 @@
 use crate::translate::invariants::{ActionView, EffectView, Invariant, InvariantPart, Literal};
 use crate::translate::normalize::{NormalizableTask, TaskAction};
-use crate::translate::pddl_ast::Condition;
+use crate::translate::pddl::Condition;
 use crate::translate::pddl_parser::SExpr;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;

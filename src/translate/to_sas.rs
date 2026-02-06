@@ -1,5 +1,5 @@
 use crate::translate::instantiate::GroundedOp;
-use crate::translate::pddl_ast::{Domain, Problem};
+use crate::translate::pddl::{Domain, Problem};
 use crate::translate::sas::SASTask;
 
 /// Format a PrimitiveNumericExpression as a string for use as a numeric variable name.
@@ -177,7 +177,7 @@ pub fn build_sas(
     >,
     py_groups: Option<Vec<Vec<String>>>,
     grounded_axioms: &[crate::translate::instantiate::GroundedAxiom],
-    normalized_goal: &crate::translate::pddl_ast::Condition,
+    normalized_goal: &crate::translate::pddl::Condition,
     norm_task: &crate::translate::normalize::NormalizableTask,
 ) -> Result<SASTask, String> {
     fn normalize_op(op: &str) -> String {
@@ -244,17 +244,17 @@ pub fn build_sas(
     let mut fluent_preds: std::collections::HashSet<String> = std::collections::HashSet::new();
     for act in &dom.actions {
         if let Some(eff_s) = &act.effect {
-            let eff = crate::translate::pddl_ast::sexpr_to_effect(eff_s);
+            let eff = crate::translate::pddl::sexpr_to_effect(eff_s);
             fn collect(
-                e: &crate::translate::pddl_ast::Effect,
+                e: &crate::translate::pddl::Effect,
                 set: &mut std::collections::HashSet<String>,
             ) {
                 match e {
-                    crate::translate::pddl_ast::Effect::Add(n, _)
-                    | crate::translate::pddl_ast::Effect::Del(n, _) => {
+                    crate::translate::pddl::Effect::Add(n, _)
+                    | crate::translate::pddl::Effect::Del(n, _) => {
                         set.insert(n.clone());
                     }
-                    crate::translate::pddl_ast::Effect::And(v) => {
+                    crate::translate::pddl::Effect::And(v) => {
                         for sub in v {
                             collect(sub, set);
                         }
@@ -345,58 +345,58 @@ pub fn build_sas(
         if !op.effects.is_empty() {
             for (_conds, eff) in &op.effects {
                 match eff {
-                    crate::translate::pddl_ast::Effect::Add(name, args) => {
+                    crate::translate::pddl::Effect::Add(name, args) => {
                         grounded_atoms.push(format!("{}({})", name, args.join(", ")));
                     }
-                    crate::translate::pddl_ast::Effect::Del(name, args) => {
+                    crate::translate::pddl::Effect::Del(name, args) => {
                         grounded_atoms.push(format!("{}({})", name, args.join(", ")));
                     }
-                    crate::translate::pddl_ast::Effect::Increase(name, args, val) => {
+                    crate::translate::pddl::Effect::Increase(name, args, val) => {
                         let key = format!("{}({})", name, args.join(", "));
                         numeric_vars.push((key, *val));
                     }
-                    crate::translate::pddl_ast::Effect::Decrease(name, args, val) => {
+                    crate::translate::pddl::Effect::Decrease(name, args, val) => {
                         let key = format!("{}({})", name, args.join(", "));
                         numeric_vars.push((key, -*val));
                     }
-                    crate::translate::pddl_ast::Effect::And(_) => {}
+                    crate::translate::pddl::Effect::And(_) => {}
                 }
             }
         } else if let Some(eff) = &op.eff {
             match eff {
-                crate::translate::pddl_ast::Effect::Add(name, args) => {
+                crate::translate::pddl::Effect::Add(name, args) => {
                     grounded_atoms.push(format!("{}({})", name, args.join(", ")));
                 }
-                crate::translate::pddl_ast::Effect::Del(name, args) => {
+                crate::translate::pddl::Effect::Del(name, args) => {
                     grounded_atoms.push(format!("{}({})", name, args.join(", ")));
                 }
-                crate::translate::pddl_ast::Effect::And(v) => {
+                crate::translate::pddl::Effect::And(v) => {
                     for sub in v {
                         match sub {
-                            crate::translate::pddl_ast::Effect::Add(name, args) => {
+                            crate::translate::pddl::Effect::Add(name, args) => {
                                 grounded_atoms.push(format!("{}({})", name, args.join(", ")));
                             }
-                            crate::translate::pddl_ast::Effect::Del(name, args) => {
+                            crate::translate::pddl::Effect::Del(name, args) => {
                                 grounded_atoms.push(format!("{}({})", name, args.join(", ")));
                             }
-                            crate::translate::pddl_ast::Effect::Increase(name, args, val) => {
+                            crate::translate::pddl::Effect::Increase(name, args, val) => {
                                 let key = format!("{}({})", name, args.join(", "));
                                 numeric_vars.push((key, *val));
                             }
-                            crate::translate::pddl_ast::Effect::Decrease(name, args, val) => {
+                            crate::translate::pddl::Effect::Decrease(name, args, val) => {
                                 let key = format!("{}({})", name, args.join(", "));
                                 numeric_vars.push((key, -*val));
                             }
-                            crate::translate::pddl_ast::Effect::And(_) => { /* nested And - ignore for now */
+                            crate::translate::pddl::Effect::And(_) => { /* nested And - ignore for now */
                             }
                         }
                     }
                 }
-                crate::translate::pddl_ast::Effect::Increase(name, args, v) => {
+                crate::translate::pddl::Effect::Increase(name, args, v) => {
                     let key = format!("{}({})", name, args.join(", "));
                     numeric_vars.push((key, *v));
                 }
-                crate::translate::pddl_ast::Effect::Decrease(name, args, v) => {
+                crate::translate::pddl::Effect::Decrease(name, args, v) => {
                     let key = format!("{}({})", name, args.join(", "));
                     numeric_vars.push((key, -*v));
                 }
@@ -404,57 +404,57 @@ pub fn build_sas(
         }
         if let Some(pre) = &op.pre {
             match pre {
-                crate::translate::pddl_ast::Condition::Atom(name, args) => {
+                crate::translate::pddl::Condition::Atom(name, args) => {
                     if fluent_preds.contains(name.as_str()) {
                         grounded_atoms.push(format!("{}({})", name, args.join(", ")));
                     }
                 }
-                crate::translate::pddl_ast::Condition::And(v) => {
+                crate::translate::pddl::Condition::And(v) => {
                     for c in v {
                         match c {
-                            crate::translate::pddl_ast::Condition::Atom(name, args) => {
+                            crate::translate::pddl::Condition::Atom(name, args) => {
                                 if fluent_preds.contains(name.as_str()) {
                                     grounded_atoms.push(format!("{}({})", name, args.join(", ")));
                                 }
                             }
-                            crate::translate::pddl_ast::Condition::Comparison(_, _, _) => {}
-                            crate::translate::pddl_ast::Condition::Not(_) => {}
-                            crate::translate::pddl_ast::Condition::And(_) => {}
-                            crate::translate::pddl_ast::Condition::Or(_) => {}
-                            crate::translate::pddl_ast::Condition::Forall(_, _) => {}
-                            crate::translate::pddl_ast::Condition::Exists(_, _) => {}
-                            crate::translate::pddl_ast::Condition::True => {}
+                            crate::translate::pddl::Condition::Comparison(_, _, _) => {}
+                            crate::translate::pddl::Condition::Not(_) => {}
+                            crate::translate::pddl::Condition::And(_) => {}
+                            crate::translate::pddl::Condition::Or(_) => {}
+                            crate::translate::pddl::Condition::Forall(_, _) => {}
+                            crate::translate::pddl::Condition::Exists(_, _) => {}
+                            crate::translate::pddl::Condition::True => {}
                         }
                     }
                 }
-                crate::translate::pddl_ast::Condition::Comparison(_, _, _) => { /* handled later */
+                crate::translate::pddl::Condition::Comparison(_, _, _) => { /* handled later */
                 }
-                crate::translate::pddl_ast::Condition::Not(_) => { /* ignore */ }
-                crate::translate::pddl_ast::Condition::Or(_) => { /* should be normalized */ }
-                crate::translate::pddl_ast::Condition::Forall(_, _) => { /* should be normalized */
+                crate::translate::pddl::Condition::Not(_) => { /* ignore */ }
+                crate::translate::pddl::Condition::Or(_) => { /* should be normalized */ }
+                crate::translate::pddl::Condition::Forall(_, _) => { /* should be normalized */
                 }
-                crate::translate::pddl_ast::Condition::Exists(_, _) => { /* should be normalized */
+                crate::translate::pddl::Condition::Exists(_, _) => { /* should be normalized */
                 }
-                crate::translate::pddl_ast::Condition::True => { /* ignore */ }
+                crate::translate::pddl::Condition::True => { /* ignore */ }
             }
         }
     }
 
     fn collect_atoms_from_condition(
-        cond: &crate::translate::pddl_ast::Condition,
+        cond: &crate::translate::pddl::Condition,
         grounded_atoms: &mut Vec<String>,
         fluent_preds: &std::collections::HashSet<String>,
     ) {
         match cond {
-            crate::translate::pddl_ast::Condition::Atom(name, args) => {
+            crate::translate::pddl::Condition::Atom(name, args) => {
                 if fluent_preds.contains(name.as_str()) {
                     grounded_atoms.push(format!("{}({})", name, args.join(", ")));
                 }
             }
-            crate::translate::pddl_ast::Condition::Not(inner) => {
+            crate::translate::pddl::Condition::Not(inner) => {
                 collect_atoms_from_condition(inner, grounded_atoms, fluent_preds);
             }
-            crate::translate::pddl_ast::Condition::And(list) => {
+            crate::translate::pddl::Condition::And(list) => {
                 for c in list {
                     collect_atoms_from_condition(c, grounded_atoms, fluent_preds);
                 }
@@ -725,22 +725,22 @@ pub fn build_sas(
 
         if let Some(pre) = &op.pre {
             match pre {
-                crate::translate::pddl_ast::Condition::Atom(name, args) => {
+                crate::translate::pddl::Condition::Atom(name, args) => {
                     let atom = format!("{}({})", name, args.join(", "));
                     if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                         prevails.push((v, val));
                     }
                 }
-                crate::translate::pddl_ast::Condition::And(v) => {
+                crate::translate::pddl::Condition::And(v) => {
                     for c in v {
                         match c {
-                            crate::translate::pddl_ast::Condition::Atom(name, args) => {
+                            crate::translate::pddl::Condition::Atom(name, args) => {
                                 let atom = format!("{}({})", name, args.join(", "));
                                 if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                                     prevails.push((v, val));
                                 }
                             }
-                            crate::translate::pddl_ast::Condition::Comparison(opstr, l, r) => {
+                            crate::translate::pddl::Condition::Comparison(opstr, l, r) => {
                                 // Use ensure_expr_var on both operands to get their numeric variable names
                                 // This handles PNEs, arithmetic expressions, and constants (which become derived!{v}.0())
                                 let left_name = ensure_expr_var(
@@ -797,19 +797,19 @@ pub fn build_sas(
                                     }
                                 }
                             }
-                            crate::translate::pddl_ast::Condition::Not(_) => { /* ignore */ }
-                            crate::translate::pddl_ast::Condition::And(_) => { /* ignore */ }
-                            crate::translate::pddl_ast::Condition::Or(_) => { /* should be normalized */
+                            crate::translate::pddl::Condition::Not(_) => { /* ignore */ }
+                            crate::translate::pddl::Condition::And(_) => { /* ignore */ }
+                            crate::translate::pddl::Condition::Or(_) => { /* should be normalized */
                             }
-                            crate::translate::pddl_ast::Condition::Forall(_, _) => { /* should be normalized */
+                            crate::translate::pddl::Condition::Forall(_, _) => { /* should be normalized */
                             }
-                            crate::translate::pddl_ast::Condition::Exists(_, _) => { /* should be normalized */
+                            crate::translate::pddl::Condition::Exists(_, _) => { /* should be normalized */
                             }
-                            crate::translate::pddl_ast::Condition::True => { /* ignore */ }
+                            crate::translate::pddl::Condition::True => { /* ignore */ }
                         }
                     }
                 }
-                crate::translate::pddl_ast::Condition::Comparison(opstr, l, r) => {
+                crate::translate::pddl::Condition::Comparison(opstr, l, r) => {
                     // Use ensure_expr_var on both operands to get their numeric variable names
                     // This handles PNEs, arithmetic expressions, and constants (which become derived!{v}.0())
                     let left_name = ensure_expr_var(
@@ -867,20 +867,20 @@ pub fn build_sas(
             for (conds, eff) in &op.effects {
                 let condition = {
                     let mut build_condition_vals =
-                        |conds: &[crate::translate::pddl_ast::Condition]| {
+                        |conds: &[crate::translate::pddl::Condition]| {
                             let mut cond_vals: Vec<(usize, usize)> = Vec::new();
-                            let mut stack: Vec<crate::translate::pddl_ast::Condition> =
+                            let mut stack: Vec<crate::translate::pddl::Condition> =
                                 conds.to_vec();
                             while let Some(cond) = stack.pop() {
                                 match cond {
-                                    crate::translate::pddl_ast::Condition::Atom(name, args) => {
+                                    crate::translate::pddl::Condition::Atom(name, args) => {
                                         let atom = format!("{}({})", name, args.join(", "));
                                         if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                                             cond_vals.push((v, val));
                                         }
                                     }
-                                    crate::translate::pddl_ast::Condition::Not(inner) => {
-                                        if let crate::translate::pddl_ast::Condition::Atom(
+                                    crate::translate::pddl::Condition::Not(inner) => {
+                                        if let crate::translate::pddl::Condition::Atom(
                                             name,
                                             args,
                                         ) = *inner
@@ -892,12 +892,12 @@ pub fn build_sas(
                                             }
                                         }
                                     }
-                                    crate::translate::pddl_ast::Condition::And(parts) => {
+                                    crate::translate::pddl::Condition::And(parts) => {
                                         for part in parts {
                                             stack.push(part);
                                         }
                                     }
-                                    crate::translate::pddl_ast::Condition::Comparison(
+                                    crate::translate::pddl::Condition::Comparison(
                                         opstr,
                                         l,
                                         r,
@@ -974,21 +974,21 @@ pub fn build_sas(
                     build_condition_vals(conds)
                 };
                 match eff {
-                    crate::translate::pddl_ast::Effect::Add(name, args) => {
+                    crate::translate::pddl::Effect::Add(name, args) => {
                         let atom = format!("{}({})", name, args.join(", "));
                         if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                             let pre = ranges.get(v).map(|r| r - 1).unwrap_or(0);
                             effects.push((v, pre, val, condition.clone()));
                         }
                     }
-                    crate::translate::pddl_ast::Effect::Del(name, args) => {
+                    crate::translate::pddl::Effect::Del(name, args) => {
                         let atom = format!("{}({})", name, args.join(", "));
                         if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                             let none_idx = ranges[v] - 1;
                             effects.push((v, val, none_idx, condition.clone()));
                         }
                     }
-                    crate::translate::pddl_ast::Effect::Increase(nname, args, val) => {
+                    crate::translate::pddl::Effect::Increase(nname, args, val) => {
                         let nkey = format!("{}({})", nname, args.join(", "));
                         if let Some(&ni) = num_index.get(&nkey) {
                             let const_name = format!("derived!{}.0()", val);
@@ -1014,7 +1014,7 @@ pub fn build_sas(
                             ));
                         }
                     }
-                    crate::translate::pddl_ast::Effect::Decrease(nname, args, val) => {
+                    crate::translate::pddl::Effect::Decrease(nname, args, val) => {
                         let nkey = format!("{}({})", nname, args.join(", "));
                         if let Some(&ni) = num_index.get(&nkey) {
                             let const_name = format!("derived!{}.0()", val);
@@ -1040,43 +1040,43 @@ pub fn build_sas(
                             ));
                         }
                     }
-                    crate::translate::pddl_ast::Effect::And(_) => {}
+                    crate::translate::pddl::Effect::And(_) => {}
                 }
             }
         } else if let Some(eff) = &op.eff {
             match eff {
-                crate::translate::pddl_ast::Effect::Add(name, args) => {
+                crate::translate::pddl::Effect::Add(name, args) => {
                     let atom = format!("{}({})", name, args.join(", "));
                     if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                         let pre = ranges.get(v).map(|r| r - 1).unwrap_or(0);
                         effects.push((v, pre, val, vec![]));
                     }
                 }
-                crate::translate::pddl_ast::Effect::Del(name, args) => {
+                crate::translate::pddl::Effect::Del(name, args) => {
                     let atom = format!("{}({})", name, args.join(", "));
                     if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                         let none_idx = ranges[v] - 1;
                         effects.push((v, val, none_idx, vec![]));
                     }
                 }
-                crate::translate::pddl_ast::Effect::And(v) => {
+                crate::translate::pddl::Effect::And(v) => {
                     for sub in v {
                         match sub {
-                            crate::translate::pddl_ast::Effect::Add(name, args) => {
+                            crate::translate::pddl::Effect::Add(name, args) => {
                                 let atom = format!("{}({})", name, args.join(", "));
                                 if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                                     let pre = ranges.get(v).map(|r| r - 1).unwrap_or(0);
                                     effects.push((v, pre, val, vec![]));
                                 }
                             }
-                            crate::translate::pddl_ast::Effect::Del(name, args) => {
+                            crate::translate::pddl::Effect::Del(name, args) => {
                                 let atom = format!("{}({})", name, args.join(", "));
                                 if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                                     let none_idx = ranges[v] - 1;
                                     effects.push((v, val, none_idx, vec![]));
                                 }
                             }
-                            crate::translate::pddl_ast::Effect::Increase(nname, args, val) => {
+                            crate::translate::pddl::Effect::Increase(nname, args, val) => {
                                 let nkey = format!("{}({})", nname, args.join(", "));
                                 if let Some(&ni) = num_index.get(&nkey) {
                                     let const_name = format!("derived!{}.0()", val);
@@ -1097,7 +1097,7 @@ pub fn build_sas(
                                     op_numeric_effects.push((ni, "+".to_string(), rhs_idx, vec![]));
                                 }
                             }
-                            crate::translate::pddl_ast::Effect::Decrease(nname, args, val) => {
+                            crate::translate::pddl::Effect::Decrease(nname, args, val) => {
                                 let nkey = format!("{}({})", nname, args.join(", "));
                                 if let Some(&ni) = num_index.get(&nkey) {
                                     let const_name = format!("derived!{}.0()", val);
@@ -1118,11 +1118,11 @@ pub fn build_sas(
                                     op_numeric_effects.push((ni, "-".to_string(), rhs_idx, vec![]));
                                 }
                             }
-                            crate::translate::pddl_ast::Effect::And(_) => {}
+                            crate::translate::pddl::Effect::And(_) => {}
                         }
                     }
                 }
-                crate::translate::pddl_ast::Effect::Increase(nname, args, val) => {
+                crate::translate::pddl::Effect::Increase(nname, args, val) => {
                     let nkey = format!("{}({})", nname, args.join(", "));
                     if let Some(&ni) = num_index.get(&nkey) {
                         let const_name = format!("derived!{}.0()", val);
@@ -1143,7 +1143,7 @@ pub fn build_sas(
                         op_numeric_effects.push((ni, "+".to_string(), rhs_idx, vec![]));
                     }
                 }
-                crate::translate::pddl_ast::Effect::Decrease(nname, args, val) => {
+                crate::translate::pddl::Effect::Decrease(nname, args, val) => {
                     let nkey = format!("{}({})", nname, args.join(", "));
                     if let Some(&ni) = num_index.get(&nkey) {
                         let const_name = format!("derived!{}.0()", val);
@@ -1375,7 +1375,7 @@ pub fn build_sas(
     // This must happen BEFORE we try to look up comparison variables in collect_condition_pairs
     {
         fn ensure_axiom_comparison_vars(
-            cond: &crate::translate::pddl_ast::Condition,
+            cond: &crate::translate::pddl::Condition,
             ensure_expr_var: &mut dyn FnMut(
                 &crate::translate::pddl_parser::SExpr,
                 &mut std::collections::HashMap<String, usize>,
@@ -1400,7 +1400,7 @@ pub fn build_sas(
             negate_op: &dyn Fn(&str) -> String,
         ) {
             match cond {
-                crate::translate::pddl_ast::Condition::Comparison(opstr, l, r) => {
+                crate::translate::pddl::Condition::Comparison(opstr, l, r) => {
                     let left_name = ensure_expr_var(
                         l,
                         num_index,
@@ -1448,7 +1448,7 @@ pub fn build_sas(
                         }
                     }
                 }
-                crate::translate::pddl_ast::Condition::And(list) => {
+                crate::translate::pddl::Condition::And(list) => {
                     for c in list {
                         ensure_axiom_comparison_vars(
                             c,
@@ -1615,7 +1615,7 @@ pub fn build_sas(
     // Each axiom has a condition that needs to be converted to (var, val) pairs
     let mut sas_axioms: Vec<crate::translate::sas::SASAxiom> = Vec::new();
     fn collect_condition_pairs(
-        cond: &crate::translate::pddl_ast::Condition,
+        cond: &crate::translate::pddl::Condition,
         atom_to_fdr: &std::collections::HashMap<String, (usize, usize)>,
         var_index: &std::collections::HashMap<String, usize>,
         num_index: &std::collections::HashMap<String, usize>,
@@ -1624,13 +1624,13 @@ pub fn build_sas(
         normalize_op: &dyn Fn(&str) -> String,
     ) {
         match cond {
-            crate::translate::pddl_ast::Condition::Atom(name, args) => {
+            crate::translate::pddl::Condition::Atom(name, args) => {
                 let atom = format!("{}({})", name, args.join(", "));
                 if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
                     condition_pairs.push((v, val));
                 }
             }
-            crate::translate::pddl_ast::Condition::Comparison(opstr, l, r) => {
+            crate::translate::pddl::Condition::Comparison(opstr, l, r) => {
                 // The comparison should have been converted to a comparison axiom variable
                 // Look it up by its string representation
                 fn sexpr_to_name(s: &crate::translate::pddl_parser::SExpr) -> Option<String> {
@@ -1676,7 +1676,7 @@ pub fn build_sas(
                     }
                 }
             }
-            crate::translate::pddl_ast::Condition::And(parts) => {
+            crate::translate::pddl::Condition::And(parts) => {
                 for p in parts {
                     collect_condition_pairs(
                         p,
@@ -1689,9 +1689,9 @@ pub fn build_sas(
                     );
                 }
             }
-            crate::translate::pddl_ast::Condition::Not(inner) => {
+            crate::translate::pddl::Condition::Not(inner) => {
                 // For negated atoms, value 1 = false
-                if let crate::translate::pddl_ast::Condition::Atom(name, args) = &**inner {
+                if let crate::translate::pddl::Condition::Atom(name, args) = &**inner {
                     let atom = format!("{}({})", name, args.join(", "));
                     if let Some(&(v, _)) = atom_to_fdr.get(&atom) {
                         // For regular atoms, we need to find the negated value

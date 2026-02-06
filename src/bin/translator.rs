@@ -4,7 +4,7 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 
 use planners::translate::normalize;
-use planners::translate::pddl::PddlTask;
+use planners::translate::pddl_parser::PddlTask;
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
 #[derive(Parser)]
 #[clap(
@@ -57,9 +57,9 @@ fn main() -> anyhow::Result<()> {
                 task.domain_forms.len(),
                 task.problem_forms.len()
             );
-            let dom = planners::translate::pddl_ast::Domain::from_sexprs(&task.domain_forms)
+            let dom = planners::translate::pddl::Domain::from_sexprs(&task.domain_forms)
                 .expect("domain parse");
-            let prob = planners::translate::pddl_ast::Problem::from_sexprs(&task.problem_forms)
+            let prob = planners::translate::pddl::Problem::from_sexprs(&task.problem_forms)
                 .expect("problem parse");
 
             // Create normalizable task and run normalization

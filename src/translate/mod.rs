@@ -11,7 +11,6 @@ pub mod normalization_function_admin;
 pub mod normalize;
 pub mod numeric_axiom_rules;
 pub mod pddl;
-pub mod pddl_ast;
 pub mod pddl_parser;
 pub mod sas;
 pub mod sas_writer;

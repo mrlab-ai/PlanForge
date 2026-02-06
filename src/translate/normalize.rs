@@ -2,7 +2,7 @@ use crate::translate::build_model as bm;
 use crate::translate::normalization_function_admin::{
     NormalizationFunctionAdministrator, NumericAxiom,
 };
-use crate::translate::pddl_ast::{Condition, Domain, Problem};
+use crate::translate::pddl::{Condition, Domain, Problem};
 use crate::translate::pddl_parser::SExpr;
 use std::collections::{HashMap, HashSet};
 
@@ -99,7 +99,7 @@ pub struct TaskAxiom {
 impl NormalizableTask {
     /// Create a normalizable task from parsed Domain and Problem ASTs
     pub fn from_ast(domain: &Domain, problem: &Problem) -> Self {
-        use crate::translate::pddl_ast::sexpr_to_condition;
+        use crate::translate::pddl::sexpr_to_condition;
         let actions = build_actions(domain, sexpr_to_condition);
         let axioms = domain
             .axioms
@@ -407,7 +407,7 @@ fn build_default_cost_effect() -> SExpr {
 }
 
 fn parse_effects_impl(effect_sexpr: &SExpr) -> Vec<TaskEffect> {
-    use crate::translate::pddl_ast::sexpr_to_condition;
+    use crate::translate::pddl::sexpr_to_condition;
     match effect_sexpr {
         SExpr::List(items) if !items.is_empty() => parse_effect_list(items, &sexpr_to_condition),
         _ => vec![TaskEffect {
@@ -755,8 +755,8 @@ pub fn normalize_rules(rules: &mut Vec<bm::RuleSpec>) -> NormalizationOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::translate::pddl::PddlTask;
-    use crate::translate::pddl_ast::{Domain, Problem};
+    use crate::translate::pddl_parser::PddlTask;
+    use crate::translate::pddl::{Domain, Problem};
     use std::path::Path;
 
     fn rule(effect: (&str, Vec<&str>), conds: Vec<(&str, Vec<&str>)>, rtype: &str) -> bm::RuleSpec {

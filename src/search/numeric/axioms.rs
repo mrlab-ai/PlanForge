@@ -525,7 +525,7 @@ impl<'a> AxiomEvaluator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{parser::numeric_parser, search::numeric::numeric_task::NumericRootTask};
+    use crate::{preprocess::numeric_parser, search::numeric::numeric_task::NumericRootTask};
 
     fn setup_problems() -> Vec<NumericRootTask> {
         let mut problems = vec![];

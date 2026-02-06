@@ -44,7 +44,7 @@ impl PddlTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::translate::pddl_ast::{Domain, Problem};
+    use crate::translate::pddl::{Domain, Problem};
 
     #[test]
     fn build_ast_smoke() {

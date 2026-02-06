@@ -202,7 +202,7 @@ impl<'a> Node<'a> for LeafNode<'a> {
 mod tests {
     use super::*;
     use crate::{
-        parser::numeric_parser::parse_numeric_sas_output,
+        preprocess::numeric_parser::parse_numeric_sas_output,
         search::numeric::{
             numeric_task::NumericRootTask, state_registry::StateRegistry,
             utils::int_packer::IntDoublePacker,

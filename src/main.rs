@@ -3,10 +3,10 @@
 #![allow(unused_variables)]
 #![allow(unused_mut)]
 
-mod parser;
+mod preprocess;
 mod search;
 
-use parser::numeric_parser::parse_numeric_sas_output;
+use preprocess::numeric_parser::parse_numeric_sas_output;
 use std::collections::VecDeque;
 use std::env;
 use std::fs;

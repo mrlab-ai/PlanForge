@@ -1,5 +1,5 @@
 use crate::translate::constraints::ConstraintSystem;
-use crate::translate::pddl_ast::Condition;
+use crate::translate::pddl::Condition;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 

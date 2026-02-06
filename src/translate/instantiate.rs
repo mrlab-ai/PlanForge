@@ -1,6 +1,6 @@
 use crate::translate::build_model;
 use crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom;
-use crate::translate::pddl_ast::{Condition, Effect};
+use crate::translate::pddl::{Condition, Effect};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -1235,7 +1235,7 @@ fn ground_from_normalized_model(
                 .cloned()
                 .collect();
             let variable_mapping = create_variable_mapping(&axiom.parameters, &used_args);
-            let condition = crate::translate::pddl_ast::substitute_condition(
+            let condition = crate::translate::pddl::substitute_condition(
                 &axiom.condition,
                 &variable_mapping,
             );
@@ -1397,12 +1397,12 @@ fn instantiate_normalized_action(
     fluent_functions: &[String],
     init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
 ) -> Result<Option<GroundedOp>, InstantiateError> {
-    use crate::translate::pddl_ast;
+    use crate::translate::pddl;
 
     let name = format!("{}({})", action.name, grounded_args.join(","));
 
     // Substitute variables in precondition
-    let pre_sub = pddl_ast::substitute_condition(&action.precondition, variable_mapping);
+    let pre_sub = pddl::substitute_condition(&action.precondition, variable_mapping);
     let fluent_function_set: std::collections::HashSet<String> =
         fluent_functions.iter().cloned().collect();
     let _preconditions = match instantiate_condition_list(
@@ -1444,7 +1444,7 @@ fn instantiate_normalized_action(
     } else if effects.is_empty() {
         None
     } else {
-        Some(pddl_ast::Effect::And(
+        Some(pddl::Effect::And(
             effects.iter().map(|(_, e)| e.clone()).collect(),
         ))
     };
@@ -1524,7 +1524,7 @@ fn instantiate_effect_with_params(
         }
 
         let condition =
-            crate::translate::pddl_ast::substitute_condition(&effect.condition, &mapping);
+            crate::translate::pddl::substitute_condition(&effect.condition, &mapping);
         let cond_list = match instantiate_condition_list(
             &condition,
             init_atom_set,
@@ -1551,49 +1551,49 @@ fn instantiate_effect_with_params(
                 )))
             }
         };
-        let parsed = crate::translate::pddl_ast::sexpr_to_effect(&substituted);
+        let parsed = crate::translate::pddl::sexpr_to_effect(&substituted);
         match parsed {
-            crate::translate::pddl_ast::Effect::Add(name, args) => {
+            crate::translate::pddl::Effect::Add(name, args) => {
                 if fluent_predicates.contains(&name) {
                     out.push((
                         cond_list,
-                        crate::translate::pddl_ast::Effect::Add(name, args),
+                        crate::translate::pddl::Effect::Add(name, args),
                     ));
                 } else if !init_atom_set.contains(&(name.clone(), args.clone())) {
                     return Err(InstantiateError::NonFluentPredicate(name));
                 }
             }
-            crate::translate::pddl_ast::Effect::Del(name, args) => {
+            crate::translate::pddl::Effect::Del(name, args) => {
                 if fluent_predicates.contains(&name) {
                     out.push((
                         cond_list,
-                        crate::translate::pddl_ast::Effect::Del(name, args),
+                        crate::translate::pddl::Effect::Del(name, args),
                     ));
                 } else if init_atom_set.contains(&(name.clone(), args.clone())) {
                     return Err(InstantiateError::NonFluentPredicate(name));
                 }
             }
-            crate::translate::pddl_ast::Effect::Increase(name, args, val) => {
+            crate::translate::pddl::Effect::Increase(name, args, val) => {
                 if fluent_function_set.contains(&name) {
                     out.push((
                         cond_list,
-                        crate::translate::pddl_ast::Effect::Increase(name, args, val),
+                        crate::translate::pddl::Effect::Increase(name, args, val),
                     ));
                 } else {
                     return Err(InstantiateError::NonFluentFunction(name));
                 }
             }
-            crate::translate::pddl_ast::Effect::Decrease(name, args, val) => {
+            crate::translate::pddl::Effect::Decrease(name, args, val) => {
                 if fluent_function_set.contains(&name) {
                     out.push((
                         cond_list,
-                        crate::translate::pddl_ast::Effect::Decrease(name, args, val),
+                        crate::translate::pddl::Effect::Decrease(name, args, val),
                     ));
                 } else {
                     return Err(InstantiateError::NonFluentFunction(name));
                 }
             }
-            crate::translate::pddl_ast::Effect::And(v) => {
+            crate::translate::pddl::Effect::And(v) => {
                 for sub in v {
                     out.push((cond_list.clone(), sub));
                 }
@@ -1708,14 +1708,14 @@ fn substitute_sexpr_with_numeric(
 }
 
 fn instantiate_condition_list(
-    condition: &crate::translate::pddl_ast::Condition,
+    condition: &crate::translate::pddl::Condition,
     init_atom_set: &std::collections::HashSet<(String, Vec<String>)>,
     model_atom_set: &std::collections::HashSet<(String, Vec<String>)>,
     fluent_predicates: &std::collections::HashSet<String>,
     fluent_function_set: &std::collections::HashSet<String>,
     init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
 ) -> Option<Vec<Condition>> {
-    use crate::translate::pddl_ast::Condition;
+    use crate::translate::pddl::Condition;
 
     match condition {
         Condition::True => Some(Vec::new()),
