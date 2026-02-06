@@ -208,130 +208,7 @@ pub fn build_sas(
     let mut instantiated_num_axioms: Vec<
         crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom,
     > = external_instantiated_num_axioms.clone();
-    // Prune numeric axioms to those required by comparisons and numeric effects
-    {
-        fn sexpr_to_key(sexpr: &crate::translate::pddl_parser::SExpr) -> Option<String> {
-            match sexpr {
-                crate::translate::pddl_parser::SExpr::Atom(a) => {
-                    if let Ok(v) = a.parse::<i64>() {
-                        Some(format!("derived!{}.0()", v))
-                    } else if a.ends_with(')') {
-                        Some(a.clone())
-                    } else {
-                        Some(format!("{}()", a))
-                    }
-                }
-                crate::translate::pddl_parser::SExpr::List(list) => {
-                    if list.is_empty() {
-                        return None;
-                    }
-                    let fname = match &list[0] {
-                        crate::translate::pddl_parser::SExpr::Atom(name) => name.clone(),
-                        _ => return None,
-                    };
-                    let args = list[1..]
-                        .iter()
-                        .filter_map(|x| match x {
-                            crate::translate::pddl_parser::SExpr::Atom(a) => Some(a.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
-                    if args.is_empty() {
-                        if fname.ends_with(')') {
-                            Some(fname)
-                        } else {
-                            Some(format!("{}()", fname))
-                        }
-                    } else {
-                        Some(format!("{}({})", fname, args.join(", ")))
-                    }
-                }
-            }
-        }
-
-        fn collect_comparisons(
-            cond: &crate::translate::pddl_ast::Condition,
-            required: &mut std::collections::HashSet<String>,
-        ) {
-            match cond {
-                crate::translate::pddl_ast::Condition::Comparison(_, l, r) => {
-                    if let Some(k) = sexpr_to_key(l) {
-                        required.insert(k);
-                    }
-                    if let Some(k) = sexpr_to_key(r) {
-                        required.insert(k);
-                    }
-                }
-                crate::translate::pddl_ast::Condition::And(v) => {
-                    for c in v {
-                        collect_comparisons(c, required);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let mut required_pnes: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for op in ops {
-            if let Some(pre) = &op.pre {
-                collect_comparisons(pre, &mut required_pnes);
-            }
-            if let Some(eff) = &op.eff {
-                if let crate::translate::pddl_ast::Effect::Increase(name, args, v)
-                | crate::translate::pddl_ast::Effect::Decrease(name, args, v) = eff
-                {
-                    required_pnes.insert(format!("{}({})", name, args.join(", ")));
-                    required_pnes.insert(format!("derived!{}.0()", v));
-                }
-            }
-            for (_conds, eff) in &op.effects {
-                match eff {
-                    crate::translate::pddl_ast::Effect::Increase(name, args, v)
-                    | crate::translate::pddl_ast::Effect::Decrease(name, args, v) => {
-                        required_pnes.insert(format!("{}({})", name, args.join(", ")));
-                        required_pnes.insert(format!("derived!{}.0()", v));
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let mut needed = required_pnes.clone();
-        let mut kept: Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom> =
-            Vec::new();
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for ax in &instantiated_num_axioms {
-                let effect_key = format_pne(&ax.effect);
-                if !needed.contains(&effect_key) {
-                    continue;
-                }
-                if kept.iter().any(|k| k == ax) {
-                    continue;
-                }
-                kept.push(ax.clone());
-                for part in &ax.parts {
-                    match part {
-                        crate::translate::numeric_axiom_rules::NumericPart::Primitive(pne) => {
-                            let key = format_pne(pne);
-                            if needed.insert(key) {
-                                changed = true;
-                            }
-                        }
-                        crate::translate::numeric_axiom_rules::NumericPart::Axiom(ref_ax) => {
-                            let key = format_pne(&ref_ax.effect);
-                            if needed.insert(key) {
-                                changed = true;
-                            }
-                        }
-                        crate::translate::numeric_axiom_rules::NumericPart::Constant(_) => {}
-                    }
-                }
-            }
-        }
-        instantiated_num_axioms = kept;
-    }
+    // Do not prune numeric axioms: Python keeps the full set for SAS
     // helper: given an SExpr that may be an arithmetic expression like
     // (+ (f a) (g b)) produce or reuse a numeric variable name, possibly
     // creating an InstantiatedNumericAxiom for the derived expression.
@@ -1495,53 +1372,6 @@ pub fn build_sas(
         }
     }
 
-    // Build propositional init vector aligned to variables using problem.init
-    let mut prop_init: Vec<i32> = vec![-1; vars.len()];
-    for sexpr in &prob.init {
-        if let crate::translate::pddl_parser::SExpr::List(list) = sexpr {
-            if list.is_empty() {
-                continue;
-            }
-            if let crate::translate::pddl_parser::SExpr::Atom(pred) = &list[0] {
-                if pred == "=" {
-                    continue;
-                }
-                let args: Vec<String> = list[1..]
-                    .iter()
-                    .filter_map(|x| match x {
-                        crate::translate::pddl_parser::SExpr::Atom(a) => Some(a.clone()),
-                        _ => None,
-                    })
-                    .collect();
-                let atom = format!("{}({})", pred, args.join(", "));
-                if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
-                    prop_init[v] = val as i32;
-                }
-            }
-        }
-    }
-    for (v_idx, init_val) in prop_init.iter_mut().enumerate() {
-        if *init_val == -1 {
-            if let Some(idx) = vars[v_idx]
-                .value_names
-                .iter()
-                .position(|name| name == "<none of those>")
-            {
-                *init_val = idx as i32;
-            } else if let Some(idx) = vars[v_idx]
-                .value_names
-                .iter()
-                .position(|name| name.starts_with("NegatedAtom "))
-            {
-                *init_val = idx as i32;
-            } else if ranges.get(v_idx).copied().unwrap_or(0) > 0 {
-                *init_val = (ranges[v_idx] as i32) - 1;
-            } else {
-                *init_val = 0;
-            }
-        }
-    }
-
     // Goal is represented by a dedicated goal axiom variable
     let goal_pairs: Vec<(usize, usize)> = vec![(goal_axiom_var, 0)];
 
@@ -1683,6 +1513,53 @@ pub fn build_sas(
             &normalize_op,
             &negate_op,
         );
+    }
+
+    // Build propositional init vector aligned to variables using problem.init
+    let mut prop_init: Vec<i32> = vec![-1; vars.len()];
+    for sexpr in &prob.init {
+        if let crate::translate::pddl_parser::SExpr::List(list) = sexpr {
+            if list.is_empty() {
+                continue;
+            }
+            if let crate::translate::pddl_parser::SExpr::Atom(pred) = &list[0] {
+                if pred == "=" {
+                    continue;
+                }
+                let args: Vec<String> = list[1..]
+                    .iter()
+                    .filter_map(|x| match x {
+                        crate::translate::pddl_parser::SExpr::Atom(a) => Some(a.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let atom = format!("{}({})", pred, args.join(", "));
+                if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
+                    prop_init[v] = val as i32;
+                }
+            }
+        }
+    }
+    for (v_idx, init_val) in prop_init.iter_mut().enumerate() {
+        if *init_val == -1 {
+            if let Some(idx) = vars[v_idx]
+                .value_names
+                .iter()
+                .position(|name| name == "<none of those>")
+            {
+                *init_val = idx as i32;
+            } else if let Some(idx) = vars[v_idx]
+                .value_names
+                .iter()
+                .position(|name| name.starts_with("NegatedAtom "))
+            {
+                *init_val = idx as i32;
+            } else if ranges.get(v_idx).copied().unwrap_or(0) > 0 {
+                *init_val = (ranges[v_idx] as i32) - 1;
+            } else {
+                *init_val = 0;
+            }
+        }
     }
 
     let comp_var_set: std::collections::HashSet<usize> =

@@ -15,4 +15,5 @@ pub mod pddl_ast;
 pub mod pddl_parser;
 pub mod sas;
 pub mod sas_writer;
+pub mod simplify;
 pub mod to_sas;

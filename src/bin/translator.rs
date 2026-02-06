@@ -125,7 +125,7 @@ fn main() -> anyhow::Result<()> {
             let instantiated_num_axioms = result.numeric_axioms;
 
             let py_groups: Option<Vec<Vec<String>>> = None;
-            let sastask = planners::translate::to_sas::build_sas(
+            let mut sastask = planners::translate::to_sas::build_sas(
                 &result.grounded_ops,
                 &dom,
                 &prob,
@@ -136,6 +136,19 @@ fn main() -> anyhow::Result<()> {
                 &norm_task,
             )
             .map_err(|err| anyhow::anyhow!(err))?;
+            match planners::translate::simplify::filter_unreachable_propositions(&mut sastask) {
+                Ok(removed) => {
+                    eprintln!("translator: simplified task, removed {} propositions", removed);
+                }
+                Err(planners::translate::simplify::SimplifyError::Impossible) => {
+                    eprintln!("translator: task simplified to unsolvable");
+                    sastask = planners::translate::simplify::trivial_task(false);
+                }
+                Err(planners::translate::simplify::SimplifyError::TriviallySolvable) => {
+                    eprintln!("translator: task simplified to trivially solvable");
+                    sastask = planners::translate::simplify::trivial_task(true);
+                }
+            }
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
             planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
             eprintln!("translator: wrote {}", out_path.display());
