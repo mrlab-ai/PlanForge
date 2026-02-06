@@ -1,5 +1,5 @@
 //! Function expression types for numeric PDDL
-//! 
+//!
 //! This module defines types for representing numeric expressions in PDDL,
 //! mirroring the Python f_expression module structure.
 
@@ -30,7 +30,11 @@ pub struct PrimitiveNumericExpression {
 
 impl PrimitiveNumericExpression {
     pub fn new(symbol: String, args: Vec<String>, ntype: char) -> Self {
-        PrimitiveNumericExpression { symbol, args, ntype }
+        PrimitiveNumericExpression {
+            symbol,
+            args,
+            ntype,
+        }
     }
 }
 
@@ -126,11 +130,13 @@ pub fn parse_functional_expression(sexpr: &SExpr) -> Option<FunctionalExpression
             // Try to parse as number (try float first to handle both "3" and "3.0")
             if let Ok(value) = a.parse::<f64>() {
                 // Store as integer representation (Fast Downward uses integer math)
-                Some(FunctionalExpression::Constant(NumericConstant::new(value as i64)))
+                Some(FunctionalExpression::Constant(NumericConstant::new(
+                    value as i64,
+                )))
             } else {
                 // Treat as primitive numeric expression (0-arity function)
                 Some(FunctionalExpression::Primitive(
-                    PrimitiveNumericExpression::new(a.clone(), vec![], 'S')
+                    PrimitiveNumericExpression::new(a.clone(), vec![], 'S'),
                 ))
             }
         }
@@ -148,9 +154,10 @@ pub fn parse_functional_expression(sexpr: &SExpr) -> Option<FunctionalExpression
                             }
                         }
                         if parts.len() >= 2 {
-                            Some(FunctionalExpression::Arithmetic(
-                                ArithmeticExpression::new(op.clone(), parts)
-                            ))
+                            Some(FunctionalExpression::Arithmetic(ArithmeticExpression::new(
+                                op.clone(),
+                                parts,
+                            )))
                         } else {
                             None
                         }
@@ -160,9 +167,9 @@ pub fn parse_functional_expression(sexpr: &SExpr) -> Option<FunctionalExpression
                         if list.len() == 2 {
                             // Unary minus
                             if let Some(part) = parse_functional_expression(&list[1]) {
-                                Some(FunctionalExpression::AdditiveInverse(
-                                    AdditiveInverse::new(part)
-                                ))
+                                Some(FunctionalExpression::AdditiveInverse(AdditiveInverse::new(
+                                    part,
+                                )))
                             } else {
                                 None
                             }
@@ -176,9 +183,10 @@ pub fn parse_functional_expression(sexpr: &SExpr) -> Option<FunctionalExpression
                                     return None;
                                 }
                             }
-                            Some(FunctionalExpression::Arithmetic(
-                                ArithmeticExpression::new(op.clone(), parts)
-                            ))
+                            Some(FunctionalExpression::Arithmetic(ArithmeticExpression::new(
+                                op.clone(),
+                                parts,
+                            )))
                         } else {
                             None
                         }
@@ -193,7 +201,7 @@ pub fn parse_functional_expression(sexpr: &SExpr) -> Option<FunctionalExpression
                             })
                             .collect();
                         Some(FunctionalExpression::Primitive(
-                            PrimitiveNumericExpression::new(op.clone(), args, 'S')
+                            PrimitiveNumericExpression::new(op.clone(), args, 'S'),
                         ))
                     }
                 }

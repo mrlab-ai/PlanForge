@@ -1,5 +1,7 @@
 use crate::translate::build_model as bm;
-use crate::translate::normalization_function_admin::{NormalizationFunctionAdministrator, NumericAxiom};
+use crate::translate::normalization_function_admin::{
+    NormalizationFunctionAdministrator, NumericAxiom,
+};
 use crate::translate::pddl_ast::{Condition, Domain, Problem};
 use crate::translate::pddl_parser::SExpr;
 use std::collections::{HashMap, HashSet};
@@ -96,14 +98,14 @@ impl NormalizableTask {
     pub fn from_ast(domain: &Domain, problem: &Problem) -> Self {
         use crate::translate::pddl_ast::sexpr_to_condition;
         let actions = build_actions(domain, sexpr_to_condition);
-        
+
         // Convert goal from SExpr to Condition
         let goal = problem
             .goal
             .as_ref()
             .map(|s| sexpr_to_condition(s))
             .unwrap_or(Condition::True);
-        
+
         NormalizableTask {
             domain_name: domain.name.clone(),
             problem_name: problem.name.clone(),
@@ -125,13 +127,13 @@ impl NormalizableTask {
             function_administrator: NormalizationFunctionAdministrator::new(),
         }
     }
-    
+
     /// Parse effects from an SExpr into a list of TaskEffect structures.
     /// Handles conditional effects with forall, when, and nested structures.
     fn parse_effects(effect_sexpr: &SExpr) -> Vec<TaskEffect> {
         parse_effects_impl(effect_sexpr)
     }
-    
+
     /// Check if an effect SExpr is a cost effect (increase total-cost only)
     /// Python only recognizes "total-cost" as a cost fluent, not "cost"
     /// (See f_expression.py:is_cost_assignment() line 257)
@@ -145,7 +147,7 @@ impl NormalizableTask {
             _ => false,
         }
     }
-    
+
     /// Parse effects and extract cost effect.
     /// Like Python's parse_effects + extract_cost, the cost effect is kept in the effects list
     /// (for backward compatibility) but also returned separately.
@@ -154,22 +156,26 @@ impl NormalizableTask {
         let cost = extract_cost_effect(&effects);
         (effects, cost)
     }
-    
+
     /// Add a new axiom to the task and return its name
-    pub fn add_axiom(&mut self, parameters: Vec<(String, Option<String>)>, condition: Condition) -> String {
+    pub fn add_axiom(
+        &mut self,
+        parameters: Vec<(String, Option<String>)>,
+        condition: Condition,
+    ) -> String {
         let axiom_name = format!("@axiom-{}", self.axiom_counter);
         self.axiom_counter += 1;
-        
+
         self.axioms.push(TaskAxiom {
             name: axiom_name.clone(),
             parameters: parameters.clone(),
             condition,
             num_external_parameters: parameters.len(),
         });
-        
+
         axiom_name
     }
-    
+
     /// Get a type map for a given set of parameters
     /// This is used when creating axioms to track variable types
     pub fn build_type_map(parameters: &[(String, Option<String>)]) -> HashMap<String, String> {
@@ -189,18 +195,34 @@ impl NormalizableTask {
         out.push_str(&format!("  objects: {}\n", self.objects.len()));
         out.push_str(&format!("  actions: {}\n", self.actions.len()));
         out.push_str(&format!("  axioms: {}\n", self.axioms.len()));
-        out.push_str(&format!("  numeric_axioms: {}\n", self.numeric_axioms.len()));
+        out.push_str(&format!(
+            "  numeric_axioms: {}\n",
+            self.numeric_axioms.len()
+        ));
         out.push_str("\nActions:\n");
         for action in &self.actions {
-            out.push_str(&format!("  - {}{}\n", action.name, fmt_params(&action.parameters)));
-            out.push_str(&format!("    pre: {}\n", fmt_condition(&action.precondition)));
+            out.push_str(&format!(
+                "  - {}{}\n",
+                action.name,
+                fmt_params(&action.parameters)
+            ));
+            out.push_str(&format!(
+                "    pre: {}\n",
+                fmt_condition(&action.precondition)
+            ));
             if let Some(cost) = &action.cost {
                 out.push_str(&format!("    cost: {}\n", fmt_sexpr(cost)));
             }
             out.push_str(&format!("    effects: {}\n", action.effects.len()));
             for eff in &action.effects {
-                out.push_str(&format!("      - params: {}\n", fmt_params(&eff.parameters)));
-                out.push_str(&format!("        when: {}\n", fmt_condition(&eff.condition)));
+                out.push_str(&format!(
+                    "      - params: {}\n",
+                    fmt_params(&eff.parameters)
+                ));
+                out.push_str(&format!(
+                    "        when: {}\n",
+                    fmt_condition(&eff.condition)
+                ));
                 out.push_str(&format!("        effect: {}\n", fmt_sexpr(&eff.effect)));
             }
         }
@@ -254,11 +276,19 @@ fn fmt_condition(cond: &Condition) -> String {
         Condition::Not(inner) => format!("(not {})", fmt_condition(inner)),
         Condition::And(parts) => format!(
             "(and {})",
-            parts.iter().map(fmt_condition).collect::<Vec<_>>().join(" ")
+            parts
+                .iter()
+                .map(fmt_condition)
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
         Condition::Or(parts) => format!(
             "(or {})",
-            parts.iter().map(fmt_condition).collect::<Vec<_>>().join(" ")
+            parts
+                .iter()
+                .map(fmt_condition)
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
         Condition::Forall(params, inner) => {
             format!("(forall {} {})", fmt_params(params), fmt_condition(inner))
@@ -356,10 +386,7 @@ fn parse_effect_list(
         }
     };
     match keyword.as_str() {
-        KW_AND => items[1..]
-            .iter()
-            .flat_map(parse_effects_impl)
-            .collect(),
+        KW_AND => items[1..].iter().flat_map(parse_effects_impl).collect(),
         KW_FORALL => parse_forall_effect(items),
         KW_WHEN => parse_when_effect(items, sexpr_to_condition),
         _ => vec![TaskEffect {
@@ -585,15 +612,15 @@ fn convert_trivial_rules(rules: &mut Vec<bm::RuleSpec>) -> Vec<bm::Atom> {
 }
 
 /// Get predicates that can change during plan execution (fluent predicates).
-/// 
+///
 /// A predicate is fluent if it appears in:
 /// - Action effects (add or delete)
 /// - Axiom heads (derived predicates)
-/// 
+///
 /// This mirrors Python's normalize.get_fluent_predicates().
 pub fn get_fluent_predicates(task: &NormalizableTask) -> HashSet<String> {
     let mut fluent_predicates = HashSet::new();
-    
+
     // Collect predicates from action effects
     for action in &task.actions {
         for effect in &action.effects {
@@ -603,12 +630,12 @@ pub fn get_fluent_predicates(task: &NormalizableTask) -> HashSet<String> {
             }
         }
     }
-    
+
     // Collect predicates from axiom heads
     for axiom in &task.axioms {
         fluent_predicates.insert(axiom.name.clone());
     }
-    
+
     fluent_predicates
 }
 
@@ -616,7 +643,10 @@ pub fn get_fluent_predicates(task: &NormalizableTask) -> HashSet<String> {
 /// Handles: (predicate args...), (not (predicate args...)), (increase/decrease/assign ...)
 fn extract_effect_predicate(effect: &SExpr) -> Option<String> {
     fn is_numeric_effect(op: &str) -> bool {
-        matches!(op, KW_INCREASE | KW_DECREASE | KW_ASSIGN | KW_SCALE_UP | KW_SCALE_DOWN)
+        matches!(
+            op,
+            KW_INCREASE | KW_DECREASE | KW_ASSIGN | KW_SCALE_UP | KW_SCALE_DOWN
+        )
     }
 
     match effect {
@@ -885,7 +915,6 @@ pub fn remove_universal_quantifiers(
     }
 }
 
-
 /// Substitute complicated goal conditions with axioms.
 ///
 /// This function implements the goal normalization from Python's normalize.py.
@@ -895,10 +924,7 @@ pub fn remove_universal_quantifiers(
 /// - Otherwise: create an axiom for the goal and replace it with an atom referencing that axiom
 ///
 /// This simplifies goal handling in the rest of the translation pipeline.
-pub fn substitute_complicated_goal(
-    goal: &Condition,
-    ctx: &mut NormalizationContext,
-) -> Condition {
+pub fn substitute_complicated_goal(goal: &Condition, ctx: &mut NormalizationContext) -> Condition {
     // Check if goal is a simple literal (Atom or Not(Atom))
     match goal {
         Condition::Atom(_, _) => return goal.clone(),
@@ -995,12 +1021,7 @@ pub fn build_dnf(condition: &Condition) -> Condition {
                 Condition::Or(result_parts)
             } else {
                 // Fallback - shouldn't happen
-                condition.change_parts(
-                    other_parts
-                        .into_iter()
-                        .chain(disjunctive_parts)
-                        .collect(),
-                )
+                condition.change_parts(other_parts.into_iter().chain(disjunctive_parts).collect())
             }
         }
 
@@ -1037,15 +1058,9 @@ pub fn build_dnf(condition: &Condition) -> Condition {
         }
 
         // For other condition types, just return with processed parts
-        _ => condition.change_parts(
-            other_parts
-                .into_iter()
-                .chain(disjunctive_parts)
-                .collect(),
-        ),
+        _ => condition.change_parts(other_parts.into_iter().chain(disjunctive_parts).collect()),
     }
 }
-
 
 /// Check if a condition is a top-level disjunction.
 ///
@@ -1100,10 +1115,7 @@ fn simplify_condition(condition: &Condition) -> Condition {
             }
         }
         Condition::Or(parts) => {
-            let mut new_parts: Vec<Condition> = parts
-                .iter()
-                .map(simplify_condition)
-                .collect();
+            let mut new_parts: Vec<Condition> = parts.iter().map(simplify_condition).collect();
             if new_parts.iter().any(|p| matches!(p, Condition::True)) {
                 return Condition::True;
             }
@@ -1182,7 +1194,7 @@ pub fn move_existential_quantifiers(condition: &Condition) -> Condition {
                 // Combine parameters from outer and inner exists
                 let mut new_parameters = params.clone();
                 new_parameters.extend(inner_params.clone());
-                
+
                 // The new condition is the inner condition's parts
                 // (which should be a single condition)
                 Condition::Exists(new_parameters, inner_cond.clone())
@@ -1202,7 +1214,7 @@ pub fn move_existential_quantifiers(condition: &Condition) -> Condition {
             // Collect all parameters from existential parts
             let mut new_parameters: Vec<(String, Option<String>)> = Vec::new();
             let mut new_conjunction_parts = other_parts;
-            
+
             for part in existential_parts {
                 if let Condition::Exists(params, inner) = part {
                     new_parameters.extend(params);
@@ -1219,7 +1231,7 @@ pub fn move_existential_quantifiers(condition: &Condition) -> Condition {
                     }
                 }
             }
-            
+
             let new_conjunction = Condition::And(new_conjunction_parts);
             Condition::Exists(new_parameters, Box::new(new_conjunction))
         }
@@ -1233,7 +1245,6 @@ pub fn move_existential_quantifiers(condition: &Condition) -> Condition {
     }
 }
 
-
 /// Eliminate existential quantifiers from axioms by turning them into parameters.
 ///
 /// This function implements normalization step [5a] from Python's normalize.py.
@@ -1246,21 +1257,18 @@ pub fn move_existential_quantifiers(condition: &Condition) -> Condition {
 /// This is done in-place by modifying the axiom's parameters and condition.
 /// The existential quantifiers are "dropped" by moving their parameters to
 /// the axiom's parameter list.
-pub fn eliminate_existential_quantifiers_from_axioms(
-    axioms: &mut [NormalizationAxiom],
-) {
+pub fn eliminate_existential_quantifiers_from_axioms(axioms: &mut [NormalizationAxiom]) {
     for axiom in axioms.iter_mut() {
         if let Condition::Exists(params, inner) = &axiom.condition {
             // Extend the axiom's parameters with the existential parameters
             axiom.parameters.extend(params.clone());
-            
+
             // Replace the condition with the inner condition (first part)
             // In Python, precond.parts[0] is used, and parts is a tuple with one element
             axiom.condition = (**inner).clone();
         }
     }
 }
-
 
 /// Eliminate existential quantifiers from action preconditions by turning them into parameters.
 ///
@@ -1277,21 +1285,18 @@ pub fn eliminate_existential_quantifiers_from_axioms(
 /// This is done in-place by modifying the action's parameters and precondition.
 /// The existential quantifiers are "dropped" by moving their parameters to
 /// the action's parameter list.
-pub fn eliminate_existential_quantifiers_from_preconditions(
-    actions: &mut [NormalizationAction],
-) {
+pub fn eliminate_existential_quantifiers_from_preconditions(actions: &mut [NormalizationAction]) {
     for action in actions.iter_mut() {
         if let Condition::Exists(params, inner) = &action.precondition {
             // Extend the action's parameters with the existential parameters
             action.parameters.extend(params.clone());
-            
+
             // Replace the precondition with the inner condition (first part)
             // In Python, precond.parts[0] is used, and parts is a tuple with one element
             action.precondition = (**inner).clone();
         }
     }
 }
-
 
 /// Eliminate existential quantifiers from conditional effect conditions.
 ///
@@ -1315,7 +1320,7 @@ pub fn eliminate_existential_quantifiers_from_conditional_effects(
         if let Condition::Exists(params, inner) = &effect.condition {
             // Extend the effect's parameters with the existential parameters
             effect.parameters.extend(params.clone());
-            
+
             // Replace the condition with the inner condition (first part)
             effect.condition = (**inner).clone();
         }
@@ -1348,14 +1353,18 @@ pub fn eliminate_existential_quantifiers_from_conditional_effects(
 /// for function symbols found in effect expressions.
 pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
     use std::collections::HashSet;
-    
+
     // Collect all defined function names
-    let mut function_names: HashSet<String> = task.functions.iter().map(|(name, _)| name.clone()).collect();
-    
+    let mut function_names: HashSet<String> = task
+        .functions
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect();
+
     // Helper to recursively scan SExpr for function symbols
     fn find_function_symbols(expr: &SExpr, symbols: &mut HashSet<String>) {
         match expr {
-            SExpr::Atom(_) => {}, // Constants or variables, not functions
+            SExpr::Atom(_) => {} // Constants or variables, not functions
             SExpr::List(items) => {
                 if items.is_empty() {
                     return;
@@ -1364,7 +1373,23 @@ pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
                 if let SExpr::Atom(op) = &items[0] {
                     // Check if it looks like a function call (not a standard operator)
                     // Standard operators: +, -, *, /, =, <, >, <=, >=, etc.
-                    if !matches!(op.as_str(), "+" | "-" | "*" | "/" | "=" | "<" | ">" | "<=" | ">=" | "and" | "or" | "not" | "increase" | "decrease" | "assign") {
+                    if !matches!(
+                        op.as_str(),
+                        "+" | "-"
+                            | "*"
+                            | "/"
+                            | "="
+                            | "<"
+                            | ">"
+                            | "<="
+                            | ">="
+                            | "and"
+                            | "or"
+                            | "not"
+                            | "increase"
+                            | "decrease"
+                            | "assign"
+                    ) {
                         // This might be a function symbol
                         symbols.insert(op.clone());
                     }
@@ -1376,7 +1401,7 @@ pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
             }
         }
     }
-    
+
     // Collect all function symbols used in numeric effects (not predicate effects)
     let mut used_symbols = HashSet::new();
     for action in &task.actions {
@@ -1387,7 +1412,10 @@ pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
                 if !items.is_empty() {
                     if let SExpr::Atom(op) = &items[0] {
                         // Only scan numeric operators
-                        if matches!(op.as_str(), "increase" | "decrease" | "assign" | "scale-up" | "scale-down") {
+                        if matches!(
+                            op.as_str(),
+                            "increase" | "decrease" | "assign" | "scale-up" | "scale-down"
+                        ) {
                             find_function_symbols(&effect.effect, &mut used_symbols);
                         }
                         // Skip predicate effects (anything else)
@@ -1401,7 +1429,7 @@ pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
     if let Some(metric_expr) = &task.metric.1 {
         find_function_symbols(metric_expr, &mut used_symbols);
     }
-    
+
     // Check for undefined functions
     let mut undefined_functions = Vec::new();
     for symbol in &used_symbols {
@@ -1409,7 +1437,7 @@ pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
             undefined_functions.push(symbol.clone());
         }
     }
-    
+
     // Add undefined 0-arity functions with warning
     for symbol in undefined_functions {
         eprintln!(
@@ -1417,11 +1445,11 @@ pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
             symbol
         );
         eprintln!("Adding new symbol '{}' with arity 0.", symbol);
-        
+
         // Add to functions list
         task.functions.push((symbol.clone(), vec![]));
         function_names.insert(symbol.clone());
-        
+
         // Note: Initial value assignment would be added to task.init here
         // Format: (= (symbol) 0)
         // For now, we just add the function definition
@@ -1466,7 +1494,7 @@ pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
 ///                 assign = eff.peffect
 ///                 assign.expression = admin.get_derived_function(assign.expression)
 ///     
-///     # remove from metric expression 
+///     # remove from metric expression
 ///     opt_dir, metric_expression = task.metric
 ///     if metric_expression is None:
 ///         assert opt_dir == '<'
@@ -1478,7 +1506,7 @@ pub fn task_verify_and_fix_arithmetic_expressions(task: &mut NormalizableTask) {
 pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
     use crate::translate::function_expression::parse_functional_expression;
     use crate::translate::normalization_function_admin::pne_to_sexpr;
-    
+
     // Helper to process comparison conditions and replace arithmetic expressions
     fn process_condition(
         cond: &Condition,
@@ -1495,7 +1523,7 @@ pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
                     // If parsing fails, keep original
                     left.clone()
                 };
-                
+
                 let right_result = if let Some(right_expr) = parse_functional_expression(right) {
                     // Process through function administrator
                     let pne = admin.get_derived_function(&right_expr);
@@ -1504,7 +1532,7 @@ pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
                     // If parsing fails, keep original
                     right.clone()
                 };
-                
+
                 Condition::Comparison(comparator.clone(), left_result, right_result)
             }
             Condition::And(parts) => {
@@ -1513,9 +1541,7 @@ pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
             Condition::Or(parts) => {
                 Condition::Or(parts.iter().map(|p| process_condition(p, admin)).collect())
             }
-            Condition::Not(inner) => {
-                Condition::Not(Box::new(process_condition(inner, admin)))
-            }
+            Condition::Not(inner) => Condition::Not(Box::new(process_condition(inner, admin))),
             Condition::Exists(params, inner) => {
                 Condition::Exists(params.clone(), Box::new(process_condition(inner, admin)))
             }
@@ -1526,7 +1552,7 @@ pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
             _ => cond.clone(),
         }
     }
-    
+
     // Helper to process effect expressions
     fn process_effect_expr(
         effect_sexpr: &SExpr,
@@ -1536,11 +1562,14 @@ pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
             SExpr::List(items) if items.len() >= 3 => {
                 // Check if this is an assignment-like effect
                 if let SExpr::Atom(op) = &items[0] {
-                    if matches!(op.as_str(), "assign" | "increase" | "decrease" | "scale-up" | "scale-down") {
+                    if matches!(
+                        op.as_str(),
+                        "assign" | "increase" | "decrease" | "scale-up" | "scale-down"
+                    ) {
                         // Pattern: (op fluent expression)
                         // Process the expression (items[2..])
                         let fluent = items[1].clone();
-                        
+
                         // Build expression SExpr from remaining items
                         let expr_sexpr = if items.len() == 3 {
                             items[2].clone()
@@ -1548,21 +1577,18 @@ pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
                             // Multiple items, wrap in a list if needed
                             items[2].clone()
                         };
-                        
+
                         // Try to parse and process
-                        let processed_expr = if let Some(func_expr) = parse_functional_expression(&expr_sexpr) {
-                            let pne = admin.get_derived_function(&func_expr);
-                            pne_to_sexpr(&pne)
-                        } else {
-                            expr_sexpr
-                        };
-                        
+                        let processed_expr =
+                            if let Some(func_expr) = parse_functional_expression(&expr_sexpr) {
+                                let pne = admin.get_derived_function(&func_expr);
+                                pne_to_sexpr(&pne)
+                            } else {
+                                expr_sexpr
+                            };
+
                         // Reconstruct effect
-                        return SExpr::List(vec![
-                            SExpr::Atom(op.clone()),
-                            fluent,
-                            processed_expr,
-                        ]);
+                        return SExpr::List(vec![SExpr::Atom(op.clone()), fluent, processed_expr]);
                     }
                 }
                 effect_sexpr.clone()
@@ -1570,39 +1596,42 @@ pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
             _ => effect_sexpr.clone(),
         }
     }
-    
+
     // Process all action preconditions
     for i in 0..task.actions.len() {
         let precond = task.actions[i].precondition.clone();
-        task.actions[i].precondition = process_condition(&precond, &mut task.function_administrator);
+        task.actions[i].precondition =
+            process_condition(&precond, &mut task.function_administrator);
     }
-    
+
     // Process all effect conditions
     for i in 0..task.actions.len() {
         for j in 0..task.actions[i].effects.len() {
             let cond = task.actions[i].effects[j].condition.clone();
-            task.actions[i].effects[j].condition = process_condition(&cond, &mut task.function_administrator);
-            
+            task.actions[i].effects[j].condition =
+                process_condition(&cond, &mut task.function_administrator);
+
             // Also process the effect expression itself
             let effect_expr = task.actions[i].effects[j].effect.clone();
-            task.actions[i].effects[j].effect = process_effect_expr(&effect_expr, &mut task.function_administrator);
+            task.actions[i].effects[j].effect =
+                process_effect_expr(&effect_expr, &mut task.function_administrator);
         }
     }
-    
+
     // Process all axiom conditions
     for i in 0..task.axioms.len() {
         let cond = task.axioms[i].condition.clone();
         task.axioms[i].condition = process_condition(&cond, &mut task.function_administrator);
     }
-    
+
     // Process goal
     let goal = task.goal.clone();
     task.goal = process_condition(&goal, &mut task.function_administrator);
-    
+
     // Collect all generated numeric axioms
     let numeric_axioms = task.function_administrator.get_all_axioms();
     task.numeric_axioms = numeric_axioms;
-    
+
     // Process metric expression
     let metric_expr = task.metric.1.clone();
     let new_metric_expr = if let Some(expr) = metric_expr {
@@ -1648,10 +1677,10 @@ pub fn task_remove_arithmetic_expressions(task: &mut NormalizableTask) {
 /// ```
 pub fn task_verify_axiom_predicates(task: &NormalizableTask) -> Result<(), String> {
     use std::collections::HashSet;
-    
+
     // Collect all axiom predicate names
     let axiom_names: HashSet<String> = task.axioms.iter().map(|ax| ax.name.clone()).collect();
-    
+
     // Check that derived predicates don't appear in :init
     for init_fact in &task.init {
         // Extract predicate name from init fact
@@ -1665,7 +1694,7 @@ pub fn task_verify_axiom_predicates(task: &NormalizableTask) -> Result<(), Strin
             }
         }
     }
-    
+
     // Check that derived predicates don't appear in action effects
     for action in &task.actions {
         for effect in &action.effects {
@@ -1681,7 +1710,7 @@ pub fn task_verify_axiom_predicates(task: &NormalizableTask) -> Result<(), Strin
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -1698,7 +1727,7 @@ fn extract_predicate_from_sexpr(expr: &SExpr) -> Option<String> {
             if items.is_empty() {
                 return None;
             }
-            
+
             // Check first element
             match &items[0] {
                 SExpr::Atom(op) => {
@@ -1712,7 +1741,9 @@ fn extract_predicate_from_sexpr(expr: &SExpr) -> Option<String> {
                             }
                         }
                         // Assignment operators: (= ...), (assign ...), etc.
-                        "=" | "assign" | "increase" | "decrease" | "scale-up" | "scale-down" => None,
+                        "=" | "assign" | "increase" | "decrease" | "scale-up" | "scale-down" => {
+                            None
+                        }
                         // Regular predicate
                         _ => Some(op.clone()),
                     }
@@ -1749,33 +1780,25 @@ pub fn task_remove_universal_quantifiers(task: &mut NormalizableTask) {
         if task.actions[i].precondition.has_universal_part() {
             let type_map = NormalizableTask::build_type_map(&task.actions[i].parameters);
             let condition = task.actions[i].precondition.clone();
-            let new_condition = remove_universal_quantifiers_impl(
-                &condition,
-                &type_map,
-                task,
-                &mut axiom_cache,
-            );
+            let new_condition =
+                remove_universal_quantifiers_impl(&condition, &type_map, task, &mut axiom_cache);
             task.actions[i].precondition = new_condition;
         }
     }
-    
+
     // Process axiom conditions
     let mut i = 0;
     while i < task.axioms.len() {
         if task.axioms[i].condition.has_universal_part() {
             let type_map = NormalizableTask::build_type_map(&task.axioms[i].parameters);
             let condition = task.axioms[i].condition.clone();
-            let new_condition = remove_universal_quantifiers_impl(
-                &condition,
-                &type_map,
-                task,
-                &mut axiom_cache,
-            );
+            let new_condition =
+                remove_universal_quantifiers_impl(&condition, &type_map, task, &mut axiom_cache);
             task.axioms[i].condition = new_condition;
         }
         i += 1;
     }
-    
+
     // Process effect conditions
     for i in 0..task.actions.len() {
         for j in 0..task.actions[i].effects.len() {
@@ -1794,7 +1817,7 @@ pub fn task_remove_universal_quantifiers(task: &mut NormalizableTask) {
             }
         }
     }
-    
+
     // Process goal
     if task.goal.has_universal_part() {
         let type_map = HashMap::new(); // Goal has no parameters typically
@@ -1832,14 +1855,12 @@ fn remove_universal_quantifiers_impl(
             let axiom_args: Vec<String> = axiom_params.iter().map(|(n, _)| n.clone()).collect();
             Condition::Not(Box::new(Condition::Atom(axiom_name, axiom_args)))
         }
-        Condition::Not(c) => {
-            Condition::Not(Box::new(remove_universal_quantifiers_impl(
-                c,
-                type_map,
-                task,
-                axiom_cache,
-            )))
-        }
+        Condition::Not(c) => Condition::Not(Box::new(remove_universal_quantifiers_impl(
+            c,
+            type_map,
+            task,
+            axiom_cache,
+        ))),
         Condition::And(parts) => {
             let new_parts: Vec<_> = parts
                 .iter()
@@ -1935,7 +1956,7 @@ fn substitute_complicated_goal_impl(goal: &Condition, task: &mut NormalizableTas
         }
         _ => {}
     }
-    
+
     // Goal is complicated - create axiom
     let axiom_name = task.add_axiom(vec![], goal.clone());
     Condition::Atom(axiom_name, vec![])
@@ -1951,14 +1972,14 @@ pub fn task_build_dnf(task: &mut NormalizableTask) {
             action.precondition = simplify_condition(&build_dnf(&action.precondition));
         }
     }
-    
+
     // Process axiom conditions
     for axiom in task.axioms.iter_mut() {
         if axiom.condition.has_disjunction() {
             axiom.condition = simplify_condition(&build_dnf(&axiom.condition));
         }
     }
-    
+
     // Process effect conditions
     for action in task.actions.iter_mut() {
         for effect in action.effects.iter_mut() {
@@ -1967,7 +1988,7 @@ pub fn task_build_dnf(task: &mut NormalizableTask) {
             }
         }
     }
-    
+
     // Process goal
     if task.goal.has_disjunction() {
         task.goal = simplify_condition(&build_dnf(&task.goal));
@@ -1981,7 +2002,7 @@ pub fn task_split_disjunctions(task: &mut NormalizableTask) {
     // Split action preconditions
     let mut new_actions = Vec::new();
     let mut actions_to_remove = Vec::new();
-    
+
     for (idx, action) in task.actions.iter().enumerate() {
         if let Some(parts) = split_disjunction(&action.precondition) {
             // Create a copy of the action for each disjunct
@@ -1993,17 +2014,17 @@ pub fn task_split_disjunctions(task: &mut NormalizableTask) {
             actions_to_remove.push(idx);
         }
     }
-    
+
     // Remove original actions (in reverse order to maintain indices)
     for idx in actions_to_remove.iter().rev() {
         task.actions.remove(*idx);
     }
     task.actions.extend(new_actions);
-    
+
     // Split axiom conditions
     let mut new_axioms = Vec::new();
     let mut axioms_to_remove = Vec::new();
-    
+
     for (idx, axiom) in task.axioms.iter().enumerate() {
         if let Some(parts) = split_disjunction(&axiom.condition) {
             for part in parts {
@@ -2014,7 +2035,7 @@ pub fn task_split_disjunctions(task: &mut NormalizableTask) {
             axioms_to_remove.push(idx);
         }
     }
-    
+
     for idx in axioms_to_remove.iter().rev() {
         task.axioms.remove(*idx);
     }
@@ -2036,7 +2057,7 @@ pub fn task_split_disjunctions(task: &mut NormalizableTask) {
         }
         action.effects = new_effects;
     }
-    
+
     // Note: Goal disjunctions should have been converted to axioms in substitute_complicated_goal
 }
 
@@ -2050,14 +2071,14 @@ pub fn task_move_existential_quantifiers(task: &mut NormalizableTask) {
             action.precondition = move_existential_quantifiers(&action.precondition);
         }
     }
-    
+
     // Process axiom conditions
     for axiom in task.axioms.iter_mut() {
         if axiom.condition.has_existential_part() {
             axiom.condition = move_existential_quantifiers(&axiom.condition);
         }
     }
-    
+
     // Process effect conditions
     for action in task.actions.iter_mut() {
         for effect in action.effects.iter_mut() {
@@ -2066,7 +2087,7 @@ pub fn task_move_existential_quantifiers(task: &mut NormalizableTask) {
             }
         }
     }
-    
+
     // Process goal
     if task.goal.has_existential_part() {
         task.goal = move_existential_quantifiers(&task.goal);
@@ -2094,7 +2115,9 @@ pub fn task_eliminate_existential_quantifiers_from_preconditions(task: &mut Norm
 }
 
 /// Eliminate existential quantifiers from effect conditions (step 5c).
-pub fn task_eliminate_existential_quantifiers_from_conditional_effects(task: &mut NormalizableTask) {
+pub fn task_eliminate_existential_quantifiers_from_conditional_effects(
+    task: &mut NormalizableTask,
+) {
     for action in task.actions.iter_mut() {
         for effect in action.effects.iter_mut() {
             if let Condition::Exists(params, inner) = &effect.condition {
@@ -2143,23 +2166,23 @@ pub fn build_exploration_rules(
     task: &NormalizableTask,
 ) -> Result<Vec<(Vec<bm::SymAtom>, bm::SymAtom)>, String> {
     let mut rules = Vec::new();
-    
+
     // For each action, create a rule for the precondition
     // @action-name(?params) :- precondition-atoms
     for action in &task.actions {
         let rule_head = get_action_predicate(action);
         let rule_body = condition_to_rule_body(&action.parameters, &action.precondition);
         rules.push((rule_body, rule_head));
-        
+
         // Also create rules for effects (both unconditional and conditional)
         // effect-atom :- @action-name(?params), effect-condition
         for effect in &action.effects {
             // Get all variables: action parameters + effect forall parameters
             let mut all_params = action.parameters.clone();
             all_params.extend(effect.parameters.clone());
-            
+
             let effect_heads = get_effect_rule_heads_checked(effect)?;
-            
+
             if !effect_heads.is_empty() {
                 let mut effect_body = vec![get_action_predicate(action)];
                 // Add effect condition atoms (if not trivially true)
@@ -2173,14 +2196,14 @@ pub fn build_exploration_rules(
             }
         }
     }
-    
+
     // For each axiom, create rules
     for axiom in &task.axioms {
         // Application rule: @axiom(?params) :- axiom-condition
         let app_rule_head = get_axiom_predicate(axiom);
         let app_rule_body = condition_to_rule_body(&axiom.parameters, &axiom.condition);
         rules.push((app_rule_body, app_rule_head.clone()));
-        
+
         // Effect rule: axiom-name(?external-params) :- @axiom(?params)
         // Python: params = axiom.parameters[:axiom.num_external_parameters]
         // For now, use all parameters (proper handling needs num_external_parameters)
@@ -2191,19 +2214,23 @@ pub fn build_exploration_rules(
                 .iter()
                 .take(axiom.num_external_parameters)
                 .map(|(name, _)| {
-                    if name.starts_with('?') { name.clone() } else { format!("?{}", name) }
+                    if name.starts_with('?') {
+                        name.clone()
+                    } else {
+                        format!("?{}", name)
+                    }
                 })
                 .collect(),
         );
         let eff_rule_body = vec![app_rule_head];
         rules.push((eff_rule_body, eff_rule_head));
     }
-    
+
     // Goal reachability rule: @goal-reachable :- goal-atoms
     let goal_rule_head = bm::SymAtom::new("@goal-reachable".to_string(), vec![]);
     let goal_rule_body = condition_to_rule_body(&[], &task.goal);
     rules.push((goal_rule_body, goal_rule_head));
-    
+
     // Add numeric axiom rules for function tracking (matches Python)
     // For each NumericAxiom from the function administrator:
     // 1. Rule: @axiom(?params) :- defined!part1(?args), defined!part2(?args), ...
@@ -2215,22 +2242,26 @@ pub fn build_exploration_rules(
         let axiom_pred = get_numeric_axiom_predicate(axiom);
         let mut rule_body = Vec::new();
         for part in &axiom.parts {
-            if let crate::translate::function_expression::FunctionalExpression::Primitive(pne) = part {
+            if let crate::translate::function_expression::FunctionalExpression::Primitive(pne) =
+                part
+            {
                 rule_body.push(get_defined_function_predicate(&pne.symbol, &pne.args));
             }
         }
         rules.push((rule_body.clone(), axiom_pred.clone()));
-        
+
         // Rule 2: defined!axiom-head :- @axiom
         let head = axiom.get_head();
         let rule_2_head = get_defined_function_predicate(&head.symbol, &axiom.parameters);
         rules.push((vec![axiom_pred.clone()], rule_2_head));
-        
+
         // Rule 3: For each primitive part, add fluent tracking rule
         // fluent-head :- @axiom, fluent!part
         let fluent_head_pred = bm::SymAtom::new(head.symbol.clone(), axiom.parameters.clone());
         for part in &axiom.parts {
-            if let crate::translate::function_expression::FunctionalExpression::Primitive(pne) = part {
+            if let crate::translate::function_expression::FunctionalExpression::Primitive(pne) =
+                part
+            {
                 let mut fluent_body = vec![axiom_pred.clone()];
                 let fluent_part = bm::SymAtom::new(pne.symbol.clone(), pne.args.clone());
                 fluent_body.push(fluent_part);
@@ -2238,7 +2269,7 @@ pub fn build_exploration_rules(
             }
         }
     }
-    
+
     Ok(rules)
 }
 
@@ -2284,7 +2315,10 @@ fn get_effect_rule_heads_checked(effect: &TaskEffect) -> Result<Vec<bm::SymAtom>
                 if op == "not" {
                     return Ok(Vec::new());
                 }
-                if matches!(op.as_str(), "increase" | "decrease" | "assign" | "scale-up" | "scale-down") {
+                if matches!(
+                    op.as_str(),
+                    "increase" | "decrease" | "assign" | "scale-up" | "scale-down"
+                ) {
                     if items.len() >= 2 {
                         if let SExpr::List(func_items) = &items[1] {
                             if let Some(SExpr::Atom(func_name)) = func_items.get(0) {
@@ -2352,7 +2386,7 @@ fn condition_to_rule_body(
     condition: &Condition,
 ) -> Vec<bm::SymAtom> {
     let mut result = Vec::new();
-    
+
     // Add type predicates for parameters
     for (param_name, param_type) in parameters {
         if let Some(type_name) = param_type {
@@ -2364,10 +2398,10 @@ fn condition_to_rule_body(
             result.push(bm::SymAtom::new(type_name.clone(), vec![param_var]));
         }
     }
-    
+
     // Extract positive literals from condition
     extract_positive_literals(condition, &mut result);
-    
+
     result
 }
 

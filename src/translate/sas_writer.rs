@@ -192,7 +192,12 @@ pub fn write_sas(task: &SASTask, path: &std::path::Path) -> anyhow::Result<()> {
     writeln!(f, "begin_numeric_axioms")?;
     for ax in task.numeric_axioms.iter() {
         // format: <effect> <op> <part0> [part1]
-        let parts_str = ax.parts.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(" ");
+        let parts_str = ax
+            .parts
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
         writeln!(f, "{} {} {}", ax.effect, ax.op, parts_str)?;
     }
     writeln!(f, "end_numeric_axioms")?;

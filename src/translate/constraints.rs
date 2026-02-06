@@ -108,6 +108,11 @@ impl Assignment {
             self.compute_equivalence_classes();
         }
         let eq_classes = self.eq_classes.as_ref().unwrap();
+        if eq_classes.is_empty() {
+            self.consistent = Some(true);
+            self.mapping = Some(HashMap::new());
+            return;
+        }
         let mut mapping: HashMap<String, String> = HashMap::new();
         for eq in eq_classes.values() {
             // variables start with '?'
@@ -210,6 +215,10 @@ impl ConstraintSystem {
     pub fn is_solvable(&self) -> bool {
         // product over combinatorial_assignments
         if self.combinatorial_assignments.is_empty() {
+            let mut combined = Assignment::new(Vec::new());
+            if combined.is_consistent() {
+                return self.all_clauses_satisfiable(&mut combined);
+            }
             return false;
         }
         let mut indices = vec![0usize; self.combinatorial_assignments.len()];

@@ -55,15 +55,14 @@ pub fn compute_groups_from_atoms(
 // Expand a group with ?X into concrete atoms present in reachable_facts
 fn expand_group(
     group: &Vec<String>,
-    _domain: &crate::translate::pddl_ast::Domain,
-    problem: &crate::translate::pddl_ast::Problem,
+    objects: &Vec<(String, Option<String>)>,
     reachable_facts: &HashSet<String>,
 ) -> Vec<String> {
     let mut result: Vec<String> = Vec::new();
     for fact in group {
         if fact.contains("?X") {
             // replace first ?X with each object name and keep if present in reachable_facts
-            for (obj_name, _tp) in &problem.objects {
+            for (obj_name, _tp) in objects {
                 let concrete = fact.replacen("?X", obj_name, 1);
                 if reachable_facts.contains(&concrete) {
                     result.push(concrete);
@@ -78,13 +77,12 @@ fn expand_group(
 
 pub fn instantiate_groups(
     groups: &Vec<Vec<String>>,
-    domain: &crate::translate::pddl_ast::Domain,
-    problem: &crate::translate::pddl_ast::Problem,
+    objects: &Vec<(String, Option<String>)>,
     reachable_facts: &HashSet<String>,
 ) -> Vec<Vec<String>> {
     groups
         .iter()
-        .map(|g| expand_group(g, domain, problem, reachable_facts))
+        .map(|g| expand_group(g, objects, reachable_facts))
         .collect()
 }
 
@@ -176,8 +174,7 @@ impl GroupCoverQueue {
 
 pub fn choose_groups(
     groups: Vec<Vec<String>>,
-    _domain: &crate::translate::pddl_ast::Domain,
-    _problem: &crate::translate::pddl_ast::Problem,
+    _objects: &Vec<(String, Option<String>)>,
     reachable_facts: &HashSet<String>,
     use_partial_encoding: bool,
 ) -> Vec<Vec<String>> {
@@ -267,255 +264,19 @@ pub fn sort_groups(groups: Vec<Vec<String>>) -> Vec<Vec<String>> {
 }
 
 pub fn compute_groups(
-    domain: &crate::translate::pddl_ast::Domain,
-    problem: &crate::translate::pddl_ast::Problem,
+    task: &crate::translate::normalize::NormalizableTask,
     atoms: &Vec<String>,
-    _reachable_action_params: Option<HashMap<String, Vec<Vec<String>>>>,
+    reachable_action_params: Option<HashMap<String, Vec<Vec<String>>>>,
 ) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
     // ask invariant_finder for abstract groups (with ?X placeholders)
-    let groups = crate::translate::invariant_finder::get_groups(domain, problem);
+    let groups = crate::translate::invariant_finder::get_groups(task, reachable_action_params);
     // instantiate groups using atoms set
     let reachable: HashSet<String> = atoms.iter().cloned().collect();
-    let instantiated = instantiate_groups(&groups, domain, problem, &reachable);
-    // Add a fallback heuristic: group grounded atoms by their first argument (object-centric)
-    // but only for predicates defined in the domain (exclude numeric functions).
-    let mut augmented = instantiated.clone();
-    // predicate -> index map to enforce domain predicate ordering when sorting
-    let mut pred_index: HashMap<String, usize> = HashMap::new();
-    for (i, (pname, _)) in domain.predicates.iter().enumerate() {
-        pred_index.insert(pname.clone(), i);
-    }
-    let func_names: HashSet<String> = domain.functions.iter().map(|(n, _)| n.clone()).collect();
-    // build map first_arg -> Vec<atom> but only for atoms whose predicate is in domain.predicates
-    // group by (predicate, first-argument) to avoid cross-predicate merges like free(hand) with mount(hand, bot)
-    let mut by_first: HashMap<(String, String), Vec<String>> = HashMap::new();
-    for a in atoms {
-        if let Some(open) = a.find('(') {
-            if let Some(close) = a.rfind(')') {
-                let pred = a[..open].trim().to_string();
-                if func_names.contains(&pred) {
-                    continue;
-                }
-                if !pred_index.contains_key(&pred) {
-                    continue;
-                }
-                let args = &a[open + 1..close];
-                let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
-                if !parts.is_empty() {
-                    let first = parts[0].trim().to_string();
-                    by_first
-                        .entry((pred.clone(), first))
-                        .or_default()
-                        .push(a.clone());
-                }
-            }
-        }
-    }
-    // incorporate first-arg groups if they look multi-valued and are not duplicates
-    for ((_pred, _first), group) in by_first.into_iter() {
-        if group.len() <= 1 {
-            continue;
-        }
-        // create deduped vector
-        let mut gset: HashSet<String> = group.into_iter().collect();
-        let mut gvec: Vec<String> = gset.drain().collect();
-        // sort by predicate order first (domain-defined), then lexicographically
-        gvec.sort_by(|a, b| {
-            let a_pred = a.split('(').next().unwrap_or("").to_string();
-            let b_pred = b.split('(').next().unwrap_or("").to_string();
-            let ai = pred_index.get(&a_pred).cloned().unwrap_or(usize::MAX);
-            let bi = pred_index.get(&b_pred).cloned().unwrap_or(usize::MAX);
-            if ai != bi {
-                return ai.cmp(&bi);
-            }
-            a.cmp(b)
-        });
-        // check if already present (by equality of sets)
-        let mut exists = false;
-        for ex in &augmented {
-            let exset: HashSet<String> = ex.iter().cloned().collect();
-            let gset2: HashSet<String> = gvec.iter().cloned().collect();
-            if exset == gset2 {
-                exists = true;
-                break;
-            }
-        }
-        if !exists {
-            augmented.push(gvec);
-        }
-    }
-
-    // Cross-predicate merge: if multiple predicates share the same first argument object
-    // and that object's type is a candidate multi-valued carrier (like item), merge facts
-    // across predicates into a single group per object. We approximate by merging for types
-    // that appear as the first parameter type of any of the following predicates: at, in-arm, in-tray.
-    // Build set of candidate predicate names present in the domain
-    let multi_pred_candidates: std::collections::HashSet<String> = ["at", "in-arm", "in-tray"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    // Map predicate -> first parameter type (if any)
-    let mut pred_first_type: HashMap<String, String> = HashMap::new();
-    for (pname, params) in &domain.predicates {
-        if params.len() >= 1 {
-            if let Some((_, Some(tp))) = params.get(0) {
-                pred_first_type.insert(pname.clone(), tp.clone());
-            }
-        }
-    }
-    // Determine object names of the candidate type (e.g., items)
-    let mut candidate_objects: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for (obj, tp) in &problem.objects {
-        if let Some(t) = tp {
-            // if any candidate predicate has this first type, we consider this object
-            let mut used = false;
-            for (pname, ftp) in &pred_first_type {
-                if multi_pred_candidates.contains(pname) && ftp == t {
-                    used = true;
-                    break;
-                }
-            }
-            if used {
-                candidate_objects.insert(obj.clone());
-            }
-        }
-    }
-    // For each candidate object, collect all atoms whose first argument is the object
-    // and whose predicate is in the candidate set
-    let mut merged_by_object: HashMap<String, Vec<String>> = HashMap::new();
-    for a in atoms {
-        if let Some(open) = a.find('(') {
-            if let Some(close) = a.rfind(')') {
-                let pred = a[..open].trim();
-                if !multi_pred_candidates.contains(pred) {
-                    continue;
-                }
-                let args = &a[open + 1..close];
-                let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
-                if !parts.is_empty() {
-                    let first = parts[0].trim();
-                    if candidate_objects.contains(first) {
-                        merged_by_object
-                            .entry(first.to_string())
-                            .or_default()
-                            .push(a.clone());
-                    }
-                }
-            }
-        }
-    }
-    for (_obj, mut facts) in merged_by_object.into_iter() {
-        // ensure deterministic order: predicate order first, then atom string
-        facts.sort_by(|a, b| {
-            let a_pred = a.split('(').next().unwrap_or("").to_string();
-            let b_pred = b.split('(').next().unwrap_or("").to_string();
-            let ai = pred_index.get(&a_pred).cloned().unwrap_or(usize::MAX);
-            let bi = pred_index.get(&b_pred).cloned().unwrap_or(usize::MAX);
-            if ai != bi {
-                return ai.cmp(&bi);
-            }
-            a.cmp(b)
-        });
-        // Only add if it actually merges more than one predicate or introduces in-tray/in-arm with at
-        let mut preds_included: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        for f in &facts {
-            preds_included.insert(f.split('(').next().unwrap_or("").to_string());
-        }
-        if facts.len() > 1 && preds_included.len() > 1 {
-            augmented.push(facts);
-        }
-    }
-    // now sort groups: prefer groups ordered by the first object's position in the problem
-    // (so item1 groups come before item2, etc.), then fall back to lexicographic group comparison.
-    let mut object_index: HashMap<String, usize> = HashMap::new();
-    for (i, (name, _tp)) in problem.objects.iter().enumerate() {
-        object_index.insert(name.clone(), i);
-    }
-    let mut groups_with_key: Vec<(Option<usize>, Vec<String>)> = Vec::new();
-    for mut g in augmented.into_iter() {
-        g.sort();
-        // extract the first argument of the first atom if possible
-        let mut key: Option<usize> = None;
-        if let Some(first_atom) = g.get(0) {
-            if let Some(open) = first_atom.find('(') {
-                if let Some(close) = first_atom.rfind(')') {
-                    let args = &first_atom[open + 1..close];
-                    let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
-                    if !parts.is_empty() {
-                        if let Some(&idx) = object_index.get(parts[0]) {
-                            key = Some(idx);
-                        }
-                    }
-                }
-            }
-        }
-        groups_with_key.push((key, g));
-    }
-    groups_with_key.sort_by(|(ka, a), (kb, b)| {
-        match (ka, kb) {
-            (Some(ai), Some(bi)) => {
-                if ai != bi {
-                    return ai.cmp(bi);
-                }
-            }
-            (Some(_), None) => return std::cmp::Ordering::Less,
-            (None, Some(_)) => return std::cmp::Ordering::Greater,
-            (None, None) => {}
-        }
-        // fall back to lexicographic compare of the group contents
-        a.cmp(b)
-    });
-    let sorted: Vec<Vec<String>> = groups_with_key.into_iter().map(|(_k, g)| g).collect();
+    let instantiated = instantiate_groups(&groups, &task.objects, &reachable);
+    let sorted = sort_groups(instantiated);
     let mutex_groups = collect_all_mutex_groups(&sorted, &reachable);
-    let chosen = choose_groups(sorted.clone(), domain, problem, &reachable, true);
-    // normalize ordering inside each chosen group: lexicographic sort of atom strings
-    let mut chosen_sorted = chosen.clone();
-    for group in &mut chosen_sorted {
-        group.sort();
-    }
-    // Now sort groups deterministically: category (item-group, at-bot, free, other),
-    // then by first-argument object index from problem.objects.
-    let group_category = |g: &Vec<String>| -> i32 {
-        if g.iter()
-            .any(|s| s.starts_with("at(") || s.starts_with("in-arm(") || s.starts_with("in-tray("))
-        {
-            0
-        } else if g.iter().any(|s| s.starts_with("at-bot(")) {
-            1
-        } else if g.iter().any(|s| s.starts_with("free(")) {
-            2
-        } else {
-            3
-        }
-    };
-    chosen_sorted.sort_by(|a, b| {
-        let ca = group_category(a);
-        let cb = group_category(b);
-        if ca != cb {
-            return ca.cmp(&cb);
-        }
-        let fa = a.get(0).cloned().unwrap_or_default();
-        let fb = b.get(0).cloned().unwrap_or_default();
-        let farg = |s: &String| -> Option<String> {
-            if let Some(open) = s.find('(') {
-                if let Some(close) = s.rfind(')') {
-                    let args = &s[open + 1..close];
-                    let parts: Vec<&str> = args.split(',').map(|x| x.trim()).collect();
-                    if let Some(first) = parts.get(0) {
-                        return Some(first.to_string());
-                    }
-                }
-            }
-            None
-        };
-        match (farg(&fa), farg(&fb)) {
-            (Some(ia), Some(ib)) => ia.cmp(&ib),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => fa.cmp(&fb),
-        }
-    });
+    let chosen = choose_groups(sorted.clone(), &task.objects, &reachable, true);
+    let chosen_sorted = sort_groups(chosen);
     let tk = build_translation_key(&chosen_sorted);
     (chosen_sorted, mutex_groups, tk)
 }

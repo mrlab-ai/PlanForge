@@ -130,12 +130,8 @@ impl Condition {
         match self {
             Condition::Atom(_, _) => Condition::Not(Box::new(self.clone())),
             Condition::Not(c) => (**c).clone(),
-            Condition::And(parts) => {
-                Condition::Or(parts.iter().map(|p| p.negate()).collect())
-            }
-            Condition::Or(parts) => {
-                Condition::And(parts.iter().map(|p| p.negate()).collect())
-            }
+            Condition::And(parts) => Condition::Or(parts.iter().map(|p| p.negate()).collect()),
+            Condition::Or(parts) => Condition::And(parts.iter().map(|p| p.negate()).collect()),
             Condition::Forall(params, c) => {
                 // ¬∀x.φ ≡ ∃x.¬φ
                 Condition::Exists(params.clone(), Box::new(c.negate()))
@@ -217,7 +213,13 @@ pub fn sexpr_to_condition(s: &SExpr) -> Condition {
     fn parse_atom(name: &str, args: &[SExpr]) -> Condition {
         let parsed_args = args
             .iter()
-            .filter_map(|a| if let SExpr::Atom(arg) = a { Some(arg.clone()) } else { None })
+            .filter_map(|a| {
+                if let SExpr::Atom(arg) = a {
+                    Some(arg.clone())
+                } else {
+                    None
+                }
+            })
             .collect();
         Condition::Atom(name.to_string(), parsed_args)
     }
@@ -242,12 +244,16 @@ pub fn sexpr_to_condition(s: &SExpr) -> Condition {
                 let key = k.to_lowercase();
                 match key.as_str() {
                     KW_AND => Condition::And(list[1..].iter().map(sexpr_to_condition).collect()),
-                    KW_NOT => list.get(1)
+                    KW_NOT => list
+                        .get(1)
                         .map(|inner| Condition::Not(Box::new(sexpr_to_condition(inner))))
                         .unwrap_or(Condition::True),
                     "<=" | ">=" | "<" | ">" | KW_EQUAL => list
                         .get(1)
-                        .and_then(|left| list.get(2).map(|right| build_compare_to_zero(k, left, right)))
+                        .and_then(|left| {
+                            list.get(2)
+                                .map(|right| build_compare_to_zero(k, left, right))
+                        })
                         .unwrap_or(Condition::True),
                     _ => parse_atom(k, &list[1..]),
                 }
@@ -316,15 +322,17 @@ pub fn sexpr_to_effect(s: &SExpr) -> Effect {
                 let key = k.to_lowercase();
                 match key.as_str() {
                     KW_AND => Effect::And(list[1..].iter().map(sexpr_to_effect).collect()),
-                    KW_NOT => list.get(1)
+                    KW_NOT => list
+                        .get(1)
                         .and_then(|inner| match inner {
                             SExpr::List(items) => parse_name_and_args(items)
                                 .map(|(name, args)| Effect::Del(name, args)),
                             _ => None,
                         })
                         .unwrap_or(Effect::And(vec![])),
-                    KW_INCREASE | KW_DECREASE => parse_numeric_effect(&list, key.as_str())
-                        .unwrap_or(Effect::And(vec![])),
+                    KW_INCREASE | KW_DECREASE => {
+                        parse_numeric_effect(&list, key.as_str()).unwrap_or(Effect::And(vec![]))
+                    }
                     _ => parse_name_and_args(list)
                         .map(|(name, args)| Effect::Add(name, args))
                         .unwrap_or(Effect::And(vec![])),
@@ -440,7 +448,10 @@ fn parse_domain_form(form: &SExpr) -> Option<Domain> {
     })
 }
 
-fn parse_predicates(content: &[SExpr], predicates: &mut Vec<(String, Vec<(String, Option<String>)>)>) {
+fn parse_predicates(
+    content: &[SExpr],
+    predicates: &mut Vec<(String, Vec<(String, Option<String>)>)>,
+) {
     for item in content {
         if let SExpr::List(p) = item {
             if let Some(SExpr::Atom(nm)) = p.get(0) {
@@ -451,7 +462,10 @@ fn parse_predicates(content: &[SExpr], predicates: &mut Vec<(String, Vec<(String
     }
 }
 
-fn parse_functions(content: &[SExpr], functions: &mut Vec<(String, Vec<(String, Option<String>)>)>) {
+fn parse_functions(
+    content: &[SExpr],
+    functions: &mut Vec<(String, Vec<(String, Option<String>)>)>,
+) {
     for item in content {
         if let SExpr::List(p) = item {
             if let Some(SExpr::Atom(nm)) = p.get(0) {

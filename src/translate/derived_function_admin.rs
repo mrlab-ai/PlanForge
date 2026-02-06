@@ -89,7 +89,10 @@ impl DerivedFunctionAdministrator {
                             })
                             .collect::<Vec<_>>();
                         let key = format!("{}({})", op, args.join(", "));
-                        PrimitiveNumericExpression { name: key, args: vec![] }
+                        PrimitiveNumericExpression {
+                            name: key,
+                            args: vec![],
+                        }
                     }
                 } else {
                     PrimitiveNumericExpression {

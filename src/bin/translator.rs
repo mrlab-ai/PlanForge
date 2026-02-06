@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
-use planners::translate::pddl::PddlTask;
 use planners::translate::normalize;
+use planners::translate::pddl::PddlTask;
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
 #[derive(Parser)]
 #[clap(
@@ -74,7 +74,10 @@ fn main() -> anyhow::Result<()> {
             );
             // Debug: print axioms
             for (i, ax) in norm_task.axioms.iter().enumerate() {
-                eprintln!("  axiom[{}]: name={}, condition={:?}", i, ax.name, ax.condition);
+                eprintln!(
+                    "  axiom[{}]: name={}, condition={:?}",
+                    i, ax.name, ax.condition
+                );
             }
             eprintln!("  goal={:?}", norm_task.goal);
 
@@ -86,12 +89,16 @@ fn main() -> anyhow::Result<()> {
                 "translator: instantiated {} grounded operators (model-guided)",
                 result.grounded_ops.len()
             );
-            eprintln!("translator: relaxed reachable: {}", result.relaxed_reachable);
+            eprintln!(
+                "translator: relaxed reachable: {}",
+                result.relaxed_reachable
+            );
             eprintln!("translator: model size: {} atoms", result.model.len());
-            
+
             // Debug: print action breakdown
             eprintln!("\nAction breakdown:");
-            let mut action_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            let mut action_counts: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
             for op in &result.grounded_ops {
                 let action_type = op.name.split('(').next().unwrap_or("unknown");
                 *action_counts.entry(action_type.to_string()).or_insert(0) += 1;
@@ -99,7 +106,7 @@ fn main() -> anyhow::Result<()> {
             for (action_type, count) in action_counts.iter() {
                 eprintln!("  {}: {}", action_type, count);
             }
-            
+
             eprintln!("\nFirst 20 grounded actions:");
             for (i, op) in result.grounded_ops.iter().take(20).enumerate() {
                 eprintln!("  {}: {}", i + 1, op.name);
@@ -107,12 +114,15 @@ fn main() -> anyhow::Result<()> {
 
             // Build SAS task
             eprintln!("\ntranslator: building SAS task...");
-            
+
             // Use the instantiated numeric axioms from the model-guided grounding
             // These are the 60+ axioms that were instantiated from the 8 templates
-            eprintln!("translator: processing {} instantiated numeric axioms from model", result.numeric_axioms.len());
+            eprintln!(
+                "translator: processing {} instantiated numeric axioms from model",
+                result.numeric_axioms.len()
+            );
             let instantiated_num_axioms = result.numeric_axioms;
-            
+
             let py_groups: Option<Vec<Vec<String>>> = None;
             let sastask = planners::translate::to_sas::build_sas(
                 &result.grounded_ops,
@@ -122,6 +132,7 @@ fn main() -> anyhow::Result<()> {
                 py_groups,
                 &norm_task.axioms,
                 &norm_task.goal,
+                &norm_task,
             )
             .map_err(|err| anyhow::anyhow!(err))?;
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
@@ -129,10 +140,7 @@ fn main() -> anyhow::Result<()> {
             eprintln!("translator: wrote {}", out_path.display());
 
             let duration = start.elapsed();
-            eprintln!(
-                "translator: completed in {:.2?} seconds",
-                duration
-            );
+            eprintln!("translator: completed in {:.2?} seconds", duration);
         }
         Commands::Preprocess { output: _output } => {
             //not implemented yet, raise error

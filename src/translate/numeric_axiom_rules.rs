@@ -40,16 +40,9 @@ pub enum NumericPart {
 
 #[derive(Debug)]
 pub enum NumericAxiomError {
-    DivideByZero {
-        axiom: String,
-    },
-    UnknownOperator {
-        axiom: String,
-        op: String,
-    },
-    NonConstantPart {
-        axiom: String,
-    },
+    DivideByZero { axiom: String },
+    UnknownOperator { axiom: String, op: String },
+    NonConstantPart { axiom: String },
 }
 
 impl std::fmt::Display for NumericAxiomError {

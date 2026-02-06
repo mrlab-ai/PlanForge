@@ -1,87 +1,344 @@
-use crate::translate::invariants::{Invariant, InvariantPart};
-use crate::translate::pddl_ast::{Condition, Domain, Problem};
+use crate::translate::invariants::{ActionView, EffectView, Invariant, InvariantPart, Literal};
+use crate::translate::normalize::{NormalizableTask, TaskAction};
+use crate::translate::pddl_ast::Condition;
+use crate::translate::pddl_parser::SExpr;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
-// Port of python/translate/invariant_finder.py (essential flow):
-// - construct initial candidates (Invariant with one part per fluent predicate)
-// - run balance checks with BalanceChecker and a candidate queue
-// - produce useful_groups by instantiating found invariants over init facts
+// Port of python/translate/invariant_finder.py
+
+fn literal_from_effect(effect: &SExpr) -> Option<Literal> {
+    match effect {
+        SExpr::Atom(a) => Some(Literal {
+            predicate: a.clone(),
+            args: Vec::new(),
+            negated: false,
+        }),
+        SExpr::List(items) if !items.is_empty() => {
+            if let SExpr::Atom(op) = &items[0] {
+                let op_l = op.as_str();
+                if op_l == "not" && items.len() == 2 {
+                    if let SExpr::List(inner) = &items[1] {
+                        if inner.is_empty() {
+                            return None;
+                        }
+                        if let SExpr::Atom(pred) = &inner[0] {
+                            let args = inner[1..]
+                                .iter()
+                                .filter_map(|x| match x {
+                                    SExpr::Atom(a) => Some(a.clone()),
+                                    _ => None,
+                                })
+                                .collect();
+                            return Some(Literal {
+                                predicate: pred.clone(),
+                                args,
+                                negated: true,
+                            });
+                        }
+                    }
+                    return None;
+                }
+                if matches!(
+                    op_l,
+                    "assign" | "increase" | "decrease" | "scale-up" | "scale-down" | "="
+                ) {
+                    return None;
+                }
+                let pred = op.clone();
+                let args = items[1..]
+                    .iter()
+                    .filter_map(|x| match x {
+                        SExpr::Atom(a) => Some(a.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                return Some(Literal {
+                    predicate: pred,
+                    args,
+                    negated: false,
+                });
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn literal_from_sexpr(sexpr: &SExpr) -> Option<Literal> {
+    literal_from_effect(sexpr)
+}
+
+fn rename_vars_sexpr(sexpr: &SExpr, mapping: &HashMap<String, String>) -> SExpr {
+    match sexpr {
+        SExpr::Atom(a) => {
+            if a.starts_with('?') {
+                if let Some(new) = mapping.get(a) {
+                    SExpr::Atom(new.clone())
+                } else {
+                    SExpr::Atom(a.clone())
+                }
+            } else {
+                SExpr::Atom(a.clone())
+            }
+        }
+        SExpr::List(items) => SExpr::List(
+            items
+                .iter()
+                .map(|i| rename_vars_sexpr(i, mapping))
+                .collect(),
+        ),
+    }
+}
+
+fn rename_vars_condition(cond: &Condition, mapping: &HashMap<String, String>) -> Condition {
+    match cond {
+        Condition::Atom(pred, args) => Condition::Atom(
+            pred.clone(),
+            args.iter()
+                .map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
+                .collect(),
+        ),
+        Condition::Not(inner) => Condition::Not(Box::new(rename_vars_condition(inner, mapping))),
+        Condition::And(parts) => Condition::And(
+            parts
+                .iter()
+                .map(|p| rename_vars_condition(p, mapping))
+                .collect(),
+        ),
+        Condition::Or(parts) => Condition::Or(
+            parts
+                .iter()
+                .map(|p| rename_vars_condition(p, mapping))
+                .collect(),
+        ),
+        Condition::Forall(params, inner) => {
+            let new_params: Vec<(String, Option<String>)> = params
+                .iter()
+                .map(|(n, t)| {
+                    (
+                        mapping.get(n).cloned().unwrap_or_else(|| n.clone()),
+                        t.clone(),
+                    )
+                })
+                .collect();
+            Condition::Forall(new_params, Box::new(rename_vars_condition(inner, mapping)))
+        }
+        Condition::Exists(params, inner) => {
+            let new_params: Vec<(String, Option<String>)> = params
+                .iter()
+                .map(|(n, t)| {
+                    (
+                        mapping.get(n).cloned().unwrap_or_else(|| n.clone()),
+                        t.clone(),
+                    )
+                })
+                .collect();
+            Condition::Exists(new_params, Box::new(rename_vars_condition(inner, mapping)))
+        }
+        Condition::Comparison(op, left, right) => Condition::Comparison(
+            op.clone(),
+            rename_vars_sexpr(left, mapping),
+            rename_vars_sexpr(right, mapping),
+        ),
+        Condition::True => Condition::True,
+    }
+}
+
+fn rename_vars_literal(lit: &Literal, mapping: &HashMap<String, String>) -> Literal {
+    Literal {
+        predicate: lit.predicate.clone(),
+        args: lit
+            .args
+            .iter()
+            .map(|a| mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
+            .collect(),
+        negated: lit.negated,
+    }
+}
+
+fn action_view_from_task_action(action: &TaskAction) -> ActionView {
+    let parameters = action
+        .parameters
+        .iter()
+        .map(|(n, _)| n.clone())
+        .collect::<Vec<_>>();
+    let mut effects = Vec::new();
+    for eff in &action.effects {
+        if let Some(peffect) = literal_from_effect(&eff.effect) {
+            let params = eff
+                .parameters
+                .iter()
+                .map(|(n, _)| n.clone())
+                .collect::<Vec<_>>();
+            effects.push(EffectView {
+                parameters: params,
+                condition: eff.condition.clone(),
+                peffect,
+            });
+        }
+    }
+    ActionView {
+        name: action.name.clone(),
+        parameters,
+        precondition: action.precondition.clone(),
+        effects,
+    }
+}
+
+fn duplicate_universal_effects(action: &ActionView) -> ActionView {
+    let mut effects = Vec::new();
+    let mut used_names: HashSet<String> = action.parameters.iter().cloned().collect();
+    for eff in &action.effects {
+        for p in &eff.parameters {
+            used_names.insert(p.clone());
+        }
+    }
+    let mut counter = 0usize;
+    for eff in &action.effects {
+        effects.push(eff.clone());
+        if eff.parameters.is_empty() {
+            continue;
+        }
+        let mut mapping: HashMap<String, String> = HashMap::new();
+        let mut new_params = Vec::new();
+        for p in &eff.parameters {
+            loop {
+                let candidate = format!("?u{}", counter);
+                counter += 1;
+                if !used_names.contains(&candidate) {
+                    used_names.insert(candidate.clone());
+                    mapping.insert(p.clone(), candidate.clone());
+                    new_params.push(candidate);
+                    break;
+                }
+            }
+        }
+        let new_condition = rename_vars_condition(&eff.condition, &mapping);
+        let new_peffect = rename_vars_literal(&eff.peffect, &mapping);
+        effects.push(EffectView {
+            parameters: new_params,
+            condition: new_condition,
+            peffect: new_peffect,
+        });
+    }
+    ActionView {
+        name: action.name.clone(),
+        parameters: action.parameters.clone(),
+        precondition: action.precondition.clone(),
+        effects,
+    }
+}
+
+fn add_inequality_preconds(
+    action: &ActionView,
+    reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
+) -> ActionView {
+    let Some(reachable) = reachable_action_params else {
+        return action.clone();
+    };
+    if action.parameters.len() < 2 {
+        return action.clone();
+    }
+    let params = match reachable.get(&action.name) {
+        Some(p) => p,
+        None => return action.clone(),
+    };
+    let mut inequal_pairs: Vec<(usize, usize)> = Vec::new();
+    for i in 0..action.parameters.len() {
+        for j in (i + 1)..action.parameters.len() {
+            let mut any_equal = false;
+            for tuple in params {
+                if i < tuple.len() && j < tuple.len() && tuple[i] == tuple[j] {
+                    any_equal = true;
+                    break;
+                }
+            }
+            if !any_equal {
+                inequal_pairs.push((i, j));
+            }
+        }
+    }
+    if inequal_pairs.is_empty() {
+        return action.clone();
+    }
+    let mut parts = vec![action.precondition.clone()];
+    for (i, j) in inequal_pairs {
+        let p1 = action.parameters[i].clone();
+        let p2 = action.parameters[j].clone();
+        parts.push(Condition::Not(Box::new(Condition::Atom(
+            "=".to_string(),
+            vec![p1, p2],
+        ))));
+    }
+    ActionView {
+        name: action.name.clone(),
+        parameters: action.parameters.clone(),
+        precondition: Condition::And(parts),
+        effects: action.effects.clone(),
+    }
+}
 
 struct BalanceChecker {
-    #[allow(dead_code)]
-    predicates_to_add_actions: HashMap<String, HashSet<String>>, // predicate -> set of action names
+    actions: Vec<ActionView>,
+    heavy_actions: Vec<ActionView>,
+    predicates_to_add_actions: HashMap<String, HashSet<usize>>,
 }
 
 impl BalanceChecker {
     fn new(
-        domain: &Domain,
-        _reachable_action_params: Option<HashMap<String, Vec<Vec<String>>>>,
+        task: &NormalizableTask,
+        reachable_action_params: Option<HashMap<String, Vec<Vec<String>>>>,
     ) -> Self {
-        let mut predicates_to_add_actions: HashMap<String, HashSet<String>> = HashMap::new();
-        for act in &domain.actions {
-            if let Some(eff_s) = &act.effect {
-                // parse SExpr into Effect
-                let eff = crate::translate::pddl_ast::sexpr_to_effect(eff_s);
-                match eff {
-                    crate::translate::pddl_ast::Effect::Add(pred, _args) => {
-                        predicates_to_add_actions
-                            .entry(pred.clone())
-                            .or_default()
-                            .insert(act.name.clone());
-                    }
-                    crate::translate::pddl_ast::Effect::And(v) => {
-                        for sub in v {
-                            match sub {
-                                crate::translate::pddl_ast::Effect::Add(pred, _args) => {
-                                    predicates_to_add_actions
-                                        .entry(pred.clone())
-                                        .or_default()
-                                        .insert(act.name.clone());
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    _ => {}
+        let mut predicates_to_add_actions: HashMap<String, HashSet<usize>> = HashMap::new();
+        let mut actions = Vec::new();
+        let mut heavy_actions = Vec::new();
+        for act in &task.actions {
+            let base = action_view_from_task_action(act);
+            let action = add_inequality_preconds(&base, &reachable_action_params);
+            let heavy_action = duplicate_universal_effects(&action);
+            for eff in &action.effects {
+                if !eff.peffect.negated {
+                    predicates_to_add_actions
+                        .entry(eff.peffect.predicate.clone())
+                        .or_default()
+                        .insert(actions.len());
                 }
             }
+            actions.push(action);
+            heavy_actions.push(heavy_action);
         }
         BalanceChecker {
+            actions,
+            heavy_actions,
             predicates_to_add_actions,
         }
     }
 
-    #[allow(dead_code)]
-    fn get_threats(&self, predicate: &str) -> HashSet<String> {
+    fn get_threats(&self, predicate: &str) -> HashSet<usize> {
         self.predicates_to_add_actions
             .get(predicate)
             .cloned()
             .unwrap_or_default()
     }
+
+    fn get_action(&self, idx: usize) -> &ActionView {
+        &self.actions[idx]
+    }
+
+    fn get_heavy_action(&self, idx: usize) -> &ActionView {
+        &self.heavy_actions[idx]
+    }
 }
 
 // Collect fluent predicates: those that occur in add/del effects of any action
-fn get_fluent_predicates(domain: &Domain) -> HashSet<String> {
+fn get_fluent_predicates(task: &NormalizableTask) -> HashSet<String> {
     let mut fluents: HashSet<String> = HashSet::new();
-    for act in &domain.actions {
-        if let Some(eff_s) = &act.effect {
-            let eff = crate::translate::pddl_ast::sexpr_to_effect(eff_s);
-            fn collect(eff: &crate::translate::pddl_ast::Effect, fluents: &mut HashSet<String>) {
-                match eff {
-                    crate::translate::pddl_ast::Effect::Add(name, _)
-                    | crate::translate::pddl_ast::Effect::Del(name, _) => {
-                        fluents.insert(name.clone());
-                    }
-                    crate::translate::pddl_ast::Effect::And(list) => {
-                        for sub in list {
-                            collect(sub, fluents);
-                        }
-                    }
-                    _ => {}
-                }
+    for action in &task.actions {
+        for eff in &action.effects {
+            if let Some(lit) = literal_from_effect(&eff.effect) {
+                fluents.insert(lit.predicate);
             }
-            collect(&eff, &mut fluents);
         }
     }
     fluents
@@ -89,10 +346,10 @@ fn get_fluent_predicates(domain: &Domain) -> HashSet<String> {
 
 // Build initial invariants analogous to python: for each fluent predicate produce
 // InvariantPart for omitted_pos in [-1] + all positions and wrap into Invariant
-fn get_initial_invariants(domain: &Domain) -> Vec<Invariant> {
+fn get_initial_invariants(task: &NormalizableTask) -> Vec<Invariant> {
     let mut out: Vec<Invariant> = Vec::new();
-    let fluent_names = get_fluent_predicates(domain);
-    for (pred, params) in &domain.predicates {
+    let fluent_names = get_fluent_predicates(task);
+    for (pred, params) in &task.predicates {
         if !fluent_names.contains(pred) {
             continue;
         }
@@ -115,38 +372,37 @@ fn get_initial_invariants(domain: &Domain) -> Vec<Invariant> {
     out
 }
 
-// Generate unique variable names for an invariant relative to an action's parameters
-fn find_unique_variables(
-    action: &crate::translate::pddl_ast::Action,
-    invariant: &Invariant,
-) -> Vec<String> {
-    let mut params: HashSet<String> = HashSet::new();
-    for (p, _t) in &action.parameters {
-        params.insert(p.clone());
+fn check_balance(
+    candidate: &Invariant,
+    balance_checker: &BalanceChecker,
+    enqueue_func: &mut impl FnMut(Invariant),
+) -> bool {
+    let mut actions_to_check: HashSet<usize> = HashSet::new();
+    for part in &candidate.parts {
+        actions_to_check.extend(balance_checker.get_threats(&part.predicate));
     }
-    // also collect any names in the effect SExpr if possible (conservative: none)
-    let mut inv_vars: Vec<String> = Vec::new();
-    let mut counter: usize = 0;
-    for _ in 0..invariant.parts[0].arity() {
-        loop {
-            let candidate = format!("?v{}", counter);
-            counter += 1;
-            if !params.contains(&candidate) {
-                inv_vars.push(candidate);
-                break;
-            }
+    for action_idx in actions_to_check {
+        let heavy_action = balance_checker.get_heavy_action(action_idx);
+        if candidate.operator_too_heavy(heavy_action) {
+            return false;
+        }
+        let action = balance_checker.get_action(action_idx);
+        if candidate.operator_unbalanced(action, enqueue_func) {
+            return false;
         }
     }
-    inv_vars
+    true
 }
 
-pub fn get_groups(domain: &Domain, problem: &Problem) -> Vec<Vec<String>> {
-    // Candidate generation with limit and timing from options; we use conservative defaults
+fn find_invariants(
+    task: &NormalizableTask,
+    reachable_action_params: Option<HashMap<String, Vec<Vec<String>>>>,
+) -> Vec<Invariant> {
     let limit_candidates = 100000usize;
     let max_time_secs = 300u64;
 
     let mut candidates: VecDeque<Invariant> = VecDeque::new();
-    let initial = get_initial_invariants(domain);
+    let initial = get_initial_invariants(task);
     for inv in initial.into_iter().take(limit_candidates) {
         candidates.push_back(inv);
     }
@@ -156,170 +412,115 @@ pub fn get_groups(domain: &Domain, problem: &Problem) -> Vec<Vec<String>> {
         seen.insert(c.clone());
     }
 
-    let _balance_checker = BalanceChecker::new(domain, None);
-
-    let start = Instant::now();
+    let balance_checker = BalanceChecker::new(task, reachable_action_params);
     let mut found: Vec<Invariant> = Vec::new();
+    let start = Instant::now();
+
     while let Some(candidate) = candidates.pop_front() {
         if start.elapsed().as_secs() > max_time_secs {
             break;
         }
-        // perform a conservative 'operator_too_heavy' check: if any action can add two
-        // facts from the invariant such that constraints allow them simultaneously,
-        // reject the candidate.
-        let mut reject = false;
-        for act in &domain.actions {
-            // parse effect SExpr into structured Effect
-            if let Some(eff_s) = &act.effect {
-                let eff = crate::translate::pddl_ast::sexpr_to_effect(eff_s);
-                // collect add effects whose predicate is part of the candidate
-                let mut add_effects: Vec<(String, Vec<String>)> = Vec::new();
-                match eff {
-                    crate::translate::pddl_ast::Effect::Add(ref name, ref args) => {
-                        if candidate.predicates.contains(name) {
-                            add_effects.push((name.clone(), args.clone()));
-                        }
-                    }
-                    crate::translate::pddl_ast::Effect::And(ref vec_eff) => {
-                        for sub in vec_eff {
-                            if let crate::translate::pddl_ast::Effect::Add(ref name, ref args) = sub
-                            {
-                                if candidate.predicates.contains(name) {
-                                    add_effects.push((name.clone(), args.clone()));
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
+        let mut pending: Vec<Invariant> = Vec::new();
+        {
+            let mut enqueue_func = |inv: Invariant| {
+                if seen.len() < limit_candidates && !seen.contains(&inv) {
+                    seen.insert(inv.clone());
+                    pending.push(inv);
                 }
-                if add_effects.len() > 1 {
-                    // for each pair, build a constraint system and test solvability
-                    for i in 0..add_effects.len() {
-                        for j in (i + 1)..add_effects.len() {
-                            let (ref n1, ref a1) = add_effects[i];
-                            let (ref n2, ref a2) = add_effects[j];
-                            // build peffect as Condition::Atom
-                            let c1 = Condition::Atom(n1.clone(), a1.clone());
-                            let c2 = Condition::Atom(n2.clone(), a2.clone());
-                            let mut system = crate::translate::constraints::ConstraintSystem::new();
-                            // ensure inequality and covers
-                            crate::translate::invariants::ensure_inequality(&mut system, &c1, &c2);
-                            // inv_vars: generate unique variables for invariant arity
-                            let inv_vars = find_unique_variables(act, &candidate);
-                            crate::translate::invariants::ensure_cover(
-                                &mut system,
-                                &c1,
-                                &candidate,
-                                &inv_vars,
-                            );
-                            crate::translate::invariants::ensure_cover(
-                                &mut system,
-                                &c2,
-                                &candidate,
-                                &inv_vars,
-                            );
-                            // Note: ensure_conjunction_sat is a simplified no-op currently
-                            if system.is_solvable() {
-                                reject = true;
-                                break;
-                            }
-                        }
-                        if reject {
-                            break;
-                        }
-                    }
-                }
-            }
-            if reject {
-                break;
+            };
+            if check_balance(&candidate, &balance_checker, &mut enqueue_func) {
+                found.push(candidate);
             }
         }
-        if !reject {
-            found.push(candidate);
+        for inv in pending {
+            candidates.push_back(inv);
         }
     }
+    found
+}
 
-    // Build useful_groups: map each found invariant to instantiated groups present in problem.init
-    // First, collect initial positive atoms from problem.init (string form)
-    let mut init_atoms: Vec<String> = Vec::new();
-    for sexpr in &problem.init {
-        if let crate::translate::pddl_parser::SExpr::List(list) = sexpr {
-            if list.is_empty() {
-                continue;
-            }
-            if let crate::translate::pddl_parser::SExpr::Atom(pred) = &list[0] {
-                if pred == "=" {
-                    continue;
-                }
-                let args: Vec<String> = list[1..]
-                    .iter()
-                    .filter_map(|x| match x {
-                        crate::translate::pddl_parser::SExpr::Atom(a) => Some(a.clone()),
-                        _ => None,
-                    })
-                    .collect();
-                let atom = format!("{}({})", pred, args.join(", "));
-                init_atoms.push(atom);
-            }
-        }
-    }
-
-    // For each invariant, for each init atom with predicate in invariant.predicates, build group key (invariant, params)
+fn useful_groups(invariants: &[Invariant], initial_facts: &[SExpr]) -> Vec<Vec<String>> {
     let mut predicate_to_invariants: HashMap<String, Vec<Invariant>> = HashMap::new();
-    for inv in &found {
-        for part in &inv.parts {
+    for inv in invariants {
+        for pred in &inv.predicates {
             predicate_to_invariants
-                .entry(part.predicate.clone())
+                .entry(pred.clone())
                 .or_default()
                 .push(inv.clone());
         }
     }
 
     let mut nonempty_groups: HashSet<(Invariant, Vec<String>)> = HashSet::new();
-    let mut overcrowded: HashSet<(Invariant, Vec<String>)> = HashSet::new();
-    for atom in &init_atoms {
-        // parse "pred(a, b, ...)"
-        if let Some(open) = atom.find('(') {
-            if let Some(close) = atom.rfind(')') {
-                let pred = &atom[..open];
-                let args_str = &atom[open + 1..close];
-                let args: Vec<String> = args_str.split(',').map(|s| s.trim().to_string()).collect();
-                if pred == "=" {
-                    continue;
-                }
-                if let Some(invs) = predicate_to_invariants.get(pred) {
-                    for inv in invs {
-                        // compute parameters via invariant.get_parameters_for_atom: we need a Condition::Atom
-                        let cond = Condition::Atom(pred.to_string(), args.clone());
-                        let params = inv.get_parameters_for_atom(&cond);
-                        let key = (inv.clone(), params.clone());
-                        if !nonempty_groups.contains(&key) {
-                            nonempty_groups.insert(key);
-                        } else {
-                            overcrowded.insert(key);
-                        }
-                    }
+    let mut overcrowded_groups: HashSet<(Invariant, Vec<String>)> = HashSet::new();
+
+    for sexpr in initial_facts {
+        let Some(atom) = literal_from_sexpr(sexpr) else {
+            continue;
+        };
+        if atom.predicate == "=" {
+            continue;
+        }
+        if let Some(invariants_for_pred) = predicate_to_invariants.get(&atom.predicate) {
+            for inv in invariants_for_pred {
+                let params = inv.get_parameters_for_atom(&atom);
+                let key = (inv.clone(), params.clone());
+                if !nonempty_groups.contains(&key) {
+                    nonempty_groups.insert(key);
+                } else {
+                    overcrowded_groups.insert(key);
                 }
             }
         }
     }
 
-    let useful: Vec<(Invariant, Vec<String>)> =
-        nonempty_groups.difference(&overcrowded).cloned().collect();
-    // instantiate groups: for each (invariant, parameters) produce vector of strings via invariant.instantiate
-    let mut groups_out: Vec<Vec<String>> = Vec::new();
+    let useful: Vec<(Invariant, Vec<String>)> = nonempty_groups
+        .difference(&overcrowded_groups)
+        .cloned()
+        .collect();
+    let mut result = Vec::new();
     for (inv, params) in useful {
-        let inst = inv.instantiate(&params);
-        groups_out.push(inst);
+        result.push(inv.instantiate(&params));
     }
+    result
+}
 
-    groups_out
+pub fn get_groups(
+    task: &NormalizableTask,
+    reachable_action_params: Option<HashMap<String, Vec<Vec<String>>>>,
+) -> Vec<Vec<String>> {
+    let mut invariants = find_invariants(task, reachable_action_params);
+    let inv_key = |inv: &Invariant| {
+        let mut parts = inv.parts.clone();
+        parts.sort_by(|x, y| {
+            let pc = x.predicate.cmp(&y.predicate);
+            if pc != std::cmp::Ordering::Equal {
+                pc
+            } else {
+                x.order.cmp(&y.order)
+            }
+        });
+        let mut key = String::new();
+        for part in parts {
+            key.push_str(&part.predicate);
+            key.push(':');
+            for pos in &part.order {
+                key.push_str(&format!("{}", pos));
+                key.push(',');
+            }
+            key.push(';');
+        }
+        key
+    };
+    invariants.sort_by(|a, b| inv_key(a).cmp(&inv_key(b)));
+    useful_groups(&invariants, &task.init)
 }
 
 // Stub matching Python API: compute reachable action params for the task.
 // Full implementation would analyze the task to determine which parameter
 // tuples are reachable for each action. For now return None to indicate
 // we don't provide additional inequality preconditions.
-pub fn get_reachable_action_params(_domain: &Domain) -> Option<HashMap<String, Vec<Vec<String>>>> {
+pub fn get_reachable_action_params(
+    _task: &NormalizableTask,
+) -> Option<HashMap<String, Vec<Vec<String>>>> {
     None
 }
