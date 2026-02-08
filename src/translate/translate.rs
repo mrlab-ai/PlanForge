@@ -9,7 +9,9 @@ use crate::translate::pddl;
 use crate::translate::pddl_parser::PddlTask;
 use crate::translate::simplify;
 use crate::translate::options;
-use crate::translate::sas::{CompareAxiom, SASAxiom, SASOperator, SASTask};
+use crate::translate::sas as internal_sas;
+use crate::translate::sas_tasks as py_sas_tasks;
+use internal_sas::{CompareAxiom, SASAxiom, SASOperator, SASTask as InternalSASTask};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug, Clone)]
@@ -97,7 +99,7 @@ impl Default for TranslateConfig {
     }
 }
 
-pub fn translate_from_files(domain: &Path, problem: &Path) -> Result<SASTask, String> {
+pub fn translate_from_files(domain: &Path, problem: &Path) -> Result<py_sas_tasks::SASTask, String> {
     translate_from_files_with_config(domain, problem, &TranslateConfig::default())
 }
 
@@ -105,7 +107,7 @@ pub fn translate_from_files_with_config(
     domain: &Path,
     problem: &Path,
     config: &TranslateConfig,
-) -> Result<SASTask, String> {
+) -> Result<py_sas_tasks::SASTask, String> {
     let task = PddlTask::from_files(domain, problem).map_err(|err| err.to_string())?;
     let dom = pddl::Domain::from_sexprs(&task.domain_forms)
         .ok_or_else(|| "failed to parse domain PDDL".to_string())?;
@@ -118,7 +120,7 @@ pub fn translate_from_ast(
     dom: &pddl::Domain,
     prob: &pddl::Problem,
     config: &TranslateConfig,
-) -> Result<SASTask, String> {
+) -> Result<py_sas_tasks::SASTask, String> {
     let mut norm_task = normalize::NormalizableTask::from_ast(dom, prob);
     norm_task.add_global_constraints();
     normalize::normalize(&mut norm_task)?;
@@ -127,7 +129,7 @@ pub fn translate_from_ast(
         .map_err(|err| err.to_string())?;
 
     let py_groups: Option<Vec<Vec<String>>> = None;
-    let mut sas_task = translate_task_from_grounded(
+    let mut sas_task = translate_task_from_grounded_internal(
         &exploration.grounded_ops,
         dom,
         prob,
@@ -151,7 +153,7 @@ pub fn translate_from_ast(
         }
     }
 
-    Ok(sas_task)
+    Ok(py_sas_tasks::from_internal(&sas_task))
 }
 
 fn ensure_expr_var_visit(
@@ -308,7 +310,7 @@ fn ensure_expr_var_visit(
     }
 }
 
-pub fn translate_task_from_grounded(
+pub fn translate_task_from_grounded_internal(
     ops: &[crate::translate::instantiate::GroundedOp],
     dom: &crate::translate::pddl::Domain,
     prob: &crate::translate::pddl::Problem,
@@ -319,7 +321,7 @@ pub fn translate_task_from_grounded(
     grounded_axioms: &[crate::translate::instantiate::GroundedAxiom],
     normalized_goal: &crate::translate::pddl::Condition,
     norm_task: &crate::translate::normalize::NormalizableTask,
-) -> Result<SASTask, String> {
+) -> Result<InternalSASTask, String> {
     fn normalize_op(op: &str) -> String {
         op.to_string()
     }
@@ -1797,7 +1799,7 @@ pub fn translate_task_from_grounded(
             Some((var, val))
         }
     };
-    Ok(SASTask {
+    Ok(InternalSASTask {
         variables: vars,
         operators,
         numeric_variables: numeric_list,
@@ -1818,6 +1820,31 @@ pub fn translate_task_from_grounded(
         global_constraint,
         comp_axiom_layer: 0,
     })
+}
+
+pub fn translate_task_from_grounded(
+    ops: &[crate::translate::instantiate::GroundedOp],
+    dom: &crate::translate::pddl::Domain,
+    prob: &crate::translate::pddl::Problem,
+    external_instantiated_num_axioms: &Vec<
+        crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom,
+    >,
+    py_groups: Option<Vec<Vec<String>>>,
+    grounded_axioms: &[crate::translate::instantiate::GroundedAxiom],
+    normalized_goal: &crate::translate::pddl::Condition,
+    norm_task: &crate::translate::normalize::NormalizableTask,
+) -> Result<py_sas_tasks::SASTask, String> {
+    let task = translate_task_from_grounded_internal(
+        ops,
+        dom,
+        prob,
+        external_instantiated_num_axioms,
+        py_groups,
+        grounded_axioms,
+        normalized_goal,
+        norm_task,
+    )?;
+    Ok(py_sas_tasks::from_internal(&task))
 }
 
 fn format_pne(pne: &PrimitiveNumericExpression) -> String {
@@ -1956,21 +1983,26 @@ pub fn build_implied_facts(
     implied
 }
 
-pub fn dump_statistics(task: &SASTask) {
-    let derived_vars = task.axiom_layers.iter().filter(|layer| **layer >= 0).count();
-    let total_facts: usize = task.ranges.iter().sum();
-    let mutex_groups = task.mutex_groups.len();
-    let mutex_size: usize = task.mutex_groups.iter().map(|g| g.len()).sum();
+pub fn dump_statistics(task: &py_sas_tasks::SASTask) {
+    let derived_vars = task
+        .variables
+        .axiom_layers
+        .iter()
+        .filter(|layer| **layer >= 0)
+        .count();
+    let total_facts: usize = task.variables.ranges.iter().sum();
+    let mutex_groups = task.mutexes.len();
+    let mutex_size: usize = task.mutexes.iter().map(|g| g.facts.len()).sum();
 
-    println!("Translator variables: {}", task.ranges.len());
+    println!("Translator variables: {}", task.variables.ranges.len());
     println!("Translator derived variables: {}", derived_vars);
     println!("Translator facts: {}", total_facts);
-    println!("Translator goal facts: {}", task.goal.len());
+    println!("Translator goal facts: {}", task.goal.pairs.len());
     println!("Translator mutex groups: {}", mutex_groups);
     println!("Translator total mutex groups size: {}", mutex_size);
     println!("Translator operators: {}", task.operators.len());
     println!("Translator axioms: {}", task.axioms.len());
-    println!("Translator task size: {}", task.variables.len());
+    println!("Translator task size: {}", task.variables.ranges.len());
 }
 
 pub fn translate_strips_conditions_aux(
@@ -2791,19 +2823,30 @@ pub fn dump_task(
         .map_err(|err| format!("failed to write output.dump: {}", err))
 }
 
-pub fn trivial_task(solvable: bool) -> SASTask {
-    simplify::trivial_task(solvable)
-}
-
-pub fn solvable_sas_task(_msg: &str) -> SASTask {
+fn solvable_sas_task_internal() -> InternalSASTask {
     simplify::trivial_task(true)
 }
 
-pub fn unsolvable_sas_task(_msg: &str) -> SASTask {
+fn unsolvable_sas_task_internal() -> InternalSASTask {
     simplify::trivial_task(false)
 }
 
-pub fn pddl_to_sas(dom: &pddl::Domain, prob: &pddl::Problem) -> Result<SASTask, String> {
+pub fn trivial_task(solvable: bool) -> py_sas_tasks::SASTask {
+    let task = simplify::trivial_task(solvable);
+    py_sas_tasks::from_internal(&task)
+}
+
+pub fn solvable_sas_task(_msg: &str) -> py_sas_tasks::SASTask {
+    let task = simplify::trivial_task(true);
+    py_sas_tasks::from_internal(&task)
+}
+
+pub fn unsolvable_sas_task(_msg: &str) -> py_sas_tasks::SASTask {
+    let task = simplify::trivial_task(false);
+    py_sas_tasks::from_internal(&task)
+}
+
+pub fn pddl_to_sas(dom: &pddl::Domain, prob: &pddl::Problem) -> Result<py_sas_tasks::SASTask, String> {
     translate_from_ast(dom, prob, &TranslateConfig::default())
 }
 
@@ -2830,7 +2873,7 @@ pub fn translate_task(
     implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
     _init_constant_predicates: &[StripsFact],
     _init_constant_numerics: &HashMap<String, f64>,
-) -> SASTask {
+) -> InternalSASTask {
     let mut init_values: Vec<i32> = ranges.iter().map(|r| (r - 1) as i32).collect();
     for fact in init {
         if let Some(pairs) = strips_to_sas.get(fact) {
@@ -2854,7 +2897,7 @@ pub fn translate_task(
         &mut sas_comp_axioms,
     );
     if goal_dict_list.is_none() {
-        return unsolvable_sas_task("Goal violates a mutex");
+        return unsolvable_sas_task_internal();
     }
     let goal_dict_list = goal_dict_list.unwrap();
     let goal_pairs: Vec<(usize, usize)> = goal_dict_list
@@ -2862,7 +2905,7 @@ pub fn translate_task(
         .map(|d| d.iter().map(|(k, v)| (*k, *v)).collect())
         .unwrap_or_default();
     if goal_pairs.is_empty() {
-        return solvable_sas_task("Empty goal");
+        return solvable_sas_task_internal();
     }
 
     let global_constraint_dict_list = translate_strips_conditions(
@@ -2930,7 +2973,7 @@ pub fn translate_task(
         })
         .collect();
 
-    SASTask {
+    InternalSASTask {
         variables,
         operators,
         numeric_variables: Vec::new(),

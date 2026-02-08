@@ -125,7 +125,7 @@ fn main() -> anyhow::Result<()> {
             let instantiated_num_axioms = result.numeric_axioms;
 
             let py_groups: Option<Vec<Vec<String>>> = None;
-            let mut sastask = planners::translate::translate::translate_task_from_grounded(
+            let mut sastask = planners::translate::translate::translate_task_from_grounded_internal(
                 &result.grounded_ops,
                 &dom,
                 &prob,
@@ -150,7 +150,9 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
-            planners::translate::sas_writer::write_sas(&sastask, &out_path)?;
+            let py_task = planners::translate::sas_tasks::from_internal(&sastask);
+            let mut out_file = std::fs::File::create(&out_path)?;
+            py_task.output(&mut out_file)?;
             eprintln!("translator: wrote {}", out_path.display());
 
             let duration = start.elapsed();
