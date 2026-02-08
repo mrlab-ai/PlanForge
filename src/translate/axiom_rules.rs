@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::translate::instantiate::GroundedOp;
+use crate::translate::pddl::Effect;
 
 /// A literal is a predicate with optional negation
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -203,10 +204,11 @@ fn compute_necessary_axiom_literals(
             let pre_literals = condition_to_literals(pre);
             register_literals(&pre_literals, false, &mut necessary_literals, &mut queue);
         }
-        for (conds, _eff) in &op.effects {
+        for (conds, eff) in &op.effects {
+            let negated = matches!(eff, Effect::Del(_, _));
             for cond in conds {
                 let cond_literals = condition_to_literals(cond);
-                register_literals(&cond_literals, false, &mut necessary_literals, &mut queue);
+                register_literals(&cond_literals, negated, &mut necessary_literals, &mut queue);
             }
         }
     }
@@ -392,7 +394,7 @@ fn simplify(axioms: &[PropositionalAxiom]) -> Vec<PropositionalAxiom> {
 
 /// Compute negative axioms for literals that are needed negatively
 fn compute_negative_axioms(
-    axioms_by_atom: &HashMap<(String, Vec<String>), Vec<PropositionalAxiom>>,
+    _axioms_by_atom: &HashMap<(String, Vec<String>), Vec<PropositionalAxiom>>,
     necessary_literals: &HashSet<Literal>,
     simplified_axioms: &HashMap<(String, Vec<String>), Vec<PropositionalAxiom>>,
 ) -> Vec<PropositionalAxiom> {
@@ -401,14 +403,10 @@ fn compute_negative_axioms(
     for literal in necessary_literals {
         let key = literal.positive().atom_key();
 
-        if literal.negated {
-            // Need the negation - compute negative axioms
-            if let Some(axioms) = axioms_by_atom.get(&key) {
+        if let Some(axioms) = simplified_axioms.get(&key) {
+            if literal.negated {
                 new_axioms.extend(negate(axioms));
-            }
-        } else {
-            // Need the positive version - use simplified axioms
-            if let Some(axioms) = simplified_axioms.get(&key) {
+            } else {
                 new_axioms.extend(axioms.clone());
             }
         }

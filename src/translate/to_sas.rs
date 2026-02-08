@@ -554,6 +554,23 @@ pub fn build_sas(
         &axiom_by_pne,
     );
 
+    // Match Python: assign sequential axiom-layer indices by sorted layer key,
+    // incrementing for every axiom in that layer.
+    let mut axiom_layer_index: std::collections::HashMap<String, i32> =
+        std::collections::HashMap::new();
+    let mut layer_keys: Vec<i32> = axioms_by_layer.keys().copied().collect();
+    layer_keys.sort();
+    let mut current_layer: i32 = 0;
+    for layer in layer_keys {
+        if let Some(layer_axioms) = axioms_by_layer.get(&layer) {
+            for ax in layer_axioms {
+                let effect_name = format_pne(&ax.effect);
+                axiom_layer_index.insert(effect_name, current_layer);
+                current_layer += 1;
+            }
+        }
+    }
+
     // Build axiom_map to identify redundant axioms
     let axiom_map = crate::translate::numeric_axiom_rules::identify_equivalent_axioms(
         &axioms_by_layer,
@@ -594,17 +611,11 @@ pub fn build_sas(
                 "D".to_string()
             };
 
-            // Determine axiom_layer
-            let mut axiom_layer: i32 = -1;
-            for (layer, layer_axioms) in &axioms_by_layer {
-                if layer_axioms
-                    .iter()
-                    .any(|a| format_pne(&a.effect) == effect_name)
-                {
-                    axiom_layer = *layer;
-                    break;
-                }
-            }
+            // Determine axiom_layer (Python-style sequential index)
+            let axiom_layer: i32 = axiom_layer_index
+                .get(&effect_name)
+                .copied()
+                .unwrap_or(-1);
 
             let idx = numeric_list.len();
             num_index.insert(effect_name.clone(), idx);
