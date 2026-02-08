@@ -125,7 +125,7 @@ fn main() -> anyhow::Result<()> {
             let instantiated_num_axioms = result.numeric_axioms;
 
             let py_groups: Option<Vec<Vec<String>>> = None;
-            let mut sastask = planners::translate::to_sas::build_sas(
+            let mut sastask = planners::translate::translate::translate_task_from_grounded(
                 &result.grounded_ops,
                 &dom,
                 &prob,

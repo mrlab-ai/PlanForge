@@ -22,7 +22,6 @@ pub mod sas_writer;
 pub mod simple_to_restricted_task;
 pub mod simplify;
 pub mod split_rules;
-pub mod to_sas;
 pub mod tools;
 pub mod timers;
 pub mod translate;
