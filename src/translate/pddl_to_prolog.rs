@@ -24,6 +24,7 @@ impl std::fmt::Display for Fact {
 pub struct Rule {
     pub conditions: Vec<build_model::SymAtom>,
     pub effect: build_model::SymAtom,
+    pub rtype: String,
 }
 
 impl Rule {
@@ -120,6 +121,7 @@ impl PrologProgram {
             .map(|r| Rule {
                 conditions: r.conditions,
                 effect: r.effect,
+                rtype: r.rtype,
             })
             .collect();
     }
@@ -205,6 +207,13 @@ fn add_init_facts(prog: &mut PrologProgram, task: &normalize::NormalizableTask) 
             predicate: type_name.clone(),
             args: vec![build_model::Arg::Const(obj_name.clone())],
         });
+        prog.add_fact(build_model::Atom {
+            predicate: "=".to_string(),
+            args: vec![
+                build_model::Arg::Const(obj_name.clone()),
+                build_model::Arg::Const(obj_name.clone()),
+            ],
+        });
         if let Some(supertypes) = type_hierarchy.get(&type_name) {
             for supertype in supertypes {
                 prog.add_fact(build_model::Atom {
@@ -221,37 +230,35 @@ fn add_init_facts(prog: &mut PrologProgram, task: &normalize::NormalizableTask) 
     }
 
     for init_sexpr in &task.init {
-        if let Some(atom) = sexpr_to_atom(init_sexpr) {
-            prog.add_fact(atom);
-            continue;
-        }
-
         if let SExpr::List(items) = init_sexpr {
             if items.len() >= 3 {
                 if let SExpr::Atom(op) = &items[0] {
                     if op == "=" {
                         if let SExpr::List(func_items) = &items[1] {
-                            if !func_items.is_empty() {
-                                if let SExpr::Atom(fname) = &func_items[0] {
-                                    let func_args: Vec<build_model::Arg> = func_items[1..]
-                                        .iter()
-                                        .filter_map(|item| match item {
-                                            SExpr::Atom(s) => {
-                                                Some(build_model::Arg::Const(s.clone()))
-                                            }
-                                            _ => None,
-                                        })
-                                        .collect();
-                                    let defined_pred = format!("defined!{}", fname);
-                                    prog.add_fact(build_model::Atom {
-                                        predicate: defined_pred,
-                                        args: func_args,
-                                    });
-                                }
+                            if let Some(SExpr::Atom(fname)) = func_items.get(0) {
+                                let func_args: Vec<build_model::Arg> = func_items[1..]
+                                    .iter()
+                                    .filter_map(|item| match item {
+                                        SExpr::Atom(s) => Some(build_model::Arg::Const(s.clone())),
+                                        _ => None,
+                                    })
+                                    .collect();
+                                let defined_pred = format!("defined!{}", fname);
+                                prog.add_fact(build_model::Atom {
+                                    predicate: defined_pred,
+                                    args: func_args,
+                                });
+                                continue;
                             }
                         }
                     }
                 }
+            }
+        }
+
+        if let Some(atom) = sexpr_to_atom(init_sexpr) {
+            if atom.predicate != "=" {
+                prog.add_fact(atom);
             }
         }
     }
@@ -286,7 +293,11 @@ pub fn translate(task: &normalize::NormalizableTask) -> PrologProgram {
     timers::timing("Generating Datalog program", false, || {
         add_init_facts(&mut prog, task);
         for (conditions, effect) in normalize::build_exploration_rules(task).unwrap_or_default() {
-            prog.add_rule(Rule { conditions, effect });
+            prog.add_rule(Rule {
+                conditions,
+                effect,
+                rtype: String::new(),
+            });
         }
     });
 

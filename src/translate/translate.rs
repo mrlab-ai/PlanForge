@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::translate::build_model::Atom;
+use crate::translate::build_model::Atom as ModelAtom;
 use crate::translate::instantiate;
 use crate::translate::normalize;
 use crate::translate::numeric_axiom_rules::{InstantiatedNumericAxiom, PrimitiveNumericExpression};
 use crate::translate::pddl;
+use crate::translate::pddl::{Atom, FunctionComparison, Literal, NegatedFunctionComparison};
 use crate::translate::pddl_parser::PddlTask;
 use crate::translate::simplify;
 use crate::translate::options;
@@ -21,77 +22,6 @@ pub struct TranslateConfig {
 
 static SIMPLIFIED_EFFECT_CONDITION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static ADDED_IMPLIED_PRECONDITION_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct StripsAtom {
-    pub predicate: String,
-    pub args: Vec<String>,
-    pub negated: bool,
-}
-
-impl StripsAtom {
-    pub fn positive(&self) -> Self {
-        Self {
-            predicate: self.predicate.clone(),
-            args: self.args.clone(),
-            negated: false,
-        }
-    }
-
-    pub fn negate(&self) -> Self {
-        Self {
-            predicate: self.predicate.clone(),
-            args: self.args.clone(),
-            negated: !self.negated,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct FunctionComparison {
-    pub comparator: String,
-    pub parts: Vec<String>,
-    pub negated: bool,
-}
-
-impl FunctionComparison {
-    pub fn negate(&self) -> Self {
-        Self {
-            comparator: self.comparator.clone(),
-            parts: self.parts.clone(),
-            negated: !self.negated,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum StripsFact {
-    Atom(StripsAtom),
-    Comparison(FunctionComparison),
-}
-
-impl StripsFact {
-    pub fn is_negated(&self) -> bool {
-        match self {
-            StripsFact::Atom(atom) => atom.negated,
-            StripsFact::Comparison(comp) => comp.negated,
-        }
-    }
-
-    pub fn negate(&self) -> Self {
-        match self {
-            StripsFact::Atom(atom) => StripsFact::Atom(atom.negate()),
-            StripsFact::Comparison(comp) => StripsFact::Comparison(comp.negate()),
-        }
-    }
-
-    pub fn positive_atom(&self) -> Option<StripsAtom> {
-        match self {
-            StripsFact::Atom(atom) => Some(atom.positive()),
-            _ => None,
-        }
-    }
-}
 
 impl Default for TranslateConfig {
     fn default() -> Self {
@@ -1860,7 +1790,7 @@ fn format_pne(pne: &PrimitiveNumericExpression) -> String {
 }
 
 pub fn strips_to_sas_dictionary(
-    groups: &[Vec<Atom>],
+    groups: &[Vec<ModelAtom>],
     num_axioms: &[InstantiatedNumericAxiom],
     num_axiom_map: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
     num_fluents: &HashSet<String>,
@@ -1868,11 +1798,11 @@ pub fn strips_to_sas_dictionary(
     include_numeric: bool,
 ) -> (
     Vec<usize>,
-    HashMap<Atom, Vec<(usize, usize)>>,
+    HashMap<ModelAtom, Vec<(usize, usize)>>,
     usize,
     HashMap<String, usize>,
 ) {
-    let mut dictionary: HashMap<Atom, Vec<(usize, usize)>> = HashMap::new();
+    let mut dictionary: HashMap<ModelAtom, Vec<(usize, usize)>> = HashMap::new();
     for (var_no, group) in groups.iter().enumerate() {
         for (val_no, atom) in group.iter().enumerate() {
             dictionary
@@ -1928,8 +1858,8 @@ pub fn strips_to_sas_dictionary(
 }
 
 pub fn build_mutex_key(
-    strips_to_sas: &HashMap<Atom, Vec<(usize, usize)>>,
-    groups: &[Vec<Atom>],
+    strips_to_sas: &HashMap<ModelAtom, Vec<(usize, usize)>>,
+    groups: &[Vec<ModelAtom>],
 ) -> Vec<Vec<(usize, usize)>> {
     let mut group_keys = Vec::new();
     for group in groups {
@@ -1947,11 +1877,11 @@ pub fn build_mutex_key(
 }
 
 pub fn build_implied_facts(
-    strips_to_sas: &HashMap<Atom, Vec<(usize, usize)>>,
-    groups: &[Vec<Atom>],
-    mutex_groups: &[Vec<Atom>],
+    strips_to_sas: &HashMap<ModelAtom, Vec<(usize, usize)>>,
+    groups: &[Vec<ModelAtom>],
+    mutex_groups: &[Vec<ModelAtom>],
 ) -> HashMap<(usize, usize), Vec<(usize, usize)>> {
-    let mut lonely_propositions: HashMap<Atom, usize> = HashMap::new();
+    let mut lonely_propositions: HashMap<ModelAtom, usize> = HashMap::new();
     for (var_no, group) in groups.iter().enumerate() {
         if group.len() == 1 {
             let lonely_prop = group[0].clone();
@@ -2006,11 +1936,11 @@ pub fn dump_statistics(task: &py_sas_tasks::SASTask) {
 }
 
 pub fn translate_strips_conditions_aux(
-    conditions: &[StripsFact],
-    dictionary: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    conditions: &[Literal],
+    dictionary: &mut HashMap<Literal, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
     numeric_dictionary: &HashMap<String, usize>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), StripsFact>,
+    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Literal>,
     sas_comp_axioms: &mut Vec<CompareAxiom>,
     mutex_check: bool,
 ) -> Option<Vec<HashMap<usize, usize>>> {
@@ -2018,7 +1948,9 @@ pub fn translate_strips_conditions_aux(
 
     for fact in conditions {
         match fact {
-            StripsFact::Comparison(comp) => {
+            Literal::FunctionComparison(comp) => {
+                let negated = false;
+                let comp = comp.clone();
                 if !dictionary.contains_key(fact) {
                     for part in &comp.parts {
                         assert!(numeric_dictionary.contains_key(part));
@@ -2029,24 +1961,24 @@ pub fn translate_strips_conditions_aux(
                         .map(|p| numeric_dictionary[p])
                         .collect();
                     let key = (comp.comparator.clone(), parts.clone());
-                    let mut fact_to_use = StripsFact::Comparison(comp.clone());
+                    let mut fact_to_use = Literal::FunctionComparison(comp.clone());
                     if let Some(pos_fact) = comp_axiom_dict.get(&key) {
-                        if comp.negated {
-                            fact_to_use = pos_fact.negate();
+                        fact_to_use = if negated {
+                            pos_fact.negate()
                         } else {
-                            fact_to_use = pos_fact.clone();
-                        }
+                            pos_fact.clone()
+                        };
                     } else {
                         let axiom = CompareAxiom {
                             comp: comp.comparator.clone(),
                             parts: parts.clone(),
                             effect_var: ranges.len(),
                         };
-                        let (pos_fact, neg_fact) = if comp.negated {
-                            (fact_to_use.negate(), fact_to_use)
-                        } else {
-                            (fact_to_use.clone(), fact_to_use.negate())
-                        };
+                        let pos_fact = Literal::FunctionComparison(comp.clone());
+                        let neg_fact = Literal::NegatedFunctionComparison(NegatedFunctionComparison {
+                            comparator: comp.comparator.clone(),
+                            parts: comp.parts.clone(),
+                        });
                         if !mutex_check {
                             sas_comp_axioms.push(axiom);
                             comp_axiom_dict.insert(key, pos_fact.clone());
@@ -2060,11 +1992,6 @@ pub fn translate_strips_conditions_aux(
                             .or_default()
                             .push((ranges.len(), 1));
                         ranges.push(3);
-                        fact_to_use = if comp.negated {
-                            StripsFact::Comparison(comp.negate())
-                        } else {
-                            StripsFact::Comparison(comp.clone())
-                        };
                     }
 
                     if let Some(entry) = dictionary.get(&fact_to_use).and_then(|v| v.first()) {
@@ -2086,10 +2013,78 @@ pub fn translate_strips_conditions_aux(
                     condition.insert(var, HashSet::from([val]));
                 }
             }
-            StripsFact::Atom(atom) => {
-                if atom.negated {
-                    continue;
+            Literal::NegatedFunctionComparison(comp) => {
+                let negated = true;
+                let comp = FunctionComparison {
+                    comparator: comp.comparator.clone(),
+                    parts: comp.parts.clone(),
+                };
+                if !dictionary.contains_key(fact) {
+                    for part in &comp.parts {
+                        assert!(numeric_dictionary.contains_key(part));
+                    }
+                    let parts: Vec<usize> = comp
+                        .parts
+                        .iter()
+                        .map(|p| numeric_dictionary[p])
+                        .collect();
+                    let key = (comp.comparator.clone(), parts.clone());
+                    let mut fact_to_use = Literal::NegatedFunctionComparison(NegatedFunctionComparison {
+                        comparator: comp.comparator.clone(),
+                        parts: comp.parts.clone(),
+                    });
+                    if let Some(pos_fact) = comp_axiom_dict.get(&key) {
+                        fact_to_use = if negated {
+                            pos_fact.negate()
+                        } else {
+                            pos_fact.clone()
+                        };
+                    } else {
+                        let axiom = CompareAxiom {
+                            comp: comp.comparator.clone(),
+                            parts: parts.clone(),
+                            effect_var: ranges.len(),
+                        };
+                        let pos_fact = Literal::FunctionComparison(comp.clone());
+                        let neg_fact = Literal::NegatedFunctionComparison(NegatedFunctionComparison {
+                            comparator: comp.comparator.clone(),
+                            parts: comp.parts.clone(),
+                        });
+                        if !mutex_check {
+                            sas_comp_axioms.push(axiom);
+                            comp_axiom_dict.insert(key, pos_fact.clone());
+                        }
+                        dictionary
+                            .entry(pos_fact)
+                            .or_default()
+                            .push((ranges.len(), 0));
+                        dictionary
+                            .entry(neg_fact)
+                            .or_default()
+                            .push((ranges.len(), 1));
+                        ranges.push(3);
+                    }
+
+                    if let Some(entry) = dictionary.get(&fact_to_use).and_then(|v| v.first()) {
+                        let (var, val) = *entry;
+                        if let Some(existing) = condition.get(&var) {
+                            if !existing.contains(&val) {
+                                return None;
+                            }
+                        }
+                        condition.insert(var, HashSet::from([val]));
+                    }
+                } else if let Some(entry) = dictionary.get(fact).and_then(|v| v.first()) {
+                    let (var, val) = *entry;
+                    if let Some(existing) = condition.get(&var) {
+                        if !existing.contains(&val) {
+                            return None;
+                        }
+                    }
+                    condition.insert(var, HashSet::from([val]));
                 }
+            }
+            Literal::Atom(_) => {
                 if let Some(entries) = dictionary.get(fact) {
                     for (var, val) in entries {
                         if let Some(existing) = condition.get(var) {
@@ -2101,20 +2096,26 @@ pub fn translate_strips_conditions_aux(
                     }
                 }
             }
+            Literal::NegatedAtom(_) => {
+                continue;
+            }
         }
     }
 
     let number_of_values = |vals: &HashSet<usize>| vals.len();
 
     for fact in conditions {
-        if matches!(fact, StripsFact::Comparison(_)) {
+        if matches!(
+            fact,
+            Literal::FunctionComparison(_) | Literal::NegatedFunctionComparison(_)
+        ) {
             continue;
         }
         if fact.is_negated() {
             let mut done = false;
             let mut new_condition: HashMap<usize, HashSet<usize>> = HashMap::new();
             if let Some(atom) = fact.positive_atom() {
-                let positive_fact = StripsFact::Atom(atom);
+                let positive_fact = Literal::Atom(atom);
                 if let Some(entries) = dictionary.get(&positive_fact) {
                     for (var, val) in entries {
                         let mut poss_vals: HashSet<usize> =
@@ -2176,13 +2177,13 @@ pub fn translate_strips_conditions_aux(
 }
 
 pub fn translate_strips_conditions(
-    conditions: &[StripsFact],
-    dictionary: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    conditions: &[Literal],
+    dictionary: &mut HashMap<Literal, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
     numeric_dictionary: &HashMap<String, usize>,
-    mutex_dict: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    mutex_dict: &mut HashMap<Literal, Vec<(usize, usize)>>,
     mutex_ranges: &mut Vec<usize>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), StripsFact>,
+    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Literal>,
     sas_comp_axioms: &mut Vec<CompareAxiom>,
 ) -> Option<Vec<HashMap<usize, usize>>> {
     if conditions.is_empty() {
@@ -2224,34 +2225,34 @@ pub struct AssignmentEffect {
 #[derive(Clone, Debug)]
 pub struct StripsOperator {
     pub name: String,
-    pub precondition: Vec<StripsFact>,
-    pub add_effects: Vec<(Vec<StripsFact>, StripsFact)>,
-    pub del_effects: Vec<(Vec<StripsFact>, StripsFact)>,
-    pub assign_effects: Vec<(Vec<StripsFact>, AssignmentEffect)>,
+    pub precondition: Vec<Literal>,
+    pub add_effects: Vec<(Vec<Literal>, Literal)>,
+    pub del_effects: Vec<(Vec<Literal>, Literal)>,
+    pub assign_effects: Vec<(Vec<Literal>, AssignmentEffect)>,
     pub cost: f64,
 }
 
 #[derive(Clone, Debug)]
 pub struct StripsAxiom {
-    pub condition: Vec<StripsFact>,
-    pub effect: StripsAtom,
+    pub condition: Vec<Literal>,
+    pub effect: Literal,
 }
 
 pub fn negate_and_translate_condition(
-    condition: &[Vec<StripsFact>],
-    dictionary: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    condition: &[Vec<Literal>],
+    dictionary: &mut HashMap<Literal, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
     numeric_dict: &HashMap<String, usize>,
-    mutex_dict: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    mutex_dict: &mut HashMap<Literal, Vec<(usize, usize)>>,
     mutex_ranges: &mut Vec<usize>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), StripsFact>,
+    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Literal>,
     sas_comp_axioms: &mut Vec<CompareAxiom>,
 ) -> Option<Vec<HashMap<usize, usize>>> {
     if condition.iter().any(|clause| clause.is_empty()) {
         return None;
     }
 
-    let mut combinations: Vec<Vec<StripsFact>> = vec![Vec::new()];
+    let mut combinations: Vec<Vec<Literal>> = vec![Vec::new()];
     for clause in condition {
         let mut next = Vec::new();
         for combo in &combinations {
@@ -2266,7 +2267,7 @@ pub fn negate_and_translate_condition(
 
     let mut negation = Vec::new();
     for combination in combinations {
-        let negated: Vec<StripsFact> = combination
+        let negated: Vec<Literal> = combination
             .iter()
             .map(|lit| lit.negate())
             .collect();
@@ -2292,13 +2293,13 @@ pub fn negate_and_translate_condition(
 
 pub fn translate_strips_operator(
     operator: &StripsOperator,
-    dictionary: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    dictionary: &mut HashMap<Literal, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
     numeric_dictionary: &HashMap<String, usize>,
-    mutex_dict: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    mutex_dict: &mut HashMap<Literal, Vec<(usize, usize)>>,
     mutex_ranges: &mut Vec<usize>,
     implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), StripsFact>,
+    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Literal>,
     sas_comp_axioms: &mut Vec<CompareAxiom>,
     num_vals: usize,
     relevant_numeric_vars: &HashSet<usize>,
@@ -2339,21 +2340,21 @@ pub fn translate_strips_operator(
 
 pub fn translate_strips_operator_aux(
     operator: &StripsOperator,
-    dictionary: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    dictionary: &mut HashMap<Literal, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
     numeric_dictionary: &HashMap<String, usize>,
-    mutex_dict: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    mutex_dict: &mut HashMap<Literal, Vec<(usize, usize)>>,
     mutex_ranges: &mut Vec<usize>,
     implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
     mut condition: HashMap<usize, usize>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), StripsFact>,
+    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Literal>,
     sas_comp_axioms: &mut Vec<CompareAxiom>,
     _num_vals: usize,
     relevant_numeric: &HashSet<usize>,
 ) -> Option<SASOperator> {
     let mut effects_by_variable: HashMap<usize, HashMap<usize, Vec<HashMap<usize, usize>>>> =
         HashMap::new();
-    let mut add_conds_by_variable: HashMap<usize, Vec<Vec<StripsFact>>> = HashMap::new();
+    let mut add_conds_by_variable: HashMap<usize, Vec<Vec<Literal>>> = HashMap::new();
 
     for (conds, fact) in &operator.add_effects {
         let eff_condition_list = translate_strips_conditions(
@@ -2635,12 +2636,12 @@ pub fn prune_stupid_effect_conditions(
 
 pub fn translate_strips_axiom(
     axiom: &StripsAxiom,
-    dictionary: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    dictionary: &mut HashMap<Literal, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
     num_dict: &HashMap<String, usize>,
-    mutex_dict: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    mutex_dict: &mut HashMap<Literal, Vec<(usize, usize)>>,
     mutex_ranges: &mut Vec<usize>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), StripsFact>,
+    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Literal>,
     sas_comp_axioms: &mut Vec<CompareAxiom>,
 ) -> Vec<SASAxiom> {
     let conditions = translate_strips_conditions(
@@ -2655,15 +2656,19 @@ pub fn translate_strips_axiom(
     );
     let mut axioms = Vec::new();
     if let Some(cond_list) = conditions {
-        let effect = if axiom.effect.negated {
-            let positive = StripsFact::Atom(axiom.effect.positive());
-            if let Some(entries) = dictionary.get(&positive) {
-                let (var, _) = entries[0];
-                (var, ranges[var] - 1)
+        let effect = if axiom.effect.is_negated() {
+            if let Some(atom) = axiom.effect.positive_atom() {
+                let positive = Literal::Atom(atom);
+                if let Some(entries) = dictionary.get(&positive) {
+                    let (var, _) = entries[0];
+                    (var, ranges[var] - 1)
+                } else {
+                    return axioms;
+                }
             } else {
                 return axioms;
             }
-        } else if let Some(entries) = dictionary.get(&StripsFact::Atom(axiom.effect.clone())) {
+        } else if let Some(entries) = dictionary.get(&axiom.effect) {
             entries[0]
         } else {
             return axioms;
@@ -2680,7 +2685,7 @@ pub fn translate_strips_axiom(
 
 pub fn translate_numeric_axiom(
     axiom: &InstantiatedNumericAxiom,
-    prop_dictionary: &HashMap<StripsFact, Vec<(usize, usize)>>,
+    prop_dictionary: &HashMap<Literal, Vec<(usize, usize)>>,
     num_dictionary: &HashMap<String, usize>,
 ) -> Option<crate::translate::sas::NumericAxiom> {
     let effect = num_dictionary.get(&format_pne(&axiom.effect)).copied()?;
@@ -2694,10 +2699,9 @@ pub fn translate_numeric_axiom(
                 let key = format_pne(&sub.effect);
                 if let Some(idx) = num_dictionary.get(&key) {
                     parts.push(*idx);
-                } else if let Some(entries) = prop_dictionary.get(&StripsFact::Atom(StripsAtom {
+                } else if let Some(entries) = prop_dictionary.get(&Literal::Atom(Atom {
                     predicate: key,
                     args: Vec::new(),
-                    negated: false,
                 })) {
                     parts.push(entries[0].0);
                 } else {
@@ -2720,13 +2724,13 @@ pub fn translate_numeric_axiom(
 
 pub fn translate_strips_operators(
     actions: &[StripsOperator],
-    strips_to_sas: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    strips_to_sas: &mut HashMap<Literal, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
     numeric_strips_to_sas: &HashMap<String, usize>,
-    mutex_dict: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    mutex_dict: &mut HashMap<Literal, Vec<(usize, usize)>>,
     mutex_ranges: &mut Vec<usize>,
     implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), StripsFact>,
+    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Literal>,
     sas_comp_axioms: &mut Vec<CompareAxiom>,
     num_vals: usize,
     relevant_numeric_vars: &HashSet<usize>,
@@ -2753,12 +2757,12 @@ pub fn translate_strips_operators(
 
 pub fn translate_strips_axioms(
     axioms: &[StripsAxiom],
-    strips_to_sas: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    strips_to_sas: &mut HashMap<Literal, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
     num_dict: &HashMap<String, usize>,
-    mutex_dict: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    mutex_dict: &mut HashMap<Literal, Vec<(usize, usize)>>,
     mutex_ranges: &mut Vec<usize>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), StripsFact>,
+    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Literal>,
     sas_comp_axioms: &mut Vec<CompareAxiom>,
 ) -> Vec<SASAxiom> {
     let mut result = Vec::new();
@@ -2792,8 +2796,8 @@ pub fn add_key_to_comp_axioms(
 }
 
 pub fn dump_task(
-    init: &[StripsFact],
-    goals: &[StripsFact],
+    init: &[Literal],
+    goals: &[Literal],
     actions: &[StripsOperator],
     axioms: &[StripsAxiom],
     axiom_layer_dict: &HashMap<String, usize>,
@@ -2851,18 +2855,18 @@ pub fn pddl_to_sas(dom: &pddl::Domain, prob: &pddl::Problem) -> Result<py_sas_ta
 }
 
 pub fn translate_task(
-    strips_to_sas: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    strips_to_sas: &mut HashMap<Literal, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
     translation_key: &mut Vec<Vec<String>>,
     numeric_strips_to_sas: &HashMap<String, usize>,
     num_count: usize,
-    mutex_dict: &mut HashMap<StripsFact, Vec<(usize, usize)>>,
+    mutex_dict: &mut HashMap<Literal, Vec<(usize, usize)>>,
     mutex_ranges: &mut Vec<usize>,
     mutex_key: &[Vec<(usize, usize)>],
-    init: &[StripsFact],
+    init: &[Literal],
     num_init: &HashMap<String, f64>,
-    goal_list: &[StripsFact],
-    global_constraint: &StripsFact,
+    goal_list: &[Literal],
+    global_constraint: &Literal,
     actions: &[StripsOperator],
     axioms: &[StripsAxiom],
     num_axioms: &[InstantiatedNumericAxiom],
@@ -2871,7 +2875,7 @@ pub fn translate_task(
     _const_num_axioms: &[InstantiatedNumericAxiom],
     metric: (String, isize),
     implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
-    _init_constant_predicates: &[StripsFact],
+    _init_constant_predicates: &[Literal],
     _init_constant_numerics: &HashMap<String, f64>,
 ) -> InternalSASTask {
     let mut init_values: Vec<i32> = ranges.iter().map(|r| (r - 1) as i32).collect();
@@ -2883,7 +2887,7 @@ pub fn translate_task(
         }
     }
 
-    let mut comp_axiom_dict: HashMap<(String, Vec<usize>), StripsFact> = HashMap::new();
+    let mut comp_axiom_dict: HashMap<(String, Vec<usize>), Literal> = HashMap::new();
     let mut sas_comp_axioms: Vec<CompareAxiom> = Vec::new();
 
     let goal_dict_list = translate_strips_conditions(

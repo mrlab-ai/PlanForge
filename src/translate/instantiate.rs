@@ -1,10 +1,7 @@
 use crate::translate::build_model;
 use crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom;
 use crate::translate::pddl::{Condition, Effect};
-use crate::translate::split_rules::{
-    add_object_conditions_to_rules, convert_trivial_rules_to_facts, split_duplicate_arguments,
-    split_rule, RuleWithType, SymRule,
-};
+use crate::translate::pddl_to_prolog;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -116,149 +113,32 @@ fn build_type_hierarchy(
 pub fn explore_normalized(
     norm_task: &crate::translate::normalize::NormalizableTask,
 ) -> Result<ExploreResult, InstantiateError> {
-    eprintln!("DEBUG: explore_normalized() Step 1: build exploration rules");
-    // Step 1: Build exploration rules from normalized actions and axioms
-    let exploration_rules = crate::translate::normalize::build_exploration_rules(norm_task)
-        .map_err(InstantiateError::Normalize)?;
-    eprintln!("  Built {} exploration rules", exploration_rules.len());
-
-    let mut prolog_rules: Vec<SymRule> = exploration_rules
-        .into_iter()
-        .map(|(body, head)| SymRule {
-            conditions: body,
-            effect: head,
-        })
-        .collect();
-
-    for rule in prolog_rules.iter_mut() {
-        split_duplicate_arguments(rule);
-    }
-
-    let object_predicate_required = add_object_conditions_to_rules(&mut prolog_rules);
-
-    let (prolog_rules, extra_facts) = convert_trivial_rules_to_facts(&prolog_rules);
-
-    eprintln!("DEBUG: explore_normalized() Step 1b: split rules");
-    let mut split_rules: Vec<RuleWithType> = Vec::new();
-    let mut counter = 0;
-    for rule in &prolog_rules {
-        split_rules.extend(split_rule(rule, &mut counter));
-    }
-    eprintln!("  After splitting: {} rules", split_rules.len());
-
-    let mut rule_specs: Vec<build_model::RuleSpec> = Vec::new();
-    for rule in split_rules {
-        rule_specs.push(build_model::RuleSpec {
-            rtype: rule.rtype,
-            effect: rule.effect,
-            conditions: rule.conditions,
-        });
-    }
-
-    eprintln!("DEBUG: explore_normalized() Step 2: add init facts");
-    // Step 2: Build init facts from problem
-    let mut init_facts: Vec<build_model::Atom> = Vec::new();
+    eprintln!("DEBUG: explore_normalized() Step 1: build prolog program");
+    let prog = pddl_to_prolog::translate(norm_task);
     let type_hierarchy = build_type_hierarchy(&norm_task.types);
 
-    // Add type facts for all objects (direct type and all supertypes)
-    for (obj_name, obj_type) in &norm_task.objects {
-        let type_name = obj_type.clone().unwrap_or_else(|| "object".to_string());
-        init_facts.push(build_model::Atom {
-            predicate: type_name.clone(),
-            args: vec![build_model::Arg::Const(obj_name.clone())],
-        });
-        if let Some(supertypes) = type_hierarchy.get(&type_name) {
-            for supertype in supertypes {
-                init_facts.push(build_model::Atom {
-                    predicate: supertype.clone(),
-                    args: vec![build_model::Arg::Const(obj_name.clone())],
-                });
-            }
-        } else if type_name != "object" {
-            init_facts.push(build_model::Atom {
-                predicate: "object".to_string(),
-                args: vec![build_model::Arg::Const(obj_name.clone())],
-            });
-        }
-    }
-    // Add equality facts for all objects: =(obj, obj)
-    for (obj_name, _) in &norm_task.objects {
-        init_facts.push(build_model::Atom {
-            predicate: "=".to_string(),
-            args: vec![
-                build_model::Arg::Const(obj_name.clone()),
-                build_model::Arg::Const(obj_name.clone()),
-            ],
+    eprintln!("  Prolog facts: {}, rules: {}", prog.facts.len(), prog.rules.len());
+
+    let init_facts: Vec<build_model::Atom> =
+        prog.facts.iter().map(|f| f.atom.clone()).collect();
+
+    let mut rule_specs: Vec<build_model::RuleSpec> = Vec::new();
+    for rule in &prog.rules {
+        rule_specs.push(build_model::RuleSpec {
+            rtype: rule.rtype.clone(),
+            effect: rule.effect.clone(),
+            conditions: rule.conditions.clone(),
         });
     }
-    if object_predicate_required {
-        for (obj_name, _) in &norm_task.objects {
-            init_facts.push(build_model::Atom {
-                predicate: "@object".to_string(),
-                args: vec![build_model::Arg::Const(obj_name.clone())],
-            });
-        }
-    }
-    // Add init state atoms
-    for init_sexpr in &norm_task.init {
-        if let Some(atom) = sexpr_to_atom(init_sexpr) {
-            init_facts.push(atom);
-            continue;
-        }
 
-        // Handle numeric function assignments (= (func args) val)
-        if let crate::translate::pddl_parser::SExpr::List(items) = init_sexpr {
-            if items.len() >= 3 {
-                if let crate::translate::pddl_parser::SExpr::Atom(op) = &items[0] {
-                    if op == "=" {
-                        if let crate::translate::pddl_parser::SExpr::List(func_items) = &items[1] {
-                            if !func_items.is_empty() {
-                                if let crate::translate::pddl_parser::SExpr::Atom(fname) =
-                                    &func_items[0]
-                                {
-                                    let func_args: Vec<build_model::Arg> = func_items[1..]
-                                        .iter()
-                                        .filter_map(|item| {
-                                            if let crate::translate::pddl_parser::SExpr::Atom(s) =
-                                                item
-                                            {
-                                                Some(build_model::Arg::Const(s.clone()))
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect();
-                                    init_facts.push(build_model::Atom {
-                                        predicate: fname.clone(),
-                                        args: func_args.clone(),
-                                    });
-                                    let defined_pred = format!("defined!{}", fname);
-                                    init_facts.push(build_model::Atom {
-                                        predicate: defined_pred,
-                                        args: func_args,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Add extra facts from rules with no body
-    init_facts.extend(extra_facts);
-
-    eprintln!("  Added {} init facts", init_facts.len());
-
-    eprintln!("DEBUG: explore_normalized() Step 3: compute model");
+    eprintln!("DEBUG: explore_normalized() Step 2: compute model");
     // Step 3: Compute the datalog model
     let mut rules = build_model::convert_rules(&rule_specs);
     let model = build_model::compute_model(&mut rules, &init_facts);
 
     eprintln!("DEBUG: computed model with {} atoms", model.len());
 
-    eprintln!("DEBUG: explore_normalized() Step 4: extract fluent facts and functions");
+    eprintln!("DEBUG: explore_normalized() Step 3: extract fluent facts and functions");
     // Step 4: Extract fluent facts and functions from model
     let fluent_facts = get_fluent_facts(norm_task, &model);
     let fluent_functions = get_fluent_functions(norm_task);
@@ -274,7 +154,7 @@ pub fn explore_normalized(
     let init_function_values = extract_init_function_values(norm_task);
     let type_to_objects = get_objects_by_type(&norm_task.objects, &type_hierarchy);
 
-    eprintln!("DEBUG: explore_normalized() Step 5: ground actions from model");
+    eprintln!("DEBUG: explore_normalized() Step 4: ground actions from model");
     // Step 5: Extract grounded actions from model
     let (ops, num_axioms, grounded_axioms) = ground_from_normalized_model(
         &model,
@@ -290,7 +170,7 @@ pub fn explore_normalized(
 
     let relaxed_reachable = model.iter().any(|atom| atom.predicate == "@goal-reachable");
 
-    eprintln!("DEBUG: explore_normalized() Step 6: separate init state into constants and fluents");
+    eprintln!("DEBUG: explore_normalized() Step 5: separate init state into constants and fluents");
     // Step 6: Extract init function values and separate constant facts
     let init_constant_numeric_facts =
         extract_constant_numeric_facts(&init_function_values, &fluent_functions);
@@ -1324,36 +1204,5 @@ fn format_number(value: f64) -> String {
         format!("{}", value as i64)
     } else {
         value.to_string()
-    }
-}
-
-/// Convert a PDDL SExpr to a build_model Atom.
-fn sexpr_to_atom(sexpr: &crate::translate::pddl_parser::SExpr) -> Option<build_model::Atom> {
-    use crate::translate::pddl_parser::SExpr;
-    match sexpr {
-        SExpr::List(items) if !items.is_empty() => {
-            if let SExpr::Atom(pred) = &items[0] {
-                if pred == "=" {
-                    return None;
-                }
-                let args: Vec<build_model::Arg> = items[1..]
-                    .iter()
-                    .filter_map(|item| {
-                        if let SExpr::Atom(s) = item {
-                            Some(build_model::Arg::Const(s.clone()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                Some(build_model::Atom {
-                    predicate: pred.clone(),
-                    args,
-                })
-            } else {
-                None
-            }
-        }
-        _ => None,
     }
 }
