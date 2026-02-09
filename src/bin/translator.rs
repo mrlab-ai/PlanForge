@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -158,9 +159,20 @@ fn main() -> anyhow::Result<()> {
             let duration = start.elapsed();
             eprintln!("translator: completed in {:.2?} seconds", duration);
         }
-        Commands::Preprocess { output: _output } => {
-            //not implemented yet, raise error
-            todo!("Preprocess command not implemented yet");
+        Commands::Preprocess { output } => {
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input)?;
+            if input.trim().is_empty() {
+                return Err(anyhow::anyhow!(
+                    "preprocess expects SAS+ input on stdin"
+                ));
+            }
+
+            if let Some(out_path) = output {
+                std::fs::write(out_path, input)?;
+            } else {
+                print!("{}", input);
+            }
         }
     }
 
