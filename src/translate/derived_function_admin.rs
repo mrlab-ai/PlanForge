@@ -28,10 +28,10 @@ impl DerivedFunctionAdministrator {
     pub fn get_derived_function(&mut self, exp: &SExpr) -> PrimitiveNumericExpression {
         match exp {
             SExpr::Atom(a) => {
-                // numeric constant -> canonical derived constant name like derived!4.0()
+                // numeric constant -> canonical derived constant name like derived!4.0
                 if let Ok(nv) = a.parse::<i64>() {
                     PrimitiveNumericExpression {
-                        name: format!("derived!{}.0()", nv),
+                        name: format!("derived!{}.0", nv),
                         args: vec![],
                     }
                 } else {
@@ -57,9 +57,9 @@ impl DerivedFunctionAdministrator {
                         for p in &list[1..] {
                             let pne = self.get_derived_function(p);
                             let token = if pne.args.is_empty() {
-                                pne.name.clone()
+                                format!("PNE {}()", pne.name)
                             } else {
-                                format!("{}({})", pne.name, pne.args.join(", "))
+                                format!("PNE {}({})", pne.name, pne.args.join(", "))
                             };
                             child_tokens.push(token);
                         }
@@ -67,16 +67,16 @@ impl DerivedFunctionAdministrator {
                             child_tokens.sort();
                         }
                         let op_name = match op.as_str() {
-                            "+" => "sum_PNE",
-                            "*" => "product_PNE",
-                            "-" => "difference_PNE",
-                            "/" => "quotient_PNE",
-                            _ => "op_PNE",
+                            "+" => "sum",
+                            "*" => "product",
+                            "-" => "difference",
+                            "/" => "quotient",
+                            _ => "op",
                         };
                         let name = if child_tokens.is_empty() {
                             format!("derived!{}", op_name)
                         } else {
-                            format!("derived!{} {}", op_name, child_tokens.join("_PNE "))
+                            format!("derived!{}_{}", op_name, child_tokens.join("_"))
                         };
                         PrimitiveNumericExpression { name, args: vec![] }
                     } else {

@@ -178,7 +178,7 @@ impl NormalizableTask {
         parameters: Vec<(String, Option<String>)>,
         condition: Condition,
     ) -> String {
-        let axiom_name = format!("@axiom-{}", self.axiom_counter);
+        let axiom_name = format!("new-axiom@{}", self.axiom_counter);
         self.axiom_counter += 1;
 
         if !self

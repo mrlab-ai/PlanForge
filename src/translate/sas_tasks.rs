@@ -143,7 +143,7 @@ impl SASNumericVariables {
         for (idx, name) in self.variable_names.iter().enumerate() {
             let t = self.types.get(idx).cloned().unwrap_or_else(|| "U".to_string());
             let layer = self.axiom_layers.get(idx).copied().unwrap_or(-1);
-            writeln!(stream, "{} {} {}", t, layer, name)?;
+            writeln!(stream, "{} {} PNE {}", t, layer, name)?;
         }
         writeln!(stream, "end_numeric_variables")?;
         Ok(())

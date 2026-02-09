@@ -107,11 +107,7 @@ impl NormalizationFunctionAdministrator {
     }
 
     fn pne_to_string(pne: &PrimitiveNumericExpression) -> String {
-        if pne.args.is_empty() {
-            pne.symbol.clone()
-        } else {
-            format!("{}({})", pne.symbol, pne.args.join(", "))
-        }
+        format!("PNE {}({})", pne.symbol, pne.args.join(", "))
     }
 
     fn make_unique_symbol(&self, base: &str) -> String {
@@ -157,7 +153,7 @@ impl NormalizationFunctionAdministrator {
                 let key = DerivedFunctionKey::Constant(nc.value);
 
                 if !self.functions.contains_key(&key) {
-                    let symbol = format!("derived!{}.0()", nc.value);
+                    let symbol = format!("derived!{}.0", nc.value);
                     let axiom = NumericAxiom::new(
                         symbol,
                         vec![],
@@ -174,11 +170,10 @@ impl NormalizationFunctionAdministrator {
             FunctionalExpression::AdditiveInverse(ai) => {
                 // Recursively process the sub-expression
                 let subexp = self.get_derived_function(&ai.part);
-                let subexp_str = Self::pne_to_string(&subexp);
-                let key = DerivedFunctionKey::AdditiveInverse(ai.op.clone(), subexp_str.clone());
+                let key = DerivedFunctionKey::AdditiveInverse(ai.op.clone(), subexp.symbol.clone());
 
                 if !self.functions.contains_key(&key) {
-                    let base = format!("derived!difference_PNE {}", subexp_str);
+                    let base = format!("derived!difference_{}", subexp.symbol);
                     let symbol = self.make_unique_symbol(&base);
 
                     // Generate default variables for parameters
@@ -218,7 +213,11 @@ impl NormalizationFunctionAdministrator {
                     .map(|p| (Self::pne_to_string(&p), p))
                     .collect();
                 if ae.op == "+" || ae.op == "*" {
-                    part_pairs.sort_by(|a, b| a.0.cmp(&b.0));
+                    part_pairs.sort_by(|a, b| {
+                        let a_is_non_derived = !a.1.symbol.starts_with("derived!");
+                        let b_is_non_derived = !b.1.symbol.starts_with("derived!");
+                        (a_is_non_derived, &a.0).cmp(&(b_is_non_derived, &b.0))
+                    });
                 }
                 let part_strings: Vec<String> = part_pairs.iter().map(|p| p.0.clone()).collect();
                 let df_parts: Vec<PrimitiveNumericExpression> =
@@ -236,16 +235,16 @@ impl NormalizationFunctionAdministrator {
                 if !self.functions.contains_key(&key) {
                     // Generate new symbol using PNE-style naming
                     let op_name = match ae.op.as_str() {
-                        "+" => "sum_PNE",
-                        "-" => "difference_PNE",
-                        "*" => "product_PNE",
-                        "/" => "quotient_PNE",
-                        _ => "op_PNE",
+                        "+" => "sum",
+                        "-" => "difference",
+                        "*" => "product",
+                        "/" => "quotient",
+                        _ => "op",
                     };
                     let base = if part_strings.is_empty() {
                         format!("derived!{}", op_name)
                     } else {
-                        format!("derived!{} {}", op_name, part_strings.join("_PNE "))
+                        format!("derived!{}_{}", op_name, part_strings.join("_"))
                     };
                     let symbol = self.make_unique_symbol(&base);
 

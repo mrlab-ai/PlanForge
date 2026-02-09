@@ -75,9 +75,6 @@ pub struct InstantiatedNumericAxiom {
 impl PartialEq for InstantiatedNumericAxiom {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
-            && self.parts == other.parts
-            && self.op == other.op
-            && self.effect == other.effect
     }
 }
 impl Eq for InstantiatedNumericAxiom {}
@@ -85,11 +82,6 @@ impl Eq for InstantiatedNumericAxiom {}
 impl Hash for InstantiatedNumericAxiom {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
-        self.op.hash(state);
-        for p in &self.parts {
-            p.hash(state);
-        }
-        self.effect.hash(state);
     }
 }
 
@@ -210,87 +202,223 @@ pub fn identify_constants(
     identify_constants_checked(axioms, axiom_by_pne).unwrap_or_else(|_| Vec::new())
 }
 
+/// Identify constant axioms and simplify them in-place (matching Python behavior).
+pub fn identify_constants_inplace(
+    axioms: &mut Vec<InstantiatedNumericAxiom>,
+) -> Vec<InstantiatedNumericAxiom> {
+    let mut index_by_effect: HashMap<PrimitiveNumericExpression, usize> = HashMap::new();
+    for (idx, ax) in axioms.iter().enumerate() {
+        index_by_effect.insert(ax.effect.clone(), idx);
+    }
+
+    let mut cache: HashMap<usize, Option<i64>> = HashMap::new();
+
+    fn eval_part(
+        part: &NumericPart,
+        axioms: &mut Vec<InstantiatedNumericAxiom>,
+        index_by_effect: &HashMap<PrimitiveNumericExpression, usize>,
+        cache: &mut HashMap<usize, Option<i64>>,
+        visiting: &mut HashSet<usize>,
+    ) -> Option<i64> {
+        match part {
+            NumericPart::Constant(NumericConstant(v)) => Some(*v),
+            NumericPart::Primitive(pne) => {
+                if let Some(idx) = index_by_effect.get(pne) {
+                    eval_axiom(*idx, axioms, index_by_effect, cache, visiting)
+                } else {
+                    None
+                }
+            }
+            NumericPart::Axiom(boxed) => {
+                if let Some(idx) = index_by_effect.get(&boxed.effect) {
+                    eval_axiom(*idx, axioms, index_by_effect, cache, visiting)
+                } else {
+                    // Fallback: try to evaluate boxed axiom directly
+                    eval_parts(&boxed.op, &boxed.parts, axioms, index_by_effect, cache, visiting)
+                }
+            }
+        }
+    }
+
+    fn eval_parts(
+        op: &Option<String>,
+        parts: &[NumericPart],
+        axioms: &mut Vec<InstantiatedNumericAxiom>,
+        index_by_effect: &HashMap<PrimitiveNumericExpression, usize>,
+        cache: &mut HashMap<usize, Option<i64>>,
+        visiting: &mut HashSet<usize>,
+    ) -> Option<i64> {
+        let mut values: Vec<i64> = Vec::new();
+        for part in parts {
+            if let Some(v) = eval_part(part, axioms, index_by_effect, cache, visiting) {
+                values.push(v);
+            } else {
+                return None;
+            }
+        }
+        if values.is_empty() {
+            return None;
+        }
+
+        if let Some(op) = op {
+            if op == "-" && values.len() == 1 {
+                return Some(-values[0]);
+            }
+            let mut iter = values.into_iter();
+            let mut acc = iter.next()?;
+            for v in iter {
+                match op.as_str() {
+                    "+" => acc += v,
+                    "-" => acc -= v,
+                    "*" => acc *= v,
+                    "/" => {
+                        if v == 0 {
+                            return None;
+                        }
+                        acc /= v;
+                    }
+                    _ => return None,
+                }
+            }
+            Some(acc)
+        } else if values.len() == 1 {
+            Some(values[0])
+        } else {
+            None
+        }
+    }
+
+    fn eval_axiom(
+        idx: usize,
+        axioms: &mut Vec<InstantiatedNumericAxiom>,
+        index_by_effect: &HashMap<PrimitiveNumericExpression, usize>,
+        cache: &mut HashMap<usize, Option<i64>>,
+        visiting: &mut HashSet<usize>,
+    ) -> Option<i64> {
+        if let Some(v) = cache.get(&idx) {
+            return *v;
+        }
+        if !visiting.insert(idx) {
+            return None;
+        }
+
+        let (op, parts) = {
+            let ax = &axioms[idx];
+            (ax.op.clone(), ax.parts.clone())
+        };
+
+        let result = eval_parts(&op, &parts, axioms, index_by_effect, cache, visiting);
+        if let Some(value) = result {
+            let ax = &mut axioms[idx];
+            ax.op = None;
+            ax.parts = vec![NumericPart::Constant(NumericConstant(value))];
+            cache.insert(idx, Some(value));
+        } else {
+            cache.insert(idx, None);
+        }
+
+        visiting.remove(&idx);
+        result
+    }
+
+    let mut visiting: HashSet<usize> = HashSet::new();
+    for idx in 0..axioms.len() {
+        let _ = eval_axiom(idx, axioms, &index_by_effect, &mut cache, &mut visiting);
+    }
+
+    let mut constants = Vec::new();
+    for idx in 0..axioms.len() {
+        if let Some(Some(_)) = cache.get(&idx) {
+            constants.push(axioms[idx].clone());
+        }
+    }
+    constants
+}
+
 /// Compute axiom layers (dependency depth), similar to compute_axiom_layers in Python.
 pub fn compute_axiom_layers(
     axioms: &[InstantiatedNumericAxiom],
     constant_axioms: &[InstantiatedNumericAxiom],
-    _axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
+    axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
 ) -> (HashMap<i32, Vec<InstantiatedNumericAxiom>>, i32) {
     const CONSTANT_OR_NO_AXIOM: i32 = -1;
     const UNKNOWN_LAYER: i32 = -2;
 
-    // Build dependency map: axiom -> set of parents (parts)
-    let mut depends_on: HashMap<String, Vec<String>> = HashMap::new();
+    let mut layers: HashMap<PrimitiveNumericExpression, i32> = HashMap::new();
     for ax in axioms {
-        let key = ax.name.clone();
-        let mut deps = Vec::new();
-        for part in &ax.parts {
-            match part {
-                NumericPart::Primitive(p) => deps.push(format!("PNE:{}", p.name)),
-                NumericPart::Axiom(boxed) => deps.push(format!("AX:{}", boxed.name)),
-                NumericPart::Constant(_) => {}
-            }
-        }
-        depends_on.insert(key, deps);
+        layers.insert(ax.effect.clone(), UNKNOWN_LAYER);
     }
 
-    let mut layers: HashMap<String, i32> = HashMap::new();
-    for ax in axioms {
-        layers.insert(ax.name.clone(), UNKNOWN_LAYER);
-    }
-
-    let const_set: HashSet<String> = constant_axioms.iter().map(|a| a.name.clone()).collect();
+    let const_set: HashSet<PrimitiveNumericExpression> =
+        constant_axioms.iter().map(|a| a.effect.clone()).collect();
 
     fn compute_layer_rec(
-        name: &str,
-        depends_on: &HashMap<String, Vec<String>>,
-        layers: &mut HashMap<String, i32>,
-        const_set: &HashSet<String>,
+        pne: &PrimitiveNumericExpression,
+        axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
+        layers: &mut HashMap<PrimitiveNumericExpression, i32>,
+        const_set: &HashSet<PrimitiveNumericExpression>,
     ) -> i32 {
         const CONSTANT_OR_NO_AXIOM: i32 = -1;
         const UNKNOWN_LAYER: i32 = -2;
-        let layer = *layers.get(name).unwrap_or(&CONSTANT_OR_NO_AXIOM);
-        if layer != UNKNOWN_LAYER {
-            return layer;
-        }
-        if const_set.contains(name) {
-            layers.insert(name.to_string(), CONSTANT_OR_NO_AXIOM);
+        if let Some(layer) = layers.get(pne) {
+            if *layer != UNKNOWN_LAYER {
+                return *layer;
+            }
+        } else {
             return CONSTANT_OR_NO_AXIOM;
         }
-        // compute max of parents
-        let mut max_layer = 0;
-        if let Some(parents) = depends_on.get(name) {
-            for p in parents {
-                // parent keys may be encoded; ignore constants
-                if p.starts_with("AX:") {
-                    let pname = &p[3..];
-                    let child_layer = compute_layer_rec(pname, depends_on, layers, const_set);
-                    max_layer = max_layer.max(child_layer + 1);
-                } else if p.starts_with("PNE:") {
-                    // If a PNE refers to an axiom, the axiom key would be in depends_on; otherwise treat as CONSTANT_OR_NO_AXIOM (-1)
-                    // Here we conservatively treat PNE as CONSTANT_OR_NO_AXIOM unless there is a matching axiom name.
-                    // No-op.
-                }
-            }
+
+        if const_set.contains(pne) {
+            layers.insert(pne.clone(), CONSTANT_OR_NO_AXIOM);
+            return CONSTANT_OR_NO_AXIOM;
         }
-        layers.insert(name.to_string(), max_layer);
-        max_layer
+
+        let ax = match axiom_by_pne.get(pne) {
+            Some(ax) => ax,
+            None => {
+                layers.insert(pne.clone(), CONSTANT_OR_NO_AXIOM);
+                return CONSTANT_OR_NO_AXIOM;
+            }
+        };
+
+        let mut layer = 0;
+        for part in &ax.parts {
+            let part_layer = match part {
+                NumericPart::Primitive(p) => {
+                    if axiom_by_pne.contains_key(p) {
+                        compute_layer_rec(p, axiom_by_pne, layers, const_set) + 1
+                    } else {
+                        0
+                    }
+                }
+                NumericPart::Axiom(boxed) => {
+                    if axiom_by_pne.contains_key(&boxed.effect) {
+                        compute_layer_rec(&boxed.effect, axiom_by_pne, layers, const_set) + 1
+                    } else {
+                        0
+                    }
+                }
+                NumericPart::Constant(_) => 0,
+            };
+            layer = layer.max(part_layer);
+        }
+
+        layers.insert(pne.clone(), layer);
+        layer
     }
 
     for ax in axioms {
-        let _ = compute_layer_rec(&ax.name, &depends_on, &mut layers, &const_set);
+        let _ = compute_layer_rec(&ax.effect, axiom_by_pne, &mut layers, &const_set);
     }
 
-    // find max layer
     let mut max_layer = -2i32;
-    for (_k, v) in &layers {
+    for v in layers.values() {
         max_layer = max_layer.max(*v);
     }
 
-    // invert map: layer -> axioms
     let mut layer_to_axioms: HashMap<i32, Vec<InstantiatedNumericAxiom>> = HashMap::new();
     for ax in axioms {
-        let layer = *layers.get(&ax.name).unwrap_or(&CONSTANT_OR_NO_AXIOM);
+        let layer = *layers.get(&ax.effect).unwrap_or(&CONSTANT_OR_NO_AXIOM);
         layer_to_axioms.entry(layer).or_default().push(ax.clone());
     }
 
@@ -298,41 +426,44 @@ pub fn compute_axiom_layers(
 }
 
 /// Identify equivalent axioms within each layer.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum AxiomKeyPart {
+    PNE(PrimitiveNumericExpression),
+    Constant(i64),
+}
+
 pub fn identify_equivalent_axioms(
     axioms_by_layer: &HashMap<i32, Vec<InstantiatedNumericAxiom>>,
     _axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
-) -> HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom> {
-    let mut axiom_map: HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom> = HashMap::new();
+) -> HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom> {
+    let mut axiom_map: HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom> = HashMap::new();
     for (_layer, axioms) in axioms_by_layer {
-        let mut key_to_unique: HashMap<
-            (Option<String>, Vec<PrimitiveNumericExpression>),
-            InstantiatedNumericAxiom,
-        > = HashMap::new();
+        let mut key_to_unique: HashMap<(Option<String>, Vec<AxiomKeyPart>), InstantiatedNumericAxiom> =
+            HashMap::new();
         for ax in axioms {
-            // mapped_args: translate parts to either the mapped effect or the primitive expression
-            let mut mapped_args: Vec<PrimitiveNumericExpression> = Vec::new();
+            let mut mapped_args: Vec<AxiomKeyPart> = Vec::new();
             for part in &ax.parts {
                 match part {
-                    NumericPart::Primitive(p) => mapped_args.push(p.clone()),
-                    NumericPart::Axiom(boxed) => {
-                        if let Some(mapped) = axiom_map.get(boxed.as_ref()) {
-                            mapped_args.push(mapped.effect.clone());
+                    NumericPart::Primitive(p) => {
+                        if let Some(mapped) = axiom_map.get(p) {
+                            mapped_args.push(AxiomKeyPart::PNE(mapped.effect.clone()));
                         } else {
-                            mapped_args.push(boxed.effect.clone());
+                            mapped_args.push(AxiomKeyPart::PNE(p.clone()));
                         }
                     }
-                    NumericPart::Constant(c) => {
-                        // represent constant as a PrimitiveNumericExpression with special name
-                        mapped_args.push(PrimitiveNumericExpression {
-                            name: format!("const:{}", c.0),
-                            args: vec![],
-                        });
+                    NumericPart::Axiom(boxed) => {
+                        if let Some(mapped) = axiom_map.get(&boxed.effect) {
+                            mapped_args.push(AxiomKeyPart::PNE(mapped.effect.clone()));
+                        } else {
+                            mapped_args.push(AxiomKeyPart::PNE(boxed.effect.clone()));
+                        }
                     }
+                    NumericPart::Constant(c) => mapped_args.push(AxiomKeyPart::Constant(c.0)),
                 }
             }
             let key = (ax.op.clone(), mapped_args.clone());
             if let Some(existing) = key_to_unique.get(&key) {
-                axiom_map.insert(ax.clone(), existing.clone());
+                axiom_map.insert(ax.effect.clone(), existing.clone());
             } else {
                 key_to_unique.insert(key, ax.clone());
             }
@@ -347,7 +478,7 @@ pub fn handle_axioms(
 ) -> (
     HashMap<i32, Vec<InstantiatedNumericAxiom>>,
     i32,
-    HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom>,
+    HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
     Vec<InstantiatedNumericAxiom>,
 ) {
     let axiom_by_pne = axiom_by_pne(axioms);
@@ -364,7 +495,7 @@ pub fn handle_axioms_checked(
     (
         HashMap<i32, Vec<InstantiatedNumericAxiom>>,
         i32,
-        HashMap<InstantiatedNumericAxiom, InstantiatedNumericAxiom>,
+        HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
         Vec<InstantiatedNumericAxiom>,
     ),
     NumericAxiomError,

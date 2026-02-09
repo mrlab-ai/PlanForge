@@ -246,7 +246,7 @@ fn add_init_facts(prog: &mut PrologProgram, task: &normalize::NormalizableTask) 
                                 let defined_pred = format!("defined!{}", fname);
                                 prog.add_fact(build_model::Atom {
                                     predicate: defined_pred,
-                                    args: func_args,
+                                    args: func_args.clone(),
                                 });
                                 continue;
                             }

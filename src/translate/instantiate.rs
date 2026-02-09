@@ -29,7 +29,8 @@ pub struct ExploreResult {
     /// Fluent facts - facts that can change during plan execution
     pub fluent_facts: Vec<build_model::Atom>,
     /// Fluent functions - numeric functions that can change
-    pub fluent_functions: Vec<String>, // For now, store function names
+    /// Stored as fully-qualified PNE strings like "f(a,b)" or "g()".
+    pub fluent_functions: Vec<String>,
     /// Initial values for numeric functions: (function_name, args) -> value
     pub init_function_values: HashMap<(String, Vec<String>), f64>,
     /// Constant predicate facts - predicate facts in init that are not fluent
@@ -141,7 +142,7 @@ pub fn explore_normalized(
     eprintln!("DEBUG: explore_normalized() Step 3: extract fluent facts and functions");
     // Step 4: Extract fluent facts and functions from model
     let fluent_facts = get_fluent_facts(norm_task, &model);
-    let fluent_functions = get_fluent_functions(norm_task);
+    let fluent_functions = get_fluent_functions(norm_task, &model);
     eprintln!(
         "  Fluent facts: {}, fluent functions: {}",
         fluent_facts.len(),
@@ -219,32 +220,38 @@ fn get_fluent_facts(
 /// Extract fluent functions (numeric functions) from normalized task.
 /// These are numeric functions that can change during plan execution.
 /// A numeric function is fluent if it appears in any action effect.
-fn get_fluent_functions(norm_task: &crate::translate::normalize::NormalizableTask) -> Vec<String> {
-    use crate::translate::pddl_parser::SExpr;
+fn get_fluent_functions(
+    norm_task: &crate::translate::normalize::NormalizableTask,
+    model: &[build_model::Atom],
+) -> Vec<String> {
     use std::collections::HashSet;
 
-    let mut fluent_functions = HashSet::new();
+    let mut function_symbols: HashSet<String> = norm_task
+        .functions
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect();
+    for axiom in &norm_task.numeric_axioms {
+        function_symbols.insert(axiom.get_head().symbol.clone());
+    }
 
-    for action in &norm_task.actions {
-        for effect in &action.effects {
-            if let SExpr::List(items) = &effect.effect {
-                if let Some(SExpr::Atom(op)) = items.get(0) {
-                    if matches!(
-                        op.as_str(),
-                        "increase" | "decrease" | "assign" | "scale-up" | "scale-down"
-                    ) {
-                        if let Some(SExpr::List(func_items)) = items.get(1) {
-                            if let Some(SExpr::Atom(func_name)) = func_items.get(0) {
-                                fluent_functions.insert(func_name.clone());
-                            }
-                        }
-                    }
-                }
-            }
+    let mut fluent_functions = HashSet::new();
+    for atom in model {
+        if function_symbols.contains(&atom.predicate) {
+            let args = extract_grounded_args(&atom.args);
+            fluent_functions.insert(format_pne_key(&atom.predicate, &args));
         }
     }
 
     fluent_functions.into_iter().collect()
+}
+
+fn format_pne_key(name: &str, args: &[String]) -> String {
+    if args.is_empty() {
+        format!("{}()", name)
+    } else {
+        format!("{}({})", name, args.join(", "))
+    }
 }
 
 fn build_init_atom_set(
@@ -393,7 +400,9 @@ fn extract_constant_numeric_facts(
 
     init_function_values
         .iter()
-        .filter(|((func_name, _args), _value)| !fluent_set.contains(func_name))
+        .filter(|((func_name, args), _value)| {
+            !fluent_set.contains(&format_pne_key(func_name, args))
+        })
         .map(|(k, v)| (k.clone(), *v))
         .collect()
 }
@@ -547,44 +556,7 @@ fn ground_from_normalized_model(
         }
     }
 
-    // Build set of fluent function instances from grounded actions
-    let mut fluent_instances: HashSet<(String, Vec<String>)> = HashSet::new();
-    for op in &grounded_ops {
-        for (_conds, eff) in &op.effects {
-            match eff {
-                Effect::Increase(name, args, _) | Effect::Decrease(name, args, _) => {
-                    fluent_instances.insert((name.clone(), args.clone()));
-                }
-                Effect::And(v) => {
-                    for sub in v {
-                        if let Effect::Increase(name, args, _) | Effect::Decrease(name, args, _) =
-                            sub
-                        {
-                            fluent_instances.insert((name.clone(), args.clone()));
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        if let Some(eff) = &op.eff {
-            match eff {
-                Effect::Increase(name, args, _) | Effect::Decrease(name, args, _) => {
-                    fluent_instances.insert((name.clone(), args.clone()));
-                }
-                Effect::And(v) => {
-                    for sub in v {
-                        if let Effect::Increase(name, args, _) | Effect::Decrease(name, args, _) =
-                            sub
-                        {
-                            fluent_instances.insert((name.clone(), args.clone()));
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
+    let fluent_function_set: HashSet<String> = fluent_functions.iter().cloned().collect();
 
     // Second pass: instantiate numeric axioms with fluent-instance knowledge
     for atom in model {
@@ -620,8 +592,9 @@ fn ground_from_normalized_model(
             if let Some(inst_axiom) = instantiate_numeric_axiom(
                 axiom,
                 &variable_mapping,
-                &fluent_instances,
+                &fluent_function_set,
                 init_function_values,
+                &mut instantiated_numeric_axioms,
             ) {
                 instantiated_numeric_axioms.insert(inst_axiom);
             } else {
@@ -683,8 +656,9 @@ fn ground_from_normalized_model(
 fn instantiate_numeric_axiom(
     axiom: &crate::translate::normalization_function_admin::NumericAxiom,
     variable_mapping: &std::collections::HashMap<String, String>,
-    fluent_instances: &std::collections::HashSet<(String, Vec<String>)>,
+    fluent_function_set: &std::collections::HashSet<String>,
     init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
+    instantiated_numeric_axioms: &mut std::collections::HashSet<InstantiatedNumericAxiom>,
 ) -> Option<InstantiatedNumericAxiom> {
     use crate::translate::function_expression::FunctionalExpression;
     use crate::translate::numeric_axiom_rules::{
@@ -724,10 +698,23 @@ fn instantiate_numeric_axiom(
                     })
                     .collect();
                 let inst_key = (pne.symbol.clone(), inst_args.clone());
-                if !fluent_instances.contains(&inst_key) {
+                let pne_key = format_pne_key(&pne.symbol, &inst_args);
+                if !fluent_function_set.contains(&pne_key) && !pne.symbol.starts_with("derived!") {
                     if let Some(val) = init_function_values.get(&inst_key) {
                         let iv = *val as i64;
-                        inst_parts.push(NumericPart::Constant(NumericConstant(iv)));
+                        let const_symbol = format!("derived!{}.0", iv);
+                        let const_pne = PrimitiveNumericExpression {
+                            name: const_symbol.clone(),
+                            args: vec![],
+                        };
+                        let const_axiom = InstantiatedNumericAxiom {
+                            name: format!("({} )", const_symbol),
+                            op: None,
+                            parts: vec![NumericPart::Constant(NumericConstant(iv))],
+                            effect: const_pne.clone(),
+                        };
+                        instantiated_numeric_axioms.insert(const_axiom);
+                        inst_parts.push(NumericPart::Primitive(const_pne));
                         continue;
                     }
                 }
@@ -992,7 +979,7 @@ fn instantiate_effect_with_params(
                 }
             }
             crate::translate::pddl::Effect::Increase(name, args, val) => {
-                if fluent_function_set.contains(&name) {
+                if fluent_function_set.contains(&format_pne_key(&name, &args)) {
                     out.push((
                         cond_list,
                         crate::translate::pddl::Effect::Increase(name, args, val),
@@ -1002,7 +989,7 @@ fn instantiate_effect_with_params(
                 }
             }
             crate::translate::pddl::Effect::Decrease(name, args, val) => {
-                if fluent_function_set.contains(&name) {
+                if fluent_function_set.contains(&format_pne_key(&name, &args)) {
                     out.push((
                         cond_list,
                         crate::translate::pddl::Effect::Decrease(name, args, val),
@@ -1062,7 +1049,13 @@ fn substitute_sexpr_with_numeric(
             } else {
                 if a.parse::<f64>().is_ok() {
                     Some(SExpr::Atom(a.clone()))
-                } else if fluent_function_set.contains(a) {
+                } else if a.starts_with("derived!") {
+                    if let Some(val) = init_function_values.get(&(a.clone(), vec![])) {
+                        Some(SExpr::Atom(format_number(*val)))
+                    } else {
+                        Some(SExpr::Atom(a.clone()))
+                    }
+                } else if fluent_function_set.contains(&format_pne_key(a, &[])) {
                     Some(SExpr::List(vec![SExpr::Atom(a.clone())]))
                 } else if let Some(val) = init_function_values.get(&(a.clone(), vec![])) {
                     Some(SExpr::Atom(format_number(*val)))
@@ -1102,7 +1095,12 @@ fn substitute_sexpr_with_numeric(
                         }
                     }
                 }
-                if fluent_function_set.contains(fname) {
+                if fname.starts_with("derived!") {
+                    if let Some(val) = init_function_values.get(&(fname.clone(), args.clone())) {
+                        return Some(SExpr::Atom(format_number(*val)));
+                    }
+                }
+                if fluent_function_set.contains(&format_pne_key(fname, &args)) {
                     let mut items = vec![SExpr::Atom(fname.clone())];
                     items.extend(args.into_iter().map(SExpr::Atom));
                     return Some(SExpr::List(items));

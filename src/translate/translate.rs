@@ -97,6 +97,13 @@ fn ensure_expr_var_visit(
     >,
     derived_axiom_index: &mut std::collections::HashMap<String, usize>,
 ) -> Option<String> {
+    let format_pne_key = |name: &str, args: &[String]| -> String {
+        if args.is_empty() {
+            format!("{}()", name)
+        } else {
+            format!("{}({})", name, args.join(", "))
+        }
+    };
     match sexpr {
         crate::translate::pddl_parser::SExpr::List(inner) => {
             if inner.is_empty() {
@@ -107,11 +114,7 @@ fn ensure_expr_var_visit(
                     let pne = df_admin.get_derived_function(
                         &crate::translate::pddl_parser::SExpr::List(inner.clone()),
                     );
-                    let derived_name = if pne.args.is_empty() {
-                        pne.name.clone()
-                    } else {
-                        format!("{} {}", pne.name, pne.args.join(" "))
-                    };
+                    let derived_key = format_pne_key(&pne.name, &pne.args);
                     let mut parts_numericparts: Vec<
                         crate::translate::numeric_axiom_rules::NumericPart,
                     > = Vec::new();
@@ -152,11 +155,11 @@ fn ensure_expr_var_visit(
                             }
                         }
                     }
-                    if !num_index.contains_key(&derived_name) {
+                    if !num_index.contains_key(&derived_key) {
                         let idx = numeric_list.len();
-                        num_index.insert(derived_name.clone(), idx);
+                        num_index.insert(derived_key.clone(), idx);
                         numeric_list.push(crate::translate::sas::NumericVariable {
-                            name: derived_name.clone(),
+                            name: derived_key.clone(),
                             initial: None,
                             ntype: "D".to_string(),
                             axiom_layer: -1,
@@ -168,16 +171,16 @@ fn ensure_expr_var_visit(
                                 args: pne.args.clone(),
                             };
                         let ax = crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom {
-                            name: derived_name.clone(),
+                            name: derived_key.clone(),
                             op: Some(op.clone()),
                             parts: parts_numericparts,
                             effect,
                         };
                         let ai = instantiated_num_axioms.len();
                         instantiated_num_axioms.push(ax.clone());
-                        derived_axiom_index.insert(derived_name.clone(), ai);
+                        derived_axiom_index.insert(derived_key.clone(), ai);
                     }
-                    return Some(derived_name);
+                    return Some(derived_key);
                 }
                 if let crate::translate::pddl_parser::SExpr::Atom(fname) = &inner[0] {
                     let args = inner[1..]
@@ -197,35 +200,36 @@ fn ensure_expr_var_visit(
         }
         crate::translate::pddl_parser::SExpr::Atom(a) => {
             if let Ok(v) = a.parse::<i64>() {
-                let const_pne_name = format!("derived!{}.0()", v);
-                if !num_index.contains_key(&const_pne_name) {
+                let const_symbol = format!("derived!{}.0()", v);
+                let const_key = format_pne_key(&const_symbol, &[]);
+                if !num_index.contains_key(&const_key) {
                     let idx = numeric_list.len();
-                    num_index.insert(const_pne_name.clone(), idx);
+                    num_index.insert(const_key.clone(), idx);
                     numeric_list.push(crate::translate::sas::NumericVariable {
-                        name: const_pne_name.clone(),
+                        name: const_key.clone(),
                         initial: Some(v),
                         ntype: "C".to_string(),
                         axiom_layer: -1,
                     });
                     numeric_init_vec.push(v);
                     let pne = crate::translate::numeric_axiom_rules::PrimitiveNumericExpression {
-                        name: const_pne_name.clone(),
+                        name: const_symbol.clone(),
                         args: vec![],
                     };
                     let part = crate::translate::numeric_axiom_rules::NumericPart::Constant(
                         crate::translate::numeric_axiom_rules::NumericConstant(v),
                     );
                     let ax = crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom {
-                        name: const_pne_name.clone(),
+                        name: const_key.clone(),
                         op: None,
                         parts: vec![part],
                         effect: pne,
                     };
                     let ai = instantiated_num_axioms.len();
                     instantiated_num_axioms.push(ax);
-                    derived_axiom_index.insert(const_pne_name.clone(), ai);
+                    derived_axiom_index.insert(const_key.clone(), ai);
                 }
-                Some(const_pne_name)
+                Some(const_key)
             } else {
                 let key = format!("{}()", a);
                 if num_index.contains_key(&key) {
@@ -573,12 +577,12 @@ pub fn translate_task_from_grounded_internal(
     let mut numeric_init_vec: Vec<i64> = Vec::new();
     let mut num_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
+    let constant_axioms =
+        crate::translate::numeric_axiom_rules::identify_constants_inplace(
+            &mut instantiated_num_axioms,
+        );
     let axiom_by_pne =
         crate::translate::numeric_axiom_rules::axiom_by_pne(&instantiated_num_axioms);
-    let constant_axioms = crate::translate::numeric_axiom_rules::identify_constants(
-        &instantiated_num_axioms,
-        &axiom_by_pne,
-    );
     let constant_effects: std::collections::HashSet<_> =
         constant_axioms.iter().map(|a| &a.effect).collect();
     let (axioms_by_layer, _max_layer) = crate::translate::numeric_axiom_rules::compute_axiom_layers(
@@ -586,21 +590,6 @@ pub fn translate_task_from_grounded_internal(
         &constant_axioms,
         &axiom_by_pne,
     );
-
-    let mut axiom_layer_index: std::collections::HashMap<String, i32> =
-        std::collections::HashMap::new();
-    let mut layer_keys: Vec<i32> = axioms_by_layer.keys().copied().collect();
-    layer_keys.sort();
-    let mut current_layer: i32 = 0;
-    for layer in layer_keys {
-        if let Some(layer_axioms) = axioms_by_layer.get(&layer) {
-            for ax in layer_axioms {
-                let effect_name = format_pne(&ax.effect);
-                axiom_layer_index.insert(effect_name, current_layer);
-                current_layer += 1;
-            }
-        }
-    }
 
     let axiom_map = crate::translate::numeric_axiom_rules::identify_equivalent_axioms(
         &axioms_by_layer,
@@ -621,7 +610,7 @@ pub fn translate_task_from_grounded_internal(
 
     for axiom in sorted_axioms.iter() {
         let effect_name = format_pne(&axiom.effect);
-        if let Some(mapped_axiom) = axiom_map.get(*axiom) {
+        if let Some(mapped_axiom) = axiom_map.get(&axiom.effect) {
             let mapped_name = format_pne(&mapped_axiom.effect);
             redundant_axioms.insert(effect_name.clone(), mapped_name);
             continue;
@@ -636,10 +625,7 @@ pub fn translate_task_from_grounded_internal(
                 "D".to_string()
             };
 
-            let axiom_layer: i32 = axiom_layer_index
-                .get(&effect_name)
-                .copied()
-                .unwrap_or(-1);
+            let axiom_layer: i32 = -1;
 
             let idx = numeric_list.len();
             num_index.insert(effect_name.clone(), idx);
@@ -656,25 +642,6 @@ pub fn translate_task_from_grounded_internal(
     for (redundant_name, target_name) in &redundant_axioms {
         if let Some(&target_idx) = num_index.get(target_name) {
             num_index.insert(redundant_name.clone(), target_idx);
-        }
-    }
-
-    for ax in &instantiated_num_axioms {
-        for part in &ax.parts {
-            if let crate::translate::numeric_axiom_rules::NumericPart::Constant(c) = part {
-                let const_name = format!("derived!{}.0()", c.0);
-                if !num_index.contains_key(&const_name) {
-                    let idx = numeric_list.len();
-                    num_index.insert(const_name.clone(), idx);
-                    numeric_list.push(crate::translate::sas::NumericVariable {
-                        name: const_name.clone(),
-                        initial: Some(c.0),
-                        ntype: "C".to_string(),
-                        axiom_layer: -1,
-                    });
-                    numeric_init_vec.push(c.0);
-                }
-            }
         }
     }
 
@@ -1186,18 +1153,14 @@ pub fn translate_task_from_grounded_internal(
         });
     }
 
-    let (num_axioms_by_layer, _max_layer, _num_axiom_map, _const_num_axioms) =
+    let (num_axioms_by_layer, _max_layer, num_axiom_map, _const_num_axioms) =
         crate::translate::numeric_axiom_rules::handle_axioms_checked(&instantiated_num_axioms)
             .map_err(|err| format!("numeric axiom error: {}", err))?;
 
     {
         let pne_key = |name: &str, args: &[String]| -> String {
             if args.is_empty() {
-                if name.ends_with(')') {
-                    name.to_string()
-                } else {
-                    format!("{}()", name)
-                }
+                format!("{}()", name)
             } else {
                 format!("{}({})", name, args.join(", "))
             }
@@ -1292,26 +1255,42 @@ pub fn translate_task_from_grounded_internal(
         }
     }
 
-    let mut axname_to_layer: std::collections::HashMap<String, i32> =
-        std::collections::HashMap::new();
-    for (layer, axs) in &num_axioms_by_layer {
-        for ax in axs {
-            axname_to_layer.insert(ax.name.clone(), *layer);
-        }
-    }
-    for nv in &mut numeric_list {
-        if let Some(l) = axname_to_layer.get(&nv.name) {
-            nv.axiom_layer = *l;
+    {
+        let pne_key = |name: &str, args: &[String]| -> String {
+            if args.is_empty() {
+                format!("{}()", name)
+            } else {
+                format!("{}({})", name, args.join(", "))
+            }
+        };
+        let mut layers: Vec<i32> = num_axioms_by_layer.keys().copied().collect();
+        layers.sort();
+        let mut num_axiom_layer: i32 = 0;
+        for layer in layers {
+            if let Some(axs) = num_axioms_by_layer.get(&layer) {
+                let mut sorted_axs = axs.clone();
+                sorted_axs.sort_by(|a, b| a.name.cmp(&b.name));
+                for ax in sorted_axs {
+                    if num_axiom_map.contains_key(&ax.effect) {
+                        continue;
+                    }
+                    let effect_key = pne_key(&ax.effect.name, &ax.effect.args);
+                    if let Some(&idx) = num_index.get(&effect_key) {
+                        if layer == -1 {
+                            numeric_list[idx].axiom_layer = -1;
+                        } else {
+                            numeric_list[idx].axiom_layer = num_axiom_layer;
+                            num_axiom_layer += 1;
+                        }
+                    }
+                }
+            }
         }
     }
 
     let format_pne = |name: &str, args: &[String]| -> String {
         if args.is_empty() {
-            if name.ends_with(')') {
-                name.to_string()
-            } else {
-                format!("{}()", name)
-            }
+            format!("{}()", name)
         } else {
             format!("{}({})", name, args.join(", "))
         }
@@ -1322,6 +1301,16 @@ pub fn translate_task_from_grounded_internal(
             let effect_idx = *num_index
                 .get(&effect_key)
                 .ok_or_else(|| format!("numeric axiom effect not found: {}", effect_key))?;
+
+            let is_constant = ax.op.is_none()
+                && ax.parts.len() == 1
+                && matches!(
+                    ax.parts[0],
+                    crate::translate::numeric_axiom_rules::NumericPart::Constant(_)
+                );
+            if is_constant {
+                continue;
+            }
 
             let mut part_indices: Vec<usize> = Vec::new();
             for part in &ax.parts {
@@ -1347,17 +1336,7 @@ pub fn translate_task_from_grounded_internal(
 
             let op = match &ax.op {
                 Some(op_str) => op_str.clone(),
-                None => {
-                    let is_constant = ax.parts.len() == 1
-                        && matches!(
-                            ax.parts[0],
-                            crate::translate::numeric_axiom_rules::NumericPart::Constant(_)
-                        );
-                    if is_constant {
-                        continue;
-                    }
-                    return Err(format!("numeric axiom has no op: {}", ax.effect.name));
-                }
+                None => return Err(format!("numeric axiom has no op: {}", ax.effect.name)),
             };
 
             numeric_axioms.push(crate::translate::sas::NumericAxiom {
@@ -1779,11 +1758,7 @@ pub fn translate_task_from_grounded(
 
 fn format_pne(pne: &PrimitiveNumericExpression) -> String {
     if pne.args.is_empty() {
-        if pne.name.ends_with(')') {
-            pne.name.clone()
-        } else {
-            format!("{}()", pne.name)
-        }
+        format!("{}()", pne.name)
     } else {
         format!("{}({})", pne.name, pne.args.join(", "))
     }
