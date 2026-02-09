@@ -13,3 +13,6 @@ sas_plan
 perf.*
 flamegraph.svg
 output.sas.reference
+output
+
+numeric-fd
