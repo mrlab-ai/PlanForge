@@ -1,10 +1,10 @@
-use std::io::Read;
 use std::path::PathBuf;
 use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
 use planners::translate::normalize;
+use planners::preprocess_port::planner::run_preprocess;
 use planners::translate::pddl_parser::PddlTask;
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
 #[derive(Parser)]
@@ -32,6 +32,8 @@ enum Commands {
     },
     /// Preprocess: read SAS+ from stdin and write a preprocessed search input (writes to stdout or file)
     Preprocess {
+        /// Optional input file (default: stdin)
+        input: Option<PathBuf>,
         /// Optional output file (default: output)
         #[clap(short, long)]
         output: Option<PathBuf>,
@@ -159,20 +161,17 @@ fn main() -> anyhow::Result<()> {
             let duration = start.elapsed();
             eprintln!("translator: completed in {:.2?} seconds", duration);
         }
-        Commands::Preprocess { output } => {
-            let mut input = String::new();
-            std::io::stdin().read_to_string(&mut input)?;
-            if input.trim().is_empty() {
+        Commands::Preprocess { input, output } => {
+            if output.is_some() {
                 return Err(anyhow::anyhow!(
-                    "preprocess expects SAS+ input on stdin"
+                    "preprocess_port writes to 'output' like the C++ preprocessor"
                 ));
             }
-
-            if let Some(out_path) = output {
-                std::fs::write(out_path, input)?;
-            } else {
-                print!("{}", input);
+            let mut args = vec!["preprocess".to_string()];
+            if let Some(path) = input {
+                args.push(path.to_string_lossy().to_string());
             }
+            run_preprocess(&args);
         }
     }
 
