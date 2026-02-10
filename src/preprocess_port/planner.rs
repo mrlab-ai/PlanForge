@@ -41,16 +41,18 @@ pub fn run_preprocess(args: &[String]) {
     };
 
     let mut input = String::new();
+    let mut argc = args.len();
     if args.len() == 2 {
         let mut file_content = File::open(&args[1]).expect("opening file");
         file_content.read_to_string(&mut input).expect("read file");
+        argc -= 1;
     } else {
         std::io::stdin()
             .read_to_string(&mut input)
             .expect("read stdin");
     }
 
-    if args.len() != 1 {
+    if argc != 1 {
         println!("*** do not perform relevance analysis ***");
         unsafe { G_DO_NOT_PRUNE_VARIABLES = true };
     }

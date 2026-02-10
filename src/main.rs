@@ -7,6 +7,9 @@ mod preprocess;
 mod search;
 
 use preprocess::numeric_parser::parse_numeric_sas_output;
+use planners::preprocess_port::planner::run_preprocess;
+use planners::translate::normalize;
+use planners::translate::pddl_parser::PddlTask;
 use std::collections::VecDeque;
 use std::env;
 use std::fs;
@@ -74,16 +77,71 @@ fn setup_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn N
     node
 }
 
+fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
+    let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))?;
+    let dom = planners::translate::pddl::Domain::from_sexprs(&task.domain_forms)
+        .expect("domain parse");
+    let prob = planners::translate::pddl::Problem::from_sexprs(&task.problem_forms)
+        .expect("problem parse");
+
+    let mut norm_task = normalize::NormalizableTask::from_ast(&dom, &prob);
+    norm_task.add_global_constraints();
+    normalize::normalize(&mut norm_task).expect("normalization failed");
+
+    let result = planners::translate::instantiate::explore_normalized(&norm_task)?;
+
+    let instantiated_num_axioms = result.numeric_axioms;
+    let py_groups: Option<Vec<Vec<String>>> = None;
+    let mut sastask = planners::translate::translate::translate_task_from_grounded_internal(
+        &result.grounded_ops,
+        &dom,
+        &prob,
+        &instantiated_num_axioms,
+        py_groups,
+        &result.grounded_axioms,
+        &norm_task.goal,
+        &norm_task,
+    )
+    .map_err(|err| anyhow::anyhow!(err))?;
+
+    match planners::translate::simplify::filter_unreachable_propositions(&mut sastask) {
+        Ok(_) => {}
+        Err(planners::translate::simplify::SimplifyError::Impossible) => {
+            sastask = planners::translate::simplify::trivial_task(false);
+        }
+        Err(planners::translate::simplify::SimplifyError::TriviallySolvable) => {
+            sastask = planners::translate::simplify::trivial_task(true);
+        }
+    }
+
+    let py_task = planners::translate::sas_tasks::from_internal(&sastask);
+    let mut out_file = std::fs::File::create("output.sas")?;
+    py_task.output(&mut out_file)?;
+    Ok(())
+}
+
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         println!("Usage: {} [sas_file]", args[0]);
+        println!("   or: {} [domain.pddl] [problem.pddl]", args[0]);
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "No SAS file provided",
         ));
     }
-    let sas_file = &args[1];
+    let sas_file = if args.len() == 3 {
+        let domain = &args[1];
+        let problem = &args[2];
+        translate_to_sas(domain, problem).map_err(|err| {
+            std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
+        })?;
+
+        run_preprocess(&vec!["preprocess".to_string(), "output.sas".to_string()]);
+        "output"
+    } else {
+        &args[1]
+    };
 
     let start_time = std::time::Instant::now();
     let task = setup_numeric_task(sas_file);
