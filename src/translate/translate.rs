@@ -12,6 +12,7 @@ use crate::translate::simplify;
 use crate::translate::options;
 use crate::translate::sas as internal_sas;
 use crate::translate::sas_tasks as py_sas_tasks;
+use crate::translate::axiom_rules::{handle_axioms, Literal as AxiomLiteral, PropositionalAxiom};
 use internal_sas::{CompareAxiom, SASAxiom, SASOperator, SASTask as InternalSASTask};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1255,6 +1256,7 @@ pub fn translate_task_from_grounded_internal(
         }
     }
 
+    let mut num_axiom_layer: i32 = 0;
     {
         let pne_key = |name: &str, args: &[String]| -> String {
             if args.is_empty() {
@@ -1265,7 +1267,6 @@ pub fn translate_task_from_grounded_internal(
         };
         let mut layers: Vec<i32> = num_axioms_by_layer.keys().copied().collect();
         layers.sort();
-        let mut num_axiom_layer: i32 = 0;
         for layer in layers {
             if let Some(axs) = num_axioms_by_layer.get(&layer) {
                 let mut sorted_axs = axs.clone();
@@ -1531,11 +1532,60 @@ pub fn translate_task_from_grounded_internal(
     let comp_var_set: std::collections::HashSet<usize> =
         comp_axioms.iter().map(|c| c.effect_var).collect();
 
+    let (axiom_layers, comparison_axiom_layer) = {
+        let prop_axioms: Vec<PropositionalAxiom> = grounded_axioms
+            .iter()
+            .map(|ax| {
+                PropositionalAxiom::new(
+                    ax.effect_atom.clone(),
+                    condition_to_axiom_literals(&ax.condition),
+                    parse_atom_to_axiom_literal(&ax.effect_atom),
+                )
+            })
+            .collect();
+        let goal_literals = condition_to_axiom_literals(normalized_goal);
+        let global_constraint_literal = match norm_task.global_constraint.as_ref() {
+            Some(name) => AxiomLiteral::new(name.clone(), Vec::new(), false),
+            None => AxiomLiteral::new("__no_global_constraint".to_string(), Vec::new(), false),
+        };
+        let axiom_result = handle_axioms(ops, &prop_axioms, &goal_literals, &global_constraint_literal);
+
+        let comparison_axiom_layer = if comp_var_set.is_empty() {
+            -1
+        } else {
+            num_axiom_layer
+        };
+        let offset = if axiom_result.axiom_layer_dict.is_empty() {
+            0
+        } else if comparison_axiom_layer >= 0 {
+            comparison_axiom_layer + 1
+        } else {
+            0
+        };
+
+        let mut axiom_layers = vec![-1; ranges.len()];
+        for (atom_key, layer) in axiom_result.axiom_layer_dict {
+            let atom_str = if atom_key.1.is_empty() {
+                format!("{}()", atom_key.0)
+            } else {
+                format!("{}({})", atom_key.0, atom_key.1.join(", "))
+            };
+            if let Some(&(var_idx, _)) = atom_to_fdr.get(&atom_str) {
+                axiom_layers[var_idx] = layer + offset;
+            }
+        }
+        for idx in &comp_var_set {
+            axiom_layers[*idx] = comparison_axiom_layer;
+        }
+
+        (axiom_layers, comparison_axiom_layer)
+    };
+
     let canonical_variables: Vec<crate::translate::sas::CanonicalVariable> = vars
         .iter()
         .enumerate()
         .map(|(idx, v)| {
-            let axiom_layer = if comp_var_set.contains(&idx) { 29 } else { -1 };
+            let axiom_layer = axiom_layers.get(idx).copied().unwrap_or(-1);
             crate::translate::sas::CanonicalVariable {
                 name: format!("var{}", idx),
                 axiom_layer,
@@ -1718,7 +1768,7 @@ pub fn translate_task_from_grounded_internal(
         numeric_init: numeric_init_vec.iter().map(|&v| v as f64).collect(),
         mutex_groups: mutex_groups_pairs,
         ranges: ranges.clone(),
-        axiom_layers: vec![-1; ranges.len()],
+        axiom_layers,
         init: prop_init,
         goal: goal_pairs,
         translation_key: translation_key.clone(),
@@ -1727,7 +1777,7 @@ pub fn translate_task_from_grounded_internal(
         canonical_metric: Some(("<".to_string(), metric_idx)),
         metric: ("<".to_string(), metric_idx),
         global_constraint,
-        comp_axiom_layer: 0,
+        comp_axiom_layer: comparison_axiom_layer,
     })
 }
 
@@ -1761,6 +1811,53 @@ fn format_pne(pne: &PrimitiveNumericExpression) -> String {
         format!("{}()", pne.name)
     } else {
         format!("{}({})", pne.name, pne.args.join(", "))
+    }
+}
+
+fn parse_atom_to_axiom_literal(atom: &str) -> AxiomLiteral {
+    if let Some(start) = atom.find('(') {
+        let pred = atom[..start].to_string();
+        let args_str = atom[start + 1..atom.len() - 1].trim();
+        let args = if args_str.is_empty() {
+            Vec::new()
+        } else {
+            args_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect()
+        };
+        AxiomLiteral::new(pred, args, false)
+    } else {
+        AxiomLiteral::new(atom.to_string(), Vec::new(), false)
+    }
+}
+
+fn condition_to_axiom_literals(cond: &crate::translate::pddl::Condition) -> Vec<AxiomLiteral> {
+    use crate::translate::pddl::Condition;
+
+    match cond {
+        Condition::Atom(name, args) => vec![AxiomLiteral::new(name.clone(), args.clone(), false)],
+        Condition::Not(inner) => match inner.as_ref() {
+            Condition::Atom(name, args) => {
+                vec![AxiomLiteral::new(name.clone(), args.clone(), true)]
+            }
+            _ => condition_to_axiom_literals(inner)
+                .into_iter()
+                .map(|l| l.negate())
+                .collect(),
+        },
+        Condition::And(parts) => parts
+            .iter()
+            .flat_map(condition_to_axiom_literals)
+            .collect(),
+        Condition::Or(parts) => parts
+            .iter()
+            .flat_map(condition_to_axiom_literals)
+            .collect(),
+        Condition::Forall(_, inner) | Condition::Exists(_, inner) => {
+            condition_to_axiom_literals(inner)
+        }
+        Condition::True | Condition::Comparison(_, _, _) => Vec::new(),
     }
 }
 

@@ -476,25 +476,13 @@ fn build_renaming(dtgs: &[DomainTransitionGraph]) -> VarValueRenaming {
 }
 
 fn rebuild_canonical(task: &mut SASTask) {
-    let axiom_var_set: HashSet<usize> = task.axioms.iter().map(|a| a.effect.0).collect();
-    let comp_var_set: HashSet<usize> = task
-        .comparison_axioms
-        .iter()
-        .map(|c| c.effect_var)
-        .collect();
     task.canonical_variables = task
         .variables
         .iter()
         .enumerate()
         .map(|(idx, v)| CanonicalVariable {
             name: format!("var{}", idx),
-            axiom_layer: if axiom_var_set.contains(&idx) {
-                30
-            } else if comp_var_set.contains(&idx) {
-                29
-            } else {
-                -1
-            },
+            axiom_layer: task.axiom_layers.get(idx).copied().unwrap_or(-1),
             values: v.value_names.clone(),
         })
         .collect();
