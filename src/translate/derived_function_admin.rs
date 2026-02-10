@@ -1,3 +1,4 @@
+use crate::translate::function_expression::format_float;
 use crate::translate::numeric_axiom_rules::PrimitiveNumericExpression;
 use crate::translate::pddl_parser::SExpr;
 use std::collections::HashMap;
@@ -29,9 +30,9 @@ impl DerivedFunctionAdministrator {
         match exp {
             SExpr::Atom(a) => {
                 // numeric constant -> canonical derived constant name like derived!4.0
-                if let Ok(nv) = a.parse::<i64>() {
+                if let Ok(nv) = a.parse::<f64>() {
                     PrimitiveNumericExpression {
-                        name: format!("derived!{}.0", nv),
+                        name: format!("derived!{}", format_float(nv)),
                         args: vec![],
                     }
                 } else {

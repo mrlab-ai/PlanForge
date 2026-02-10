@@ -1,4 +1,5 @@
 use crate::translate::build_model;
+use crate::translate::function_expression::format_float;
 use crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom;
 use crate::translate::pddl::{Condition, Effect};
 use crate::translate::pddl_to_prolog;
@@ -11,6 +12,7 @@ pub struct GroundedOp {
     pub pre: Option<Condition>,
     pub eff: Option<Effect>,
     pub effects: Vec<(Vec<Condition>, Effect)>,
+    pub cost: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -382,7 +384,10 @@ fn extract_init_function_values(
     for axiom in &norm_task.numeric_axioms {
         if axiom.op.is_none() && axiom.parameters.is_empty() && axiom.parts.len() == 1 {
             if let FunctionalExpression::Constant(constant) = &axiom.parts[0] {
-                init_values.insert((axiom.name.clone(), vec![]), constant.value as f64);
+                init_values.insert(
+                    (axiom.name.clone(), vec![]),
+                    constant.value.into_inner(),
+                );
             }
         }
     }
@@ -538,6 +543,7 @@ fn ground_from_normalized_model(
                 }
 
                 // Instantiate this specific action with these parameters
+                let uses_metric = norm_task.metric.1.is_some();
                 let grounded_op = instantiate_normalized_action(
                     action,
                     &grounded_args,
@@ -548,6 +554,7 @@ fn ground_from_normalized_model(
                     type_to_objects,
                     fluent_functions,
                     init_function_values,
+                    uses_metric,
                 )?;
                 if let Some(op) = grounded_op {
                     grounded_ops.push(op);
@@ -661,9 +668,11 @@ fn instantiate_numeric_axiom(
     instantiated_numeric_axioms: &mut std::collections::HashSet<InstantiatedNumericAxiom>,
 ) -> Option<InstantiatedNumericAxiom> {
     use crate::translate::function_expression::FunctionalExpression;
+    use crate::translate::function_expression::format_float;
     use crate::translate::numeric_axiom_rules::{
-        NumericConstant, NumericPart, PrimitiveNumericExpression,
-    };
+            NumericConstant, NumericPart, PrimitiveNumericExpression,
+        };
+    use ordered_float::OrderedFloat;
 
     // Build instantiated name: "(axiom-name arg1 arg2 ...)"
     let arg_list: Vec<String> = axiom
@@ -701,8 +710,8 @@ fn instantiate_numeric_axiom(
                 let pne_key = format_pne_key(&pne.symbol, &inst_args);
                 if !fluent_function_set.contains(&pne_key) && !pne.symbol.starts_with("derived!") {
                     if let Some(val) = init_function_values.get(&inst_key) {
-                        let iv = *val as i64;
-                        let const_symbol = format!("derived!{}.0", iv);
+                        let iv = *val;
+                        let const_symbol = format!("derived!{}", format_float(iv));
                         let const_pne = PrimitiveNumericExpression {
                             name: const_symbol.clone(),
                             args: vec![],
@@ -710,7 +719,7 @@ fn instantiate_numeric_axiom(
                         let const_axiom = InstantiatedNumericAxiom {
                             name: format!("({} )", const_symbol),
                             op: None,
-                            parts: vec![NumericPart::Constant(NumericConstant(iv))],
+                            parts: vec![NumericPart::Constant(NumericConstant(OrderedFloat(iv)))],
                             effect: const_pne.clone(),
                         };
                         instantiated_numeric_axioms.insert(const_axiom);
@@ -801,8 +810,10 @@ fn instantiate_normalized_action(
     type_to_objects: &std::collections::HashMap<String, Vec<String>>,
     fluent_functions: &[String],
     init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
+    uses_metric: bool,
 ) -> Result<Option<GroundedOp>, InstantiateError> {
     use crate::translate::pddl;
+    use crate::translate::function_expression::{parse_functional_expression, FunctionalExpression};
 
     let name = format!("{}({})", action.name, grounded_args.join(","));
 
@@ -854,12 +865,92 @@ fn instantiate_normalized_action(
         ))
     };
 
+    fn extract_cost_expression(effect: &crate::translate::pddl_parser::SExpr) -> Option<crate::translate::pddl_parser::SExpr> {
+        if let crate::translate::pddl_parser::SExpr::List(items) = effect {
+            if items.len() >= 3 {
+                return Some(items[2].clone());
+            }
+        }
+        None
+    }
+
+    fn eval_cost_expr(
+        expr: &FunctionalExpression,
+        var_mapping: &std::collections::HashMap<String, String>,
+        init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
+    ) -> Option<f64> {
+        match expr {
+            FunctionalExpression::Constant(c) => Some(c.value.into_inner()),
+            FunctionalExpression::Primitive(pne) => {
+                let args = pne
+                    .args
+                    .iter()
+                    .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
+                    .collect::<Vec<_>>();
+                init_function_values.get(&(pne.symbol.clone(), args)).copied()
+            }
+            FunctionalExpression::Arithmetic(arith) => {
+                let mut values = Vec::new();
+                for part in &arith.parts {
+                    values.push(eval_cost_expr(part, var_mapping, init_function_values)?);
+                }
+                match arith.op.as_str() {
+                    "+" => Some(values.into_iter().fold(0.0, |acc, v| acc + v)),
+                    "-" => {
+                        let mut iter = values.into_iter();
+                        let first = iter.next()?;
+                        Some(iter.fold(first, |acc, v| acc - v))
+                    }
+                    "*" => Some(values.into_iter().fold(1.0, |acc, v| acc * v)),
+                    "/" => {
+                        let mut iter = values.into_iter();
+                        let first = iter.next()?;
+                        let mut acc = first;
+                        for v in iter {
+                            if v == 0.0 {
+                                return None;
+                            }
+                            acc /= v;
+                        }
+                        Some(acc)
+                    }
+                    _ => None,
+                }
+            }
+            FunctionalExpression::AdditiveInverse(inv) => {
+                let val = eval_cost_expr(&inv.part, var_mapping, init_function_values)?;
+                Some(-val)
+            }
+        }
+    }
+
+    let cost = if uses_metric {
+        match &action.cost {
+            None => 0.0,
+            Some(cost_effect) => {
+                if let Some(expr_sexpr) = extract_cost_expression(cost_effect) {
+                    if let Some(func_expr) = parse_functional_expression(&expr_sexpr) {
+                        eval_cost_expr(&func_expr, variable_mapping, init_function_values)
+                            .unwrap_or(1.0)
+                    } else {
+                        1.0
+                    }
+                } else {
+                    1.0
+                }
+            }
+        }
+    } else {
+        1.0
+    };
+
     Ok(Some(GroundedOp {
         name,
         args: grounded_args.to_vec(),
         pre: Some(pre_sub),
         eff: eff_sub,
         effects,
+        cost,
     }))
 }
 
@@ -1198,9 +1289,5 @@ fn instantiate_condition_list(
 }
 
 fn format_number(value: f64) -> String {
-    if value.fract() == 0.0 {
-        format!("{}", value as i64)
-    } else {
-        value.to_string()
-    }
+    format_float(value)
 }

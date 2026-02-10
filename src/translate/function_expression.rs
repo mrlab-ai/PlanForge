@@ -4,6 +4,7 @@
 //! mirroring the Python f_expression module structure.
 
 use crate::translate::pddl_parser::SExpr;
+use ordered_float::OrderedFloat;
 
 /// A functional expression in PDDL (base trait-like concept)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -51,18 +52,28 @@ impl std::fmt::Display for PrimitiveNumericExpression {
 /// A numeric constant value
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NumericConstant {
-    pub value: i64,
+    pub value: OrderedFloat<f64>,
 }
 
 impl NumericConstant {
-    pub fn new(value: i64) -> Self {
-        NumericConstant { value }
+    pub fn new(value: f64) -> Self {
+        NumericConstant {
+            value: OrderedFloat(value),
+        }
     }
 }
 
 impl std::fmt::Display for NumericConstant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.value)
+        write!(f, "{}", format_float(self.value.into_inner()))
+    }
+}
+
+pub fn format_float(value: f64) -> String {
+    if value.fract() == 0.0 {
+        format!("{:.1}", value)
+    } else {
+        value.to_string()
     }
 }
 
@@ -129,10 +140,7 @@ pub fn parse_functional_expression(sexpr: &SExpr) -> Option<FunctionalExpression
         SExpr::Atom(a) => {
             // Try to parse as number (try float first to handle both "3" and "3.0")
             if let Ok(value) = a.parse::<f64>() {
-                // Store as integer representation (Fast Downward uses integer math)
-                Some(FunctionalExpression::Constant(NumericConstant::new(
-                    value as i64,
-                )))
+                Some(FunctionalExpression::Constant(NumericConstant::new(value)))
             } else {
                 // Treat as primitive numeric expression (0-arity function)
                 Some(FunctionalExpression::Primitive(

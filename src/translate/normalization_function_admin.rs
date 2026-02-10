@@ -5,6 +5,7 @@
 //! This is separate from the lightweight stub used in instantiate.rs.
 
 use crate::translate::function_expression::*;
+use ordered_float::OrderedFloat;
 use crate::translate::pddl_parser::SExpr;
 use std::collections::HashMap;
 
@@ -80,7 +81,7 @@ impl NumericAxiom {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum DerivedFunctionKey {
     /// Constant: (value,)
-    Constant(i64),
+    Constant(OrderedFloat<f64>),
     /// Additive inverse: (op, part_string)
     AdditiveInverse(String, String),
     /// Arithmetic: (op, [part_strings...])
@@ -153,7 +154,7 @@ impl NormalizationFunctionAdministrator {
                 let key = DerivedFunctionKey::Constant(nc.value);
 
                 if !self.functions.contains_key(&key) {
-                    let symbol = format!("derived!{}.0", nc.value);
+                    let symbol = format!("derived!{}", format_float(nc.value.into_inner()));
                     let axiom = NumericAxiom::new(
                         symbol,
                         vec![],
@@ -325,7 +326,7 @@ mod tests {
     #[test]
     fn test_constant() {
         let mut admin = NormalizationFunctionAdministrator::new();
-        let constant = FunctionalExpression::Constant(NumericConstant::new(42));
+        let constant = FunctionalExpression::Constant(NumericConstant::new(42.0));
         let pne = admin.get_derived_function(&constant);
 
         assert!(pne.symbol.contains("derived!"));
@@ -382,7 +383,7 @@ mod tests {
     #[test]
     fn test_caching() {
         let mut admin = NormalizationFunctionAdministrator::new();
-        let constant = FunctionalExpression::Constant(NumericConstant::new(42));
+        let constant = FunctionalExpression::Constant(NumericConstant::new(42.0));
 
         let pne1 = admin.get_derived_function(&constant);
         let pne2 = admin.get_derived_function(&constant);

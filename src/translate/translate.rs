@@ -92,7 +92,7 @@ fn ensure_expr_var_visit(
     df_admin: &mut crate::translate::derived_function_admin::DerivedFunctionAdministrator,
     num_index: &mut std::collections::HashMap<String, usize>,
     numeric_list: &mut Vec<crate::translate::sas::NumericVariable>,
-    numeric_init_vec: &mut Vec<i64>,
+    numeric_init_vec: &mut Vec<f64>,
     instantiated_num_axioms: &mut Vec<
         crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom,
     >,
@@ -122,11 +122,11 @@ fn ensure_expr_var_visit(
                     for p in &inner[1..] {
                         match p {
                             crate::translate::pddl_parser::SExpr::Atom(a) => {
-                                if let Ok(nv) = a.parse::<i64>() {
+                                if let Ok(nv) = a.parse::<f64>() {
                                     parts_numericparts.push(
                                         crate::translate::numeric_axiom_rules::NumericPart::Constant(
                                             crate::translate::numeric_axiom_rules::NumericConstant(
-                                                nv,
+                                                ordered_float::OrderedFloat(nv),
                                             ),
                                         ),
                                     );
@@ -165,7 +165,7 @@ fn ensure_expr_var_visit(
                             ntype: "D".to_string(),
                             axiom_layer: -1,
                         });
-                        numeric_init_vec.push(0);
+                        numeric_init_vec.push(0.0);
                         let effect =
                             crate::translate::numeric_axiom_rules::PrimitiveNumericExpression {
                                 name: pne.name.clone(),
@@ -200,8 +200,11 @@ fn ensure_expr_var_visit(
             }
         }
         crate::translate::pddl_parser::SExpr::Atom(a) => {
-            if let Ok(v) = a.parse::<i64>() {
-                let const_symbol = format!("derived!{}.0()", v);
+            if let Ok(v) = a.parse::<f64>() {
+                let const_symbol = format!(
+                    "derived!{}",
+                    crate::translate::function_expression::format_float(v)
+                );
                 let const_key = format_pne_key(&const_symbol, &[]);
                 if !num_index.contains_key(&const_key) {
                     let idx = numeric_list.len();
@@ -218,7 +221,9 @@ fn ensure_expr_var_visit(
                         args: vec![],
                     };
                     let part = crate::translate::numeric_axiom_rules::NumericPart::Constant(
-                        crate::translate::numeric_axiom_rules::NumericConstant(v),
+                        crate::translate::numeric_axiom_rules::NumericConstant(
+                            ordered_float::OrderedFloat(v),
+                        ),
                     );
                     let ax = crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom {
                         name: const_key.clone(),
@@ -290,7 +295,7 @@ pub fn translate_task_from_grounded_internal(
         |sexpr: &crate::translate::pddl_parser::SExpr,
          num_index: &mut std::collections::HashMap<String, usize>,
          numeric_list: &mut Vec<crate::translate::sas::NumericVariable>,
-         numeric_init_vec: &mut Vec<i64>,
+         numeric_init_vec: &mut Vec<f64>,
          instantiated_num_axioms: &mut Vec<
             crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom,
         >,
@@ -331,7 +336,7 @@ pub fn translate_task_from_grounded_internal(
         }
     }
 
-    let mut numeric_inits: Vec<(String, i64)> = Vec::new();
+    let mut numeric_inits: Vec<(String, f64)> = Vec::new();
     let mut grounded_atoms: Vec<String> = Vec::new();
     let func_names: std::collections::HashSet<String> =
         dom.functions.iter().map(|(n, _)| n.clone()).collect();
@@ -354,7 +359,7 @@ pub fn translate_task_from_grounded_internal(
                                     .join(", ");
                                 let key = format!("{}({})", fname, arg_s);
                                 if let crate::translate::pddl_parser::SExpr::Atom(val) = &list[2] {
-                                    if let Ok(n) = val.parse::<i64>() {
+                                    if let Ok(n) = val.parse::<f64>() {
                                         if func_names.contains(fname) {
                                             numeric_inits.push((key, n));
                                         } else {
@@ -389,7 +394,7 @@ pub fn translate_task_from_grounded_internal(
         }
     }
 
-    let mut numeric_vars: Vec<(String, i64)> = Vec::new();
+    let mut numeric_vars: Vec<(String, f64)> = Vec::new();
     let _canon_num = |name: &str| -> String {
         if name.contains('(') {
             name.to_string()
@@ -575,7 +580,7 @@ pub fn translate_task_from_grounded_internal(
     }
 
     let mut numeric_list: Vec<crate::translate::sas::NumericVariable> = Vec::new();
-    let mut numeric_init_vec: Vec<i64> = Vec::new();
+    let mut numeric_init_vec: Vec<f64> = Vec::new();
     let mut num_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     let constant_axioms =
@@ -632,11 +637,11 @@ pub fn translate_task_from_grounded_internal(
             num_index.insert(effect_name.clone(), idx);
             numeric_list.push(crate::translate::sas::NumericVariable {
                 name: effect_name,
-                initial: Some(0),
+                initial: Some(0.0),
                 ntype,
                 axiom_layer,
             });
-            numeric_init_vec.push(0);
+            numeric_init_vec.push(0.0);
         }
     }
 
@@ -646,7 +651,7 @@ pub fn translate_task_from_grounded_internal(
         }
     }
 
-    let mut num_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut num_map: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
     let fluent_numeric_keys: std::collections::HashSet<String> =
         numeric_vars.iter().map(|(k, _)| k.clone()).collect();
     for (n, v) in numeric_vars.into_iter() {
@@ -657,9 +662,9 @@ pub fn translate_task_from_grounded_internal(
             num_map.insert(k, v);
         }
     }
-    num_map.entry("total-cost()".to_string()).or_insert(0);
+    num_map.entry("total-cost()".to_string()).or_insert(0.0);
 
-    let mut fluent_entries: Vec<(String, i64)> =
+    let mut fluent_entries: Vec<(String, f64)> =
         num_map.iter().map(|(k, v)| (k.clone(), *v)).collect();
     fluent_entries.sort_by(|a, b| a.0.cmp(&b.0));
     for (n, v) in fluent_entries.iter() {
@@ -690,16 +695,49 @@ pub fn translate_task_from_grounded_internal(
         numeric_init_vec.push(*v);
     }
 
-    let mut metric_idx: isize = -1;
-    for (i, nv) in numeric_list.iter().enumerate() {
-        if nv.name == "total-cost()" {
-            metric_idx = i as isize;
-            break;
+    let metric_idx: isize = match &norm_task.metric.1 {
+        None => *num_index
+            .get("total-cost()")
+            .ok_or_else(|| "metric fluent not found: total-cost()".to_string())? as isize,
+        Some(crate::translate::pddl_parser::SExpr::Atom(name)) if name == "-1" => {
+            *num_index
+                .get("total-cost()")
+                .ok_or_else(|| "metric fluent not found: total-cost()".to_string())? as isize
         }
-        if metric_idx == -1 && nv.name == "cost()" {
-            metric_idx = i as isize;
+        Some(expr) => {
+            let metric_key = match expr {
+                crate::translate::pddl_parser::SExpr::Atom(name) => format!("{}()", name),
+                crate::translate::pddl_parser::SExpr::List(items) => {
+                    if items.is_empty() {
+                        return Err("metric expression is empty".to_string());
+                    }
+                    let name = match &items[0] {
+                        crate::translate::pddl_parser::SExpr::Atom(n) => n.clone(),
+                        _ => return Err("metric expression has no name".to_string()),
+                    };
+                    let args: Vec<String> = items[1..]
+                        .iter()
+                        .filter_map(|s| {
+                            if let crate::translate::pddl_parser::SExpr::Atom(a) = s {
+                                Some(a.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if args.is_empty() {
+                        format!("{}()", name)
+                    } else {
+                        format!("{}({})", name, args.join(", "))
+                    }
+                }
+            };
+            let idx = num_index
+                .get(&metric_key)
+                .ok_or_else(|| format!("metric fluent not found: {}", metric_key))?;
+            *idx as isize
         }
-    }
+    };
 
     let mut operators: Vec<crate::translate::sas::SASOperator> = Vec::new();
     let mut numeric_axioms: Vec<crate::translate::sas::NumericAxiom> = Vec::new();
@@ -967,7 +1005,10 @@ pub fn translate_task_from_grounded_internal(
                     crate::translate::pddl::Effect::Increase(nname, args, val) => {
                         let nkey = format!("{}({})", nname, args.join(", "));
                         if let Some(&ni) = num_index.get(&nkey) {
-                            let const_name = format!("derived!{}.0()", val);
+                            let const_name = format!(
+                                "derived!{}()",
+                                crate::translate::function_expression::format_float(*val)
+                            );
                             let rhs_idx = if let Some(&idx) = num_index.get(&const_name) {
                                 idx
                             } else {
@@ -993,7 +1034,10 @@ pub fn translate_task_from_grounded_internal(
                     crate::translate::pddl::Effect::Decrease(nname, args, val) => {
                         let nkey = format!("{}({})", nname, args.join(", "));
                         if let Some(&ni) = num_index.get(&nkey) {
-                            let const_name = format!("derived!{}.0()", val);
+                            let const_name = format!(
+                                "derived!{}()",
+                                crate::translate::function_expression::format_float(*val)
+                            );
                             let rhs_idx = if let Some(&idx) = num_index.get(&const_name) {
                                 idx
                             } else {
@@ -1055,7 +1099,10 @@ pub fn translate_task_from_grounded_internal(
                             crate::translate::pddl::Effect::Increase(nname, args, val) => {
                                 let nkey = format!("{}({})", nname, args.join(", "));
                                 if let Some(&ni) = num_index.get(&nkey) {
-                                    let const_name = format!("derived!{}.0()", val);
+                                    let const_name = format!(
+                                        "derived!{}()",
+                                        crate::translate::function_expression::format_float(*val)
+                                    );
                                     let rhs_idx = if let Some(&idx) = num_index.get(&const_name) {
                                         idx
                                     } else {
@@ -1077,7 +1124,10 @@ pub fn translate_task_from_grounded_internal(
                             crate::translate::pddl::Effect::Decrease(nname, args, val) => {
                                 let nkey = format!("{}({})", nname, args.join(", "));
                                 if let Some(&ni) = num_index.get(&nkey) {
-                                    let const_name = format!("derived!{}.0()", val);
+                                    let const_name = format!(
+                                        "derived!{}()",
+                                        crate::translate::function_expression::format_float(*val)
+                                    );
                                     let rhs_idx = if let Some(&idx) = num_index.get(&const_name) {
                                         idx
                                     } else {
@@ -1103,7 +1153,10 @@ pub fn translate_task_from_grounded_internal(
                 crate::translate::pddl::Effect::Increase(nname, args, val) => {
                     let nkey = format!("{}({})", nname, args.join(", "));
                     if let Some(&ni) = num_index.get(&nkey) {
-                        let const_name = format!("derived!{}.0()", val);
+                        let const_name = format!(
+                            "derived!{}()",
+                            crate::translate::function_expression::format_float(*val)
+                        );
                         let rhs_idx = if let Some(&idx) = num_index.get(&const_name) {
                             idx
                         } else {
@@ -1124,7 +1177,10 @@ pub fn translate_task_from_grounded_internal(
                 crate::translate::pddl::Effect::Decrease(nname, args, val) => {
                     let nkey = format!("{}({})", nname, args.join(", "));
                     if let Some(&ni) = num_index.get(&nkey) {
-                        let const_name = format!("derived!{}.0()", val);
+                        let const_name = format!(
+                            "derived!{}()",
+                            crate::translate::function_expression::format_float(*val)
+                        );
                         let rhs_idx = if let Some(&idx) = num_index.get(&const_name) {
                             idx
                         } else {
@@ -1150,7 +1206,7 @@ pub fn translate_task_from_grounded_internal(
             prevails,
             effects,
             numeric_effects: op_numeric_effects,
-            cost: 1.0,
+            cost: op.cost,
         });
     }
 
@@ -1176,17 +1232,19 @@ pub fn translate_task_from_grounded_internal(
                         Some(idx) => *idx,
                         None => continue,
                     };
-                    let mut values: Vec<i64> = Vec::new();
+                    let mut values: Vec<f64> = Vec::new();
                     let mut ok = true;
                     for part in &ax.parts {
                         match part {
                             crate::translate::numeric_axiom_rules::NumericPart::Constant(c) => {
-                                values.push(c.0);
+                                values.push(c.0.into_inner());
                             }
                             crate::translate::numeric_axiom_rules::NumericPart::Primitive(pne) => {
                                 let key = pne_key(&pne.name, &pne.args);
                                 if let Some(idx) = num_index.get(&key) {
-                                    values.push(numeric_init_vec.get(*idx).copied().unwrap_or(0));
+                                    values.push(
+                                        numeric_init_vec.get(*idx).copied().unwrap_or(0.0),
+                                    );
                                 } else {
                                     ok = false;
                                     break;
@@ -1195,7 +1253,9 @@ pub fn translate_task_from_grounded_internal(
                             crate::translate::numeric_axiom_rules::NumericPart::Axiom(ref_ax) => {
                                 let key = pne_key(&ref_ax.effect.name, &ref_ax.effect.args);
                                 if let Some(idx) = num_index.get(&key) {
-                                    values.push(numeric_init_vec.get(*idx).copied().unwrap_or(0));
+                                    values.push(
+                                        numeric_init_vec.get(*idx).copied().unwrap_or(0.0),
+                                    );
                                 } else {
                                     ok = false;
                                     break;
@@ -1208,7 +1268,7 @@ pub fn translate_task_from_grounded_internal(
                     }
                     let value = match ax.op.as_deref() {
                         None => values[0],
-                        Some("+") => values.into_iter().fold(0, |acc, v| acc + v),
+                        Some("+") => values.into_iter().fold(0.0, |acc, v| acc + v),
                         Some("-") => {
                             let mut iter = values.into_iter();
                             if let Some(mut acc) = iter.next() {
@@ -1223,12 +1283,12 @@ pub fn translate_task_from_grounded_internal(
                                 continue;
                             }
                         }
-                        Some("*") => values.into_iter().fold(1, |acc, v| acc * v),
+                        Some("*") => values.into_iter().fold(1.0, |acc, v| acc * v),
                         Some("/") => {
                             let mut iter = values.into_iter();
                             if let Some(mut acc) = iter.next() {
                                 for v in iter {
-                                    if v == 0 {
+                                    if v == 0.0 {
                                         ok = false;
                                         break;
                                     }
@@ -1320,7 +1380,10 @@ pub fn translate_task_from_grounded_internal(
                         format_pne(&pne.name, &pne.args)
                     }
                     crate::translate::numeric_axiom_rules::NumericPart::Constant(c) => {
-                        format!("derived!{}.0()", c.0)
+                        format!(
+                            "derived!{}()",
+                            crate::translate::function_expression::format_float(c.0.into_inner())
+                        )
                     }
                     crate::translate::numeric_axiom_rules::NumericPart::Axiom(ref_ax) => {
                         format_pne(&ref_ax.effect.name, &ref_ax.effect.args)
@@ -1355,13 +1418,13 @@ pub fn translate_task_from_grounded_internal(
                 &crate::translate::pddl_parser::SExpr,
                 &mut std::collections::HashMap<String, usize>,
                 &mut Vec<crate::translate::sas::NumericVariable>,
-                &mut Vec<i64>,
+                &mut Vec<f64>,
                 &mut Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
                 &mut std::collections::HashMap<String, usize>,
             ) -> Option<String>,
             num_index: &mut std::collections::HashMap<String, usize>,
             numeric_list: &mut Vec<crate::translate::sas::NumericVariable>,
-            numeric_init_vec: &mut Vec<i64>,
+            numeric_init_vec: &mut Vec<f64>,
             instantiated_num_axioms: &mut Vec<
                 crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom,
             >,
@@ -1507,32 +1570,10 @@ pub fn translate_task_from_grounded_internal(
             }
         }
     }
-    for (v_idx, init_val) in prop_init.iter_mut().enumerate() {
-        if *init_val == -1 {
-            if let Some(idx) = vars[v_idx]
-                .value_names
-                .iter()
-                .position(|name| name == "<none of those>")
-            {
-                *init_val = idx as i32;
-            } else if let Some(idx) = vars[v_idx]
-                .value_names
-                .iter()
-                .position(|name| name.starts_with("NegatedAtom "))
-            {
-                *init_val = idx as i32;
-            } else if ranges.get(v_idx).copied().unwrap_or(0) > 0 {
-                *init_val = (ranges[v_idx] as i32) - 1;
-            } else {
-                *init_val = 0;
-            }
-        }
-    }
-
     let comp_var_set: std::collections::HashSet<usize> =
         comp_axioms.iter().map(|c| c.effect_var).collect();
 
-    let (axiom_layers, comparison_axiom_layer) = {
+    let (axiom_layers, comparison_axiom_layer, axiom_init_literals) = {
         let prop_axioms: Vec<PropositionalAxiom> = grounded_axioms
             .iter()
             .map(|ax| {
@@ -1578,8 +1619,53 @@ pub fn translate_task_from_grounded_internal(
             axiom_layers[*idx] = comparison_axiom_layer;
         }
 
-        (axiom_layers, comparison_axiom_layer)
+        (axiom_layers, comparison_axiom_layer, axiom_result.axiom_init)
     };
+
+    for lit in &axiom_init_literals {
+        let atom_str = if lit.args.is_empty() {
+            format!("{}()", lit.predicate)
+        } else {
+            format!("{}({})", lit.predicate, lit.args.join(", "))
+        };
+        if let Some(&(var, val)) = atom_to_fdr.get(&atom_str) {
+            if lit.negated {
+                if let Some(neg_idx) = vars[var]
+                    .value_names
+                    .iter()
+                    .position(|name| name == &format!("NegatedAtom {}", atom_str))
+                {
+                    prop_init[var] = neg_idx as i32;
+                } else if ranges.get(var).copied().unwrap_or(0) > 0 {
+                    prop_init[var] = (ranges[var] as i32) - 1;
+                }
+            } else {
+                prop_init[var] = val as i32;
+            }
+        }
+    }
+
+    for (v_idx, init_val) in prop_init.iter_mut().enumerate() {
+        if *init_val == -1 {
+            if let Some(idx) = vars[v_idx]
+                .value_names
+                .iter()
+                .position(|name| name == "<none of those>")
+            {
+                *init_val = idx as i32;
+            } else if let Some(idx) = vars[v_idx]
+                .value_names
+                .iter()
+                .position(|name| name.starts_with("NegatedAtom "))
+            {
+                *init_val = idx as i32;
+            } else if ranges.get(v_idx).copied().unwrap_or(0) > 0 {
+                *init_val = (ranges[v_idx] as i32) - 1;
+            } else {
+                *init_val = 0;
+            }
+        }
+    }
 
     let canonical_variables: Vec<crate::translate::sas::CanonicalVariable> = vars
         .iter()
@@ -1626,7 +1712,7 @@ pub fn translate_task_from_grounded_internal(
                 prevail: op.prevails.clone(),
                 pre_post,
                 assign_effects,
-                cost: 1.0,
+                cost: op.cost,
             }
         })
         .collect();
@@ -1765,7 +1851,7 @@ pub fn translate_task_from_grounded_internal(
         numeric_axioms,
         comparison_axioms: comp_axioms,
         axioms: sas_axioms,
-        numeric_init: numeric_init_vec.iter().map(|&v| v as f64).collect(),
+        numeric_init: numeric_init_vec.clone(),
         mutex_groups: mutex_groups_pairs,
         ranges: ranges.clone(),
         axiom_layers,
@@ -1774,8 +1860,8 @@ pub fn translate_task_from_grounded_internal(
         translation_key: translation_key.clone(),
         canonical_variables,
         canonical_operators,
-        canonical_metric: Some(("<".to_string(), metric_idx)),
-        metric: ("<".to_string(), metric_idx),
+        canonical_metric: Some((norm_task.metric.0.clone(), metric_idx)),
+        metric: (norm_task.metric.0.clone(), metric_idx),
         global_constraint,
         comp_axiom_layer: comparison_axiom_layer,
     })

@@ -4,6 +4,7 @@
 // or constants), and effect (a primitive numeric expression). We mirror a
 // minimal subset of these types here so the logic can be reused from Rust.
 
+use ordered_float::OrderedFloat;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
@@ -29,7 +30,7 @@ impl Hash for PrimitiveNumericExpression {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct NumericConstant(pub i64);
+pub struct NumericConstant(pub OrderedFloat<f64>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NumericPart {
@@ -106,19 +107,19 @@ pub fn identify_constants_checked(
     fn is_constant(
         ax: &InstantiatedNumericAxiom,
         ax_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
-    ) -> Result<Option<i64>, NumericAxiomError> {
+    ) -> Result<Option<f64>, NumericAxiomError> {
         // Recursive helper. If the axiom can be reduced to a single numeric constant,
         // return Some(value), otherwise None.
         if ax.op.is_none() && ax.parts.len() == 1 {
             if let NumericPart::Constant(NumericConstant(v)) = &ax.parts[0] {
-                return Ok(Some(*v));
+                return Ok(Some(v.into_inner()));
             }
         }
         // Otherwise, check if all parts are constants (recursively).
-        let mut values: Vec<i64> = Vec::new();
+        let mut values: Vec<f64> = Vec::new();
         for part in &ax.parts {
             match part {
-                NumericPart::Constant(NumericConstant(v)) => values.push(*v),
+                NumericPart::Constant(NumericConstant(v)) => values.push(v.into_inner()),
                 NumericPart::Primitive(pne) => {
                     if let Some(dep_ax) = ax_by_pne.get(pne) {
                         if let Some(v) = is_constant(dep_ax, ax_by_pne)? {
@@ -155,7 +156,7 @@ pub fn identify_constants_checked(
                             "-" => acc = acc - v,
                             "*" => acc = acc * v,
                             "/" => {
-                                if v != 0 {
+                                if v != 0.0 {
                                     acc = acc / v
                                 } else {
                                     return Err(NumericAxiomError::DivideByZero {
@@ -211,17 +212,17 @@ pub fn identify_constants_inplace(
         index_by_effect.insert(ax.effect.clone(), idx);
     }
 
-    let mut cache: HashMap<usize, Option<i64>> = HashMap::new();
+    let mut cache: HashMap<usize, Option<f64>> = HashMap::new();
 
     fn eval_part(
         part: &NumericPart,
         axioms: &mut Vec<InstantiatedNumericAxiom>,
         index_by_effect: &HashMap<PrimitiveNumericExpression, usize>,
-        cache: &mut HashMap<usize, Option<i64>>,
+        cache: &mut HashMap<usize, Option<f64>>,
         visiting: &mut HashSet<usize>,
-    ) -> Option<i64> {
+    ) -> Option<f64> {
         match part {
-            NumericPart::Constant(NumericConstant(v)) => Some(*v),
+            NumericPart::Constant(NumericConstant(v)) => Some(v.into_inner()),
             NumericPart::Primitive(pne) => {
                 if let Some(idx) = index_by_effect.get(pne) {
                     eval_axiom(*idx, axioms, index_by_effect, cache, visiting)
@@ -245,10 +246,10 @@ pub fn identify_constants_inplace(
         parts: &[NumericPart],
         axioms: &mut Vec<InstantiatedNumericAxiom>,
         index_by_effect: &HashMap<PrimitiveNumericExpression, usize>,
-        cache: &mut HashMap<usize, Option<i64>>,
+        cache: &mut HashMap<usize, Option<f64>>,
         visiting: &mut HashSet<usize>,
-    ) -> Option<i64> {
-        let mut values: Vec<i64> = Vec::new();
+    ) -> Option<f64> {
+        let mut values: Vec<f64> = Vec::new();
         for part in parts {
             if let Some(v) = eval_part(part, axioms, index_by_effect, cache, visiting) {
                 values.push(v);
@@ -272,7 +273,7 @@ pub fn identify_constants_inplace(
                     "-" => acc -= v,
                     "*" => acc *= v,
                     "/" => {
-                        if v == 0 {
+                        if v == 0.0 {
                             return None;
                         }
                         acc /= v;
@@ -292,9 +293,9 @@ pub fn identify_constants_inplace(
         idx: usize,
         axioms: &mut Vec<InstantiatedNumericAxiom>,
         index_by_effect: &HashMap<PrimitiveNumericExpression, usize>,
-        cache: &mut HashMap<usize, Option<i64>>,
+        cache: &mut HashMap<usize, Option<f64>>,
         visiting: &mut HashSet<usize>,
-    ) -> Option<i64> {
+    ) -> Option<f64> {
         if let Some(v) = cache.get(&idx) {
             return *v;
         }
@@ -311,7 +312,7 @@ pub fn identify_constants_inplace(
         if let Some(value) = result {
             let ax = &mut axioms[idx];
             ax.op = None;
-            ax.parts = vec![NumericPart::Constant(NumericConstant(value))];
+            ax.parts = vec![NumericPart::Constant(NumericConstant(OrderedFloat(value)))];
             cache.insert(idx, Some(value));
         } else {
             cache.insert(idx, None);
@@ -429,7 +430,7 @@ pub fn compute_axiom_layers(
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum AxiomKeyPart {
     PNE(PrimitiveNumericExpression),
-    Constant(i64),
+    Constant(OrderedFloat<f64>),
 }
 
 pub fn identify_equivalent_axioms(

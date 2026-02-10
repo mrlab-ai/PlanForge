@@ -22,7 +22,7 @@ pub struct CanonicalEffect {
 #[derive(Debug, Clone)]
 pub enum CanonicalAssignRhs {
     Variable(usize),
-    Constant(i64),
+    Constant(f64),
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +45,7 @@ pub struct CanonicalOperator {
 #[derive(Debug, Clone)]
 pub struct NumericVariable {
     pub name: String,
-    pub initial: Option<i64>,
+    pub initial: Option<f64>,
     pub ntype: String,
     pub axiom_layer: i32,
 }
@@ -107,7 +107,7 @@ pub struct SASTask {
 
 #[derive(Debug, Clone)]
 pub enum NumericPrecond {
-    VarConst(usize, String, i64),
+    VarConst(usize, String, f64),
     VarVar(usize, String, usize),
 }
 
