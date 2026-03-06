@@ -489,11 +489,7 @@ pub fn translate_task_from_grounded_internal(
                     }
                 }
                 crate::translate::pddl::Condition::Comparison(_, _, _) => {}
-                crate::translate::pddl::Condition::Not(_) => {}
-                crate::translate::pddl::Condition::Or(_) => {}
-                crate::translate::pddl::Condition::Forall(_, _) => {}
-                crate::translate::pddl::Condition::Exists(_, _) => {}
-                crate::translate::pddl::Condition::True => {}
+                _ => {}
             }
         }
     }
@@ -509,15 +505,19 @@ pub fn translate_task_from_grounded_internal(
                     grounded_atoms.push(format!("{}({})", name, args.join(", ")));
                 }
             }
-            crate::translate::pddl::Condition::Not(inner) => {
-                collect_atoms_from_condition(inner, grounded_atoms, fluent_preds);
-            }
-            crate::translate::pddl::Condition::And(list) => {
-                for c in list {
-                    collect_atoms_from_condition(c, grounded_atoms, fluent_preds);
+            crate::translate::pddl::Condition::And(parts)
+            | crate::translate::pddl::Condition::Or(parts) => {
+                for part in parts {
+                    collect_atoms_from_condition(part, grounded_atoms, fluent_preds);
                 }
             }
-            _ => {}
+            crate::translate::pddl::Condition::Not(inner)
+            | crate::translate::pddl::Condition::Forall(_, inner)
+            | crate::translate::pddl::Condition::Exists(_, inner) => {
+                collect_atoms_from_condition(inner, grounded_atoms, fluent_preds);
+            }
+            crate::translate::pddl::Condition::Comparison(_, _, _) => {}
+            crate::translate::pddl::Condition::True => {}
         }
     }
 
@@ -582,6 +582,39 @@ pub fn translate_task_from_grounded_internal(
     let mut numeric_list: Vec<crate::translate::sas::NumericVariable> = Vec::new();
     let mut numeric_init_vec: Vec<f64> = Vec::new();
     let mut num_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+    let mut pre_num_map: std::collections::HashMap<String, f64> =
+        std::collections::HashMap::new();
+    for (n, v) in numeric_vars.iter() {
+        pre_num_map.entry(n.clone()).or_insert(*v);
+    }
+    for (k, v) in numeric_inits.iter() {
+        pre_num_map.insert(k.clone(), *v);
+    }
+
+    fn ensure_numeric_key(
+        key: &str,
+        pre_num_map: &std::collections::HashMap<String, f64>,
+        num_index: &mut std::collections::HashMap<String, usize>,
+        numeric_list: &mut Vec<crate::translate::sas::NumericVariable>,
+        numeric_init_vec: &mut Vec<f64>,
+    ) {
+        if num_index.contains_key(key) {
+            return;
+        }
+        if let Some(v) = pre_num_map.get(key) {
+            let ntype = if key == "total-cost()" { "I" } else { "R" };
+            let idx = numeric_list.len();
+            num_index.insert(key.to_string(), idx);
+            numeric_list.push(crate::translate::sas::NumericVariable {
+                name: key.to_string(),
+                initial: Some(*v),
+                ntype: ntype.to_string(),
+                axiom_layer: -1,
+            });
+            numeric_init_vec.push(*v);
+        }
+    }
 
     let constant_axioms =
         crate::translate::numeric_axiom_rules::identify_constants_inplace(
@@ -652,15 +685,11 @@ pub fn translate_task_from_grounded_internal(
     }
 
     let mut num_map: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
-    let fluent_numeric_keys: std::collections::HashSet<String> =
-        numeric_vars.iter().map(|(k, _)| k.clone()).collect();
     for (n, v) in numeric_vars.into_iter() {
         num_map.entry(n).or_insert(v);
     }
     for (k, v) in numeric_inits.into_iter() {
-        if fluent_numeric_keys.contains(&k) {
-            num_map.insert(k, v);
-        }
+        num_map.insert(k, v);
     }
     num_map.entry("total-cost()".to_string()).or_insert(0.0);
 
@@ -674,8 +703,7 @@ pub fn translate_task_from_grounded_internal(
 
         let ntype = if n == "total-cost()" {
             "I".to_string()
-        } else if n.contains("derived!") || (n.contains('+') || n.contains('-')) && n.contains('(')
-        {
+        } else if n.contains("derived!") {
             "D".to_string()
         } else if n.starts_with("const:") {
             "C".to_string()
@@ -747,7 +775,26 @@ pub fn translate_task_from_grounded_internal(
         std::collections::HashMap::new();
     for op in ops {
         let mut prevails: Vec<(usize, usize)> = Vec::new();
+        #[derive(Default)]
+        struct EffectAccumulator {
+            condition: Vec<(usize, usize)>,
+            add: Option<usize>,
+            del: Option<usize>,
+            none_idx: usize,
+        }
+
         let mut effects: Vec<(usize, usize, usize, Vec<(usize, usize)>)> = Vec::new();
+        let mut effect_acc: HashMap<(usize, String), EffectAccumulator> = HashMap::new();
+        let normalize_condition = |cond: &[(usize, usize)]| -> (String, Vec<(usize, usize)>) {
+            let mut normalized = cond.to_vec();
+            normalized.sort();
+            let key = normalized
+                .iter()
+                .map(|(v, val)| format!("{}:{}", v, val))
+                .collect::<Vec<_>>()
+                .join(",");
+            (key, normalized)
+        };
         let mut op_numeric_effects: Vec<(usize, String, usize, Vec<(usize, usize)>)> = Vec::new();
 
         if let Some(pre) = &op.pre {
@@ -785,6 +832,20 @@ pub fn translate_task_from_grounded_internal(
                                     &mut derived_axiom_index,
                                 );
                                 if let (Some(left_key), Some(right_key)) = (left_name, right_name) {
+                                    ensure_numeric_key(
+                                        &left_key,
+                                        &pre_num_map,
+                                        &mut num_index,
+                                        &mut numeric_list,
+                                        &mut numeric_init_vec,
+                                    );
+                                    ensure_numeric_key(
+                                        &right_key,
+                                        &pre_num_map,
+                                        &mut num_index,
+                                        &mut numeric_list,
+                                        &mut numeric_init_vec,
+                                    );
                                     if let (Some(&ni), Some(&nj)) =
                                         (num_index.get(&left_key), num_index.get(&right_key))
                                     {
@@ -848,6 +909,20 @@ pub fn translate_task_from_grounded_internal(
                         &mut derived_axiom_index,
                     );
                     if let (Some(left_key), Some(right_key)) = (left_name, right_name) {
+                        ensure_numeric_key(
+                            &left_key,
+                            &pre_num_map,
+                            &mut num_index,
+                            &mut numeric_list,
+                            &mut numeric_init_vec,
+                        );
+                        ensure_numeric_key(
+                            &right_key,
+                            &pre_num_map,
+                            &mut num_index,
+                            &mut numeric_list,
+                            &mut numeric_init_vec,
+                        );
                         if let (Some(&ni), Some(&nj)) =
                             (num_index.get(&left_key), num_index.get(&right_key))
                         {
@@ -935,12 +1010,27 @@ pub fn translate_task_from_grounded_internal(
                                         if let (Some(left_key), Some(right_key)) =
                                             (left_name, right_name)
                                         {
+                                            ensure_numeric_key(
+                                                &left_key,
+                                                &pre_num_map,
+                                                &mut num_index,
+                                                &mut numeric_list,
+                                                &mut numeric_init_vec,
+                                            );
+                                            ensure_numeric_key(
+                                                &right_key,
+                                                &pre_num_map,
+                                                &mut num_index,
+                                                &mut numeric_list,
+                                                &mut numeric_init_vec,
+                                            );
                                             if let (Some(&ni), Some(&nj)) = (
                                                 num_index.get(&left_key),
                                                 num_index.get(&right_key),
                                             ) {
+                                                let op_norm = normalize_op(&opstr);
                                                 let comp_key =
-                                                    format!("{} {} {}", opstr, left_key, right_key);
+                                                    format!("{} {} {}", op_norm, ni, nj);
                                                 let effect_idx = if let Some(&ei) =
                                                     var_index.get(&comp_key)
                                                 {
@@ -948,13 +1038,12 @@ pub fn translate_task_from_grounded_internal(
                                                 } else {
                                                     let ei = vars.len();
                                                     var_index.insert(comp_key.clone(), ei);
-                                                    let pos = format!(
-                                                        "{} {} {}",
-                                                        opstr, left_key, right_key
-                                                    );
+                                                    let pos = format!("{} {} {}", op_norm, ni, nj);
                                                     let neg = format!(
-                                                        "not {} {} {}",
-                                                        opstr, left_key, right_key
+                                                        "{} {} {}",
+                                                        negate_op(&op_norm),
+                                                        ni,
+                                                        nj
                                                     );
                                                     vars.push(crate::translate::sas::Variable {
                                                         value_names: vec![
@@ -991,15 +1080,31 @@ pub fn translate_task_from_grounded_internal(
                     crate::translate::pddl::Effect::Add(name, args) => {
                         let atom = format!("{}({})", name, args.join(", "));
                         if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
-                            let pre = ranges.get(v).map(|r| r - 1).unwrap_or(0);
-                            effects.push((v, pre, val, condition.clone()));
+                            let (cond_key, normalized_cond) = normalize_condition(&condition);
+                            let entry = effect_acc
+                                .entry((v, cond_key))
+                                .or_insert_with(|| EffectAccumulator {
+                                    condition: normalized_cond,
+                                    add: None,
+                                    del: None,
+                                    none_idx: ranges.get(v).map(|r| r - 1).unwrap_or(0),
+                                });
+                            entry.add = Some(val);
                         }
                     }
                     crate::translate::pddl::Effect::Del(name, args) => {
                         let atom = format!("{}({})", name, args.join(", "));
                         if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
-                            let none_idx = ranges[v] - 1;
-                            effects.push((v, val, none_idx, condition.clone()));
+                            let (cond_key, normalized_cond) = normalize_condition(&condition);
+                            let entry = effect_acc
+                                .entry((v, cond_key))
+                                .or_insert_with(|| EffectAccumulator {
+                                    condition: normalized_cond,
+                                    add: None,
+                                    del: None,
+                                    none_idx: ranges.get(v).map(|r| r - 1).unwrap_or(0),
+                                });
+                            entry.del = Some(val);
                         }
                     }
                     crate::translate::pddl::Effect::Increase(nname, args, val) => {
@@ -1065,37 +1170,71 @@ pub fn translate_task_from_grounded_internal(
             }
         } else if let Some(eff) = &op.eff {
             match eff {
-                crate::translate::pddl::Effect::Add(name, args) => {
-                    let atom = format!("{}({})", name, args.join(", "));
-                    if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
-                        let pre = ranges.get(v).map(|r| r - 1).unwrap_or(0);
-                        effects.push((v, pre, val, vec![]));
+                    crate::translate::pddl::Effect::Add(name, args) => {
+                        let atom = format!("{}({})", name, args.join(", "));
+                        if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
+                            let (cond_key, normalized_cond) = normalize_condition(&[]);
+                            let entry = effect_acc
+                                .entry((v, cond_key))
+                                .or_insert_with(|| EffectAccumulator {
+                                    condition: normalized_cond,
+                                    add: None,
+                                    del: None,
+                                    none_idx: ranges.get(v).map(|r| r - 1).unwrap_or(0),
+                                });
+                            entry.add = Some(val);
+                        }
                     }
-                }
-                crate::translate::pddl::Effect::Del(name, args) => {
-                    let atom = format!("{}({})", name, args.join(", "));
-                    if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
-                        let none_idx = ranges[v] - 1;
-                        effects.push((v, val, none_idx, vec![]));
+                    crate::translate::pddl::Effect::Del(name, args) => {
+                        let atom = format!("{}({})", name, args.join(", "));
+                        if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
+                            let (cond_key, normalized_cond) = normalize_condition(&[]);
+                            let entry = effect_acc
+                                .entry((v, cond_key))
+                                .or_insert_with(|| EffectAccumulator {
+                                    condition: normalized_cond,
+                                    add: None,
+                                    del: None,
+                                    none_idx: ranges.get(v).map(|r| r - 1).unwrap_or(0),
+                                });
+                            entry.del = Some(val);
+                        }
                     }
-                }
                 crate::translate::pddl::Effect::And(v) => {
                     for sub in v {
-                        match sub {
-                            crate::translate::pddl::Effect::Add(name, args) => {
-                                let atom = format!("{}({})", name, args.join(", "));
-                                if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
-                                    let pre = ranges.get(v).map(|r| r - 1).unwrap_or(0);
-                                    effects.push((v, pre, val, vec![]));
-                                }
-                            }
-                            crate::translate::pddl::Effect::Del(name, args) => {
-                                let atom = format!("{}({})", name, args.join(", "));
-                                if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
-                                    let none_idx = ranges[v] - 1;
-                                    effects.push((v, val, none_idx, vec![]));
-                                }
-                            }
+                                match sub {
+                                    crate::translate::pddl::Effect::Add(name, args) => {
+                                        let atom = format!("{}({})", name, args.join(", "));
+                                        if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
+                                            let (cond_key, normalized_cond) =
+                                                normalize_condition(&[]);
+                                            let entry = effect_acc
+                                                .entry((v, cond_key))
+                                                .or_insert_with(|| EffectAccumulator {
+                                                    condition: normalized_cond,
+                                                    add: None,
+                                                    del: None,
+                                                    none_idx: ranges.get(v).map(|r| r - 1).unwrap_or(0),
+                                                });
+                                            entry.add = Some(val);
+                                        }
+                                    }
+                                    crate::translate::pddl::Effect::Del(name, args) => {
+                                        let atom = format!("{}({})", name, args.join(", "));
+                                        if let Some(&(v, val)) = atom_to_fdr.get(&atom) {
+                                            let (cond_key, normalized_cond) =
+                                                normalize_condition(&[]);
+                                            let entry = effect_acc
+                                                .entry((v, cond_key))
+                                                .or_insert_with(|| EffectAccumulator {
+                                                    condition: normalized_cond,
+                                                    add: None,
+                                                    del: None,
+                                                    none_idx: ranges.get(v).map(|r| r - 1).unwrap_or(0),
+                                                });
+                                            entry.del = Some(val);
+                                        }
+                                    }
                             crate::translate::pddl::Effect::Increase(nname, args, val) => {
                                 let nkey = format!("{}({})", nname, args.join(", "));
                                 if let Some(&ni) = num_index.get(&nkey) {
@@ -1201,6 +1340,21 @@ pub fn translate_task_from_grounded_internal(
             }
         }
 
+        for ((v, _), acc) in effect_acc.into_iter() {
+            match (acc.add, acc.del) {
+                (Some(add_val), Some(del_val)) => {
+                    effects.push((v, del_val, add_val, acc.condition));
+                }
+                (Some(add_val), None) => {
+                    effects.push((v, acc.none_idx, add_val, acc.condition));
+                }
+                (None, Some(del_val)) => {
+                    effects.push((v, del_val, acc.none_idx, acc.condition));
+                }
+                (None, None) => {}
+            }
+        }
+
         operators.push(crate::translate::sas::SASOperator {
             name: op.name.clone(),
             prevails,
@@ -1227,6 +1381,9 @@ pub fn translate_task_from_grounded_internal(
         for layer in layers {
             if let Some(axs) = num_axioms_by_layer.get(&layer) {
                 for ax in axs {
+                    if !constant_effects.contains(&ax.effect) {
+                        continue;
+                    }
                     let effect_key = pne_key(&ax.effect.name, &ax.effect.args);
                     let effect_idx = match num_index.get(&effect_key) {
                         Some(idx) => *idx,
@@ -1356,8 +1513,12 @@ pub fn translate_task_from_grounded_internal(
             format!("{}({})", name, args.join(", "))
         }
     };
+    let mut seen_numeric_axioms: HashSet<(String, Vec<usize>, usize)> = HashSet::new();
     for (_layer, axs) in &num_axioms_by_layer {
         for ax in axs {
+            if num_axiom_map.contains_key(&ax.effect) {
+                continue;
+            }
             let effect_key = format_pne(&ax.effect.name, &ax.effect.args);
             let effect_idx = *num_index
                 .get(&effect_key)
@@ -1402,12 +1563,14 @@ pub fn translate_task_from_grounded_internal(
                 Some(op_str) => op_str.clone(),
                 None => return Err(format!("numeric axiom has no op: {}", ax.effect.name)),
             };
-
-            numeric_axioms.push(crate::translate::sas::NumericAxiom {
-                op,
-                parts: part_indices,
-                effect: effect_idx,
-            });
+            let key = (op.clone(), part_indices.clone(), effect_idx);
+            if seen_numeric_axioms.insert(key) {
+                numeric_axioms.push(crate::translate::sas::NumericAxiom {
+                    op,
+                    parts: part_indices,
+                    effect: effect_idx,
+                });
+            }
         }
     }
 
@@ -1422,6 +1585,7 @@ pub fn translate_task_from_grounded_internal(
                 &mut Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
                 &mut std::collections::HashMap<String, usize>,
             ) -> Option<String>,
+            pre_num_map: &std::collections::HashMap<String, f64>,
             num_index: &mut std::collections::HashMap<String, usize>,
             numeric_list: &mut Vec<crate::translate::sas::NumericVariable>,
             numeric_init_vec: &mut Vec<f64>,
@@ -1456,6 +1620,20 @@ pub fn translate_task_from_grounded_internal(
                         derived_axiom_index,
                     );
                     if let (Some(left_key), Some(right_key)) = (left_name, right_name) {
+                        ensure_numeric_key(
+                            &left_key,
+                            pre_num_map,
+                            num_index,
+                            numeric_list,
+                            numeric_init_vec,
+                        );
+                        ensure_numeric_key(
+                            &right_key,
+                            pre_num_map,
+                            num_index,
+                            numeric_list,
+                            numeric_init_vec,
+                        );
                         if let (Some(&ni), Some(&nj)) =
                             (num_index.get(&left_key), num_index.get(&right_key))
                         {
@@ -1490,6 +1668,7 @@ pub fn translate_task_from_grounded_internal(
                         ensure_axiom_comparison_vars(
                             c,
                             ensure_expr_var,
+                            pre_num_map,
                             num_index,
                             numeric_list,
                             numeric_init_vec,
@@ -1513,6 +1692,7 @@ pub fn translate_task_from_grounded_internal(
             ensure_axiom_comparison_vars(
                 &ax.condition,
                 &mut ensure_expr_var,
+                &pre_num_map,
                 &mut num_index,
                 &mut numeric_list,
                 &mut numeric_init_vec,
@@ -1531,6 +1711,7 @@ pub fn translate_task_from_grounded_internal(
         ensure_axiom_comparison_vars(
             normalized_goal,
             &mut ensure_expr_var,
+            &pre_num_map,
             &mut num_index,
             &mut numeric_list,
             &mut numeric_init_vec,
@@ -1722,10 +1903,23 @@ pub fn translate_task_from_grounded_internal(
         cond: &crate::translate::pddl::Condition,
         atom_to_fdr: &std::collections::HashMap<String, (usize, usize)>,
         var_index: &std::collections::HashMap<String, usize>,
-        num_index: &std::collections::HashMap<String, usize>,
+        num_index: &mut std::collections::HashMap<String, usize>,
         ranges: &[usize],
         condition_pairs: &mut Vec<(usize, usize)>,
         normalize_op: &dyn Fn(&str) -> String,
+        ensure_expr_var: &mut dyn FnMut(
+            &crate::translate::pddl_parser::SExpr,
+            &mut std::collections::HashMap<String, usize>,
+            &mut Vec<crate::translate::sas::NumericVariable>,
+            &mut Vec<f64>,
+            &mut Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
+            &mut std::collections::HashMap<String, usize>,
+        ) -> Option<String>,
+        pre_num_map: &std::collections::HashMap<String, f64>,
+        numeric_list: &mut Vec<crate::translate::sas::NumericVariable>,
+        numeric_init_vec: &mut Vec<f64>,
+        instantiated_num_axioms: &mut Vec<crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom>,
+        derived_axiom_index: &mut std::collections::HashMap<String, usize>,
     ) {
         match cond {
             crate::translate::pddl::Condition::Atom(name, args) => {
@@ -1735,38 +1929,37 @@ pub fn translate_task_from_grounded_internal(
                 }
             }
             crate::translate::pddl::Condition::Comparison(opstr, l, r) => {
-                fn sexpr_to_name(s: &crate::translate::pddl_parser::SExpr) -> Option<String> {
-                    match s {
-                        crate::translate::pddl_parser::SExpr::Atom(a) => {
-                            if a.starts_with("derived!") {
-                                Some(format!("{}()", a))
-                            } else {
-                                Some(format!("{}()", a))
-                            }
-                        }
-                        crate::translate::pddl_parser::SExpr::List(list) => {
-                            if list.is_empty() {
-                                return None;
-                            }
-                            if let crate::translate::pddl_parser::SExpr::Atom(name) = &list[0] {
-                                let args: Vec<String> = list[1..]
-                                    .iter()
-                                    .filter_map(|s| {
-                                        if let crate::translate::pddl_parser::SExpr::Atom(a) = s {
-                                            Some(a.clone())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect();
-                                Some(format!("{}({})", name, args.join(", ")))
-                            } else {
-                                None
-                            }
-                        }
-                    }
-                }
-                if let (Some(left_key), Some(right_key)) = (sexpr_to_name(l), sexpr_to_name(r)) {
+                let left_name = ensure_expr_var(
+                    l,
+                    num_index,
+                    numeric_list,
+                    numeric_init_vec,
+                    instantiated_num_axioms,
+                    derived_axiom_index,
+                );
+                let right_name = ensure_expr_var(
+                    r,
+                    num_index,
+                    numeric_list,
+                    numeric_init_vec,
+                    instantiated_num_axioms,
+                    derived_axiom_index,
+                );
+                if let (Some(left_key), Some(right_key)) = (left_name, right_name) {
+                    ensure_numeric_key(
+                        &left_key,
+                        pre_num_map,
+                        num_index,
+                        numeric_list,
+                        numeric_init_vec,
+                    );
+                    ensure_numeric_key(
+                        &right_key,
+                        pre_num_map,
+                        num_index,
+                        numeric_list,
+                        numeric_init_vec,
+                    );
                     if let (Some(&ni), Some(&nj)) =
                         (num_index.get(&left_key), num_index.get(&right_key))
                     {
@@ -1788,6 +1981,12 @@ pub fn translate_task_from_grounded_internal(
                         ranges,
                         condition_pairs,
                         normalize_op,
+                        ensure_expr_var,
+                        pre_num_map,
+                        numeric_list,
+                        numeric_init_vec,
+                        instantiated_num_axioms,
+                        derived_axiom_index,
                     );
                 }
             }
@@ -1808,10 +2007,16 @@ pub fn translate_task_from_grounded_internal(
         normalized_goal,
         &atom_to_fdr,
         &var_index,
-        &num_index,
+        &mut num_index,
         &ranges,
         &mut goal_pairs,
         &normalize_op,
+        &mut ensure_expr_var,
+        &pre_num_map,
+        &mut numeric_list,
+        &mut numeric_init_vec,
+        &mut instantiated_num_axioms,
+        &mut derived_axiom_index,
     );
 
     for ax in grounded_axioms {
@@ -1821,10 +2026,16 @@ pub fn translate_task_from_grounded_internal(
                 &ax.condition,
                 &atom_to_fdr,
                 &var_index,
-                &num_index,
+                &mut num_index,
                 &ranges,
                 &mut condition_pairs,
                 &normalize_op,
+                &mut ensure_expr_var,
+                &pre_num_map,
+                &mut numeric_list,
+                &mut numeric_init_vec,
+                &mut instantiated_num_axioms,
+                &mut derived_axiom_index,
             );
             sas_axioms.push(crate::translate::sas::SASAxiom {
                 condition: condition_pairs,
@@ -2858,8 +3069,8 @@ pub fn translate_numeric_axiom(
                 if let Some(idx) = num_dictionary.get(&key) {
                     parts.push(*idx);
                 } else if let Some(entries) = prop_dictionary.get(&Literal::Atom(Atom {
-                    predicate: key,
-                    args: Vec::new(),
+                    predicate: sub.effect.name.clone(),
+                    args: sub.effect.args.clone(),
                 })) {
                     parts.push(entries[0].0);
                 } else {
@@ -2867,7 +3078,12 @@ pub fn translate_numeric_axiom(
                 }
             }
             crate::translate::numeric_axiom_rules::NumericPart::Constant(constant) => {
-                let key = constant.0.to_string();
+                let key = format!(
+                    "derived!{}()",
+                    crate::translate::function_expression::format_float(
+                        constant.0.into_inner()
+                    )
+                );
                 parts.push(*num_dictionary.get(&key)?);
             }
         }
@@ -3123,9 +3339,14 @@ pub fn translate_task(
         &mut sas_comp_axioms,
     );
 
+    let mut seen_numeric_axioms: HashSet<(String, Vec<usize>, usize)> = HashSet::new();
     let numeric_axioms: Vec<crate::translate::sas::NumericAxiom> = num_axioms
         .iter()
         .filter_map(|ax| translate_numeric_axiom(ax, strips_to_sas, numeric_strips_to_sas))
+        .filter(|ax| {
+            let key = (ax.op.clone(), ax.parts.clone(), ax.effect);
+            seen_numeric_axioms.insert(key)
+        })
         .collect();
 
     let variables = translation_key

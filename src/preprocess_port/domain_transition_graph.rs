@@ -88,7 +88,9 @@ impl DomainTransitionGraph {
             if op_pre_post.pre != -1 {
                 let pp_var = unsafe { &*op_pre_post.var };
                 if pp_var.get_level() == self.level {
-                    assert!(op_pre_post.pre == from);
+                    if op_pre_post.pre != from {
+                        continue;
+                    }
                 } else {
                     cond.push((op_pre_post.var, op_pre_post.pre));
                 }

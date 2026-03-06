@@ -431,6 +431,7 @@ pub fn compute_axiom_layers(
 enum AxiomKeyPart {
     PNE(PrimitiveNumericExpression),
     Constant(OrderedFloat<f64>),
+    AxiomName(String),
 }
 
 pub fn identify_equivalent_axioms(
@@ -453,11 +454,7 @@ pub fn identify_equivalent_axioms(
                         }
                     }
                     NumericPart::Axiom(boxed) => {
-                        if let Some(mapped) = axiom_map.get(&boxed.effect) {
-                            mapped_args.push(AxiomKeyPart::PNE(mapped.effect.clone()));
-                        } else {
-                            mapped_args.push(AxiomKeyPart::PNE(boxed.effect.clone()));
-                        }
+                        mapped_args.push(AxiomKeyPart::AxiomName(boxed.name.clone()));
                     }
                     NumericPart::Constant(c) => mapped_args.push(AxiomKeyPart::Constant(c.0)),
                 }
@@ -483,9 +480,10 @@ pub fn handle_axioms(
     Vec<InstantiatedNumericAxiom>,
 ) {
     let axiom_by_pne = axiom_by_pne(axioms);
-    let constant_axioms = identify_constants(axioms, &axiom_by_pne);
+    let mut simplified_axioms = axioms.to_vec();
+    let constant_axioms = identify_constants_inplace(&mut simplified_axioms);
     let (axioms_by_layer, max_layer) =
-        compute_axiom_layers(axioms, &constant_axioms, &axiom_by_pne);
+        compute_axiom_layers(&simplified_axioms, &constant_axioms, &axiom_by_pne);
     let axiom_map = identify_equivalent_axioms(&axioms_by_layer, &axiom_by_pne);
     (axioms_by_layer, max_layer, axiom_map, constant_axioms)
 }
@@ -502,9 +500,10 @@ pub fn handle_axioms_checked(
     NumericAxiomError,
 > {
     let axiom_by_pne = axiom_by_pne(axioms);
-    let constant_axioms = identify_constants_checked(axioms, &axiom_by_pne)?;
+    let mut simplified_axioms = axioms.to_vec();
+    let constant_axioms = identify_constants_inplace(&mut simplified_axioms);
     let (axioms_by_layer, max_layer) =
-        compute_axiom_layers(axioms, &constant_axioms, &axiom_by_pne);
+        compute_axiom_layers(&simplified_axioms, &constant_axioms, &axiom_by_pne);
     let axiom_map = identify_equivalent_axioms(&axioms_by_layer, &axiom_by_pne);
     Ok((axioms_by_layer, max_layer, axiom_map, constant_axioms))
 }

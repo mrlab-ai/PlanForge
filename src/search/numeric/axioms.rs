@@ -176,11 +176,7 @@ impl ComparisonAxiom {
     pub fn update_values(&self, numeric_state: &mut Vec<f64>) -> Result<bool, InvalidIndex> {
         let left = self.left_hand_side as usize;
         let right = self.right_hand_side as usize;
-        let affected = self.affected_var_id as usize;
-        if left >= numeric_state.len()
-            || right >= numeric_state.len()
-            || affected >= numeric_state.len()
-        {
+        if left >= numeric_state.len() || right >= numeric_state.len() {
             return Err(InvalidIndex {
                 length: numeric_state.len() as u32,
                 index: left as u32,

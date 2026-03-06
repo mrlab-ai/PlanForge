@@ -219,23 +219,16 @@ fn get_fluent_facts(
         .collect()
 }
 
-/// Extract fluent functions (numeric functions) from normalized task.
-/// These are numeric functions that can change during plan execution.
-/// A numeric function is fluent if it appears in any action effect.
+/// Extract fluent functions (numeric functions) from the model.
+/// Matches Python behavior: treat model PNE atoms as fluent functions.
 fn get_fluent_functions(
     norm_task: &crate::translate::normalize::NormalizableTask,
     model: &[build_model::Atom],
 ) -> Vec<String> {
     use std::collections::HashSet;
 
-    let mut function_symbols: HashSet<String> = norm_task
-        .functions
-        .iter()
-        .map(|(name, _)| name.clone())
-        .collect();
-    for axiom in &norm_task.numeric_axioms {
-        function_symbols.insert(axiom.get_head().symbol.clone());
-    }
+    let function_symbols: HashSet<String> =
+        norm_task.functions.iter().map(|(name, _)| name.clone()).collect();
 
     let mut fluent_functions = HashSet::new();
     for atom in model {
@@ -668,9 +661,8 @@ fn instantiate_numeric_axiom(
     instantiated_numeric_axioms: &mut std::collections::HashSet<InstantiatedNumericAxiom>,
 ) -> Option<InstantiatedNumericAxiom> {
     use crate::translate::function_expression::FunctionalExpression;
-    use crate::translate::function_expression::format_float;
     use crate::translate::numeric_axiom_rules::{
-            NumericConstant, NumericPart, PrimitiveNumericExpression,
+            InstantiatedNumericAxiom, NumericConstant, NumericPart, PrimitiveNumericExpression,
         };
     use ordered_float::OrderedFloat;
 
@@ -707,23 +699,24 @@ fn instantiate_numeric_axiom(
                     })
                     .collect();
                 let inst_key = (pne.symbol.clone(), inst_args.clone());
-                let pne_key = format_pne_key(&pne.symbol, &inst_args);
-                if !fluent_function_set.contains(&pne_key) && !pne.symbol.starts_with("derived!") {
-                    if let Some(val) = init_function_values.get(&inst_key) {
-                        let iv = *val;
-                        let const_symbol = format!("derived!{}", format_float(iv));
-                        let const_pne = PrimitiveNumericExpression {
-                            name: const_symbol.clone(),
+                let inst_key_str = format_pne_key(&pne.symbol, &inst_args);
+                if !pne.symbol.starts_with("derived!")
+                    && !fluent_function_set.contains(&inst_key_str)
+                {
+                    if let Some(value) = init_function_values.get(&inst_key) {
+                        let const_name = format!("derived!{}", format_float(*value));
+                        let const_effect = PrimitiveNumericExpression {
+                            name: const_name.clone(),
                             args: vec![],
                         };
                         let const_axiom = InstantiatedNumericAxiom {
-                            name: format!("({} )", const_symbol),
+                            name: format!("({})", const_name),
                             op: None,
-                            parts: vec![NumericPart::Constant(NumericConstant(OrderedFloat(iv)))],
-                            effect: const_pne.clone(),
+                            parts: vec![NumericPart::Constant(NumericConstant(OrderedFloat(*value)))],
+                            effect: const_effect.clone(),
                         };
                         instantiated_numeric_axioms.insert(const_axiom);
-                        inst_parts.push(NumericPart::Primitive(const_pne));
+                        inst_parts.push(NumericPart::Primitive(const_effect));
                         continue;
                     }
                 }
@@ -821,8 +814,13 @@ fn instantiate_normalized_action(
     let pre_sub = pddl::substitute_condition(&action.precondition, variable_mapping);
     let fluent_function_set: std::collections::HashSet<String> =
         fluent_functions.iter().cloned().collect();
-    let _preconditions = match instantiate_condition_list(
+    let pre_substituted = substitute_condition_numeric(
         &pre_sub,
+        &fluent_function_set,
+        init_function_values,
+    );
+    let _preconditions = match instantiate_condition_list(
+        &pre_substituted,
         init_atom_set,
         model_atom_set,
         fluent_predicates,
@@ -947,11 +945,75 @@ fn instantiate_normalized_action(
     Ok(Some(GroundedOp {
         name,
         args: grounded_args.to_vec(),
-        pre: Some(pre_sub),
+        pre: Some(pre_substituted),
         eff: eff_sub,
         effects,
         cost,
     }))
+}
+
+fn substitute_condition_numeric(
+    condition: &crate::translate::pddl::Condition,
+    fluent_function_set: &std::collections::HashSet<String>,
+    init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
+) -> crate::translate::pddl::Condition {
+    use crate::translate::pddl::Condition;
+
+    match condition {
+        Condition::Comparison(op, left, right) => {
+            let left_sub = substitute_sexpr_with_numeric(
+                left,
+                &std::collections::HashMap::new(),
+                fluent_function_set,
+                init_function_values,
+            )
+            .unwrap_or_else(|| left.clone());
+            let right_sub = substitute_sexpr_with_numeric(
+                right,
+                &std::collections::HashMap::new(),
+                fluent_function_set,
+                init_function_values,
+            )
+            .unwrap_or_else(|| right.clone());
+            Condition::Comparison(op.clone(), left_sub, right_sub)
+        }
+        Condition::Not(inner) => {
+            Condition::Not(Box::new(substitute_condition_numeric(
+                inner,
+                fluent_function_set,
+                init_function_values,
+            )))
+        }
+        Condition::And(parts) => Condition::And(
+            parts
+                .iter()
+                .map(|p| substitute_condition_numeric(p, fluent_function_set, init_function_values))
+                .collect(),
+        ),
+        Condition::Or(parts) => Condition::Or(
+            parts
+                .iter()
+                .map(|p| substitute_condition_numeric(p, fluent_function_set, init_function_values))
+                .collect(),
+        ),
+        Condition::Forall(params, inner) => Condition::Forall(
+            params.clone(),
+            Box::new(substitute_condition_numeric(
+                inner,
+                fluent_function_set,
+                init_function_values,
+            )),
+        ),
+        Condition::Exists(params, inner) => Condition::Exists(
+            params.clone(),
+            Box::new(substitute_condition_numeric(
+                inner,
+                fluent_function_set,
+                init_function_values,
+            )),
+        ),
+        _ => condition.clone(),
+    }
 }
 
 fn instantiate_effects(

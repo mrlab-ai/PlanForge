@@ -31,7 +31,7 @@ fn ws(input: &str) -> IResult<&str, (), VerboseError<&str>> {
 
 fn atom(input: &str) -> IResult<&str, SExpr, VerboseError<&str>> {
     let (i, s) = recognize(take_while1(is_atom_char))(input)?;
-    Ok((i, SExpr::Atom(s.to_string())))
+    Ok((i, SExpr::Atom(s.to_ascii_lowercase())))
 }
 
 fn list(input: &str) -> IResult<&str, SExpr, VerboseError<&str>> {
