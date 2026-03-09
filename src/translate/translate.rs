@@ -555,6 +555,21 @@ fn translate_strips_operator_aux(
         }
     }
 
+    if let Some(cost_assignment) = &operator.cost {
+        if let Some(expr_pne) = cost_assignment.expression.as_pne() {
+            if let Some(&expr_var) = numeric_dictionary.get(expr_pne) {
+                if let Some(&fluent_var) = numeric_dictionary.get(&cost_assignment.fluent) {
+                    ass_effects_by_variable
+                        .entry(fluent_var)
+                        .or_insert_with(HashMap::new)
+                        .entry((cost_assignment.symbol.clone(), expr_var))
+                        .or_insert_with(Vec::new)
+                        .push(HashMap::new());
+                }
+            }
+        }
+    }
+
     // Handle del effects: add var=none_of_those when deleted and no add effect
     for (&var, del_vals) in &del_effects_by_variable {
         let add_conds = add_conds_by_variable.get(&var)
