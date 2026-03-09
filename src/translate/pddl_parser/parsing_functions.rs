@@ -262,7 +262,12 @@ fn parse_function_comparison(alist: &[SExpr], _type_dict: &HashMap<String, Vec<S
     let parts: Vec<FunctionalExpression> = alist[1..].iter()
         .map(|item| parse_expression(item))
         .collect();
-    Condition::FunctionComparison(FunctionComparison::new(comparator, parts))
+    assert_eq!(parts.len(), 2, "numeric comparisons must have exactly two parts");
+    let difference = FunctionalExpression::ArithmeticExpression(
+        ArithmeticExpression::new("-".to_string(), parts),
+    );
+    let zero = FunctionalExpression::NumericConstant(NumericConstant::new(0.0));
+    Condition::FunctionComparison(FunctionComparison::new(comparator, vec![difference, zero]))
 }
 
 /// Python: def parse_literal(alist)
