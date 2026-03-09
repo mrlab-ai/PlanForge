@@ -54,30 +54,27 @@ fn main() -> anyhow::Result<()> {
                 "translator: reading domain {:?} and problem {:?}",
                 domain, problem
             );
-            let task = PddlTask::from_files(&domain, &problem)?;
+            let task = PddlTask::from_files(&domain, &problem).map_err(|e| anyhow::anyhow!(e))?;
             eprintln!(
                 "translator: parsed forms: {} domain / {} problem",
                 task.domain_forms.len(),
                 task.problem_forms.len()
             );
-            let dom = planners::translate::pddl::Domain::from_sexprs(&task.domain_forms)
-                .expect("domain parse");
-            let prob = planners::translate::pddl::Problem::from_sexprs(&task.problem_forms)
-                .expect("problem parse");
+            let parsed_task = task.to_task();
 
             // Create normalizable task and run normalization
             eprintln!("translator: normalizing task...");
-            let mut norm_task = normalize::NormalizableTask::from_ast(&dom, &prob);
+            let mut norm_task = normalize::NormalizableTask::from_task(parsed_task);
             norm_task.add_global_constraints();
             normalize::normalize(&mut norm_task).expect("normalization failed");
             eprintln!(
                 "translator: normalized - {} actions, {} axioms, {} numeric axioms",
-                norm_task.actions.len(),
-                norm_task.axioms.len(),
-                norm_task.numeric_axioms.len()
+                norm_task.task.actions.len(),
+                norm_task.task.axioms.len(),
+                norm_task.task.function_administrator.axioms.len()
             );
             // Debug: print axioms
-            for (i, ax) in norm_task.axioms.iter().enumerate() {
+            for (i, ax) in norm_task.task.axioms.iter().enumerate() {
                 eprintln!(
                     "  axiom[{}]: name={}, condition={:?}",
                     i, ax.name, ax.condition
@@ -88,7 +85,7 @@ fn main() -> anyhow::Result<()> {
             // Run instantiation (Phase 1: model-guided grounding)
             // Use the normalized task for proper exploration rule generation
             eprintln!("\ntranslator: running instantiation...");
-            let result = planners::translate::instantiate::explore_normalized(&norm_task)?;
+            let result = planners::translate::instantiate::explore_normalized(&norm_task).map_err(|e| anyhow::anyhow!(e))?;
             eprintln!(
                 "translator: instantiated {} grounded operators (model-guided)",
                 result.grounded_ops.len()
@@ -97,7 +94,7 @@ fn main() -> anyhow::Result<()> {
                 "translator: relaxed reachable: {}",
                 result.relaxed_reachable
             );
-            eprintln!("translator: model size: {} atoms", result.model.len());
+            eprintln!("translator: atoms: {}", result.atoms.len());
 
             // Debug: print action breakdown
             eprintln!("\nAction breakdown:");
@@ -130,8 +127,9 @@ fn main() -> anyhow::Result<()> {
             let py_groups: Option<Vec<Vec<String>>> = None;
             let mut sastask = planners::translate::translate::translate_task_from_grounded_internal(
                 &result.grounded_ops,
-                &dom,
-                &prob,
+                &task.domain_forms,
+                &task.problem_forms,
+                &result.num_fluents,
                 &instantiated_num_axioms,
                 py_groups,
                 &result.grounded_axioms,
@@ -140,8 +138,8 @@ fn main() -> anyhow::Result<()> {
             )
             .map_err(|err| anyhow::anyhow!(err))?;
             match planners::translate::simplify::filter_unreachable_propositions(&mut sastask) {
-                Ok(removed) => {
-                    eprintln!("translator: simplified task, removed {} propositions", removed);
+                Ok(()) => {
+                    eprintln!("translator: simplified task");
                 }
                 Err(planners::translate::simplify::SimplifyError::Impossible) => {
                     eprintln!("translator: task simplified to unsolvable");
@@ -150,6 +148,9 @@ fn main() -> anyhow::Result<()> {
                 Err(planners::translate::simplify::SimplifyError::TriviallySolvable) => {
                     eprintln!("translator: task simplified to trivially solvable");
                     sastask = planners::translate::simplify::trivial_task(true);
+                }
+                Err(planners::translate::simplify::SimplifyError::DoesNothing) => {
+                    eprintln!("translator: simplification made no changes");
                 }
             }
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));

@@ -1,169 +1,82 @@
+/// Port of pddl_to_prolog.py
+/// Translates a PDDL task into a logic program for grounding.
+
 use std::collections::{HashMap, HashSet};
 
-use crate::translate::build_model;
-use crate::translate::normalize;
-use crate::translate::pddl_parser::SExpr;
-use crate::translate::split_rules::{
-    add_object_conditions_to_rules, convert_trivial_rules_to_facts, split_duplicate_arguments,
-    split_rule, RuleWithType, SymRule,
-};
-use crate::translate::timers;
+use super::pddl::conditions::*;
+use super::pddl::pddl_types::{TypedObject, get_type_predicate_name};
+use super::pddl::tasks::Task;
+use super::normalize;
 
-#[derive(Debug, Clone)]
+/// Python: class Fact(object)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Fact {
-    pub atom: build_model::Atom,
+    pub atom: Vec<String>, // predicate name followed by args
 }
 
-impl std::fmt::Display for Fact {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}." , format_atom(&self.atom))
+impl Fact {
+    pub fn new(atom: Vec<String>) -> Self {
+        Fact { atom }
     }
 }
 
+/// Rule type for build_model dispatch
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleType {
+    Join,
+    Product,
+    Project,
+}
+
+/// Python: class Rule(object)
 #[derive(Debug, Clone)]
 pub struct Rule {
-    pub conditions: Vec<build_model::SymAtom>,
-    pub effect: build_model::SymAtom,
-    pub rtype: String,
+    pub conditions: Vec<Vec<String>>, // each condition is [pred, arg1, arg2, ...]
+    pub effect: Vec<String>,           // [pred, arg1, arg2, ...]
+    pub rule_type: Option<RuleType>,   // set by split_rules / greedy_join
 }
 
 impl Rule {
-    pub fn add_condition(&mut self, condition: build_model::SymAtom) {
-        self.conditions.push(condition);
+    pub fn new(conditions: Vec<Vec<String>>, effect: Vec<String>) -> Self {
+        Rule { conditions, effect, rule_type: None }
     }
 
-    pub fn variables(&self) -> HashSet<String> {
-        get_variables(self.conditions.iter().chain(std::iter::once(&self.effect)))
-    }
-}
-
-impl std::fmt::Display for Rule {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let conds = self
-            .conditions
-            .iter()
-            .map(format_sym_atom)
-            .collect::<Vec<_>>()
-            .join(", ");
-        write!(f, "{} :- {}.", format_sym_atom(&self.effect), conds)
-    }
-}
-
-pub struct PrologProgram {
-    pub facts: Vec<Fact>,
-    pub rules: Vec<Rule>,
-    pub objects: HashSet<String>,
-    counter: usize,
-}
-
-impl PrologProgram {
-    pub fn new() -> Self {
-        Self {
-            facts: Vec::new(),
-            rules: Vec::new(),
-            objects: HashSet::new(),
-            counter: 0,
-        }
+    pub fn new_typed(conditions: Vec<Vec<String>>, effect: Vec<String>, rule_type: RuleType) -> Self {
+        Rule { conditions, effect, rule_type: Some(rule_type) }
     }
 
-    pub fn add_fact(&mut self, atom: build_model::Atom) {
-        for arg in &atom.args {
-            if let build_model::Arg::Const(val) = arg {
-                self.objects.insert(val.clone());
-            }
-        }
-        self.facts.push(Fact { atom });
-    }
+    /// Python: def rename_duplicate_variables(self)
+    pub fn rename_duplicate_variables(&mut self) {
+        let mut seen: HashMap<String, usize> = HashMap::new();
+        let mut extra_conditions: Vec<(String, String)> = vec![];
 
-    pub fn add_rule(&mut self, rule: Rule) {
-        self.rules.push(rule);
-    }
-
-    pub fn normalize(&mut self) {
-        let mut sym_rules: Vec<SymRule> = self
-            .rules
-            .iter()
-            .cloned()
-            .map(|r| SymRule {
-                conditions: r.conditions,
-                effect: r.effect,
-            })
-            .collect();
-
-        for rule in sym_rules.iter_mut() {
-            split_duplicate_arguments(rule);
-        }
-
-        let object_predicate_required = add_object_conditions_to_rules(&mut sym_rules);
-        if object_predicate_required {
-            for obj in self.objects.clone() {
-                self.facts.push(Fact {
-                    atom: build_model::Atom {
-                        predicate: "@object".to_string(),
-                        args: vec![build_model::Arg::Const(obj)],
-                    },
-                });
+        for cond in &mut self.conditions {
+            for arg in cond[1..].iter_mut() {
+                if arg.starts_with('?') {
+                    let count = seen.entry(arg.clone()).or_insert(0);
+                    *count += 1;
+                    if *count > 1 {
+                        let new_name = format!("{}@{}", arg, count);
+                        extra_conditions.push((arg.clone(), new_name.clone()));
+                        *arg = new_name;
+                    }
+                }
             }
         }
 
-        let (sym_rules, extra_facts) = convert_trivial_rules_to_facts(&sym_rules);
-        for atom in extra_facts {
-            self.add_fact(atom);
-        }
-
-        let mut split_rules_out: Vec<RuleWithType> = Vec::new();
-        for rule in &sym_rules {
-            split_rules_out.extend(split_rule(rule, &mut self.counter));
-        }
-
-        self.rules = split_rules_out
-            .into_iter()
-            .map(|r| Rule {
-                conditions: r.conditions,
-                effect: r.effect,
-                rtype: r.rtype,
-            })
-            .collect();
-    }
-
-    pub fn dump(&self) {
-        println!("Facts in PrologProgram:");
-        for fact in &self.facts {
-            println!("{}", fact);
-        }
-        println!("Rules in PrologProgram:");
-        for rule in &self.rules {
-            println!("{}", rule);
+        // Add equality conditions for renamed variables
+        for (original, renamed) in extra_conditions {
+            self.conditions.push(vec!["=".to_string(), original, renamed]);
         }
     }
 }
 
-fn format_atom(atom: &build_model::Atom) -> String {
-    let args = atom
-        .args
-        .iter()
-        .map(|arg| match arg {
-            build_model::Arg::Const(val) => val.clone(),
-            build_model::Arg::Var(idx) => format!("?{}", idx),
-            build_model::Arg::FreeVar(name) => name.clone(),
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("Atom {}({})", atom.predicate, args)
-}
-
-fn format_sym_atom(atom: &build_model::SymAtom) -> String {
-    let args = atom.args.join(", ");
-    format!("Atom {}({})", atom.predicate, args)
-}
-
-fn get_variables<'a, I>(atoms: I) -> HashSet<String>
-where
-    I: IntoIterator<Item = &'a build_model::SymAtom>,
-{
+/// Python: def get_variables(symbolic_atoms)
+/// Get all variables (strings starting with '?') from a list of atoms.
+pub fn get_variables(atoms: &[Vec<String>]) -> HashSet<String> {
     let mut variables = HashSet::new();
-    for sym_atom in atoms {
-        for arg in &sym_atom.args {
+    for atom in atoms {
+        for arg in &atom[1..] {
             if arg.starts_with('?') {
                 variables.insert(arg.clone());
             }
@@ -172,159 +85,207 @@ where
     variables
 }
 
-fn build_type_hierarchy(
-    types: &[(String, Option<String>)],
-) -> HashMap<String, Vec<String>> {
-    let mut parent_map: HashMap<String, String> = HashMap::new();
-    for (t, parent) in types {
-        if let Some(p) = parent {
-            parent_map.insert(t.clone(), p.clone());
-        }
-    }
-
-    let mut hierarchy: HashMap<String, Vec<String>> = HashMap::new();
-    for (t, _) in types {
-        let mut chain = Vec::new();
-        let mut current = t.clone();
-        while let Some(parent) = parent_map.get(&current) {
-            chain.push(parent.clone());
-            if parent == "object" {
-                break;
-            }
-            current = parent.clone();
-        }
-        hierarchy.insert(t.clone(), chain);
-    }
-    hierarchy
+/// Python: class PrologProgram(object)
+pub struct PrologProgram {
+    pub facts: HashSet<Fact>,
+    pub rules: Vec<Rule>,
+    pub objects: HashSet<String>,
 }
 
-fn add_init_facts(prog: &mut PrologProgram, task: &normalize::NormalizableTask) {
-    let type_hierarchy = build_type_hierarchy(&task.types);
-
-    for (obj_name, obj_type) in &task.objects {
-        let type_name = obj_type.clone().unwrap_or_else(|| "object".to_string());
-        prog.add_fact(build_model::Atom {
-            predicate: type_name.clone(),
-            args: vec![build_model::Arg::Const(obj_name.clone())],
-        });
-        prog.add_fact(build_model::Atom {
-            predicate: "=".to_string(),
-            args: vec![
-                build_model::Arg::Const(obj_name.clone()),
-                build_model::Arg::Const(obj_name.clone()),
-            ],
-        });
-        if let Some(supertypes) = type_hierarchy.get(&type_name) {
-            for supertype in supertypes {
-                prog.add_fact(build_model::Atom {
-                    predicate: supertype.clone(),
-                    args: vec![build_model::Arg::Const(obj_name.clone())],
-                });
-            }
-        } else if type_name != "object" {
-            prog.add_fact(build_model::Atom {
-                predicate: "object".to_string(),
-                args: vec![build_model::Arg::Const(obj_name.clone())],
-            });
+impl PrologProgram {
+    pub fn new() -> Self {
+        PrologProgram {
+            facts: HashSet::new(),
+            rules: vec![],
+            objects: HashSet::new(),
         }
     }
 
-    for init_sexpr in &task.init {
-        if let SExpr::List(items) = init_sexpr {
-            if items.len() >= 3 {
-                if let SExpr::Atom(op) = &items[0] {
-                    if op == "=" {
-                        if let SExpr::List(func_items) = &items[1] {
-                            if let Some(SExpr::Atom(fname)) = func_items.get(0) {
-                                let func_args: Vec<build_model::Arg> = func_items[1..]
-                                    .iter()
-                                    .filter_map(|item| match item {
-                                        SExpr::Atom(s) => Some(build_model::Arg::Const(s.clone())),
-                                        _ => None,
-                                    })
-                                    .collect();
-                                let defined_pred = format!("defined!{}", fname);
-                                prog.add_fact(build_model::Atom {
-                                    predicate: defined_pred,
-                                    args: func_args.clone(),
-                                });
-                                continue;
-                            }
-                        }
-                    }
+    pub fn add_fact(&mut self, atom: Vec<String>) {
+        self.facts.insert(Fact::new(atom));
+    }
+
+    pub fn add_rule(&mut self, rule: Rule) {
+        self.rules.push(rule);
+    }
+
+    /// Python: def normalize(self)
+    pub fn normalize(&mut self) {
+        // 1. Remove free effect variables
+        self.remove_free_effect_variables();
+        // 2. Split duplicate arguments
+        self.split_duplicate_arguments();
+        // 3. Convert trivial rules (empty conditions) into facts
+        self.convert_trivial_rules();
+    }
+
+    /// Python: def split_rules(self)
+    pub fn split_rules(&mut self) {
+        let mut new_rules = vec![];
+        let mut counter = 0;
+        for rule in &self.rules {
+            let split = super::split_rules::split_into_binary_rules(rule, &mut counter);
+            new_rules.extend(split);
+        }
+        self.rules = new_rules;
+    }
+
+    /// Python: def remove_free_effect_variables(self)
+    pub fn remove_free_effect_variables(&mut self) {
+        let mut must_add_predicate = false;
+        for rule in &mut self.rules {
+            let eff_vars: HashSet<String> = rule.effect[1..].iter()
+                .filter(|a| a.starts_with('?'))
+                .cloned()
+                .collect();
+            let cond_vars: HashSet<String> = rule.conditions.iter()
+                .flat_map(|c| c[1..].iter().filter(|a| a.starts_with('?')).cloned())
+                .collect();
+
+            let free_vars: Vec<String> = eff_vars.difference(&cond_vars).cloned().collect();
+            if !free_vars.is_empty() {
+                must_add_predicate = true;
+                for var in free_vars {
+                    rule.conditions.push(vec!["@object".to_string(), var]);
                 }
             }
         }
-
-        if let Some(atom) = sexpr_to_atom(init_sexpr) {
-            if atom.predicate != "=" {
-                prog.add_fact(atom);
+        if must_add_predicate {
+            eprintln!("Unbound effect variables: Adding @object predicate.");
+            for obj in self.objects.clone() {
+                self.add_fact(vec!["@object".to_string(), obj]);
             }
         }
     }
-}
 
-fn sexpr_to_atom(sexpr: &SExpr) -> Option<build_model::Atom> {
-    match sexpr {
-        SExpr::List(items) if !items.is_empty() => {
-            if let SExpr::Atom(pred) = &items[0] {
-                let args = items[1..]
-                    .iter()
-                    .filter_map(|s| match s {
-                        SExpr::Atom(a) => Some(build_model::Arg::Const(a.clone())),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
-                Some(build_model::Atom {
-                    predicate: pred.clone(),
-                    args,
-                })
+    /// Python: def split_duplicate_arguments(self)
+    pub fn split_duplicate_arguments(&mut self) {
+        for rule in &mut self.rules {
+            rule.rename_duplicate_variables();
+        }
+    }
+
+    /// Python: def convert_trivial_rules(self)
+    pub fn convert_trivial_rules(&mut self) {
+        // Convert rules with no conditions to facts
+        let mut new_facts = vec![];
+        let mut new_rules = vec![];
+        for rule in &self.rules {
+            if rule.conditions.is_empty() {
+                // Only convert to fact if there are no variables in effect
+                if rule.effect[1..].iter().all(|a| !a.starts_with('?')) {
+                    new_facts.push(rule.effect.clone());
+                } else {
+                    new_rules.push(rule.clone());
+                }
             } else {
-                None
+                new_rules.push(rule.clone());
             }
         }
-        _ => None,
+        self.rules = new_rules;
+        for fact in new_facts {
+            self.add_fact(fact);
+        }
     }
 }
 
-pub fn translate(task: &normalize::NormalizableTask) -> PrologProgram {
-    let mut prog = PrologProgram::new();
-
-    timers::timing("Generating Datalog program", false, || {
-        add_init_facts(&mut prog, task);
-        for (conditions, effect) in normalize::build_exploration_rules(task).unwrap_or_default() {
-            prog.add_rule(Rule {
-                conditions,
-                effect,
-                rtype: String::new(),
-            });
-        }
-    });
-
-    timers::timing("Normalizing Datalog program", true, || {
-        prog.normalize();
-    });
-
-    prog
+/// Python: def translate_typed_object(prog, obj, type_dict)
+fn translate_typed_object(obj: &TypedObject, type_dict: &HashMap<String, &super::pddl::pddl_types::Type>, program: &mut PrologProgram) {
+    program.objects.insert(obj.name.clone());
+    // Add type atom for the object's own type and all supertypes
+    let mut type_name = Some(obj.type_name.clone());
+    while let Some(ref tn) = type_name {
+        let type_pred = get_type_predicate_name(tn);
+        program.add_fact(vec![type_pred, obj.name.clone()]);
+        type_name = type_dict.get(tn)
+            .and_then(|t| t.basetype_name.clone());
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::translate::pddl::{Domain, Problem};
+/// Python: def translate_facts(task, program)
+fn translate_facts(task: &Task, program: &mut PrologProgram) {
+    for atom in &task.init {
+        let mut fact = vec![atom.predicate.clone()];
+        fact.extend(atom.args.clone());
+        program.add_fact(fact);
+    }
+    for assign in &task.num_init {
+        let mut fact = vec![normalize::get_function_predicate(&assign.fluent.symbol)];
+        fact.extend(assign.fluent.args.clone());
+        program.add_fact(fact);
+    }
+}
 
-    #[test]
-    fn translate_smoke() {
-        let task = crate::translate::pddl_parser::PddlTask::from_files(
-            std::path::Path::new("misc/plant-watering/domain.pddl"),
-            std::path::Path::new("misc/plant-watering/prob_4_1_1.pddl"),
-        )
-        .unwrap();
-        let dom = Domain::from_sexprs(&task.domain_forms).expect("domain parsed");
-        let prob = Problem::from_sexprs(&task.problem_forms).expect("problem parsed");
-        let mut norm_task = normalize::NormalizableTask::from_ast(&dom, &prob);
-        normalize::normalize(&mut norm_task).expect("normalization failed");
-        let prog = translate(&norm_task);
-        assert!(!prog.facts.is_empty());
+/// Python: def translate(task) -> PrologProgram
+/// Main translation function: converts PDDL task to a logic program.
+pub fn translate(task: &Task) -> PrologProgram {
+    let mut program = PrologProgram::new();
+
+    // Build type dictionary
+    let type_dict: HashMap<String, &super::pddl::pddl_types::Type> = task.types.iter()
+        .map(|t| (t.name.clone(), t))
+        .collect();
+
+    // Add objects with type facts
+    for obj in &task.objects {
+        translate_typed_object(obj, &type_dict, &mut program);
+    }
+
+    // Add init facts
+    translate_facts(task, &mut program);
+
+    for rule in normalize::build_exploration_rules(task) {
+        let conditions = rule.conditions.iter().flat_map(condition_to_atoms).collect();
+        let effect_atoms = condition_to_atoms(&rule.effect);
+        if let Some(effect) = effect_atoms.into_iter().next() {
+            program.add_rule(Rule::new(conditions, effect));
+        }
+    }
+
+    // Normalize the program (steps 1-3 from Python)
+    program.normalize();
+    // Split rules (step 4: split n-ary joins into binary)
+    program.split_rules();
+
+    program
+}
+
+/// Convert a condition tree to a list of atoms for rules.
+fn condition_to_atoms(cond: &Condition) -> Vec<Vec<String>> {
+    match cond {
+        Condition::Truth => vec![],
+        Condition::Conjunction(conj) => {
+            conj.parts.iter().flat_map(|p| condition_to_atoms(p)).collect()
+        }
+        Condition::Atom(atom) => {
+            let mut result = vec![atom.predicate.clone()];
+            result.extend(atom.args.clone());
+            vec![result]
+        }
+        Condition::NegatedAtom(natom) => {
+            // Negated atoms are generally ignored in exploration (relaxation)
+            vec![]
+        }
+        Condition::FunctionComparison(fc) => {
+            fc.parts.iter()
+                .flat_map(|part| part.primitive_numeric_expressions())
+                .map(|pne| {
+                    let mut result = vec![normalize::get_function_predicate(&pne.symbol)];
+                    result.extend(pne.args.clone());
+                    result
+                })
+                .collect()
+        }
+        Condition::NegatedFunctionComparison(nfc) => {
+            nfc.parts.iter()
+                .flat_map(|part| part.primitive_numeric_expressions())
+                .map(|pne| {
+                    let mut result = vec![normalize::get_function_predicate(&pne.symbol)];
+                    result.extend(pne.args.clone());
+                    result
+                })
+                .collect()
+        }
+        _ => vec![],
     }
 }

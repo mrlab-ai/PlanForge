@@ -1,48 +1,30 @@
-use std::sync::OnceLock;
-use clap::Parser;
+/// Port of options.py
+/// Configuration options for the translator.
 
-#[derive(Debug, Clone, clap::Parser)]
-#[command(name = "translate", about = "Translator options")]
-pub struct Options {
-    /// path to domain pddl file
-    pub domain: String,
-    /// path to task pddl file
-    pub task: String,
-    /// output relaxed task (no delete effects)
-    #[arg(long, default_value_t = false)]
-    pub relaxed: bool,
-    /// represent facts in multiple mutex groups in multiple variables
-    #[arg(long = "full-encoding", default_value_t = false)]
-    pub full_encoding: bool,
-    /// max number of candidates for invariant generation
-    #[arg(long = "invariant-generation-max-candidates", default_value_t = 100000)]
-    pub invariant_generation_max_candidates: i32,
-    /// max time for invariant generation (seconds)
-    #[arg(long = "invariant-generation-max-time", default_value_t = 300)]
-    pub invariant_generation_max_time: i32,
-    /// infer additional preconditions
-    #[arg(long = "add-implied-preconditions", default_value_t = false)]
-    pub add_implied_preconditions: bool,
-    /// keep facts that can't be reached from the initial state
-    #[arg(long = "keep-unreachable-facts", default_value_t = false)]
-    pub keep_unreachable_facts: bool,
-    /// dump human-readable SAS+ representation of the task
-    #[arg(long = "dump-task", default_value_t = false)]
-    pub dump_task: bool,
-}
+/// Whether to use partial encoding (default: true)
+/// Python: argparser.add_argument("--full-encoding", dest="use_partial_encoding", action="store_false")
+pub const USE_PARTIAL_ENCODING: bool = true;
 
-static OPTIONS: OnceLock<Options> = OnceLock::new();
+/// Maximum candidates for invariant generation (default: 100000)
+/// Python: argparser.add_argument("--invariant-generation-max-candidates", default=100000, type=int)
+pub const INVARIANT_GENERATION_MAX_CANDIDATES: usize = 100000;
 
-pub fn parse_args() -> Options {
-    Options::parse()
-}
+/// Maximum time for invariant generation in seconds (default: 300)
+/// Python: argparser.add_argument("--invariant-generation-max-time", default=300, type=int)
+pub const INVARIANT_GENERATION_MAX_TIME: u64 = 300;
 
-pub fn setup() -> &'static Options {
-    let opts = parse_args();
-    let _ = OPTIONS.set(opts);
-    OPTIONS.get().expect("options initialized")
-}
+/// Whether to add implied preconditions (default: false)
+/// Python: argparser.add_argument("--add-implied-preconditions", action="store_true")
+pub const ADD_IMPLIED_PRECONDITIONS: bool = false;
 
-pub fn get() -> Option<&'static Options> {
-    OPTIONS.get()
-}
+/// Whether to filter unreachable facts (default: true)
+/// Python: argparser.add_argument("--keep-unreachable-facts", dest="filter_unreachable_facts", action="store_false")
+pub const FILTER_UNREACHABLE_FACTS: bool = true;
+
+/// Whether to dump the task (default: false)
+/// Python: argparser.add_argument("--dump-task", action="store_true")
+pub const DUMP_TASK: bool = false;
+
+/// Whether to generate a relaxed task (default: false)
+/// Python: argparser.add_argument("--relaxed", dest="generate_relaxed_task", action="store_true")
+pub const GENERATE_RELAXED_TASK: bool = false;

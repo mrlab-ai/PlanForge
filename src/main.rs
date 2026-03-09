@@ -78,24 +78,22 @@ fn setup_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn N
 }
 
 fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
-    let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))?;
-    let dom = planners::translate::pddl::Domain::from_sexprs(&task.domain_forms)
-        .expect("domain parse");
-    let prob = planners::translate::pddl::Problem::from_sexprs(&task.problem_forms)
-        .expect("problem parse");
+    let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem)).map_err(|e| anyhow::anyhow!(e))?;
+    let parsed_task = task.to_task();
 
-    let mut norm_task = normalize::NormalizableTask::from_ast(&dom, &prob);
+    let mut norm_task = normalize::NormalizableTask::from_task(parsed_task);
     norm_task.add_global_constraints();
     normalize::normalize(&mut norm_task).expect("normalization failed");
 
-    let result = planners::translate::instantiate::explore_normalized(&norm_task)?;
+    let result = planners::translate::instantiate::explore_normalized(&norm_task).map_err(|e| anyhow::anyhow!(e))?;
 
     let instantiated_num_axioms = result.numeric_axioms;
     let py_groups: Option<Vec<Vec<String>>> = None;
     let mut sastask = planners::translate::translate::translate_task_from_grounded_internal(
         &result.grounded_ops,
-        &dom,
-        &prob,
+        &task.domain_forms,
+        &task.problem_forms,
+        &result.num_fluents,
         &instantiated_num_axioms,
         py_groups,
         &result.grounded_axioms,
@@ -105,12 +103,15 @@ fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
     .map_err(|err| anyhow::anyhow!(err))?;
 
     match planners::translate::simplify::filter_unreachable_propositions(&mut sastask) {
-        Ok(_) => {}
+        Ok(()) => {}
         Err(planners::translate::simplify::SimplifyError::Impossible) => {
             sastask = planners::translate::simplify::trivial_task(false);
         }
         Err(planners::translate::simplify::SimplifyError::TriviallySolvable) => {
             sastask = planners::translate::simplify::trivial_task(true);
+        }
+        Err(planners::translate::simplify::SimplifyError::DoesNothing) => {
+            // Task unchanged
         }
     }
 

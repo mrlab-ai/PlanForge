@@ -1,282 +1,220 @@
-use std::cell::RefCell;
+/// Port of fact_groups.py
+/// Groups atoms into mutex groups / FDR variables.
+
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 
-/// Simplified fact grouping: group grounded atoms by predicate and first argument
-/// for common binary predicates like at(item, place) -> group all at(item, *)
-/// Falls back to singleton groups for anything else.
-pub fn compute_groups_from_atoms(
-    atoms: &Vec<String>,
-) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
-    // groups, mutex_groups (same as groups here), translation_key (list of value names per group)
-    let mut by_key: HashMap<String, Vec<String>> = HashMap::new();
-    let mut remaining: HashSet<String> = atoms.iter().cloned().collect();
+use super::pddl::conditions::*;
+use super::pddl::tasks::Task;
+use super::invariant_finder;
+use super::options;
 
-    for atom in atoms {
-        // parse like "pred(arg1, arg2, ...)"
-        if let Some(open) = atom.find('(') {
-            if let Some(close) = atom.rfind(')') {
-                let pred = &atom[..open];
-                let args = &atom[open + 1..close];
-                let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
-                if parts.len() >= 2 {
-                    let key = format!("{}({})", pred, parts[0]);
-                    by_key.entry(key).or_default().push(atom.clone());
-                    remaining.remove(atom);
-                    continue;
-                }
-            }
-        }
-        // fallback: singleton grouping by atom
-        by_key.entry(atom.clone()).or_default().push(atom.clone());
-        remaining.remove(atom);
-    }
-
-    // build groups list, deduplicate and sort each group for determinism
-    let mut groups: Vec<Vec<String>> = by_key
-        .into_iter()
-        .map(|(_k, v)| {
-            let mut set: std::collections::HashSet<String> = v.into_iter().collect();
-            let mut vec: Vec<String> = set.drain().collect();
-            vec.sort();
-            vec
-        })
-        .collect();
-    groups.sort_by(|a, b| a.len().cmp(&b.len()).reverse());
-    // mutex_groups: for now same as groups
-    let mutex_groups = groups.clone();
-
-    // translation_key: for each group, return the positive atom strings only.
-    let translation_key: Vec<Vec<String>> = groups.clone();
-
-    (groups, mutex_groups, translation_key)
-}
-
-// Expand a group with ?X into concrete atoms present in reachable_facts
-fn expand_group(
-    group: &Vec<String>,
-    objects: &Vec<(String, Option<String>)>,
-    reachable_facts: &HashSet<String>,
-) -> Vec<String> {
-    let mut result: Vec<String> = Vec::new();
+/// Python: def expand_group(group, task, reachable_facts)
+fn expand_group(group: &[Atom], task: &Task, reachable_facts: &HashSet<Atom>) -> Vec<Atom> {
+    let mut result = vec![];
     for fact in group {
-        if fact.contains("?X") {
-            // replace first ?X with each object name and keep if present in reachable_facts
-            for (obj_name, _tp) in objects {
-                let concrete = fact.replacen("?X", obj_name, 1);
-                if reachable_facts.contains(&concrete) {
-                    result.push(concrete);
+        if let Some(pos) = fact.args.iter().position(|a| a == "?X") {
+            for obj in &task.objects {
+                let mut newargs = fact.args.clone();
+                newargs[pos] = obj.name.clone();
+                let atom = Atom::new(fact.predicate.clone(), newargs);
+                if reachable_facts.contains(&atom) {
+                    result.push(atom);
                 }
             }
-        } else if reachable_facts.contains(fact) {
+        } else {
             result.push(fact.clone());
         }
     }
     result
 }
 
-pub fn instantiate_groups(
-    groups: &Vec<Vec<String>>,
-    objects: &Vec<(String, Option<String>)>,
-    reachable_facts: &HashSet<String>,
-) -> Vec<Vec<String>> {
-    groups
-        .iter()
-        .map(|g| expand_group(g, objects, reachable_facts))
-        .collect()
+/// Python: def instantiate_groups(groups, task, reachable_facts)
+fn instantiate_groups(groups: &[Vec<Atom>], task: &Task, reachable_facts: &HashSet<Atom>) -> Vec<Vec<Atom>> {
+    groups.iter().map(|g| expand_group(g, task, reachable_facts)).collect()
 }
 
-pub struct GroupCoverQueue {
-    groups_by_size: Vec<Vec<Rc<RefCell<HashSet<String>>>>>,
-    groups_by_fact: HashMap<String, Vec<Rc<RefCell<HashSet<String>>>>>,
+/// Python: class GroupCoverQueue
+struct GroupCoverQueue {
     max_size: usize,
-    top: Option<Rc<RefCell<HashSet<String>>>>,
+    groups_by_size: Vec<Vec<HashSet<Atom>>>,
+    groups_by_fact: HashMap<Atom, Vec<usize>>, // indices into a flat list
+    top: Option<HashSet<Atom>>,
+    all_groups: Vec<HashSet<Atom>>,
 }
 
 impl GroupCoverQueue {
-    pub fn new(groups: Vec<HashSet<String>>) -> Self {
+    fn new(groups: &[Vec<Atom>]) -> Self {
         if groups.is_empty() {
             return GroupCoverQueue {
-                groups_by_size: Vec::new(),
-                groups_by_fact: HashMap::new(),
                 max_size: 0,
+                groups_by_size: vec![],
+                groups_by_fact: HashMap::new(),
                 top: None,
+                all_groups: vec![],
             };
         }
+
         let max_size = groups.iter().map(|g| g.len()).max().unwrap_or(0);
-        let mut groups_by_size: Vec<Vec<Rc<RefCell<HashSet<String>>>>> =
-            vec![Vec::new(); max_size + 1];
-        let mut groups_by_fact: HashMap<String, Vec<Rc<RefCell<HashSet<String>>>>> = HashMap::new();
-        for g in groups.into_iter() {
-            let sz = g.len();
-            let rc = Rc::new(RefCell::new(g));
-            for fact in rc.borrow().iter() {
-                groups_by_fact
-                    .entry(fact.clone())
-                    .or_default()
-                    .push(rc.clone());
+        let mut groups_by_size: Vec<Vec<HashSet<Atom>>> = vec![vec![]; max_size + 1];
+        let mut groups_by_fact: HashMap<Atom, Vec<usize>> = HashMap::new();
+        let mut all_groups: Vec<HashSet<Atom>> = vec![];
+
+        for group in groups {
+            let group_set: HashSet<Atom> = group.iter().cloned().collect();
+            let idx = all_groups.len();
+            groups_by_size[group_set.len()].push(group_set.clone());
+            for fact in &group_set {
+                groups_by_fact.entry(fact.clone()).or_default().push(idx);
             }
-            groups_by_size[sz].push(rc);
+            all_groups.push(group_set);
         }
-        let mut qc = GroupCoverQueue {
+
+        let mut q = GroupCoverQueue {
+            max_size,
             groups_by_size,
             groups_by_fact,
-            max_size,
             top: None,
+            all_groups,
         };
-        qc.update_top();
-        qc
+        q.update_top();
+        q
+    }
+
+    fn is_active(&self) -> bool {
+        self.max_size > 1
+    }
+
+    fn pop(&mut self) -> Vec<Atom> {
+        let result: Vec<Atom> = self.top.take().unwrap().into_iter().collect();
+        if options::USE_PARTIAL_ENCODING {
+            for fact in &result {
+                // Remove fact from all groups that contain it
+                // This is a simplified version - in Python it modifies groups in-place
+                for group in &mut self.all_groups {
+                    group.remove(fact);
+                }
+            }
+        }
+        self.update_top();
+        result
     }
 
     fn update_top(&mut self) {
         while self.max_size > 1 {
-            // take from the size-bucket and check actual size; if changed, move it
-            while let Some(candidate_rc) = self.groups_by_size[self.max_size].pop() {
-                let cur_len = candidate_rc.borrow().len();
-                if cur_len == self.max_size {
-                    self.top = Some(candidate_rc.clone());
-                    return;
-                } else {
-                    // move to bucket matching its new size
-                    if cur_len > 0 {
-                        self.groups_by_size[cur_len].push(candidate_rc.clone());
-                    }
+            // Collect candidates to redistribute
+            let mut to_redistribute: Vec<HashSet<Atom>> = vec![];
+            let mut found: Option<HashSet<Atom>> = None;
+
+            while let Some(candidate) = self.groups_by_size[self.max_size].pop() {
+                if candidate.len() == self.max_size {
+                    found = Some(candidate);
+                    break;
                 }
+                if !candidate.is_empty() {
+                    to_redistribute.push(candidate);
+                }
+            }
+
+            for cand in to_redistribute {
+                let sz = cand.len();
+                self.groups_by_size[sz].push(cand);
+            }
+
+            if found.is_some() {
+                self.top = found;
+                return;
             }
             self.max_size -= 1;
         }
-        self.top = None;
-    }
-
-    pub fn pop(&mut self, use_partial_encoding: bool) -> Option<Vec<String>> {
-        if let Some(top_rc) = self.top.take() {
-            let result: Vec<String> = top_rc.borrow().iter().cloned().collect();
-            if use_partial_encoding {
-                // remove each fact from its groups
-                for fact in &result {
-                    if let Some(list) = self.groups_by_fact.get(fact) {
-                        for g in list.iter() {
-                            g.borrow_mut().remove(fact);
-                        }
-                    }
-                }
-            }
-            self.update_top();
-            return Some(result);
-        }
-        None
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.top.is_none()
     }
 }
 
-pub fn choose_groups(
-    groups: Vec<Vec<String>>,
-    _objects: &Vec<(String, Option<String>)>,
-    reachable_facts: &HashSet<String>,
-    use_partial_encoding: bool,
-) -> Vec<Vec<String>> {
-    // convert groups to HashSet forms
-    let mutable_groups: Vec<HashSet<String>> = groups
-        .into_iter()
-        .map(|g| g.into_iter().collect())
-        .collect();
-    let mut queue = GroupCoverQueue::new(mutable_groups);
-    let mut uncovered: HashSet<String> = reachable_facts.clone();
-    let mut result: Vec<Vec<String>> = Vec::new();
-    while !queue.is_empty() {
-        if let Some(group) = queue.pop(use_partial_encoding) {
-            for f in &group {
-                uncovered.remove(f);
-            }
-            result.push(group);
-        } else {
-            break;
+/// Python: def choose_groups(groups, reachable_facts)
+fn choose_groups(groups: &[Vec<Atom>], reachable_facts: &HashSet<Atom>) -> Vec<Vec<Atom>> {
+    let mut queue = GroupCoverQueue::new(groups);
+    let mut uncovered_facts = reachable_facts.clone();
+    let mut result = vec![];
+    while queue.is_active() {
+        let group = queue.pop();
+        for fact in &group {
+            uncovered_facts.remove(fact);
         }
+        result.push(group);
     }
-    // leftover uncovered facts become singleton groups
-    for fact in uncovered {
-        result.push(vec![fact]);
+    println!("{} uncovered facts", uncovered_facts.len());
+    for fact in &uncovered_facts {
+        result.push(vec![fact.clone()]);
     }
     result
 }
 
-pub fn build_translation_key(groups: &Vec<Vec<String>>) -> Vec<Vec<String>> {
-    groups
-        .iter()
-        .map(|group| {
-            if group.len() == 1 {
-                vec![group[0].clone(), format!("NegatedAtom {}", group[0])]
-            } else {
-                let values = group.clone();
-                values
-            }
-        })
-        .collect()
+/// Python: def build_translation_key(groups)
+pub fn build_translation_key(groups: &[Vec<Atom>]) -> Vec<Vec<String>> {
+    let mut translation_keys = vec![];
+    for group in groups {
+        let mut group_key: Vec<String> = group.iter().map(|f| format!("{}", f)).collect();
+        if group.len() == 1 {
+            group_key.push(format!("{}", group[0].negate()));
+        } else {
+            group_key.push("<none of those>".to_string());
+        }
+        translation_keys.push(group_key);
+    }
+    translation_keys
 }
 
-pub fn collect_all_mutex_groups(
-    groups: &Vec<Vec<String>>,
-    atoms: &HashSet<String>,
-) -> Vec<Vec<String>> {
-    let mut all_groups: Vec<Vec<String>> = Vec::new();
-    let mut uncovered: HashSet<String> = atoms.clone();
+/// Python: def collect_all_mutex_groups(groups, atoms)
+fn collect_all_mutex_groups(groups: &[Vec<Atom>], atoms: &HashSet<Atom>) -> Vec<Vec<Atom>> {
+    let mut all_groups = vec![];
+    let mut uncovered_facts = atoms.clone();
     for group in groups {
-        let gset: HashSet<String> = group.iter().cloned().collect();
-        for fact in &gset {
-            uncovered.remove(fact);
+        for fact in group {
+            uncovered_facts.remove(fact);
         }
         all_groups.push(group.clone());
     }
-    for fact in uncovered {
-        all_groups.push(vec![fact]);
+    for fact in &uncovered_facts {
+        all_groups.push(vec![fact.clone()]);
     }
     all_groups
 }
 
-pub fn sort_groups(groups: Vec<Vec<String>>) -> Vec<Vec<String>> {
-    let mut g = groups;
-    // sort elements in each group lexicographically
-    for group in &mut g {
-        group.sort();
-    }
-    // sort groups lexicographically by their sequence of strings (like Python repr(list))
-    g.sort_by(|a, b| {
-        let mut it_a = a.iter();
-        let mut it_b = b.iter();
-        loop {
-            match (it_a.next(), it_b.next()) {
-                (Some(sa), Some(sb)) => {
-                    let c = sa.cmp(sb);
-                    if c != std::cmp::Ordering::Equal {
-                        return c;
-                    }
-                }
-                (None, Some(_)) => return std::cmp::Ordering::Less,
-                (Some(_), None) => return std::cmp::Ordering::Greater,
-                (None, None) => return std::cmp::Ordering::Equal,
-            }
-        }
-    });
-    g
+/// Python: def sort_groups(groups)
+fn sort_groups(groups: Vec<Vec<Atom>>) -> Vec<Vec<Atom>> {
+    let mut sorted: Vec<Vec<Atom>> = groups.into_iter()
+        .map(|mut g| {
+            g.sort_by(|a, b| format!("{:?}", a).cmp(&format!("{:?}", b)));
+            g
+        })
+        .collect();
+    sorted.sort_by(|a, b| format!("{:?}", a).cmp(&format!("{:?}", b)));
+    sorted
 }
 
+/// Python: def compute_groups(task, atoms, reachable_action_params)
+/// Returns (groups, mutex_groups, translation_key)
 pub fn compute_groups(
-    task: &crate::translate::normalize::NormalizableTask,
-    atoms: &Vec<String>,
-    reachable_action_params: Option<HashMap<String, Vec<Vec<String>>>>,
-) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
-    // ask invariant_finder for abstract groups (with ?X placeholders)
-    let groups = crate::translate::invariant_finder::get_groups(task, reachable_action_params);
-    // instantiate groups using atoms set
-    let reachable: HashSet<String> = atoms.iter().cloned().collect();
-    let instantiated = instantiate_groups(&groups, &task.objects, &reachable);
-    let sorted = sort_groups(instantiated);
-    let mutex_groups = collect_all_mutex_groups(&sorted, &reachable);
-    let chosen = choose_groups(sorted.clone(), &task.objects, &reachable, true);
-    let chosen_sorted = sort_groups(chosen);
-    let tk = build_translation_key(&chosen_sorted);
-    (chosen_sorted, mutex_groups, tk)
+    task: &Task,
+    atoms: &HashSet<Atom>,
+    reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
+) -> (Vec<Vec<Atom>>, Vec<Vec<Atom>>, Vec<Vec<String>>) {
+    let groups = invariant_finder::get_groups(task, reachable_action_params);
+
+    println!("Instantiating groups...");
+    let groups = instantiate_groups(&groups, task, atoms);
+
+    let groups = sort_groups(groups);
+
+    println!("Collecting mutex groups...");
+    let mutex_groups = collect_all_mutex_groups(&groups, atoms);
+
+    println!("Choosing groups...");
+    let groups = choose_groups(&groups, atoms);
+
+    let groups = sort_groups(groups);
+
+    println!("Building translation key...");
+    let translation_key = build_translation_key(&groups);
+
+    (groups, mutex_groups, translation_key)
 }

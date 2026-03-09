@@ -1,33 +1,52 @@
+/// Port of tools.py
+
+/// Python: def cartesian_product(sequences)
+/// This isn't actually a proper cartesian product because we
+/// concatenate lists, rather than forming sequences of atomic elements.
 pub fn cartesian_product<T: Clone>(sequences: &[Vec<Vec<T>>]) -> Vec<Vec<T>> {
     if sequences.is_empty() {
-        return vec![Vec::new()];
+        return vec![vec![]];
     }
-    let tail = cartesian_product(&sequences[1..]);
-    let mut out = Vec::new();
+
+    let rest = cartesian_product(&sequences[1..]);
+    let mut result = vec![];
     for item in &sequences[0] {
-        for seq in &tail {
+        for sequence in &rest {
             let mut combined = item.clone();
-            combined.extend(seq.iter().cloned());
-            out.push(combined);
+            combined.extend(sequence.iter().cloned());
+            result.push(combined);
         }
     }
-    out
+    result
 }
 
-pub fn get_peak_memory_in_kb() -> Result<u64, String> {
-    let contents = std::fs::read_to_string("/proc/self/status")
-        .map_err(|err| format!("warning: could not determine peak memory: {}", err))?;
-    for line in contents.lines() {
-        let mut parts = line.split_whitespace();
-        if let Some(label) = parts.next() {
-            if label == "VmPeak:" {
-                if let Some(val) = parts.next() {
-                    return val
-                        .parse::<u64>()
-                        .map_err(|err| format!("warning: invalid VmPeak value: {}", err));
-                }
+/// Standard cartesian product (itertools.product equivalent)
+pub fn product<T: Clone>(sequences: &[Vec<T>]) -> Vec<Vec<T>> {
+    if sequences.is_empty() {
+        return vec![vec![]];
+    }
+
+    let rest = product(&sequences[1..]);
+    let mut result = vec![];
+    for item in &sequences[0] {
+        for sequence in &rest {
+            let mut combined = vec![item.clone()];
+            combined.extend(sequence.iter().cloned());
+            result.push(combined);
+        }
+    }
+    result
+}
+
+/// Python: def get_peak_memory_in_kb()
+pub fn get_peak_memory_in_kb() -> Option<usize> {
+    if let Ok(content) = std::fs::read_to_string("/proc/self/status") {
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 && parts[0] == "VmPeak:" {
+                return parts[1].parse().ok();
             }
         }
     }
-    Err("warning: could not determine peak memory".to_string())
+    None
 }

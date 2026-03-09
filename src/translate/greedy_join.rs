@@ -1,76 +1,77 @@
-use crate::translate::build_model;
-use crate::translate::split_rules::{RuleWithType, SymRule};
+/// Port of greedy_join.py
+/// Greedy algorithm for splitting rules into binary joins.
 
-fn get_variables(atom: &build_model::SymAtom) -> std::collections::HashSet<String> {
-    atom.args
-        .iter()
-        .filter(|a| a.starts_with('?'))
-        .cloned()
-        .collect()
-}
+use std::collections::{HashMap, HashSet};
+use super::pddl_to_prolog::{Rule, RuleType, get_variables};
 
-#[derive(Clone)]
+/// Python: class OccurrencesTracker(object)
 struct OccurrencesTracker {
-    occurrences: std::collections::HashMap<String, i32>,
+    occurrences: HashMap<String, usize>,
 }
 
 impl OccurrencesTracker {
-    fn new(rule: &SymRule) -> Self {
-        let mut tracker = Self {
-            occurrences: std::collections::HashMap::new(),
-        };
-        tracker.update(&rule.effect, 1);
-        for cond in &rule.conditions {
-            tracker.update(cond, 1);
+    fn new(rule: &Rule) -> Self {
+        let mut occurrences = HashMap::new();
+        for arg in &rule.effect[1..] {
+            if arg.starts_with('?') {
+                *occurrences.entry(arg.clone()).or_insert(0) += 1;
+            }
         }
-        tracker
+        for cond in &rule.conditions {
+            for arg in &cond[1..] {
+                if arg.starts_with('?') {
+                    *occurrences.entry(arg.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+        OccurrencesTracker { occurrences }
     }
 
-    fn update(&mut self, atom: &build_model::SymAtom, delta: i32) {
-        for var in atom.args.iter().filter(|a| a.starts_with('?')) {
-            let entry = self.occurrences.entry(var.clone()).or_insert(0);
-            *entry += delta;
-            if *entry == 0 {
-                self.occurrences.remove(var);
+    fn update(&mut self, atom: &[String], delta: i32) {
+        for arg in &atom[1..] {
+            if arg.starts_with('?') {
+                let entry = self.occurrences.entry(arg.clone()).or_insert(0);
+                *entry = (*entry as i32 + delta) as usize;
+                if *entry == 0 {
+                    self.occurrences.remove(arg);
+                }
             }
         }
     }
 
-    fn variables(&self) -> std::collections::HashSet<String> {
+    fn variables(&self) -> HashSet<String> {
         self.occurrences.keys().cloned().collect()
     }
 }
 
-#[derive(Clone)]
+/// Python: class CostMatrix(object)
 struct CostMatrix {
-    joinees: Vec<build_model::SymAtom>,
-    cost_matrix: Vec<Vec<(i32, i32, i32)>>,
+    joinees: Vec<Vec<String>>,
+    cost_matrix: Vec<Vec<(usize, usize, i32)>>,
 }
 
 impl CostMatrix {
-    fn new(joinees: Vec<build_model::SymAtom>) -> Self {
-        let mut cm = Self {
-            joinees: Vec::new(),
-            cost_matrix: Vec::new(),
+    fn new(joinees: Vec<Vec<String>>) -> Self {
+        let mut cm = CostMatrix {
+            joinees: vec![],
+            cost_matrix: vec![],
         };
-        for j in joinees {
-            cm.add_entry(j);
+        for joinee in joinees {
+            cm.add_entry(joinee);
         }
         cm
     }
 
-    fn add_entry(&mut self, joinee: build_model::SymAtom) {
-        let new_row: Vec<(i32, i32, i32)> = self
-            .joinees
-            .iter()
-            .map(|other| compute_join_cost(&joinee, other))
+    fn add_entry(&mut self, joinee: Vec<String>) {
+        let new_row: Vec<(usize, usize, i32)> = self.joinees.iter()
+            .map(|other| Self::compute_join_cost(&joinee, other))
             .collect();
         self.cost_matrix.push(new_row);
         self.joinees.push(joinee);
     }
 
     fn delete_entry(&mut self, index: usize) {
-        for row in self.cost_matrix.iter_mut().skip(index + 1) {
+        for row in &mut self.cost_matrix[(index + 1)..] {
             row.remove(index);
         }
         self.cost_matrix.remove(index);
@@ -78,34 +79,46 @@ impl CostMatrix {
     }
 
     fn find_min_pair(&self) -> (usize, usize) {
-        let mut best: Option<((i32, i32, i32), usize, usize)> = None;
+        assert!(self.joinees.len() >= 2);
+        let mut min_cost = (usize::MAX, usize::MAX, 0i32);
+        let mut left_index = 0;
+        let mut right_index = 0;
         for (i, row) in self.cost_matrix.iter().enumerate() {
             for (j, entry) in row.iter().enumerate() {
-                if let Some((best_entry, _, _)) = &best {
-                    if entry < best_entry {
-                        best = Some((*entry, i, j));
-                    }
-                } else {
-                    best = Some((*entry, i, j));
+                if *entry < min_cost {
+                    min_cost = *entry;
+                    left_index = i;
+                    right_index = j;
                 }
             }
         }
-        let (_, i, j) = best.expect("at least one pair");
-        (i, j)
+        (left_index, right_index)
     }
 
-    fn remove_min_pair(&mut self) -> (build_model::SymAtom, build_model::SymAtom) {
+    fn remove_min_pair(&mut self) -> (Vec<String>, Vec<String>) {
         let (left_index, right_index) = self.find_min_pair();
-        let (li, ri) = if left_index > right_index {
-            (left_index, right_index)
-        } else {
-            (right_index, left_index)
-        };
-        let left = self.joinees[li].clone();
-        let right = self.joinees[ri].clone();
-        self.delete_entry(li);
-        self.delete_entry(ri);
+        let left = self.joinees[left_index].clone();
+        let right = self.joinees[right_index].clone();
+        assert!(left_index > right_index);
+        self.delete_entry(left_index);
+        self.delete_entry(right_index);
         (left, right)
+    }
+
+    fn compute_join_cost(left: &[String], right: &[String]) -> (usize, usize, i32) {
+        let left_vars = get_variables(&[left.to_vec()]);
+        let right_vars = get_variables(&[right.to_vec()]);
+        let (left_vars, right_vars) = if left_vars.len() > right_vars.len() {
+            (right_vars, left_vars)
+        } else {
+            (left_vars, right_vars)
+        };
+        let common = left_vars.intersection(&right_vars).count();
+        (
+            left_vars.len() - common,
+            right_vars.len() - common,
+            -(common as i32),
+        )
     }
 
     fn can_join(&self) -> bool {
@@ -113,115 +126,88 @@ impl CostMatrix {
     }
 }
 
-fn compute_join_cost(left: &build_model::SymAtom, right: &build_model::SymAtom) -> (i32, i32, i32) {
-    let left_vars = get_variables(left);
-    let right_vars = get_variables(right);
-    let (small, large) = if left_vars.len() <= right_vars.len() {
-        (left_vars, right_vars)
-    } else {
-        (right_vars, left_vars)
-    };
-    let common: std::collections::HashSet<String> = small.intersection(&large).cloned().collect();
-    let common_len = common.len() as i32;
-    (
-        (small.len() as i32) - common_len,
-        (large.len() as i32) - common_len,
-        -common_len,
-    )
-}
-
-#[derive(Clone)]
+/// Python: class ResultList(object)
 struct ResultList {
-    final_effect: build_model::SymAtom,
-    result: Vec<RuleWithType>,
+    final_effect: Vec<String>,
+    result: Vec<Rule>,
     counter: usize,
 }
 
 impl ResultList {
-    fn new(rule: &SymRule, counter: usize) -> Self {
-        Self {
+    fn new(rule: &Rule, counter: usize) -> Self {
+        ResultList {
             final_effect: rule.effect.clone(),
-            result: Vec::new(),
+            result: vec![],
             counter,
         }
     }
 
-    fn next_name(&mut self) -> String {
-        let name = format!("p${}", self.counter);
-        self.counter += 1;
-        name
-    }
-
-    fn add_rule(
-        &mut self,
-        rtype: &str,
-        conditions: Vec<build_model::SymAtom>,
-        effect_vars: Vec<String>,
-    ) -> build_model::SymAtom {
-        let effect = build_model::SymAtom::new(self.next_name(), effect_vars);
-        self.result.push(RuleWithType {
-            rtype: rtype.to_string(),
-            conditions,
-            effect: effect.clone(),
-        });
-        effect
-    }
-
-    fn into_result(mut self) -> (Vec<RuleWithType>, usize) {
+    fn get_result(mut self) -> (Vec<Rule>, usize) {
         if let Some(last) = self.result.last_mut() {
             last.effect = self.final_effect;
         }
         (self.result, self.counter)
     }
+
+    fn add_rule(&mut self, rule_type: RuleType, conditions: Vec<Vec<String>>, effect_vars: Vec<String>) -> Vec<String> {
+        let pred = format!("p${}", self.counter);
+        self.counter += 1;
+        let mut effect = vec![pred];
+        effect.extend(effect_vars);
+        let rule = Rule::new_typed(conditions, effect.clone(), rule_type);
+        self.result.push(rule);
+        effect
+    }
 }
 
-pub fn greedy_join(rule: &SymRule, counter: &mut usize) -> Vec<RuleWithType> {
+/// Python: def greedy_join(rule, name_generator)
+pub fn greedy_join(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
+    assert!(rule.conditions.len() >= 2);
+
     let mut cost_matrix = CostMatrix::new(rule.conditions.clone());
     let mut occurrences = OccurrencesTracker::new(rule);
-    let mut result = ResultList::new(rule, *counter);
+    let mut result_list = ResultList::new(rule, *counter);
 
     while cost_matrix.can_join() {
         let (left, right) = cost_matrix.remove_min_pair();
-        for joinee in [&left, &right] {
-            occurrences.update(joinee, -1);
-        }
+        occurrences.update(&left, -1);
+        occurrences.update(&right, -1);
 
-        let left_vars = get_variables(&left);
-        let right_vars = get_variables(&right);
-        let common_vars: std::collections::HashSet<String> =
-            left_vars.intersection(&right_vars).cloned().collect();
-        let condition_vars: std::collections::HashSet<String> =
-            left_vars.union(&right_vars).cloned().collect();
-        let effect_vars_set: std::collections::HashSet<String> = occurrences
-            .variables()
-            .intersection(&condition_vars)
-            .cloned()
-            .collect();
+        let left_vars = get_variables(&[left.clone()]);
+        let right_vars = get_variables(&[right.clone()]);
+        let common_vars: HashSet<String> = left_vars.intersection(&right_vars).cloned().collect();
+        let condition_vars: HashSet<String> = left_vars.union(&right_vars).cloned().collect();
+        let effect_vars: HashSet<String> = occurrences.variables().intersection(&condition_vars).cloned().collect();
 
         let mut joinees = vec![left, right];
         for joinee in joinees.iter_mut() {
-            let joinee_vars = get_variables(joinee);
-            let retained_vars: std::collections::HashSet<String> = joinee_vars
-                .intersection(&effect_vars_set)
-                .chain(joinee_vars.intersection(&common_vars))
-                .cloned()
-                .collect();
-            if retained_vars.len() != joinee_vars.len() {
-                let mut vars: Vec<String> = retained_vars.into_iter().collect();
-                vars.sort();
-                let proj_effect = result.add_rule("project", vec![joinee.clone()], vars);
-                *joinee = proj_effect;
+            let joinee_vars = get_variables(&[joinee.clone()]);
+            let retained_vars: HashSet<String> = joinee_vars.intersection(
+                &effect_vars.union(&common_vars).cloned().collect()
+            ).cloned().collect();
+            if retained_vars != joinee_vars {
+                let mut sorted_retained: Vec<String> = retained_vars.into_iter().collect();
+                sorted_retained.sort();
+                *joinee = result_list.add_rule(
+                    RuleType::Project,
+                    vec![joinee.clone()],
+                    sorted_retained,
+                );
             }
         }
 
-        let mut effect_vars: Vec<String> = effect_vars_set.into_iter().collect();
-        effect_vars.sort();
-        let joint = result.add_rule("join", joinees, effect_vars);
-        cost_matrix.add_entry(joint.clone());
-        occurrences.update(&joint, 1);
+        let mut sorted_effect_vars: Vec<String> = effect_vars.into_iter().collect();
+        sorted_effect_vars.sort();
+        let joint_condition = result_list.add_rule(
+            RuleType::Join,
+            joinees,
+            sorted_effect_vars,
+        );
+        cost_matrix.add_entry(joint_condition.clone());
+        occurrences.update(&joint_condition, 1);
     }
 
-    let (rules, new_counter) = result.into_result();
+    let (result, new_counter) = result_list.get_result();
     *counter = new_counter;
-    rules
+    result
 }
