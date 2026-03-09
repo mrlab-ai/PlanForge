@@ -2,10 +2,13 @@ use super::open_list::{OpenList, SearchNode};
 use ordered_float::OrderedFloat;
 use std::collections::{HashMap, VecDeque};
 
-/// A tie-breaking open list that sorts by evaluation values and breaks ties using FIFO order.
+/// A tie-breaking open list that sorts lexicographically by evaluation values
+/// and breaks exact ties using FIFO order.
 ///
-/// This implementation maintains separate queues for each unique evaluation key,
-/// allowing for efficient tie-breaking while preserving the order of insertion.
+/// The evaluator order passed to [`TieBreakingOpenList::new`] defines the
+/// comparison order. For example, using `[f, h]` means nodes are ordered by
+/// increasing `f = g + h`, and for equal `f` values the node with lower `h`
+/// is preferred. If all evaluator values are equal, insertion order is kept.
 pub struct TieBreakingOpenList {
     /// Maps evaluation keys to FIFO queues of nodes
     buckets: HashMap<Vec<OrderedFloat<f64>>, VecDeque<SearchNode>>,
@@ -25,7 +28,7 @@ impl TieBreakingOpenList {
         }
     }
 
-    /// Computes the evaluation key for a given node using the stored evaluator names.
+    /// Computes the lexicographic evaluation key for a given node.
     fn compute_key(&self, node: &SearchNode) -> Vec<OrderedFloat<f64>> {
         let mut key = Vec::with_capacity(self.evaluator_names.len());
 
@@ -111,6 +114,19 @@ mod tests {
         let state = ConcreteState::new(state_id);
         let mut evaluation = EvaluationResult::new_with_id(state.get_id(), g_value, false);
         evaluation.set_heuristic_value("g".to_string(), g_value);
+        SearchNode::root(state, evaluation)
+    }
+
+    fn create_test_node_with_values(
+        state_id: usize,
+        g_value: f64,
+        heuristic_values: &[(&str, f64)],
+    ) -> SearchNode {
+        let state = ConcreteState::new(state_id);
+        let mut evaluation = EvaluationResult::new_with_id(state.get_id(), g_value, false);
+        for (name, value) in heuristic_values {
+            evaluation.set_heuristic_value((*name).to_string(), *value);
+        }
         SearchNode::root(state, evaluation)
     }
 
@@ -221,6 +237,52 @@ mod tests {
         assert_eq!(open_list.pop().unwrap().state.get_id(), 4); // g=15.0
         assert_eq!(open_list.pop().unwrap().state.get_id(), 1); // g=20.0, first
         assert_eq!(open_list.pop().unwrap().state.get_id(), 3); // g=20.0, second
+    }
+
+    #[test]
+    fn test_tiebreaking_prefers_lower_h_for_equal_f() {
+        let mut open_list =
+            TieBreakingOpenList::new(vec!["f_h".to_string(), "h".to_string()], true);
+
+        open_list.insert(create_test_node_with_values(
+            1,
+            4.0,
+            &[("g", 4.0), ("h", 5.0), ("f_h", 9.0)],
+        ));
+        open_list.insert(create_test_node_with_values(
+            2,
+            6.0,
+            &[("g", 6.0), ("h", 3.0), ("f_h", 9.0)],
+        ));
+        open_list.insert(create_test_node_with_values(
+            3,
+            2.0,
+            &[("g", 2.0), ("h", 8.0), ("f_h", 10.0)],
+        ));
+
+        assert_eq!(open_list.pop().unwrap().state.get_id(), 2);
+        assert_eq!(open_list.pop().unwrap().state.get_id(), 1);
+        assert_eq!(open_list.pop().unwrap().state.get_id(), 3);
+    }
+
+    #[test]
+    fn test_tiebreaking_uses_fifo_when_f_and_h_match() {
+        let mut open_list =
+            TieBreakingOpenList::new(vec!["f_h".to_string(), "h".to_string()], true);
+
+        open_list.insert(create_test_node_with_values(
+            1,
+            4.0,
+            &[("g", 4.0), ("h", 5.0), ("f_h", 9.0)],
+        ));
+        open_list.insert(create_test_node_with_values(
+            2,
+            4.0,
+            &[("g", 4.0), ("h", 5.0), ("f_h", 9.0)],
+        ));
+
+        assert_eq!(open_list.pop().unwrap().state.get_id(), 1);
+        assert_eq!(open_list.pop().unwrap().state.get_id(), 2);
     }
 
     #[test]
