@@ -1287,11 +1287,40 @@ pub fn translate_task_from_grounded_internal(
 ) -> Result<SASTask, String> {
     let task = &norm_task.task;
 
-    let mut num_fluents_set: HashSet<PrimitiveNumericExpression> = num_fluents.iter().cloned().collect();
-    for assign in &task.num_init {
-        num_fluents_set.insert(assign.fluent.clone());
+    fn type_rank(ntype: char) -> u8 {
+        match ntype {
+            'I' => 4,
+            'R' => 3,
+            'D' => 2,
+            'C' => 1,
+            _ => 0,
+        }
     }
-    let num_fluents_vec: Vec<PrimitiveNumericExpression> = num_fluents_set.iter().cloned().collect();
+
+    fn merge_numeric_fluent_type(
+        merged: &mut HashMap<(String, Vec<String>), PrimitiveNumericExpression>,
+        pne: PrimitiveNumericExpression,
+    ) {
+        let key = (pne.symbol.clone(), pne.args.clone());
+        match merged.get(&key) {
+            Some(existing) if type_rank(existing.ntype) >= type_rank(pne.ntype) => {}
+            _ => {
+                merged.insert(key, pne);
+            }
+        }
+    }
+
+    let mut merged_num_fluents: HashMap<(String, Vec<String>), PrimitiveNumericExpression> = HashMap::new();
+    for fluent in num_fluents {
+        merge_numeric_fluent_type(&mut merged_num_fluents, fluent.clone());
+    }
+    for assign in &task.num_init {
+        merge_numeric_fluent_type(&mut merged_num_fluents, assign.fluent.clone());
+    }
+    merge_numeric_fluent_type(&mut merged_num_fluents, task.metric.1.clone());
+
+    let num_fluents_vec: Vec<PrimitiveNumericExpression> = merged_num_fluents.values().cloned().collect();
+    let num_fluents_set: HashSet<PrimitiveNumericExpression> = num_fluents_vec.iter().cloned().collect();
 
     // Compute fact groups
     let atoms_set: HashSet<Atom> = atoms.iter().cloned().collect();

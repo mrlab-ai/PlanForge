@@ -290,6 +290,14 @@ pub fn parse_literal(alist: &SExpr) -> Condition {
 
 /// Python: def parse_expression(alist)
 pub fn parse_expression(alist: &SExpr) -> FunctionalExpression {
+    fn classify_pne(symbol: String, args: Vec<String>) -> PrimitiveNumericExpression {
+        if symbol == "total-cost" && args.is_empty() {
+            PrimitiveNumericExpression::with_type(symbol, args, 'I')
+        } else {
+            PrimitiveNumericExpression::new(symbol, args)
+        }
+    }
+
     match alist {
         SExpr::Atom(s) => {
             // Try to parse as a number
@@ -298,7 +306,7 @@ pub fn parse_expression(alist: &SExpr) -> FunctionalExpression {
             } else {
                 // It's a function symbol with no arguments
                 FunctionalExpression::PrimitiveNumericExpression(
-                    PrimitiveNumericExpression::new(s.clone(), vec![])
+                    classify_pne(s.clone(), vec![])
                 )
             }
         }
@@ -329,7 +337,7 @@ pub fn parse_expression(alist: &SExpr) -> FunctionalExpression {
                         .map(|a| a.as_atom().to_string())
                         .collect();
                     FunctionalExpression::PrimitiveNumericExpression(
-                        PrimitiveNumericExpression::new(symbol, args)
+                        classify_pne(symbol, args)
                     )
                 }
             }
