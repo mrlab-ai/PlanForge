@@ -12,6 +12,7 @@ use crate::search::numeric::{
     state_registry::{ConcreteState, StateID, StateRegistry},
     successor_generator::{GroundedSuccessorGenerator, Node},
 };
+use ordered_float::OrderedFloat;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -87,8 +88,10 @@ pub struct AStarSearch<'a> {
     initial_state: Option<ConcreteState>,
 
     // Statistics
+    nodes_evaluated: usize,
     nodes_expanded: usize,
     nodes_generated: usize,
+    last_reported_f_layer: Option<OrderedFloat<f64>>,
 }
 
 impl<'a> AStarSearch<'a> {
@@ -164,9 +167,29 @@ impl<'a> AStarSearch<'a> {
             f_evaluator,
             time_limit: time_limit.unwrap_or(Duration::from_secs(30 * 60)), // 30 minutes default
             initial_state: Some(initial_state),
+            nodes_evaluated: 0,
             nodes_expanded: 0,
             nodes_generated: 0,
+            last_reported_f_layer: None,
         }
+    }
+
+    fn maybe_print_f_layer(&mut self, node: &SearchNode, start_time: &Instant) {
+        let f_value = OrderedFloat(node.evaluation.get_heuristic_value(&self.f_evaluator.name()));
+        if self.last_reported_f_layer == Some(f_value) {
+            return;
+        }
+
+        self.last_reported_f_layer = Some(f_value);
+
+        println!(
+            "f = {} [{} evaluated, {} expanded, t={:.6}s, {} KB]",
+            format_f_value(f_value.into_inner()),
+            self.nodes_evaluated,
+            self.nodes_expanded,
+            start_time.elapsed().as_secs_f64(),
+            resident_memory_kb(),
+        );
     }
 
     /// Checks if the given state satisfies all goal conditions
@@ -276,7 +299,7 @@ impl<'a> AStarSearch<'a> {
     }
 
     /// Performs one step of A* search
-    fn step(&mut self) -> SearchStatus {
+    fn step(&mut self, start_time: &Instant) -> SearchStatus {
         if self.open_list.is_empty() {
             return SearchStatus::Failed;
         }
@@ -300,6 +323,8 @@ impl<'a> AStarSearch<'a> {
                 return SearchStatus::InProgress;
             }
         }
+
+        self.maybe_print_f_layer(&node, start_time);
 
         self.closed_set.insert(state_id);
         self.nodes_expanded += 1;
@@ -348,6 +373,7 @@ impl<'a> AStarSearch<'a> {
 
             // Evaluate and add to open list
             if let Ok(evaluation) = self.evaluate_state(&succ_state, new_g_value) {
+                self.nodes_evaluated += 1;
                 let search_node = SearchNode::root(succ_state, evaluation);
                 self.open_list.insert(search_node);
             }
@@ -370,6 +396,7 @@ impl<'a> SearchEngine for AStarSearch<'a> {
 
         // Add initial state to open list
         if let Ok(initial_evaluation) = self.evaluate_state(&initial_state, 0.0) {
+            self.nodes_evaluated += 1;
             let initial_node = SearchNode::root(initial_state.clone(), initial_evaluation);
             self.open_list.insert(initial_node);
         }
@@ -398,7 +425,7 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             }
 
             // Perform one search step
-            match self.step() {
+            match self.step(&start_time) {
                 SearchStatus::Solved(goal_state_id) => {
                     // Use the goal state ID returned from step()
                     let plan = self.extract_plan(goal_state_id);
@@ -436,6 +463,30 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             );
         }
     }
+}
+
+fn format_f_value(value: f64) -> String {
+    if value.fract().abs() < 1e-9 {
+        format!("{:.0}", value)
+    } else {
+        format!("{:.6}", value)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn resident_memory_kb() -> i64 {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+    if result != 0 {
+        return 0;
+    }
+    let usage = unsafe { usage.assume_init() };
+    usage.ru_maxrss
+}
+
+#[cfg(not(target_os = "linux"))]
+fn resident_memory_kb() -> i64 {
+    0
 }
 
 #[cfg(test)]
