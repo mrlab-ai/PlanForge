@@ -59,19 +59,6 @@ fn project_rule(
     let mut result_vars: Vec<String> = cond_vars.intersection(&effect_vars)
         .cloned()
         .collect();
-    // Also keep variables shared with other conditions (not in this component)
-    let all_condition_indices: HashSet<usize> = condition_indices.iter().cloned().collect();
-    let other_conditions: Vec<Vec<String>> = rule.conditions.iter().enumerate()
-        .filter(|(i, _)| !all_condition_indices.contains(i))
-        .map(|(_, c)| c.clone())
-        .collect();
-    let other_vars = get_variables(&other_conditions);
-    let shared_with_other: Vec<String> = cond_vars.intersection(&other_vars).cloned().collect();
-    for v in shared_with_other {
-        if !result_vars.contains(&v) {
-            result_vars.push(v);
-        }
-    }
     result_vars.sort();
 
     let mut effect = vec![predicate];
@@ -81,7 +68,7 @@ fn project_rule(
 }
 
 /// Python: def split_rule(rule, name_generator)
-fn split_rule(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
+pub fn split_rule(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
     // Separate important (have variables) from trivial (no variables) conditions
     let mut important_indices = vec![];
     let mut trivial_conditions = vec![];
@@ -108,7 +95,7 @@ fn split_rule(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
         .map(|comp| comp.iter().map(|&i| important_indices[i]).collect())
         .collect();
 
-    let mut projected_rules: Vec<Rule> = components_original.iter()
+    let projected_rules: Vec<Rule> = components_original.iter()
         .map(|comp| project_rule(rule, comp, counter))
         .collect();
 

@@ -45,26 +45,34 @@ impl Rule {
         Rule { conditions, effect, rule_type: Some(rule_type) }
     }
 
-    /// Python: def rename_duplicate_variables(self)
-    pub fn rename_duplicate_variables(&mut self) {
-        let mut seen: HashMap<String, usize> = HashMap::new();
-        let mut extra_conditions: Vec<(String, String)> = vec![];
-
-        for cond in &mut self.conditions {
-            for arg in cond[1..].iter_mut() {
-                if arg.starts_with('?') {
-                    let count = seen.entry(arg.clone()).or_insert(0);
-                    *count += 1;
-                    if *count > 1 {
-                        let new_name = format!("{}@{}", arg, count);
-                        extra_conditions.push((arg.clone(), new_name.clone()));
-                        *arg = new_name;
-                    }
+    fn rename_duplicate_variables_in_atom(
+        atom: &mut Vec<String>,
+        extra_conditions: &mut Vec<(String, String)>,
+    ) {
+        let mut used_variables: HashSet<String> = HashSet::new();
+        for (index, arg) in atom[1..].iter_mut().enumerate() {
+            if arg.starts_with('?') {
+                if used_variables.contains(arg) {
+                    let new_name = format!("{}@{}", arg, extra_conditions.len());
+                    let original = arg.clone();
+                    *arg = new_name.clone();
+                    extra_conditions.push((original, new_name));
+                } else {
+                    used_variables.insert(arg.clone());
                 }
             }
         }
+    }
 
-        // Add equality conditions for renamed variables
+    /// Python: def rename_duplicate_variables(self)
+    pub fn rename_duplicate_variables(&mut self) {
+        let mut extra_conditions: Vec<(String, String)> = vec![];
+
+        Self::rename_duplicate_variables_in_atom(&mut self.effect, &mut extra_conditions);
+        for cond in &mut self.conditions {
+            Self::rename_duplicate_variables_in_atom(cond, &mut extra_conditions);
+        }
+
         for (original, renamed) in extra_conditions {
             self.conditions.push(vec!["=".to_string(), original, renamed]);
         }
@@ -124,7 +132,7 @@ impl PrologProgram {
         let mut new_rules = vec![];
         let mut counter = 0;
         for rule in &self.rules {
-            let split = super::split_rules::split_into_binary_rules(rule, &mut counter);
+            let split = super::split_rules::split_rule(rule, &mut counter);
             new_rules.extend(split);
         }
         self.rules = new_rules;

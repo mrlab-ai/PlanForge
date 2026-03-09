@@ -463,6 +463,14 @@ fn remove_arithmetic_expressions(task: &mut Task) {
                 eff.peffect = rewrite_condition(&mut task.function_administrator, &peffect);
             }
         }
+        for (_, _, assignment) in &mut action.assign_effects {
+            if !matches!(assignment.expression, FunctionalExpression::PrimitiveNumericExpression(_)) {
+                let expression = assignment.expression.clone();
+                assignment.expression = FunctionalExpression::PrimitiveNumericExpression(
+                    task.function_administrator.get_derived_function(&expression, &HashSet::new()),
+                );
+            }
+        }
         if let Some(cost) = &mut action.cost {
             if !matches!(cost.expression, FunctionalExpression::PrimitiveNumericExpression(_)) {
                 let expression = cost.expression.clone();

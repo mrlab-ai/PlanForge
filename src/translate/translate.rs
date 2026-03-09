@@ -1269,6 +1269,7 @@ fn build_implied_facts(
 /// Python: def pddl_to_sas(task) — the main orchestrator
 /// Called from main.rs as translate_task_from_grounded_internal
 pub fn translate_task_from_grounded_internal(
+    atoms: &[Atom],
     grounded_ops: &[PropositionalAction],
     _dom: &super::pddl_parser::lisp_parser::SExpr,
     _prob: &super::pddl_parser::lisp_parser::SExpr,
@@ -1276,54 +1277,17 @@ pub fn translate_task_from_grounded_internal(
     num_axioms: &[InstantiatedNumericAxiom],
     _py_groups: Option<Vec<Vec<String>>>,
     grounded_axioms: &[PropositionalAxiom],
+    reachable_action_params: &HashMap<String, Vec<Vec<String>>>,
     goal: &Condition,
     norm_task: &NormalizableTask,
 ) -> Result<SASTask, String> {
     let task = &norm_task.task;
-
-    // Get atoms from grounded operators
-    let mut atoms: Vec<Atom> = vec![];
-    let mut atom_set: HashSet<Atom> = HashSet::new();
-    for op in grounded_ops {
-        for cond in &op.precondition {
-            if let Some(a) = cond.literal_positive() {
-                if atom_set.insert(a.clone()) {
-                    atoms.push(a);
-                }
-            }
-        }
-        for (_, eff) in &op.add_effects {
-            if atom_set.insert(eff.clone()) {
-                atoms.push(eff.clone());
-            }
-        }
-        for (_, eff) in &op.del_effects {
-            if atom_set.insert(eff.clone()) {
-                atoms.push(eff.clone());
-            }
-        }
-    }
 
     let mut num_fluents_set: HashSet<PrimitiveNumericExpression> = num_fluents.iter().cloned().collect();
     for assign in &task.num_init {
         num_fluents_set.insert(assign.fluent.clone());
     }
     let num_fluents_vec: Vec<PrimitiveNumericExpression> = num_fluents_set.iter().cloned().collect();
-
-    // Reachable action params (for fact groups)
-    let mut reachable_action_params: HashMap<String, Vec<Vec<String>>> = HashMap::new();
-    for op in grounded_ops {
-        // Extract action name and params from "(action_name param1 param2 ...)"
-        let name_str = op.name.trim_start_matches('(').trim_end_matches(')');
-        let parts: Vec<&str> = name_str.split_whitespace().collect();
-        if !parts.is_empty() {
-            let action_name = parts[0].to_string();
-            let params: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
-            reachable_action_params.entry(action_name)
-                .or_insert_with(Vec::new)
-                .push(params);
-        }
-    }
 
     // Compute fact groups
     let atoms_set: HashSet<Atom> = atoms.iter().cloned().collect();
@@ -1400,7 +1364,7 @@ pub fn translate_task_from_grounded_internal(
         &const_num_axioms,
         &task.metric,
         &implied_facts,
-        &task.init.iter().filter(|a| !atom_set.contains(a)).cloned().collect::<Vec<_>>(),
+        &task.init.iter().filter(|a| !atoms_set.contains(a)).cloned().collect::<Vec<_>>(),
         &task.num_init.iter().filter(|a| !num_fluents_set.contains(&a.fluent)).cloned().collect::<Vec<_>>(),
     )?;
 

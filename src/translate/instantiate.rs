@@ -174,15 +174,9 @@ pub fn explore(task: &Task) -> ExploreResult {
 
     let mut reachable_atoms: Vec<Atom> = vec![];
     for fact in &model {
-        if fact.atom.len() >= 1 {
-            let pred = &fact.atom[0];
-            // Skip type predicates and internal predicates
-            if !pred.starts_with("==") && !pred.starts_with("@") {
-                let args = fact.atom[1..].to_vec();
-                let atom = Atom::new(pred.clone(), args);
-                if fluent_facts.contains(pred) {
-                    reachable_atoms.push(atom);
-                }
+        if let Some(pred) = fact.atom.first() {
+            if fluent_facts.contains(pred) {
+                reachable_atoms.push(Atom::new(pred.clone(), fact.atom[1..].to_vec()));
             }
         }
     }

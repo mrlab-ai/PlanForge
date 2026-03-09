@@ -90,6 +90,7 @@ fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
     let instantiated_num_axioms = result.numeric_axioms;
     let py_groups: Option<Vec<Vec<String>>> = None;
     let mut sastask = planners::translate::translate::translate_task_from_grounded_internal(
+        &result.atoms,
         &result.grounded_ops,
         &task.domain_forms,
         &task.problem_forms,
@@ -97,6 +98,7 @@ fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
         &instantiated_num_axioms,
         py_groups,
         &result.grounded_axioms,
+        &result.reachable_action_params,
         &norm_task.goal,
         &norm_task,
     )
