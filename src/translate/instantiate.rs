@@ -6,12 +6,11 @@ use std::collections::{HashMap, HashSet};
 use super::pddl::conditions::*;
 use super::pddl::pddl_types::TypedObject;
 use super::pddl::tasks::Task;
-use super::pddl::actions::{Action, PropositionalAction};
-use super::pddl::axioms::{Axiom, PropositionalAxiom, NumericAxiom, InstantiatedNumericAxiom};
+use super::pddl::actions::PropositionalAction;
+use super::pddl::axioms::{PropositionalAxiom, InstantiatedNumericAxiom};
 use super::pddl::f_expression::*;
 use super::pddl_to_prolog;
 use super::build_model;
-use super::normalize;
 
 fn collect_used_derived_pnes_from_expr(expr: &FunctionalExpression, out: &mut HashSet<PrimitiveNumericExpression>) {
     match expr {
@@ -84,7 +83,7 @@ pub struct ExploreResult {
 }
 
 /// Python: def get_fluent_facts(task, model)
-fn get_fluent_facts(task: &Task, model: &[pddl_to_prolog::Fact]) -> HashSet<String> {
+fn get_fluent_facts(task: &Task, _model: &[pddl_to_prolog::Fact]) -> HashSet<String> {
     // A predicate is fluent if it appears in any action effect
     let mut fluent_preds: HashSet<String> = HashSet::new();
     for action in &task.actions {
@@ -107,7 +106,18 @@ fn get_fluent_functions(model: &[pddl_to_prolog::Fact]) -> HashSet<PrimitiveNume
     for fact in model {
         if let Some(pred) = fact.atom.first() {
             if let Some(symbol) = pred.strip_prefix("@fluent-function-") {
-                result.insert(PrimitiveNumericExpression::new(symbol.to_string(), fact.atom[1..].to_vec()));
+                let ntype = if symbol == "total-cost" {
+                    'I'
+                } else if symbol.starts_with("derived!") {
+                    'D'
+                } else {
+                    'R'
+                };
+                result.insert(PrimitiveNumericExpression::with_type(
+                    symbol.to_string(),
+                    fact.atom[1..].to_vec(),
+                    ntype,
+                ));
             }
         }
     }
@@ -325,48 +335,10 @@ pub fn explore(task: &Task) -> ExploreResult {
         }
     }
 
-    // Step 9: Collect fluent numeric expressions
-    let mut num_fluents: HashSet<PrimitiveNumericExpression> = HashSet::new();
-    for func in &task.functions {
-        // Get all ground instances of this function
-        let func_params = &func.arguments;
-        if func_params.is_empty() {
-            num_fluents.insert(PrimitiveNumericExpression::new(func.name.clone(), vec![]));
-        } else {
-            let param_combinations = get_parameter_combinations(
-                &func_params.iter().map(|p| p.clone()).collect::<Vec<_>>(),
-                &objects_by_type,
-            );
-            for params in &param_combinations {
-                let pne = PrimitiveNumericExpression::new(func.name.clone(), params.clone());
-                num_fluents.insert(pne);
-            }
-        }
-    }
-    num_fluents.extend(fluent_functions.iter().cloned());
-    for axiom in &numeric_axioms {
-        num_fluents.insert(axiom.effect.clone());
-        for part in &axiom.parts {
-            for pne in part.primitive_numeric_expressions() {
-                num_fluents.insert(pne);
-            }
-        }
-    }
-    for op in &grounded_ops {
-        for (_, assignment) in &op.assign_effects {
-            num_fluents.insert(assignment.fluent.clone());
-            for pne in assignment.expression.primitive_numeric_expressions() {
-                num_fluents.insert(pne);
-            }
-        }
-        if let Some(cost) = &op.cost {
-            num_fluents.insert(cost.fluent.clone());
-            for pne in cost.expression.primitive_numeric_expressions() {
-                num_fluents.insert(pne);
-            }
-        }
-    }
-    let num_fluents: Vec<PrimitiveNumericExpression> = num_fluents.into_iter().collect();
+    // Step 9: Collect fluent numeric expressions.
+    // Python returns the grounded fluent functions from the exploration model
+    // here, not every declared or referenced numeric expression.
+    let num_fluents: Vec<PrimitiveNumericExpression> = fluent_functions.iter().cloned().collect();
 
     // Determine initial constant predicates and numerics
     let mut init_constant_predicates: Vec<Atom> = vec![];
@@ -377,7 +349,7 @@ pub fn explore(task: &Task) -> ExploreResult {
         }
     }
     for assign in &task.num_init {
-        if !fluent_facts.contains(&assign.fluent.symbol) {
+        if !fluent_functions.contains(&assign.fluent) {
             init_constant_numerics.push(assign.clone());
         }
     }

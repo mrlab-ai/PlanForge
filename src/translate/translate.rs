@@ -1314,9 +1314,6 @@ pub fn translate_task_from_grounded_internal(
     for fluent in num_fluents {
         merge_numeric_fluent_type(&mut merged_num_fluents, fluent.clone());
     }
-    for assign in &task.num_init {
-        merge_numeric_fluent_type(&mut merged_num_fluents, assign.fluent.clone());
-    }
     merge_numeric_fluent_type(&mut merged_num_fluents, task.metric.1.clone());
 
     let num_fluents_vec: Vec<PrimitiveNumericExpression> = merged_num_fluents.values().cloned().collect();
