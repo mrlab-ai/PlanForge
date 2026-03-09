@@ -1068,8 +1068,12 @@ fn translate_task(
     );
 
     // Translate numeric axioms
+    let const_num_axiom_effects: HashSet<PrimitiveNumericExpression> = const_num_axioms
+        .iter()
+        .map(|ax| ax.effect.clone())
+        .collect();
     let sas_num_axioms: Vec<SASNumericAxiom> = num_axioms.iter()
-        .filter(|ax| !const_num_axioms.contains(ax) && !num_axiom_map.contains_key(&ax.effect))
+        .filter(|ax| !const_num_axiom_effects.contains(&ax.effect) && !num_axiom_map.contains_key(&ax.effect))
         .filter_map(|ax| translate_numeric_axiom(ax, strips_to_sas, numeric_strips_to_sas))
         .collect();
 
@@ -1296,13 +1300,13 @@ pub fn translate_task_from_grounded_internal(
     );
 
     // Handle numeric axioms
-    let (num_axioms_by_layer, _max_num_layer, num_axiom_map, const_num_axioms) =
+    let (processed_num_axioms, num_axioms_by_layer, _max_num_layer, num_axiom_map, const_num_axioms) =
         numeric_axiom_rules::handle_axioms(num_axioms);
 
     // Build STRIPS to SAS dictionary
     let (mut ranges, mut strips_to_sas, num_count, numeric_strips_to_sas) =
         strips_to_sas_dictionary(
-            &groups, num_axioms, &num_axiom_map, &num_fluents_vec,
+            &groups, &processed_num_axioms, &num_axiom_map, &num_fluents_vec,
             options::USE_PARTIAL_ENCODING,
             true,
         );
@@ -1310,7 +1314,7 @@ pub fn translate_task_from_grounded_internal(
     // Build dictionary for full mutex groups
     let (mut mutex_ranges, mut mutex_dict, _, _) =
         strips_to_sas_dictionary(
-            &mutex_groups, num_axioms, &num_axiom_map, &num_fluents_vec,
+            &mutex_groups, &processed_num_axioms, &num_axiom_map, &num_fluents_vec,
             false,
             false,
         );
@@ -1358,7 +1362,7 @@ pub fn translate_task_from_grounded_internal(
         gc,
         grounded_ops,
         grounded_axioms.to_vec(),
-        num_axioms,
+        &processed_num_axioms,
         &num_axioms_by_layer,
         &num_axiom_map,
         &const_num_axioms,
