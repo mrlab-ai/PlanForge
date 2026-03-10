@@ -24,6 +24,7 @@ pub enum SearchStatus {
     Solved(StateID), // Include the goal state ID
     Failed,
     Timeout,
+    MemoryLimitReached,
 }
 
 /// A plan is a sequence of operators
@@ -85,6 +86,7 @@ pub struct AStarSearch<'a> {
 
     // Configuration
     time_limit: Duration,
+    max_memory_bytes: Option<u64>,
     initial_state: Option<ConcreteState>,
 
     // Statistics
@@ -112,6 +114,7 @@ impl<'a> AStarSearch<'a> {
         state_registry: StateRegistry<'a>,
         heuristic: Option<Box<dyn Heuristic>>,
         time_limit: Option<Duration>,
+        max_memory_bytes: Option<u64>,
     ) -> Self {
         let successor_generator = Self::create_successor_generator(task);
 
@@ -166,11 +169,37 @@ impl<'a> AStarSearch<'a> {
             g_evaluator,
             f_evaluator,
             time_limit: time_limit.unwrap_or(Duration::from_secs(30 * 60)), // 30 minutes default
+            max_memory_bytes,
             initial_state: Some(initial_state),
             nodes_evaluated: 0,
             nodes_expanded: 0,
             nodes_generated: 0,
             last_reported_f_layer: None,
+        }
+    }
+
+    fn resource_limit_status(&self, start_time: &Instant) -> Option<SearchStatus> {
+        if start_time.elapsed() > self.time_limit {
+            return Some(SearchStatus::Timeout);
+        }
+
+        if let Some(max_memory_bytes) = self.max_memory_bytes {
+            let current_memory_bytes = current_memory_kb().saturating_mul(1024);
+            if current_memory_bytes >= max_memory_bytes {
+                return Some(SearchStatus::MemoryLimitReached);
+            }
+        }
+
+        None
+    }
+
+    fn terminal_result(&self, status: SearchStatus, start_time: &Instant) -> SearchResult {
+        SearchResult {
+            status,
+            plan: None,
+            nodes_expanded: self.nodes_expanded,
+            nodes_generated: self.nodes_generated,
+            search_time: start_time.elapsed(),
         }
     }
 
@@ -188,7 +217,7 @@ impl<'a> AStarSearch<'a> {
             self.nodes_evaluated,
             self.nodes_expanded,
             start_time.elapsed().as_secs_f64(),
-            resident_memory_kb(),
+            current_memory_kb(),
         );
     }
 
@@ -413,19 +442,10 @@ impl<'a> SearchEngine for AStarSearch<'a> {
 
         // Main search loop
         loop {
-            // Check time limit
-            if start_time.elapsed() > self.time_limit {
-                return SearchResult {
-                    status: SearchStatus::Timeout,
-                    plan: None,
-                    nodes_expanded: self.nodes_expanded,
-                    nodes_generated: self.nodes_generated,
-                    search_time: start_time.elapsed(),
-                };
-            }
-
-            // Perform one search step
-            match self.step(&start_time) {
+            match self
+                .resource_limit_status(&start_time)
+                .unwrap_or_else(|| self.step(&start_time))
+            {
                 SearchStatus::Solved(goal_state_id) => {
                     // Use the goal state ID returned from step()
                     let plan = self.extract_plan(goal_state_id);
@@ -439,16 +459,15 @@ impl<'a> SearchEngine for AStarSearch<'a> {
                     };
                 }
                 SearchStatus::Failed => {
-                    return SearchResult {
-                        status: SearchStatus::Failed,
-                        plan: None,
-                        nodes_expanded: self.nodes_expanded,
-                        nodes_generated: self.nodes_generated,
-                        search_time: start_time.elapsed(),
-                    };
+                    return self.terminal_result(SearchStatus::Failed, &start_time);
                 }
                 SearchStatus::InProgress => continue,
-                SearchStatus::Timeout => unreachable!(), // Handled above
+                SearchStatus::Timeout => {
+                    return self.terminal_result(SearchStatus::Timeout, &start_time);
+                }
+                SearchStatus::MemoryLimitReached => {
+                    return self.terminal_result(SearchStatus::MemoryLimitReached, &start_time);
+                }
             }
         }
     }
@@ -474,18 +493,32 @@ fn format_f_value(value: f64) -> String {
 }
 
 #[cfg(target_os = "linux")]
-fn resident_memory_kb() -> i64 {
+fn current_memory_kb() -> u64 {
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+        for line in status.lines() {
+            if let Some(value) = line.strip_prefix("VmRSS:") {
+                if let Some(kb) = value
+                    .split_whitespace()
+                    .next()
+                    .and_then(|part| part.parse::<u64>().ok())
+                {
+                    return kb;
+                }
+            }
+        }
+    }
+
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
     let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
     if result != 0 {
         return 0;
     }
     let usage = unsafe { usage.assume_init() };
-    usage.ru_maxrss
+    usage.ru_maxrss.max(0) as u64
 }
 
 #[cfg(not(target_os = "linux"))]
-fn resident_memory_kb() -> i64 {
+fn current_memory_kb() -> u64 {
     0
 }
 
@@ -498,6 +531,7 @@ mod tests {
         // Test basic enum functionality
         assert_eq!(SearchStatus::InProgress, SearchStatus::InProgress);
         assert_ne!(SearchStatus::Solved(0), SearchStatus::Failed);
+        assert_ne!(SearchStatus::MemoryLimitReached, SearchStatus::Timeout);
     }
 
     #[test]

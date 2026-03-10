@@ -6,13 +6,14 @@
 mod preprocess;
 mod search;
 
+use clap::Parser;
 use preprocess::numeric_parser::parse_numeric_sas_output;
 use planners::preprocess_port::planner::run_preprocess;
 use planners::translate::normalize;
 use planners::translate::pddl_parser::PddlTask;
 use std::collections::VecDeque;
-use std::env;
 use std::fs;
+use std::time::Duration;
 
 use crate::search::numeric::axioms::AxiomEvaluator;
 use crate::search::numeric::numeric_task::AbstractNumericTask;
@@ -26,6 +27,94 @@ use crate::search::numeric::successor_generator::Node;
 use crate::search::numeric::utils::int_packer::IntDoublePacker;
 use search::numeric::search_engine::{AStarSearch, SearchEngine};
 
+#[derive(Parser, Debug)]
+#[command(author, version, about = "Numeric planner")]
+struct Cli {
+    #[arg(long = "max-memory", value_name = "SIZE", value_parser = parse_memory_limit)]
+    max_memory: Option<u64>,
+
+    #[arg(long = "max-time", value_name = "DURATION", value_parser = parse_time_limit)]
+    max_time: Option<Duration>,
+
+    #[arg(value_name = "INPUT", required = true, num_args = 1..=2)]
+    inputs: Vec<String>,
+}
+
+fn parse_suffixed_value(
+    input: &str,
+    default_multiplier: u64,
+    units: &[(&str, u64)],
+    kind: &str,
+) -> Result<u64, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{} cannot be empty", kind));
+    }
+
+    let suffix_start = trimmed
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(trimmed.len());
+    if suffix_start == 0 {
+        return Err(format!("{} must start with a number: {}", kind, input));
+    }
+
+    let value = trimmed[..suffix_start]
+        .parse::<u64>()
+        .map_err(|_| format!("invalid {} value: {}", kind, input))?;
+    let suffix = trimmed[suffix_start..].trim().to_ascii_lowercase();
+
+    let multiplier = if suffix.is_empty() {
+        default_multiplier
+    } else {
+        units
+            .iter()
+            .find_map(|(unit, factor)| (*unit == suffix).then_some(*factor))
+            .ok_or_else(|| format!("invalid {} suffix '{}': {}", kind, suffix, input))?
+    };
+
+    value
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("{} is too large: {}", kind, input))
+}
+
+fn parse_memory_limit(input: &str) -> Result<u64, String> {
+    parse_suffixed_value(
+        input,
+        1,
+        &[
+            ("b", 1),
+            ("k", 1024),
+            ("kb", 1024),
+            ("m", 1024 * 1024),
+            ("mb", 1024 * 1024),
+            ("g", 1024 * 1024 * 1024),
+            ("gb", 1024 * 1024 * 1024),
+            ("t", 1024_u64.pow(4)),
+            ("tb", 1024_u64.pow(4)),
+        ][..],
+        "memory limit",
+    )
+}
+
+fn parse_time_limit(input: &str) -> Result<Duration, String> {
+    let seconds = parse_suffixed_value(
+        input,
+        1,
+        &[("ms", 0), ("s", 1), ("m", 60), ("h", 60 * 60)][..],
+        "time limit",
+    )?;
+
+    if input.trim().to_ascii_lowercase().ends_with("ms") {
+        let millis = input.trim()[..input.trim().len() - 2]
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| format!("invalid time limit value: {}", input))?;
+        Ok(Duration::from_millis(millis))
+    } else {
+        Ok(Duration::from_secs(seconds))
+    }
+}
+
 fn setup_state_registry<'a>(
     problem: &'a NumericRootTask,
     state_packer: &'a IntDoublePacker,
@@ -38,7 +127,8 @@ fn setup_axiom_evaluator<'a>(
     problem: &'a NumericRootTask,
     state_packer: &'a IntDoublePacker,
 ) -> AxiomEvaluator<'a> {
-    let axiom_evaluator = AxiomEvaluator::new(problem as &dyn AbstractNumericTask, &state_packer);
+    let task: &'a dyn AbstractNumericTask = problem;
+    let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
     axiom_evaluator
 }
 
@@ -124,18 +214,10 @@ fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
 }
 
 fn main() -> std::io::Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        println!("Usage: {} [sas_file]", args[0]);
-        println!("   or: {} [domain.pddl] [problem.pddl]", args[0]);
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "No SAS file provided",
-        ));
-    }
-    let sas_file = if args.len() == 3 {
-        let domain = &args[1];
-        let problem = &args[2];
+    let cli = Cli::parse();
+    let sas_file = if cli.inputs.len() == 2 {
+        let domain = &cli.inputs[0];
+        let problem = &cli.inputs[1];
         translate_to_sas(domain, problem).map_err(|err| {
             std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
         })?;
@@ -143,7 +225,7 @@ fn main() -> std::io::Result<()> {
         run_preprocess(&vec!["preprocess".to_string(), "output.sas".to_string()]);
         "output"
     } else {
-        &args[1]
+        &cli.inputs[0]
     };
 
     let start_time = std::time::Instant::now();
@@ -153,6 +235,12 @@ fn main() -> std::io::Result<()> {
 
     println!("=== A* Search Engine ===");
     println!("File: {}", sas_file);
+    if let Some(max_time) = cli.max_time {
+        println!("Max time: {:?}", max_time);
+    }
+    if let Some(max_memory) = cli.max_memory {
+        println!("Max memory: {} bytes", max_memory);
+    }
     println!(
         "Variables: {} regular, {} numeric",
         task.variables().len(),
@@ -167,11 +255,13 @@ fn main() -> std::io::Result<()> {
     // Create search engine and get result, then explicitly drop the search engine
     let result = {
         // Move ownership of state_registry into the search engine to avoid lifetime issues
+        let task_ref: &dyn AbstractNumericTask = &task;
         let search = AStarSearch::new(
-            &task,
+            task_ref,
             state_registry,
             None, // BlindHeuristic (will be created by default)
-            None, // 30-minute timeout
+            cli.max_time,
+            cli.max_memory,
         );
 
         println!("Starting search...");
@@ -212,6 +302,9 @@ fn main() -> std::io::Result<()> {
         SearchStatus::Timeout => {
             println!("Search timed out");
         }
+        SearchStatus::MemoryLimitReached => {
+            println!("Search stopped after reaching the memory limit");
+        }
         SearchStatus::InProgress => {
             println!("Search ended in progress");
         }
@@ -223,4 +316,23 @@ fn main() -> std::io::Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_memory_limit_suffixes() {
+        assert_eq!(parse_memory_limit("500M").unwrap(), 500 * 1024 * 1024);
+        assert_eq!(parse_memory_limit("8g").unwrap(), 8 * 1024 * 1024 * 1024);
+        assert_eq!(parse_memory_limit("1024").unwrap(), 1024);
+    }
+
+    #[test]
+    fn parses_time_limit_suffixes() {
+        assert_eq!(parse_time_limit("60s").unwrap(), Duration::from_secs(60));
+        assert_eq!(parse_time_limit("5m").unwrap(), Duration::from_secs(300));
+        assert_eq!(parse_time_limit("250ms").unwrap(), Duration::from_millis(250));
+    }
 }
