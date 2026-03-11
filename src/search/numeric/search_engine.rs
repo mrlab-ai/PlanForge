@@ -14,7 +14,6 @@ use crate::search::numeric::{
 };
 use ordered_float::OrderedFloat;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 /// Search status indicating the outcome of the search
@@ -46,14 +45,6 @@ struct SearchNodeInfo {
     parent_state: Option<StateID>,
     parent_operator_id: Option<usize>,
     g_value: f64,
-    status: NodeStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum NodeStatus {
-    New,
-    Open,
-    Closed,
 }
 
 pub trait SearchEngine {
@@ -86,6 +77,8 @@ pub struct AStarSearch<'a> {
     nodes_expanded: usize,
     nodes_generated: usize,
     last_reported_f_layer: Option<OrderedFloat<f64>>,
+    state_values_buffer: Vec<i32>,
+    applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
 }
 
 impl<'a> AStarSearch<'a> {
@@ -168,6 +161,8 @@ impl<'a> AStarSearch<'a> {
             nodes_expanded: 0,
             nodes_generated: 0,
             last_reported_f_layer: None,
+            state_values_buffer: Vec::with_capacity(task.variables().len()),
+            applicable_operators_buffer: Vec::new(),
         }
     }
 
@@ -256,9 +251,7 @@ impl<'a> AStarSearch<'a> {
         state: &ConcreteState,
         g_value: f64,
     ) -> Result<EvaluationResult, Box<dyn std::error::Error>> {
-        // Create evaluation state and mark goal flag
-        let state_owned = state.clone();
-        let mut eval_state = EvaluationState::new(&state_owned, g_value, false);
+        let mut eval_state = EvaluationState::new(state, g_value, false);
         let is_goal = self.is_goal_state(state);
         eval_state.set_is_goal(is_goal);
 
@@ -274,38 +267,13 @@ impl<'a> AStarSearch<'a> {
         Ok(eval_state.into_result())
     }
 
-    /// Generates successor states for a given state
-    fn generate_successors(
-        &mut self,
-        state: &ConcreteState,
-    ) -> Vec<(ConcreteState, usize, f64)> {
-        let mut successors = Vec::new();
-
-        let state_values = state.get_state(&self.state_registry);
-        let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
-        self.successor_generator
-            .get_applicable_operators(&state_values[..], &mut applicable_operators);
-
-        for (operator, operator_id) in applicable_operators {
-            match self.state_registry.get_successor_state(state, operator) {
-                Ok(succ_state) => {
-                    // If metric is enabled, use metric-based transition cost; else, use parsed operator cost
-                    let cost = if self.task.metric().use_metric() {
-                        self.state_registry
-                            .transition_cost(state, &succ_state)
-                            .unwrap_or(1.0)
-                    } else {
-                        operator.cost() as f64
-                    };
-                    successors.push((succ_state, operator_id, cost));
-                }
-                Err(_) => {
-                    // Skip operators that can't be applied
-                    continue;
-                }
-            }
-        }
-        successors
+    fn populate_applicable_operators(&mut self, state: &ConcreteState) {
+        state.fill_state(&self.state_registry, &mut self.state_values_buffer);
+        self.applicable_operators_buffer.clear();
+        self.successor_generator.get_applicable_operators(
+            &self.state_values_buffer,
+            &mut self.applicable_operators_buffer,
+        );
     }
 
     /// Performs one step of A* search
@@ -343,9 +311,6 @@ impl<'a> AStarSearch<'a> {
             return SearchStatus::Solved(state_id);
         }
 
-        // Generate successors
-        let successors = self.generate_successors(&node.state);
-
         // Get the current best g-value for this state
         let current_g = if let Some(info) = self.search_nodes.get(&state_id) {
             info.g_value
@@ -353,7 +318,14 @@ impl<'a> AStarSearch<'a> {
             0.0 // Initial state
         };
 
-        for (succ_state, operator_id, op_cost) in successors {
+        self.populate_applicable_operators(&node.state);
+        let mut applicable_operators = std::mem::take(&mut self.applicable_operators_buffer);
+
+        for (operator, operator_id) in applicable_operators.iter().copied() {
+            let succ_state = match self.state_registry.get_successor_state(&node.state, operator) {
+                Ok(succ_state) => succ_state,
+                Err(_) => continue,
+            };
             let succ_state_id = succ_state.get_id();
 
             // Skip if already closed
@@ -361,6 +333,13 @@ impl<'a> AStarSearch<'a> {
                 continue;
             }
 
+            let op_cost = if self.task.metric().use_metric() {
+                self.state_registry
+                    .transition_cost(&node.state, &succ_state)
+                    .unwrap_or(1.0)
+            } else {
+                operator.cost() as f64
+            };
             let new_g_value = current_g + op_cost;
 
             // Check if we've seen this state before
@@ -375,7 +354,6 @@ impl<'a> AStarSearch<'a> {
                 parent_state: Some(state_id),
                 parent_operator_id: Some(operator_id),
                 g_value: new_g_value,
-                status: NodeStatus::Open,
             };
 
             self.search_nodes.insert(succ_state_id, node_info);
@@ -388,6 +366,9 @@ impl<'a> AStarSearch<'a> {
                 self.open_list.insert(search_node);
             }
         }
+
+        applicable_operators.clear();
+        self.applicable_operators_buffer = applicable_operators;
 
         SearchStatus::InProgress
     }
@@ -416,7 +397,6 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             parent_state: None,
             parent_operator_id: None,
             g_value: 0.0,
-            status: NodeStatus::Open,
         };
         self.search_nodes
             .insert(initial_state.get_id(), initial_info);

@@ -61,13 +61,20 @@ impl ConcreteState {
 
     /// Gets the propositional state values as a vector
     pub fn get_state(&self, state_registry: &StateRegistry) -> Vec<i32> {
+        let mut values = Vec::with_capacity(state_registry.root_task.variables().len());
+        self.fill_state(state_registry, &mut values);
+        values
+    }
+
+    /// Fills `output` with the propositional state values without allocating a new vector.
+    pub fn fill_state(&self, state_registry: &StateRegistry, output: &mut Vec<i32>) {
+        output.clear();
+
         let buffer = state_registry.get_buffer(self.pool_offset);
         let task = state_registry.root_task;
         let state_packer = state_registry.global_state_packer;
 
-        (0..task.variables().len())
-            .map(|i| state_packer.get(buffer, i as i32) as i32)
-            .collect()
+        output.extend((0..task.variables().len()).map(|i| state_packer.get(buffer, i as i32) as i32));
     }
 
     /// Gets the numeric state values for regular variables
@@ -862,6 +869,47 @@ impl<'a> StateRegistry<'a> {
         Ok(numeric_state[metric_fluent_id as usize])
     }
 
+    fn metric_value_for_state(&self, state: &ConcreteState) -> Result<f64, InvalidIndex> {
+        let metric_fluent_id = self.root_task.metric().var_id();
+
+        if metric_fluent_id < 0 {
+            return Ok(0.0);
+        }
+
+        let metric_fluent_id = metric_fluent_id as usize;
+        if metric_fluent_id >= self.root_task.numeric_variables().len() {
+            return Err(InvalidIndex {
+                length: self.root_task.numeric_variables().len() as u32,
+                index: metric_fluent_id as u32,
+            });
+        }
+
+        let metric_var = &self.root_task.numeric_variables()[metric_fluent_id];
+        match metric_var.get_type() {
+            NumericType::Regular => {
+                let buffer = state.buffer(self);
+                Ok(self
+                    .global_state_packer
+                    .get_double(buffer, self.numeric_indices[metric_fluent_id]))
+            }
+            NumericType::Cost => {
+                let cost_index = self.numeric_indices[metric_fluent_id];
+                let cost_info_borrow = self.cost_info.borrow();
+                let cost_values = cost_info_borrow.get(state, self);
+                if cost_index >= 0 && (cost_index as usize) < cost_values.len() {
+                    Ok(cost_values[cost_index as usize])
+                } else {
+                    Ok(0.0)
+                }
+            }
+            NumericType::Constant => Ok(self.numeric_constants[self.numeric_indices[metric_fluent_id] as usize]),
+            NumericType::Derived => {
+                let numeric_vals = self.get_numeric_vars(state)?;
+                self.evaluate_metric(&numeric_vals)
+            }
+        }
+    }
+
     /// Computes the transition cost between two states based on the metric fluent.
     /// If a metric is defined, the cost is the absolute change according to min/max:
     /// - For minimizing metrics, cost = max(0, new - old)
@@ -876,11 +924,8 @@ impl<'a> StateRegistry<'a> {
             return Ok(1.0);
         }
 
-        // Get numeric vectors for both states
-        let old_vals = self.get_numeric_vars(predecessor)?;
-        let new_vals = self.get_numeric_vars(successor)?;
-        let old_metric = self.evaluate_metric(&old_vals)?;
-        let new_metric = self.evaluate_metric(&new_vals)?;
+        let old_metric = self.metric_value_for_state(predecessor)?;
+        let new_metric = self.metric_value_for_state(successor)?;
 
         let is_min = self.root_task.metric().is_min();
         let delta = if is_min {
@@ -907,8 +952,7 @@ impl<'a> StateRegistry<'a> {
             return Ok(new_cost_info.to_vec());
         }
 
-        let predecessor_numeric_vals = self.get_numeric_vars(predecessor_state)?;
-        let old_metric_val = self.evaluate_metric(&predecessor_numeric_vals)?;
+        let old_metric_val = self.metric_value_for_state(predecessor_state)?;
         let new_metric_val = self.evaluate_metric(successor_numeric_vals)?;
 
         let metric_minimizes = self.root_task.metric().is_min();
