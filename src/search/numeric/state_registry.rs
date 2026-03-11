@@ -604,35 +604,42 @@ impl<'a> StateRegistry<'a> {
         current_state: &ConcreteState,
         operator: &Operator,
     ) -> Result<ConcreteState, StateInsertError> {
-        // Start from a copy of the current buffer for the successor
+        let mut successor_values = Vec::new();
+        let mut cost_values = Vec::new();
+        self.get_successor_state_with_buffers(
+            current_state,
+            operator,
+            &mut successor_values,
+            &mut cost_values,
+        )
+    }
+
+    pub fn get_successor_state_with_buffers(
+        &mut self,
+        current_state: &ConcreteState,
+        operator: &Operator,
+        successor_values: &mut Vec<f64>,
+        cost_values: &mut Vec<f64>,
+    ) -> Result<ConcreteState, StateInsertError> {
         let previous_buffer = current_state.buffer(self);
         let mut next_buffer = previous_buffer.clone();
 
-        // Apply propositional effects in-place on next_buffer
         self.apply_propositional_effects(&mut next_buffer, current_state, operator);
 
-        // Apply numeric effects (reading regular values from previous_buffer)
-        let mut successor_values =
-            self.get_numeric_vars(current_state)
-                .map_err(|e| StateInsertError {
-                    message: format!("Failed to get numeric variables: {:?}", e),
-                })?;
-        // Initialize cost instrumentation from predecessor's stored info
-        let mut cost_values = {
-            let prev_inst = self.get_cost_information(current_state);
-            if prev_inst.len() == self.count_cost_variables() {
-                prev_inst
-            } else {
-                // Resize to expected number of cost vars
-                let mut v = prev_inst;
-                v.resize(self.count_cost_variables(), 0.0);
-                v
-            }
-        };
+        self.fill_numeric_vars(current_state, successor_values)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to get numeric variables: {:?}", e),
+            })?;
+
+        self.fill_cost_information(current_state, cost_values);
+        let expected_cost_vars = self.count_cost_variables();
+        if cost_values.len() < expected_cost_vars {
+            cost_values.resize(expected_cost_vars, 0.0);
+        }
 
         self.apply_numeric_effects(
-            &mut successor_values,
-            &mut cost_values,
+            successor_values,
+            cost_values,
             operator,
             &mut next_buffer,
             previous_buffer,
@@ -644,23 +651,20 @@ impl<'a> StateRegistry<'a> {
             message: format!("Failed to lookup successor state: {:?}", e),
         })?;
 
-        // Handle cost information based on whether this is a new or existing state
         if id == self.state_data_pool.len() - 1 {
-            // This is a new state - store cost information
             if !cost_values.is_empty() {
-                self.set_cost_information(&successor, cost_values);
+                self.set_cost_information(&successor, cost_values.clone());
             }
         } else {
-            // Existing state - use metric optimization to determine which cost info to keep
             let cost_info_borrow = self.cost_info.borrow();
             let old_cost_info = cost_info_borrow.get(&successor, self);
             let selected_result = self.select_cost_information(
                 current_state,
-                &successor_values,
+                successor_values,
                 old_cost_info,
-                &cost_values,
+                cost_values,
             );
-            drop(cost_info_borrow); // Drop the borrow before calling set
+            drop(cost_info_borrow);
 
             match selected_result {
                 Ok(selected_cost_info) => {
@@ -702,6 +706,12 @@ impl<'a> StateRegistry<'a> {
             .count()
     }
 
+    fn fill_cost_information(&self, state: &ConcreteState, output: &mut Vec<f64>) {
+        output.clear();
+        let cost_info_borrow = self.cost_info.borrow();
+        output.extend_from_slice(cost_info_borrow.get(state, self));
+    }
+
     /// Retrieves all numeric variable values for a given state
     ///
     /// This method reconstructs the complete numeric state by:
@@ -711,6 +721,18 @@ impl<'a> StateRegistry<'a> {
     /// - Evaluating arithmetic axioms to compute derived values
     fn get_numeric_vars(&self, state: &ConcreteState) -> Result<Vec<f64>, InvalidIndex> {
         let mut result = vec![0.0; self.root_task.numeric_variables().len()];
+        self.fill_numeric_vars(state, &mut result)?;
+        Ok(result)
+    }
+
+    fn fill_numeric_vars(
+        &self,
+        state: &ConcreteState,
+        output: &mut Vec<f64>,
+    ) -> Result<(), InvalidIndex> {
+        output.clear();
+        output.resize(self.root_task.numeric_variables().len(), 0.0);
+
         let buffer = state.buffer(self);
 
         // Get cost information for this state
@@ -719,7 +741,7 @@ impl<'a> StateRegistry<'a> {
 
         // Fill in values by variable type
         for (i, numeric_var) in self.root_task.numeric_variables().iter().enumerate() {
-            result[i] = match numeric_var.get_type() {
+            output[i] = match numeric_var.get_type() {
                 NumericType::Cost => {
                     // Retrieve cost variable from per-state storage
                     let cost_index = self.numeric_indices[i];
@@ -741,7 +763,7 @@ impl<'a> StateRegistry<'a> {
         }
 
         debug_assert_eq!(
-            result.len(),
+            output.len(),
             self.root_task.numeric_variables().len(),
             "Numeric variables length mismatch"
         );
@@ -749,10 +771,10 @@ impl<'a> StateRegistry<'a> {
         // Evaluate arithmetic axioms if present
         if self.axiom_evaluator.has_numeric_axioms() {
             self.axiom_evaluator
-                .evaluate_arithmetic_axioms(&mut result)?;
+                .evaluate_arithmetic_axioms(output)?;
         }
 
-        Ok(result)
+        Ok(())
     }
 
     /// Applies numeric assignment effects to create a successor state
@@ -779,7 +801,6 @@ impl<'a> StateRegistry<'a> {
             let assignment_var = &self.root_task.numeric_variables()[assignment_var_id];
             let affected_var = &self.root_task.numeric_variables()[affected_var_id];
 
-            // Get the assignment value based on variable type
             let assignment_value = if assignment_var.get_type() == &NumericType::Regular {
                 self.global_state_packer
                     .get_double(previous_buffer, self.numeric_indices[assignment_var_id])
@@ -787,14 +808,12 @@ impl<'a> StateRegistry<'a> {
                 current_values[assignment_var_id]
             };
 
-            // Apply the operation
             let result = AssignmentOperation::apply(
                 current_values[affected_var_id],
                 effect.operation(),
                 assignment_value,
             );
 
-            // Store the result based on affected variable type
             match affected_var.get_type() {
                 NumericType::Cost => {
                     let cost_index = self.numeric_indices[affected_var_id] as usize;
@@ -826,18 +845,12 @@ impl<'a> StateRegistry<'a> {
             }
         }
 
-        // Evaluate arithmetic axioms
         self.axiom_evaluator
             .evaluate_arithmetic_axioms(current_values)
             .map_err(|e| StateInsertError {
                 message: format!("Failed to evaluate arithmetic axioms: {:?}", e),
             })?;
 
-        // Evaluate general axioms
-        let initial_propositional_state = self
-            .root_task
-            .get_initial_propositional_state_values()
-            .clone();
         self.axiom_evaluator
             .evaluate(next_buffer, current_values)
             .map_err(|e| StateInsertError {

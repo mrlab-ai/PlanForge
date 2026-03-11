@@ -79,6 +79,8 @@ pub struct AStarSearch<'a> {
     last_reported_f_layer: Option<OrderedFloat<f64>>,
     state_values_buffer: Vec<i32>,
     applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
+    successor_numeric_values_buffer: Vec<f64>,
+    successor_cost_values_buffer: Vec<f64>,
 }
 
 impl<'a> AStarSearch<'a> {
@@ -163,6 +165,8 @@ impl<'a> AStarSearch<'a> {
             last_reported_f_layer: None,
             state_values_buffer: Vec::with_capacity(task.variables().len()),
             applicable_operators_buffer: Vec::new(),
+            successor_numeric_values_buffer: Vec::with_capacity(task.numeric_variables().len()),
+            successor_cost_values_buffer: Vec::new(),
         }
     }
 
@@ -322,7 +326,12 @@ impl<'a> AStarSearch<'a> {
         let mut applicable_operators = std::mem::take(&mut self.applicable_operators_buffer);
 
         for (operator, operator_id) in applicable_operators.iter().copied() {
-            let succ_state = match self.state_registry.get_successor_state(&node.state, operator) {
+            let succ_state = match self.state_registry.get_successor_state_with_buffers(
+                &node.state,
+                operator,
+                &mut self.successor_numeric_values_buffer,
+                &mut self.successor_cost_values_buffer,
+            ) {
                 Ok(succ_state) => succ_state,
                 Err(_) => continue,
             };
