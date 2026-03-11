@@ -989,23 +989,12 @@ mod tests {
         let initial_state = state_registry.get_initial_state();
 
         let state = initial_state.get_state(&state_registry);
-        let facts = state
-            .iter()
-            .enumerate()
-            .map(|(i, value)| Fact::new(i as u32, *value as i32))
-            .collect::<Vec<_>>();
-        let mut facts_refs = Vec::new();
-
-        for fact in &facts {
-            facts_refs.push(fact);
-        }
-
         let suc_gen = setup_successor_generator(&task);
 
-        let mut applicable_operators = VecDeque::new();
-        suc_gen.get_applicable_operators(&facts, &mut applicable_operators);
+        let mut applicable_operators = Vec::new();
+        suc_gen.get_applicable_operators(&state, &mut applicable_operators);
 
-        let op = applicable_operators.pop_front().unwrap();
+        let (op, _) = applicable_operators.into_iter().next().unwrap();
 
         println!(
             "Initial state: {}",
@@ -1115,24 +1104,13 @@ mod tests {
         let initial_state = state_registry.get_initial_state();
 
         let state = initial_state.get_state(&state_registry);
-        let facts = state
-            .iter()
-            .enumerate()
-            .map(|(i, value)| Fact::new(i as u32, *value as i32))
-            .collect::<Vec<_>>();
-        let mut facts_refs = Vec::new();
-
-        for fact in &facts {
-            facts_refs.push(fact);
-        }
-
         let suc_gen = setup_successor_generator(&task);
 
-        let mut applicable_operators = VecDeque::new();
-        suc_gen.get_applicable_operators(&facts, &mut applicable_operators);
+        let mut applicable_operators = Vec::new();
+        suc_gen.get_applicable_operators(&state, &mut applicable_operators);
 
         // Get the first applicable operator
-        let op = applicable_operators.front().unwrap();
+        let (op, _) = applicable_operators.first().unwrap();
 
         println!("Testing operator: {:?}", op.name());
         println!("Initial state ID: {}", initial_state.get_id());

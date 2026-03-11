@@ -10,7 +10,7 @@ use crate::search::numeric::{
     numeric_task::{AbstractNumericTask, Fact, Operator},
     open_lists::{OpenList, SearchNode, TieBreakingOpenList},
     state_registry::{ConcreteState, StateID, StateRegistry},
-    successor_generator::{GroundedSuccessorGenerator, Node},
+    successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node},
 };
 use ordered_float::OrderedFloat;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -44,7 +44,7 @@ pub struct SearchResult {
 #[derive(Debug, Clone)]
 struct SearchNodeInfo {
     parent_state: Option<StateID>,
-    parent_operator: Option<Operator>,
+    parent_operator_id: Option<usize>,
     g_value: f64,
     status: NodeStatus,
 }
@@ -56,19 +56,11 @@ enum NodeStatus {
     Closed,
 }
 
-/// Base trait for search engines
 pub trait SearchEngine {
     fn search(&mut self) -> SearchResult;
     fn print_initial_h_values(&mut self);
 }
 
-/// Lightweight A* search implementation
-///
-/// This provides a minimal A* search with:
-/// - f = g + h evaluation with tie-breaking on h
-/// - ZeroHeuristic as default heuristic
-/// - No reopening of closed nodes
-/// - Basic plan reconstruction
 pub struct AStarSearch<'a> {
     task: &'a dyn AbstractNumericTask,
     state_registry: StateRegistry<'a>,
@@ -101,7 +93,7 @@ impl<'a> AStarSearch<'a> {
     fn create_successor_generator(task: &'a dyn AbstractNumericTask) -> Box<dyn Node<'a> + 'a> {
         let mut queue = VecDeque::new();
         for (op_id, operator) in task.get_operators().iter().enumerate() {
-            queue.push_back((operator, op_id as u32));
+            queue.push_back((operator, op_id));
         }
 
         let mut generator = GroundedSuccessorGenerator::new(task);
@@ -152,7 +144,8 @@ impl<'a> AStarSearch<'a> {
 
         // Create open list with f-value primary, h-value secondary (tie-breaking)
         let evaluator_names = vec![f_evaluator.name(), heuristic.name()];
-        let open_list = TieBreakingOpenList::new(evaluator_names, true); // ascending order
+        let open_list = TieBreakingOpenList::new(evaluator_names, true)
+            .expect("A* tie-breaking open list must have at least one evaluator");
 
         // Build initial state now to allow potential cost initializations (matches FD ordering)
         let mut state_registry = state_registry;
@@ -243,11 +236,11 @@ impl<'a> AStarSearch<'a> {
         let mut current_state = goal_state;
 
         while let Some(node_info) = self.search_nodes.get(&current_state) {
-            if let (Some(parent_state), Some(operator)) =
-                (&node_info.parent_state, &node_info.parent_operator)
+            if let (Some(parent_state), Some(operator_id)) =
+                (node_info.parent_state, node_info.parent_operator_id)
             {
-                plan.push(operator.clone());
-                current_state = *parent_state;
+                plan.push(self.task.get_operators()[operator_id].clone());
+                current_state = parent_state;
             } else {
                 break; // Reached initial state
             }
@@ -285,28 +278,16 @@ impl<'a> AStarSearch<'a> {
     fn generate_successors(
         &mut self,
         state: &ConcreteState,
-    ) -> Vec<(ConcreteState, Operator, f64)> {
-        // For now, let's use a simpler approach - iterate through all operators
-        // and check preconditions manually. This is less efficient but works around
-        // the lifetime issues with the successor generator.
+    ) -> Vec<(ConcreteState, usize, f64)> {
         let mut successors = Vec::new();
 
-        //TODO: Maybe we should adapt the successor generator to use Vec<i32> instead of Fact
-        let state_facts = state.get_state(&self.state_registry);
-        let facts = state_facts
-            .iter()
-            .enumerate()
-            .map(|(i, value)| Fact::new(i as u32, *value as i32))
-            .collect::<Vec<_>>();
-
-        let mut applicable_operators: VecDeque<&Operator> = VecDeque::new();
+        let state_values = state.get_state(&self.state_registry);
+        let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
         self.successor_generator
-            .get_applicable_operators(&facts[..], &mut applicable_operators);
+            .get_applicable_operators(&state_values[..], &mut applicable_operators);
 
-        for op in applicable_operators {
-            // Check if all preconditions are satisfied
-
-            match self.state_registry.get_successor_state(state, op) {
+        for (operator, operator_id) in applicable_operators {
+            match self.state_registry.get_successor_state(state, operator) {
                 Ok(succ_state) => {
                     // If metric is enabled, use metric-based transition cost; else, use parsed operator cost
                     let cost = if self.task.metric().use_metric() {
@@ -314,9 +295,9 @@ impl<'a> AStarSearch<'a> {
                             .transition_cost(state, &succ_state)
                             .unwrap_or(1.0)
                     } else {
-                        op.cost() as f64
+                        operator.cost() as f64
                     };
-                    successors.push((succ_state, op.clone(), cost));
+                    successors.push((succ_state, operator_id, cost));
                 }
                 Err(_) => {
                     // Skip operators that can't be applied
@@ -372,7 +353,7 @@ impl<'a> AStarSearch<'a> {
             0.0 // Initial state
         };
 
-        for (succ_state, operator, op_cost) in successors {
+        for (succ_state, operator_id, op_cost) in successors {
             let succ_state_id = succ_state.get_id();
 
             // Skip if already closed
@@ -392,7 +373,7 @@ impl<'a> AStarSearch<'a> {
             // Create new search node info
             let node_info = SearchNodeInfo {
                 parent_state: Some(state_id),
-                parent_operator: Some(operator.clone()),
+                parent_operator_id: Some(operator_id),
                 g_value: new_g_value,
                 status: NodeStatus::Open,
             };
@@ -433,7 +414,7 @@ impl<'a> SearchEngine for AStarSearch<'a> {
         // Initialize search node info for initial state
         let initial_info = SearchNodeInfo {
             parent_state: None,
-            parent_operator: None,
+            parent_operator_id: None,
             g_value: 0.0,
             status: NodeStatus::Open,
         };

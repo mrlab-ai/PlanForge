@@ -2,18 +2,11 @@ use crate::search::numeric::{
     numeric_task::{AbstractNumericTask, Fact, Operator},
     utils::errors::ConstructError,
 };
-use std::collections::{LinkedList, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::Debug;
 
-trait OperatorGenerator {
-    fn generate_applicable_operators(
-        &self,
-        state: &Vec<i32>,
-        numeric_state: &Vec<f64>,
-    ) -> Vec<&Operator>;
-}
-
 type Condition<'a> = Vec<&'a Fact>;
+pub type ApplicableOperator<'a> = (&'a Operator, usize);
 
 pub struct GroundedSuccessorGenerator<'a> {
     task: &'a dyn AbstractNumericTask,
@@ -48,16 +41,15 @@ impl<'a> GroundedSuccessorGenerator<'a> {
     pub fn construct(
         &mut self,
         branch_var_id: &mut u32,
-        queue: &mut VecDeque<(&'a Operator, u32)>,
+        queue: &mut VecDeque<ApplicableOperator<'a>>,
     ) -> Result<Box<dyn Node<'a>>, ConstructError> {
         if queue.is_empty() {
-            //let insert_queue = queue.iter().map(|(op, op_id)| *op).collect::<VecDeque<_>>();
             return Ok(Box::new(LeafNode::new(None)));
         }
         loop {
             // Test if no further switch is necessary (or possible).
             if *branch_var_id as usize >= self.task.variables().len() {
-                let ops: VecDeque<&'a Operator> = queue.iter().map(|(op, _)| *op).collect();
+                let ops: Vec<ApplicableOperator<'a>> = queue.iter().copied().collect();
                 return Ok(Box::new(LeafNode::new(Some(ops))));
             }
 
@@ -66,7 +58,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 
             let mut operators_for_value = vec![VecDeque::new(); num_children as usize];
             let mut default_operators = VecDeque::new();
-            let mut applicable_operators = VecDeque::new();
+            let mut applicable_operators = Vec::new();
 
             let mut all_ops_immediate = true;
             let mut var_interesting = false;
@@ -79,7 +71,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 
                 if condition_index >= self.conditions[op_id as usize].len() {
                     var_interesting = true;
-                    applicable_operators.push_back(op);
+                    applicable_operators.push((op, op_id));
                 } else {
                     all_ops_immediate = false;
                     let fact = &self.conditions[op_id as usize][condition_index];
@@ -125,15 +117,15 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 pub trait Node<'a>: 'a + Debug {
     fn get_applicable_operators(
         &self,
-        state: &[Fact],
-        applicable_operators: &mut VecDeque<&'a Operator>, //TODO: Why is a DeqQueue here? Did I do this on purpose?
+        state: &[i32],
+        applicable_operators: &mut Vec<ApplicableOperator<'a>>,
     );
 }
 
 #[derive(Debug)]
 struct BranchNode<'a> {
     var_id: u32,
-    immediate_operators: VecDeque<&'a Operator>,
+    immediate_operators: Vec<ApplicableOperator<'a>>,
     value_children: Vec<Box<dyn Node<'a>>>,
     default_child: Option<Box<dyn Node<'a>>>,
 }
@@ -141,7 +133,7 @@ struct BranchNode<'a> {
 impl<'a> BranchNode<'a> {
     pub fn new(
         var_id: u32,
-        immediate_operators: VecDeque<&'a Operator>,
+        immediate_operators: Vec<ApplicableOperator<'a>>,
         value_children: Vec<Box<dyn Node<'a>>>,
         default_child: Option<Box<dyn Node<'a>>>,
     ) -> BranchNode<'a> {
@@ -157,13 +149,11 @@ impl<'a> BranchNode<'a> {
 impl<'a> Node<'a> for BranchNode<'a> {
     fn get_applicable_operators(
         &self,
-        state: &[Fact],
-        applicable_operators: &mut VecDeque<&'a Operator>,
+        state: &[i32],
+        applicable_operators: &mut Vec<ApplicableOperator<'a>>,
     ) {
-        for operator in &self.immediate_operators {
-            applicable_operators.push_back(operator);
-        }
-        let value = state[self.var_id as usize].value();
+        applicable_operators.extend(self.immediate_operators.iter().copied());
+        let value = state[self.var_id as usize];
         self.value_children[value as usize].get_applicable_operators(state, applicable_operators);
 
         // Also process the default child, which contains operators that don't depend on this variable
@@ -175,11 +165,11 @@ impl<'a> Node<'a> for BranchNode<'a> {
 
 #[derive(Debug)]
 struct LeafNode<'a> {
-    applicable_operators: Option<VecDeque<&'a Operator>>,
+    applicable_operators: Option<Vec<ApplicableOperator<'a>>>,
 }
 
 impl<'a> LeafNode<'a> {
-    pub fn new(applicable_operators: Option<VecDeque<&'a Operator>>) -> LeafNode<'a> {
+    pub fn new(applicable_operators: Option<Vec<ApplicableOperator<'a>>>) -> LeafNode<'a> {
         LeafNode {
             applicable_operators,
         }
@@ -189,11 +179,11 @@ impl<'a> LeafNode<'a> {
 impl<'a> Node<'a> for LeafNode<'a> {
     fn get_applicable_operators(
         &self,
-        _state: &[Fact],
-        applicable_operators: &mut VecDeque<&'a Operator>,
+        _state: &[i32],
+        applicable_operators: &mut Vec<ApplicableOperator<'a>>,
     ) {
         if let Some(operators) = &self.applicable_operators {
-            applicable_operators.extend(operators.iter());
+            applicable_operators.extend(operators.iter().copied());
         }
     }
 }
@@ -214,17 +204,20 @@ mod tests {
         let mut problems = vec![];
         for file in std::fs::read_dir("misc/numeric_sas").unwrap() {
             let file = file.unwrap();
-            if file.path().extension().unwrap() == "sas" {
-                let input = std::fs::read_to_string(file.path()).unwrap();
+            let path = file.path();
+            if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("sas") {
+                continue;
+            }
+
+            let input = std::fs::read_to_string(&path).unwrap();
                 let (unconsumed_input, problem) = parse_numeric_sas_output(&input).unwrap();
                 assert!(
                     unconsumed_input.is_empty(),
                     "Unconsumed input: {}",
                     unconsumed_input
                 );
-                if file.path().file_name().unwrap() == "example3.sas" {
-                    problems.push(problem);
-                }
+            if path.file_name().and_then(|name| name.to_str()) == Some("example3.sas") {
+                problems.push(problem);
             }
         }
         problems
@@ -239,7 +232,7 @@ mod tests {
 
             let mut queue = VecDeque::new();
             for (op_id, operator) in problem.get_operators().iter().enumerate() {
-                queue.push_back((operator, op_id as u32));
+                queue.push_back((operator, op_id));
             }
 
             let state_packer = setup_state_packer(&problem);
@@ -249,18 +242,12 @@ mod tests {
 
             let state = state_registry.get_initial_state();
             let state = state.get_state(&state_registry);
-            let facts = state
-                .iter()
-                .enumerate()
-                .map(|(i, value)| Fact::new(i as u32, *value as i32))
-                .collect::<Vec<_>>();
-            println!("Facts: {:?}", facts);
+            println!("State values: {:?}", state);
 
             let node = generator.construct(&mut 0, &mut queue).unwrap();
 
-            // Create references to the facts for the node API
-            let mut applicable_operators: VecDeque<&Operator> = VecDeque::new();
-            node.get_applicable_operators(&facts[..], &mut applicable_operators);
+            let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
+            node.get_applicable_operators(&state[..], &mut applicable_operators);
 
             //dbg!("Facts: {:?}", facts_refs);
             dbg!("Applicable operators: {:?}", applicable_operators);

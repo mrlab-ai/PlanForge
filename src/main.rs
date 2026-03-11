@@ -157,7 +157,7 @@ fn setup_numeric_task(file_name: &str) -> NumericRootTask {
 fn setup_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn Node<'a> + 'a> {
     let mut queue = VecDeque::new();
     for (op_id, operator) in task.get_operators().iter().enumerate() {
-        queue.push_back((operator, op_id as u32));
+        queue.push_back((operator, op_id));
     }
 
     let mut generator = GroundedSuccessorGenerator::new(task);

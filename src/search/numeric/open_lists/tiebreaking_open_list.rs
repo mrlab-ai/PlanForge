@@ -1,6 +1,27 @@
 use super::open_list::{OpenList, SearchNode};
 use ordered_float::OrderedFloat;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
+use std::error::Error;
+use std::fmt;
+
+type EvaluationKey = Vec<OrderedFloat<f64>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TieBreakingOpenListError {
+    EmptyEvaluatorList,
+}
+
+impl fmt::Display for TieBreakingOpenListError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TieBreakingOpenListError::EmptyEvaluatorList => {
+                write!(f, "tie-breaking open list requires at least one evaluator")
+            }
+        }
+    }
+}
+
+impl Error for TieBreakingOpenListError {}
 
 /// A tie-breaking open list that sorts lexicographically by evaluation values
 /// and breaks exact ties using FIFO order.
@@ -9,9 +30,12 @@ use std::collections::{HashMap, VecDeque};
 /// comparison order. For example, using `[f, h]` means nodes are ordered by
 /// increasing `f = g + h`, and for equal `f` values the node with lower `h`
 /// is preferred. If all evaluator values are equal, insertion order is kept.
+#[derive(Debug)]
 pub struct TieBreakingOpenList {
     /// Maps evaluation keys to FIFO queues of nodes
-    buckets: HashMap<Vec<OrderedFloat<f64>>, VecDeque<SearchNode>>,
+    buckets: BTreeMap<EvaluationKey, VecDeque<SearchNode>>,
+    /// Total number of nodes stored across all buckets
+    size: usize,
     /// The names of evaluators used to compute keys
     evaluator_names: Vec<String>,
     /// Whether the list is sorted in ascending order (true) or descending (false)
@@ -20,16 +44,21 @@ pub struct TieBreakingOpenList {
 
 impl TieBreakingOpenList {
     /// Creates a new tie-breaking open list with the given evaluator names.
-    pub fn new(evaluator_names: Vec<String>, ascending: bool) -> Self {
-        Self {
-            buckets: HashMap::new(),
+    pub fn new(evaluator_names: Vec<String>, ascending: bool) -> Result<Self, TieBreakingOpenListError> {
+        if evaluator_names.is_empty() {
+            return Err(TieBreakingOpenListError::EmptyEvaluatorList);
+        }
+
+        Ok(Self {
+            buckets: BTreeMap::new(),
+            size: 0,
             evaluator_names,
             ascending,
-        }
+        })
     }
 
     /// Computes the lexicographic evaluation key for a given node.
-    fn compute_key(&self, node: &SearchNode) -> Vec<OrderedFloat<f64>> {
+    fn compute_key(&self, node: &SearchNode) -> EvaluationKey {
         let mut key = Vec::with_capacity(self.evaluator_names.len());
 
         for evaluator_name in &self.evaluator_names {
@@ -40,16 +69,11 @@ impl TieBreakingOpenList {
         key
     }
 
-    /// Finds the best key according to the sort order.
-    fn find_best_key(&self) -> Option<&Vec<OrderedFloat<f64>>> {
-        if self.buckets.is_empty() {
-            return None;
-        }
-
+    fn best_bucket(&self) -> Option<(&EvaluationKey, &VecDeque<SearchNode>)> {
         if self.ascending {
-            self.buckets.keys().min()
+            self.buckets.first_key_value()
         } else {
-            self.buckets.keys().max()
+            self.buckets.last_key_value()
         }
     }
 }
@@ -61,42 +85,47 @@ impl OpenList for TieBreakingOpenList {
             .entry(key)
             .or_insert_with(VecDeque::new)
             .push_back(node);
+        self.size += 1;
     }
 
     fn pop(&mut self) -> Option<SearchNode> {
-        // Find the best key
-        let best_key = self.find_best_key()?.clone();
-
-        // Get the bucket for this key and pop from front (FIFO)
-        if let Some(bucket) = self.buckets.get_mut(&best_key) {
-            let node = bucket.pop_front();
-
-            // Remove empty buckets
-            if bucket.is_empty() {
-                self.buckets.remove(&best_key);
-            }
-
-            node
+        let mut best_bucket = if self.ascending {
+            self.buckets.first_entry()?
         } else {
-            None
+            self.buckets.last_entry()?
+        };
+
+        let (node, bucket_is_empty) = {
+            let bucket = best_bucket.get_mut();
+            let node = bucket
+                .pop_front()
+                .expect("best bucket in tie-breaking open list must not be empty");
+            (node, bucket.is_empty())
+        };
+        self.size -= 1;
+
+        if bucket_is_empty {
+            best_bucket.remove_entry();
         }
+
+        Some(node)
     }
 
     fn peek(&self) -> Option<&SearchNode> {
-        let best_key = self.find_best_key()?;
-        self.buckets.get(best_key)?.front()
+        self.best_bucket()?.1.front()
     }
 
     fn is_empty(&self) -> bool {
-        self.buckets.is_empty()
+        self.size == 0
     }
 
     fn len(&self) -> usize {
-        self.buckets.values().map(|bucket| bucket.len()).sum()
+        self.size
     }
 
     fn clear(&mut self) {
         self.buckets.clear();
+        self.size = 0;
     }
 
     fn required_evaluators(&self) -> Vec<String> {
@@ -109,6 +138,10 @@ mod tests {
     use super::*;
     use crate::search::numeric::evaluation::EvaluationResult;
     use crate::search::numeric::state_registry::ConcreteState;
+
+    fn create_open_list(evaluator_names: Vec<String>, ascending: bool) -> TieBreakingOpenList {
+        TieBreakingOpenList::new(evaluator_names, ascending).unwrap()
+    }
 
     fn create_test_node(state_id: usize, g_value: f64) -> SearchNode {
         let state = ConcreteState::new(state_id);
@@ -132,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_tiebreaking_empty() {
-        let mut open_list = TieBreakingOpenList::new(vec!["g".to_string()], true);
+        let mut open_list = create_open_list(vec!["g".to_string()], true);
 
         assert!(open_list.is_empty());
         assert_eq!(open_list.len(), 0);
@@ -142,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_tiebreaking_single_node() {
-        let mut open_list = TieBreakingOpenList::new(vec!["g".to_string()], true);
+        let mut open_list = create_open_list(vec!["g".to_string()], true);
 
         let node = create_test_node(1, 10.0);
         open_list.insert(node);
@@ -159,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_tiebreaking_g_value_ordering() {
-        let mut open_list = TieBreakingOpenList::new(vec!["g".to_string()], true); // ascending
+        let mut open_list = create_open_list(vec!["g".to_string()], true); // ascending
 
         // Insert nodes with different g-values
         open_list.insert(create_test_node(1, 30.0));
@@ -174,7 +207,7 @@ mod tests {
 
     #[test]
     fn test_tiebreaking_descending_order() {
-        let mut open_list = TieBreakingOpenList::new(vec!["g".to_string()], false); // descending
+        let mut open_list = create_open_list(vec!["g".to_string()], false); // descending
 
         // Insert nodes with different g-values
         open_list.insert(create_test_node(1, 10.0));
@@ -189,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_tiebreaking_fifo_order() {
-        let mut open_list = TieBreakingOpenList::new(vec!["g".to_string()], true);
+        let mut open_list = create_open_list(vec!["g".to_string()], true);
 
         // Insert nodes with same g-value (should use FIFO tie-breaking)
         open_list.insert(create_test_node(1, 10.0));
@@ -204,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_tiebreaking_peek() {
-        let mut open_list = TieBreakingOpenList::new(vec!["g".to_string()], true);
+        let mut open_list = create_open_list(vec!["g".to_string()], true);
 
         open_list.insert(create_test_node(1, 30.0));
         open_list.insert(create_test_node(2, 10.0));
@@ -222,7 +255,7 @@ mod tests {
 
     #[test]
     fn test_tiebreaking_complex_scenario() {
-        let mut open_list = TieBreakingOpenList::new(vec!["g".to_string()], true);
+        let mut open_list = create_open_list(vec!["g".to_string()], true);
 
         // Mixed g-values with ties
         open_list.insert(create_test_node(1, 20.0));
@@ -241,8 +274,7 @@ mod tests {
 
     #[test]
     fn test_tiebreaking_prefers_lower_h_for_equal_f() {
-        let mut open_list =
-            TieBreakingOpenList::new(vec!["f_h".to_string(), "h".to_string()], true);
+        let mut open_list = create_open_list(vec!["f_h".to_string(), "h".to_string()], true);
 
         open_list.insert(create_test_node_with_values(
             1,
@@ -267,8 +299,7 @@ mod tests {
 
     #[test]
     fn test_tiebreaking_uses_fifo_when_f_and_h_match() {
-        let mut open_list =
-            TieBreakingOpenList::new(vec!["f_h".to_string(), "h".to_string()], true);
+        let mut open_list = create_open_list(vec!["f_h".to_string(), "h".to_string()], true);
 
         open_list.insert(create_test_node_with_values(
             1,
@@ -286,8 +317,31 @@ mod tests {
     }
 
     #[test]
+    fn test_tiebreaking_rejects_empty_evaluator_list() {
+        let error = TieBreakingOpenList::new(vec![], true).unwrap_err();
+
+        assert_eq!(error, TieBreakingOpenListError::EmptyEvaluatorList);
+    }
+
+    #[test]
+    fn test_tiebreaking_len_tracks_operations() {
+        let mut open_list = create_open_list(vec!["g".to_string()], true);
+
+        open_list.insert(create_test_node(1, 10.0));
+        open_list.insert(create_test_node(2, 20.0));
+        assert_eq!(open_list.len(), 2);
+
+        let _ = open_list.pop();
+        assert_eq!(open_list.len(), 1);
+
+        open_list.clear();
+        assert_eq!(open_list.len(), 0);
+        assert!(open_list.is_empty());
+    }
+
+    #[test]
     fn test_required_evaluators() {
-        let open_list = TieBreakingOpenList::new(vec!["g".to_string(), "h".to_string()], true);
+        let open_list = create_open_list(vec!["g".to_string(), "h".to_string()], true);
         let required = open_list.required_evaluators();
 
         assert_eq!(required.len(), 2);
@@ -297,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let mut open_list = TieBreakingOpenList::new(vec!["g".to_string()], true);
+        let mut open_list = create_open_list(vec!["g".to_string()], true);
 
         open_list.insert(create_test_node(1, 10.0));
         open_list.insert(create_test_node(2, 20.0));
