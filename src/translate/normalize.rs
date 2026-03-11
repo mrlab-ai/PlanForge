@@ -1,15 +1,14 @@
 /// Port of normalize.py
 /// Normalization of PDDL tasks before grounding.
-
 use std::collections::{HashMap, HashSet};
 
-use super::pddl::conditions::*;
-use super::pddl::pddl_types::TypedObject;
-use super::pddl::effects::{Effect, EffectType, EffectKind};
 use super::pddl::actions::Action;
 use super::pddl::axioms::Axiom;
-use super::pddl::tasks::Task;
+use super::pddl::conditions::*;
+use super::pddl::effects::{Effect, EffectKind, EffectType};
 use super::pddl::f_expression::*;
+use super::pddl::pddl_types::TypedObject;
+use super::pddl::tasks::Task;
 
 /// Python: NormalizableTask equivalent
 /// Wraps a Task with additional state for normalization.
@@ -132,7 +131,11 @@ fn remove_universal_quantifiers(task: &mut Task) {
         let mut new_effects = vec![];
         for eff in &action.effects {
             let new_cond = remove_universal(&eff.condition);
-            new_effects.push(Effect::new(eff.parameters.clone(), new_cond, eff.peffect.clone()));
+            new_effects.push(Effect::new(
+                eff.parameters.clone(),
+                new_cond,
+                eff.peffect.clone(),
+            ));
         }
         action.effects = new_effects;
     }
@@ -146,7 +149,7 @@ fn remove_universal(cond: &Condition) -> Condition {
                 remove_universal(&uc.parts[0])
             } else {
                 Condition::Conjunction(Conjunction::new(
-                    uc.parts.iter().map(|p| remove_universal(p)).collect()
+                    uc.parts.iter().map(|p| remove_universal(p)).collect(),
                 ))
             };
             // not(exists params. not(inner))
@@ -157,16 +160,12 @@ fn remove_universal(cond: &Condition) -> Condition {
                 vec![remove_universal(&inner)],
             ))
         }
-        Condition::Conjunction(conj) => {
-            Condition::Conjunction(Conjunction::new(
-                conj.parts.iter().map(|p| remove_universal(p)).collect()
-            ))
-        }
-        Condition::Disjunction(disj) => {
-            Condition::Disjunction(Disjunction::new(
-                disj.parts.iter().map(|p| remove_universal(p)).collect()
-            ))
-        }
+        Condition::Conjunction(conj) => Condition::Conjunction(Conjunction::new(
+            conj.parts.iter().map(|p| remove_universal(p)).collect(),
+        )),
+        Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
+            disj.parts.iter().map(|p| remove_universal(p)).collect(),
+        )),
         Condition::ExistentialCondition(ec) => {
             Condition::ExistentialCondition(ExistentialCondition::new(
                 ec.parameters.clone(),
@@ -182,9 +181,7 @@ fn substitute_complicated_goal(task: &mut Task) {
     let goal = &task.goal;
     // If goal is not a simple conjunction of literals, create an axiom
     let needs_substitution = match goal {
-        Condition::Conjunction(conj) => {
-            conj.parts.iter().any(|p| !p.is_literal())
-        }
+        Condition::Conjunction(conj) => conj.parts.iter().any(|p| !p.is_literal()),
         Condition::Atom(_) | Condition::NegatedAtom(_) => false,
         Condition::Truth => false,
         _ => true,
@@ -192,9 +189,7 @@ fn substitute_complicated_goal(task: &mut Task) {
 
     if needs_substitution {
         let new_pred = "@goal-reachable".to_string();
-        let axiom = Axiom::new(
-            new_pred.clone(), vec![], 0, goal.clone(),
-        );
+        let axiom = Axiom::new(new_pred.clone(), vec![], 0, goal.clone());
         task.axioms.push(axiom);
         task.goal = Condition::Atom(Atom::new(new_pred, vec![]));
     }
@@ -254,13 +249,16 @@ fn to_dnf(cond: &Condition) -> Vec<Condition> {
                 }
                 dnf_parts = new_dnf_parts;
             }
-            dnf_parts.into_iter().map(|parts| {
-                if parts.len() == 1 {
-                    parts.into_iter().next().unwrap()
-                } else {
-                    Condition::Conjunction(Conjunction::new(parts))
-                }
-            }).collect()
+            dnf_parts
+                .into_iter()
+                .map(|parts| {
+                    if parts.len() == 1 {
+                        parts.into_iter().next().unwrap()
+                    } else {
+                        Condition::Conjunction(Conjunction::new(parts))
+                    }
+                })
+                .collect()
         }
         other => vec![other.clone()],
     }
@@ -293,7 +291,10 @@ fn move_existential_quantifiers(task: &mut Task) {
                     }
                     Condition::ExistentialCondition(ExistentialCondition::new(
                         new_parameters,
-                        vec![Condition::Conjunction(Conjunction::new(new_conjunction_parts)).simplified()],
+                        vec![
+                            Condition::Conjunction(Conjunction::new(new_conjunction_parts))
+                                .simplified(),
+                        ],
                     ))
                     .simplified()
                 }
@@ -316,14 +317,17 @@ fn move_existential_quantifiers(task: &mut Task) {
                 ))
                 .simplified()
             }
-            Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
-                disj.parts.iter().map(recurse).collect(),
-            ))
-            .simplified(),
-            Condition::UniversalCondition(uc) => Condition::UniversalCondition(
-                UniversalCondition::new(uc.parameters.clone(), uc.parts.iter().map(recurse).collect()),
-            )
-            .simplified(),
+            Condition::Disjunction(disj) => {
+                Condition::Disjunction(Disjunction::new(disj.parts.iter().map(recurse).collect()))
+                    .simplified()
+            }
+            Condition::UniversalCondition(uc) => {
+                Condition::UniversalCondition(UniversalCondition::new(
+                    uc.parameters.clone(),
+                    uc.parts.iter().map(recurse).collect(),
+                ))
+                .simplified()
+            }
             other => other.clone(),
         }
     }
@@ -419,35 +423,62 @@ fn remove_arithmetic_expressions(task: &mut Task) {
     ) -> Condition {
         match condition {
             Condition::FunctionComparison(fc) => {
-                let parts = fc.parts.iter().map(|part| {
-                    FunctionalExpression::PrimitiveNumericExpression(
-                        function_administrator.get_derived_function(part, &HashSet::new()),
-                    )
-                }).collect();
+                let parts = fc
+                    .parts
+                    .iter()
+                    .map(|part| {
+                        FunctionalExpression::PrimitiveNumericExpression(
+                            function_administrator.get_derived_function(part, &HashSet::new()),
+                        )
+                    })
+                    .collect();
                 Condition::FunctionComparison(FunctionComparison::new(fc.comparator.clone(), parts))
             }
             Condition::NegatedFunctionComparison(nfc) => {
-                let parts = nfc.parts.iter().map(|part| {
-                    FunctionalExpression::PrimitiveNumericExpression(
-                        function_administrator.get_derived_function(part, &HashSet::new()),
-                    )
-                }).collect();
-                Condition::NegatedFunctionComparison(NegatedFunctionComparison::new(nfc.comparator.clone(), parts))
+                let parts = nfc
+                    .parts
+                    .iter()
+                    .map(|part| {
+                        FunctionalExpression::PrimitiveNumericExpression(
+                            function_administrator.get_derived_function(part, &HashSet::new()),
+                        )
+                    })
+                    .collect();
+                Condition::NegatedFunctionComparison(NegatedFunctionComparison::new(
+                    nfc.comparator.clone(),
+                    parts,
+                ))
             }
             Condition::Conjunction(conj) => Condition::Conjunction(Conjunction::new(
-                conj.parts.iter().map(|part| rewrite_condition(function_administrator, part)).collect(),
+                conj.parts
+                    .iter()
+                    .map(|part| rewrite_condition(function_administrator, part))
+                    .collect(),
             )),
             Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
-                disj.parts.iter().map(|part| rewrite_condition(function_administrator, part)).collect(),
+                disj.parts
+                    .iter()
+                    .map(|part| rewrite_condition(function_administrator, part))
+                    .collect(),
             )),
-            Condition::ExistentialCondition(ec) => Condition::ExistentialCondition(ExistentialCondition::new(
-                ec.parameters.clone(),
-                ec.parts.iter().map(|part| rewrite_condition(function_administrator, part)).collect(),
-            )),
-            Condition::UniversalCondition(uc) => Condition::UniversalCondition(UniversalCondition::new(
-                uc.parameters.clone(),
-                uc.parts.iter().map(|part| rewrite_condition(function_administrator, part)).collect(),
-            )),
+            Condition::ExistentialCondition(ec) => {
+                Condition::ExistentialCondition(ExistentialCondition::new(
+                    ec.parameters.clone(),
+                    ec.parts
+                        .iter()
+                        .map(|part| rewrite_condition(function_administrator, part))
+                        .collect(),
+                ))
+            }
+            Condition::UniversalCondition(uc) => {
+                Condition::UniversalCondition(UniversalCondition::new(
+                    uc.parameters.clone(),
+                    uc.parts
+                        .iter()
+                        .map(|part| rewrite_condition(function_administrator, part))
+                        .collect(),
+                ))
+            }
             other => other.clone(),
         }
     }
@@ -458,24 +489,34 @@ fn remove_arithmetic_expressions(task: &mut Task) {
         for eff in &mut action.effects {
             let condition = eff.condition.clone();
             eff.condition = rewrite_condition(&mut task.function_administrator, &condition);
-            if let Condition::FunctionComparison(_) | Condition::NegatedFunctionComparison(_) = &eff.peffect {
+            if let Condition::FunctionComparison(_) | Condition::NegatedFunctionComparison(_) =
+                &eff.peffect
+            {
                 let peffect = eff.peffect.clone();
                 eff.peffect = rewrite_condition(&mut task.function_administrator, &peffect);
             }
         }
         for (_, _, assignment) in &mut action.assign_effects {
-            if !matches!(assignment.expression, FunctionalExpression::PrimitiveNumericExpression(_)) {
+            if !matches!(
+                assignment.expression,
+                FunctionalExpression::PrimitiveNumericExpression(_)
+            ) {
                 let expression = assignment.expression.clone();
                 assignment.expression = FunctionalExpression::PrimitiveNumericExpression(
-                    task.function_administrator.get_derived_function(&expression, &HashSet::new()),
+                    task.function_administrator
+                        .get_derived_function(&expression, &HashSet::new()),
                 );
             }
         }
         if let Some(cost) = &mut action.cost {
-            if !matches!(cost.expression, FunctionalExpression::PrimitiveNumericExpression(_)) {
+            if !matches!(
+                cost.expression,
+                FunctionalExpression::PrimitiveNumericExpression(_)
+            ) {
                 let expression = cost.expression.clone();
                 cost.expression = FunctionalExpression::PrimitiveNumericExpression(
-                    task.function_administrator.get_derived_function(&expression, &HashSet::new()),
+                    task.function_administrator
+                        .get_derived_function(&expression, &HashSet::new()),
                 );
             }
         }
@@ -552,7 +593,10 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
                 continue;
             }
             let mut conditions = vec![action_head.clone()];
-            conditions.extend(condition_to_rule_body(&effect.parameters, &effect.condition));
+            conditions.extend(condition_to_rule_body(
+                &effect.parameters,
+                &effect.condition,
+            ));
             rules.push(ExplorationRule {
                 conditions,
                 effect: effect.peffect.clone(),
@@ -602,7 +646,9 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
             effect: Condition::Atom(Atom::new(
                 axiom.name.clone(),
                 axiom.parameters[..axiom.num_external_parameters]
-                    .iter().map(|p| p.name.clone()).collect(),
+                    .iter()
+                    .map(|p| p.name.clone())
+                    .collect(),
             )),
             parameters: vec![],
         });
@@ -615,7 +661,8 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
     });
 
     for axiom in task.function_administrator.get_all_axioms() {
-        let mut applicability_args: Vec<String> = axiom.parameters.iter().map(|p| p.name.clone()).collect();
+        let mut applicability_args: Vec<String> =
+            axiom.parameters.iter().map(|p| p.name.clone()).collect();
         for part in &axiom.parts {
             if let FunctionalExpression::PrimitiveNumericExpression(pne) = part {
                 applicability_args.extend(pne.args.clone());
@@ -627,7 +674,9 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
             applicability_args,
         ));
 
-        let applicability_conditions: Vec<Condition> = axiom.parts.iter()
+        let applicability_conditions: Vec<Condition> = axiom
+            .parts
+            .iter()
             .filter_map(|part| {
                 if let FunctionalExpression::PrimitiveNumericExpression(pne) = part {
                     Some(Condition::Atom(Atom::new(
@@ -689,9 +738,7 @@ pub struct ExplorationRule {
 /// Extract all atomic conditions from a condition tree
 fn all_conditions(cond: &Condition) -> Vec<Condition> {
     match cond {
-        Condition::Conjunction(conj) => {
-            conj.parts.iter().flat_map(|p| all_conditions(p)).collect()
-        }
+        Condition::Conjunction(conj) => conj.parts.iter().flat_map(|p| all_conditions(p)).collect(),
         Condition::Truth => vec![],
         other => vec![other.clone()],
     }
@@ -760,7 +807,11 @@ pub fn condition_to_rule_body(parameters: &[TypedObject], condition: &Condition)
         match part {
             Condition::Atom(_) => result.push(part),
             Condition::FunctionComparison(fc) => {
-                for pne in fc.parts.iter().flat_map(|expr| expr.primitive_numeric_expressions()) {
+                for pne in fc
+                    .parts
+                    .iter()
+                    .flat_map(|expr| expr.primitive_numeric_expressions())
+                {
                     result.push(Condition::Atom(Atom::new(
                         get_function_predicate(&pne.symbol),
                         pne.args.clone(),
@@ -768,7 +819,11 @@ pub fn condition_to_rule_body(parameters: &[TypedObject], condition: &Condition)
                 }
             }
             Condition::NegatedFunctionComparison(nfc) => {
-                for pne in nfc.parts.iter().flat_map(|expr| expr.primitive_numeric_expressions()) {
+                for pne in nfc
+                    .parts
+                    .iter()
+                    .flat_map(|expr| expr.primitive_numeric_expressions())
+                {
                     result.push(Condition::Atom(Atom::new(
                         get_function_predicate(&pne.symbol),
                         pne.args.clone(),

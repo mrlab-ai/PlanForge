@@ -73,7 +73,11 @@ pub struct NumericEffect {
 }
 
 impl NumericEffect {
-    pub fn new(var: *const NumericVariable, fop: FOperator, foperand: *const NumericVariable) -> Self {
+    pub fn new(
+        var: *const NumericVariable,
+        fop: FOperator,
+        foperand: *const NumericVariable,
+    ) -> Self {
         Self {
             var,
             effect_conds: Vec::new(),
@@ -123,7 +127,10 @@ impl Operator {
         for _ in 0..count {
             let var_no = stream.read_i32();
             let val = stream.read_i32();
-            prevail.push(Prevail::new(variables[var_no as usize] as *const Variable, val));
+            prevail.push(Prevail::new(
+                variables[var_no as usize] as *const Variable,
+                val,
+            ));
         }
 
         let mut pre_post: Vec<PrePost> = Vec::new();
@@ -134,7 +141,10 @@ impl Operator {
             for _ in 0..eff_conds {
                 let var = stream.read_i32();
                 let value = stream.read_i32();
-                ecs.push(EffCond::new(variables[var as usize] as *const Variable, value));
+                ecs.push(EffCond::new(
+                    variables[var as usize] as *const Variable,
+                    value,
+                ));
             }
             let var_no = stream.read_i32();
             let val = stream.read_i32();
@@ -163,7 +173,10 @@ impl Operator {
             for _ in 0..eff_conds {
                 let var = stream.read_i32();
                 let value = stream.read_i32();
-                ecs.push(EffCond::new(variables[var as usize] as *const Variable, value));
+                ecs.push(EffCond::new(
+                    variables[var as usize] as *const Variable,
+                    value,
+                ));
             }
             let af_var = stream.read_i32();
             let op_str = stream.read_token();
@@ -286,14 +299,7 @@ impl Operator {
                 let cvar = unsafe { &*cond.var };
                 write!(out, " {} {}", cvar.get_level(), cond.cond).unwrap();
             }
-            writeln!(
-                out,
-                " {} {} {}",
-                var.get_level(),
-                eff.pre,
-                eff.post
-            )
-            .unwrap();
+            writeln!(out, " {} {} {}", var.get_level(), eff.pre, eff.post).unwrap();
         }
 
         writeln!(out, "{}", self.assign_effects.len()).unwrap();
@@ -346,10 +352,7 @@ pub fn strip_operators(operators: &mut Vec<Operator>) {
         op.strip_unimportant_effects();
     }
     operators.retain(|op| !op.is_redundant());
-    println!(
-        "{} of {} operators necessary.",
-        operators.len(), old_count
-    );
+    println!("{} of {} operators necessary.", operators.len(), old_count);
 }
 
 #[cfg(test)]

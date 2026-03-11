@@ -1,8 +1,7 @@
+use super::pddl_to_prolog::{get_variables, Rule, RuleType};
 /// Port of greedy_join.py
 /// Greedy algorithm for splitting rules into binary joins.
-
 use std::collections::{HashMap, HashSet};
-use super::pddl_to_prolog::{Rule, RuleType, get_variables};
 
 /// Python: class OccurrencesTracker(object)
 struct OccurrencesTracker {
@@ -63,7 +62,9 @@ impl CostMatrix {
     }
 
     fn add_entry(&mut self, joinee: Vec<String>) {
-        let new_row: Vec<(usize, usize, i32)> = self.joinees.iter()
+        let new_row: Vec<(usize, usize, i32)> = self
+            .joinees
+            .iter()
             .map(|other| Self::compute_join_cost(&joinee, other))
             .collect();
         self.cost_matrix.push(new_row);
@@ -149,7 +150,12 @@ impl ResultList {
         (self.result, self.counter)
     }
 
-    fn add_rule(&mut self, rule_type: RuleType, conditions: Vec<Vec<String>>, effect_vars: Vec<String>) -> Vec<String> {
+    fn add_rule(
+        &mut self,
+        rule_type: RuleType,
+        conditions: Vec<Vec<String>>,
+        effect_vars: Vec<String>,
+    ) -> Vec<String> {
         let pred = format!("p${}", self.counter);
         self.counter += 1;
         let mut effect = vec![pred];
@@ -177,32 +183,30 @@ pub fn greedy_join(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
         let right_vars = get_variables(&[right.clone()]);
         let common_vars: HashSet<String> = left_vars.intersection(&right_vars).cloned().collect();
         let condition_vars: HashSet<String> = left_vars.union(&right_vars).cloned().collect();
-        let effect_vars: HashSet<String> = occurrences.variables().intersection(&condition_vars).cloned().collect();
+        let effect_vars: HashSet<String> = occurrences
+            .variables()
+            .intersection(&condition_vars)
+            .cloned()
+            .collect();
 
         let mut joinees = vec![left, right];
         for joinee in joinees.iter_mut() {
             let joinee_vars = get_variables(&[joinee.clone()]);
-            let retained_vars: HashSet<String> = joinee_vars.intersection(
-                &effect_vars.union(&common_vars).cloned().collect()
-            ).cloned().collect();
+            let retained_vars: HashSet<String> = joinee_vars
+                .intersection(&effect_vars.union(&common_vars).cloned().collect())
+                .cloned()
+                .collect();
             if retained_vars != joinee_vars {
                 let mut sorted_retained: Vec<String> = retained_vars.into_iter().collect();
                 sorted_retained.sort();
-                *joinee = result_list.add_rule(
-                    RuleType::Project,
-                    vec![joinee.clone()],
-                    sorted_retained,
-                );
+                *joinee =
+                    result_list.add_rule(RuleType::Project, vec![joinee.clone()], sorted_retained);
             }
         }
 
         let mut sorted_effect_vars: Vec<String> = effect_vars.into_iter().collect();
         sorted_effect_vars.sort();
-        let joint_condition = result_list.add_rule(
-            RuleType::Join,
-            joinees,
-            sorted_effect_vars,
-        );
+        let joint_condition = result_list.add_rule(RuleType::Join, joinees, sorted_effect_vars);
         cost_matrix.add_entry(joint_condition.clone());
         occurrences.update(&joint_condition, 1);
     }

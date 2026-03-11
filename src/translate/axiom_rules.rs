@@ -1,11 +1,10 @@
 /// Port of axiom_rules.py
 /// Handles axiom layers, simplification, and negative axiom computation.
-
 use std::collections::{HashMap, HashSet};
 
-use super::pddl::conditions::*;
-use super::pddl::axioms::PropositionalAxiom;
 use super::pddl::actions::PropositionalAction;
+use super::pddl::axioms::PropositionalAxiom;
+use super::pddl::conditions::*;
 
 /// Python: def handle_axioms(operators, axioms, goal_list, global_constraint)
 /// Returns (processed_axioms, axiom_init_atoms, axiom_layer_dict)
@@ -20,18 +19,18 @@ pub fn handle_axioms(
     }
 
     let mut axioms_by_atom = get_axioms_by_atom(&axioms);
-    let axiom_literals = compute_necessary_axiom_literals(
-        &axioms_by_atom,
-        operators,
-        goal_list,
-        global_constraint,
-    );
+    let axiom_literals =
+        compute_necessary_axiom_literals(&axioms_by_atom, operators, goal_list, global_constraint);
     let axiom_init = compute_axiom_init(&axioms_by_atom, &axiom_literals);
     let _simplified_axioms = simplify_axioms(&mut axioms_by_atom, &axiom_literals);
     let processed_axioms = compute_negative_axioms(&axioms_by_atom, &axiom_literals);
     let axiom_layers = compute_axiom_layers(&processed_axioms, &axiom_init);
 
-    (processed_axioms, axiom_init.into_iter().collect(), axiom_layers)
+    (
+        processed_axioms,
+        axiom_init.into_iter().collect(),
+        axiom_layers,
+    )
 }
 
 fn get_axioms_by_atom(axioms: &[PropositionalAxiom]) -> HashMap<Atom, Vec<PropositionalAxiom>> {
@@ -154,7 +153,8 @@ fn simplify_axioms(
 
 fn simplify(mut axioms: Vec<PropositionalAxiom>) -> Vec<PropositionalAxiom> {
     for axiom in &mut axioms {
-        axiom.condition
+        axiom
+            .condition
             .sort_by_key(|condition| format!("{:?}", condition));
         remove_duplicate_conditions(&mut axiom.condition);
     }
@@ -186,10 +186,7 @@ fn simplify(mut axioms: Vec<PropositionalAxiom>) -> Vec<PropositionalAxiom> {
             .unwrap_or_default();
         for literal in literals {
             if let Some(candidates) = axioms_by_literal.get(literal) {
-                dominated_axioms = dominated_axioms
-                    .intersection(candidates)
-                    .copied()
-                    .collect();
+                dominated_axioms = dominated_axioms.intersection(candidates).copied().collect();
             } else {
                 dominated_axioms.clear();
                 break;
@@ -263,9 +260,7 @@ pub fn negate(axioms: &[PropositionalAxiom]) -> Vec<PropositionalAxiom> {
         } else {
             let mut new_result = vec![];
             for literal in condition {
-                let negated_literal = literal
-                    .negate_literal()
-                    .unwrap_or_else(|| literal.clone());
+                let negated_literal = literal.negate_literal().unwrap_or_else(|| literal.clone());
                 for result_axiom in &result {
                     let mut new_axiom = result_axiom.clone_axiom();
                     new_axiom.condition.push(negated_literal.clone());
@@ -298,7 +293,11 @@ fn compute_axiom_layers(
                 if let Some(condition_atom) = condition.literal_positive() {
                     let condition_sign = !condition.is_negated();
                     let condition_init_sign = axiom_init.contains(&condition_atom);
-                    let bonus = if condition_sign == condition_init_sign { 1 } else { 0 };
+                    let bonus = if condition_sign == condition_init_sign {
+                        1
+                    } else {
+                        0
+                    };
                     entry.insert((condition_atom, bonus));
                 }
             }
@@ -332,12 +331,9 @@ fn compute_axiom_layers(
             let mut new_layer = 0;
             if let Some(dependencies) = depends_on.get(atom) {
                 for (condition_atom, bonus) in dependencies {
-                    new_layer = new_layer.max(find_level(
-                        condition_atom,
-                        marker - *bonus,
-                        depends_on,
-                        layers,
-                    ) + *bonus);
+                    new_layer = new_layer.max(
+                        find_level(condition_atom, marker - *bonus, depends_on, layers) + *bonus,
+                    );
                 }
             }
             layers.insert(atom.clone(), new_layer);

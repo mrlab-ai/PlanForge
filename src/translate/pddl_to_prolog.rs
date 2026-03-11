@@ -1,12 +1,11 @@
 /// Port of pddl_to_prolog.py
 /// Translates a PDDL task into a logic program for grounding.
-
 use std::collections::{HashMap, HashSet};
 
-use super::pddl::conditions::*;
-use super::pddl::pddl_types::{TypedObject, get_type_predicate_name};
-use super::pddl::tasks::Task;
 use super::normalize;
+use super::pddl::conditions::*;
+use super::pddl::pddl_types::{get_type_predicate_name, TypedObject};
+use super::pddl::tasks::Task;
 
 /// Python: class Fact(object)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -32,17 +31,29 @@ pub enum RuleType {
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub conditions: Vec<Vec<String>>, // each condition is [pred, arg1, arg2, ...]
-    pub effect: Vec<String>,           // [pred, arg1, arg2, ...]
-    pub rule_type: Option<RuleType>,   // set by split_rules / greedy_join
+    pub effect: Vec<String>,          // [pred, arg1, arg2, ...]
+    pub rule_type: Option<RuleType>,  // set by split_rules / greedy_join
 }
 
 impl Rule {
     pub fn new(conditions: Vec<Vec<String>>, effect: Vec<String>) -> Self {
-        Rule { conditions, effect, rule_type: None }
+        Rule {
+            conditions,
+            effect,
+            rule_type: None,
+        }
     }
 
-    pub fn new_typed(conditions: Vec<Vec<String>>, effect: Vec<String>, rule_type: RuleType) -> Self {
-        Rule { conditions, effect, rule_type: Some(rule_type) }
+    pub fn new_typed(
+        conditions: Vec<Vec<String>>,
+        effect: Vec<String>,
+        rule_type: RuleType,
+    ) -> Self {
+        Rule {
+            conditions,
+            effect,
+            rule_type: Some(rule_type),
+        }
     }
 
     fn rename_duplicate_variables_in_atom(
@@ -74,7 +85,8 @@ impl Rule {
         }
 
         for (original, renamed) in extra_conditions {
-            self.conditions.push(vec!["=".to_string(), original, renamed]);
+            self.conditions
+                .push(vec!["=".to_string(), original, renamed]);
         }
     }
 }
@@ -142,11 +154,14 @@ impl PrologProgram {
     pub fn remove_free_effect_variables(&mut self) {
         let mut must_add_predicate = false;
         for rule in &mut self.rules {
-            let eff_vars: HashSet<String> = rule.effect[1..].iter()
+            let eff_vars: HashSet<String> = rule.effect[1..]
+                .iter()
                 .filter(|a| a.starts_with('?'))
                 .cloned()
                 .collect();
-            let cond_vars: HashSet<String> = rule.conditions.iter()
+            let cond_vars: HashSet<String> = rule
+                .conditions
+                .iter()
                 .flat_map(|c| c[1..].iter().filter(|a| a.starts_with('?')).cloned())
                 .collect();
 
@@ -198,15 +213,18 @@ impl PrologProgram {
 }
 
 /// Python: def translate_typed_object(prog, obj, type_dict)
-fn translate_typed_object(obj: &TypedObject, type_dict: &HashMap<String, &super::pddl::pddl_types::Type>, program: &mut PrologProgram) {
+fn translate_typed_object(
+    obj: &TypedObject,
+    type_dict: &HashMap<String, &super::pddl::pddl_types::Type>,
+    program: &mut PrologProgram,
+) {
     program.objects.insert(obj.name.clone());
     // Add type atom for the object's own type and all supertypes
     let mut type_name = Some(obj.type_name.clone());
     while let Some(ref tn) = type_name {
         let type_pred = get_type_predicate_name(tn);
         program.add_fact(vec![type_pred, obj.name.clone()]);
-        type_name = type_dict.get(tn)
-            .and_then(|t| t.basetype_name.clone());
+        type_name = type_dict.get(tn).and_then(|t| t.basetype_name.clone());
     }
 }
 
@@ -230,9 +248,8 @@ pub fn translate(task: &Task) -> PrologProgram {
     let mut program = PrologProgram::new();
 
     // Build type dictionary
-    let type_dict: HashMap<String, &super::pddl::pddl_types::Type> = task.types.iter()
-        .map(|t| (t.name.clone(), t))
-        .collect();
+    let type_dict: HashMap<String, &super::pddl::pddl_types::Type> =
+        task.types.iter().map(|t| (t.name.clone(), t)).collect();
 
     // Add objects with type facts
     for obj in &task.objects {
@@ -243,7 +260,11 @@ pub fn translate(task: &Task) -> PrologProgram {
     translate_facts(task, &mut program);
 
     for rule in normalize::build_exploration_rules(task) {
-        let conditions = rule.conditions.iter().flat_map(condition_to_atoms).collect();
+        let conditions = rule
+            .conditions
+            .iter()
+            .flat_map(condition_to_atoms)
+            .collect();
         let effect_atoms = condition_to_atoms(&rule.effect);
         if let Some(effect) = effect_atoms.into_iter().next() {
             program.add_rule(Rule::new(conditions, effect));
@@ -262,9 +283,11 @@ pub fn translate(task: &Task) -> PrologProgram {
 fn condition_to_atoms(cond: &Condition) -> Vec<Vec<String>> {
     match cond {
         Condition::Truth => vec![],
-        Condition::Conjunction(conj) => {
-            conj.parts.iter().flat_map(|p| condition_to_atoms(p)).collect()
-        }
+        Condition::Conjunction(conj) => conj
+            .parts
+            .iter()
+            .flat_map(|p| condition_to_atoms(p))
+            .collect(),
         Condition::Atom(atom) => {
             let mut result = vec![atom.predicate.clone()];
             result.extend(atom.args.clone());
@@ -274,26 +297,26 @@ fn condition_to_atoms(cond: &Condition) -> Vec<Vec<String>> {
             // Negated atoms are generally ignored in exploration (relaxation)
             vec![]
         }
-        Condition::FunctionComparison(fc) => {
-            fc.parts.iter()
-                .flat_map(|part| part.primitive_numeric_expressions())
-                .map(|pne| {
-                    let mut result = vec![normalize::get_function_predicate(&pne.symbol)];
-                    result.extend(pne.args.clone());
-                    result
-                })
-                .collect()
-        }
-        Condition::NegatedFunctionComparison(nfc) => {
-            nfc.parts.iter()
-                .flat_map(|part| part.primitive_numeric_expressions())
-                .map(|pne| {
-                    let mut result = vec![normalize::get_function_predicate(&pne.symbol)];
-                    result.extend(pne.args.clone());
-                    result
-                })
-                .collect()
-        }
+        Condition::FunctionComparison(fc) => fc
+            .parts
+            .iter()
+            .flat_map(|part| part.primitive_numeric_expressions())
+            .map(|pne| {
+                let mut result = vec![normalize::get_function_predicate(&pne.symbol)];
+                result.extend(pne.args.clone());
+                result
+            })
+            .collect(),
+        Condition::NegatedFunctionComparison(nfc) => nfc
+            .parts
+            .iter()
+            .flat_map(|part| part.primitive_numeric_expressions())
+            .map(|pne| {
+                let mut result = vec![normalize::get_function_predicate(&pne.symbol)];
+                result.extend(pne.args.clone());
+                result
+            })
+            .collect(),
         _ => vec![],
     }
 }

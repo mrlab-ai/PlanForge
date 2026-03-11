@@ -2,9 +2,11 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::conditions::{Condition, Conjunction, Atom, NegatedAtom};
+use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
+use super::f_expression::{
+    instantiate_expression, FunctionalExpression, PrimitiveNumericExpression,
+};
 use super::pddl_types::TypedObject;
-use super::f_expression::{PrimitiveNumericExpression, FunctionalExpression, instantiate_expression};
 
 /// Python: class Axiom(object)
 /// Represents a derived predicate axiom.
@@ -50,7 +52,12 @@ impl Axiom {
 
     /// Python: def dump(self)
     pub fn dump(&self) {
-        println!("Axiom {} ({} params, global={})", self.name, self.parameters.len(), self.is_global_constraint);
+        println!(
+            "Axiom {} ({} params, global={})",
+            self.name,
+            self.parameters.len(),
+            self.is_global_constraint
+        );
         println!("  condition: {}", self.condition);
     }
 
@@ -61,7 +68,9 @@ impl Axiom {
         for p in &mut self.parameters {
             p.uniquify_name(&mut type_map, &mut renamings);
         }
-        self.condition = self.condition.uniquify_variables(&mut type_map, &mut renamings);
+        self.condition = self
+            .condition
+            .uniquify_variables(&mut type_map, &mut renamings);
     }
 
     /// Python: def instantiate(self, var_mapping, init_facts, fluent_facts, ...)
@@ -79,13 +88,24 @@ impl Axiom {
         // Build the effect atom
         let arg_list: Vec<String> = self.parameters[..self.num_external_parameters]
             .iter()
-            .map(|p| var_mapping.get(&p.name).cloned().unwrap_or_else(|| p.name.clone()))
+            .map(|p| {
+                var_mapping
+                    .get(&p.name)
+                    .cloned()
+                    .unwrap_or_else(|| p.name.clone())
+            })
             .collect();
         let effect = Atom::new(self.name.clone(), arg_list);
 
         // Instantiate condition
         let condition = match self.condition.instantiate_action(
-            var_mapping, init_facts, fluent_facts, fluent_functions, init_function_vals, task_function_admin, new_constant_axioms,
+            var_mapping,
+            init_facts,
+            fluent_facts,
+            fluent_functions,
+            init_function_vals,
+            task_function_admin,
+            new_constant_axioms,
         ) {
             Some(conds) => conds,
             None => return None,
@@ -109,7 +129,11 @@ pub struct PropositionalAxiom {
 
 impl PropositionalAxiom {
     pub fn new(name: String, condition: Vec<Condition>, effect: Condition) -> Self {
-        PropositionalAxiom { name, condition, effect }
+        PropositionalAxiom {
+            name,
+            condition,
+            effect,
+        }
     }
 
     /// Python: def clone(self)
@@ -129,7 +153,11 @@ impl PropositionalAxiom {
 
 impl fmt::Display for PropositionalAxiom {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PropAxiom({}, {:?} -> {})", self.name, self.condition, self.effect)
+        write!(
+            f,
+            "PropAxiom({}, {:?} -> {})",
+            self.name, self.condition, self.effect
+        )
     }
 }
 
@@ -144,19 +172,31 @@ pub struct NumericAxiom {
 }
 
 impl NumericAxiom {
-    pub fn new(name: String, parameters: Vec<TypedObject>, op: String, parts: Vec<FunctionalExpression>) -> Self {
-        NumericAxiom { name, parameters, op, parts }
+    pub fn new(
+        name: String,
+        parameters: Vec<TypedObject>,
+        op: String,
+        parts: Vec<FunctionalExpression>,
+    ) -> Self {
+        NumericAxiom {
+            name,
+            parameters,
+            op,
+            parts,
+        }
     }
 
     pub fn ntype(&self) -> char {
-        if self.op.is_empty() { 'C' } else { 'D' }
+        if self.op.is_empty() {
+            'C'
+        } else {
+            'D'
+        }
     }
 
     /// Python: def get_head(self)
     pub fn get_head(&self) -> PrimitiveNumericExpression {
-        let args: Vec<String> = self.parameters.iter()
-            .map(|p| p.name.clone())
-            .collect();
+        let args: Vec<String> = self.parameters.iter().map(|p| p.name.clone()).collect();
         PrimitiveNumericExpression::with_type(self.name.clone(), args, self.ntype())
     }
 
@@ -169,22 +209,32 @@ impl NumericAxiom {
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut Vec<InstantiatedNumericAxiom>,
     ) -> InstantiatedNumericAxiom {
-        let new_args: Vec<String> = self.parameters.iter()
-            .map(|p| var_mapping.get(&p.name).cloned().unwrap_or_else(|| p.name.clone()))
+        let new_args: Vec<String> = self
+            .parameters
+            .iter()
+            .map(|p| {
+                var_mapping
+                    .get(&p.name)
+                    .cloned()
+                    .unwrap_or_else(|| p.name.clone())
+            })
             .collect();
-        let effect = PrimitiveNumericExpression::with_type(
-            self.name.clone(), new_args, self.ntype(),
-        );
+        let effect =
+            PrimitiveNumericExpression::with_type(self.name.clone(), new_args, self.ntype());
 
-        let new_parts: Vec<FunctionalExpression> = self.parts.iter()
-            .map(|part| instantiate_expression(
-                part,
-                var_mapping,
-                fluent_functions,
-                init_function_vals,
-                task_function_admin,
-                new_constant_axioms,
-            ))
+        let new_parts: Vec<FunctionalExpression> = self
+            .parts
+            .iter()
+            .map(|part| {
+                instantiate_expression(
+                    part,
+                    var_mapping,
+                    fluent_functions,
+                    init_function_vals,
+                    task_function_admin,
+                    new_constant_axioms,
+                )
+            })
             .collect();
 
         InstantiatedNumericAxiom {
@@ -225,7 +275,12 @@ impl InstantiatedNumericAxiom {
         parts: Vec<FunctionalExpression>,
         effect: PrimitiveNumericExpression,
     ) -> Self {
-        InstantiatedNumericAxiom { name, op, parts, effect }
+        InstantiatedNumericAxiom {
+            name,
+            op,
+            parts,
+            effect,
+        }
     }
 
     pub fn dump(&self) {
@@ -239,14 +294,20 @@ impl InstantiatedNumericAxiom {
 
 impl fmt::Display for InstantiatedNumericAxiom {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "InstNumAxiom({}, {} -> {})", self.name, self.op, self.effect)
+        write!(
+            f,
+            "InstNumAxiom({}, {} -> {})",
+            self.name, self.op, self.effect
+        )
     }
 }
 
 impl PartialEq for InstantiatedNumericAxiom {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.op == other.op
-            && self.parts == other.parts && self.effect == other.effect
+        self.name == other.name
+            && self.op == other.op
+            && self.parts == other.parts
+            && self.effect == other.effect
     }
 }
 

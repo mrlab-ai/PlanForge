@@ -153,7 +153,12 @@ impl NegatedAtom {
 impl fmt::Display for NegatedAtom {
     /// Python: def __str__(self) -> "NegatedAtom %s(%s)"
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "NegatedAtom {}({})", self.predicate, self.args.join(", "))
+        write!(
+            f,
+            "NegatedAtom {}({})",
+            self.predicate,
+            self.args.join(", ")
+        )
     }
 }
 
@@ -233,7 +238,11 @@ pub struct FunctionComparison {
 
 impl FunctionComparison {
     pub fn new(comparator: String, parts: Vec<super::f_expression::FunctionalExpression>) -> Self {
-        FunctionComparison { comparator, parts, negated: false }
+        FunctionComparison {
+            comparator,
+            parts,
+            negated: false,
+        }
     }
 
     /// Python: def negate(self) -> NegatedFunctionComparison
@@ -248,7 +257,11 @@ impl FunctionComparison {
 
 impl fmt::Display for FunctionComparison {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FunctionComparison({}, {:?})", self.comparator, self.parts)
+        write!(
+            f,
+            "FunctionComparison({}, {:?})",
+            self.comparator, self.parts
+        )
     }
 }
 
@@ -262,7 +275,11 @@ pub struct NegatedFunctionComparison {
 
 impl NegatedFunctionComparison {
     pub fn new(comparator: String, parts: Vec<super::f_expression::FunctionalExpression>) -> Self {
-        NegatedFunctionComparison { comparator, parts, negated: true }
+        NegatedFunctionComparison {
+            comparator,
+            parts,
+            negated: true,
+        }
     }
 
     /// Python: def negate(self) -> FunctionComparison
@@ -277,7 +294,11 @@ impl NegatedFunctionComparison {
 
 impl fmt::Display for NegatedFunctionComparison {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "NegatedFunctionComparison({}, {:?})", self.comparator, self.parts)
+        write!(
+            f,
+            "NegatedFunctionComparison({}, {:?})",
+            self.comparator, self.parts
+        )
     }
 }
 
@@ -332,28 +353,30 @@ impl Condition {
                 }
             }
             Condition::UniversalCondition(uc) => {
-                let new_parts: Vec<Condition> = uc.parts.iter()
-                    .map(|p| p.simplified())
-                    .collect();
+                let new_parts: Vec<Condition> = uc.parts.iter().map(|p| p.simplified()).collect();
                 // Python: if isinstance(parts[0], ConstantCondition): return parts[0]
-                if new_parts.len() == 1 && matches!(&new_parts[0], Condition::Truth | Condition::Falsity) {
+                if new_parts.len() == 1
+                    && matches!(&new_parts[0], Condition::Truth | Condition::Falsity)
+                {
                     new_parts.into_iter().next().unwrap()
                 } else {
                     Condition::UniversalCondition(UniversalCondition::new(
-                        uc.parameters.clone(), new_parts,
+                        uc.parameters.clone(),
+                        new_parts,
                     ))
                 }
             }
             Condition::ExistentialCondition(ec) => {
-                let new_parts: Vec<Condition> = ec.parts.iter()
-                    .map(|p| p.simplified())
-                    .collect();
+                let new_parts: Vec<Condition> = ec.parts.iter().map(|p| p.simplified()).collect();
                 // Python: if isinstance(parts[0], ConstantCondition): return parts[0]
-                if new_parts.len() == 1 && matches!(&new_parts[0], Condition::Truth | Condition::Falsity) {
+                if new_parts.len() == 1
+                    && matches!(&new_parts[0], Condition::Truth | Condition::Falsity)
+                {
                     new_parts.into_iter().next().unwrap()
                 } else {
                     Condition::ExistentialCondition(ExistentialCondition::new(
-                        ec.parameters.clone(), new_parts,
+                        ec.parameters.clone(),
+                        new_parts,
                     ))
                 }
             }
@@ -367,16 +390,12 @@ impl Condition {
         match self {
             Condition::Truth => Condition::Truth,
             Condition::Falsity => Condition::Falsity,
-            Condition::Conjunction(conj) => {
-                Condition::Conjunction(Conjunction::new(
-                    conj.parts.iter().map(|p| p.relaxed()).collect(),
-                ))
-            }
-            Condition::Disjunction(disj) => {
-                Condition::Disjunction(Disjunction::new(
-                    disj.parts.iter().map(|p| p.relaxed()).collect(),
-                ))
-            }
+            Condition::Conjunction(conj) => Condition::Conjunction(Conjunction::new(
+                conj.parts.iter().map(|p| p.relaxed()).collect(),
+            )),
+            Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
+                disj.parts.iter().map(|p| p.relaxed()).collect(),
+            )),
             Condition::UniversalCondition(uc) => {
                 Condition::UniversalCondition(UniversalCondition::new(
                     uc.parameters.clone(),
@@ -401,7 +420,9 @@ impl Condition {
         // Replaces typed quantifiers with untyped ones by adding type predicates.
         match self {
             Condition::UniversalCondition(uc) => {
-                let type_lits: Vec<Condition> = uc.parameters.iter()
+                let type_lits: Vec<Condition> = uc
+                    .parameters
+                    .iter()
                     .map(|p| {
                         let atom = p.get_atom();
                         Condition::NegatedAtom(atom.negate())
@@ -415,7 +436,9 @@ impl Condition {
                 ))
             }
             Condition::ExistentialCondition(ec) => {
-                let type_lits: Vec<Condition> = ec.parameters.iter()
+                let type_lits: Vec<Condition> = ec
+                    .parameters
+                    .iter()
                     .map(|p| Condition::Atom(p.get_atom()))
                     .collect();
                 let mut parts: Vec<Condition> = type_lits;
@@ -425,16 +448,12 @@ impl Condition {
                     vec![Condition::Conjunction(Conjunction::new(parts))],
                 ))
             }
-            Condition::Conjunction(conj) => {
-                Condition::Conjunction(Conjunction::new(
-                    conj.parts.iter().map(|p| p.untyped()).collect(),
-                ))
-            }
-            Condition::Disjunction(disj) => {
-                Condition::Disjunction(Disjunction::new(
-                    disj.parts.iter().map(|p| p.untyped()).collect(),
-                ))
-            }
+            Condition::Conjunction(conj) => Condition::Conjunction(Conjunction::new(
+                conj.parts.iter().map(|p| p.untyped()).collect(),
+            )),
+            Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
+                disj.parts.iter().map(|p| p.untyped()).collect(),
+            )),
             other => other.clone(),
         }
     }
@@ -451,7 +470,9 @@ impl Condition {
                 for p in &mut new_params {
                     p.uniquify_name(type_map, renamings);
                 }
-                let new_parts = uc.parts.iter()
+                let new_parts = uc
+                    .parts
+                    .iter()
                     .map(|p| p.uniquify_variables(type_map, renamings))
                     .collect();
                 Condition::UniversalCondition(UniversalCondition::new(new_params, new_parts))
@@ -461,44 +482,62 @@ impl Condition {
                 for p in &mut new_params {
                     p.uniquify_name(type_map, renamings);
                 }
-                let new_parts = ec.parts.iter()
+                let new_parts = ec
+                    .parts
+                    .iter()
                     .map(|p| p.uniquify_variables(type_map, renamings))
                     .collect();
                 Condition::ExistentialCondition(ExistentialCondition::new(new_params, new_parts))
             }
-            Condition::Conjunction(conj) => {
-                Condition::Conjunction(Conjunction::new(
-                    conj.parts.iter().map(|p| p.uniquify_variables(type_map, renamings)).collect(),
-                ))
-            }
-            Condition::Disjunction(disj) => {
-                Condition::Disjunction(Disjunction::new(
-                    disj.parts.iter().map(|p| p.uniquify_variables(type_map, renamings)).collect(),
-                ))
-            }
+            Condition::Conjunction(conj) => Condition::Conjunction(Conjunction::new(
+                conj.parts
+                    .iter()
+                    .map(|p| p.uniquify_variables(type_map, renamings))
+                    .collect(),
+            )),
+            Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
+                disj.parts
+                    .iter()
+                    .map(|p| p.uniquify_variables(type_map, renamings))
+                    .collect(),
+            )),
             Condition::Atom(atom) => {
-                let new_args = atom.args.iter()
+                let new_args = atom
+                    .args
+                    .iter()
                     .map(|a| renamings.get(a).cloned().unwrap_or_else(|| a.clone()))
                     .collect();
                 Condition::Atom(Atom::new(atom.predicate.clone(), new_args))
             }
             Condition::NegatedAtom(natom) => {
-                let new_args = natom.args.iter()
+                let new_args = natom
+                    .args
+                    .iter()
                     .map(|a| renamings.get(a).cloned().unwrap_or_else(|| a.clone()))
                     .collect();
                 Condition::NegatedAtom(NegatedAtom::new(natom.predicate.clone(), new_args))
             }
             Condition::FunctionComparison(fc) => {
-                let new_parts = fc.parts.iter()
+                let new_parts = fc
+                    .parts
+                    .iter()
                     .map(|p| p.rename_variables(renamings))
                     .collect();
-                Condition::FunctionComparison(FunctionComparison::new(fc.comparator.clone(), new_parts))
+                Condition::FunctionComparison(FunctionComparison::new(
+                    fc.comparator.clone(),
+                    new_parts,
+                ))
             }
             Condition::NegatedFunctionComparison(nfc) => {
-                let new_parts = nfc.parts.iter()
+                let new_parts = nfc
+                    .parts
+                    .iter()
                     .map(|p| p.rename_variables(renamings))
                     .collect();
-                Condition::NegatedFunctionComparison(NegatedFunctionComparison::new(nfc.comparator.clone(), new_parts))
+                Condition::NegatedFunctionComparison(NegatedFunctionComparison::new(
+                    nfc.comparator.clone(),
+                    new_parts,
+                ))
             }
             other => other.clone(),
         }
@@ -542,18 +581,18 @@ impl Condition {
                 }
                 result
             }
-            Condition::Atom(atom) => {
-                atom.args.iter()
-                    .filter(|a| a.starts_with('?'))
-                    .cloned()
-                    .collect()
-            }
-            Condition::NegatedAtom(natom) => {
-                natom.args.iter()
-                    .filter(|a| a.starts_with('?'))
-                    .cloned()
-                    .collect()
-            }
+            Condition::Atom(atom) => atom
+                .args
+                .iter()
+                .filter(|a| a.starts_with('?'))
+                .cloned()
+                .collect(),
+            Condition::NegatedAtom(natom) => natom
+                .args
+                .iter()
+                .filter(|a| a.starts_with('?'))
+                .cloned()
+                .collect(),
             Condition::FunctionComparison(fc) => {
                 let mut result = HashSet::new();
                 for p in &fc.parts {
@@ -621,7 +660,10 @@ impl Condition {
 
     /// Check if this condition is negated (NegatedAtom or NegatedFunctionComparison)
     pub fn is_negated(&self) -> bool {
-        matches!(self, Condition::NegatedAtom(_) | Condition::NegatedFunctionComparison(_))
+        matches!(
+            self,
+            Condition::NegatedAtom(_) | Condition::NegatedFunctionComparison(_)
+        )
     }
 
     /// Get the Atom if this is Condition::Atom
@@ -705,7 +747,9 @@ impl Condition {
                 }
             }
             Condition::Atom(atom) => {
-                let new_args: Vec<String> = atom.args.iter()
+                let new_args: Vec<String> = atom
+                    .args
+                    .iter()
                     .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
                     .collect();
                 let new_atom = Atom::new(atom.predicate.clone(), new_args);
@@ -718,12 +762,17 @@ impl Condition {
                 // else: static fact in init -> always true, skip
             }
             Condition::NegatedAtom(natom) => {
-                let new_args: Vec<String> = natom.args.iter()
+                let new_args: Vec<String> = natom
+                    .args
+                    .iter()
                     .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
                     .collect();
                 let new_atom = Atom::new(natom.predicate.clone(), new_args.clone());
                 if fluent_facts.contains(&natom.predicate) {
-                    result.push(Condition::NegatedAtom(NegatedAtom::new(natom.predicate.clone(), new_args)));
+                    result.push(Condition::NegatedAtom(NegatedAtom::new(
+                        natom.predicate.clone(),
+                        new_args,
+                    )));
                 } else if init_facts.contains(&new_atom) {
                     // Static fact in init but we need it negated -> unsatisfiable
                     panic!("Static atom in init but needed negated: {}", new_atom);
@@ -746,7 +795,9 @@ impl fmt::Display for Condition {
             Condition::Conjunction(c) => {
                 write!(f, "Conjunction([")?;
                 for (i, p) in c.parts.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", p)?;
                 }
                 write!(f, "])")
@@ -754,7 +805,9 @@ impl fmt::Display for Condition {
             Condition::Disjunction(d) => {
                 write!(f, "Disjunction([")?;
                 for (i, p) in d.parts.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", p)?;
                 }
                 write!(f, "])")

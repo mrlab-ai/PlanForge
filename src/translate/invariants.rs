@@ -1,12 +1,11 @@
+use itertools::Itertools;
 /// Port of invariants.py
 /// Invariant parts and invariant checking for mutex group computation.
-
 use std::collections::{HashMap, HashSet};
-use itertools::Itertools;
 
-use super::pddl::conditions::*;
+use super::constraints::{Assignment, ConstraintSystem, NegativeClause};
 use super::pddl::actions::Action;
-use super::constraints::{ConstraintSystem, Assignment, NegativeClause};
+use super::pddl::conditions::*;
 use super::tools;
 
 /// Python: def invert_list(alist)
@@ -19,16 +18,19 @@ fn invert_list(alist: &[String]) -> HashMap<String, Vec<usize>> {
 }
 
 /// Python: def instantiate_factored_mapping(pairs)
-fn instantiate_factored_mapping(
-    pairs: &[(Vec<usize>, Vec<i32>)],
-) -> Vec<Vec<(usize, i32)>> {
-    let part_mappings: Vec<Vec<Vec<(usize, i32)>>> = pairs.iter()
+fn instantiate_factored_mapping(pairs: &[(Vec<usize>, Vec<i32>)]) -> Vec<Vec<(usize, i32)>> {
+    let part_mappings: Vec<Vec<Vec<(usize, i32)>>> = pairs
+        .iter()
         .map(|(preimg, img)| {
             // Generate all permutations of img and zip with preimg
             let perms: Vec<Vec<i32>> = img.iter().cloned().permutations(img.len()).collect();
-            perms.into_iter()
+            perms
+                .into_iter()
                 .map(|perm_img| {
-                    preimg.iter().cloned().zip(perm_img.into_iter())
+                    preimg
+                        .iter()
+                        .cloned()
+                        .zip(perm_img.into_iter())
                         .collect::<Vec<(usize, i32)>>()
                 })
                 .collect()
@@ -42,9 +44,7 @@ fn instantiate_factored_mapping(
 
 /// Python: def find_unique_variables(action, invariant)
 fn find_unique_variables(action: &Action, invariant: &Invariant) -> Vec<String> {
-    let mut params: HashSet<String> = action.parameters.iter()
-        .map(|p| p.name.clone())
-        .collect();
+    let mut params: HashSet<String> = action.parameters.iter().map(|p| p.name.clone()).collect();
     for eff in &action.effects {
         for p in &eff.parameters {
             params.insert(p.name.clone());
@@ -69,11 +69,11 @@ fn find_unique_variables(action: &Action, invariant: &Invariant) -> Vec<String> 
 fn get_literals(condition: &Condition) -> Vec<&Condition> {
     match condition {
         Condition::Atom(_) | Condition::NegatedAtom(_) => vec![condition],
-        Condition::Conjunction(conj) => {
-            conj.parts.iter()
-                .filter(|p| matches!(p, Condition::Atom(_) | Condition::NegatedAtom(_)))
-                .collect()
-        }
+        Condition::Conjunction(conj) => conj
+            .parts
+            .iter()
+            .filter(|p| matches!(p, Condition::Atom(_) | Condition::NegatedAtom(_)))
+            .collect(),
         _ => vec![],
     }
 }
@@ -121,7 +121,8 @@ pub fn ensure_conjunction_sat(system: &mut ConstraintSystem, parts: &[&[&Conditi
                     if let (Some((_, _, pos_args)), Some((_, _, neg_args))) =
                         (literal_info(posatom), literal_info(negatom))
                     {
-                        let parts: Vec<(String, String)> = neg_args.iter()
+                        let parts: Vec<(String, String)> = neg_args
+                            .iter()
                             .zip(pos_args.iter())
                             .map(|(a, b)| (a.clone(), b.clone()))
                             .collect();
@@ -148,16 +149,13 @@ fn ensure_cover(
 }
 
 /// Python: def ensure_inequality(system, literal1, literal2)
-fn ensure_inequality(
-    system: &mut ConstraintSystem,
-    literal1: &Condition,
-    literal2: &Condition,
-) {
+fn ensure_inequality(system: &mut ConstraintSystem, literal1: &Condition, literal2: &Condition) {
     if let (Some((_, pred1, args1)), Some((_, pred2, args2))) =
         (literal_info(literal1), literal_info(literal2))
     {
         if pred1 == pred2 && !args1.is_empty() {
-            let parts: Vec<(String, String)> = args1.iter()
+            let parts: Vec<(String, String)> = args1
+                .iter()
                 .zip(args2.iter())
                 .map(|(a, b)| (a.clone(), b.clone()))
                 .collect();
@@ -170,13 +168,17 @@ fn ensure_inequality(
 #[derive(Debug, Clone, Eq)]
 pub struct InvariantPart {
     pub predicate: String,
-    pub order: Vec<usize>,     // mapping from invariant var positions to predicate arg positions
-    pub omitted_pos: i32,      // position of the "counted" variable, -1 if none
+    pub order: Vec<usize>, // mapping from invariant var positions to predicate arg positions
+    pub omitted_pos: i32,  // position of the "counted" variable, -1 if none
 }
 
 impl InvariantPart {
     pub fn new(predicate: String, order: Vec<usize>, omitted_pos: i32) -> Self {
-        InvariantPart { predicate, order, omitted_pos }
+        InvariantPart {
+            predicate,
+            order,
+            omitted_pos,
+        }
     }
 
     /// Python: def arity(self)
@@ -187,7 +189,8 @@ impl InvariantPart {
     /// Python: def get_assignment(self, parameters, literal)
     pub fn get_assignment(&self, parameters: &[String], literal: &Condition) -> Assignment {
         if let Some((_, _, args)) = literal_info(literal) {
-            let equalities: Vec<(String, String)> = parameters.iter()
+            let equalities: Vec<(String, String)> = parameters
+                .iter()
                 .zip(self.order.iter())
                 .map(|(param, &argpos)| (param.clone(), args[argpos].clone()))
                 .collect();
@@ -213,7 +216,10 @@ impl InvariantPart {
         for (param, &argpos) in parameters.iter().zip(self.order.iter()) {
             args[argpos] = param.clone();
         }
-        Atom { predicate: self.predicate.clone(), args }
+        Atom {
+            predicate: self.predicate.clone(),
+            args,
+        }
     }
 
     /// Python: def possible_mappings(self, own_literal, other_literal)
@@ -249,7 +255,8 @@ impl InvariantPart {
             if len_diff != 0 {
                 let mut own_pos_extended = own_positions.clone();
                 own_pos_extended.push(usize::MAX); // sentinel for -1
-                let own_pos_i32: Vec<i32> = own_pos_extended.iter()
+                let own_pos_i32: Vec<i32> = own_pos_extended
+                    .iter()
                     .map(|&p| if p == usize::MAX { -1 } else { p as i32 })
                     .collect();
                 allowed_omissions = 0;
@@ -285,13 +292,22 @@ impl InvariantPart {
                     new_order[*value as usize] = *key;
                 }
             }
-            result.push(InvariantPart::new(other_pred.to_string(), new_order, omitted));
+            result.push(InvariantPart::new(
+                other_pred.to_string(),
+                new_order,
+                omitted,
+            ));
         }
         result
     }
 
     /// Python: def matches(self, other, own_literal, other_literal)
-    pub fn matches(&self, other: &InvariantPart, own_literal: &Condition, other_literal: &Condition) -> bool {
+    pub fn matches(
+        &self,
+        other: &InvariantPart,
+        own_literal: &Condition,
+        other_literal: &Condition,
+    ) -> bool {
         self.get_parameters(own_literal) == other.get_parameters(other_literal)
     }
 }
@@ -317,7 +333,8 @@ impl PartialOrd for InvariantPart {
 
 impl Ord for InvariantPart {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.predicate.cmp(&other.predicate)
+        self.predicate
+            .cmp(&other.predicate)
             .then(self.order.cmp(&other.order))
     }
 }
@@ -334,11 +351,16 @@ impl Invariant {
     pub fn new(parts: impl IntoIterator<Item = InvariantPart>) -> Self {
         let parts_set: HashSet<InvariantPart> = parts.into_iter().collect();
         let predicates: HashSet<String> = parts_set.iter().map(|p| p.predicate.clone()).collect();
-        let predicate_to_part: HashMap<String, InvariantPart> = parts_set.iter()
+        let predicate_to_part: HashMap<String, InvariantPart> = parts_set
+            .iter()
             .map(|p| (p.predicate.clone(), p.clone()))
             .collect();
         assert_eq!(parts_set.len(), predicates.len());
-        Invariant { parts: parts_set, predicates, predicate_to_part }
+        Invariant {
+            parts: parts_set,
+            predicates,
+            predicate_to_part,
+        }
     }
 
     /// Python: def arity(self)
@@ -358,7 +380,10 @@ impl Invariant {
 
     /// Python: def instantiate(self, parameters)
     pub fn instantiate(&self, parameters: &[String]) -> Vec<Atom> {
-        self.parts.iter().map(|part| part.instantiate(parameters)).collect()
+        self.parts
+            .iter()
+            .map(|part| part.instantiate(parameters))
+            .collect()
     }
 
     /// Python: def get_covering_assignments(self, parameters, atom)
@@ -402,7 +427,9 @@ impl Invariant {
 
     /// Python: def operator_too_heavy(self, h_action)
     pub fn operator_too_heavy(&self, h_action: &Action) -> bool {
-        let add_effects: Vec<&super::pddl::effects::Effect> = h_action.effects.iter()
+        let add_effects: Vec<&super::pddl::effects::Effect> = h_action
+            .effects
+            .iter()
             .filter(|eff| {
                 if let Some((negated, pred, _)) = literal_info(&eff.peffect) {
                     !negated && self.predicate_to_part.contains_key(pred)
@@ -457,7 +484,9 @@ impl Invariant {
         enqueue_func: &mut dyn FnMut(Invariant),
     ) -> bool {
         let inv_vars = find_unique_variables(action, self);
-        let relevant_effs: Vec<&super::pddl::effects::Effect> = action.effects.iter()
+        let relevant_effs: Vec<&super::pddl::effects::Effect> = action
+            .effects
+            .iter()
             .filter(|eff| {
                 if let Some((_, pred, _)) = literal_info(&eff.peffect) {
                     self.predicate_to_part.contains_key(pred)
@@ -467,7 +496,8 @@ impl Invariant {
             })
             .collect();
 
-        let add_effects: Vec<&&super::pddl::effects::Effect> = relevant_effs.iter()
+        let add_effects: Vec<&&super::pddl::effects::Effect> = relevant_effs
+            .iter()
             .filter(|eff| {
                 if let Some((negated, _, _)) = literal_info(&eff.peffect) {
                     !negated
@@ -477,7 +507,8 @@ impl Invariant {
             })
             .collect();
 
-        let del_effects: Vec<&&super::pddl::effects::Effect> = relevant_effs.iter()
+        let del_effects: Vec<&&super::pddl::effects::Effect> = relevant_effs
+            .iter()
             .filter(|eff| {
                 if let Some((negated, _, _)) = literal_info(&eff.peffect) {
                     negated
@@ -544,7 +575,11 @@ impl Invariant {
         let add_cond_lits = get_literals(&add_effect.condition);
         let add_neg = negate_literal(&add_effect.peffect);
 
-        for lit in precond_lits.iter().chain(add_cond_lits.iter()).chain(std::iter::once(&&add_neg)) {
+        for lit in precond_lits
+            .iter()
+            .chain(add_cond_lits.iter())
+            .chain(std::iter::once(&&add_neg))
+        {
             if let Some((_, pred, _)) = literal_info(lit) {
                 lhs_by_pred.entry(pred.to_string()).or_default().push(lit);
             }
@@ -552,7 +587,12 @@ impl Invariant {
 
         for del_effect in del_effects {
             minimal_renamings = self.unbalanced_renamings(
-                del_effect, add_effect, inv_vars, &lhs_by_pred, minimal_renamings);
+                del_effect,
+                add_effect,
+                inv_vars,
+                &lhs_by_pred,
+                minimal_renamings,
+            );
             if minimal_renamings.is_empty() {
                 return false;
             }
@@ -574,7 +614,9 @@ impl Invariant {
                 for del_eff in &action.effects {
                     if let Some((negated, del_pred, _)) = literal_info(&del_eff.peffect) {
                         if negated && !self.predicate_to_part.contains_key(del_pred) {
-                            for match_part in part.possible_matches(&add_effect.peffect, &del_eff.peffect) {
+                            for match_part in
+                                part.possible_matches(&add_effect.peffect, &del_eff.peffect)
+                            {
                                 let mut new_parts: HashSet<InvariantPart> = self.parts.clone();
                                 new_parts.insert(match_part);
                                 enqueue_func(Invariant::new(new_parts));
@@ -649,7 +691,10 @@ impl Invariant {
         lhs_by_pred: &HashMap<String, Vec<&Condition>>,
     ) -> bool {
         let mut system = renaming.copy();
-        let all_lits: Vec<&Condition> = lhs_by_pred.values().flat_map(|v| v.iter().copied()).collect();
+        let all_lits: Vec<&Condition> = lhs_by_pred
+            .values()
+            .flat_map(|v| v.iter().copied())
+            .collect();
         let all_lits_ref: Vec<&[&Condition]> = vec![&all_lits[..]];
         ensure_conjunction_sat(&mut system, &all_lits_ref);
         system.is_solvable()
@@ -665,7 +710,8 @@ impl Invariant {
 
         let del_cond_lits = get_literals(&del_effect.condition);
         let del_neg = negate_literal(&del_effect.peffect);
-        let all_lits: Vec<&Condition> = del_cond_lits.into_iter()
+        let all_lits: Vec<&Condition> = del_cond_lits
+            .into_iter()
             .chain(std::iter::once(&del_neg as &Condition))
             .collect();
 
@@ -678,7 +724,8 @@ impl Invariant {
                         if m_negated != negated {
                             continue;
                         }
-                        let equalities: Vec<(String, String)> = args.iter()
+                        let equalities: Vec<(String, String)> = args
+                            .iter()
                             .zip(m_args.iter())
                             .map(|(a, b)| (a.clone(), b.clone()))
                             .collect();
@@ -734,9 +781,9 @@ impl Ord for Invariant {
 /// Helper to negate a literal condition
 fn negate_literal(cond: &Condition) -> Condition {
     match cond {
-        Condition::Atom(a) => Condition::NegatedAtom(
-            NegatedAtom::new(a.predicate.clone(), a.args.clone())
-        ),
+        Condition::Atom(a) => {
+            Condition::NegatedAtom(NegatedAtom::new(a.predicate.clone(), a.args.clone()))
+        }
         Condition::NegatedAtom(na) => {
             Condition::Atom(Atom::new(na.predicate.clone(), na.args.clone()))
         }
@@ -758,7 +805,8 @@ impl BalanceChecker {
     }
 
     pub fn get_heavy_action(&self, action_idx: usize) -> &Action {
-        self.action_to_heavy_action.get(&action_idx)
+        self.action_to_heavy_action
+            .get(&action_idx)
             .unwrap_or(&self.actions[action_idx])
     }
 }

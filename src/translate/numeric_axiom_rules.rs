@@ -1,12 +1,13 @@
 /// Port of numeric_axiom_rules.py
 /// Handles numeric axiom constant folding, layer computation, and equivalence detection.
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use ordered_float::OrderedFloat;
 
 use super::pddl::axioms::InstantiatedNumericAxiom;
-use super::pddl::f_expression::{FunctionalExpression, NumericConstant, PrimitiveNumericExpression};
+use super::pddl::f_expression::{
+    FunctionalExpression, NumericConstant, PrimitiveNumericExpression,
+};
 
 /// Python: def handle_axioms(axioms)
 /// Returns (processed_axioms, axioms_by_layer, max_layer, axiom_map, constant_axioms)
@@ -52,7 +53,10 @@ pub fn handle_axioms(
 
 fn is_folded_constant_axiom(axiom: &InstantiatedNumericAxiom) -> bool {
     axiom.op.is_empty()
-        && matches!(axiom.parts.first(), Some(FunctionalExpression::NumericConstant(_)))
+        && matches!(
+            axiom.parts.first(),
+            Some(FunctionalExpression::NumericConstant(_))
+        )
 }
 
 fn axiom_by_pne(axioms: &[InstantiatedNumericAxiom]) -> HashMap<PrimitiveNumericExpression, usize> {
@@ -94,7 +98,9 @@ fn fold_axiom_if_constant(
     let result = if op.is_empty() {
         match parts.first() {
             Some(FunctionalExpression::NumericConstant(nc)) => Some(nc.value),
-            Some(part) if parts.len() == 1 => resolve_constant_part(part, axioms, axiom_index, memo, visiting),
+            Some(part) if parts.len() == 1 => {
+                resolve_constant_part(part, axioms, axiom_index, memo, visiting)
+            }
             _ => None,
         }
     } else {
@@ -113,7 +119,9 @@ fn fold_axiom_if_constant(
 
     if let Some(value) = result {
         axioms[idx].op.clear();
-        axioms[idx].parts = vec![FunctionalExpression::NumericConstant(NumericConstant { value })];
+        axioms[idx].parts = vec![FunctionalExpression::NumericConstant(NumericConstant {
+            value,
+        })];
         axioms[idx].effect.ntype = 'C';
     }
 
@@ -131,14 +139,19 @@ fn resolve_constant_part(
 ) -> Option<OrderedFloat<f64>> {
     match part {
         FunctionalExpression::NumericConstant(nc) => Some(nc.value),
-        FunctionalExpression::PrimitiveNumericExpression(pne) => axiom_index
-            .get(pne)
-            .and_then(|&dep_idx| fold_axiom_if_constant(dep_idx, axioms, axiom_index, memo, visiting)),
+        FunctionalExpression::PrimitiveNumericExpression(pne) => {
+            axiom_index.get(pne).and_then(|&dep_idx| {
+                fold_axiom_if_constant(dep_idx, axioms, axiom_index, memo, visiting)
+            })
+        }
         _ => None,
     }
 }
 
-fn evaluate_constant_expression(op: &str, values: &[OrderedFloat<f64>]) -> Option<OrderedFloat<f64>> {
+fn evaluate_constant_expression(
+    op: &str,
+    values: &[OrderedFloat<f64>],
+) -> Option<OrderedFloat<f64>> {
     if values.is_empty() {
         return None;
     }
@@ -214,13 +227,15 @@ fn compute_axiom_layers(
         } else {
             let mut current = 0;
             for part in &axioms[idx].parts {
-                current = current.max(compute_layer_for_expr(
-                    part,
-                    axioms,
-                    axiom_index,
-                    constant_effects,
-                    layer_cache,
-                ) + 1);
+                current = current.max(
+                    compute_layer_for_expr(
+                        part,
+                        axioms,
+                        axiom_index,
+                        constant_effects,
+                        layer_cache,
+                    ) + 1,
+                );
             }
             current
         };
@@ -243,7 +258,10 @@ fn compute_axiom_layers(
     let mut axioms_by_layer: BTreeMap<i32, Vec<InstantiatedNumericAxiom>> = BTreeMap::new();
     for axiom in axioms {
         let layer = *layer_cache.get(&axiom.effect).unwrap_or(&-1);
-        axioms_by_layer.entry(layer).or_default().push(axiom.clone());
+        axioms_by_layer
+            .entry(layer)
+            .or_default()
+            .push(axiom.clone());
     }
 
     (axioms_by_layer, max_layer)
@@ -252,11 +270,14 @@ fn compute_axiom_layers(
 fn identify_equivalent_axioms(
     axioms_by_layer: &BTreeMap<i32, Vec<InstantiatedNumericAxiom>>,
 ) -> HashMap<PrimitiveNumericExpression, PrimitiveNumericExpression> {
-    let mut axiom_map: HashMap<PrimitiveNumericExpression, PrimitiveNumericExpression> = HashMap::new();
+    let mut axiom_map: HashMap<PrimitiveNumericExpression, PrimitiveNumericExpression> =
+        HashMap::new();
 
     for axioms in axioms_by_layer.values() {
-        let mut key_to_unique: HashMap<(String, Vec<FunctionalExpression>), PrimitiveNumericExpression> =
-            HashMap::new();
+        let mut key_to_unique: HashMap<
+            (String, Vec<FunctionalExpression>),
+            PrimitiveNumericExpression,
+        > = HashMap::new();
 
         for axiom in axioms {
             let mapped_args: Vec<FunctionalExpression> = axiom

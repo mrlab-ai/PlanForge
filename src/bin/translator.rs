@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
-use planners::translate::normalize;
 use planners::preprocess_port::planner::run_preprocess;
+use planners::translate::normalize;
 use planners::translate::pddl_parser::PddlTask;
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
 #[derive(Parser)]
@@ -85,7 +85,8 @@ fn main() -> anyhow::Result<()> {
             // Run instantiation (Phase 1: model-guided grounding)
             // Use the normalized task for proper exploration rule generation
             eprintln!("\ntranslator: running instantiation...");
-            let result = planners::translate::instantiate::explore_normalized(&norm_task).map_err(|e| anyhow::anyhow!(e))?;
+            let result = planners::translate::instantiate::explore_normalized(&norm_task)
+                .map_err(|e| anyhow::anyhow!(e))?;
             eprintln!(
                 "translator: instantiated {} grounded operators (model-guided)",
                 result.grounded_ops.len()
@@ -125,20 +126,21 @@ fn main() -> anyhow::Result<()> {
             let instantiated_num_axioms = result.numeric_axioms;
 
             let py_groups: Option<Vec<Vec<String>>> = None;
-            let mut sastask = planners::translate::translate::translate_task_from_grounded_internal(
-                &result.atoms,
-                &result.grounded_ops,
-                &task.domain_forms,
-                &task.problem_forms,
-                &result.num_fluents,
-                &instantiated_num_axioms,
-                py_groups,
-                &result.grounded_axioms,
-                &result.reachable_action_params,
-                &norm_task.goal,
-                &norm_task,
-            )
-            .map_err(|err| anyhow::anyhow!(err))?;
+            let mut sastask =
+                planners::translate::translate::translate_task_from_grounded_internal(
+                    &result.atoms,
+                    &result.grounded_ops,
+                    &task.domain_forms,
+                    &task.problem_forms,
+                    &result.num_fluents,
+                    &instantiated_num_axioms,
+                    py_groups,
+                    &result.grounded_axioms,
+                    &result.reachable_action_params,
+                    &norm_task.goal,
+                    &norm_task,
+                )
+                .map_err(|err| anyhow::anyhow!(err))?;
             match planners::translate::simplify::filter_unreachable_propositions(&mut sastask) {
                 Ok(()) => {
                     eprintln!("translator: simplified task");

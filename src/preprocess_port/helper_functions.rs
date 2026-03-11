@@ -292,10 +292,8 @@ fn read_mutexes(
 ) {
     let count = stream.read_i32();
     for _ in 0..count {
-        mutexes.push(crate::preprocess_port::mutex_group::MutexGroup::from_stream(
-            stream,
-            variables,
-        ));
+        mutexes
+            .push(crate::preprocess_port::mutex_group::MutexGroup::from_stream(stream, variables));
     }
 }
 
@@ -361,8 +359,7 @@ fn read_axioms_rel(
     let count = stream.read_i32();
     for _ in 0..count {
         axioms_rel.push(crate::preprocess_port::axiom::AxiomRelational::from_stream(
-            stream,
-            variables,
+            stream, variables,
         ));
     }
     axioms_rel.sort_by(|a, b| {
@@ -459,11 +456,8 @@ pub fn read_preprocessed_problem_description(
     if DEBUG {
         println!("reading initial state...");
     }
-    *initial_state = crate::preprocess_port::state::State::from_stream(
-        stream,
-        variables,
-        numeric_variables,
-    );
+    *initial_state =
+        crate::preprocess_port::state::State::from_stream(stream, variables, numeric_variables);
     read_goal(stream, variables, goals);
     if DEBUG {
         println!("reading operators...");
@@ -519,7 +513,9 @@ pub fn dump_preprocessed_problem_description(
 
 pub fn dump_dtgs(
     ordering: &Vec<*mut Variable>,
-    transition_graphs: &mut Vec<crate::preprocess_port::domain_transition_graph::DomainTransitionGraph>,
+    transition_graphs: &mut Vec<
+        crate::preprocess_port::domain_transition_graph::DomainTransitionGraph,
+    >,
 ) {
     let num_graphs = transition_graphs.len();
     for i in 0..num_graphs {
@@ -550,7 +546,12 @@ pub fn generate_cpp_input(
     writeln!(outfile, "end_version").unwrap();
 
     writeln!(outfile, "begin_metric").unwrap();
-    writeln!(outfile, "{} {}", metric.optimization_criterion, metric.index).unwrap();
+    writeln!(
+        outfile,
+        "{} {}",
+        metric.optimization_criterion, metric.index
+    )
+    .unwrap();
     writeln!(outfile, "end_metric").unwrap();
 
     let num_vars = ordered_vars.len();

@@ -22,6 +22,7 @@ use crate::search::numeric::numeric_task::{
 };
 use crate::search::numeric::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
 use crate::search::numeric::utils::per_state_info::{PerStateInformation, PerStateInformationBase};
+use crate::search::numeric::utils::segmented_vector2::SegmentedArrayVector;
 use crate::search::numeric::{
     numeric_task::{NumericRootTask, NumericType},
     utils::int_packer::IntDoublePacker,
@@ -39,7 +40,7 @@ type StatePacker = IntDoublePacker;
 pub type StateID = usize;
 
 /// Type alias for the underlying data storage
-type DataStorage = Vec<Vec<u64>>;
+type DataStorage = SegmentedArrayVector<u64>;
 
 /// Represents a concrete state in the planning problem
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +75,8 @@ impl ConcreteState {
         let task = state_registry.root_task;
         let state_packer = state_registry.global_state_packer;
 
-        output.extend((0..task.variables().len()).map(|i| state_packer.get(buffer, i as i32) as i32));
+        output
+            .extend((0..task.variables().len()).map(|i| state_packer.get(buffer, i as i32) as i32));
     }
 
     /// Gets the numeric state values for regular variables
@@ -97,7 +99,7 @@ impl ConcreteState {
     }
 
     /// Gets a reference to the underlying buffer for this state
-    pub fn buffer<'a>(&self, state_registry: &'a StateRegistry) -> &'a Vec<u64> {
+    pub fn buffer<'a>(&self, state_registry: &'a StateRegistry) -> &'a [u64] {
         state_registry.get_buffer(self.pool_offset)
     }
 
@@ -216,7 +218,7 @@ impl<'a> StateRegistry<'a> {
             id,
             root_task,
             global_state_packer,
-            state_data_pool: Vec::new(),
+            state_data_pool: DataStorage::new(global_state_packer.num_bins() as usize),
             numeric_constants: Vec::new(),
             numeric_indices: vec![-1; number_numeric_vars],
             registered_states: HashMap::with_capacity(1024),
@@ -262,9 +264,15 @@ impl<'a> StateRegistry<'a> {
     ///
     /// # Panics
     /// Panics if the index is out of bounds
-    pub fn get_buffer(&self, index: usize) -> &Vec<u64> {
+    pub fn get_buffer(&self, index: usize) -> &[u64] {
         self.state_data_pool
             .get(index)
+            .expect("State index out of bounds")
+    }
+
+    fn get_buffer_mut(&mut self, index: usize) -> &mut [u64] {
+        self.state_data_pool
+            .get_mut(index)
             .expect("State index out of bounds")
     }
 
@@ -283,39 +291,32 @@ impl<'a> StateRegistry<'a> {
             bucket
                 .iter()
                 .copied()
-                .find(|&existing_id| self.state_data_pool[existing_id][..num_bins] == bins[..num_bins])
+                .find(|&existing_id| self.get_buffer(existing_id)[..num_bins] == bins[..num_bins])
         })
     }
 
-    fn register_unique_state(&mut self, key: u64, state_data: Vec<u64>) -> StateID {
-        let state_id = self.state_data_pool.len();
-        self.state_data_pool.push(state_data);
+    fn insert_id_or_pop_state(&mut self) -> (StateID, bool) {
+        let state_id = self.state_data_pool.len() - 1;
+        let key = {
+            let state_data = self.get_buffer(state_id);
+            fast_hash_bins(&state_data[..self.num_state_bins()])
+        };
+
+        let existing_id = {
+            let state_data = self.get_buffer(state_id);
+            self.find_registered_state_id(key, state_data)
+        };
+
+        if let Some(existing_id) = existing_id {
+            self.state_data_pool.pop_back();
+            return (existing_id, false);
+        }
+
         self.registered_states
             .entry(key)
             .or_insert_with(|| Vec::with_capacity(4))
             .push(state_id);
-        state_id
-    }
-
-    fn register_or_get_state_id_from_slice(&mut self, state_data: &[u64]) -> StateID {
-        let key = fast_hash_bins(&state_data[..self.num_state_bins()]);
-
-        if let Some(existing_id) = self.find_registered_state_id(key, state_data) {
-            existing_id
-        } else {
-            self.register_unique_state(key, state_data.to_vec())
-        }
-    }
-
-    /// Inserts a state into the registry or returns existing ID if duplicate.
-    fn register_or_get_state_id(&mut self, state_data: Vec<u64>) -> StateID {
-        let key = fast_hash_bins(&state_data[..self.num_state_bins()]);
-
-        if let Some(existing_id) = self.find_registered_state_id(key, &state_data) {
-            existing_id
-        } else {
-            self.register_unique_state(key, state_data)
-        }
+        (state_id, true)
     }
 
     /// Creates and registers the initial state of the planning problem
@@ -348,7 +349,8 @@ impl<'a> StateRegistry<'a> {
             .expect("Failed to evaluate axioms during initial state creation");
 
         // Register the state
-        let state_id = self.register_or_get_state_id(init_buffer);
+        self.state_data_pool.push_back(&init_buffer);
+        let (state_id, _) = self.insert_id_or_pop_state();
 
         let init_state = ConcreteState::new(state_id);
 
@@ -499,12 +501,13 @@ impl<'a> StateRegistry<'a> {
         let mut numeric_values_copy = numeric_values;
         self.evaluate_axioms(&mut buffer, &mut numeric_values_copy)?;
 
-        let id = self.register_or_get_state_id(buffer);
+        self.state_data_pool.push_back(&buffer);
+        let (id, is_new_state) = self.insert_id_or_pop_state();
 
         let new_state = ConcreteState::new(id);
 
         // Handle cost information based on whether this is a new or existing state
-        if id == self.state_data_pool.len() - 1 {
+        if is_new_state {
             // New state - store cost information
             if !_cost_variables.is_empty() {
                 self.set_cost_information(&new_state, _cost_variables);
@@ -612,13 +615,11 @@ impl<'a> StateRegistry<'a> {
         current_state: &ConcreteState,
         operator: &Operator,
     ) -> Result<ConcreteState, StateInsertError> {
-        let mut packed_buffer = Vec::new();
         let mut successor_values = Vec::new();
         let mut cost_values = Vec::new();
         self.get_successor_state_with_buffers(
             current_state,
             operator,
-            &mut packed_buffer,
             &mut successor_values,
             &mut cost_values,
         )
@@ -628,16 +629,9 @@ impl<'a> StateRegistry<'a> {
         &mut self,
         current_state: &ConcreteState,
         operator: &Operator,
-        packed_buffer: &mut Vec<u64>,
         successor_values: &mut Vec<f64>,
         cost_values: &mut Vec<f64>,
     ) -> Result<ConcreteState, StateInsertError> {
-        let previous_buffer = current_state.buffer(self);
-        packed_buffer.clear();
-        packed_buffer.extend_from_slice(previous_buffer);
-
-        self.apply_propositional_effects(packed_buffer, current_state, operator);
-
         self.fill_numeric_vars(current_state, successor_values)
             .map_err(|e| StateInsertError {
                 message: format!("Failed to get numeric variables: {:?}", e),
@@ -649,18 +643,33 @@ impl<'a> StateRegistry<'a> {
             cost_values.resize(expected_cost_vars, 0.0);
         }
 
+        self.state_data_pool.push_copy(current_state.get_id());
+        let successor_state_id = self.state_data_pool.len() - 1;
+        let previous_buffer_ptr = self.get_buffer(current_state.get_id()).as_ptr();
+        let next_buffer_ptr = self.get_buffer_mut(successor_state_id).as_mut_ptr();
+        let num_bins = self.num_state_bins();
+
+        let (previous_buffer, next_buffer) = unsafe {
+            (
+                std::slice::from_raw_parts(previous_buffer_ptr, num_bins),
+                std::slice::from_raw_parts_mut(next_buffer_ptr, num_bins),
+            )
+        };
+
+        self.apply_propositional_effects(next_buffer, current_state, operator);
+
         self.apply_numeric_effects(
             successor_values,
             cost_values,
             operator,
-            packed_buffer,
+            next_buffer,
             previous_buffer,
         )?;
 
-        let id = self.register_or_get_state_id_from_slice(packed_buffer);
+        let (id, is_new_state) = self.insert_id_or_pop_state();
         let successor = ConcreteState::new(id);
 
-        if id == self.state_data_pool.len() - 1 {
+        if is_new_state {
             if !cost_values.is_empty() {
                 self.set_cost_information(&successor, cost_values.clone());
             }
@@ -779,8 +788,7 @@ impl<'a> StateRegistry<'a> {
 
         // Evaluate arithmetic axioms if present
         if self.axiom_evaluator.has_numeric_axioms() {
-            self.axiom_evaluator
-                .evaluate_arithmetic_axioms(output)?;
+            self.axiom_evaluator.evaluate_arithmetic_axioms(output)?;
         }
 
         Ok(())
@@ -924,7 +932,9 @@ impl<'a> StateRegistry<'a> {
                     Ok(0.0)
                 }
             }
-            NumericType::Constant => Ok(self.numeric_constants[self.numeric_indices[metric_fluent_id] as usize]),
+            NumericType::Constant => {
+                Ok(self.numeric_constants[self.numeric_indices[metric_fluent_id] as usize])
+            }
             NumericType::Derived => {
                 let numeric_vals = self.get_numeric_vars(state)?;
                 self.evaluate_metric(&numeric_vals)

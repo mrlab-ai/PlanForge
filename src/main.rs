@@ -7,10 +7,10 @@ mod preprocess;
 mod search;
 
 use clap::Parser;
-use preprocess::numeric_parser::parse_numeric_sas_output;
 use planners::preprocess_port::planner::run_preprocess;
 use planners::translate::normalize;
 use planners::translate::pddl_parser::PddlTask;
+use preprocess::numeric_parser::parse_numeric_sas_output;
 use std::collections::VecDeque;
 use std::fs;
 use std::time::Duration;
@@ -168,14 +168,16 @@ fn setup_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn N
 }
 
 fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
-    let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem)).map_err(|e| anyhow::anyhow!(e))?;
+    let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))
+        .map_err(|e| anyhow::anyhow!(e))?;
     let parsed_task = task.to_task();
 
     let mut norm_task = normalize::NormalizableTask::from_task(parsed_task);
     norm_task.add_global_constraints();
     normalize::normalize(&mut norm_task).expect("normalization failed");
 
-    let result = planners::translate::instantiate::explore_normalized(&norm_task).map_err(|e| anyhow::anyhow!(e))?;
+    let result = planners::translate::instantiate::explore_normalized(&norm_task)
+        .map_err(|e| anyhow::anyhow!(e))?;
 
     let instantiated_num_axioms = result.numeric_axioms;
     let py_groups: Option<Vec<Vec<String>>> = None;
@@ -218,9 +220,8 @@ fn main() -> std::io::Result<()> {
     let sas_file = if cli.inputs.len() == 2 {
         let domain = &cli.inputs[0];
         let problem = &cli.inputs[1];
-        translate_to_sas(domain, problem).map_err(|err| {
-            std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
-        })?;
+        translate_to_sas(domain, problem)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
 
         run_preprocess(&vec!["preprocess".to_string(), "output.sas".to_string()]);
         "output"
@@ -333,6 +334,9 @@ mod tests {
     fn parses_time_limit_suffixes() {
         assert_eq!(parse_time_limit("60s").unwrap(), Duration::from_secs(60));
         assert_eq!(parse_time_limit("5m").unwrap(), Duration::from_secs(300));
-        assert_eq!(parse_time_limit("250ms").unwrap(), Duration::from_millis(250));
+        assert_eq!(
+            parse_time_limit("250ms").unwrap(),
+            Duration::from_millis(250)
+        );
     }
 }

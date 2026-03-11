@@ -1,18 +1,20 @@
 /// Port of instantiate.py
 /// Instantiates the PDDL task using the logic program model.
-
 use std::collections::{HashMap, HashSet};
 
+use super::build_model;
+use super::pddl::actions::PropositionalAction;
+use super::pddl::axioms::{InstantiatedNumericAxiom, PropositionalAxiom};
 use super::pddl::conditions::*;
+use super::pddl::f_expression::*;
 use super::pddl::pddl_types::TypedObject;
 use super::pddl::tasks::Task;
-use super::pddl::actions::PropositionalAction;
-use super::pddl::axioms::{PropositionalAxiom, InstantiatedNumericAxiom};
-use super::pddl::f_expression::*;
 use super::pddl_to_prolog;
-use super::build_model;
 
-fn collect_used_derived_pnes_from_expr(expr: &FunctionalExpression, out: &mut HashSet<PrimitiveNumericExpression>) {
+fn collect_used_derived_pnes_from_expr(
+    expr: &FunctionalExpression,
+    out: &mut HashSet<PrimitiveNumericExpression>,
+) {
     match expr {
         FunctionalExpression::PrimitiveNumericExpression(pne) => {
             if pne.symbol.starts_with("derived!") {
@@ -33,7 +35,10 @@ fn collect_used_derived_pnes_from_expr(expr: &FunctionalExpression, out: &mut Ha
     }
 }
 
-fn collect_used_derived_pnes_from_condition(cond: &Condition, out: &mut HashSet<PrimitiveNumericExpression>) {
+fn collect_used_derived_pnes_from_condition(
+    cond: &Condition,
+    out: &mut HashSet<PrimitiveNumericExpression>,
+) {
     match cond {
         Condition::FunctionComparison(fc) => {
             for part in &fc.parts {
@@ -125,10 +130,14 @@ fn get_fluent_functions(model: &[pddl_to_prolog::Fact]) -> HashSet<PrimitiveNume
 }
 
 /// Python: def get_objects_by_type(typed_objects, types)
-fn get_objects_by_type(objects: &[TypedObject], types: &[super::pddl::pddl_types::Type]) -> HashMap<String, Vec<String>> {
+fn get_objects_by_type(
+    objects: &[TypedObject],
+    types: &[super::pddl::pddl_types::Type],
+) -> HashMap<String, Vec<String>> {
     let mut result: HashMap<String, Vec<String>> = HashMap::new();
     for obj in objects {
-        result.entry(obj.type_name.clone())
+        result
+            .entry(obj.type_name.clone())
             .or_insert_with(Vec::new)
             .push(obj.name.clone());
 
@@ -137,7 +146,8 @@ fn get_objects_by_type(objects: &[TypedObject], types: &[super::pddl::pddl_types
         while let Some(ref type_name) = current_type {
             if let Some(t) = types.iter().find(|t| &t.name == type_name) {
                 if let Some(ref base) = t.basetype_name {
-                    result.entry(base.clone())
+                    result
+                        .entry(base.clone())
                         .or_insert_with(Vec::new)
                         .push(obj.name.clone());
                     current_type = Some(base.clone());
@@ -153,7 +163,9 @@ fn get_objects_by_type(objects: &[TypedObject], types: &[super::pddl::pddl_types
 }
 
 /// Python: def init_function_values(num_init)
-fn init_function_values(num_init: &[FunctionAssignment]) -> HashMap<PrimitiveNumericExpression, f64> {
+fn init_function_values(
+    num_init: &[FunctionAssignment],
+) -> HashMap<PrimitiveNumericExpression, f64> {
     let mut result = HashMap::new();
     for assign in num_init {
         if let FunctionalExpression::NumericConstant(nc) = &assign.expression {
@@ -201,7 +213,8 @@ pub fn explore(task: &Task) -> ExploreResult {
             if pred.starts_with("@action-") {
                 let action_name = &pred["@action-".len()..];
                 let params = fact.atom[1..].to_vec();
-                reachable_action_params.entry(action_name.to_string())
+                reachable_action_params
+                    .entry(action_name.to_string())
                     .or_insert_with(Vec::new)
                     .push(params);
             } else if pred == "@goal-reachable" {
@@ -226,8 +239,13 @@ pub fn explore(task: &Task) -> ExploreResult {
                     // For parameters beyond num_external, they're internal
                     // We need to handle them too
                     if let Some(prop_action) = action.instantiate(
-                        &var_mapping, &init_facts, &fluent_facts,
-                        &fluent_functions, &init_func_vals, &mut task_function_admin, &mut new_constant_numeric_axioms,
+                        &var_mapping,
+                        &init_facts,
+                        &fluent_facts,
+                        &fluent_functions,
+                        &init_func_vals,
+                        &mut task_function_admin,
+                        &mut new_constant_numeric_axioms,
                     ) {
                         grounded_ops.push(prop_action);
                     }
@@ -247,8 +265,13 @@ pub fn explore(task: &Task) -> ExploreResult {
                 var_mapping.insert(param.name.clone(), value.clone());
             }
             if let Some(prop_axiom) = axiom.instantiate(
-                &var_mapping, &init_facts, &fluent_facts,
-                &fluent_functions, &init_func_vals, &mut task_function_admin, &mut new_constant_numeric_axioms,
+                &var_mapping,
+                &init_facts,
+                &fluent_facts,
+                &fluent_functions,
+                &init_func_vals,
+                &mut task_function_admin,
+                &mut new_constant_numeric_axioms,
             ) {
                 grounded_axioms.push(prop_axiom);
             }
@@ -256,11 +279,12 @@ pub fn explore(task: &Task) -> ExploreResult {
     }
 
     let mut numeric_axioms: Vec<InstantiatedNumericAxiom> = vec![];
-    let numeric_axioms_by_name: HashMap<String, super::pddl::axioms::NumericAxiom> = task_function_admin
-        .get_all_axioms()
-        .into_iter()
-        .map(|axiom| (axiom.name.clone(), axiom))
-        .collect();
+    let numeric_axioms_by_name: HashMap<String, super::pddl::axioms::NumericAxiom> =
+        task_function_admin
+            .get_all_axioms()
+            .into_iter()
+            .map(|axiom| (axiom.name.clone(), axiom))
+            .collect();
 
     for fact in &model {
         if fact.atom.is_empty() {
@@ -312,7 +336,10 @@ pub fn explore(task: &Task) -> ExploreResult {
 
     for axiom in numeric_axioms_by_name.values() {
         let head = axiom.get_head();
-        for used in used_derived.iter().filter(|p| p.symbol == head.symbol && p.args.len() == axiom.parameters.len()) {
+        for used in used_derived
+            .iter()
+            .filter(|p| p.symbol == head.symbol && p.args.len() == axiom.parameters.len())
+        {
             let mut var_mapping: HashMap<String, String> = HashMap::new();
             for (param, value) in axiom.parameters.iter().zip(used.args.iter()) {
                 var_mapping.insert(param.name.clone(), value.clone());
@@ -368,7 +395,9 @@ pub fn explore(task: &Task) -> ExploreResult {
 }
 
 /// Python: explore_normalized is the same but takes NormalizableTask
-pub fn explore_normalized(norm_task: &super::normalize::NormalizableTask) -> Result<ExploreResult, String> {
+pub fn explore_normalized(
+    norm_task: &super::normalize::NormalizableTask,
+) -> Result<ExploreResult, String> {
     Ok(explore(&norm_task.task))
 }
 
@@ -384,7 +413,8 @@ fn get_parameter_combinations(
     let param = &parameters[0];
     let rest_combos = get_parameter_combinations(&parameters[1..], objects_by_type);
 
-    let objects = objects_by_type.get(&param.type_name)
+    let objects = objects_by_type
+        .get(&param.type_name)
         .cloned()
         .unwrap_or_else(Vec::new);
 

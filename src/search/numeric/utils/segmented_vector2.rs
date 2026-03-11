@@ -1,5 +1,5 @@
 use std::cmp;
-use std::ops::{Index, IndexMut};
+use std::slice;
 
 const SEGMENT_BYTES: usize = 8192;
 
@@ -59,6 +59,28 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
         self.size += 1;
     }
 
+    pub fn push_copy(&mut self, index: usize) {
+        if index >= self.size {
+            panic!("index out of bounds");
+        }
+
+        let (source_segment, source_offset) = self.get_segment_index(index);
+        let source_ptr = self.segments[source_segment][source_offset..].as_ptr();
+
+        let (dest_segment, dest_offset) = self.get_segment_index(self.size);
+        if dest_segment == self.segments.len() {
+            self.add_segment();
+        }
+
+        let dest_ptr = self.segments[dest_segment][dest_offset..].as_mut_ptr();
+        for offset in 0..self.elements_per_array {
+            unsafe {
+                *dest_ptr.add(offset) = (*source_ptr.add(offset)).clone();
+            }
+        }
+        self.size += 1;
+    }
+
     pub fn pop_back(&mut self) {
         debug_assert!(self.size > 0);
         if self.size == 0 {
@@ -95,6 +117,10 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
         }
         let (segment, offset) = self.get_segment_index(index);
         Some(&mut self.segments[segment][offset..offset + self.elements_per_array])
+    }
+
+    pub fn len(&self) -> usize {
+        self.size
     }
 
     pub fn size(&self) -> usize {

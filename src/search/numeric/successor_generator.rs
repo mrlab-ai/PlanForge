@@ -210,12 +210,12 @@ mod tests {
             }
 
             let input = std::fs::read_to_string(&path).unwrap();
-                let (unconsumed_input, problem) = parse_numeric_sas_output(&input).unwrap();
-                assert!(
-                    unconsumed_input.is_empty(),
-                    "Unconsumed input: {}",
-                    unconsumed_input
-                );
+            let (unconsumed_input, problem) = parse_numeric_sas_output(&input).unwrap();
+            assert!(
+                unconsumed_input.is_empty(),
+                "Unconsumed input: {}",
+                unconsumed_input
+            );
             if path.file_name().and_then(|name| name.to_str()) == Some("example3.sas") {
                 problems.push(problem);
             }

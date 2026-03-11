@@ -2,17 +2,17 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::pddl_types::{Type, TypedObject};
-use super::predicates::Predicate;
-use super::functions::Function;
-use super::conditions::{Condition, Conjunction, Atom, NegatedAtom};
-use super::f_expression::{
-    FunctionalExpression, PrimitiveNumericExpression, FunctionAssignment, NumericConstant,
-    ArithmeticExpression,
-};
-use super::effects::Effect;
 use super::actions::Action;
 use super::axioms::{Axiom, NumericAxiom};
+use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
+use super::effects::Effect;
+use super::f_expression::{
+    ArithmeticExpression, FunctionAssignment, FunctionalExpression, NumericConstant,
+    PrimitiveNumericExpression,
+};
+use super::functions::Function;
+use super::pddl_types::{Type, TypedObject};
+use super::predicates::Predicate;
 
 fn prettyprint(symbol: &str) -> String {
     match symbol {
@@ -124,18 +124,32 @@ impl Task {
         } else {
             Condition::Conjunction(Conjunction::new(universal_constraints))
         };
-        let axiom = self.add_axiom(format!("new-axiom@{}", self.axioms.len()), vec![], 0, condition);
+        let axiom = self.add_axiom(
+            format!("new-axiom@{}", self.axioms.len()),
+            vec![],
+            0,
+            condition,
+        );
         self.global_constraint = Condition::Atom(Atom::new(axiom.predicate, vec![]));
     }
 
     /// Python: def add_axiom(self, name, parameters, num_external, condition)
-    pub fn add_axiom(&mut self, name: String, parameters: Vec<TypedObject>, num_external: usize, condition: Condition) -> Atom {
-        let args: Vec<String> = parameters[..num_external].iter()
+    pub fn add_axiom(
+        &mut self,
+        name: String,
+        parameters: Vec<TypedObject>,
+        num_external: usize,
+        condition: Condition,
+    ) -> Atom {
+        let args: Vec<String> = parameters[..num_external]
+            .iter()
             .map(|p| p.name.clone())
             .collect();
         let effect = Atom::new(name.clone(), args);
-        self.predicates.push(Predicate::new(name.clone(), parameters.clone()));
-        self.axioms.push(Axiom::new(name, parameters, num_external, condition));
+        self.predicates
+            .push(Predicate::new(name.clone(), parameters.clone()));
+        self.axioms
+            .push(Axiom::new(name, parameters, num_external, condition));
         effect
     }
 
@@ -220,7 +234,8 @@ impl DerivedFunctionAdministrator {
         let args = match expression {
             FunctionalExpression::NumericConstant(_) => vec![],
             FunctionalExpression::AdditiveInverse(ai) => {
-                self.get_derived_function(&ai.parts[0], fluent_functions).args
+                self.get_derived_function(&ai.parts[0], fluent_functions)
+                    .args
             }
             FunctionalExpression::ArithmeticExpression(ae) => {
                 let mut subexpressions: Vec<PrimitiveNumericExpression> = ae
@@ -297,13 +312,19 @@ impl DerivedFunctionAdministrator {
                 if ae.op == "+" || ae.op == "*" {
                     subexpressions.sort_by_key(|p| format!("{}({})", p.symbol, p.args.join(",")));
                 }
-                let args: Vec<String> = subexpressions.iter().flat_map(|df| df.args.clone()).collect();
+                let args: Vec<String> = subexpressions
+                    .iter()
+                    .flat_map(|df| df.args.clone())
+                    .collect();
                 let default_args = self.get_default_variables(args.len());
                 let mut arg_index = 0;
                 let mut rewritten_parts = vec![];
                 for df in &subexpressions {
                     let end = arg_index + df.args.len();
-                    let slice = default_args[arg_index..end].iter().map(|p| p.name.clone()).collect();
+                    let slice = default_args[arg_index..end]
+                        .iter()
+                        .map(|p| p.name.clone())
+                        .collect();
                     rewritten_parts.push(FunctionalExpression::PrimitiveNumericExpression(
                         PrimitiveNumericExpression::with_type(df.symbol.clone(), slice, 'D'),
                     ));
@@ -354,7 +375,10 @@ pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
     let mut seen = HashSet::new();
     for item in lst {
         if !seen.insert(item) {
-            eprintln!("Warning: duplicate {} in {}: {}", what_type, what_list, item);
+            eprintln!(
+                "Warning: duplicate {} in {}: {}",
+                what_type, what_list, item
+            );
         }
     }
 }

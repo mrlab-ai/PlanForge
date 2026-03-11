@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::io::Write;
 
 use crate::preprocess_port::axiom::{
@@ -224,10 +224,7 @@ impl<'a> CausalGraph<'a> {
                     if *curr_source != curr_target {
                         let entry = weighted_succ.entry(curr_target).or_insert(0);
                         *entry += 1;
-                        let pred = self
-                            .predecessor_graph
-                            .get_mut(&curr_target)
-                            .unwrap();
+                        let pred = self.predecessor_graph.get_mut(&curr_target).unwrap();
                         let pred_entry = pred.entry(*curr_source).or_insert(0);
                         *pred_entry += 1;
                     }
@@ -257,10 +254,7 @@ impl<'a> CausalGraph<'a> {
                     if *curr_source != curr_target {
                         let entry = weighted_succ.entry(curr_target).or_insert(0);
                         *entry += 1;
-                        let pred = self
-                            .predecessor_graph
-                            .get_mut(&curr_target)
-                            .unwrap();
+                        let pred = self.predecessor_graph.get_mut(&curr_target).unwrap();
                         let pred_entry = pred.entry(*curr_source).or_insert(0);
                         *pred_entry += 1;
                     }
@@ -292,10 +286,7 @@ impl<'a> CausalGraph<'a> {
                 if *curr_source != curr_target {
                     let entry = weighted_succ.entry(curr_target).or_insert(0);
                     *entry += 1;
-                    let pred = self
-                        .predecessor_graph
-                        .get_mut(&curr_target)
-                        .unwrap();
+                    let pred = self.predecessor_graph.get_mut(&curr_target).unwrap();
                     let pred_entry = pred.entry(*curr_source).or_insert(0);
                     *pred_entry += 1;
                 }
@@ -327,8 +318,12 @@ impl<'a> CausalGraph<'a> {
     fn weigh_graph_from_ass_axioms(&mut self, ass_axioms: &'a [AxiomNumericComputation]) {
         for ass_ax in ass_axioms {
             let mut source_vars: Vec<CGVar> = Vec::new();
-            source_vars.push(CGVar::new_nvar(ass_ax.get_left_var() as *mut NumericVariable));
-            source_vars.push(CGVar::new_nvar(ass_ax.get_right_var() as *mut NumericVariable));
+            source_vars.push(CGVar::new_nvar(
+                ass_ax.get_left_var() as *mut NumericVariable
+            ));
+            source_vars.push(CGVar::new_nvar(
+                ass_ax.get_right_var() as *mut NumericVariable
+            ));
             let target = CGVar::new_nvar(ass_ax.get_effect_var() as *mut NumericVariable);
 
             for curr_source in &source_vars {
@@ -454,7 +449,9 @@ impl<'a> CausalGraph<'a> {
                 let var = unsafe { &*num_eff.var };
                 if var.get_type() == NumType::Instrumentation {
                     assert!(var.is_necessary());
-                    self.set_variable_instrumentation_necessary(num_eff.foperand as *mut NumericVariable);
+                    self.set_variable_instrumentation_necessary(
+                        num_eff.foperand as *mut NumericVariable,
+                    );
                 }
             }
         }
@@ -500,10 +497,7 @@ impl<'a> CausalGraph<'a> {
                 if !curr_predecessor.is_necessary() {
                     curr_predecessor.set_necessary();
                     if DEBUG {
-                        println!(
-                            "var {} is neccessary.",
-                            curr_predecessor.get_name()
-                        );
+                        println!("var {} is neccessary.", curr_predecessor.get_name());
                     }
                     self.dfs(curr_predecessor);
                 }
@@ -521,8 +515,12 @@ impl<'a> CausalGraph<'a> {
         }
         for ass_ax in self.ass_axioms {
             if inst_var == ass_ax.get_effect_var() as *mut NumericVariable {
-                self.set_variable_instrumentation_necessary(ass_ax.get_left_var() as *mut NumericVariable);
-                self.set_variable_instrumentation_necessary(ass_ax.get_right_var() as *mut NumericVariable);
+                self.set_variable_instrumentation_necessary(
+                    ass_ax.get_left_var() as *mut NumericVariable
+                );
+                self.set_variable_instrumentation_necessary(
+                    ass_ax.get_right_var() as *mut NumericVariable
+                );
             }
         }
     }

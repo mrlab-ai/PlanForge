@@ -44,7 +44,10 @@ pub struct TieBreakingOpenList {
 
 impl TieBreakingOpenList {
     /// Creates a new tie-breaking open list with the given evaluator names.
-    pub fn new(evaluator_names: Vec<String>, ascending: bool) -> Result<Self, TieBreakingOpenListError> {
+    pub fn new(
+        evaluator_names: Vec<String>,
+        ascending: bool,
+    ) -> Result<Self, TieBreakingOpenListError> {
         if evaluator_names.is_empty() {
             return Err(TieBreakingOpenListError::EmptyEvaluatorList);
         }

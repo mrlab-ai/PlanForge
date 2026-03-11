@@ -79,7 +79,6 @@ pub struct AStarSearch<'a> {
     last_reported_f_layer: Option<OrderedFloat<f64>>,
     state_values_buffer: Vec<i32>,
     applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
-    successor_state_buffer: Vec<u64>,
     successor_numeric_values_buffer: Vec<f64>,
     successor_cost_values_buffer: Vec<f64>,
 }
@@ -143,8 +142,6 @@ impl<'a> AStarSearch<'a> {
         let open_list = TieBreakingOpenList::new(evaluator_names, true)
             .expect("A* tie-breaking open list must have at least one evaluator");
 
-        let packed_state_bins = state_registry.global_state_packer().num_bins() as usize;
-
         // Build initial state now to allow potential cost initializations (matches FD ordering)
         let mut state_registry = state_registry;
         let initial_state = state_registry.get_initial_state();
@@ -168,7 +165,6 @@ impl<'a> AStarSearch<'a> {
             last_reported_f_layer: None,
             state_values_buffer: Vec::with_capacity(task.variables().len()),
             applicable_operators_buffer: Vec::new(),
-            successor_state_buffer: Vec::with_capacity(packed_state_bins),
             successor_numeric_values_buffer: Vec::with_capacity(task.numeric_variables().len()),
             successor_cost_values_buffer: Vec::new(),
         }
@@ -200,7 +196,10 @@ impl<'a> AStarSearch<'a> {
     }
 
     fn maybe_print_f_layer(&mut self, node: &SearchNode, start_time: &Instant) {
-        let f_value = OrderedFloat(node.evaluation.get_heuristic_value(&self.f_evaluator.name()));
+        let f_value = OrderedFloat(
+            node.evaluation
+                .get_heuristic_value(&self.f_evaluator.name()),
+        );
         if self.last_reported_f_layer == Some(f_value) {
             return;
         }
@@ -333,7 +332,6 @@ impl<'a> AStarSearch<'a> {
             let succ_state = match self.state_registry.get_successor_state_with_buffers(
                 &node.state,
                 operator,
-                &mut self.successor_state_buffer,
                 &mut self.successor_numeric_values_buffer,
                 &mut self.successor_cost_values_buffer,
             ) {

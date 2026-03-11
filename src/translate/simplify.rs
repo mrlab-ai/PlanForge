@@ -1,6 +1,5 @@
 /// Port of simplify.py
 /// Simplification of SAS+ tasks by removing unreachable propositions.
-
 use std::collections::{HashMap, HashSet};
 
 use super::sas_tasks::*;
@@ -90,29 +89,34 @@ fn build_dtgs(task: &SASTask) -> Vec<DomainTransitionGraph> {
     let init_vals = &task.init.values;
     let sizes = &task.variables.ranges;
 
-    let mut dtgs: Vec<DomainTransitionGraph> = init_vals.iter()
+    let mut dtgs: Vec<DomainTransitionGraph> = init_vals
+        .iter()
         .zip(sizes.iter())
         .filter(|(_, &size)| size > 0)
         .map(|(&init, &size)| DomainTransitionGraph::new(init as usize, size))
         .collect();
 
-    let add_arc = |dtgs: &mut Vec<DomainTransitionGraph>, var_no: usize, pre_spec: i32, post: usize| {
-        if pre_spec == -1 {
-            for pre in 0..sizes[var_no] {
-                if pre != post {
-                    dtgs[var_no].add_arc(pre, post);
+    let add_arc =
+        |dtgs: &mut Vec<DomainTransitionGraph>, var_no: usize, pre_spec: i32, post: usize| {
+            if pre_spec == -1 {
+                for pre in 0..sizes[var_no] {
+                    if pre != post {
+                        dtgs[var_no].add_arc(pre, post);
+                    }
                 }
+            } else {
+                dtgs[var_no].add_arc(pre_spec as usize, post);
             }
-        } else {
-            dtgs[var_no].add_arc(pre_spec as usize, post);
-        }
-    };
+        };
 
     let get_effective_pre = |var_no: usize,
                              conditions: &HashMap<usize, usize>,
                              effect_conditions: &[(usize, usize)]|
      -> Option<i32> {
-        let mut result: i32 = *conditions.get(&var_no).map(|v| v as &usize).unwrap_or(&(usize::MAX)) as i32;
+        let mut result: i32 = *conditions
+            .get(&var_no)
+            .map(|v| v as &usize)
+            .unwrap_or(&(usize::MAX)) as i32;
         if result == usize::MAX as i32 {
             result = -1;
         }
@@ -129,9 +133,8 @@ fn build_dtgs(task: &SASTask) -> Vec<DomainTransitionGraph> {
     };
 
     for op in &task.operators {
-        let conditions: HashMap<usize, usize> = op.get_applicability_conditions()
-            .into_iter()
-            .collect();
+        let conditions: HashMap<usize, usize> =
+            op.get_applicability_conditions().into_iter().collect();
         for &(var_no, _, post, ref cond) in &op.pre_post {
             if let Some(effective_pre) = get_effective_pre(var_no, &conditions, cond) {
                 add_arc(&mut dtgs, var_no, effective_pre, post);
@@ -158,9 +161,9 @@ fn build_dtgs(task: &SASTask) -> Vec<DomainTransitionGraph> {
 // ============================================================
 
 struct VarValueRenaming {
-    new_var_nos: Vec<Option<usize>>,      // indexed by old var_no
-    new_values: Vec<Vec<RenamedValue>>,    // indexed by old var_no and old value
-    new_sizes: Vec<usize>,                // indexed by new var_no
+    new_var_nos: Vec<Option<usize>>,    // indexed by old var_no
+    new_values: Vec<Vec<RenamedValue>>, // indexed by old var_no and old value
+    new_sizes: Vec<usize>,              // indexed by new var_no
     new_var_count: usize,
     num_removed_values: usize,
 }
@@ -176,7 +179,12 @@ impl VarValueRenaming {
         }
     }
 
-    fn register_variable(&mut self, old_domain_size: usize, init_value: usize, new_domain: &HashSet<usize>) {
+    fn register_variable(
+        &mut self,
+        old_domain_size: usize,
+        init_value: usize,
+        new_domain: &HashSet<usize>,
+    ) {
         assert!(new_domain.len() >= 1 && new_domain.len() <= old_domain_size);
         assert!(new_domain.contains(&init_value));
 
@@ -233,7 +241,9 @@ impl VarValueRenaming {
     }
 
     fn apply_to_value_names(&self, value_names: &mut Vec<Vec<String>>) {
-        let mut new_value_names: Vec<Vec<String>> = self.new_sizes.iter()
+        let mut new_value_names: Vec<Vec<String>> = self
+            .new_sizes
+            .iter()
             .map(|&size| vec![String::new(); size])
             .collect();
 
@@ -283,7 +293,9 @@ impl VarValueRenaming {
     }
 
     fn apply_to_init(&self, init: &mut SASInit) {
-        let init_pairs: Vec<(usize, usize)> = init.values.iter()
+        let init_pairs: Vec<(usize, usize)> = init
+            .values
+            .iter()
             .enumerate()
             .map(|(var, &val)| (var, val as usize))
             .collect();
@@ -344,7 +356,10 @@ impl VarValueRenaming {
             }
             RenamedValue::Normal(nv) => {
                 let nvn = new_var.expect("global constraint variable removed");
-                println!("Simplified global constraint to new variable ordering {:?}", (nvn, nv));
+                println!(
+                    "Simplified global constraint to new variable ordering {:?}",
+                    (nvn, nv)
+                );
                 (nvn, nv)
             }
         }
@@ -400,9 +415,8 @@ impl VarValueRenaming {
             Ok(()) => {}
         }
 
-        let conditions_dict: HashMap<usize, usize> = applicability_conditions.iter()
-            .cloned()
-            .collect();
+        let conditions_dict: HashMap<usize, usize> =
+            applicability_conditions.iter().cloned().collect();
         let mut new_prevail_vars: HashSet<usize> = conditions_dict.keys().cloned().collect();
         let mut new_pre_post = vec![];
         let mut new_assign_effects = vec![];
@@ -423,7 +437,8 @@ impl VarValueRenaming {
             return None; // No effect
         }
 
-        let new_prevail: Vec<(usize, usize)> = conditions_dict.iter()
+        let new_prevail: Vec<(usize, usize)> = conditions_dict
+            .iter()
             .filter(|(var, _)| new_prevail_vars.contains(var))
             .map(|(&var, &val)| (var, val))
             .collect();
@@ -447,8 +462,10 @@ impl VarValueRenaming {
                 // Python: assert not new_value is always_false
                 // If the new_value is always false, then the condition must
                 // have been impossible (which should have been caught above).
-                panic!("axiom effect value is always_false, \
-                        condition should have been impossible");
+                panic!(
+                    "axiom effect value is always_false, \
+                        condition should have been impossible"
+                );
             }
             RenamedValue::AlwaysTrue => {
                 return Err(SimplifyError::DoesNothing);
@@ -478,8 +495,10 @@ impl VarValueRenaming {
             let (_, np) = self.translate_pair(var_no, pre as usize);
             match np {
                 RenamedValue::AlwaysFalse => {
-                    panic!("This function should only be called for operators \
-                            whose applicability conditions are deemed possible.");
+                    panic!(
+                        "This function should only be called for operators \
+                            whose applicability conditions are deemed possible."
+                    );
                 }
                 RenamedValue::AlwaysTrue => {
                     // In Python: new_pre can be always_true, but it's asserted
@@ -498,8 +517,10 @@ impl VarValueRenaming {
         let new_post_val = match new_post {
             RenamedValue::Normal(v) => v,
             RenamedValue::AlwaysFalse => {
-                panic!("if we survived so far, this effect can trigger \
-                        and then new_post cannot be always_false");
+                panic!(
+                    "if we survived so far, this effect can trigger \
+                        and then new_post cannot be always_false"
+                );
             }
             _ => return None,
         };
@@ -510,8 +531,11 @@ impl VarValueRenaming {
 
         // -2 means always_true. Python asserts new_pre is not always_true
         // if the effect changes the value and can fire.
-        assert!(new_pre != -2, "if this pre_post changes the value and can fire, \
-                new_pre cannot be always_true");
+        assert!(
+            new_pre != -2,
+            "if this pre_post changes the value and can fire, \
+                new_pre cannot be always_true"
+        );
 
         let mut new_cond = cond.clone();
         match self.convert_pairs(&mut new_cond) {
@@ -609,7 +633,10 @@ pub fn trivial_task(solvable: bool) -> SASTask {
     let variables = SASVariables::new(
         vec![2],
         vec![-1],
-        vec![vec!["Atom dummy(val1)".to_string(), "Atom dummy(val2)".to_string()]],
+        vec![vec![
+            "Atom dummy(val1)".to_string(),
+            "Atom dummy(val2)".to_string(),
+        ]],
         0,
     );
     let num_variables = SASNumericVariables::new(

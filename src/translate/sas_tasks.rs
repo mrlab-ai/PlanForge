@@ -1,6 +1,5 @@
 /// Port of sas_tasks.py
 /// SAS+ task representation for the planner output format.
-
 use std::io::Write;
 
 pub const SAS_FILE_VERSION: i32 = 4;
@@ -41,13 +40,15 @@ impl SASTask {
     ) -> Self {
         // Sort operators by (name, prevail, pre_post) as Python does
         operators.sort_by(|a, b| {
-            a.name.cmp(&b.name)
+            a.name
+                .cmp(&b.name)
                 .then_with(|| a.prevail.cmp(&b.prevail))
                 .then_with(|| a.pre_post.cmp(&b.pre_post))
         });
         // Sort axioms by (condition, effect)
         axioms.sort_by(|a, b| {
-            a.condition.cmp(&b.condition)
+            a.condition
+                .cmp(&b.condition)
                 .then_with(|| a.effect.cmp(&b.effect))
         });
         SASTask {
@@ -80,8 +81,11 @@ impl SASTask {
         for axiom in &self.axioms {
             axiom.validate(&self.variables, &self.init);
         }
-        assert!(self.metric.0 == "<" || self.metric.0 == ">",
-            "Invalid metric direction: {}", self.metric.0);
+        assert!(
+            self.metric.0 == "<" || self.metric.0 == ">",
+            "Invalid metric direction: {}",
+            self.metric.0
+        );
         assert!(self.global_constraint.1 == 0);
     }
 
@@ -144,7 +148,11 @@ impl SASTask {
         }
         writeln!(stream, "end_numeric_axioms")?;
         writeln!(stream, "begin_global_constraint")?;
-        writeln!(stream, "{} {}", self.global_constraint.0, self.global_constraint.1)?;
+        writeln!(
+            stream,
+            "{} {}",
+            self.global_constraint.0, self.global_constraint.1
+        )?;
         writeln!(stream, "end_global_constraint")?;
         Ok(())
     }
@@ -191,37 +199,65 @@ impl SASVariables {
         value_names: Vec<Vec<String>>,
         comp_axiom_layer: i32,
     ) -> Self {
-        SASVariables { ranges, axiom_layers, value_names, comp_axiom_layer }
+        SASVariables {
+            ranges,
+            axiom_layers,
+            value_names,
+            comp_axiom_layer,
+        }
     }
 
     pub fn validate(&self) {
         assert_eq!(self.ranges.len(), self.axiom_layers.len());
         assert_eq!(self.ranges.len(), self.value_names.len());
-        for (i, ((var_range, layer), var_value_names)) in self.ranges.iter()
+        for (i, ((var_range, layer), var_value_names)) in self
+            .ranges
+            .iter()
             .zip(self.axiom_layers.iter())
             .zip(self.value_names.iter())
             .enumerate()
         {
-            assert_eq!(*var_range, var_value_names.len(),
-                "var {}: range {} != value_names len {}", i, var_range, var_value_names.len());
-            assert!(*var_range >= 2,
-                "var {}: range {} < 2", i, var_range);
-            assert!(*layer == -1 || *layer >= 0,
-                "var {}: invalid layer {}", i, layer);
+            assert_eq!(
+                *var_range,
+                var_value_names.len(),
+                "var {}: range {} != value_names len {}",
+                i,
+                var_range,
+                var_value_names.len()
+            );
+            assert!(*var_range >= 2, "var {}: range {} < 2", i, var_range);
+            assert!(
+                *layer == -1 || *layer >= 0,
+                "var {}: invalid layer {}",
+                i,
+                layer
+            );
             if *layer > self.comp_axiom_layer {
                 // logic axiom: must be binary
-                assert_eq!(*var_range, 2,
-                    "var {}: logic axiom layer {} but range {}", i, layer, var_range);
+                assert_eq!(
+                    *var_range, 2,
+                    "var {}: logic axiom layer {} but range {}",
+                    i, layer, var_range
+                );
             }
         }
     }
 
     pub fn validate_fact(&self, fact: (usize, usize)) {
         let (var, value) = fact;
-        assert!(var < self.ranges.len(),
-            "var {} out of range (max {})", var, self.ranges.len());
-        assert!(value < self.ranges[var],
-            "value {} out of range for var {} (max {})", value, var, self.ranges[var]);
+        assert!(
+            var < self.ranges.len(),
+            "var {} out of range (max {})",
+            var,
+            self.ranges.len()
+        );
+        assert!(
+            value < self.ranges[var],
+            "value {} out of range for var {} (max {})",
+            value,
+            var,
+            self.ranges[var]
+        );
     }
 
     pub fn validate_condition(&self, condition: &[(usize, usize)]) {
@@ -236,7 +272,9 @@ impl SASVariables {
     }
 
     pub fn dump(&self) {
-        for (var, ((rang, names), axiom_layer)) in self.ranges.iter()
+        for (var, ((rang, names), axiom_layer)) in self
+            .ranges
+            .iter()
             .zip(self.value_names.iter())
             .zip(self.axiom_layers.iter())
             .enumerate()
@@ -256,7 +294,9 @@ impl SASVariables {
 
     pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
         writeln!(stream, "{}", self.ranges.len())?;
-        for (var, ((rang, axiom_layer), values)) in self.ranges.iter()
+        for (var, ((rang, axiom_layer), values)) in self
+            .ranges
+            .iter()
             .zip(self.axiom_layers.iter())
             .zip(self.value_names.iter())
             .enumerate()
@@ -291,12 +331,12 @@ pub struct SASNumericVariables {
 }
 
 impl SASNumericVariables {
-    pub fn new(
-        variable_names: Vec<String>,
-        axiom_layers: Vec<i32>,
-        types: Vec<String>,
-    ) -> Self {
-        SASNumericVariables { variable_names, axiom_layers, types }
+    pub fn new(variable_names: Vec<String>, axiom_layers: Vec<i32>, types: Vec<String>) -> Self {
+        SASNumericVariables {
+            variable_names,
+            axiom_layers,
+            types,
+        }
     }
 
     pub fn dump(&self) {
@@ -378,9 +418,13 @@ impl SASInit {
     }
 
     pub fn validate(&self, variables: &SASVariables) {
-        assert_eq!(self.values.len(), variables.ranges.len(),
+        assert_eq!(
+            self.values.len(),
+            variables.ranges.len(),
             "init values len {} != variable ranges len {}",
-            self.values.len(), variables.ranges.len());
+            self.values.len(),
+            variables.ranges.len()
+        );
         for (var, val) in self.values.iter().enumerate() {
             if *val >= 0 {
                 variables.validate_fact((var, *val as usize));
@@ -479,7 +523,13 @@ impl SASOperator {
         prevail.sort();
         assign_effects.sort();
         let pre_post = Self::canonical_pre_post(pre_post);
-        SASOperator { name, prevail, pre_post, assign_effects, cost }
+        SASOperator {
+            name,
+            prevail,
+            pre_post,
+            assign_effects,
+            cost,
+        }
     }
 
     fn canonical_pre_post(
@@ -501,35 +551,54 @@ impl SASOperator {
         variables.validate_condition(&self.prevail);
         let prevail_vars: std::collections::HashSet<usize> =
             self.prevail.iter().map(|(v, _)| *v).collect();
-        let mut pre_values: std::collections::HashMap<usize, i32> = std::collections::HashMap::new();
+        let mut pre_values: std::collections::HashMap<usize, i32> =
+            std::collections::HashMap::new();
         for (var, pre, post, cond) in &self.pre_post {
             variables.validate_condition(cond);
-            assert!(!prevail_vars.contains(var),
-                "var {} in both prevail and pre_post", var);
+            assert!(
+                !prevail_vars.contains(var),
+                "var {} in both prevail and pre_post",
+                var
+            );
             if *pre != -1 {
                 variables.validate_fact((*var, *pre as usize));
             }
             variables.validate_fact((*var, *post));
-            assert_eq!(variables.axiom_layers[*var], -1,
-                "pre_post effect on derived var {}", var);
+            assert_eq!(
+                variables.axiom_layers[*var], -1,
+                "pre_post effect on derived var {}",
+                var
+            );
             if let Some(existing_pre) = pre_values.get(var) {
-                assert_eq!(*existing_pre, *pre,
-                    "var {} has multiple preconditions", var);
+                assert_eq!(
+                    *existing_pre, *pre,
+                    "var {} has multiple preconditions",
+                    var
+                );
             } else {
                 pre_values.insert(*var, *pre);
             }
         }
         for (_, _, _, cond) in &self.pre_post {
             for (cvar, _) in cond {
-                assert!(!pre_values.contains_key(cvar) || pre_values[cvar] == -1,
-                    "effect condition var {} also has pre", cvar);
-                assert!(!prevail_vars.contains(cvar),
-                    "effect condition var {} also in prevail", cvar);
+                assert!(
+                    !pre_values.contains_key(cvar) || pre_values[cvar] == -1,
+                    "effect condition var {} also has pre",
+                    cvar
+                );
+                assert!(
+                    !prevail_vars.contains(cvar),
+                    "effect condition var {} also in prevail",
+                    cvar
+                );
             }
         }
         if self.pre_post.is_empty() {
-            assert!(!self.assign_effects.is_empty(),
-                "operator {} has no effects", self.name);
+            assert!(
+                !self.assign_effects.is_empty(),
+                "operator {} has no effects",
+                self.name
+            );
         }
     }
 
@@ -544,7 +613,8 @@ impl SASOperator {
             let cond_str = if cond.is_empty() {
                 String::new()
             } else {
-                let parts: Vec<String> = cond.iter()
+                let parts: Vec<String> = cond
+                    .iter()
                     .map(|(cv, cv2)| format!("{}: {}", cv, cv2))
                     .collect();
                 format!(" [{}]", parts.join(", "))
@@ -555,7 +625,8 @@ impl SASOperator {
             let cond_str = if cond.is_empty() {
                 String::new()
             } else {
-                let parts: Vec<String> = cond.iter()
+                let parts: Vec<String> = cond
+                    .iter()
                     .map(|(cv, cv2)| format!("{}: {}", cv, cv2))
                     .collect();
                 format!(" [{}]", parts.join(", "))
@@ -612,7 +683,8 @@ impl SASOperator {
     }
 
     pub fn get_applicability_conditions(&self) -> Vec<(usize, usize)> {
-        let mut conditions: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        let mut conditions: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
         for (var, val) in &self.prevail {
             assert!(!conditions.contains_key(var));
             conditions.insert(*var, *val);
@@ -655,14 +727,22 @@ impl SASAxiom {
         variables.validate_fact(self.effect);
         let (eff_var, eff_value) = self.effect;
         let eff_layer = variables.axiom_layers[eff_var];
-        assert!(eff_layer >= 0,
-            "axiom effect var {} not a derived variable (layer {})", eff_var, eff_layer);
+        assert!(
+            eff_layer >= 0,
+            "axiom effect var {} not a derived variable (layer {})",
+            eff_var,
+            eff_layer
+        );
         let eff_init_value = init.values[eff_var];
         for &(cond_var, cond_value) in &self.condition {
             let cond_layer = variables.axiom_layers[cond_var];
             if cond_layer != -1 {
-                assert!(cond_layer <= eff_layer,
-                    "axiom condition layer {} > effect layer {}", cond_layer, eff_layer);
+                assert!(
+                    cond_layer <= eff_layer,
+                    "axiom condition layer {} > effect layer {}",
+                    cond_layer,
+                    eff_layer
+                );
                 if cond_layer == eff_layer {
                     let cond_init_value = init.values[cond_var];
                     if eff_value as i32 != eff_init_value {
@@ -715,7 +795,11 @@ pub struct SASCompareAxiom {
 
 impl SASCompareAxiom {
     pub fn new(comp: String, parts: Vec<usize>, effect: usize) -> Self {
-        SASCompareAxiom { comp, parts, effect }
+        SASCompareAxiom {
+            comp,
+            parts,
+            effect,
+        }
     }
 
     pub fn invert_comparator(&self) -> SASCompareAxiom {
@@ -732,7 +816,9 @@ impl SASCompareAxiom {
     }
 
     pub fn dump(&self) {
-        let parts_str = self.parts.iter()
+        let parts_str = self
+            .parts
+            .iter()
             .map(|v| v.to_string())
             .collect::<Vec<_>>()
             .join(" ");
@@ -740,7 +826,9 @@ impl SASCompareAxiom {
     }
 
     pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        let parts_str = self.parts.iter()
+        let parts_str = self
+            .parts
+            .iter()
             .map(|v| v.to_string())
             .collect::<Vec<_>>()
             .join(" ");
@@ -776,7 +864,9 @@ impl SASNumericAxiom {
     }
 
     pub fn dump(&self) {
-        let parts_str = self.parts.iter()
+        let parts_str = self
+            .parts
+            .iter()
             .map(|v| v.to_string())
             .collect::<Vec<_>>()
             .join(" ");
@@ -784,7 +874,9 @@ impl SASNumericAxiom {
     }
 
     pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        let parts_str = self.parts.iter()
+        let parts_str = self
+            .parts
+            .iter()
             .map(|v| v.to_string())
             .collect::<Vec<_>>()
             .join(" ");

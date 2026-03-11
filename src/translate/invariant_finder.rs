@@ -1,17 +1,16 @@
+use itertools::Itertools;
 /// Port of invariant_finder.py
 /// Finds mutex invariants among ground atoms.
-
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
-use itertools::Itertools;
 
-use super::pddl::conditions::*;
+use super::constraints::NegativeClause;
+use super::invariants::{BalanceChecker, Invariant, InvariantPart};
+use super::options;
 use super::pddl::actions::Action;
+use super::pddl::conditions::*;
 use super::pddl::pddl_types::TypedObject;
 use super::pddl::tasks::Task;
-use super::invariants::{Invariant, InvariantPart, BalanceChecker};
-use super::constraints::{NegativeClause};
-use super::options;
 
 /// Python: class BalanceChecker.__init__(self, task, reachable_action_params)
 fn build_balance_checker(
@@ -102,9 +101,8 @@ fn add_inequality_preconds(
         for (pos1, pos2) in inequal_params {
             let param1 = action.parameters[pos1].name.clone();
             let param2 = action.parameters[pos2].name.clone();
-            let new_cond = Condition::NegatedAtom(
-                NegatedAtom::new("=".to_string(), vec![param1, param2])
-            );
+            let new_cond =
+                Condition::NegatedAtom(NegatedAtom::new("=".to_string(), vec![param1, param2]));
             precond_parts.push(new_cond);
         }
         // Simplified conjunction (Python calls .simplified())
@@ -133,8 +131,12 @@ fn get_fluents(task: &Task) -> HashSet<String> {
     for action in &task.actions {
         for eff in &action.effects {
             match &eff.peffect {
-                Condition::Atom(a) => { fluent_names.insert(a.predicate.clone()); }
-                Condition::NegatedAtom(na) => { fluent_names.insert(na.predicate.clone()); }
+                Condition::Atom(a) => {
+                    fluent_names.insert(a.predicate.clone());
+                }
+                Condition::NegatedAtom(na) => {
+                    fluent_names.insert(na.predicate.clone());
+                }
                 _ => {}
             }
         }
@@ -159,7 +161,8 @@ fn get_initial_invariants(task: &Task) -> Vec<Invariant> {
         }
         // Try omitting each arg position
         for &omitted_arg in &all_args {
-            let order: Vec<usize> = all_args.iter()
+            let order: Vec<usize> = all_args
+                .iter()
                 .filter(|&&i| i != omitted_arg)
                 .cloned()
                 .collect();
@@ -212,7 +215,10 @@ fn useful_groups(invariants: &[Invariant], initial_facts: &[Atom]) -> Vec<Vec<At
     let mut predicate_to_invariants: HashMap<String, Vec<&Invariant>> = HashMap::new();
     for inv in invariants {
         for pred in &inv.predicates {
-            predicate_to_invariants.entry(pred.clone()).or_default().push(inv);
+            predicate_to_invariants
+                .entry(pred.clone())
+                .or_default()
+                .push(inv);
         }
     }
 
@@ -220,7 +226,8 @@ fn useful_groups(invariants: &[Invariant], initial_facts: &[Atom]) -> Vec<Vec<At
     let mut overcrowded_groups: HashSet<(usize, Vec<String>)> = HashSet::new();
 
     // Map invariants to indices for hashing
-    let inv_to_idx: HashMap<*const Invariant, usize> = invariants.iter()
+    let inv_to_idx: HashMap<*const Invariant, usize> = invariants
+        .iter()
         .enumerate()
         .map(|(i, inv)| (inv as *const Invariant, i))
         .collect();
@@ -247,7 +254,8 @@ fn useful_groups(invariants: &[Invariant], initial_facts: &[Atom]) -> Vec<Vec<At
         let inv = &invariants[inv_idx];
         let mut parts: Vec<&InvariantPart> = inv.parts.iter().collect();
         parts.sort();
-        let group: Vec<Atom> = parts.iter()
+        let group: Vec<Atom> = parts
+            .iter()
             .map(|part| part.instantiate(&parameters))
             .collect();
         groups.push(group);

@@ -1,12 +1,11 @@
 /// Port of fact_groups.py
 /// Groups atoms into mutex groups / FDR variables.
-
 use std::collections::{HashMap, HashSet};
 
-use super::pddl::conditions::*;
-use super::pddl::tasks::Task;
 use super::invariant_finder;
 use super::options;
+use super::pddl::conditions::*;
+use super::pddl::tasks::Task;
 
 /// Python: def expand_group(group, task, reachable_facts)
 fn expand_group(group: &[Atom], task: &Task, reachable_facts: &HashSet<Atom>) -> Vec<Atom> {
@@ -29,8 +28,15 @@ fn expand_group(group: &[Atom], task: &Task, reachable_facts: &HashSet<Atom>) ->
 }
 
 /// Python: def instantiate_groups(groups, task, reachable_facts)
-fn instantiate_groups(groups: &[Vec<Atom>], task: &Task, reachable_facts: &HashSet<Atom>) -> Vec<Vec<Atom>> {
-    groups.iter().map(|g| expand_group(g, task, reachable_facts)).collect()
+fn instantiate_groups(
+    groups: &[Vec<Atom>],
+    task: &Task,
+    reachable_facts: &HashSet<Atom>,
+) -> Vec<Vec<Atom>> {
+    groups
+        .iter()
+        .map(|g| expand_group(g, task, reachable_facts))
+        .collect()
 }
 
 /// Python: class GroupCoverQueue
@@ -181,7 +187,8 @@ fn collect_all_mutex_groups(groups: &[Vec<Atom>], atoms: &HashSet<Atom>) -> Vec<
 
 /// Python: def sort_groups(groups)
 fn sort_groups(groups: Vec<Vec<Atom>>) -> Vec<Vec<Atom>> {
-    let mut sorted: Vec<Vec<Atom>> = groups.into_iter()
+    let mut sorted: Vec<Vec<Atom>> = groups
+        .into_iter()
         .map(|mut g| {
             g.sort_by(|a, b| format!("{:?}", a).cmp(&format!("{:?}", b)));
             g

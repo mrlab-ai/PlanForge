@@ -1,6 +1,5 @@
 /// Port of constraints.py
 /// Constraint system for invariant checking.
-
 use std::collections::{HashMap, HashSet};
 
 /// Python: class NegativeClause(object)
@@ -29,7 +28,9 @@ impl NegativeClause {
 
     /// Python: def apply_mapping(self, m)
     pub fn apply_mapping(&self, mapping: &HashMap<String, String>) -> NegativeClause {
-        let new_parts = self.parts.iter()
+        let new_parts = self
+            .parts
+            .iter()
             .map(|(v1, v2)| {
                 let new_v1 = mapping.get(v1).cloned().unwrap_or_else(|| v1.clone());
                 let new_v2 = mapping.get(v2).cloned().unwrap_or_else(|| v2.clone());
@@ -65,14 +66,16 @@ impl Assignment {
         let mut eq_classes: HashMap<String, HashSet<String>> = HashMap::new();
 
         for (v1, v2) in &self.equalities {
-            let c1 = eq_classes.entry(v1.clone())
+            let c1 = eq_classes
+                .entry(v1.clone())
                 .or_insert_with(|| {
                     let mut s = HashSet::new();
                     s.insert(v1.clone());
                     s
                 })
                 .clone();
-            let c2 = eq_classes.entry(v2.clone())
+            let c2 = eq_classes
+                .entry(v2.clone())
                 .or_insert_with(|| {
                     let mut s = HashSet::new();
                     s.insert(v2.clone());
@@ -119,10 +122,12 @@ impl Assignment {
             }
             seen_classes.insert(sorted_class);
 
-            let variables: Vec<&String> = eq_class.iter()
+            let variables: Vec<&String> = eq_class
+                .iter()
                 .filter(|item| item.starts_with('?'))
                 .collect();
-            let constants: Vec<&String> = eq_class.iter()
+            let constants: Vec<&String> = eq_class
+                .iter()
                 .filter(|item| !item.starts_with('?'))
                 .collect();
 
@@ -224,7 +229,9 @@ impl ConstraintSystem {
     pub fn combine(&self, other: &ConstraintSystem) -> ConstraintSystem {
         let mut combined = ConstraintSystem::new();
         combined.combinatorial_assignments = self.combinatorial_assignments.clone();
-        combined.combinatorial_assignments.extend(other.combinatorial_assignments.clone());
+        combined
+            .combinatorial_assignments
+            .extend(other.combinatorial_assignments.clone());
         combined.neg_clauses = self.neg_clauses.clone();
         combined.neg_clauses.extend(other.neg_clauses.clone());
         combined

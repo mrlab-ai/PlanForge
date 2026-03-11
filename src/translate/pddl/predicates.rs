@@ -1,6 +1,6 @@
+use super::pddl_types::TypedObject;
 /// Port of pddl/predicates.py
 use std::fmt;
-use super::pddl_types::TypedObject;
 
 /// Python: class Predicate(object): def __init__(self, name, arguments)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

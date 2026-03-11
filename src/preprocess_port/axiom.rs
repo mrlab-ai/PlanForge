@@ -1,6 +1,8 @@
 use std::io::Write;
 
-use crate::preprocess_port::helper_functions::{check_magic, stringify, CompOperator, FOperator, InputStream};
+use crate::preprocess_port::helper_functions::{
+    check_magic, stringify, CompOperator, FOperator, InputStream,
+};
 use crate::preprocess_port::variable::{NumericVariable, Variable};
 
 #[derive(Debug, Clone)]
@@ -159,10 +161,8 @@ impl AxiomFunctionalComparison {
         let (comp_string, reverse_comp_string) = stringify(coper);
         let left_name = unsafe { &*left_var }.get_name();
         let right_name = unsafe { &*right_var }.get_name();
-        unsafe { &mut *effect_var }.set_fact_name(
-            0,
-            format!("{} {}, {}", comp_string, left_name, right_name),
-        );
+        unsafe { &mut *effect_var }
+            .set_fact_name(0, format!("{} {}, {}", comp_string, left_name, right_name));
         unsafe { &mut *effect_var }.set_fact_name(
             1,
             format!("{} {}, {}", reverse_comp_string, left_name, right_name),
@@ -344,10 +344,7 @@ impl AxiomNumericComputation {
 pub fn strip_axiom_relationals(axioms: &mut Vec<AxiomRelational>) {
     let old_count = axioms.len();
     axioms.retain(|axiom| !axiom.is_redundant());
-    println!(
-        "{} of {} axiom rules necessary.",
-        axioms.len(), old_count
-    );
+    println!("{} of {} axiom rules necessary.", axioms.len(), old_count);
 }
 
 pub fn strip_axiom_functional_assignment(axioms: &mut Vec<AxiomNumericComputation>) {
@@ -355,7 +352,8 @@ pub fn strip_axiom_functional_assignment(axioms: &mut Vec<AxiomNumericComputatio
     axioms.retain(|axiom| !axiom.is_redundant());
     println!(
         "{} of {} axiom_functional assignment rules necessary.",
-        axioms.len(), old_count
+        axioms.len(),
+        old_count
     );
 }
 
@@ -364,6 +362,7 @@ pub fn strip_axiom_functional_comparisons(axioms: &mut Vec<AxiomFunctionalCompar
     axioms.retain(|axiom| !axiom.is_redundant());
     println!(
         "{} of {} axiom_functional comparison rules necessary.",
-        axioms.len(), old_count
+        axioms.len(),
+        old_count
     );
 }

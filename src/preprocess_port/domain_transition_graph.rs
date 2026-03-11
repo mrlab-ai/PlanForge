@@ -73,7 +73,14 @@ impl DomainTransitionGraph {
         Self { vertices, level }
     }
 
-    pub fn add_transition(&mut self, from: i32, to: i32, op: &Operator, op_index: i32, pre_post: &PrePost) {
+    pub fn add_transition(
+        &mut self,
+        from: i32,
+        to: i32,
+        op: &Operator,
+        op_index: i32,
+        pre_post: &PrePost,
+    ) {
         let var = unsafe { &*pre_post.var };
         assert!(var.get_level() == self.level && pre_post.post == to);
         let mut trans = Transition::new(to, op_index);

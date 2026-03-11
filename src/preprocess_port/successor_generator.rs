@@ -175,7 +175,8 @@ impl SuccessorGenerator {
             next_condition_by_op.push(0);
         }
 
-        let mut var_order: Vec<*const Variable> = variables.iter().map(|v| *v as *const Variable).collect();
+        let mut var_order: Vec<*const Variable> =
+            variables.iter().map(|v| *v as *const Variable).collect();
         var_order.sort_by(|a, b| (*a as usize).cmp(&(*b as usize)));
 
         let mut sg = SuccessorGenerator {
@@ -190,7 +191,11 @@ impl SuccessorGenerator {
         sg
     }
 
-    fn construct_recursive(&mut self, mut switch_var_no: usize, mut op_indices: Vec<i32>) -> GeneratorBase {
+    fn construct_recursive(
+        &mut self,
+        mut switch_var_no: usize,
+        mut op_indices: Vec<i32>,
+    ) -> GeneratorBase {
         if op_indices.is_empty() {
             return GeneratorBase::Empty(GeneratorEmpty);
         }
@@ -241,7 +246,10 @@ impl SuccessorGenerator {
             } else if var_is_interesting {
                 let mut gen_for_val: Vec<GeneratorBase> = Vec::new();
                 for j in 0..number_of_children {
-                    let child = self.construct_recursive(switch_var_no + 1, ops_for_val_indices[j as usize].clone());
+                    let child = self.construct_recursive(
+                        switch_var_no + 1,
+                        ops_for_val_indices[j as usize].clone(),
+                    );
                     gen_for_val.push(child);
                 }
                 let default_sg = self.construct_recursive(switch_var_no + 1, default_ops_indices);

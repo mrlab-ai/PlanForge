@@ -2,12 +2,12 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::conditions::{Condition, Conjunction, Atom, NegatedAtom};
-use super::pddl_types::TypedObject;
-use super::effects::{Effect, EffectType, EffectKind};
+use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
+use super::effects::{Effect, EffectKind, EffectType};
 use super::f_expression::{
-    FunctionAssignment, PrimitiveNumericExpression, FunctionalExpression, NumericConstant,
+    FunctionAssignment, FunctionalExpression, NumericConstant, PrimitiveNumericExpression,
 };
+use super::pddl_types::TypedObject;
 
 /// Python: class Action(object)
 #[derive(Debug, Clone)]
@@ -52,7 +52,9 @@ impl Action {
         for p in &mut self.parameters {
             p.uniquify_name(&mut type_map, &mut renamings);
         }
-        self.precondition = self.precondition.uniquify_variables(&mut type_map, &mut renamings);
+        self.precondition = self
+            .precondition
+            .uniquify_variables(&mut type_map, &mut renamings);
         // Effects already have their own parameters that need renaming
         let mut new_effects = vec![];
         for eff in &self.effects {
@@ -60,8 +62,12 @@ impl Action {
             for p in &mut new_params {
                 p.uniquify_name(&mut type_map, &mut renamings);
             }
-            let new_cond = eff.condition.uniquify_variables(&mut type_map, &mut renamings);
-            let new_peff = eff.peffect.uniquify_variables(&mut type_map, &mut renamings);
+            let new_cond = eff
+                .condition
+                .uniquify_variables(&mut type_map, &mut renamings);
+            let new_peff = eff
+                .peffect
+                .uniquify_variables(&mut type_map, &mut renamings);
             new_effects.push(Effect::new(new_params, new_cond, new_peff));
         }
         self.effects = new_effects;
@@ -106,14 +112,25 @@ impl Action {
         // Build the action name
         let arg_list: Vec<String> = self.parameters[..self.num_external_parameters]
             .iter()
-            .map(|p| var_mapping.get(&p.name).cloned().unwrap_or_else(|| p.name.clone()))
+            .map(|p| {
+                var_mapping
+                    .get(&p.name)
+                    .cloned()
+                    .unwrap_or_else(|| p.name.clone())
+            })
             .collect();
         let name = format!("({} {})", self.name, arg_list.join(" "));
 
         // Instantiate precondition
         let mut precondition = vec![];
         match self.precondition.instantiate_action(
-            var_mapping, init_facts, fluent_facts, fluent_functions, init_function_vals, task_function_admin, new_constant_axioms,
+            var_mapping,
+            init_facts,
+            fluent_facts,
+            fluent_functions,
+            init_function_vals,
+            task_function_admin,
+            new_constant_axioms,
         ) {
             Some(conds) => precondition = conds,
             None => return None, // Precondition statically false
@@ -127,7 +144,13 @@ impl Action {
         for eff in &self.effects {
             // Check effect condition
             let eff_condition = match eff.condition.instantiate_action(
-                var_mapping, init_facts, fluent_facts, fluent_functions, init_function_vals, task_function_admin, new_constant_axioms,
+                var_mapping,
+                init_facts,
+                fluent_facts,
+                fluent_functions,
+                init_function_vals,
+                task_function_admin,
+                new_constant_axioms,
             ) {
                 Some(conds) => conds,
                 None => continue, // Effect condition statically false
@@ -135,14 +158,18 @@ impl Action {
 
             match &eff.peffect {
                 Condition::Atom(atom) => {
-                    let new_args: Vec<String> = atom.args.iter()
+                    let new_args: Vec<String> = atom
+                        .args
+                        .iter()
                         .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
                         .collect();
                     let new_atom = Atom::new(atom.predicate.clone(), new_args);
                     add_effects.push((eff_condition, new_atom));
                 }
                 Condition::NegatedAtom(natom) => {
-                    let new_args: Vec<String> = natom.args.iter()
+                    let new_args: Vec<String> = natom
+                        .args
+                        .iter()
                         .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
                         .collect();
                     let new_atom = Atom::new(natom.predicate.clone(), new_args);
@@ -155,27 +182,46 @@ impl Action {
         for (params, condition, assignment) in &self.assign_effects {
             let mut eff_var_mapping = var_mapping.clone();
             for parameter in params {
-                eff_var_mapping.entry(parameter.name.clone()).or_insert_with(|| parameter.name.clone());
+                eff_var_mapping
+                    .entry(parameter.name.clone())
+                    .or_insert_with(|| parameter.name.clone());
             }
             let eff_condition = match condition.instantiate_action(
-                &eff_var_mapping, init_facts, fluent_facts, fluent_functions, init_function_vals, task_function_admin, new_constant_axioms,
+                &eff_var_mapping,
+                init_facts,
+                fluent_facts,
+                fluent_functions,
+                init_function_vals,
+                task_function_admin,
+                new_constant_axioms,
             ) {
                 Some(conds) => conds,
                 None => continue,
             };
             let instantiated_assignment = assignment.instantiate(
-                &eff_var_mapping, fluent_functions, init_function_vals, task_function_admin, new_constant_axioms,
+                &eff_var_mapping,
+                fluent_functions,
+                init_function_vals,
+                task_function_admin,
+                new_constant_axioms,
             );
             assign_effects.push((eff_condition, instantiated_assignment));
         }
 
         // Instantiate cost
         let cost = if let Some(ref c) = self.cost {
-            Some(c.instantiate(var_mapping, fluent_functions, init_function_vals, task_function_admin, new_constant_axioms))
+            Some(c.instantiate(
+                var_mapping,
+                fluent_functions,
+                init_function_vals,
+                task_function_admin,
+                new_constant_axioms,
+            ))
         } else {
             // Default cost: increase(total-cost, 1)
             let constant_expr = FunctionalExpression::NumericConstant(NumericConstant::new(1.0));
-            let derived = task_function_admin.get_derived_function(&constant_expr, fluent_functions);
+            let derived =
+                task_function_admin.get_derived_function(&constant_expr, fluent_functions);
             if let Some(axiom) = task_function_admin
                 .get_all_axioms()
                 .into_iter()
@@ -284,7 +330,15 @@ impl Condition {
             Condition::Falsity => None,
             Condition::Conjunction(conj) => {
                 for part in &conj.parts {
-                    match part.instantiate_action(var_mapping, init_facts, fluent_facts, fluent_functions, init_function_vals, task_function_admin, new_constant_axioms) {
+                    match part.instantiate_action(
+                        var_mapping,
+                        init_facts,
+                        fluent_facts,
+                        fluent_functions,
+                        init_function_vals,
+                        task_function_admin,
+                        new_constant_axioms,
+                    ) {
                         Some(conds) => result.extend(conds),
                         None => return None,
                     }
@@ -292,7 +346,9 @@ impl Condition {
                 Some(result)
             }
             Condition::Atom(atom) => {
-                let new_args: Vec<String> = atom.args.iter()
+                let new_args: Vec<String> = atom
+                    .args
+                    .iter()
                     .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
                     .collect();
                 let new_atom = Atom::new(atom.predicate.clone(), new_args);
@@ -305,12 +361,17 @@ impl Condition {
                 }
             }
             Condition::NegatedAtom(natom) => {
-                let new_args: Vec<String> = natom.args.iter()
+                let new_args: Vec<String> = natom
+                    .args
+                    .iter()
                     .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
                     .collect();
                 let pos_atom = Atom::new(natom.predicate.clone(), new_args.clone());
                 if fluent_facts.contains(&natom.predicate) {
-                    Some(vec![Condition::NegatedAtom(NegatedAtom::new(natom.predicate.clone(), new_args))])
+                    Some(vec![Condition::NegatedAtom(NegatedAtom::new(
+                        natom.predicate.clone(),
+                        new_args,
+                    ))])
                 } else if init_facts.contains(&pos_atom) {
                     None // static true, but we need it negated -> false
                 } else {
@@ -319,35 +380,50 @@ impl Condition {
             }
             Condition::FunctionComparison(fc) => {
                 // Instantiate the function comparison
-                let new_parts = fc.parts.iter()
-                    .map(|p| super::f_expression::instantiate_expression(
-                        p,
-                        var_mapping,
-                        fluent_functions,
-                        init_function_vals,
-                        task_function_admin,
-                        new_constant_axioms,
-                    ))
+                let new_parts = fc
+                    .parts
+                    .iter()
+                    .map(|p| {
+                        super::f_expression::instantiate_expression(
+                            p,
+                            var_mapping,
+                            fluent_functions,
+                            init_function_vals,
+                            task_function_admin,
+                            new_constant_axioms,
+                        )
+                    })
                     .collect();
-                let new_fc = super::conditions::FunctionComparison::new(fc.comparator.clone(), new_parts);
+                let new_fc =
+                    super::conditions::FunctionComparison::new(fc.comparator.clone(), new_parts);
                 Some(vec![Condition::FunctionComparison(
-                    super::conditions::FunctionComparison::new(new_fc.comparator, new_fc.parts)
+                    super::conditions::FunctionComparison::new(new_fc.comparator, new_fc.parts),
                 )])
             }
             Condition::NegatedFunctionComparison(nfc) => {
-                let new_parts = nfc.parts.iter()
-                    .map(|p| super::f_expression::instantiate_expression(
-                        p,
-                        var_mapping,
-                        fluent_functions,
-                        init_function_vals,
-                        task_function_admin,
-                        new_constant_axioms,
-                    ))
+                let new_parts = nfc
+                    .parts
+                    .iter()
+                    .map(|p| {
+                        super::f_expression::instantiate_expression(
+                            p,
+                            var_mapping,
+                            fluent_functions,
+                            init_function_vals,
+                            task_function_admin,
+                            new_constant_axioms,
+                        )
+                    })
                     .collect();
-                let new_nfc = super::conditions::NegatedFunctionComparison::new(nfc.comparator.clone(), new_parts);
+                let new_nfc = super::conditions::NegatedFunctionComparison::new(
+                    nfc.comparator.clone(),
+                    new_parts,
+                );
                 Some(vec![Condition::NegatedFunctionComparison(
-                    super::conditions::NegatedFunctionComparison::new(new_nfc.comparator, new_nfc.parts)
+                    super::conditions::NegatedFunctionComparison::new(
+                        new_nfc.comparator,
+                        new_nfc.parts,
+                    ),
                 )])
             }
             _ => {

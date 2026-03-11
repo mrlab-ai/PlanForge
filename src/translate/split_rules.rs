@@ -1,9 +1,8 @@
+use super::graph::Graph;
+use super::pddl_to_prolog::{get_variables, Rule, RuleType};
 /// Port of split_rules.py
 /// Splits rules with many conditions into binary rules.
-
 use std::collections::HashSet;
-use super::pddl_to_prolog::{Rule, RuleType, get_variables};
-use super::graph::Graph;
 
 /// Python: def get_connected_conditions(conditions)
 fn get_connected_conditions(conditions: &[Vec<String>]) -> Vec<Vec<usize>> {
@@ -12,11 +11,13 @@ fn get_connected_conditions(conditions: &[Vec<String>]) -> Vec<Vec<usize>> {
 
     // Build var_to_conditions mapping
     for i in 0..n {
-        for j in (i+1)..n {
-            let vars_i: HashSet<&String> = conditions[i][1..].iter()
+        for j in (i + 1)..n {
+            let vars_i: HashSet<&String> = conditions[i][1..]
+                .iter()
                 .filter(|a| a.starts_with('?'))
                 .collect();
-            let vars_j: HashSet<&String> = conditions[j][1..].iter()
+            let vars_j: HashSet<&String> = conditions[j][1..]
+                .iter()
                 .filter(|a| a.starts_with('?'))
                 .collect();
             if vars_i.intersection(&vars_j).next().is_some() {
@@ -26,7 +27,8 @@ fn get_connected_conditions(conditions: &[Vec<String>]) -> Vec<Vec<usize>> {
     }
 
     let components = graph.connected_components();
-    let mut result: Vec<Vec<usize>> = components.into_iter()
+    let mut result: Vec<Vec<usize>> = components
+        .into_iter()
         .map(|s| {
             let mut v: Vec<usize> = s.into_iter().collect();
             v.sort();
@@ -38,12 +40,9 @@ fn get_connected_conditions(conditions: &[Vec<String>]) -> Vec<Vec<usize>> {
 }
 
 /// Python: def project_rule(rule, conditions, name_generator)
-fn project_rule(
-    rule: &Rule,
-    condition_indices: &[usize],
-    counter: &mut usize,
-) -> Rule {
-    let selected_conditions: Vec<Vec<String>> = condition_indices.iter()
+fn project_rule(rule: &Rule, condition_indices: &[usize], counter: &mut usize) -> Rule {
+    let selected_conditions: Vec<Vec<String>> = condition_indices
+        .iter()
         .map(|&i| rule.conditions[i].clone())
         .collect();
 
@@ -51,14 +50,13 @@ fn project_rule(
     *counter += 1;
 
     let cond_vars = get_variables(&selected_conditions);
-    let effect_vars: HashSet<String> = rule.effect[1..].iter()
+    let effect_vars: HashSet<String> = rule.effect[1..]
+        .iter()
         .filter(|a| a.starts_with('?'))
         .cloned()
         .collect();
 
-    let mut result_vars: Vec<String> = cond_vars.intersection(&effect_vars)
-        .cloned()
-        .collect();
+    let mut result_vars: Vec<String> = cond_vars.intersection(&effect_vars).cloned().collect();
     result_vars.sort();
 
     let mut effect = vec![predicate];
@@ -81,7 +79,8 @@ pub fn split_rule(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
         }
     }
 
-    let important_conditions: Vec<Vec<String>> = important_indices.iter()
+    let important_conditions: Vec<Vec<String>> = important_indices
+        .iter()
         .map(|&i| rule.conditions[i].clone())
         .collect();
 
@@ -91,11 +90,13 @@ pub fn split_rule(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
     }
 
     // Map component indices back to original condition indices
-    let components_original: Vec<Vec<usize>> = components.iter()
+    let components_original: Vec<Vec<usize>> = components
+        .iter()
         .map(|comp| comp.iter().map(|&i| important_indices[i]).collect())
         .collect();
 
-    let projected_rules: Vec<Rule> = components_original.iter()
+    let projected_rules: Vec<Rule> = components_original
+        .iter()
         .map(|comp| project_rule(rule, comp, counter))
         .collect();
 
@@ -104,9 +105,8 @@ pub fn split_rule(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
         result.extend(split_into_binary_rules(proj_rule, counter));
     }
 
-    let mut combining_conditions: Vec<Vec<String>> = projected_rules.iter()
-        .map(|r| r.effect.clone())
-        .collect();
+    let mut combining_conditions: Vec<Vec<String>> =
+        projected_rules.iter().map(|r| r.effect.clone()).collect();
     combining_conditions.extend(trivial_conditions);
 
     let mut combining_rule = Rule::new(combining_conditions.clone(), rule.effect.clone());

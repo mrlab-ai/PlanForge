@@ -1,18 +1,17 @@
 /// Port of pddl_parser/parsing_functions.py
 /// Main PDDL parsing functions that convert S-expressions into PDDL AST.
-
 use std::collections::HashMap;
 
 use super::lisp_parser::SExpr;
-use crate::translate::pddl::pddl_types::{Type, TypedObject, get_type_predicate_name};
-use crate::translate::pddl::predicates::Predicate;
-use crate::translate::pddl::functions::Function;
-use crate::translate::pddl::conditions::*;
-use crate::translate::pddl::f_expression::*;
-use crate::translate::pddl::effects::*;
 use crate::translate::pddl::actions::Action;
 use crate::translate::pddl::axioms::Axiom;
-use crate::translate::pddl::tasks::{Task, Requirements};
+use crate::translate::pddl::conditions::*;
+use crate::translate::pddl::effects::*;
+use crate::translate::pddl::f_expression::*;
+use crate::translate::pddl::functions::Function;
+use crate::translate::pddl::pddl_types::{get_type_predicate_name, Type, TypedObject};
+use crate::translate::pddl::predicates::Predicate;
+use crate::translate::pddl::tasks::{Requirements, Task};
 
 /// Python: def parse_typed_list(alist, only_variables=False, constructor=TypedObject, default_type="object")
 /// Parses a list of typed items: "?x ?y - type ?z - type2"
@@ -127,9 +126,7 @@ pub fn parse_function(alist: &[SExpr], type_name: &str) -> Function {
 pub fn parse_condition(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) -> Condition {
     match alist {
         SExpr::List(items) if items.is_empty() => Condition::Truth,
-        SExpr::List(items) => {
-            parse_condition_aux(items, type_dict)
-        }
+        SExpr::List(items) => parse_condition_aux(items, type_dict),
         SExpr::Atom(_) => {
             // single atom, treat as Truth or parse as literal
             Condition::Truth
@@ -145,13 +142,15 @@ fn parse_condition_aux(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>
     let tag = alist[0].as_atom();
     match tag {
         "and" => {
-            let parts: Vec<Condition> = alist[1..].iter()
+            let parts: Vec<Condition> = alist[1..]
+                .iter()
                 .map(|item| parse_condition(item, type_dict))
                 .collect();
             Condition::Conjunction(Conjunction::new(parts))
         }
         "or" => {
-            let parts: Vec<Condition> = alist[1..].iter()
+            let parts: Vec<Condition> = alist[1..]
+                .iter()
                 .map(|item| parse_condition(item, type_dict))
                 .collect();
             Condition::Disjunction(Disjunction::new(parts))
@@ -172,7 +171,8 @@ fn parse_condition_aux(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>
             } else {
                 // It's a negated literal
                 let pred = inner_list[0].as_atom().to_string();
-                let args: Vec<String> = inner_list[1..].iter()
+                let args: Vec<String> = inner_list[1..]
+                    .iter()
                     .map(|a| a.as_atom().to_string())
                     .collect();
                 Condition::NegatedAtom(NegatedAtom::new(pred, args))
@@ -190,7 +190,8 @@ fn parse_condition_aux(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>
                 other => Condition::Disjunction(Disjunction::new(vec![
                     // Can't simply negate arbitrary conditions; use DeMorgan etc.
                     // For simplicity in PDDL, imply usually has literals
-                    other, right.clone()
+                    other,
+                    right.clone(),
                 ])),
             };
             match neg_left {
@@ -210,15 +211,11 @@ fn parse_condition_aux(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>
             let body = parse_condition(&alist[2], type_dict);
             Condition::ExistentialCondition(ExistentialCondition::new(parameters, vec![body]))
         }
-        "<" | "<=" | "=" | ">=" | ">" => {
-            parse_function_comparison(alist, type_dict)
-        }
+        "<" | "<=" | "=" | ">=" | ">" => parse_function_comparison(alist, type_dict),
         _ => {
             // It's a literal (atom)
             let pred = tag.to_string();
-            let args: Vec<String> = alist[1..].iter()
-                .map(|a| a.as_atom().to_string())
-                .collect();
+            let args: Vec<String> = alist[1..].iter().map(|a| a.as_atom().to_string()).collect();
             Condition::Atom(Atom::new(pred, args))
         }
     }
@@ -247,7 +244,8 @@ fn is_function_comparison(alist: &[SExpr]) -> bool {
         match tag.as_str() {
             "<" | "<=" | ">=" | ">" => true,
             "=" => {
-                alist.len() == 3 && (expression_looks_numeric(&alist[1]) || expression_looks_numeric(&alist[2]))
+                alist.len() == 3
+                    && (expression_looks_numeric(&alist[1]) || expression_looks_numeric(&alist[2]))
             }
             _ => false,
         }
@@ -257,15 +255,24 @@ fn is_function_comparison(alist: &[SExpr]) -> bool {
 }
 
 /// Parse a function comparison like (< (f x) 5)
-fn parse_function_comparison(alist: &[SExpr], _type_dict: &HashMap<String, Vec<String>>) -> Condition {
+fn parse_function_comparison(
+    alist: &[SExpr],
+    _type_dict: &HashMap<String, Vec<String>>,
+) -> Condition {
     let comparator = alist[0].as_atom().to_string();
-    let parts: Vec<FunctionalExpression> = alist[1..].iter()
+    let parts: Vec<FunctionalExpression> = alist[1..]
+        .iter()
         .map(|item| parse_expression(item))
         .collect();
-    assert_eq!(parts.len(), 2, "numeric comparisons must have exactly two parts");
-    let difference = FunctionalExpression::ArithmeticExpression(
-        ArithmeticExpression::new("-".to_string(), parts),
+    assert_eq!(
+        parts.len(),
+        2,
+        "numeric comparisons must have exactly two parts"
     );
+    let difference = FunctionalExpression::ArithmeticExpression(ArithmeticExpression::new(
+        "-".to_string(),
+        parts,
+    ));
     let zero = FunctionalExpression::NumericConstant(NumericConstant::new(0.0));
     Condition::FunctionComparison(FunctionComparison::new(comparator, vec![difference, zero]))
 }
@@ -280,15 +287,11 @@ pub fn parse_literal(alist: &SExpr) -> Condition {
     if tag == "not" {
         let inner = items[1].as_list();
         let pred = inner[0].as_atom().to_string();
-        let args: Vec<String> = inner[1..].iter()
-            .map(|a| a.as_atom().to_string())
-            .collect();
+        let args: Vec<String> = inner[1..].iter().map(|a| a.as_atom().to_string()).collect();
         Condition::NegatedAtom(NegatedAtom::new(pred, args))
     } else {
         let pred = tag.to_string();
-        let args: Vec<String> = items[1..].iter()
-            .map(|a| a.as_atom().to_string())
-            .collect();
+        let args: Vec<String> = items[1..].iter().map(|a| a.as_atom().to_string()).collect();
         Condition::Atom(Atom::new(pred, args))
     }
 }
@@ -310,9 +313,7 @@ pub fn parse_expression(alist: &SExpr) -> FunctionalExpression {
                 FunctionalExpression::NumericConstant(NumericConstant::new(val))
             } else {
                 // It's a function symbol with no arguments
-                FunctionalExpression::PrimitiveNumericExpression(
-                    classify_pne(s.clone(), vec![])
-                )
+                FunctionalExpression::PrimitiveNumericExpression(classify_pne(s.clone(), vec![]))
             }
         }
         SExpr::List(items) => {
@@ -327,23 +328,22 @@ pub fn parse_expression(alist: &SExpr) -> FunctionalExpression {
                         let inner = parse_expression(&items[1]);
                         FunctionalExpression::AdditiveInverse(AdditiveInverse::new(vec![inner]))
                     } else {
-                        let parts: Vec<FunctionalExpression> = items[1..].iter()
+                        let parts: Vec<FunctionalExpression> = items[1..]
+                            .iter()
                             .map(|item| parse_expression(item))
                             .collect();
-                        FunctionalExpression::ArithmeticExpression(
-                            ArithmeticExpression::new(tag.to_string(), parts)
-                        )
+                        FunctionalExpression::ArithmeticExpression(ArithmeticExpression::new(
+                            tag.to_string(),
+                            parts,
+                        ))
                     }
                 }
                 _ => {
                     // It's a function application: (f arg1 arg2 ...)
                     let symbol = tag.to_string();
-                    let args: Vec<String> = items[1..].iter()
-                        .map(|a| a.as_atom().to_string())
-                        .collect();
-                    FunctionalExpression::PrimitiveNumericExpression(
-                        classify_pne(symbol, args)
-                    )
+                    let args: Vec<String> =
+                        items[1..].iter().map(|a| a.as_atom().to_string()).collect();
+                    FunctionalExpression::PrimitiveNumericExpression(classify_pne(symbol, args))
                 }
             }
         }
@@ -379,7 +379,8 @@ pub fn parse_effects(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) ->
     }
     let tag = items[0].as_atom();
     if tag == "and" {
-        let effects: Vec<EffectType> = items[1..].iter()
+        let effects: Vec<EffectType> = items[1..]
+            .iter()
             .map(|item| parse_effect(item, type_dict))
             .collect();
         EffectType::Conjunctive(ConjunctiveEffect::new(effects))
@@ -396,12 +397,10 @@ fn parse_effect(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) -> Effe
         "not" => {
             let inner = items[1].as_list();
             let pred = inner[0].as_atom().to_string();
-            let args: Vec<String> = inner[1..].iter()
-                .map(|a| a.as_atom().to_string())
-                .collect();
-            EffectType::Simple(SimpleEffect::new(
-                Condition::NegatedAtom(NegatedAtom::new(pred, args))
-            ))
+            let args: Vec<String> = inner[1..].iter().map(|a| a.as_atom().to_string()).collect();
+            EffectType::Simple(SimpleEffect::new(Condition::NegatedAtom(NegatedAtom::new(
+                pred, args,
+            ))))
         }
         "when" => {
             let condition = parse_condition(&items[1], type_dict);
@@ -421,12 +420,8 @@ fn parse_effect(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) -> Effe
         _ => {
             // Simple add effect (atom)
             let pred = tag.to_string();
-            let args: Vec<String> = items[1..].iter()
-                .map(|a| a.as_atom().to_string())
-                .collect();
-            EffectType::Simple(SimpleEffect::new(
-                Condition::Atom(Atom::new(pred, args))
-            ))
+            let args: Vec<String> = items[1..].iter().map(|a| a.as_atom().to_string()).collect();
+            EffectType::Simple(SimpleEffect::new(Condition::Atom(Atom::new(pred, args))))
         }
     }
 }
@@ -478,18 +473,19 @@ pub fn parse_action(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -
     // Normalize effects
     let effects = if let Some(ref eff) = effect_type {
         let normalized = eff.normalize();
-        normalized.into_iter().map(|(params, condition, kind)| {
-            match kind {
-                EffectKind::Literal(lit) => {
-                    Effect::new(params, condition, lit)
+        normalized
+            .into_iter()
+            .map(|(params, condition, kind)| {
+                match kind {
+                    EffectKind::Literal(lit) => Effect::new(params, condition, lit),
+                    EffectKind::Numeric(assign) => {
+                        // Numeric effects stored separately
+                        // For now, store as Effect with a special marker
+                        Effect::new(params, condition, Condition::Truth) // placeholder
+                    }
                 }
-                EffectKind::Numeric(assign) => {
-                    // Numeric effects stored separately
-                    // For now, store as Effect with a special marker
-                    Effect::new(params, condition, Condition::Truth) // placeholder
-                }
-            }
-        }).collect()
+            })
+            .collect()
     } else {
         vec![]
     };
@@ -579,7 +575,8 @@ pub fn parse_axiom(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
         i += 1;
     }
 
-    let num_external = parameters.iter()
+    let num_external = parameters
+        .iter()
         .position(|_| false) // All parameters are external for axioms
         .unwrap_or(parameters.len());
     // Actually for axioms, num_external_parameters = len(parameters) from :parameters
@@ -597,8 +594,17 @@ pub fn parse_task(domain_pddl: &SExpr, task_pddl: &SExpr) -> Task {
     let task_items = task_pddl.as_list();
 
     // Parse domain
-    let (domain_name, requirements, types, type_dict, constants,
-         predicates, functions, actions, axioms) = parse_domain_pddl(domain_items);
+    let (
+        domain_name,
+        requirements,
+        types,
+        type_dict,
+        constants,
+        predicates,
+        functions,
+        actions,
+        axioms,
+    ) = parse_domain_pddl(domain_items);
 
     // Parse problem
     let (task_name, _task_domain, objects, mut init, num_init, goal, metric) =
@@ -609,39 +615,61 @@ pub fn parse_task(domain_pddl: &SExpr, task_pddl: &SExpr) -> Task {
     all_objects.extend(objects);
 
     for obj in &all_objects {
-        init.push(Atom::new("=".to_string(), vec![obj.name.clone(), obj.name.clone()]));
+        init.push(Atom::new(
+            "=".to_string(),
+            vec![obj.name.clone(), obj.name.clone()],
+        ));
     }
 
     // Determine metric
     let task_metric = metric.unwrap_or_else(|| {
-        ("<".to_string(), PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'))
+        (
+            "<".to_string(),
+            PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
+        )
     });
 
     // Check if total-cost function exists, if not add it
     let mut all_functions = functions;
     if !all_functions.iter().any(|f| f.name == "total-cost") {
-        all_functions.push(Function::new("total-cost".to_string(), vec![], "number".to_string()));
+        all_functions.push(Function::new(
+            "total-cost".to_string(),
+            vec![],
+            "number".to_string(),
+        ));
     }
 
     Task::new(
-        domain_name, task_name, requirements, types, all_objects,
-        predicates, all_functions, init, num_init, goal, actions, axioms,
+        domain_name,
+        task_name,
+        requirements,
+        types,
+        all_objects,
+        predicates,
+        all_functions,
+        init,
+        num_init,
+        goal,
+        actions,
+        axioms,
         task_metric,
     )
 }
 
 /// Python: def parse_domain_pddl(domain_pddl)
 /// Generator in Python, here returns all parsed components.
-fn parse_domain_pddl(items: &[SExpr]) -> (
-    String,                          // domain_name
-    Requirements,                    // requirements
-    Vec<Type>,                       // types
-    HashMap<String, Vec<String>>,    // type_dict (supertypes)
-    Vec<TypedObject>,                // constants
-    Vec<Predicate>,                  // predicates
-    Vec<Function>,                   // functions
-    Vec<Action>,                     // actions
-    Vec<Axiom>,                      // axioms
+fn parse_domain_pddl(
+    items: &[SExpr],
+) -> (
+    String,                       // domain_name
+    Requirements,                 // requirements
+    Vec<Type>,                    // types
+    HashMap<String, Vec<String>>, // type_dict (supertypes)
+    Vec<TypedObject>,             // constants
+    Vec<Predicate>,               // predicates
+    Vec<Function>,                // functions
+    Vec<Action>,                  // actions
+    Vec<Axiom>,                   // axioms
 ) {
     assert_eq!(items[0].as_atom(), "define", "Expected (define ...)");
 
@@ -667,7 +695,8 @@ fn parse_domain_pddl(items: &[SExpr]) -> (
         let tag = section[0].as_atom();
         match tag {
             ":requirements" => {
-                let reqs: Vec<String> = section[1..].iter()
+                let reqs: Vec<String> = section[1..]
+                    .iter()
                     .map(|s| s.as_atom().to_string())
                     .collect();
                 requirements = Requirements::new(reqs);
@@ -680,7 +709,8 @@ fn parse_domain_pddl(items: &[SExpr]) -> (
                 constants = parse_typed_list(&section[1..], false, "object");
             }
             ":predicates" => {
-                predicates = section[1..].iter()
+                predicates = section[1..]
+                    .iter()
                     .map(|p| parse_predicate(p.as_list()))
                     .collect();
             }
@@ -704,7 +734,17 @@ fn parse_domain_pddl(items: &[SExpr]) -> (
         }
     }
 
-    (domain_name, requirements, types, type_dict, constants, predicates, functions, actions, axioms)
+    (
+        domain_name,
+        requirements,
+        types,
+        type_dict,
+        constants,
+        predicates,
+        functions,
+        actions,
+        axioms,
+    )
 }
 
 /// Parse function declarations with types
@@ -741,14 +781,17 @@ fn parse_function_list(items: &[SExpr]) -> Vec<Function> {
 }
 
 /// Python: def parse_task_pddl(task_pddl, type_dict)
-fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -> (
-    String,                                            // task_name
-    String,                                            // domain_name reference
-    Vec<TypedObject>,                                  // objects
-    Vec<Atom>,                                         // init (propositional)
-    Vec<FunctionAssignment>,                           // num_init (numeric)
-    Condition,                                         // goal
-    Option<(String, PrimitiveNumericExpression)>,       // metric
+fn parse_task_pddl(
+    items: &[SExpr],
+    type_dict: &HashMap<String, Vec<String>>,
+) -> (
+    String,                                       // task_name
+    String,                                       // domain_name reference
+    Vec<TypedObject>,                             // objects
+    Vec<Atom>,                                    // init (propositional)
+    Vec<FunctionAssignment>,                      // num_init (numeric)
+    Condition,                                    // goal
+    Option<(String, PrimitiveNumericExpression)>, // metric
 ) {
     assert_eq!(items[0].as_atom(), "define");
 
@@ -791,16 +834,15 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
                             FunctionalExpression::PrimitiveNumericExpression(pne) => pne,
                             _ => panic!("Expected PNE in numeric init"),
                         };
-                        num_init.push(FunctionAssignment::new(
-                            "=".to_string(), fluent, value_expr,
-                        ));
+                        num_init.push(FunctionAssignment::new("=".to_string(), fluent, value_expr));
                     } else if matches!(first, "not") {
                         // Negative init fact - these are not standard PDDL but we handle them
                         // Just skip, closed world assumption handles this
                     } else {
                         // Positive init fact
                         let pred = first.to_string();
-                        let args: Vec<String> = init_item[1..].iter()
+                        let args: Vec<String> = init_item[1..]
+                            .iter()
                             .map(|a| a.as_atom().to_string())
                             .collect();
                         init.push(Atom::new(pred, args));
@@ -830,7 +872,15 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
         }
     }
 
-    (task_name, domain_name, objects, init, num_init, goal, metric)
+    (
+        task_name,
+        domain_name,
+        objects,
+        init,
+        num_init,
+        goal,
+        metric,
+    )
 }
 
 /// Python: def check_for_duplicates(lst, what_type, what_list)
@@ -839,7 +889,10 @@ pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
     let mut seen = HashSet::new();
     for item in lst {
         if !seen.insert(item) {
-            eprintln!("Warning: duplicate {} in {}: {}", what_type, what_list, item);
+            eprintln!(
+                "Warning: duplicate {} in {}: {}",
+                what_type, what_list, item
+            );
         }
     }
 }

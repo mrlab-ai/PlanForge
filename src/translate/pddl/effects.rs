@@ -3,9 +3,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::conditions::{Condition, Conjunction, Atom, NegatedAtom};
+use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
+use super::f_expression::{FunctionAssignment, FunctionalExpression, PrimitiveNumericExpression};
 use super::pddl_types::TypedObject;
-use super::f_expression::{FunctionAssignment, PrimitiveNumericExpression, FunctionalExpression};
 
 /// Python: class Effect(object)
 /// An effect consists of parameters (for universal effects), a condition, and a primitive effect.
@@ -19,7 +19,11 @@ pub struct Effect {
 
 impl Effect {
     pub fn new(parameters: Vec<TypedObject>, condition: Condition, peffect: Condition) -> Self {
-        Effect { parameters, condition, peffect }
+        Effect {
+            parameters,
+            condition,
+            peffect,
+        }
     }
 
     /// Python: def dump(self)
@@ -68,7 +72,11 @@ impl Effect {
 
 impl fmt::Display for Effect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Effect({:?}, {}, {})", self.parameters, self.condition, self.peffect)
+        write!(
+            f,
+            "Effect({:?}, {}, {})",
+            self.parameters, self.condition, self.peffect
+        )
     }
 }
 
@@ -81,7 +89,10 @@ pub struct ConditionalEffect {
 
 impl ConditionalEffect {
     pub fn new(condition: Condition, effect: EffectType) -> Self {
-        ConditionalEffect { condition, effect: Box::new(effect) }
+        ConditionalEffect {
+            condition,
+            effect: Box::new(effect),
+        }
     }
 }
 
@@ -94,7 +105,10 @@ pub struct UniversalEffect {
 
 impl UniversalEffect {
     pub fn new(parameters: Vec<TypedObject>, effect: EffectType) -> Self {
-        UniversalEffect { parameters, effect: Box::new(effect) }
+        UniversalEffect {
+            parameters,
+            effect: Box::new(effect),
+        }
     }
 }
 
@@ -167,9 +181,10 @@ impl EffectType {
             EffectType::Conditional(ce) => {
                 let new_condition = match condition {
                     Condition::Truth => ce.condition.clone(),
-                    _ => Condition::Conjunction(Conjunction::new(
-                        vec![condition, ce.condition.clone()]
-                    )),
+                    _ => Condition::Conjunction(Conjunction::new(vec![
+                        condition,
+                        ce.condition.clone(),
+                    ])),
                 };
                 ce.effect.normalize_aux(params, new_condition)
             }
@@ -209,7 +224,10 @@ impl EffectType {
                 if new_effects.len() == 1 {
                     (new_effects.into_iter().next().unwrap(), cost_effect)
                 } else {
-                    (EffectType::Conjunctive(ConjunctiveEffect::new(new_effects)), cost_effect)
+                    (
+                        EffectType::Conjunctive(ConjunctiveEffect::new(new_effects)),
+                        cost_effect,
+                    )
                 }
             }
             _ => (self.clone(), None),

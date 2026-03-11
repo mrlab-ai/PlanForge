@@ -1,4 +1,5 @@
 use std::cmp::max;
+use std::cell::RefCell;
 
 use crate::search::numeric::{
     self,
@@ -197,47 +198,47 @@ impl ComparisonAxiom {
         self.right_hand_side
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct AxiomRule {
     condition_count: i32,
-    unsatisfied_conditions: i32,
     effect_var: i32,
     effect_value: u64,
-    effect_literal: AxiomLiteral,
 }
 
 impl AxiomRule {
-    pub fn new(
-        cond_count: usize,
-        eff_var: usize,
-        eff_val: usize,
-        eff_literal: &AxiomLiteral,
-    ) -> Self {
+    pub fn new(cond_count: usize, eff_var: usize, eff_val: usize) -> Self {
         AxiomRule {
             condition_count: cond_count as i32,
-            unsatisfied_conditions: cond_count as i32,
             effect_var: eff_var as i32,
             effect_value: eff_val as u64,
-            effect_literal: eff_literal.clone(), //TODO: Get rid of clone. Either use lifetime or Rc
         }
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct AxiomLiteral {
-    condition_of: Vec<AxiomRule>,
+    condition_of: Vec<usize>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 struct NegationByFailureInfo {
     var_id: u32,
-    literal: AxiomLiteral, // TODO: make this a reference to avoid cloning.
+    literal_value: usize,
 }
 
 impl NegationByFailureInfo {
-    pub fn new(var_id: u32, literal: AxiomLiteral) -> Self {
-        NegationByFailureInfo { var_id, literal }
+    pub fn new(var_id: u32, literal_value: usize) -> Self {
+        NegationByFailureInfo {
+            var_id,
+            literal_value,
+        }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LiteralRef {
+    var_id: usize,
+    value: usize,
 }
 
 pub struct AxiomEvaluator<'a> {
@@ -250,7 +251,8 @@ pub struct AxiomEvaluator<'a> {
     last_propositional_axiom_layer: i32,
     last_arithmetic_axiom_layer: i32,
     nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
-    queue: Vec<AxiomLiteral>, // Queue for processing axioms
+    queue: RefCell<Vec<LiteralRef>>,
+    unsatisfied_conditions: RefCell<Vec<i32>>,
 }
 
 impl<'a> AxiomEvaluator<'a> {
@@ -300,8 +302,7 @@ impl<'a> AxiomEvaluator<'a> {
             let cond_count = axiom.conditions.len();
             let eff_var = axiom.var_id as usize;
             let eff_val = axiom.effect_value as usize;
-            let eff_literal = &axiom_literals[eff_var][eff_val];
-            rules.push(AxiomRule::new(cond_count, eff_var, eff_val, eff_literal));
+            rules.push(AxiomRule::new(cond_count, eff_var, eff_val));
         }
 
         for i in 0..numeric_task.axioms().len() {
@@ -310,7 +311,7 @@ impl<'a> AxiomEvaluator<'a> {
             for condition in conditions.iter() {
                 axiom_literals[condition.var() as usize][condition.value() as usize]
                     .condition_of
-                    .push(rules[i].clone()); //TODO: Get rid of clone
+                    .push(i);
             }
         }
 
@@ -326,15 +327,15 @@ impl<'a> AxiomEvaluator<'a> {
         for var_id in 0..numeric_task.get_num_variables() {
             let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
             if axiom_layer != -1 && axiom_layer != last_layer {
-                let nbf_value =
-                    numeric_task.get_initial_propositional_state_values()[var_id as usize];
-                let literal = axiom_literals[var_id as usize][nbf_value as usize].clone();
-                let nbf_info = NegationByFailureInfo::new(var_id as u32, literal);
+                let nbf_value = numeric_task.get_variable_default_axiom_value(var_id).unwrap();
+                let nbf_info = NegationByFailureInfo::new(var_id as u32, nbf_value as usize);
                 nbf_info_by_layer[axiom_layer as usize].push(nbf_info);
             }
         }
 
         //TODO: evaluate arithmetic axioms here instead of state_registry
+
+        let rule_count = rules.len();
 
         AxiomEvaluator {
             numeric_task,
@@ -346,7 +347,8 @@ impl<'a> AxiomEvaluator<'a> {
             last_propositional_axiom_layer,
             last_arithmetic_axiom_layer,
             nbf_info_by_layer,
-            queue: vec![],
+            queue: RefCell::new(Vec::new()),
+            unsatisfied_conditions: RefCell::new(vec![0; rule_count]),
         }
     }
 
@@ -385,17 +387,23 @@ impl<'a> AxiomEvaluator<'a> {
             return Ok(());
         }
 
-        let mut queue = Vec::<AxiomLiteral>::new();
+        let mut queue = self.queue.borrow_mut();
+        queue.clear();
+
+        let mut unsatisfied_conditions = self.unsatisfied_conditions.borrow_mut();
+        if unsatisfied_conditions.len() != self.rules.len() {
+            unsatisfied_conditions.resize(self.rules.len(), 0);
+        }
 
         // Initialize queue with current variable values (following C++ logic)
         for i in 0..self.numeric_task.get_num_variables() {
             let axiom_layer = self.numeric_task.get_variable_axiom_layer(i).unwrap();
             if axiom_layer == -1 {
                 // Non-derived variable -> push immediately
-                queue.push(
-                    self.axiom_literals[i as usize][self.state_packer.get(buffer, i) as usize]
-                        .clone(),
-                );
+                queue.push(LiteralRef {
+                    var_id: i as usize,
+                    value: self.state_packer.get(buffer, i) as usize,
+                });
             } else if axiom_layer <= self.last_arithmetic_axiom_layer {
                 return Err(AxiomEvalError::WrongAxiomLayer(
                     numeric::utils::errors::WrongAxiomLayer {
@@ -405,14 +413,13 @@ impl<'a> AxiomEvaluator<'a> {
                 ));
             } else if axiom_layer == self.comparison_axiom_layer {
                 // Variable is the result of a comparison axiom
-                queue.push(
-                    self.axiom_literals[i as usize][self.state_packer.get(buffer, i) as usize]
-                        .clone(),
-                );
+                queue.push(LiteralRef {
+                    var_id: i as usize,
+                    value: self.state_packer.get(buffer, i) as usize,
+                });
             } else if axiom_layer <= self.last_propositional_axiom_layer {
                 // Set derived variables to their default values initially
-                let default_value =
-                    self.numeric_task.get_initial_propositional_state_values()[i as usize];
+                let default_value = self.numeric_task.get_variable_default_axiom_value(i).unwrap();
                 self.state_packer.set(buffer, i, default_value as u64);
             } else {
                 return Err(AxiomEvalError::WrongAxiomLayer(
@@ -424,10 +431,8 @@ impl<'a> AxiomEvaluator<'a> {
             }
         }
 
-        // Initialize rule satisfaction counters (need mutable copy)
-        let mut rules = self.rules.clone();
-        for rule in &mut rules {
-            rule.unsatisfied_conditions = rule.condition_count;
+        for (rule_index, rule) in self.rules.iter().enumerate() {
+            unsatisfied_conditions[rule_index] = rule.condition_count;
 
             // Handle trivial axioms (no conditions)
             if rule.condition_count == 0 {
@@ -435,7 +440,10 @@ impl<'a> AxiomEvaluator<'a> {
                 let val = rule.effect_value;
                 if self.state_packer.get(buffer, var_no) != val {
                     self.state_packer.set(buffer, var_no, val);
-                    queue.push(rule.effect_literal.clone());
+                    queue.push(LiteralRef {
+                        var_id: var_no as usize,
+                        value: val as usize,
+                    });
                 }
             }
         }
@@ -443,27 +451,24 @@ impl<'a> AxiomEvaluator<'a> {
         // Process each axiom layer
         for layer_no in 0..self.nbf_info_by_layer.len() {
             // Apply Horn rules - continue until queue is empty
-            while !queue.is_empty() {
-                let curr_literal = queue.pop().unwrap();
+            while let Some(curr_literal) = queue.pop() {
+                let dependent_rules = &self.axiom_literals[curr_literal.var_id][curr_literal.value].condition_of;
 
                 // For each rule that depends on this literal
-                for rule_ref in &curr_literal.condition_of {
-                    // Find the matching rule in our mutable copy
-                    if let Some(rule) = rules.iter_mut().find(|r| {
-                        r.effect_var == rule_ref.effect_var
-                            && r.effect_value == rule_ref.effect_value
-                    }) {
-                        // Decrement unsatisfied conditions
-                        rule.unsatisfied_conditions -= 1;
+                for &rule_index in dependent_rules {
+                    let remaining = &mut unsatisfied_conditions[rule_index];
+                    *remaining -= 1;
 
-                        // If all conditions are satisfied, apply the rule
-                        if rule.unsatisfied_conditions == 0 {
-                            let var_no = rule.effect_var;
-                            let val = rule.effect_value;
-                            if self.state_packer.get(buffer, var_no) != val {
-                                self.state_packer.set(buffer, var_no, val);
-                                queue.push(rule.effect_literal.clone());
-                            }
+                    if *remaining == 0 {
+                        let rule = &self.rules[rule_index];
+                        let var_no = rule.effect_var;
+                        let val = rule.effect_value;
+                        if self.state_packer.get(buffer, var_no) != val {
+                            self.state_packer.set(buffer, var_no, val);
+                            queue.push(LiteralRef {
+                                var_id: var_no as usize,
+                                value: val as usize,
+                            });
                         }
                     }
                 }
@@ -474,10 +479,15 @@ impl<'a> AxiomEvaluator<'a> {
                 let nbf_info = &self.nbf_info_by_layer[layer_no];
                 for info in nbf_info {
                     let var_no = info.var_id as i32;
-                    let default_value =
-                        self.numeric_task.get_initial_propositional_state_values()[var_no as usize];
+                    let default_value = self
+                        .numeric_task
+                        .get_variable_default_axiom_value(var_no)
+                        .unwrap();
                     if self.state_packer.get(buffer, var_no) == default_value as u64 {
-                        queue.push(info.literal.clone());
+                        queue.push(LiteralRef {
+                            var_id: var_no as usize,
+                            value: info.literal_value,
+                        });
                     }
                 }
             }
@@ -492,7 +502,6 @@ impl<'a> AxiomEvaluator<'a> {
         numeric_state: &mut Vec<f64>,
     ) -> Result<(), AxiomEvalError> {
         if !self.has_axioms() {
-            println!("No axioms to evaluate");
             return Ok(());
         }
         if self.has_numeric_axioms() {

@@ -53,7 +53,9 @@ impl std::fmt::Display for SExpr {
             SExpr::List(l) => {
                 write!(f, "(")?;
                 for (i, item) in l.iter().enumerate() {
-                    if i > 0 { write!(f, " ")?; }
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
                     write!(f, "{}", item)?;
                 }
                 write!(f, ")")
@@ -103,7 +105,9 @@ fn tokenize(input: &str) -> Vec<String> {
 
 /// Python: def parse_list_aux(tokenstream)
 /// Recursively parses a token stream into an S-expression.
-fn parse_list_aux(tokens: &mut std::iter::Peekable<std::vec::IntoIter<String>>) -> Result<SExpr, String> {
+fn parse_list_aux(
+    tokens: &mut std::iter::Peekable<std::vec::IntoIter<String>>,
+) -> Result<SExpr, String> {
     let token = tokens.next().ok_or("Unexpected end of input")?;
     if token == "(" {
         let mut result = vec![];

@@ -20,8 +20,12 @@ impl Type {
 
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Type({}, {})", self.name,
-               self.basetype_name.as_deref().unwrap_or("None"))
+        write!(
+            f,
+            "Type({}, {})",
+            self.name,
+            self.basetype_name.as_deref().unwrap_or("None")
+        )
     }
 }
 
@@ -43,7 +47,11 @@ impl TypedObject {
 
     /// Python: def uniquify_name(self, type_map, renamings)
     /// Renames the variable to avoid clashes with existing names.
-    pub fn uniquify_name(&mut self, type_map: &mut std::collections::HashMap<String, usize>, renamings: &mut std::collections::HashMap<String, String>) {
+    pub fn uniquify_name(
+        &mut self,
+        type_map: &mut std::collections::HashMap<String, usize>,
+        renamings: &mut std::collections::HashMap<String, String>,
+    ) {
         if self.name.starts_with('?') {
             let type_name = &self.type_name;
             let counter = type_map.entry(type_name.clone()).or_insert(0);

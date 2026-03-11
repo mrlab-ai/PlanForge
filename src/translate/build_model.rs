@@ -1,15 +1,14 @@
+use super::pddl_to_prolog::{Fact, PrologProgram, RuleType};
 /// Port of build_model.py
 /// Forward-chaining model builder for grounding.
-
 use std::collections::{HashMap, HashSet};
-use super::pddl_to_prolog::{PrologProgram, Fact, RuleType};
 
 /// An atom in the model: predicate + arguments.
 /// Arguments can be integers (variable positions) or strings (constants/variables).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Arg {
-    Pos(usize),     // refers to position in effect
-    Str(String),    // constant or unbound variable
+    Pos(usize),  // refers to position in effect
+    Str(String), // constant or unbound variable
 }
 
 /// An internal atom representation for the model builder.
@@ -41,9 +40,11 @@ fn variables_to_numbers(
         args: new_effect_args,
     };
 
-    let new_conditions: Vec<InternalAtom> = conditions.iter()
+    let new_conditions: Vec<InternalAtom> = conditions
+        .iter()
         .map(|cond| {
-            let args = cond[1..].iter()
+            let args = cond[1..]
+                .iter()
                 .map(|arg| {
                     if let Some(&pos) = rename_map.get(arg) {
                         Arg::Pos(pos)
@@ -86,12 +87,24 @@ impl GroundAtom {
 trait BuildRule {
     fn prepare_effect(&self, new_atom: &GroundAtom, cond_index: usize) -> Vec<Option<String>>;
     fn update_index(&mut self, new_atom: &GroundAtom, cond_index: usize);
-    fn fire(&self, new_atom: &GroundAtom, cond_index: usize, enqueue: &mut dyn FnMut(&str, &[Option<String>]));
+    fn fire(
+        &self,
+        new_atom: &GroundAtom,
+        cond_index: usize,
+        enqueue: &mut dyn FnMut(&str, &[Option<String>]),
+    );
     fn conditions(&self) -> &[InternalAtom];
 }
 
-fn prepare_effect_impl(effect: &InternalAtom, conditions: &[InternalAtom], new_atom: &GroundAtom, cond_index: usize) -> Vec<Option<String>> {
-    let mut effect_args: Vec<Option<String>> = effect.args.iter()
+fn prepare_effect_impl(
+    effect: &InternalAtom,
+    conditions: &[InternalAtom],
+    new_atom: &GroundAtom,
+    cond_index: usize,
+) -> Vec<Option<String>> {
+    let mut effect_args: Vec<Option<String>> = effect
+        .args
+        .iter()
         .map(|a| match a {
             Arg::Str(s) => Some(s.clone()),
             Arg::Pos(_) => None,
@@ -123,23 +136,41 @@ impl JoinRule {
         let left_args = &conditions[0].args;
         let right_args = &conditions[1].args;
 
-        let left_vars: HashSet<usize> = left_args.iter().filter_map(|a| match a {
-            Arg::Pos(p) => Some(*p),
-            _ => None,
-        }).collect();
-        let right_vars: HashSet<usize> = right_args.iter().filter_map(|a| match a {
-            Arg::Pos(p) => Some(*p),
-            _ => None,
-        }).collect();
+        let left_vars: HashSet<usize> = left_args
+            .iter()
+            .filter_map(|a| match a {
+                Arg::Pos(p) => Some(*p),
+                _ => None,
+            })
+            .collect();
+        let right_vars: HashSet<usize> = right_args
+            .iter()
+            .filter_map(|a| match a {
+                Arg::Pos(p) => Some(*p),
+                _ => None,
+            })
+            .collect();
 
         let mut common_vars: Vec<usize> = left_vars.intersection(&right_vars).cloned().collect();
         common_vars.sort();
 
-        let left_positions: Vec<usize> = common_vars.iter()
-            .map(|var| left_args.iter().position(|a| matches!(a, Arg::Pos(p) if p == var)).unwrap())
+        let left_positions: Vec<usize> = common_vars
+            .iter()
+            .map(|var| {
+                left_args
+                    .iter()
+                    .position(|a| matches!(a, Arg::Pos(p) if p == var))
+                    .unwrap()
+            })
             .collect();
-        let right_positions: Vec<usize> = common_vars.iter()
-            .map(|var| right_args.iter().position(|a| matches!(a, Arg::Pos(p) if p == var)).unwrap())
+        let right_positions: Vec<usize> = common_vars
+            .iter()
+            .map(|var| {
+                right_args
+                    .iter()
+                    .position(|a| matches!(a, Arg::Pos(p) if p == var))
+                    .unwrap()
+            })
             .collect();
 
         JoinRule {
@@ -157,15 +188,25 @@ impl BuildRule for JoinRule {
     }
 
     fn update_index(&mut self, new_atom: &GroundAtom, cond_index: usize) {
-        let key: Vec<String> = self.common_var_positions[cond_index].iter()
+        let key: Vec<String> = self.common_var_positions[cond_index]
+            .iter()
             .map(|&pos| new_atom.args[pos].clone())
             .collect();
-        self.atoms_by_key[cond_index].entry(key).or_default().push(new_atom.clone());
+        self.atoms_by_key[cond_index]
+            .entry(key)
+            .or_default()
+            .push(new_atom.clone());
     }
 
-    fn fire(&self, new_atom: &GroundAtom, cond_index: usize, enqueue: &mut dyn FnMut(&str, &[Option<String>])) {
+    fn fire(
+        &self,
+        new_atom: &GroundAtom,
+        cond_index: usize,
+        enqueue: &mut dyn FnMut(&str, &[Option<String>]),
+    ) {
         let effect_args = self.prepare_effect(new_atom, cond_index);
-        let key: Vec<String> = self.common_var_positions[cond_index].iter()
+        let key: Vec<String> = self.common_var_positions[cond_index]
+            .iter()
             .map(|&pos| new_atom.args[pos].clone())
             .collect();
         let other_cond_index = 1 - cond_index;
@@ -185,7 +226,9 @@ impl BuildRule for JoinRule {
         }
     }
 
-    fn conditions(&self) -> &[InternalAtom] { &self.conditions }
+    fn conditions(&self) -> &[InternalAtom] {
+        &self.conditions
+    }
 }
 
 // ============== ProductRule ==============
@@ -209,7 +252,9 @@ impl ProductRule {
     }
 
     fn get_bindings(atom: &GroundAtom, cond: &InternalAtom) -> Vec<(usize, String)> {
-        cond.args.iter().zip(atom.args.iter())
+        cond.args
+            .iter()
+            .zip(atom.args.iter())
             .filter_map(|(var_no, obj)| {
                 if let Arg::Pos(pos) = var_no {
                     Some((*pos, obj.clone()))
@@ -233,7 +278,12 @@ impl BuildRule for ProductRule {
         self.atoms_by_index[cond_index].push(new_atom.clone());
     }
 
-    fn fire(&self, new_atom: &GroundAtom, cond_index: usize, enqueue: &mut dyn FnMut(&str, &[Option<String>])) {
+    fn fire(
+        &self,
+        new_atom: &GroundAtom,
+        cond_index: usize,
+        enqueue: &mut dyn FnMut(&str, &[Option<String>]),
+    ) {
         if self.empty_atom_list_no > 0 {
             return;
         }
@@ -245,7 +295,8 @@ impl BuildRule for ProductRule {
                 continue;
             }
             let atoms = &self.atoms_by_index[pos];
-            let factor: Vec<Vec<(usize, String)>> = atoms.iter()
+            let factor: Vec<Vec<(usize, String)>> = atoms
+                .iter()
                 .map(|atom| Self::get_bindings(atom, cond))
                 .collect();
             bindings_factors.push(factor);
@@ -278,7 +329,9 @@ impl BuildRule for ProductRule {
         }
     }
 
-    fn conditions(&self) -> &[InternalAtom] { &self.conditions }
+    fn conditions(&self) -> &[InternalAtom] {
+        &self.conditions
+    }
 }
 
 // ============== ProjectRule ==============
@@ -304,12 +357,19 @@ impl BuildRule for ProjectRule {
         // No index needed for projection
     }
 
-    fn fire(&self, new_atom: &GroundAtom, cond_index: usize, enqueue: &mut dyn FnMut(&str, &[Option<String>])) {
+    fn fire(
+        &self,
+        new_atom: &GroundAtom,
+        cond_index: usize,
+        enqueue: &mut dyn FnMut(&str, &[Option<String>]),
+    ) {
         let effect_args = self.prepare_effect(new_atom, cond_index);
         enqueue(&self.effect.predicate, &effect_args);
     }
 
-    fn conditions(&self) -> &[InternalAtom] { &self.conditions }
+    fn conditions(&self) -> &[InternalAtom] {
+        &self.conditions
+    }
 }
 
 // ============== Unifier ==============
@@ -356,7 +416,9 @@ impl Generator {
                     leaf.matches.push(value);
                     Generator::Leaf(leaf)
                 } else {
-                    let mut root = Generator::Leaf(LeafGenerator { matches: vec![value] });
+                    let mut root = Generator::Leaf(LeafGenerator {
+                        matches: vec![value],
+                    });
                     for &(arg_index, ref arg) in args.iter().rev() {
                         let mut new_root = MatchGenerator {
                             index: arg_index,
@@ -396,13 +458,15 @@ impl Generator {
                         };
                         let new_branch = Generator::Leaf(LeafGenerator { matches: vec![] })
                             .insert(&args[1..], value);
-                        new_parent.match_generator.insert(arg.clone(), Box::new(new_branch));
+                        new_parent
+                            .match_generator
+                            .insert(arg.clone(), Box::new(new_branch));
                         Generator::Match(new_parent)
                     } else {
                         // mg.index == arg_index
-                        let branch = mg.match_generator
-                            .remove(arg)
-                            .unwrap_or_else(|| Box::new(Generator::Leaf(LeafGenerator { matches: vec![] })));
+                        let branch = mg.match_generator.remove(arg).unwrap_or_else(|| {
+                            Box::new(Generator::Leaf(LeafGenerator { matches: vec![] }))
+                        });
                         let new_branch = (*branch).insert(&args[1..], value);
                         mg.match_generator.insert(arg.clone(), Box::new(new_branch));
                         Generator::Match(mg)
@@ -423,7 +487,9 @@ impl Unifier {
 
         for (rule_idx, rule) in rules.iter().enumerate() {
             for (cond_idx, cond) in rule.conditions().iter().enumerate() {
-                let constant_args: Vec<(usize, String)> = cond.args.iter()
+                let constant_args: Vec<(usize, String)> = cond
+                    .args
+                    .iter()
                     .enumerate()
                     .filter_map(|(i, arg)| match arg {
                         Arg::Str(s) if !s.starts_with('?') => Some((i, s.clone())),
@@ -464,7 +530,8 @@ struct Queue {
 
 impl Queue {
     fn new(atoms: Vec<GroundAtom>) -> Self {
-        let enqueued: HashSet<Vec<String>> = atoms.iter()
+        let enqueued: HashSet<Vec<String>> = atoms
+            .iter()
             .map(|a| {
                 let mut key = vec![a.predicate.clone()];
                 key.extend(a.args.clone());
@@ -487,14 +554,19 @@ impl Queue {
     fn push(&mut self, predicate: &str, args: &[Option<String>]) {
         self.num_pushes += 1;
         // Only enqueue if all args are bound
-        let bound_args: Vec<String> = match args.iter().map(|a| a.clone()).collect::<Option<Vec<String>>>() {
+        let bound_args: Vec<String> = match args
+            .iter()
+            .map(|a| a.clone())
+            .collect::<Option<Vec<String>>>()
+        {
             Some(a) => a,
             None => return,
         };
         let mut key = vec![predicate.to_string()];
         key.extend(bound_args.clone());
         if self.enqueued.insert(key) {
-            self.queue.push(GroundAtom::new(predicate.to_string(), bound_args));
+            self.queue
+                .push(GroundAtom::new(predicate.to_string(), bound_args));
         }
     }
 
@@ -528,7 +600,9 @@ pub fn compute_model(prog: &PrologProgram) -> Vec<Fact> {
     let unifier = Unifier::new(&rules);
 
     // Convert program facts to GroundAtoms
-    let mut fact_atoms: Vec<GroundAtom> = prog.facts.iter()
+    let mut fact_atoms: Vec<GroundAtom> = prog
+        .facts
+        .iter()
         .map(|f| GroundAtom::new(f.atom[0].clone(), f.atom[1..].to_vec()))
         .collect();
     fact_atoms.sort_by(|a, b| format!("{:?}", a).cmp(&format!("{:?}", b)));

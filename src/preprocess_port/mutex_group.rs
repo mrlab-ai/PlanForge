@@ -76,8 +76,5 @@ pub fn strip_mutexes(mutexes: &mut Vec<MutexGroup>) {
         mutex.strip_unimportant_facts();
     }
     mutexes.retain(|m| !m.is_redundant());
-    println!(
-        "{} of {} mutex groups necessary.",
-        mutexes.len(), old_count
-    );
+    println!("{} of {} mutex groups necessary.", mutexes.len(), old_count);
 }

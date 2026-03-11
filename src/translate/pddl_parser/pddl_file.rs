@@ -1,6 +1,5 @@
 /// Port of pddl_parser/pddl_file.py
 /// Entry point for parsing PDDL files.
-
 use std::path::Path;
 
 use super::lisp_parser::{self, SExpr};
@@ -35,9 +34,6 @@ impl PddlTask {
 /// Python: def open(domain_filename=None, task_filename=None)
 /// Convenience function matching Python's pddl_parser.open().
 pub fn open(domain_filename: &str, task_filename: &str) -> Result<Task, String> {
-    let task = PddlTask::from_files(
-        Path::new(domain_filename),
-        Path::new(task_filename),
-    )?;
+    let task = PddlTask::from_files(Path::new(domain_filename), Path::new(task_filename))?;
     Ok(task.to_task())
 }
