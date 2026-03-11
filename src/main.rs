@@ -11,10 +11,12 @@ use planners::preprocess_port::planner::run_preprocess;
 use planners::translate::normalize;
 use planners::translate::pddl_parser::PddlTask;
 use preprocess::numeric_parser::parse_numeric_sas_output;
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 use std::time::Duration;
 
@@ -32,6 +34,51 @@ use crate::search::numeric::successor_generator::GroundedSuccessorGenerator;
 use crate::search::numeric::successor_generator::Node;
 use crate::search::numeric::utils::int_packer::IntDoublePacker;
 use search::numeric::search_engine::{AStarSearch, SearchEngine};
+
+const EXIT_SUCCESS: i32 = 0;
+const EXIT_OUT_OF_MEMORY: i32 = 6;
+const EXIT_TIMEOUT: i32 = 7;
+
+#[cfg(unix)]
+static OOM_REPORTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+struct ReportingAllocator;
+
+#[cfg(unix)]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: ReportingAllocator = ReportingAllocator;
+
+#[cfg(unix)]
+unsafe impl GlobalAlloc for ReportingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ptr = System.alloc(layout);
+        if ptr.is_null() {
+            report_out_of_memory_and_exit();
+        }
+        ptr
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        let ptr = System.alloc_zeroed(layout);
+        if ptr.is_null() {
+            report_out_of_memory_and_exit();
+        }
+        ptr
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let new_ptr = System.realloc(ptr, layout, new_size);
+        if new_ptr.is_null() {
+            report_out_of_memory_and_exit();
+        }
+        new_ptr
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        System.dealloc(ptr, layout)
+    }
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about = "Numeric planner")]
@@ -251,15 +298,12 @@ fn peak_memory_kb() -> u64 {
 fn register_event_handlers() {
     static INIT: Once = Once::new();
 
-    INIT.call_once(|| {
-        unsafe {
-            libc::signal(libc::SIGABRT, signal_handler as libc::sighandler_t);
-            libc::signal(libc::SIGTERM, signal_handler as libc::sighandler_t);
-            libc::signal(libc::SIGSEGV, signal_handler as libc::sighandler_t);
-            libc::signal(libc::SIGINT, signal_handler as libc::sighandler_t);
-            libc::signal(libc::SIGXCPU, signal_handler as libc::sighandler_t);
-        }
-
+    INIT.call_once(|| unsafe {
+        libc::signal(libc::SIGABRT, signal_handler as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, signal_handler as libc::sighandler_t);
+        libc::signal(libc::SIGSEGV, signal_handler as libc::sighandler_t);
+        libc::signal(libc::SIGINT, signal_handler as libc::sighandler_t);
+        libc::signal(libc::SIGXCPU, signal_handler as libc::sighandler_t);
     });
 }
 
@@ -269,18 +313,77 @@ fn register_event_handlers() {}
 #[cfg(unix)]
 extern "C" fn signal_handler(signal_number: libc::c_int) {
     unsafe {
-        let peak = peak_memory_kb();
-        if peak > 0 {
-            write_fd(libc::STDOUT_FILENO, b"Peak memory: ");
-            write_number_fd(libc::STDOUT_FILENO, peak);
-            write_fd(libc::STDOUT_FILENO, b" KB\n");
-        }
+        print_peak_memory_reentrant(libc::STDOUT_FILENO);
         write_fd(libc::STDOUT_FILENO, b"caught signal ");
         write_number_fd(libc::STDOUT_FILENO, signal_number as u64);
         write_fd(libc::STDOUT_FILENO, b" -- exiting\n");
         libc::_exit(128 + signal_number);
     }
 }
+
+#[cfg(unix)]
+unsafe fn report_out_of_memory_and_exit() -> ! {
+    if OOM_REPORTED.swap(true, Ordering::SeqCst) {
+        libc::_exit(6);
+    }
+
+    write_fd(libc::STDOUT_FILENO, b"Failed to allocate memory.\n");
+    write_fd(libc::STDOUT_FILENO, b"Memory limit has been reached.\n");
+    print_peak_memory_reentrant(libc::STDOUT_FILENO);
+    libc::_exit(6)
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn print_peak_memory_reentrant(fd: libc::c_int) {
+    let proc_fd = libc::open(c"/proc/self/status".as_ptr(), libc::O_RDONLY);
+    if proc_fd < 0 {
+        return;
+    }
+
+    let magic = b"VmPeak:";
+    let mut matched = 0usize;
+    let mut found = false;
+    let mut wrote_prefix = false;
+    let mut buffer = [0u8; 4096];
+
+    loop {
+        let bytes_read = libc::read(proc_fd, buffer.as_mut_ptr().cast(), buffer.len());
+        if bytes_read <= 0 {
+            break;
+        }
+
+        for &byte in &buffer[..bytes_read as usize] {
+            if !found {
+                if byte == magic[matched] {
+                    matched += 1;
+                    if matched == magic.len() {
+                        found = true;
+                    }
+                } else {
+                    matched = if byte == magic[0] { 1 } else { 0 };
+                }
+                continue;
+            }
+
+            if byte.is_ascii_digit() {
+                if !wrote_prefix {
+                    write_fd(fd, b"Peak memory: ");
+                    wrote_prefix = true;
+                }
+                write_fd(fd, std::slice::from_ref(&byte));
+            } else if wrote_prefix {
+                write_fd(fd, b" KB\n");
+                let _ = libc::close(proc_fd);
+                return;
+            }
+        }
+    }
+
+    let _ = libc::close(proc_fd);
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+unsafe fn print_peak_memory_reentrant(_fd: libc::c_int) {}
 
 #[cfg(unix)]
 unsafe fn write_fd(fd: libc::c_int, mut bytes: &[u8]) {
@@ -313,6 +416,104 @@ unsafe fn write_number_fd(fd: libc::c_int, value: u64) {
     write_fd(fd, &buffer[index..]);
 }
 
+fn exit_code_for_search_status(status: &SearchStatus) -> i32 {
+    match status {
+        SearchStatus::Timeout => EXIT_TIMEOUT,
+        SearchStatus::MemoryLimitReached => EXIT_OUT_OF_MEMORY,
+        SearchStatus::InProgress | SearchStatus::Solved(_) | SearchStatus::Failed => EXIT_SUCCESS,
+    }
+}
+
+fn print_search_result(result: &SearchResult) {
+    match result.status {
+        SearchStatus::Solved(_) => {
+            println!("SOLVED!");
+            if let Some(plan) = result.plan.as_ref() {
+                println!("Solution plan ({} steps):", plan.len());
+
+                let mut plan_content = String::new();
+                for op in plan.iter() {
+                    plan_content.push_str(&format!("({})\n", op.name()));
+                }
+
+                match fs::write("sas_plan", plan_content) {
+                    Ok(()) => println!("Plan written to sas_plan file"),
+                    Err(e) => eprintln!("Error writing plan file: {}", e),
+                }
+
+                for (i, op) in plan.iter().enumerate() {
+                    println!("  {}: {}", i + 1, op.name());
+                }
+            }
+        }
+        SearchStatus::Failed => {
+            println!("No solution found");
+        }
+        SearchStatus::Timeout => {
+            println!("Search timed out");
+        }
+        SearchStatus::MemoryLimitReached => {
+            println!("Search stopped after reaching the memory limit");
+        }
+        SearchStatus::InProgress => {
+            println!("Search ended in progress");
+        }
+    }
+
+    println!(
+        "Statistics: {} expanded, {} generated, {:?}",
+        result.nodes_expanded, result.nodes_generated, result.search_time
+    );
+}
+
+#[cfg(unix)]
+fn wrapper_exit_code(status: std::process::ExitStatus) -> i32 {
+    status
+        .code()
+        .unwrap_or_else(|| status.signal().map(|signal| 128 + signal).unwrap_or(1))
+}
+
+#[cfg(unix)]
+fn normalize_wrapped_exit(
+    status: std::process::ExitStatus,
+    time_limit: Option<Duration>,
+    memory_limit: Option<u64>,
+) -> i32 {
+    if let Some(signal) = status.signal() {
+        if signal == libc::SIGXCPU && time_limit.is_some() {
+            println!("Time limit reached. Abort search.");
+            return EXIT_TIMEOUT;
+        }
+
+        if memory_limit.is_some()
+            && (signal == libc::SIGABRT || signal == libc::SIGSEGV || signal == libc::SIGKILL)
+        {
+            println!("Failed to allocate memory.");
+            println!("Memory limit has been reached.");
+            return EXIT_OUT_OF_MEMORY;
+        }
+    }
+
+    let exit_code = wrapper_exit_code(status);
+
+    if time_limit.is_some() && exit_code == 128 + libc::SIGXCPU {
+        println!("Time limit reached. Abort search.");
+        return EXIT_TIMEOUT;
+    }
+
+    if memory_limit.is_some()
+        && (exit_code == 128 + libc::SIGABRT
+            || exit_code == 128 + libc::SIGSEGV
+            || exit_code == 128 + libc::SIGKILL)
+    {
+        println!("Failed to allocate memory.");
+        println!("Memory limit has been reached.");
+        return EXIT_OUT_OF_MEMORY;
+    }
+
+    exit_code
+}
+
 #[cfg(unix)]
 fn run_wrapped_process(cli: &Cli) -> std::io::Result<()> {
     let current_executable = std::env::current_exe()?;
@@ -333,25 +534,7 @@ fn run_wrapped_process(cli: &Cli) -> std::io::Result<()> {
     }
 
     let status = command.status()?;
-    let exit_code = status
-        .code()
-        .unwrap_or_else(|| status.signal().map(|signal| 128 + signal).unwrap_or(1));
-
-    if let Some(signal) = status.signal() {
-        if signal == libc::SIGXCPU && time_limit.is_some() {
-            println!("Time limit reached. Abort search.");
-        } else if memory_limit.is_some()
-            && (signal == libc::SIGABRT || signal == libc::SIGSEGV || signal == libc::SIGKILL)
-        {
-            println!("Failed to allocate memory.");
-            println!("Memory limit has been reached.");
-        }
-    } else if memory_limit.is_some()
-        && (exit_code == 128 + libc::SIGABRT || exit_code == 128 + libc::SIGSEGV)
-    {
-        println!("Failed to allocate memory.");
-        println!("Memory limit has been reached.");
-    }
+    let exit_code = normalize_wrapped_exit(status, time_limit, memory_limit);
 
     std::process::exit(exit_code)
 }
@@ -393,7 +576,7 @@ fn apply_process_limits(
     Ok(())
 }
 
-fn run_internal(cli: &Cli) -> std::io::Result<()> {
+fn run_internal(cli: &Cli) -> std::io::Result<SearchResult> {
     register_event_handlers();
 
     let sas_file = if cli.inputs.len() == 2 {
@@ -432,69 +615,39 @@ fn run_internal(cli: &Cli) -> std::io::Result<()> {
             state_registry,
             None,
             if cli.internal_run { None } else { cli.max_time },
-            if cli.internal_run { None } else { cli.max_memory },
+            if cli.internal_run {
+                None
+            } else {
+                cli.max_memory
+            },
         );
 
         println!("Starting search...");
         search.search()
     };
 
-    match result.status {
-        SearchStatus::Solved(_) => {
-            println!("SOLVED!");
-            if let Some(plan) = result.plan {
-                println!("Solution plan ({} steps):", plan.len());
+    print_search_result(&result);
 
-                let mut plan_content = String::new();
-                for op in plan.iter() {
-                    plan_content.push_str(&format!("({})\n", op.name()));
-                }
-
-                match fs::write("sas_plan", plan_content) {
-                    Ok(()) => println!("Plan written to sas_plan file"),
-                    Err(e) => eprintln!("Error writing plan file: {}", e),
-                }
-
-                for (i, op) in plan.iter().enumerate() {
-                    println!("  {}: {}", i + 1, op.name());
-                }
-            }
-        }
-        SearchStatus::Failed => {
-            println!("No solution found");
-        }
-        SearchStatus::Timeout => {
-            println!("Search timed out");
-        }
-        SearchStatus::MemoryLimitReached => {
-            println!("Search stopped after reaching the memory limit");
-        }
-        SearchStatus::InProgress => {
-            println!("Search ended in progress");
-        }
-    }
-
-    println!(
-        "Statistics: {} expanded, {} generated, {:?}",
-        result.nodes_expanded, result.nodes_generated, result.search_time
-    );
-
-    Ok(())
+    Ok(result)
 }
 
 fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
     #[cfg(unix)]
     if !cli.internal_run {
-        run_wrapped_process(&cli)?;
+        return run_wrapped_process(&cli);
     }
 
-    run_internal(&cli)
+    let result = run_internal(&cli)?;
+    std::process::exit(exit_code_for_search_status(&result.status));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
 
     #[test]
     fn parses_memory_limit_suffixes() {
@@ -510,6 +663,56 @@ mod tests {
         assert_eq!(
             parse_time_limit("250ms").unwrap(),
             Duration::from_millis(250)
+        );
+    }
+
+    #[test]
+    fn maps_search_statuses_to_exit_codes() {
+        assert_eq!(
+            exit_code_for_search_status(&SearchStatus::Solved(0)),
+            EXIT_SUCCESS
+        );
+        assert_eq!(
+            exit_code_for_search_status(&SearchStatus::Failed),
+            EXIT_SUCCESS
+        );
+        assert_eq!(
+            exit_code_for_search_status(&SearchStatus::Timeout),
+            EXIT_TIMEOUT
+        );
+        assert_eq!(
+            exit_code_for_search_status(&SearchStatus::MemoryLimitReached),
+            EXIT_OUT_OF_MEMORY
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normalizes_wrapped_timeout_signal() {
+        let status = std::process::ExitStatus::from_raw(libc::SIGXCPU);
+        assert_eq!(
+            normalize_wrapped_exit(status, Some(Duration::from_secs(1)), None),
+            EXIT_TIMEOUT
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normalizes_wrapped_memory_signal() {
+        let status = std::process::ExitStatus::from_raw(libc::SIGSEGV);
+        assert_eq!(
+            normalize_wrapped_exit(status, None, Some(1024)),
+            EXIT_OUT_OF_MEMORY
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normalizes_wrapped_timeout_exit_code() {
+        let status = std::process::ExitStatus::from_raw((128 + libc::SIGXCPU) << 8);
+        assert_eq!(
+            normalize_wrapped_exit(status, Some(Duration::from_secs(1)), None),
+            EXIT_TIMEOUT
         );
     }
 }
