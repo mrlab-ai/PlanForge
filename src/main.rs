@@ -12,8 +12,14 @@ use planners::translate::normalize;
 use planners::translate::pddl_parser::PddlTask;
 use preprocess::numeric_parser::parse_numeric_sas_output;
 use std::collections::VecDeque;
+use std::ffi::OsString;
 use std::fs;
+use std::process::Command;
+use std::sync::Once;
 use std::time::Duration;
+
+#[cfg(unix)]
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 use crate::search::numeric::axioms::AxiomEvaluator;
 use crate::search::numeric::numeric_task::AbstractNumericTask;
@@ -27,7 +33,7 @@ use crate::search::numeric::successor_generator::Node;
 use crate::search::numeric::utils::int_packer::IntDoublePacker;
 use search::numeric::search_engine::{AStarSearch, SearchEngine};
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about = "Numeric planner")]
 struct Cli {
     #[arg(long = "max-memory", value_name = "SIZE", value_parser = parse_memory_limit)]
@@ -35,6 +41,9 @@ struct Cli {
 
     #[arg(long = "max-time", value_name = "DURATION", value_parser = parse_time_limit)]
     max_time: Option<Duration>,
+
+    #[arg(long, hide = true)]
+    internal_run: bool,
 
     #[arg(value_name = "INPUT", required = true, num_args = 1..=2)]
     inputs: Vec<String>,
@@ -215,8 +224,178 @@ fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn main() -> std::io::Result<()> {
-    let cli = Cli::parse();
+#[cfg(target_os = "linux")]
+fn peak_memory_kb() -> u64 {
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+        for line in status.lines() {
+            if let Some(value) = line.strip_prefix("VmPeak:") {
+                if let Some(kb) = value
+                    .split_whitespace()
+                    .next()
+                    .and_then(|part| part.parse::<u64>().ok())
+                {
+                    return kb;
+                }
+            }
+        }
+    }
+    0
+}
+
+#[cfg(not(target_os = "linux"))]
+fn peak_memory_kb() -> u64 {
+    0
+}
+
+#[cfg(unix)]
+fn register_event_handlers() {
+    static INIT: Once = Once::new();
+
+    INIT.call_once(|| {
+        unsafe {
+            libc::signal(libc::SIGABRT, signal_handler as libc::sighandler_t);
+            libc::signal(libc::SIGTERM, signal_handler as libc::sighandler_t);
+            libc::signal(libc::SIGSEGV, signal_handler as libc::sighandler_t);
+            libc::signal(libc::SIGINT, signal_handler as libc::sighandler_t);
+            libc::signal(libc::SIGXCPU, signal_handler as libc::sighandler_t);
+        }
+
+    });
+}
+
+#[cfg(not(unix))]
+fn register_event_handlers() {}
+
+#[cfg(unix)]
+extern "C" fn signal_handler(signal_number: libc::c_int) {
+    unsafe {
+        let peak = peak_memory_kb();
+        if peak > 0 {
+            write_fd(libc::STDOUT_FILENO, b"Peak memory: ");
+            write_number_fd(libc::STDOUT_FILENO, peak);
+            write_fd(libc::STDOUT_FILENO, b" KB\n");
+        }
+        write_fd(libc::STDOUT_FILENO, b"caught signal ");
+        write_number_fd(libc::STDOUT_FILENO, signal_number as u64);
+        write_fd(libc::STDOUT_FILENO, b" -- exiting\n");
+        libc::_exit(128 + signal_number);
+    }
+}
+
+#[cfg(unix)]
+unsafe fn write_fd(fd: libc::c_int, mut bytes: &[u8]) {
+    while !bytes.is_empty() {
+        let written = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+        if written <= 0 {
+            break;
+        }
+        bytes = &bytes[written as usize..];
+    }
+}
+
+#[cfg(unix)]
+unsafe fn write_number_fd(fd: libc::c_int, value: u64) {
+    let mut buffer = [0u8; 32];
+    let mut index = buffer.len();
+    let mut current = value;
+
+    if current == 0 {
+        write_fd(fd, b"0");
+        return;
+    }
+
+    while current > 0 {
+        index -= 1;
+        buffer[index] = b'0' + (current % 10) as u8;
+        current /= 10;
+    }
+
+    write_fd(fd, &buffer[index..]);
+}
+
+#[cfg(unix)]
+fn run_wrapped_process(cli: &Cli) -> std::io::Result<()> {
+    let current_executable = std::env::current_exe()?;
+    let mut child_args = vec![OsString::from("--internal-run")];
+    child_args.extend(cli.inputs.iter().cloned().map(OsString::from));
+
+    let time_limit = cli.max_time;
+    let memory_limit = cli.max_memory;
+
+    let mut command = Command::new(current_executable);
+    command.args(child_args);
+    command.stdin(std::process::Stdio::inherit());
+    command.stdout(std::process::Stdio::inherit());
+    command.stderr(std::process::Stdio::inherit());
+
+    unsafe {
+        command.pre_exec(move || apply_process_limits(time_limit, memory_limit));
+    }
+
+    let status = command.status()?;
+    let exit_code = status
+        .code()
+        .unwrap_or_else(|| status.signal().map(|signal| 128 + signal).unwrap_or(1));
+
+    if let Some(signal) = status.signal() {
+        if signal == libc::SIGXCPU && time_limit.is_some() {
+            println!("Time limit reached. Abort search.");
+        } else if memory_limit.is_some()
+            && (signal == libc::SIGABRT || signal == libc::SIGSEGV || signal == libc::SIGKILL)
+        {
+            println!("Failed to allocate memory.");
+            println!("Memory limit has been reached.");
+        }
+    } else if memory_limit.is_some()
+        && (exit_code == 128 + libc::SIGABRT || exit_code == 128 + libc::SIGSEGV)
+    {
+        println!("Failed to allocate memory.");
+        println!("Memory limit has been reached.");
+    }
+
+    std::process::exit(exit_code)
+}
+
+#[cfg(unix)]
+fn apply_process_limits(
+    time_limit: Option<Duration>,
+    memory_limit: Option<u64>,
+) -> std::io::Result<()> {
+    if let Some(time_limit) = time_limit {
+        let mut soft_limit = time_limit.as_secs();
+        if time_limit.subsec_nanos() > 0 {
+            soft_limit = soft_limit.saturating_add(1);
+        }
+        let hard_limit = soft_limit.saturating_add(1);
+        let cpu_limit = libc::rlimit {
+            rlim_cur: soft_limit as libc::rlim_t,
+            rlim_max: hard_limit as libc::rlim_t,
+        };
+
+        let result = unsafe { libc::setrlimit(libc::RLIMIT_CPU, &cpu_limit) };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+
+    if let Some(memory_limit) = memory_limit {
+        let address_space_limit = libc::rlimit {
+            rlim_cur: memory_limit as libc::rlim_t,
+            rlim_max: memory_limit as libc::rlim_t,
+        };
+
+        let result = unsafe { libc::setrlimit(libc::RLIMIT_AS, &address_space_limit) };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+
+    Ok(())
+}
+
+fn run_internal(cli: &Cli) -> std::io::Result<()> {
+    register_event_handlers();
+
     let sas_file = if cli.inputs.len() == 2 {
         let domain = &cli.inputs[0];
         let problem = &cli.inputs[1];
@@ -236,41 +415,28 @@ fn main() -> std::io::Result<()> {
 
     println!("=== A* Search Engine ===");
     println!("File: {}", sas_file);
-    if let Some(max_time) = cli.max_time {
-        println!("Max time: {:?}", max_time);
-    }
-    if let Some(max_memory) = cli.max_memory {
-        println!("Max memory: {} bytes", max_memory);
-    }
     println!(
         "Variables: {} regular, {} numeric",
         task.variables().len(),
         task.numeric_variables().len()
     );
 
-    // Create all components in main() scope where lifetimes can be properly managed
     let state_packer = setup_state_packer(&task);
     let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
-    let mut state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+    let state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
 
-    // Create search engine and get result, then explicitly drop the search engine
     let result = {
-        // Move ownership of state_registry into the search engine to avoid lifetime issues
         let task_ref: &dyn AbstractNumericTask = &task;
-        let search = AStarSearch::new(
+        let mut search = AStarSearch::new(
             task_ref,
             state_registry,
-            None, // BlindHeuristic (will be created by default)
-            cli.max_time,
-            cli.max_memory,
+            None,
+            if cli.internal_run { None } else { cli.max_time },
+            if cli.internal_run { None } else { cli.max_memory },
         );
 
         println!("Starting search...");
-
-        // Mutable binding so we can call search()
-        let mut search = search;
-        let search_result = search.search();
-        search_result
+        search.search()
     };
 
     match result.status {
@@ -279,19 +445,16 @@ fn main() -> std::io::Result<()> {
             if let Some(plan) = result.plan {
                 println!("Solution plan ({} steps):", plan.len());
 
-                // Create the sas_plan file content
                 let mut plan_content = String::new();
                 for op in plan.iter() {
                     plan_content.push_str(&format!("({})\n", op.name()));
                 }
 
-                // Write the plan to sas_plan file
                 match fs::write("sas_plan", plan_content) {
                     Ok(()) => println!("Plan written to sas_plan file"),
                     Err(e) => eprintln!("Error writing plan file: {}", e),
                 }
 
-                // Also print the plan to console
                 for (i, op) in plan.iter().enumerate() {
                     println!("  {}: {}", i + 1, op.name());
                 }
@@ -317,6 +480,16 @@ fn main() -> std::io::Result<()> {
     );
 
     Ok(())
+}
+
+fn main() -> std::io::Result<()> {
+    let cli = Cli::parse();
+    #[cfg(unix)]
+    if !cli.internal_run {
+        run_wrapped_process(&cli)?;
+    }
+
+    run_internal(&cli)
 }
 
 #[cfg(test)]

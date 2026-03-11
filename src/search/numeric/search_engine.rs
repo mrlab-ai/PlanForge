@@ -68,7 +68,7 @@ pub struct AStarSearch<'a> {
     f_evaluator: SumEvaluator,
 
     // Configuration
-    time_limit: Duration,
+    time_limit: Option<Duration>,
     max_memory_bytes: Option<u64>,
     initial_state: Option<ConcreteState>,
 
@@ -156,7 +156,7 @@ impl<'a> AStarSearch<'a> {
             heuristic,
             g_evaluator,
             f_evaluator,
-            time_limit: time_limit.unwrap_or(Duration::from_secs(30 * 60)), // 30 minutes default
+            time_limit,
             max_memory_bytes,
             initial_state: Some(initial_state),
             nodes_evaluated: 0,
@@ -171,8 +171,10 @@ impl<'a> AStarSearch<'a> {
     }
 
     fn resource_limit_status(&self, start_time: &Instant) -> Option<SearchStatus> {
-        if start_time.elapsed() > self.time_limit {
-            return Some(SearchStatus::Timeout);
+        if let Some(time_limit) = self.time_limit {
+            if start_time.elapsed() > time_limit {
+                return Some(SearchStatus::Timeout);
+            }
         }
 
         if let Some(max_memory_bytes) = self.max_memory_bytes {
