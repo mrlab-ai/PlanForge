@@ -273,39 +273,49 @@ impl<'a> StateRegistry<'a> {
         self.global_state_packer
     }
 
-    /// Inserts a state into the registry or returns existing ID if duplicate
-    ///
-    /// This method implements FD's insert_id_or_pop_state pattern using semantic state comparison.
-    /// It checks if an equivalent state already exists by comparing state content (not memory location).
-    fn insert_id_or_pop_state(&mut self) -> StateID {
-        debug_assert!(!self.state_data_pool.is_empty());
-        let state_id = self.state_data_pool.len() - 1;
-        let num_bins = self.global_state_packer.num_bins() as usize;
+    fn num_state_bins(&self) -> usize {
+        self.global_state_packer.num_bins() as usize
+    }
 
-        // Compute stable hash of the packed bins for the new state.
-        let data = &self.state_data_pool[state_id];
-        let key = fast_hash_bins(&data[..num_bins]);
+    fn find_registered_state_id(&self, key: u64, bins: &[u64]) -> Option<StateID> {
+        let num_bins = self.num_state_bins();
+        self.registered_states.get(&key).and_then(|bucket| {
+            bucket
+                .iter()
+                .copied()
+                .find(|&existing_id| self.state_data_pool[existing_id][..num_bins] == bins[..num_bins])
+        })
+    }
 
-        // Probe bucket and compare within it for semantic equality
-        if let Some(bucket) = self.registered_states.get_mut(&key) {
-            for &existing_id in bucket.iter() {
-                if self.state_data_pool[existing_id][..num_bins] == data[..num_bins] {
-                    // Duplicate: pop newly pushed state and return existing ID
-                    self.state_data_pool.pop();
-                    return existing_id;
-                }
-            }
-            // Unique within bucket; append
-            bucket.push(state_id);
-        } else {
-            // First entry for this hash
-            let mut v = Vec::with_capacity(4);
-            v.push(state_id);
-            self.registered_states.insert(key, v);
-        }
-
-        // Unique state; keep and return new ID
+    fn register_unique_state(&mut self, key: u64, state_data: Vec<u64>) -> StateID {
+        let state_id = self.state_data_pool.len();
+        self.state_data_pool.push(state_data);
+        self.registered_states
+            .entry(key)
+            .or_insert_with(|| Vec::with_capacity(4))
+            .push(state_id);
         state_id
+    }
+
+    fn register_or_get_state_id_from_slice(&mut self, state_data: &[u64]) -> StateID {
+        let key = fast_hash_bins(&state_data[..self.num_state_bins()]);
+
+        if let Some(existing_id) = self.find_registered_state_id(key, state_data) {
+            existing_id
+        } else {
+            self.register_unique_state(key, state_data.to_vec())
+        }
+    }
+
+    /// Inserts a state into the registry or returns existing ID if duplicate.
+    fn register_or_get_state_id(&mut self, state_data: Vec<u64>) -> StateID {
+        let key = fast_hash_bins(&state_data[..self.num_state_bins()]);
+
+        if let Some(existing_id) = self.find_registered_state_id(key, &state_data) {
+            existing_id
+        } else {
+            self.register_unique_state(key, state_data)
+        }
     }
 
     /// Creates and registers the initial state of the planning problem
@@ -338,8 +348,7 @@ impl<'a> StateRegistry<'a> {
             .expect("Failed to evaluate axioms during initial state creation");
 
         // Register the state
-        self.state_data_pool.push(init_buffer);
-        let state_id = self.insert_id_or_pop_state();
+        let state_id = self.register_or_get_state_id(init_buffer);
 
         let init_state = ConcreteState::new(state_id);
 
@@ -490,8 +499,7 @@ impl<'a> StateRegistry<'a> {
         let mut numeric_values_copy = numeric_values;
         self.evaluate_axioms(&mut buffer, &mut numeric_values_copy)?;
 
-        self.state_data_pool.push(buffer);
-        let id = self.insert_id_or_pop_state();
+        let id = self.register_or_get_state_id(buffer);
 
         let new_state = ConcreteState::new(id);
 
@@ -604,11 +612,13 @@ impl<'a> StateRegistry<'a> {
         current_state: &ConcreteState,
         operator: &Operator,
     ) -> Result<ConcreteState, StateInsertError> {
+        let mut packed_buffer = Vec::new();
         let mut successor_values = Vec::new();
         let mut cost_values = Vec::new();
         self.get_successor_state_with_buffers(
             current_state,
             operator,
+            &mut packed_buffer,
             &mut successor_values,
             &mut cost_values,
         )
@@ -618,13 +628,15 @@ impl<'a> StateRegistry<'a> {
         &mut self,
         current_state: &ConcreteState,
         operator: &Operator,
+        packed_buffer: &mut Vec<u64>,
         successor_values: &mut Vec<f64>,
         cost_values: &mut Vec<f64>,
     ) -> Result<ConcreteState, StateInsertError> {
         let previous_buffer = current_state.buffer(self);
-        let mut next_buffer = previous_buffer.clone();
+        packed_buffer.clear();
+        packed_buffer.extend_from_slice(previous_buffer);
 
-        self.apply_propositional_effects(&mut next_buffer, current_state, operator);
+        self.apply_propositional_effects(packed_buffer, current_state, operator);
 
         self.fill_numeric_vars(current_state, successor_values)
             .map_err(|e| StateInsertError {
@@ -641,15 +653,12 @@ impl<'a> StateRegistry<'a> {
             successor_values,
             cost_values,
             operator,
-            &mut next_buffer,
+            packed_buffer,
             previous_buffer,
         )?;
 
-        self.state_data_pool.push(next_buffer);
-        let id = self.insert_id_or_pop_state();
-        let successor = self.lookup_state(id).map_err(|e| StateInsertError {
-            message: format!("Failed to lookup successor state: {:?}", e),
-        })?;
+        let id = self.register_or_get_state_id_from_slice(packed_buffer);
+        let successor = ConcreteState::new(id);
 
         if id == self.state_data_pool.len() - 1 {
             if !cost_values.is_empty() {

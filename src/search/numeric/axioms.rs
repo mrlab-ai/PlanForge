@@ -288,7 +288,7 @@ impl<'a> AxiomEvaluator<'a> {
         if first_propositional_axiom_layer >= 0 && numeric_task.get_num_cmp_axioms() > 0 {
             comparison_axiom_layer = first_propositional_axiom_layer;
             first_propositional_axiom_layer += 1;
-            assert!(comparison_axiom_layer == last_arithmetic_axiom_layer + 1);
+            debug_assert_eq!(comparison_axiom_layer, last_arithmetic_axiom_layer + 1);
         }
 
         for var in numeric_task.variables().iter() {

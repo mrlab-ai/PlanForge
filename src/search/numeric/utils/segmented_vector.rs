@@ -16,7 +16,13 @@ pub struct SegmentedVector<T> {
 impl<T> SegmentedVector<T> {
     pub fn new() -> Self {
         let element_size = std::mem::size_of::<T>();
-        assert!(element_size > 0, "SegmentedVector cannot be used with zero-sized types");
+        debug_assert!(
+            element_size > 0,
+            "SegmentedVector cannot be used with zero-sized types"
+        );
+        if element_size == 0 {
+            panic!("SegmentedVector cannot be used with zero-sized types");
+        }
         let segment_elements = (SEGMENT_BYTES / element_size).max(1);
         let element_layout = Layout::array::<T>(segment_elements).unwrap();
 
@@ -139,7 +145,10 @@ impl<T> Index<usize> for SegmentedVector<T> {
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
-        assert!(index < self.the_size, "index out of bounds");
+        debug_assert!(index < self.the_size, "index out of bounds");
+        if index >= self.the_size {
+            panic!("index out of bounds");
+        }
         let segment_idx = self.get_segment_index(index);
         let offset_in_segment = self.get_offset_in_segment(index);
         unsafe {
@@ -151,7 +160,10 @@ impl<T> Index<usize> for SegmentedVector<T> {
 
 impl<T> IndexMut<usize> for SegmentedVector<T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        assert!(index < self.the_size, "index out of bounds");
+        debug_assert!(index < self.the_size, "index out of bounds");
+        if index >= self.the_size {
+            panic!("index out of bounds");
+        }
         let segment_idx = self.get_segment_index(index);
         let offset_in_segment = self.get_offset_in_segment(index);
         unsafe {
@@ -172,9 +184,21 @@ pub struct SegmentedArrayVector<T> {
 
 impl<T> SegmentedArrayVector<T> {
     pub fn new(elements_per_array: usize) -> Self {
-        assert!(elements_per_array > 0, "elements_per_array must be greater than 0");
+        debug_assert!(
+            elements_per_array > 0,
+            "elements_per_array must be greater than 0"
+        );
+        if elements_per_array == 0 {
+            panic!("elements_per_array must be greater than 0");
+        }
         let element_size = std::mem::size_of::<T>();
-        assert!(element_size > 0, "SegmentedArrayVector cannot be used with zero-sized types");
+        debug_assert!(
+            element_size > 0,
+            "SegmentedArrayVector cannot be used with zero-sized types"
+        );
+        if element_size == 0 {
+            panic!("SegmentedArrayVector cannot be used with zero-sized types");
+        }
 
         let arrays_per_segment = (SEGMENT_BYTES / (elements_per_array * element_size)).max(1);
         let elements_per_segment = elements_per_array * arrays_per_segment;
@@ -213,11 +237,14 @@ impl<T> SegmentedArrayVector<T> {
     }
 
     pub fn push_back(&mut self, entry_array: &[T]) {
-        assert_eq!(
+        debug_assert_eq!(
             entry_array.len(),
             self.elements_per_array,
             "input array must match elements_per_array"
         );
+        if entry_array.len() != self.elements_per_array {
+            panic!("input array must match elements_per_array");
+        }
 
         let segment_idx = self.get_segment_index(self.the_size);
         let offset_in_segment = self.get_offset_in_segment(self.the_size);
@@ -235,7 +262,10 @@ impl<T> SegmentedArrayVector<T> {
     }
 
     pub fn pop_back(&mut self) {
-        assert!(self.the_size > 0, "pop_back on empty SegmentedArrayVector");
+        debug_assert!(self.the_size > 0, "pop_back on empty SegmentedArrayVector");
+        if self.the_size == 0 {
+            panic!("pop_back on empty SegmentedArrayVector");
+        }
 
         self.the_size -= 1;
         let segment_idx = self.get_segment_index(self.the_size);
@@ -312,7 +342,10 @@ impl<T> Index<usize> for SegmentedArrayVector<T> {
     type Output = [T];
 
     fn index(&self, index: usize) -> &Self::Output {
-        assert!(index < self.the_size, "index out of bounds");
+        debug_assert!(index < self.the_size, "index out of bounds");
+        if index >= self.the_size {
+            panic!("index out of bounds");
+        }
         let segment_idx = self.get_segment_index(index);
         let offset_in_segment = self.get_offset_in_segment(index);
         unsafe {
@@ -324,7 +357,10 @@ impl<T> Index<usize> for SegmentedArrayVector<T> {
 
 impl<T> IndexMut<usize> for SegmentedArrayVector<T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        assert!(index < self.the_size, "index out of bounds");
+        debug_assert!(index < self.the_size, "index out of bounds");
+        if index >= self.the_size {
+            panic!("index out of bounds");
+        }
         let segment_idx = self.get_segment_index(index);
         let offset_in_segment = self.get_offset_in_segment(index);
         unsafe {

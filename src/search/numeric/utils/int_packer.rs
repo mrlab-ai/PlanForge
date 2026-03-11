@@ -13,12 +13,12 @@ fn get_bit_size_for_range(range: u64) -> i32 {
 }
 
 fn get_bit_mask(from: i32, to: i32) -> u64 {
-    assert!(from >= 0);
-    assert!(to >= from);
-    assert!(to <= BITS_PER_BIN);
+    debug_assert!(from >= 0);
+    debug_assert!(to >= from);
+    debug_assert!(to <= BITS_PER_BIN);
     let length = to - from;
     if length == BITS_PER_BIN {
-        assert!(from == 0 && to == BITS_PER_BIN);
+        debug_assert!(from == 0 && to == BITS_PER_BIN);
         return !0u64;
     }
     ((1 << length) - 1) << from
@@ -109,7 +109,7 @@ impl IntDoublePacker {
 
             // Pop the last variable index if available
             if let Some(var) = best_fit_vars.pop() {
-                assert!(var >= 0);
+                debug_assert!(var >= 0);
                 self.var_infos[var as usize] =
                     VariableInfo::new(ranges[var as usize], bin_index, used_bits);
                 used_bits += bits;
@@ -126,7 +126,7 @@ impl IntDoublePacker {
     }
 
     fn pack_bins(&mut self, ranges: &[u64]) {
-        assert!(self.var_infos.is_empty());
+        debug_assert!(self.var_infos.is_empty());
 
         let num_vars = ranges.len();
         self.var_infos.resize(num_vars, VariableInfo::default());
@@ -135,7 +135,7 @@ impl IntDoublePacker {
 
         for var in (0..num_vars).rev() {
             let bits = get_bit_size_for_range(ranges[var]);
-            assert!(bits <= BITS_PER_BIN);
+            debug_assert!(bits <= BITS_PER_BIN);
             bits_to_var[bits as usize].push(var as i32);
         }
 

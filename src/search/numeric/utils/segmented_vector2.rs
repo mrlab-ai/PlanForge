@@ -14,7 +14,10 @@ pub struct SegmentedArrayVector<T: Clone> {
 
 impl<T: Clone + Default> SegmentedArrayVector<T> {
     pub fn new(elements_per_array: usize) -> Self {
-        assert!(elements_per_array > 0);
+        debug_assert!(elements_per_array > 0);
+        if elements_per_array == 0 {
+            panic!("elements_per_array must be greater than 0");
+        }
         let arrays_per_segment = cmp::max(
             SEGMENT_BYTES / (elements_per_array * std::mem::size_of::<T>()),
             1,
@@ -43,7 +46,10 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
     }
 
     pub fn push_back(&mut self, entry: &[T]) {
-        assert_eq!(entry.len(), self.elements_per_array);
+        debug_assert_eq!(entry.len(), self.elements_per_array);
+        if entry.len() != self.elements_per_array {
+            panic!("entry length must match elements_per_array");
+        }
 
         let (segment, offset) = self.get_segment_index(self.size);
         if segment == self.segments.len() {
@@ -54,13 +60,19 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
     }
 
     pub fn pop_back(&mut self) {
-        assert!(self.size > 0);
+        debug_assert!(self.size > 0);
+        if self.size == 0 {
+            panic!("pop_back on empty SegmentedArrayVector");
+        }
         self.size -= 1;
         // No actual deallocation; reuse on next push_back
     }
 
     pub fn resize(&mut self, new_size: usize, entry: &[T]) {
-        assert_eq!(entry.len(), self.elements_per_array);
+        debug_assert_eq!(entry.len(), self.elements_per_array);
+        if entry.len() != self.elements_per_array {
+            panic!("entry length must match elements_per_array");
+        }
         while self.size < new_size {
             self.push_back(entry);
         }
