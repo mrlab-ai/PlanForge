@@ -327,9 +327,8 @@ impl<'a> AxiomEvaluator<'a> {
         for var_id in 0..numeric_task.get_num_variables() {
             let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
             if axiom_layer != -1 && axiom_layer != last_layer {
-                let nbf_value = numeric_task
-                    .get_variable_default_axiom_value(var_id)
-                    .unwrap();
+                let nbf_value =
+                    numeric_task.get_initial_propositional_state_values()[var_id as usize];
                 let nbf_info = NegationByFailureInfo::new(var_id as u32, nbf_value as usize);
                 nbf_info_by_layer[axiom_layer as usize].push(nbf_info);
             }
@@ -421,10 +420,8 @@ impl<'a> AxiomEvaluator<'a> {
                 });
             } else if axiom_layer <= self.last_propositional_axiom_layer {
                 // Set derived variables to their default values initially
-                let default_value = self
-                    .numeric_task
-                    .get_variable_default_axiom_value(i)
-                    .unwrap();
+                let default_value =
+                    self.numeric_task.get_initial_propositional_state_values()[i as usize];
                 self.state_packer.set(buffer, i, default_value as u64);
             } else {
                 return Err(AxiomEvalError::WrongAxiomLayer(
@@ -485,10 +482,8 @@ impl<'a> AxiomEvaluator<'a> {
                 let nbf_info = &self.nbf_info_by_layer[layer_no];
                 for info in nbf_info {
                     let var_no = info.var_id as i32;
-                    let default_value = self
-                        .numeric_task
-                        .get_variable_default_axiom_value(var_no)
-                        .unwrap();
+                    let default_value =
+                        self.numeric_task.get_initial_propositional_state_values()[var_no as usize];
                     if self.state_packer.get(buffer, var_no) == default_value as u64 {
                         queue.push(LiteralRef {
                             var_id: var_no as usize,
