@@ -17,3 +17,6 @@ output
 
 numeric-fd
 experiments/
+
+.devenv*
+.direnv
