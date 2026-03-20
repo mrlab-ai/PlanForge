@@ -1,0 +1,13 @@
+[package]
+name = "planners"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+planners-sas = { path = "../planners-sas" }
+planners-translate = { path = "../planners-translate" }
+planners-preprocess = { path = "../planners-preprocess" }
+planners-search = { path = "../planners-search" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"

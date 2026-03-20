@@ -1,11 +1,12 @@
 /target
 
-*.sas
+./*.sas
+*.out
 .vscode
 
 //Fast downward files
 cpp/ 
-pddl/
+./pddl/
 //python/
 scripts/
 sas_plan

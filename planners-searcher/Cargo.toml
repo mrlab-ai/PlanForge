@@ -1,0 +1,8 @@
+[package]
+name = "planners-searcher"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+planners-search = { path = "../planners-search" }
+clap = { version = "4", features = ["derive"] }

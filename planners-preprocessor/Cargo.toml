@@ -1,0 +1,7 @@
+[package]
+name = "planners-preprocessor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+planners-preprocess = { path = "../planners-preprocess" }

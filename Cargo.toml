@@ -1,16 +1,31 @@
-[package]
-name = "planners"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+default-members = [
+    "planners-sas",
+    "planners-translate",
+    "planners-translator",
+    "planners-preprocess",
+    "planners-preprocessor",
+    "planners-search",
+    "planners-searcher",
+    "planners",
+    "tests",
+]
 
-[dependencies]
-nom = "7"
-libc = "0.2"
-ordered-float = "5.1.0"
-clap = { version = "4", features = ["derive"] }
-anyhow = "1"
-serde_json = "1"
-itertools = "0.13"
+members = [
+    "planners-sas",
+    "planners-translate",
+    "planners-translator",
+    "planners-preprocess",
+    "planners-preprocessor",
+    "planners-search",
+    "planners-searcher",
+    "planners",
+    "tests",
+    "translate-backup",
+]
 
 [profile.release]
-debug = true
+lto = true
+resolver = 2
+# `codegen-units = 1` allows a more optimized compilation.
+codegen-units = 1
