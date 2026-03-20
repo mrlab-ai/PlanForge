@@ -1,0 +1,33 @@
+{
+  "command": [
+    "/run/current-system/sw/bin/python3",
+    "numeric-fd/fast-downward.py",
+    "--build",
+    "debug64",
+    "/home/markus/code/numeric_planneRS/misc/numeric-pddl-files/rover-unit/pfile1.pddl",
+    "--search",
+    "astar(blind)"
+  ],
+  "log_file": "/home/markus/code/numeric_planneRS/fd_stats_misc/logs/rover-unit/pfile1.pddl.log",
+  "problem_file": "rover-unit/pfile1.pddl",
+  "returncode": 0,
+  "stats": {
+    "dead_ends": 0,
+    "evaluated": 41553,
+    "evaluations": 41553,
+    "expanded": 21753,
+    "generated": 147641,
+    "peak_memory_kb": 20624,
+    "plan_cost": 10,
+    "plan_length": 10,
+    "registered_states": 41553,
+    "reopened": 0,
+    "search_time_line": "Search time: 0.176534s",
+    "search_time_s": 0.176534,
+    "solution_found": true,
+    "total_time_line": "Total time: 0.177127s",
+    "total_time_s": 0.177127
+  },
+  "timed_out": false,
+  "wall_time_s": 0.29630804099997476
+}

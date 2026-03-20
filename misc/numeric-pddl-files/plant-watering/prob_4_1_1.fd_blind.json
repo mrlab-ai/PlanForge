@@ -1,0 +1,33 @@
+{
+  "command": [
+    "/run/current-system/sw/bin/python3",
+    "numeric-fd/fast-downward.py",
+    "--build",
+    "debug64",
+    "/home/markus/code/numeric_planneRS/misc/numeric-pddl-files/plant-watering/prob_4_1_1.pddl",
+    "--search",
+    "astar(blind)"
+  ],
+  "log_file": "/home/markus/code/numeric_planneRS/fd_stats_misc/logs/plant-watering/prob_4_1_1.pddl.log",
+  "problem_file": "plant-watering/prob_4_1_1.pddl",
+  "returncode": 0,
+  "stats": {
+    "dead_ends": 0,
+    "evaluated": 276,
+    "evaluations": 276,
+    "expanded": 227,
+    "generated": 1241,
+    "peak_memory_kb": 12344,
+    "plan_cost": 13,
+    "plan_length": 13,
+    "registered_states": 276,
+    "reopened": 0,
+    "search_time_line": "Search time: 0.00185716s",
+    "search_time_s": 0.00185716,
+    "solution_found": true,
+    "total_time_line": "Total time: 0.00227944s",
+    "total_time_s": 0.00227944
+  },
+  "timed_out": false,
+  "wall_time_s": 0.10745848699980343
+}

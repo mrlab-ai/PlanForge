@@ -1,0 +1,33 @@
+{
+  "command": [
+    "/run/current-system/sw/bin/python3",
+    "numeric-fd/fast-downward.py",
+    "--build",
+    "debug64",
+    "/home/markus/code/numeric_planneRS/misc/numeric-pddl-files/minecraft-pogo-advanced/prob_15x15_1.pddl",
+    "--search",
+    "astar(blind)"
+  ],
+  "log_file": "/home/markus/code/numeric_planneRS/fd_stats_misc/logs/minecraft-pogo-advanced/prob_15x15_1.pddl.log",
+  "problem_file": "minecraft-pogo-advanced/prob_15x15_1.pddl",
+  "returncode": 0,
+  "stats": {
+    "dead_ends": 0,
+    "evaluated": 346179,
+    "evaluations": 346179,
+    "expanded": 55787,
+    "generated": 12662727,
+    "peak_memory_kb": 113664,
+    "plan_cost": 6,
+    "plan_length": 6,
+    "registered_states": 346179,
+    "reopened": 0,
+    "search_time_line": "Search time: 7.96166s",
+    "search_time_s": 7.96166,
+    "solution_found": true,
+    "total_time_line": "Total time: 8.20152s",
+    "total_time_s": 8.20152
+  },
+  "timed_out": false,
+  "wall_time_s": 15.63742980699999
+}

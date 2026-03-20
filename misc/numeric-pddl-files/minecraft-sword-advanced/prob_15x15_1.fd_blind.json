@@ -1,0 +1,33 @@
+{
+  "command": [
+    "/run/current-system/sw/bin/python3",
+    "numeric-fd/fast-downward.py",
+    "--build",
+    "debug64",
+    "/home/markus/code/numeric_planneRS/misc/numeric-pddl-files/minecraft-sword-advanced/prob_15x15_1.pddl",
+    "--search",
+    "astar(blind)"
+  ],
+  "log_file": "/home/markus/code/numeric_planneRS/fd_stats_misc/logs/minecraft-sword-advanced/prob_15x15_1.pddl.log",
+  "problem_file": "minecraft-sword-advanced/prob_15x15_1.pddl",
+  "returncode": 0,
+  "stats": {
+    "dead_ends": 0,
+    "evaluated": 679,
+    "evaluations": 679,
+    "expanded": 4,
+    "generated": 679,
+    "peak_memory_kb": 37564,
+    "plan_cost": 2,
+    "plan_length": 2,
+    "registered_states": 679,
+    "reopened": 0,
+    "search_time_line": "Search time: 0.00151051s",
+    "search_time_s": 0.00151051,
+    "solution_found": true,
+    "total_time_line": "Total time: 0.170231s",
+    "total_time_s": 0.170231
+  },
+  "timed_out": false,
+  "wall_time_s": 4.762075576999905
+}

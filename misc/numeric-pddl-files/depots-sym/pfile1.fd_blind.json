@@ -1,0 +1,33 @@
+{
+  "command": [
+    "/run/current-system/sw/bin/python3",
+    "numeric-fd/fast-downward.py",
+    "--build",
+    "debug64",
+    "/home/markus/code/numeric_planneRS/misc/numeric-pddl-files/depots-sym/pfile1.pddl",
+    "--search",
+    "astar(blind)"
+  ],
+  "log_file": "/home/markus/code/numeric_planneRS/fd_stats_misc/logs/depots-sym/pfile1.pddl.log",
+  "problem_file": "depots-sym/pfile1.pddl",
+  "returncode": 0,
+  "stats": {
+    "dead_ends": 0,
+    "evaluated": 392,
+    "evaluations": 392,
+    "expanded": 212,
+    "generated": 1325,
+    "peak_memory_kb": 12344,
+    "plan_cost": 22,
+    "plan_length": 10,
+    "registered_states": 392,
+    "reopened": 0,
+    "search_time_line": "Search time: 0.00226164s",
+    "search_time_s": 0.00226164,
+    "solution_found": true,
+    "total_time_line": "Total time: 0.00324159s",
+    "total_time_s": 0.00324159
+  },
+  "timed_out": false,
+  "wall_time_s": 0.1749960350002766
+}
