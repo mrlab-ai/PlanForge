@@ -3,6 +3,9 @@
 //! This module provides a simplified search engine based on the C++ Fast Downward
 //! implementation, focusing on A* search with minimal overhead.
 
+#[cfg(test)]
+mod tests;
+
 use crate::numeric::{
     evaluation::g_evaluator::{GEvaluator, SumEvaluator},
     evaluation::heuristic::BlindHeuristic,
@@ -495,32 +498,4 @@ fn current_memory_kb() -> u64 {
 #[cfg(not(target_os = "linux"))]
 fn current_memory_kb() -> u64 {
     0
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_search_status_enum() {
-        // Test basic enum functionality
-        assert_eq!(SearchStatus::InProgress, SearchStatus::InProgress);
-        assert_ne!(SearchStatus::Solved(0), SearchStatus::Failed);
-        assert_ne!(SearchStatus::MemoryLimitReached, SearchStatus::Timeout);
-    }
-
-    #[test]
-    fn test_search_result_creation() {
-        let result = SearchResult {
-            status: SearchStatus::Failed,
-            plan: None,
-            nodes_expanded: 0,
-            nodes_generated: 0,
-            search_time: Duration::from_millis(100),
-        };
-
-        assert_eq!(result.status, SearchStatus::Failed);
-        assert!(result.plan.is_none());
-        assert_eq!(result.nodes_expanded, 0);
-    }
 }

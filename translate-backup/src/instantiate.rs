@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use crate::translate::build_model;
 use crate::translate::function_expression::format_float;
 use crate::translate::numeric_axiom_rules::InstantiatedNumericAxiom;
@@ -77,7 +80,6 @@ impl std::fmt::Display for InstantiateError {
 
 impl std::error::Error for InstantiateError {}
 
-
 fn build_type_hierarchy(
     types: &[(String, Option<String>)],
 ) -> std::collections::HashMap<String, Vec<String>> {
@@ -106,7 +108,6 @@ fn build_type_hierarchy(
     hierarchy
 }
 
-
 /// High-level exploration step mirroring python/translate/instantiate.py::explore.
 ///
 /// 1. Translate the normalized task into a datalog-style program.
@@ -121,10 +122,13 @@ pub fn explore_normalized(
     let prog = pddl_to_prolog::translate(norm_task);
     let type_hierarchy = build_type_hierarchy(&norm_task.types);
 
-    eprintln!("  Prolog facts: {}, rules: {}", prog.facts.len(), prog.rules.len());
+    eprintln!(
+        "  Prolog facts: {}, rules: {}",
+        prog.facts.len(),
+        prog.rules.len()
+    );
 
-    let init_facts: Vec<build_model::Atom> =
-        prog.facts.iter().map(|f| f.atom.clone()).collect();
+    let init_facts: Vec<build_model::Atom> = prog.facts.iter().map(|f| f.atom.clone()).collect();
 
     let mut rule_specs: Vec<build_model::RuleSpec> = Vec::new();
     for rule in &prog.rules {
@@ -229,8 +233,11 @@ fn get_fluent_functions(
 ) -> Vec<String> {
     use std::collections::HashSet;
 
-    let function_symbols: HashSet<String> =
-        norm_task.functions.iter().map(|(name, _)| name.clone()).collect();
+    let function_symbols: HashSet<String> = norm_task
+        .functions
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect();
 
     let mut fluent_functions = HashSet::new();
     for atom in model {
@@ -487,7 +494,14 @@ fn ground_from_normalized_model(
     type_to_objects: &std::collections::HashMap<String, Vec<String>>,
     fluent_functions: &[String],
     init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
-) -> Result<(Vec<GroundedOp>, Vec<InstantiatedNumericAxiom>, Vec<GroundedAxiom>), InstantiateError> {
+) -> Result<
+    (
+        Vec<GroundedOp>,
+        Vec<InstantiatedNumericAxiom>,
+        Vec<GroundedAxiom>,
+    ),
+    InstantiateError,
+> {
     use std::collections::{HashMap, HashSet};
 
     // Build action lookup map
@@ -640,10 +654,8 @@ fn ground_from_normalized_model(
                 .cloned()
                 .collect();
             let variable_mapping = create_variable_mapping(&axiom.parameters, &used_args);
-            let condition = crate::translate::pddl::substitute_condition(
-                &axiom.condition,
-                &variable_mapping,
-            );
+            let condition =
+                crate::translate::pddl::substitute_condition(&axiom.condition, &variable_mapping);
             let effect_atom = format!("{}({})", axiom.name, used_args.join(", "));
             if grounded_axiom_atoms.insert(effect_atom.clone()) {
                 grounded_axioms.push(GroundedAxiom {
@@ -676,8 +688,8 @@ fn instantiate_numeric_axiom(
 ) -> Option<InstantiatedNumericAxiom> {
     use crate::translate::function_expression::FunctionalExpression;
     use crate::translate::numeric_axiom_rules::{
-            InstantiatedNumericAxiom, NumericConstant, NumericPart, PrimitiveNumericExpression,
-        };
+        InstantiatedNumericAxiom, NumericConstant, NumericPart, PrimitiveNumericExpression,
+    };
     use ordered_float::OrderedFloat;
 
     // Build instantiated name: "(axiom-name arg1 arg2 ...)"
@@ -726,7 +738,9 @@ fn instantiate_numeric_axiom(
                         let const_axiom = InstantiatedNumericAxiom {
                             name: format!("({})", const_name),
                             op: None,
-                            parts: vec![NumericPart::Constant(NumericConstant(OrderedFloat(*value)))],
+                            parts: vec![NumericPart::Constant(NumericConstant(OrderedFloat(
+                                *value,
+                            )))],
                             effect: const_effect.clone(),
                         };
                         instantiated_numeric_axioms.insert(const_axiom);
@@ -819,8 +833,10 @@ fn instantiate_normalized_action(
     init_function_values: &std::collections::HashMap<(String, Vec<String>), f64>,
     uses_metric: bool,
 ) -> Result<Option<GroundedOp>, InstantiateError> {
+    use crate::translate::function_expression::{
+        parse_functional_expression, FunctionalExpression,
+    };
     use crate::translate::pddl;
-    use crate::translate::function_expression::{parse_functional_expression, FunctionalExpression};
 
     let name = format!("{}({})", action.name, grounded_args.join(","));
 
@@ -828,11 +844,8 @@ fn instantiate_normalized_action(
     let pre_sub = pddl::substitute_condition(&action.precondition, variable_mapping);
     let fluent_function_set: std::collections::HashSet<String> =
         fluent_functions.iter().cloned().collect();
-    let pre_substituted = substitute_condition_numeric(
-        &pre_sub,
-        &fluent_function_set,
-        init_function_values,
-    );
+    let pre_substituted =
+        substitute_condition_numeric(&pre_sub, &fluent_function_set, init_function_values);
     let _preconditions = match instantiate_condition_list(
         &pre_substituted,
         init_atom_set,
@@ -877,7 +890,9 @@ fn instantiate_normalized_action(
         ))
     };
 
-    fn extract_cost_expression(effect: &crate::translate::pddl_parser::SExpr) -> Option<crate::translate::pddl_parser::SExpr> {
+    fn extract_cost_expression(
+        effect: &crate::translate::pddl_parser::SExpr,
+    ) -> Option<crate::translate::pddl_parser::SExpr> {
         if let crate::translate::pddl_parser::SExpr::List(items) = effect {
             if items.len() >= 3 {
                 return Some(items[2].clone());
@@ -899,7 +914,9 @@ fn instantiate_normalized_action(
                     .iter()
                     .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
                     .collect::<Vec<_>>();
-                init_function_values.get(&(pne.symbol.clone(), args)).copied()
+                init_function_values
+                    .get(&(pne.symbol.clone(), args))
+                    .copied()
             }
             FunctionalExpression::Arithmetic(arith) => {
                 let mut values = Vec::new();
@@ -991,13 +1008,11 @@ fn substitute_condition_numeric(
             .unwrap_or_else(|| right.clone());
             Condition::Comparison(op.clone(), left_sub, right_sub)
         }
-        Condition::Not(inner) => {
-            Condition::Not(Box::new(substitute_condition_numeric(
-                inner,
-                fluent_function_set,
-                init_function_values,
-            )))
-        }
+        Condition::Not(inner) => Condition::Not(Box::new(substitute_condition_numeric(
+            inner,
+            fluent_function_set,
+            init_function_values,
+        ))),
         Condition::And(parts) => Condition::And(
             parts
                 .iter()
@@ -1095,8 +1110,7 @@ fn instantiate_effect_with_params(
             mapping.insert(param, value);
         }
 
-        let condition =
-            crate::translate::pddl::substitute_condition(&effect.condition, &mapping);
+        let condition = crate::translate::pddl::substitute_condition(&effect.condition, &mapping);
         let cond_list = match instantiate_condition_list(
             &condition,
             init_atom_set,
@@ -1127,20 +1141,14 @@ fn instantiate_effect_with_params(
         match parsed {
             crate::translate::pddl::Effect::Add(name, args) => {
                 if fluent_predicates.contains(&name) {
-                    out.push((
-                        cond_list,
-                        crate::translate::pddl::Effect::Add(name, args),
-                    ));
+                    out.push((cond_list, crate::translate::pddl::Effect::Add(name, args)));
                 } else if !init_atom_set.contains(&(name.clone(), args.clone())) {
                     return Err(InstantiateError::NonFluentPredicate(name));
                 }
             }
             crate::translate::pddl::Effect::Del(name, args) => {
                 if fluent_predicates.contains(&name) {
-                    out.push((
-                        cond_list,
-                        crate::translate::pddl::Effect::Del(name, args),
-                    ));
+                    out.push((cond_list, crate::translate::pddl::Effect::Del(name, args)));
                 } else if init_atom_set.contains(&(name.clone(), args.clone())) {
                     return Err(InstantiateError::NonFluentPredicate(name));
                 }
@@ -1366,101 +1374,4 @@ fn instantiate_condition_list(
 
 fn format_number(value: f64) -> String {
     format_float(value)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{extract_constant_numeric_facts, extract_init_function_values, extract_init_predicate_facts};
-    use crate::translate::build_model;
-    use crate::translate::normalize::NormalizableTask;
-    use crate::translate::pddl::{Condition, Domain, Problem};
-    use crate::translate::pddl_parser::SExpr;
-    use std::collections::HashMap;
-
-    fn empty_task_with_init(init: Vec<SExpr>) -> NormalizableTask {
-        let domain = Domain {
-            name: "d".to_string(),
-            predicates: vec![],
-            functions: vec![],
-            types: vec![],
-            actions: vec![],
-            axioms: vec![],
-        };
-        let problem = Problem {
-            name: "p".to_string(),
-            objects: vec![],
-            init,
-            goal: Some(SExpr::Atom("truth".to_string())),
-            metric: None,
-        };
-
-        let mut task = NormalizableTask::from_ast(&domain, &problem);
-        task.goal = Condition::True;
-        task
-    }
-
-    #[test]
-    fn init_function_values_only_include_problem_assignments() {
-        let task = empty_task_with_init(vec![SExpr::List(vec![
-            SExpr::Atom("=".to_string()),
-            SExpr::List(vec![
-                SExpr::Atom("fuel".to_string()),
-                SExpr::Atom("satellite0".to_string()),
-            ]),
-            SExpr::Atom("17.5".to_string()),
-        ])]);
-
-        let values = extract_init_function_values(&task);
-
-        assert_eq!(values.len(), 1);
-        assert_eq!(values.get(&("fuel".to_string(), vec!["satellite0".to_string()])), Some(&17.5));
-        assert!(!values.contains_key(&("derived!0.0".to_string(), vec![])));
-    }
-
-    #[test]
-    fn init_predicate_facts_ignore_numeric_assignments() {
-        let task = empty_task_with_init(vec![
-            SExpr::List(vec![
-                SExpr::Atom("power_avail".to_string()),
-                SExpr::Atom("satellite0".to_string()),
-            ]),
-            SExpr::List(vec![
-                SExpr::Atom("=".to_string()),
-                SExpr::List(vec![
-                    SExpr::Atom("fuel".to_string()),
-                    SExpr::Atom("satellite0".to_string()),
-                ]),
-                SExpr::Atom("3.0".to_string()),
-            ]),
-        ]);
-
-        let facts = extract_init_predicate_facts(&task);
-
-        assert_eq!(
-            facts,
-            vec![build_model::Atom {
-                predicate: "power_avail".to_string(),
-                args: vec![build_model::Arg::Const("satellite0".to_string())],
-            }]
-        );
-    }
-
-    #[test]
-    fn constant_numeric_facts_exclude_fluent_functions() {
-        let init_values = HashMap::from([
-            (("fuel".to_string(), vec!["satellite0".to_string()]), 10.0),
-            (("slew_time".to_string(), vec!["a".to_string(), "b".to_string()]), 2.0),
-        ]);
-
-        let constants = extract_constant_numeric_facts(
-            &init_values,
-            &["fuel(satellite0)".to_string()],
-        );
-
-        assert_eq!(constants.len(), 1);
-        assert_eq!(
-            constants.get(&("slew_time".to_string(), vec!["a".to_string(), "b".to_string()])),
-            Some(&2.0)
-        );
-    }
 }

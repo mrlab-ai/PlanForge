@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use crate::translate::pddl_parser::SExpr;
 
 pub fn tokenize_list(obj: &SExpr) -> Vec<String> {
@@ -60,18 +63,3 @@ pub fn print_nested_list(nested_list: &SExpr) -> String {
     wrap_lines(&stream.lines().map(str::to_string).collect::<Vec<_>>()).join("\n")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn print_nested_list_emits_define() {
-        let expr = SExpr::List(vec![
-            SExpr::Atom("define".to_string()),
-            SExpr::List(vec![SExpr::Atom("problem".to_string()), SExpr::Atom("p1".to_string())]),
-        ]);
-        let printed = print_nested_list(&expr);
-        assert!(printed.contains("define"));
-        assert!(printed.contains("problem"));
-    }
-}

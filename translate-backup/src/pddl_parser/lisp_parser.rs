@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use nom::branch::alt;
 use nom::bytes::complete::{take_while, take_while1};
 use nom::character::complete::{char, multispace1};
@@ -17,7 +20,9 @@ pub struct ParseError {
 
 impl ParseError {
     pub fn new(value: impl Into<String>) -> Self {
-        Self { value: value.into() }
+        Self {
+            value: value.into(),
+        }
     }
 }
 
@@ -101,12 +106,19 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, ParseError> {
             .replace('(', " ( ")
             .replace(')', " ) ")
             .replace('?', " ?");
-        tokens.extend(normalized.split_whitespace().map(|token| token.to_ascii_lowercase()));
+        tokens.extend(
+            normalized
+                .split_whitespace()
+                .map(|token| token.to_ascii_lowercase()),
+        );
     }
     Ok(tokens)
 }
 
-pub fn parse_list_aux(tokens: &[String], start_index: usize) -> Result<(Vec<SExpr>, usize), ParseError> {
+pub fn parse_list_aux(
+    tokens: &[String],
+    start_index: usize,
+) -> Result<(Vec<SExpr>, usize), ParseError> {
     let mut result = Vec::new();
     let mut index = start_index;
     while index < tokens.len() {
@@ -152,7 +164,10 @@ pub fn parse_nested_list(input: &str) -> Result<Vec<SExpr>, ParseError> {
     if tokens.first().map(String::as_str) != Some("(") {
         return Err(ParseError::new(format!(
             "Expected '(', got {}.",
-            tokens.first().cloned().unwrap_or_else(|| "<eof>".to_string())
+            tokens
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "<eof>".to_string())
         )));
     }
     let (result, next_index) = parse_list_aux(&tokens, 1)?;
@@ -163,37 +178,4 @@ pub fn parse_nested_list(input: &str) -> Result<Vec<SExpr>, ParseError> {
         )));
     }
     Ok(result)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn parse_satellite_domain_sexprs_smoke() {
-        let s = fs::read_to_string("others/satellite/domain.pddl").expect("read pddl file");
-        let sexprs = parse_sexprs(&s).expect("parse should succeed");
-        assert!(!sexprs.is_empty());
-        match &sexprs[0] {
-            SExpr::List(items) => match &items[0] {
-                SExpr::Atom(a) => assert_eq!(a.to_lowercase(), "define"),
-                _ => panic!("expected atom define"),
-            },
-            _ => panic!("expected list"),
-        }
-    }
-
-    #[test]
-    fn parse_nested_list_accepts_comments() {
-        let input = "(define ; comment\n  (problem test))\n";
-        let parsed = parse_nested_list(input).expect("nested list parse should succeed");
-        assert!(!parsed.is_empty());
-    }
-
-    #[test]
-    fn tokenize_rejects_non_ascii_outside_comments() {
-        let err = tokenize("(define ä)").expect_err("tokenizer should reject non-ascii");
-        assert!(err.to_string().contains("Non-ASCII"));
-    }
 }
