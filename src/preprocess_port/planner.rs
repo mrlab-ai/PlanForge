@@ -10,8 +10,8 @@ use crate::preprocess_port::domain_transition_graph::{
     are_dtgs_strongly_connected, build_dtgs, DomainTransitionGraph,
 };
 use crate::preprocess_port::helper_functions::{
-    check_and_repair_empty_axiom_layers, generate_cpp_input, read_preprocessed_problem_description,
-    GlobalConstraint, InputStream, Metric,
+    check_and_repair_empty_axiom_layers, generate_cpp_input_to_path,
+    read_preprocessed_problem_description, GlobalConstraint, InputStream, Metric,
 };
 use crate::preprocess_port::mutex_group::{strip_mutexes, MutexGroup};
 use crate::preprocess_port::operator::{strip_operators, Operator};
@@ -19,6 +19,10 @@ use crate::preprocess_port::state::State;
 use crate::preprocess_port::variable::{NumericVariable, Variable};
 
 pub fn run_preprocess(args: &[String]) {
+    run_preprocess_to_output(args, std::path::Path::new("output"));
+}
+
+pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) {
     let mut metric = Metric {
         optimization_criterion: '<',
         index: 0,
@@ -156,7 +160,7 @@ pub fn run_preprocess(args: &[String]) {
     println!("Preprocessor task size: {}", task_size);
 
     println!("Writing output...");
-    generate_cpp_input(
+    generate_cpp_input_to_path(
         solveable_in_poly_time,
         &ordering,
         &numeric_ordering,
@@ -169,6 +173,7 @@ pub fn run_preprocess(args: &[String]) {
         &axioms_numeric,
         &axioms_func_comp,
         &global_constraint,
+        output_path,
     );
     println!("done");
 }

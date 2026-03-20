@@ -225,3 +225,13 @@ pub fn compute_groups(
 
     (groups, mutex_groups, translation_key)
 }
+
+pub fn compute_singleton_groups(atoms: &HashSet<Atom>) -> (Vec<Vec<Atom>>, Vec<Vec<Atom>>, Vec<Vec<String>>) {
+    let mut groups: Vec<Vec<Atom>> = atoms.iter().cloned().map(|atom| vec![atom]).collect();
+    groups = sort_groups(groups);
+
+    let mutex_groups = groups.clone();
+    let translation_key = build_translation_key(&groups);
+
+    (groups, mutex_groups, translation_key)
+}

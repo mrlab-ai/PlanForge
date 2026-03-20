@@ -34,6 +34,11 @@ pub type Plan = Vec<Operator>;
 pub struct SearchResult {
     pub status: SearchStatus,
     pub plan: Option<Plan>,
+    /// Solution cost as used by the search engine (g-value of the goal state).
+    ///
+    /// When a metric is defined, this corresponds to the accumulated metric deltas.
+    /// Otherwise it corresponds to the sum of declared operator costs.
+    pub solution_cost: Option<f64>,
     pub nodes_expanded: usize,
     pub nodes_generated: usize,
     pub search_time: Duration,
@@ -191,6 +196,7 @@ impl<'a> AStarSearch<'a> {
         SearchResult {
             status,
             plan: None,
+            solution_cost: None,
             nodes_expanded: self.nodes_expanded,
             nodes_generated: self.nodes_generated,
             search_time: start_time.elapsed(),
@@ -424,10 +430,12 @@ impl<'a> SearchEngine for AStarSearch<'a> {
                 SearchStatus::Solved(goal_state_id) => {
                     // Use the goal state ID returned from step()
                     let plan = self.extract_plan(goal_state_id);
+                    let solution_cost = self.search_nodes.get(&goal_state_id).map(|info| info.g_value);
 
                     return SearchResult {
                         status: SearchStatus::Solved(goal_state_id),
                         plan: Some(plan),
+                        solution_cost,
                         nodes_expanded: self.nodes_expanded,
                         nodes_generated: self.nodes_generated,
                         search_time: start_time.elapsed(),
@@ -514,6 +522,7 @@ mod tests {
         let result = SearchResult {
             status: SearchStatus::Failed,
             plan: None,
+            solution_cost: None,
             nodes_expanded: 0,
             nodes_generated: 0,
             search_time: Duration::from_millis(100),

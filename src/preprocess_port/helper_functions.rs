@@ -539,7 +539,40 @@ pub fn generate_cpp_input(
     axioms_func_comp: &Vec<crate::preprocess_port::axiom::AxiomFunctionalComparison>,
     constraint: &GlobalConstraint,
 ) {
-    let mut outfile = std::fs::File::create("output").expect("open output");
+    generate_cpp_input_to_path(
+        solveable_in_poly_time,
+        ordered_vars,
+        numeric_vars,
+        metric,
+        mutexes,
+        initial_state,
+        goals,
+        operators,
+        axioms_rel,
+        axioms_func_ass,
+        axioms_func_comp,
+        constraint,
+        std::path::Path::new("output"),
+    );
+}
+
+pub fn generate_cpp_input_to_path(
+    solveable_in_poly_time: bool,
+    ordered_vars: &Vec<*mut Variable>,
+    numeric_vars: &Vec<*mut NumericVariable>,
+    metric: &Metric,
+    mutexes: &Vec<crate::preprocess_port::mutex_group::MutexGroup>,
+    initial_state: &crate::preprocess_port::state::State,
+    goals: &Vec<(*mut Variable, i32)>,
+    operators: &Vec<crate::preprocess_port::operator::Operator>,
+    axioms_rel: &Vec<crate::preprocess_port::axiom::AxiomRelational>,
+    axioms_func_ass: &Vec<crate::preprocess_port::axiom::AxiomNumericComputation>,
+    axioms_func_comp: &Vec<crate::preprocess_port::axiom::AxiomFunctionalComparison>,
+    constraint: &GlobalConstraint,
+    output_path: &std::path::Path,
+) {
+    let mut outfile = std::fs::File::create(output_path)
+        .unwrap_or_else(|_| panic!("open output {}", output_path.display()));
 
     writeln!(outfile, "begin_version").unwrap();
     writeln!(outfile, "{}", PRE_FILE_VERSION).unwrap();
