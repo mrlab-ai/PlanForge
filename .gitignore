@@ -21,3 +21,8 @@ experiments/
 
 .devenv*
 .direnv
+
+# playground python files
+*.py
+__pycache__/
+others

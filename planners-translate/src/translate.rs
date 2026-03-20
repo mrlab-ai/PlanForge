@@ -1429,7 +1429,7 @@ pub fn translate_task_from_grounded_internal(
     _prob: &super::pddl_parser::lisp_parser::SExpr,
     num_fluents: &[PrimitiveNumericExpression],
     num_axioms: &[InstantiatedNumericAxiom],
-    _py_groups: Option<Vec<Vec<String>>>,
+    py_groups: Option<Vec<Vec<String>>>,
     grounded_axioms: &[PropositionalAxiom],
     reachable_action_params: &HashMap<String, Vec<Vec<String>>>,
     goal: &Condition,
@@ -1474,8 +1474,13 @@ pub fn translate_task_from_grounded_internal(
 
     // Compute fact groups
     let atoms_set: HashSet<Atom> = atoms.iter().cloned().collect();
-    let (groups, mutex_groups, mut translation_key) =
-        fact_groups::compute_groups(task, &atoms_set, &Some(reachable_action_params.clone()));
+    let (groups, mutex_groups, mut translation_key) = if py_groups.is_some() {
+        // Fast path: skip invariant finding / mutex discovery.
+        // This preserves semantics but produces a less compact encoding.
+        fact_groups::compute_singleton_groups(&atoms_set)
+    } else {
+        fact_groups::compute_groups(task, &atoms_set, &Some(reachable_action_params.clone()))
+    };
 
     // Handle numeric axioms
     let (

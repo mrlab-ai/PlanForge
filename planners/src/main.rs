@@ -201,7 +201,7 @@ fn setup_state_packer<'a>(problem: &'a NumericRootTask) -> IntDoublePacker {
     IntDoublePacker::new(&domain_sizes)
 }
 
-fn setup_numeric_task(file_name: &str) -> NumericRootTask {
+fn setup_numeric_task(file_name: impl AsRef<std::path::Path>) -> NumericRootTask {
     // This function should create a NumericRootTask with the necessary setup for testing
     // For now, we return an empty task as a placeholder
     let file_content = std::fs::read_to_string(file_name).unwrap();
@@ -223,7 +223,28 @@ fn setup_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn N
     node
 }
 
-fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
+fn translate_to_sas_to_path(
+    domain: &str,
+    problem: &str,
+    output_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    translate_to_sas_to_path_internal(domain, problem, output_path, false)
+}
+
+fn translate_to_sas_to_path_fast(
+    domain: &str,
+    problem: &str,
+    output_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    translate_to_sas_to_path_internal(domain, problem, output_path, true)
+}
+
+fn translate_to_sas_to_path_internal(
+    domain: &str,
+    problem: &str,
+    output_path: &std::path::Path,
+    fast_groups: bool,
+) -> anyhow::Result<()> {
     let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))
         .map_err(|e| anyhow::anyhow!(e))?;
     let parsed_task = task.to_task();
@@ -236,7 +257,7 @@ fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!(e))?;
 
     let instantiated_num_axioms = result.numeric_axioms;
-    let py_groups: Option<Vec<Vec<String>>> = None;
+    let py_groups: Option<Vec<Vec<String>>> = if fast_groups { Some(vec![]) } else { None };
     let mut sastask = planners_translate::translate::translate_task_from_grounded_internal(
         &result.atoms,
         &result.grounded_ops,
@@ -266,9 +287,13 @@ fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
     }
 
     let py_task = planners_translate::sas_tasks::from_internal(&sastask);
-    let mut out_file = std::fs::File::create("output.sas")?;
+    let mut out_file = std::fs::File::create(output_path)?;
     py_task.output(&mut out_file)?;
     Ok(())
+}
+
+fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
+    translate_to_sas_to_path(domain, problem, std::path::Path::new("output.sas"))
 }
 
 #[cfg(target_os = "linux")]
@@ -429,7 +454,14 @@ fn print_search_result(result: &SearchResult) {
         SearchStatus::Solved(_) => {
             println!("SOLVED!");
             if let Some(plan) = result.plan.as_ref() {
-                println!("Solution plan ({} steps):", plan.len());
+                let plan_cost = result
+                    .solution_cost
+                    .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum());
+                println!(
+                    "Solution plan ({} steps, cost {:.6}):",
+                    plan.len(),
+                    plan_cost
+                );
 
                 let mut plan_content = String::new();
                 for op in plan.iter() {

@@ -209,12 +209,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "planners"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80761b2d580961f5a987c4f41903f5c4738bddf6504b2460c33b26a67744d65a"
-
-[[package]]
 name = "planners-preprocess"
 version = "0.1.0"
 
@@ -359,7 +353,12 @@ dependencies = [
 name = "tests"
 version = "0.1.0"
 dependencies = [
- "planners 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "anyhow",
+ "planners-preprocess",
+ "planners-sas",
+ "planners-search",
+ "planners-translate",
+ "serde_json",
 ]
 
 [[package]]

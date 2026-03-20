@@ -1,0 +1,33 @@
+{
+  "command": [
+    "/run/current-system/sw/bin/python3",
+    "numeric-fd/fast-downward.py",
+    "--build",
+    "debug64",
+    "/home/markus/code/numeric_planneRS/misc/numeric-pddl-files/farmland/prob_2_100_1229_scale.pddl",
+    "--search",
+    "astar(blind)"
+  ],
+  "log_file": "/home/markus/code/numeric_planneRS/fd_stats_misc/logs/farmland/prob_2_100_1229_scale.pddl.log",
+  "problem_file": "farmland/prob_2_100_1229_scale.pddl",
+  "returncode": 0,
+  "stats": {
+    "dead_ends": 0,
+    "evaluated": 2558,
+    "evaluations": 2558,
+    "expanded": 2551,
+    "generated": 9738,
+    "peak_memory_kb": 12736,
+    "plan_cost": 78,
+    "plan_length": 78,
+    "registered_states": 2558,
+    "reopened": 0,
+    "search_time_line": "Search time: 0.0176183s",
+    "search_time_s": 0.0176183,
+    "solution_found": true,
+    "total_time_line": "Total time: 0.0181972s",
+    "total_time_s": 0.0181972
+  },
+  "timed_out": false,
+  "wall_time_s": 0.1670673280000301
+}

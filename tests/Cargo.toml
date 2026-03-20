@@ -5,4 +5,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-planners = "0"
+planners-preprocess = { path = "../planners-preprocess" }
+planners-sas = { path = "../planners-sas" }
+planners-search = { path = "../planners-search" }
+planners-translate = { path = "../planners-translate" }
+anyhow = "1"
+serde_json = "1"

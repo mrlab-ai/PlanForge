@@ -292,8 +292,9 @@ fn read_mutexes(
 ) {
     let count = stream.read_i32();
     for _ in 0..count {
-        mutexes
-            .push(crate::mutex_group::MutexGroup::from_stream(stream, variables));
+        mutexes.push(crate::mutex_group::MutexGroup::from_stream(
+            stream, variables,
+        ));
     }
 }
 
@@ -378,13 +379,11 @@ fn read_axioms_func_comp(
     let count = stream.read_i32();
     check_magic(stream, "begin_comparison_axioms");
     for _ in 0..count {
-        axioms_func_comp.push(
-            crate::axiom::AxiomFunctionalComparison::from_stream(
-                stream,
-                variables,
-                numeric_variables,
-            ),
-        );
+        axioms_func_comp.push(crate::axiom::AxiomFunctionalComparison::from_stream(
+            stream,
+            variables,
+            numeric_variables,
+        ));
     }
     check_magic(stream, "end_comparison_axioms");
     axioms_func_comp.sort_by(|a, b| {
@@ -402,12 +401,10 @@ fn read_axioms_numeric(
     let count = stream.read_i32();
     check_magic(stream, "begin_numeric_axioms");
     for _ in 0..count {
-        axioms_numeric.push(
-            crate::axiom::AxiomNumericComputation::from_stream(
-                stream,
-                numeric_variables,
-            ),
-        );
+        axioms_numeric.push(crate::axiom::AxiomNumericComputation::from_stream(
+            stream,
+            numeric_variables,
+        ));
     }
     check_magic(stream, "end_numeric_axioms");
     axioms_numeric.sort_by(|a, b| {
@@ -456,8 +453,7 @@ pub fn read_preprocessed_problem_description(
     if DEBUG {
         println!("reading initial state...");
     }
-    *initial_state =
-        crate::state::State::from_stream(stream, variables, numeric_variables);
+    *initial_state = crate::state::State::from_stream(stream, variables, numeric_variables);
     read_goal(stream, variables, goals);
     if DEBUG {
         println!("reading operators...");
@@ -513,9 +509,7 @@ pub fn dump_preprocessed_problem_description(
 
 pub fn dump_dtgs(
     ordering: &Vec<*mut Variable>,
-    transition_graphs: &mut Vec<
-        crate::domain_transition_graph::DomainTransitionGraph,
-    >,
+    transition_graphs: &mut Vec<crate::domain_transition_graph::DomainTransitionGraph>,
 ) {
     let num_graphs = transition_graphs.len();
     for i in 0..num_graphs {
@@ -526,7 +520,7 @@ pub fn dump_dtgs(
 }
 
 pub fn generate_cpp_input(
-    solveable_in_poly_time: bool,
+    solvable_in_poly_time: bool,
     ordered_vars: &Vec<*mut Variable>,
     numeric_vars: &Vec<*mut NumericVariable>,
     metric: &Metric,
@@ -539,7 +533,40 @@ pub fn generate_cpp_input(
     axioms_func_comp: &Vec<crate::axiom::AxiomFunctionalComparison>,
     constraint: &GlobalConstraint,
 ) {
-    let mut outfile = std::fs::File::create("output").expect("open output");
+    generate_cpp_input_to_path(
+        solvable_in_poly_time,
+        ordered_vars,
+        numeric_vars,
+        metric,
+        mutexes,
+        initial_state,
+        goals,
+        operators,
+        axioms_rel,
+        axioms_func_ass,
+        axioms_func_comp,
+        constraint,
+        std::path::Path::new("output"),
+    );
+}
+
+pub fn generate_cpp_input_to_path(
+    solvable_in_poly_time: bool,
+    ordered_vars: &Vec<*mut Variable>,
+    numeric_vars: &Vec<*mut NumericVariable>,
+    metric: &Metric,
+    mutexes: &Vec<super::mutex_group::MutexGroup>,
+    initial_state: &super::state::State,
+    goals: &Vec<(*mut Variable, i32)>,
+    operators: &Vec<super::operator::Operator>,
+    axioms_rel: &Vec<super::axiom::AxiomRelational>,
+    axioms_func_ass: &Vec<super::axiom::AxiomNumericComputation>,
+    axioms_func_comp: &Vec<super::axiom::AxiomFunctionalComparison>,
+    constraint: &GlobalConstraint,
+    output_path: &std::path::Path,
+) {
+    let mut outfile = std::fs::File::create(output_path)
+        .unwrap_or_else(|_| panic!("open output {}", output_path.display()));
 
     writeln!(outfile, "begin_version").unwrap();
     writeln!(outfile, "{}", PRE_FILE_VERSION).unwrap();
@@ -646,5 +673,5 @@ pub fn generate_cpp_input(
 
     writeln!(outfile, "begin_SG").unwrap();
 
-    let _ = solveable_in_poly_time;
+    let _ = solvable_in_poly_time;
 }
