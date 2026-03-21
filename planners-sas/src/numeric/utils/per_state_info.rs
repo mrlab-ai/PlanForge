@@ -42,7 +42,7 @@ pub trait PerStateInformationBase {
 /// - Maintains a set of subscribed registries for tracking
 ///
 /// # Example Usage
-/// ```
+/// ```ignore
 /// let mut per_state_info = PerStateInformation::new();
 /// per_state_info.subscribe(registry_id); // Subscribe to a registry
 /// let state_data = per_state_info.get_mut(&some_state, registry); // Gets default or existing data
