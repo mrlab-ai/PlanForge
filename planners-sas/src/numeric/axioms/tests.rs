@@ -22,15 +22,16 @@ fn test_axiom_evaluator_creation() {
     let mut buffer = vec![0; axiom_evaluator.state_packer.num_bins() as usize];
     for (i, value) in init_state.iter().enumerate() {
         dbg!(i, value);
+        assert_eq!(*value, 1);
         axiom_evaluator
             .state_packer
             .set(&mut buffer, i as i32, *value as u64);
     }
 
-    dbg!(axiom_evaluator.state_packer.get(&buffer, 0));
+    assert_eq!(axiom_evaluator.state_packer.get(&buffer, 0), 1);
 
-    dbg!(&buffer);
-    dbg!(problem.numeric_variables().len());
+    assert_eq!(buffer, vec![0u64, 0u64, 9u64]);
+    assert_eq!(problem.numeric_variables().len(), 2);
 }
 
 #[test]

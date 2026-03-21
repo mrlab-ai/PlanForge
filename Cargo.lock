@@ -378,6 +378,7 @@ dependencies = [
  "planners-sas",
  "planners-search",
  "planners-translate",
+ "planners-translator",
  "serde_json",
 ]
 

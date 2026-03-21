@@ -19,10 +19,7 @@ fn test_state_registry_initial_state() {
     let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
     let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
     let initial_state = state_registry.get_initial_state();
-    print!(
-        "Initial state: {}",
-        initial_state.debug_with_registry(&state_registry)
-    );
+    assert_eq!(initial_state.get_state(&state_registry), [1, 0]);
 }
 
 #[test]
@@ -34,10 +31,7 @@ fn test_cost_information_storage() {
 
     let initial_state = state_registry.get_initial_state();
 
-    // Check that cost information is stored
     let cost_info = state_registry.get_cost_information(&initial_state);
-    println!("Initial state cost information: {:?}", cost_info);
-
-    // The cost information should be accessible (empty vector if no cost variables)
-    println!("Cost information length: {}", cost_info.len());
+    assert_eq!(cost_info, [0.0]);
+    assert_eq!(cost_info.len(), 1);
 }

@@ -6,8 +6,8 @@ use super::*;
 fn test_per_state_info_basic() {
     let per_state_info = PerStateInformation::with_default(42);
 
-    // Test that default value is returned for non-existent entries
-    // Note: This test would need actual ConcreteState instances to be meaningful
+    // Test that default value is returned for non-existent entries.
+    // TODO: This test would need actual ConcreteState instances to be meaningful.
     // For now, it's a placeholder
     assert_eq!(per_state_info.default_value, 42);
 }

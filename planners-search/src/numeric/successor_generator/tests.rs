@@ -61,7 +61,7 @@ fn get_root_task() -> NumericRootTask {
     let comparison_axioms = Vec::new();
     let assignment_axioms = Vec::new();
     let global_constraint = (0, 0);
-    let output = NumericRootTask::new(
+    NumericRootTask::new(
         version,
         metric,
         variables,
@@ -75,9 +75,7 @@ fn get_root_task() -> NumericRootTask {
         comparison_axioms,
         assignment_axioms,
         global_constraint,
-    );
-
-    output
+    )
 }
 
 #[test]
@@ -96,17 +94,23 @@ fn test_grounded_successor_generator() {
     let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
 
     let state = state_registry.get_initial_state();
-    let state = state.get_state(&state_registry);
-    println!("State values: {:?}", state);
+    let state_values = state.get_state(&state_registry);
+    assert_eq!(state_values, [1, 1]);
 
     let node = generator.construct(&mut 0, &mut queue).unwrap();
 
     let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
-    node.get_applicable_operators(&state[..], &mut applicable_operators);
+    node.get_applicable_operators(&state_values[..], &mut applicable_operators);
 
-    //dbg!("Facts: {:?}", facts_refs);
-    dbg!("Applicable operators: {:?}", applicable_operators);
-    //dbg!("Node: {:?}", node);
+    let applicable = Operator::new(
+        String::from("drop"),
+        vec![Fact::new(1, 1)],
+        vec![Effect::new(vec![], 1, 1, 5)],
+        vec![],
+        1,
+    );
+    assert_eq!(applicable_operators[0], (&applicable, 0));
+    assert_eq!(applicable_operators.len(), 1);
 }
 
 #[test]
@@ -125,24 +129,11 @@ fn test_generate_immediate_successor_of_init_state() {
 
     let (op, _) = applicable_operators.into_iter().next().unwrap();
 
-    println!(
-        "Initial state: {}",
-        initial_state.debug_with_registry(&state_registry)
-    );
-    println!("OP: {:?}", op);
-
     let successor = state_registry
         .get_successor_state(&initial_state, op)
         .expect("Failed to get successor state");
-
-    println!(
-        "Successor state: {}",
-        successor.debug_with_registry(&state_registry)
-    );
-    println!(
-        "Numeric indices: {:?}",
-        state_registry.get_numeric_indices()
-    );
+    assert_eq!(successor.get_state(&state_registry), [1, 5]);
+    assert_eq!(state_registry.get_numeric_indices(), [0, 0]);
 }
 
 #[test]
@@ -161,18 +152,10 @@ fn test_per_state_info_subscription() {
 
     // Verify subscription
     assert!(custom_per_state_info.is_subscribed_to(state_registry.id()));
-    println!(
-        "PerStateInformation subscribed to registry {}",
-        state_registry.id()
-    );
 
     // Test unsubscription
     state_registry.unsubscribe_per_state_info(&mut custom_per_state_info);
     assert!(!custom_per_state_info.is_subscribed_to(state_registry.id()));
-    println!(
-        "PerStateInformation unsubscribed from registry {}",
-        state_registry.id()
-    );
 
     // Re-subscribe for cleanup test
     state_registry.subscribe_per_state_info(&mut custom_per_state_info);
@@ -181,10 +164,6 @@ fn test_per_state_info_subscription() {
     // Manually cleanup (simulating registry destruction)
     custom_per_state_info.cleanup_registry(state_registry.id());
     assert!(!custom_per_state_info.is_subscribed_to(state_registry.id()));
-    println!(
-        "PerStateInformation cleaned up for registry {}",
-        state_registry.id()
-    );
 }
 
 #[test]
@@ -199,15 +178,9 @@ fn test_automatic_cleanup_on_drop() {
 
         // Verify the cost_info is automatically subscribed
         assert!(state_registry.get_cost_info().borrow().is_subscribed_to(id));
-        println!("StateRegistry {} has auto-subscribed cost_info", id);
 
         id
     }; // StateRegistry drops here, triggering automatic cleanup
-
-    println!(
-        "StateRegistry {} has been dropped with automatic cleanup",
-        registry_id
-    );
 }
 
 #[test]
@@ -227,33 +200,24 @@ fn test_duplicate_successor_should_not_generate_new_id() {
     // Get the first applicable operator
     let (op, _) = applicable_operators.first().unwrap();
 
-    println!("Testing operator: {:?}", op.name());
-    println!("Initial state ID: {}", initial_state.get_id());
-    println!(
-        "Initial registered_states size: {}",
-        state_registry.get_registered_states().len()
-    );
+    assert_eq!(op.name(), "drop");
+    assert_eq!(initial_state.get_id(), 0);
+    assert_eq!(state_registry.get_registered_states().len(), 1);
 
     // Generate the successor state twice
     let successor1 = state_registry
         .get_successor_state(&initial_state, op)
         .expect("Failed to get first successor state");
 
-    println!(
-        "After first successor - registered_states size: {}",
-        state_registry.get_registered_states().len()
-    );
-    println!("First successor ID: {}", successor1.get_id());
+    assert_eq!(state_registry.get_registered_states().len(), 2);
+    assert_eq!(successor1.get_id(), 1);
 
     let successor2 = state_registry
         .get_successor_state(&initial_state, op)
         .expect("Failed to get second successor state");
 
-    println!(
-        "After second successor - registered_states size: {}",
-        state_registry.get_registered_states().len()
-    );
-    println!("Second successor ID: {}", successor2.get_id());
+    assert_eq!(state_registry.get_registered_states().len(), 2);
+    assert_eq!(successor2.get_id(), 1);
 
     // They should have the same ID if duplicate detection is working
     assert_eq!(
