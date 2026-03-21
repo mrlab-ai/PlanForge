@@ -400,8 +400,8 @@ impl Generator {
             Generator::Match(mg) => {
                 result.extend_from_slice(&mg.matches);
                 if mg.index < atom.args.len() {
-                    if let Some(gen) = mg.match_generator.get(&atom.args[mg.index]) {
-                        gen.generate(atom, result);
+                    if let Some(gener) = mg.match_generator.get(&atom.args[mg.index]) {
+                        gener.generate(atom, result);
                     }
                 }
                 mg.next.generate(atom, result);
@@ -497,10 +497,10 @@ impl Unifier {
                     })
                     .collect();
 
-                let gen = pred_to_gen
+                let gener = pred_to_gen
                     .remove(&cond.predicate)
                     .unwrap_or(Generator::Leaf(LeafGenerator { matches: vec![] }));
-                let new_gen = gen.insert(&constant_args, (rule_idx, cond_idx));
+                let new_gen = gener.insert(&constant_args, (rule_idx, cond_idx));
                 pred_to_gen.insert(cond.predicate.clone(), new_gen);
             }
         }
@@ -512,8 +512,8 @@ impl Unifier {
 
     fn unify(&self, atom: &GroundAtom) -> Vec<(usize, usize)> {
         let mut result = vec![];
-        if let Some(gen) = self.predicate_to_generator.get(&atom.predicate) {
-            gen.generate(atom, &mut result);
+        if let Some(gener) = self.predicate_to_generator.get(&atom.predicate) {
+            gener.generate(atom, &mut result);
         }
         result
     }

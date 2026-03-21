@@ -92,7 +92,7 @@ fn build_dtgs(task: &SASTask) -> Vec<DomainTransitionGraph> {
     let mut dtgs: Vec<DomainTransitionGraph> = init_vals
         .iter()
         .zip(sizes.iter())
-        .filter(|(_, &size)| size > 0)
+        .filter(|(_, size)| **size > 0)
         .map(|(&init, &size)| DomainTransitionGraph::new(init as usize, size))
         .collect();
 

@@ -18,9 +18,6 @@ use super::simplify;
 
 const DEBUG: bool = true;
 
-static mut SIMPLIFIED_EFFECT_CONDITION_COUNTER: usize = 0;
-static mut ADDED_IMPLIED_PRECONDITION_COUNTER: usize = 0;
-
 // ============================================================
 // strips_to_sas_dictionary
 // ============================================================
@@ -366,6 +363,8 @@ fn translate_strips_conditions(
 
 /// Python: def translate_strips_operator(operator, dictionary, ranges, ...)
 fn translate_strips_operator(
+    simplified_effect_condition_counter: &mut usize,
+    added_implied_precondition_counter: &mut usize,
     operator: &PropositionalAction,
     dictionary: &mut HashMap<Atom, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
@@ -396,6 +395,8 @@ fn translate_strips_operator(
     let mut sas_operators = vec![];
     for condition in conditions.unwrap() {
         if let Some(op) = translate_strips_operator_aux(
+            simplified_effect_condition_counter,
+            added_implied_precondition_counter,
             operator,
             dictionary,
             ranges,
@@ -489,6 +490,8 @@ fn cartesian_product_conditions(lists: &[Vec<Condition>]) -> Vec<Vec<Condition>>
 
 /// Python: def translate_strips_operator_aux(operator, dictionary, ranges, ...)
 fn translate_strips_operator_aux(
+    simplified_effect_condition_counter: &mut usize,
+    added_implied_precondition_counter: &mut usize,
     operator: &PropositionalAction,
     dictionary: &mut HashMap<Atom, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
@@ -678,6 +681,8 @@ fn translate_strips_operator_aux(
     }
 
     build_sas_operator(
+        simplified_effect_condition_counter,
+        added_implied_precondition_counter,
         &operator.name,
         condition,
         &effects_by_variable,
@@ -705,6 +710,8 @@ fn translate_strips_operator_aux(
 // ============================================================
 
 fn build_sas_operator(
+    simplified_effect_condition_counter: &mut usize,
+    added_implied_precondition_counter: &mut usize,
     name: &str,
     condition: &HashMap<usize, usize>,
     effects_by_variable: &HashMap<usize, HashMap<usize, Vec<HashMap<usize, usize>>>>,
@@ -755,17 +762,13 @@ fn build_sas_operator(
             if ranges[var] == 2 {
                 // Apply simplifications for binary variables
                 if prune_stupid_effect_conditions(var, post, &mut eff_condition_lists) {
-                    unsafe {
-                        SIMPLIFIED_EFFECT_CONDITION_COUNTER += 1;
-                    }
+                    *simplified_effect_condition_counter += 1;
                 }
                 if options::ADD_IMPLIED_PRECONDITIONS
                     && pre == -1
                     && implied_precondition.contains(&(var, 1 - post))
                 {
-                    unsafe {
-                        ADDED_IMPLIED_PRECONDITION_COUNTER += 1;
-                    }
+                    *added_implied_precondition_counter += 1;
                     pre = (1 - post) as i32;
                 }
             }
@@ -972,6 +975,8 @@ fn translate_numeric_axiom(
 // ============================================================
 
 fn translate_strips_operators(
+    simplified_effect_condition_counter: &mut usize,
+    added_implied_precondition_counter: &mut usize,
     actions: &[PropositionalAction],
     strips_to_sas: &mut HashMap<Atom, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
@@ -987,6 +992,8 @@ fn translate_strips_operators(
     let mut result = vec![];
     for action in actions {
         let sas_ops = translate_strips_operator(
+            simplified_effect_condition_counter,
+            added_implied_precondition_counter,
             action,
             strips_to_sas,
             ranges,
@@ -1065,6 +1072,8 @@ fn add_key_to_comp_axioms(
 
 /// Python: def translate_task(...)
 fn translate_task(
+    simplified_effect_condition_counter: &mut usize,
+    added_implied_precondition_counter: &mut usize,
     strips_to_sas: &mut HashMap<Atom, Vec<(usize, usize)>>,
     ranges: &mut Vec<usize>,
     translation_key: &mut Vec<Vec<String>>,
@@ -1180,6 +1189,8 @@ fn translate_task(
 
     // Translate operators
     let operators = translate_strips_operators(
+        simplified_effect_condition_counter,
+        added_implied_precondition_counter,
         actions,
         strips_to_sas,
         ranges,
@@ -1541,8 +1552,13 @@ pub fn translate_task_from_grounded_internal(
         "Global constraint must be an atom literal"
     );
 
+    let mut simplified_effect_condition_counter: usize = 0;
+    let mut added_implied_precondition_counter: usize = 0;
+
     // Translate the task
     let sas_task = translate_task(
+        &mut simplified_effect_condition_counter,
+        &mut added_implied_precondition_counter,
         &mut strips_to_sas,
         &mut ranges,
         &mut translation_key,
@@ -1577,16 +1593,14 @@ pub fn translate_task_from_grounded_internal(
             .collect::<Vec<_>>(),
     )?;
 
-    unsafe {
-        println!(
-            "{} effect conditions simplified",
-            SIMPLIFIED_EFFECT_CONDITION_COUNTER
-        );
-        println!(
-            "{} implied preconditions added",
-            ADDED_IMPLIED_PRECONDITION_COUNTER
-        );
-    }
+    println!(
+        "{} effect conditions simplified",
+        simplified_effect_condition_counter
+    );
+    println!(
+        "{} implied preconditions added",
+        added_implied_precondition_counter
+    );
 
     // Filter unreachable facts
     if options::FILTER_UNREACHABLE_FACTS {
