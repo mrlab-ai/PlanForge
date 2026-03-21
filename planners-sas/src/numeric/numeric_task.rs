@@ -1,4 +1,5 @@
 use crate::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
+use crate::numeric::numeric_parser::parse_numeric_sas_output;
 use crate::numeric::state_registry::{ConcreteState, StateRegistry};
 use crate::numeric::utils::int_packer::IntDoublePacker;
 use std::{
@@ -394,6 +395,13 @@ impl NumericRootTask {
             assignment_axioms,
             global_constraint,
         }
+    }
+
+    pub fn from_file(file_name: impl AsRef<std::path::Path>) -> Self {
+        let file_content = std::fs::read_to_string(file_name).unwrap();
+        parse_numeric_sas_output(&file_content)
+            .unwrap() // TODO: Handle errors properly
+            .1
     }
 
     /// Returns a reference to the metric configuration

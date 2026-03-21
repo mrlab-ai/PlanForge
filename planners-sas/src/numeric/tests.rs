@@ -85,33 +85,3 @@ pub(crate) fn get_root_task() -> NumericRootTask {
         global_constraint,
     )
 }
-
-pub(crate) fn setup_state_packer(problem: &NumericRootTask) -> IntDoublePacker {
-    let mut domain_sizes = vec![];
-    for var in problem.variables().iter() {
-        domain_sizes.push(var.domain_size() as u64);
-    }
-    for numeric_var in problem.numeric_variables().iter() {
-        if numeric_var.get_type() == &NumericType::Regular {
-            domain_sizes.push(u64::MAX);
-        }
-    }
-    IntDoublePacker::new(&domain_sizes)
-}
-
-pub(crate) fn setup_axiom_evaluator<'a>(
-    problem: &'a NumericRootTask,
-    state_packer: &'a IntDoublePacker,
-) -> AxiomEvaluator<'a> {
-    let task: &'a dyn AbstractNumericTask = problem;
-    let axiom_evaluator = AxiomEvaluator::new(task, state_packer);
-    axiom_evaluator
-}
-
-pub(crate) fn setup_state_registry<'a>(
-    problem: &'a NumericRootTask,
-    state_packer: &'a IntDoublePacker,
-    axiom_evaluator: &'a AxiomEvaluator<'a>,
-) -> StateRegistry<'a> {
-    StateRegistry::new(problem, state_packer, axiom_evaluator)
-}

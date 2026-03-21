@@ -1,3 +1,5 @@
+use planners_search::numeric::search_engine::SearchStatus;
+
 use super::*;
 
 #[cfg(unix)]

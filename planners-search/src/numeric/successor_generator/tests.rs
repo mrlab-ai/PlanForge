@@ -80,63 +80,20 @@ fn get_root_task() -> NumericRootTask {
     output
 }
 
-fn setup_state_registry<'a>(
-    problem: &'a NumericRootTask,
-    state_packer: &'a IntDoublePacker,
-    axiom_evaluator: &'a AxiomEvaluator<'a>,
-) -> StateRegistry<'a> {
-    StateRegistry::new(problem, state_packer, axiom_evaluator)
-}
+#[test]
+fn test_grounded_successor_generator() {
+    let task = get_root_task();
 
-fn setup_axiom_evaluator<'a>(
-    problem: &'a NumericRootTask,
-    state_packer: &'a IntDoublePacker,
-) -> AxiomEvaluator<'a> {
-    let task: &'a dyn AbstractNumericTask = problem;
-    let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
-    axiom_evaluator
-}
+    let mut generator = GroundedSuccessorGenerator::new(&task);
 
-fn setup_state_packer<'a>(problem: &'a NumericRootTask) -> IntDoublePacker {
-    let mut domain_sizes = vec![];
-    for var in problem.variables().iter() {
-        domain_sizes.push(var.domain_size() as u64);
-    }
-    for numeric_var in problem.numeric_variables().iter() {
-        if numeric_var.get_type() == &NumericType::Regular {
-            domain_sizes.push(u64::MAX);
-        }
-    }
-    IntDoublePacker::new(&domain_sizes)
-}
-
-fn setup_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn Node<'a> + 'a> {
     let mut queue = VecDeque::new();
     for (op_id, operator) in task.get_operators().iter().enumerate() {
         queue.push_back((operator, op_id));
     }
 
-    let mut generator = GroundedSuccessorGenerator::new(task);
-
-    let node = generator.construct(&mut 0, &mut queue).unwrap();
-
-    node
-}
-
-#[test]
-fn test_grounded_successor_generator() {
-    let problem = get_root_task();
-
-    let mut generator = GroundedSuccessorGenerator::new(&problem);
-
-    let mut queue = VecDeque::new();
-    for (op_id, operator) in problem.get_operators().iter().enumerate() {
-        queue.push_back((operator, op_id));
-    }
-
-    let state_packer = setup_state_packer(&problem);
-    let axiom_evaluator = setup_axiom_evaluator(&problem, &state_packer);
-    let mut state_registry = setup_state_registry(&problem, &state_packer, &axiom_evaluator);
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
 
     let state = state_registry.get_initial_state();
     let state = state.get_state(&state_registry);
@@ -155,13 +112,13 @@ fn test_grounded_successor_generator() {
 #[test]
 fn test_generate_immediate_successor_of_init_state() {
     let task = get_root_task();
-    let state_packer = setup_state_packer(&task);
-    let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
-    let mut state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
     let initial_state = state_registry.get_initial_state();
 
     let state = initial_state.get_state(&state_registry);
-    let suc_gen = setup_successor_generator(&task);
+    let suc_gen = GroundedSuccessorGenerator::construct_node_from_task(&task);
 
     let mut applicable_operators = Vec::new();
     suc_gen.get_applicable_operators(&state, &mut applicable_operators);
@@ -191,9 +148,9 @@ fn test_generate_immediate_successor_of_init_state() {
 #[test]
 fn test_per_state_info_subscription() {
     let task = get_root_task();
-    let state_packer = setup_state_packer(&task);
-    let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
-    let state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
 
     // Create a PerStateInformation instance
     let mut custom_per_state_info =
@@ -233,11 +190,11 @@ fn test_per_state_info_subscription() {
 #[test]
 fn test_automatic_cleanup_on_drop() {
     let task = get_root_task();
-    let state_packer = setup_state_packer(&task);
-    let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
 
     let registry_id = {
-        let state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+        let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
         let id = state_registry.id();
 
         // Verify the cost_info is automatically subscribed
@@ -256,13 +213,13 @@ fn test_automatic_cleanup_on_drop() {
 #[test]
 fn test_duplicate_successor_should_not_generate_new_id() {
     let task = get_root_task();
-    let state_packer = setup_state_packer(&task);
-    let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
-    let mut state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
     let initial_state = state_registry.get_initial_state();
 
     let state = initial_state.get_state(&state_registry);
-    let suc_gen = setup_successor_generator(&task);
+    let suc_gen = GroundedSuccessorGenerator::construct_node_from_task(&task);
 
     let mut applicable_operators = Vec::new();
     suc_gen.get_applicable_operators(&state, &mut applicable_operators);

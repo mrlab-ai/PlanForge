@@ -41,6 +41,19 @@ impl<'a> GroundedSuccessorGenerator<'a> {
         }
     }
 
+    pub fn construct_node_from_task<T: AbstractNumericTask>(task: &'a T) -> Box<dyn Node<'a>> {
+        let mut queue = VecDeque::new();
+        for (op_id, operator) in task.get_operators().iter().enumerate() {
+            queue.push_back((operator, op_id));
+        }
+
+        let mut generator = GroundedSuccessorGenerator::new(task);
+
+        let node = generator.construct(&mut 0, &mut queue).unwrap();
+
+        node
+    }
+
     pub fn construct(
         &mut self,
         branch_var_id: &mut u32,

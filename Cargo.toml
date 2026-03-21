@@ -8,6 +8,7 @@ default-members = [
     "planners-search",
     "planners-searcher",
     "planners",
+    "planners-cli-utils",
     "tests",
 ]
 
@@ -20,6 +21,7 @@ members = [
     "planners-search",
     "planners-searcher",
     "planners",
+    "planners-cli-utils",
     "tests",
     "translate-backup",
 ]

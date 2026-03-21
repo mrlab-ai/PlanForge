@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use planners_preprocess::planner::run_preprocess_to_output;
+use planners_preprocess::run_preprocess_to_output;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_parser::parse_numeric_sas_output;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
@@ -12,64 +12,12 @@ use planners_sas::numeric::numeric_task::NumericRootTask;
 use planners_sas::numeric::numeric_task::NumericType;
 use planners_sas::numeric::state_registry::StateRegistry;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
-use planners_search::numeric::search_engine::{AStarSearch, SearchEngine};
 use planners_search::numeric::search_engine::SearchStatus;
+use planners_search::numeric::search_engine::{AStarSearch, SearchEngine};
 use planners_search::numeric::successor_generator::GroundedSuccessorGenerator;
 use planners_search::numeric::successor_generator::Node;
 use planners_translate::normalize;
 use planners_translate::pddl_parser::PddlTask;
-
-fn setup_state_registry<'a>(
-    problem: &'a NumericRootTask,
-    state_packer: &'a IntDoublePacker,
-    axiom_evaluator: &'a AxiomEvaluator<'a>,
-) -> StateRegistry<'a> {
-    StateRegistry::new(problem, state_packer, axiom_evaluator)
-}
-
-fn setup_axiom_evaluator<'a>(
-    problem: &'a NumericRootTask,
-    state_packer: &'a IntDoublePacker,
-) -> AxiomEvaluator<'a> {
-    let task: &'a dyn AbstractNumericTask = problem;
-    let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
-    axiom_evaluator
-}
-
-fn setup_state_packer<'a>(problem: &'a NumericRootTask) -> IntDoublePacker {
-    let mut domain_sizes = vec![];
-    for var in problem.variables().iter() {
-        domain_sizes.push(var.domain_size() as u64);
-    }
-    for numeric_var in problem.numeric_variables().iter() {
-        if numeric_var.get_type() == &NumericType::Regular {
-            domain_sizes.push(u64::MAX);
-        }
-    }
-    IntDoublePacker::new(&domain_sizes)
-}
-
-fn setup_numeric_task(file_name: impl AsRef<std::path::Path>) -> NumericRootTask {
-    // This function should create a NumericRootTask with the necessary setup for testing
-    // For now, we return an empty task as a placeholder
-    let file_content = std::fs::read_to_string(file_name).unwrap();
-    parse_numeric_sas_output(&file_content)
-        .unwrap() //TODO: Handle errors properly
-        .1
-}
-
-fn setup_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn Node<'a> + 'a> {
-    let mut queue = VecDeque::new();
-    for (op_id, operator) in task.get_operators().iter().enumerate() {
-        queue.push_back((operator, op_id));
-    }
-
-    let mut generator = GroundedSuccessorGenerator::new(task);
-
-    let node = generator.construct(&mut 0, &mut queue).unwrap();
-
-    node
-}
 
 fn translate_to_sas_to_path(
     domain: &str,
@@ -342,10 +290,10 @@ fn fd_blind_plan_cost_matches_misc_benchmarks() {
         );
 
         let (actual_cost, actual_len): (Option<f64>, Option<u64>) = {
-            let task = setup_numeric_task(&preprocessed);
-            let state_packer = setup_state_packer(&task);
-            let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
-            let state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+            let task = NumericRootTask::from_file(&preprocessed);
+            let state_packer = IntDoublePacker::from_task(&task);
+            let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+            let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
 
             let result = {
                 let task_ref: &dyn AbstractNumericTask = &task;

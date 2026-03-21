@@ -14,10 +14,10 @@ use crate::numeric::tests::*;
 
 #[test]
 fn test_state_registry_initial_state() {
-    let problem = get_root_task();
-    let state_packer = setup_state_packer(&problem);
-    let axiom_evaluator = setup_axiom_evaluator(&problem, &state_packer);
-    let mut state_registry = setup_state_registry(&problem, &state_packer, &axiom_evaluator);
+    let task = get_root_task();
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
     let initial_state = state_registry.get_initial_state();
     print!(
         "Initial state: {}",
@@ -28,9 +28,9 @@ fn test_state_registry_initial_state() {
 #[test]
 fn test_cost_information_storage() {
     let task = get_root_task();
-    let state_packer = setup_state_packer(&task);
-    let axiom_evaluator = setup_axiom_evaluator(&task, &state_packer);
-    let mut state_registry = setup_state_registry(&task, &state_packer, &axiom_evaluator);
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
 
     let initial_state = state_registry.get_initial_state();
 

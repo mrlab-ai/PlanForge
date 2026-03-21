@@ -1,3 +1,5 @@
+use crate::numeric::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType};
+
 #[cfg(test)]
 mod tests;
 
@@ -84,8 +86,21 @@ impl IntDoublePacker {
             var_infos: vec![],
             num_bins: 0,
         };
-        packer.pack_bins(&ranges);
+        packer.pack_bins(ranges);
         packer
+    }
+
+    pub fn from_task(task: &NumericRootTask) -> Self {
+        let mut domain_sizes = vec![];
+        for var in task.variables().iter() {
+            domain_sizes.push(var.domain_size() as u64);
+        }
+        for numeric_var in task.numeric_variables().iter() {
+            if numeric_var.get_type() == &NumericType::Regular {
+                domain_sizes.push(u64::MAX);
+            }
+        }
+        IntDoublePacker::new(&domain_sizes)
     }
 
     pub fn num_bins(&self) -> i32 {

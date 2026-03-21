@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
-use planners_preprocess::planner::run_preprocess;
 use planners_translate::normalize;
 use planners_translate::pddl_parser::PddlTask;
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
@@ -30,14 +29,14 @@ enum Commands {
         #[clap(short, long)]
         output: Option<PathBuf>,
     },
-    /// Preprocess: read SAS+ from stdin and write a preprocessed search input (writes to stdout or file)
-    Preprocess {
-        /// Optional input file (default: stdin)
-        input: Option<PathBuf>,
-        /// Optional output file (default: output)
-        #[clap(short, long)]
-        output: Option<PathBuf>,
-    },
+    // /// Preprocess: read SAS+ from stdin and write a preprocessed search input (writes to stdout or file)
+    // Preprocess {
+    //     /// Optional input file (default: stdin)
+    //     input: Option<PathBuf>,
+    //     /// Optional output file (default: output)
+    //     #[clap(short, long)]
+    //     output: Option<PathBuf>,
+    // },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -164,18 +163,6 @@ fn main() -> anyhow::Result<()> {
 
             let duration = start.elapsed();
             eprintln!("translator: completed in {:.2?} seconds", duration);
-        }
-        Commands::Preprocess { input, output } => {
-            if output.is_some() {
-                return Err(anyhow::anyhow!(
-                    "preprocess_port writes to 'output' like the C++ preprocessor"
-                ));
-            }
-            let mut args = vec!["preprocess".to_string()];
-            if let Some(path) = input {
-                args.push(path.to_string_lossy().to_string());
-            }
-            run_preprocess(&args);
         }
     }
 
