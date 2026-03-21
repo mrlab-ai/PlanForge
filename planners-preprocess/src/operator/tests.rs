@@ -9,7 +9,7 @@ fn from_stream_preserves_conditional_numeric_effects() {
 begin_variable\nv1\n-1\n2\nc\nd\nend_variable\n"
             .to_string(),
     );
-    let mut variables_storage = vec![
+    let mut variables_storage = [
         Variable::from_stream(&mut variable_stream),
         Variable::from_stream(&mut variable_stream),
     ];
@@ -19,7 +19,7 @@ begin_variable\nv1\n-1\n2\nc\nd\nend_variable\n"
         .collect::<Vec<_>>();
 
     let mut numeric_stream = InputStream::new("R -1 n0\nR -1 n1\n".to_string());
-    let mut numeric_storage = vec![
+    let mut numeric_storage = [
         NumericVariable::from_stream(&mut numeric_stream),
         NumericVariable::from_stream(&mut numeric_stream),
     ];

@@ -9,5 +9,6 @@ planners-preprocess = { path = "../planners-preprocess" }
 planners-sas = { path = "../planners-sas" }
 planners-search = { path = "../planners-search" }
 planners-translate = { path = "../planners-translate" }
+planners-translator = { path = "../planners-translator" }
 anyhow = "1"
 serde_json = "1"
