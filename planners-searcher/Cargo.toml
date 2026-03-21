@@ -1,0 +1,14 @@
+[package]
+name = "planners-searcher"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "planners-searcher"
+doc = false
+
+[dependencies]
+planners-sas = { path = "../planners-sas" }
+planners-search = { path = "../planners-search" }
+planners-cli-utils = { path = "../planners-cli-utils" }
+clap = { version = "4", features = ["derive"] }

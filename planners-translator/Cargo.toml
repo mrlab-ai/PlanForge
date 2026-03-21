@@ -1,0 +1,15 @@
+[package]
+name = "planners-translator"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "planners-translator"
+doc = false
+
+[dependencies]
+planners-translate = { path = "../planners-translate" }
+planners-preprocess = { path = "../planners-preprocess" }
+planners-cli-utils = { path = "../planners-cli-utils" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
