@@ -195,6 +195,10 @@ impl ComparisonAxiom {
     pub fn get_right_var_id(&self) -> i32 {
         self.right_hand_side
     }
+
+    pub fn get_operator(&self) -> &ComparisonOperator {
+        &self.operator
+    }
 }
 #[derive(Debug)]
 struct AxiomRule {
