@@ -27,8 +27,6 @@ pub struct AbstractOperator {
     pub regression_preconditions: Vec<Fact>,
     pub preconditions: Vec<Fact>,
     pub changed_numeric_vars: Vec<usize>,
-    pub source_partitions: Vec<usize>,
-    pub target_partitions: Vec<usize>,
 }
 
 impl AbstractOperator {
@@ -40,8 +38,6 @@ impl AbstractOperator {
         hash_multipliers: &[i32],
         concrete_op_ids: Vec<usize>,
         changed_numeric_vars: Vec<usize>,
-        source_partitions: Vec<usize>,
-        target_partitions: Vec<usize>,
     ) -> Self {
         let mut preconditions: Vec<Fact> = pre_pairs.to_vec();
         preconditions.extend_from_slice(prev_pairs);
@@ -75,8 +71,6 @@ impl AbstractOperator {
             regression_preconditions,
             preconditions,
             changed_numeric_vars,
-            source_partitions,
-            target_partitions,
         }
     }
 }
@@ -87,8 +81,6 @@ pub struct TransitionInfo {
     pub target_partition_facts: Vec<Fact>,
     pub prevail_facts: Vec<Fact>,
     pub changed_numeric_vars: Vec<usize>,
-    pub source_partitions: Vec<usize>,
-    pub target_partitions: Vec<usize>,
 }
 
 #[derive(Clone)]
@@ -709,8 +701,6 @@ fn multiply_out_propositional(
                 &generator.hash_multipliers,
                 vec![concrete_op_id],
                 trans.changed_numeric_vars,
-                trans.source_partitions,
-                trans.target_partitions,
             );
 
             let idx = out.len();
@@ -773,8 +763,6 @@ fn compute_hash_effects_with_preconditions(
             target_partition_facts: Vec::new(),
             prevail_facts: Vec::new(),
             changed_numeric_vars: Vec::new(),
-            source_partitions: Vec::new(),
-            target_partitions: Vec::new(),
         }]);
     }
 
@@ -831,8 +819,6 @@ fn compute_hash_effects_with_preconditions(
             target_partition_facts: Vec::new(),
             prevail_facts: Vec::new(),
             changed_numeric_vars: Vec::new(),
-            source_partitions: Vec::new(),
-            target_partitions: Vec::new(),
         }]);
     }
 
@@ -862,8 +848,6 @@ fn compute_hash_effects_with_preconditions(
         let mut prevail_facts: Vec<Fact> = Vec::new();
 
         let mut changed_numeric_vars: Vec<usize> = Vec::new();
-        let mut source_parts: Vec<usize> = Vec::new();
-        let mut target_parts: Vec<usize> = Vec::new();
 
         for (var_id, src, tgt) in &combo {
             let abs_var_id = num_props + (*var_id as u32);
@@ -873,8 +857,6 @@ fn compute_hash_effects_with_preconditions(
                 source_partition_facts.push(Fact::new(abs_var_id, *src as i32));
                 target_partition_facts.push(Fact::new(abs_var_id, *tgt as i32));
                 changed_numeric_vars.push(*var_id);
-                source_parts.push(*src);
-                target_parts.push(*tgt);
             }
         }
 
@@ -981,8 +963,6 @@ fn compute_hash_effects_with_preconditions(
             target_partition_facts,
             prevail_facts,
             changed_numeric_vars,
-            source_partitions: source_parts,
-            target_partitions: target_parts,
         });
     }
 
