@@ -200,6 +200,18 @@ impl AbstractOperatorGenerator {
 		&self.hash_multipliers
 	}
 
+	pub fn domain_sizes(&self) -> &[i32] {
+		&self.domain_sizes
+	}
+
+	pub fn domain_mapping(&self) -> &DomainMapping {
+		&self.domain_mapping
+	}
+
+	pub fn numeric_domain_sizes(&self) -> &[usize] {
+		&self.numeric_domain_sizes
+	}
+
 	pub fn build_abstract_operators(
 		&mut self,
 		task: &dyn AbstractNumericTask,
