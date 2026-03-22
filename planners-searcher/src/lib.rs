@@ -1,21 +1,22 @@
 use clap::Parser;
 use planners_cli_utils::*;
 use planners_sas::numeric::axioms::AxiomEvaluator;
-use planners_sas::numeric::numeric_parser::parse_numeric_sas_output;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
-use planners_sas::numeric::{numeric_task::NumericType, state_registry::StateRegistry};
+use planners_sas::numeric::state_registry::StateRegistry;
 use planners_search::numeric::search_engine::{
     AStarSearch, SearchEngine, SearchResult, SearchStatus,
 };
-use planners_search::numeric::successor_generator::{GroundedSuccessorGenerator, Node};
-use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::time::Duration;
+
+pub mod recursive_config;
+
+pub use recursive_config::{parse_search_spec, HeuristicSpec, SearchSpec};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about = "Numeric planner")]
@@ -29,6 +30,16 @@ pub struct PlannersSearcherCli {
     #[arg(long, hide = true)]
     pub internal_run: bool,
 
+    /// Recursive search configuration.
+    /// Examples: "astar(blind())".
+    #[arg(
+        long,
+        value_name = "SPEC",
+        default_value = "astar(blind())",
+        value_parser = crate::recursive_config::parse_search_spec
+    )]
+    pub search: crate::recursive_config::SearchSpec,
+
     #[arg(value_name = "SAS_FILE", required = true)]
     pub sas_file: String,
 }
@@ -37,6 +48,9 @@ pub struct PlannersSearcherCli {
 pub fn run_wrapped_process(cli: &PlannersSearcherCli) -> std::io::Result<()> {
     let current_executable = std::env::current_exe()?;
     let mut child_args = vec![OsString::from("--internal-run")];
+    // Preserve the selected search configuration when re-executing ourselves.
+    child_args.push(OsString::from("--search"));
+    child_args.push(OsString::from(cli.search.to_string()));
     child_args.extend([cli.sas_file.clone()].iter().map(OsString::from));
 
     let time_limit = cli.max_time;
@@ -68,7 +82,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let parse_time = start_time.elapsed();
     println!("Parsed numeric SAS output in: {:?}", parse_time);
 
-    println!("=== A* Search Engine ===");
+    println!("=== Search Engine ===");
     println!("File: {}", sas_file);
     println!(
         "Variables: {} regular, {} numeric",
@@ -80,22 +94,24 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
     let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
 
-    let result = {
-        let task_ref: &dyn AbstractNumericTask = &task;
-        let mut search = AStarSearch::new(
-            task_ref,
-            state_registry,
-            None,
-            if cli.internal_run { None } else { cli.max_time },
-            if cli.internal_run {
-                None
-            } else {
-                cli.max_memory
-            },
-        );
+    let result = match &cli.search {
+        crate::recursive_config::SearchSpec::Astar(heuristic) => {
+            let task_ref: &dyn AbstractNumericTask = &task;
+            let heuristic_override = match heuristic {
+                crate::recursive_config::HeuristicSpec::Blind => None,
+            };
 
-        println!("Starting search...");
-        search.search()
+            let mut search = AStarSearch::new(
+                task_ref,
+                state_registry,
+                heuristic_override,
+                if cli.internal_run { None } else { cli.max_time },
+                if cli.internal_run { None } else { cli.max_memory },
+            );
+
+            println!("Starting A* search with {:?}...", heuristic);
+            search.search()
+        }
     };
 
     print_search_result(&result);

@@ -31,6 +31,16 @@ pub struct PlannersCli {
     #[arg(long, hide = true)]
     pub internal_run: bool,
 
+    /// Recursive search configuration.
+    /// Examples: "astar(blind())".
+    #[arg(
+        long,
+        value_name = "SPEC",
+        default_value = "astar(blind())",
+        value_parser = planners_searcher::parse_search_spec
+    )]
+    pub search: planners_searcher::SearchSpec,
+
     #[arg(value_name = "INPUT", required = true, num_args = 1..=2)]
     pub inputs: Vec<String>,
 }
@@ -39,6 +49,8 @@ pub struct PlannersCli {
 pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     let current_executable = std::env::current_exe()?;
     let mut child_args = vec![OsString::from("--internal-run")];
+    child_args.push(OsString::from("--search"));
+    child_args.push(OsString::from(cli.search.to_string()));
     child_args.extend(cli.inputs.iter().cloned().map(OsString::from));
 
     let time_limit = cli.max_time;
@@ -91,22 +103,24 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
     let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
 
-    let result = {
-        let task_ref: &dyn AbstractNumericTask = &task;
-        let mut search = AStarSearch::new(
-            task_ref,
-            state_registry,
-            None,
-            if cli.internal_run { None } else { cli.max_time },
-            if cli.internal_run {
-                None
-            } else {
-                cli.max_memory
-            },
-        );
+    let result = match &cli.search {
+        planners_searcher::SearchSpec::Astar(heuristic) => {
+            let task_ref: &dyn AbstractNumericTask = &task;
+            let heuristic_override = match heuristic {
+                planners_searcher::HeuristicSpec::Blind => None,
+            };
 
-        println!("Starting search...");
-        search.search()
+            let mut search = AStarSearch::new(
+                task_ref,
+                state_registry,
+                heuristic_override,
+                if cli.internal_run { None } else { cli.max_time },
+                if cli.internal_run { None } else { cli.max_memory },
+            );
+
+            println!("Starting A* search with {:?}...", heuristic);
+            search.search()
+        }
     };
 
     print_search_result(&result);

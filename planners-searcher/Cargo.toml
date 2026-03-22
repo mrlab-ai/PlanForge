@@ -12,3 +12,5 @@ planners-sas = { path = "../planners-sas" }
 planners-search = { path = "../planners-search" }
 planners-cli-utils = { path = "../planners-cli-utils" }
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+nom = "7"
