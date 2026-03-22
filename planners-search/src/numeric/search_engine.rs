@@ -19,6 +19,27 @@ use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistr
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
+fn min_action_cost_from_initial_metric_deltas<'a>(
+    state_registry: &StateRegistry<'a>,
+    initial_state: &ConcreteState,
+    operators: &[Operator],
+) -> f64 {
+    let mut min_cost = f64::INFINITY;
+    for op in operators {
+        let delta = match state_registry.metric_delta_applying_operator(initial_state, op) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        min_cost = min_cost.min(delta);
+    }
+
+    if min_cost.is_finite() {
+        min_cost
+    } else {
+        0.0
+    }
+}
+
 /// Search status indicating the outcome of the search
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchStatus {
@@ -114,23 +135,29 @@ impl<'a> AStarSearch<'a> {
     ) -> Self {
         let successor_generator = Self::create_successor_generator(task);
 
-        // Determine min_action_cost following FD semantics
+        // Build initial state early so numeric constants are initialized in the registry.
+        // (Required to derive a correct min_action_cost under metric.)
+        let mut state_registry = state_registry;
+        let initial_state = state_registry.get_initial_state();
+
+        // Determine min_action_cost.
+        //
+        // Numeric-fd mirror: in metric tasks, blind returns the minimum operator cost,
+        // where each operator cost is the raw metric delta when applying the operator
+        // in the initial state.
         let declared_min_cost = task
             .get_operators()
             .iter()
             .map(|op| op.cost() as f64)
             .fold(f64::INFINITY, |a, b| a.min(b));
 
-        // If a metric is used, evaluate cost at initial state for true costs later; for blind we need a lower bound
         let uses_metric = task.metric().use_metric();
         let min_action_cost = if uses_metric {
-            // FD uses declared operator cost when metric is used at parse time.
-            // Use the minimum declared operator cost as min_action_cost.
-            if declared_min_cost.is_finite() {
-                declared_min_cost.max(0.0)
-            } else {
-                1.0
-            }
+            min_action_cost_from_initial_metric_deltas(
+                &state_registry,
+                &initial_state,
+                task.get_operators(),
+            )
         } else if declared_min_cost.is_finite() {
             declared_min_cost.max(0.0)
         } else {
@@ -150,10 +177,6 @@ impl<'a> AStarSearch<'a> {
         let evaluator_names = vec![f_evaluator.name(), heuristic.name()];
         let open_list = TieBreakingOpenList::new(evaluator_names, true)
             .expect("A* tie-breaking open list must have at least one evaluator");
-
-        // Build initial state now to allow potential cost initializations (matches FD ordering)
-        let mut state_registry = state_registry;
-        let initial_state = state_registry.get_initial_state();
 
         Self {
             task,
