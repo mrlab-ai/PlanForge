@@ -69,6 +69,48 @@ impl Interval {
     }
 
     #[inline]
+    pub fn contains(&self, value: f64) -> bool {
+        if value.is_nan() || self.is_empty() {
+            return false;
+        }
+
+        let lower_ok = if value > self.lower {
+            true
+        } else if value == self.lower {
+            self.lower_closed
+        } else {
+            false
+        };
+
+        let upper_ok = if value < self.upper {
+            true
+        } else if value == self.upper {
+            self.upper_closed
+        } else {
+            false
+        };
+
+        lower_ok && upper_ok
+    }
+
+    #[inline]
+    pub fn can_split_at(&self, value: f64, include_in_lower: bool) -> bool {
+        if self.is_empty() || value.is_nan() || value.is_infinite() {
+            return false;
+        }
+        if !self.contains(value) {
+            return false;
+        }
+        if self.is_singleton() {
+            return false;
+        }
+
+        let lower = Interval::new(self.lower, value, self.lower_closed, include_in_lower);
+        let upper = Interval::new(value, self.upper, !include_in_lower, self.upper_closed);
+        !lower.is_empty() && !upper.is_empty() && lower != *self && upper != *self
+    }
+
+    #[inline]
     fn normalized(mut self) -> Self {
         if self.lower.is_infinite() && self.lower.is_sign_negative() {
             self.lower_closed = false;

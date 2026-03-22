@@ -1081,33 +1081,9 @@ fn decode_state_to_vectors(
     num_out.push(nums);
 }
 
-fn interval_contains(iv: &Interval, value: f64) -> bool {
-    if value.is_nan() || iv.is_empty() {
-        return false;
-    }
-
-    let lower_ok = if value > iv.lower {
-        true
-    } else if value == iv.lower {
-        iv.lower_closed
-    } else {
-        false
-    };
-
-    let upper_ok = if value < iv.upper {
-        true
-    } else if value == iv.upper {
-        iv.upper_closed
-    } else {
-        false
-    };
-
-    lower_ok && upper_ok
-}
-
 fn partition_for_value(partitions: &[Interval], value: f64) -> Option<i32> {
     partitions
         .iter()
-        .position(|iv| interval_contains(iv, value))
+        .position(|iv| iv.contains(value))
         .and_then(|i| i32::try_from(i).ok())
 }
