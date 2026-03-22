@@ -115,7 +115,11 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                 state_registry,
                 heuristic_override,
                 if cli.internal_run { None } else { cli.max_time },
-                if cli.internal_run { None } else { cli.max_memory },
+                if cli.internal_run {
+                    None
+                } else {
+                    cli.max_memory
+                },
             );
 
             println!("Starting A* search with {:?}...", heuristic);

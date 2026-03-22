@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use crate::helper_functions::{check_magic, FOperator, InputStream, DEBUG};
+use crate::helper_functions::{DEBUG, FOperator, InputStream, check_magic};
 use crate::variable::{NumType, NumericVariable, Variable};
 
 #[cfg(test)]

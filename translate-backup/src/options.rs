@@ -1,5 +1,5 @@
-use std::sync::OnceLock;
 use clap::Parser;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, clap::Parser)]
 #[command(name = "translate", about = "Translator options")]

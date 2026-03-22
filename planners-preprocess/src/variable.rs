@@ -1,8 +1,8 @@
 use std::fmt;
 use std::io::Write;
 
-use crate::helper_functions::check_magic;
 use crate::helper_functions::InputStream;
+use crate::helper_functions::check_magic;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NumType {

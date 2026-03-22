@@ -2,8 +2,8 @@ use clap::Parser;
 use planners_cli_utils::*;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
-use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use planners_sas::numeric::state_registry::StateRegistry;
+use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use planners_search::numeric::search_engine::{
     AStarSearch, SearchEngine, SearchResult, SearchStatus,
 };
@@ -16,7 +16,7 @@ use std::time::Duration;
 
 pub mod recursive_config;
 
-pub use recursive_config::{parse_search_spec, HeuristicSpec, SearchSpec};
+pub use recursive_config::{HeuristicSpec, SearchSpec, parse_search_spec};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about = "Numeric planner")]
@@ -106,7 +106,11 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 state_registry,
                 heuristic_override,
                 if cli.internal_run { None } else { cli.max_time },
-                if cli.internal_run { None } else { cli.max_memory },
+                if cli.internal_run {
+                    None
+                } else {
+                    cli.max_memory
+                },
             );
 
             println!("Starting A* search with {:?}...", heuristic);
@@ -175,4 +179,3 @@ pub fn print_search_result(result: &SearchResult) {
         result.nodes_expanded, result.nodes_generated, result.search_time
     );
 }
-

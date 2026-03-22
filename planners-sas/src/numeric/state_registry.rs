@@ -949,15 +949,18 @@ impl<'a> StateRegistry<'a> {
             return Ok(1.0);
         }
 
-        let old_metric = self.metric_value_for_state(state).map_err(|e| StateInsertError {
-            message: format!("Failed to read metric value for state: {e:?}"),
-        })?;
+        let old_metric = self
+            .metric_value_for_state(state)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to read metric value for state: {e:?}"),
+            })?;
 
         let previous_buffer = state.buffer(self);
         let mut next_buffer = previous_buffer.to_vec();
 
         // Reconstruct numeric values for the given state (including constants and cost vars).
-        let mut successor_numeric_values = Vec::with_capacity(self.root_task.numeric_variables().len());
+        let mut successor_numeric_values =
+            Vec::with_capacity(self.root_task.numeric_variables().len());
         self.fill_numeric_vars(state, &mut successor_numeric_values)
             .map_err(|e| StateInsertError {
                 message: format!("Failed to read numeric variables for state: {e:?}"),

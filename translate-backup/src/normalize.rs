@@ -431,7 +431,7 @@ fn parse_effect_list(
                 parameters: vec![],
                 condition: Condition::True,
                 effect: SExpr::List(items.to_vec()),
-            }]
+            }];
         }
     };
     match keyword.as_str() {

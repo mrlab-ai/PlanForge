@@ -20,7 +20,11 @@ fn atom_texts(alist: &[SExpr]) -> anyhow::Result<Vec<String>> {
     alist.iter().map(atom_text).collect()
 }
 
-pub fn parse_typed_list(alist: &[String], only_variables: bool, default_type: &str) -> Vec<(String, String)> {
+pub fn parse_typed_list(
+    alist: &[String],
+    only_variables: bool,
+    default_type: &str,
+) -> Vec<(String, String)> {
     let mut result = Vec::new();
     let mut index = 0;
     while index < alist.len() {
@@ -28,19 +32,28 @@ pub fn parse_typed_list(alist: &[String], only_variables: bool, default_type: &s
         while separator < alist.len() && alist[separator] != "-" {
             separator += 1;
         }
-        let item_type = if separator + 1 < alist.len() && separator < alist.len() && alist[separator] == "-" {
-            alist[separator + 1].clone()
+        let item_type =
+            if separator + 1 < alist.len() && separator < alist.len() && alist[separator] == "-" {
+                alist[separator + 1].clone()
+            } else {
+                default_type.to_string()
+            };
+        let end = if separator < alist.len() && alist[separator] == "-" {
+            separator
         } else {
-            default_type.to_string()
+            alist.len()
         };
-        let end = if separator < alist.len() && alist[separator] == "-" { separator } else { alist.len() };
         for item in &alist[index..end] {
             if only_variables {
                 assert!(item.starts_with('?'), "Expected variable, got {item}");
             }
             result.push((item.clone(), item_type.clone()));
         }
-        index = if separator < alist.len() && alist[separator] == "-" { separator + 2 } else { alist.len() };
+        index = if separator < alist.len() && alist[separator] == "-" {
+            separator + 2
+        } else {
+            alist.len()
+        };
     }
     result
 }
@@ -121,9 +134,7 @@ pub fn parse_literal(_alist: &[SExpr], _negated: bool) -> anyhow::Result<Atom> {
     anyhow::bail!("parse_literal is not ported yet")
 }
 
-pub fn _get_predicate_id_and_arity(
-    _text: &str,
-) -> anyhow::Result<(String, usize)> {
+pub fn _get_predicate_id_and_arity(_text: &str) -> anyhow::Result<(String, usize)> {
     if !SEEN_WARNING_TYPE_PREDICATE_NAME_CLASH.load(Ordering::Relaxed) {
         SEEN_WARNING_TYPE_PREDICATE_NAME_CLASH.store(true, Ordering::Relaxed);
     }
@@ -152,10 +163,21 @@ pub fn parse_assignment(_alist: &[SExpr]) -> anyhow::Result<SExpr> {
 
 pub fn parse_action(alist: &[SExpr]) -> anyhow::Result<Action> {
     let mut iterator = alist.iter();
-    let action_tag = atom_text(iterator.next().ok_or_else(|| anyhow::anyhow!("missing :action tag"))?)?;
-    anyhow::ensure!(action_tag == ":action", "expected :action, found {action_tag}");
+    let action_tag = atom_text(
+        iterator
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("missing :action tag"))?,
+    )?;
+    anyhow::ensure!(
+        action_tag == ":action",
+        "expected :action, found {action_tag}"
+    );
 
-    let name = atom_text(iterator.next().ok_or_else(|| anyhow::anyhow!("missing action name"))?)?;
+    let name = atom_text(
+        iterator
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("missing action name"))?,
+    )?;
 
     let mut parameters = Vec::new();
     let mut precond = None;
@@ -213,7 +235,10 @@ pub fn parse_axiom(_alist: &[SExpr]) -> anyhow::Result<()> {
     anyhow::bail!("parse_axiom is not ported yet")
 }
 
-pub fn parse_task(_domain_pddl: &[SExpr], _task_pddl: &[SExpr]) -> anyhow::Result<(Vec<SExpr>, Vec<SExpr>)> {
+pub fn parse_task(
+    _domain_pddl: &[SExpr],
+    _task_pddl: &[SExpr],
+) -> anyhow::Result<(Vec<SExpr>, Vec<SExpr>)> {
     anyhow::bail!("parse_task is not ported yet")
 }
 
@@ -239,7 +264,10 @@ pub fn check_atom_consistency<T: PartialEq>(
     let in_same = same_truth_value.iter().any(|item| item == atom);
     let in_other = other_truth_value.iter().any(|item| item == atom);
     if in_same && in_other {
-        anyhow::bail!("atom occurs with inconsistent truth value: {}", atom_is_true)
+        anyhow::bail!(
+            "atom occurs with inconsistent truth value: {}",
+            atom_is_true
+        )
     }
     Ok(())
 }
@@ -259,4 +287,3 @@ pub fn check_for_duplicates<T: Eq + std::hash::Hash + std::fmt::Debug>(
     }
     Ok(())
 }
-

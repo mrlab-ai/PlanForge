@@ -135,11 +135,7 @@ impl DomainTransitionGraph {
                 trans.condition.sort_by(|a, b| {
                     let ap = a.0 as usize;
                     let bp = b.0 as usize;
-                    if ap == bp {
-                        a.1.cmp(&b.1)
-                    } else {
-                        ap.cmp(&bp)
-                    }
+                    if ap == bp { a.1.cmp(&b.1) } else { ap.cmp(&bp) }
                 });
             }
 

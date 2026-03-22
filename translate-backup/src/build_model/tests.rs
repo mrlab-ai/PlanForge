@@ -18,9 +18,11 @@ fn join_rule_produces_effect() {
     };
     let mut rules = convert_rules(&[spec]);
     let model = compute_model(&mut rules, &facts);
-    assert!(model
-        .iter()
-        .any(|a| a.predicate == "r" && matches!(&a.args[0], Arg::Const(s) if s=="a")));
+    assert!(
+        model
+            .iter()
+            .any(|a| a.predicate == "r" && matches!(&a.args[0], Arg::Const(s) if s=="a"))
+    );
 }
 
 #[test]
@@ -49,8 +51,10 @@ fn project_rule_projects() {
     };
     let mut rules = convert_rules(&[spec]);
     let model = compute_model(&mut rules, &facts);
-    assert!(model
-        .iter()
-        .any(|a| a.predicate == "r" && matches!(&a.args[0], Arg::Const(s) if s=="a")));
+    assert!(
+        model
+            .iter()
+            .any(|a| a.predicate == "r" && matches!(&a.args[0], Arg::Const(s) if s=="a"))
+    );
 }
 // End of build_model.rs

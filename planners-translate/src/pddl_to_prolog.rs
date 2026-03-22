@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::normalize;
 use super::pddl::conditions::*;
-use super::pddl::pddl_types::{get_type_predicate_name, TypedObject};
+use super::pddl::pddl_types::{TypedObject, get_type_predicate_name};
 use super::pddl::tasks::Task;
 
 /// Python: class Fact(object)

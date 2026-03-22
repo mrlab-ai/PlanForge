@@ -1,8 +1,8 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::os::unix::process::ExitStatusExt;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub const EXIT_SUCCESS: i32 = 0;

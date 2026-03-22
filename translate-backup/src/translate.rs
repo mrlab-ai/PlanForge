@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use super::axiom_rules::{handle_axioms, Literal as AxiomLiteral, PropositionalAxiom};
+use super::axiom_rules::{Literal as AxiomLiteral, PropositionalAxiom, handle_axioms};
 use super::build_model::Atom as ModelAtom;
 use super::instantiate;
 use super::normalize;

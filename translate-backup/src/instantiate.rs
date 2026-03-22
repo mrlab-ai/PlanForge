@@ -834,7 +834,7 @@ fn instantiate_normalized_action(
     uses_metric: bool,
 ) -> Result<Option<GroundedOp>, InstantiateError> {
     use crate::translate::function_expression::{
-        parse_functional_expression, FunctionalExpression,
+        FunctionalExpression, parse_functional_expression,
     };
     use crate::translate::pddl;
 
@@ -1134,7 +1134,7 @@ fn instantiate_effect_with_params(
                 return Err(InstantiateError::FailedSubstitution(format!(
                     "{:?}",
                     effect.effect
-                )))
+                )));
             }
         };
         let parsed = crate::translate::pddl::sexpr_to_effect(&substituted);

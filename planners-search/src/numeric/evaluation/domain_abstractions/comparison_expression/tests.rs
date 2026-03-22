@@ -1,6 +1,8 @@
 use super::*;
 
-use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planners_sas::numeric::axioms::{
+    AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
+};
 use planners_sas::numeric::numeric_task::{Metric, NumericRootTask, NumericType, NumericVariable};
 
 #[test]

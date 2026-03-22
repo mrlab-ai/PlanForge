@@ -1,4 +1,3 @@
-
 use super::{
     extract_constant_numeric_facts, extract_init_function_values, extract_init_predicate_facts,
 };

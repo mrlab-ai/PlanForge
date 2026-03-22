@@ -36,12 +36,15 @@ impl SASTask {
         init_constant_predicates: Vec<String>,
         init_constant_numerics: Vec<String>,
     ) -> Self {
-        operators.sort_by(|a, b| (a.name.clone(), a.prevail.clone(), a.pre_post.clone()).cmp(&(
-            b.name.clone(),
-            b.prevail.clone(),
-            b.pre_post.clone(),
-        )));
-        axioms.sort_by(|a, b| (a.condition.clone(), a.effect).cmp(&(b.condition.clone(), b.effect)));
+        operators.sort_by(|a, b| {
+            (a.name.clone(), a.prevail.clone(), a.pre_post.clone()).cmp(&(
+                b.name.clone(),
+                b.prevail.clone(),
+                b.pre_post.clone(),
+            ))
+        });
+        axioms
+            .sort_by(|a, b| (a.condition.clone(), a.effect).cmp(&(b.condition.clone(), b.effect)));
         Self {
             variables,
             numeric_variables,
@@ -95,7 +98,11 @@ impl SASTask {
         }
         writeln!(stream, "end_numeric_axioms")?;
         writeln!(stream, "begin_global_constraint")?;
-        writeln!(stream, "{} {}", self.global_constraint.0, self.global_constraint.1)?;
+        writeln!(
+            stream,
+            "{} {}",
+            self.global_constraint.0, self.global_constraint.1
+        )?;
         writeln!(stream, "end_global_constraint")?;
         Ok(())
     }
@@ -141,7 +148,11 @@ impl SASNumericVariables {
         writeln!(stream, "{}", self.variable_names.len())?;
         writeln!(stream, "begin_numeric_variables")?;
         for (idx, name) in self.variable_names.iter().enumerate() {
-            let t = self.types.get(idx).cloned().unwrap_or_else(|| "U".to_string());
+            let t = self
+                .types
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| "U".to_string());
             let layer = self.axiom_layers.get(idx).copied().unwrap_or(-1);
             writeln!(stream, "{} {} PNE {}", t, layer, name)?;
         }
@@ -218,14 +229,12 @@ pub struct SASOperator {
 impl SASOperator {
     pub fn output<W: Write>(&self, mut stream: W) -> std::io::Result<()> {
         writeln!(stream, "begin_operator")?;
-        let printed_name = if self.name.len() >= 2
-            && self.name.starts_with('(')
-            && self.name.ends_with(')')
-        {
-            self.name[1..self.name.len() - 1].to_string()
-        } else {
-            self.name.clone()
-        };
+        let printed_name =
+            if self.name.len() >= 2 && self.name.starts_with('(') && self.name.ends_with(')') {
+                self.name[1..self.name.len() - 1].to_string()
+            } else {
+                self.name.clone()
+            };
         writeln!(stream, "{}", printed_name)?;
         writeln!(stream, "{}", self.prevail.len())?;
         for (var, val) in &self.prevail {

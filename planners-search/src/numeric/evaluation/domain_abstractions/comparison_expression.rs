@@ -215,9 +215,7 @@ impl ArithOp {
                 let (rlo, rlo_c) = rhs.min_bound();
                 let (rhi, rhi_c) = rhs.max_bound();
                 let contains_zero =
-                    (rlo < 0.0 && rhi > 0.0)
-                        || (rlo == 0.0 && rlo_c)
-                        || (rhi == 0.0 && rhi_c);
+                    (rlo < 0.0 && rhi > 0.0) || (rlo == 0.0 && rlo_c) || (rhi == 0.0 && rhi_c);
                 if contains_zero {
                     return Interval::unbounded();
                 }
@@ -569,7 +567,9 @@ pub type ComparisonTreeNodeId = usize;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComparisonTreeNode {
-    Leaf { numeric_var_id: i32 },
+    Leaf {
+        numeric_var_id: i32,
+    },
     Arith {
         result_numeric_var_id: i32,
         assignment_axiom_id: usize,
@@ -711,7 +711,9 @@ impl ComparisonTree {
                     .unwrap_or_else(|_| panic!("negative numeric_var_id {numeric_var_id}"));
                 inputs[idx]
             }
-            ComparisonTreeNode::Arith { op, left, right, .. } => {
+            ComparisonTreeNode::Arith {
+                op, left, right, ..
+            } => {
                 let lhs = self.eval_node_interval(*left, inputs);
                 let rhs = self.eval_node_interval(*right, inputs);
                 op.apply_interval(lhs, rhs)
@@ -726,7 +728,9 @@ impl ComparisonTree {
                     .unwrap_or_else(|_| panic!("negative numeric_var_id {numeric_var_id}"));
                 inputs[idx]
             }
-            ComparisonTreeNode::Arith { op, left, right, .. } => {
+            ComparisonTreeNode::Arith {
+                op, left, right, ..
+            } => {
                 let lhs = self.eval_node_point(*left, inputs);
                 let rhs = self.eval_node_point(*right, inputs);
                 op.apply(lhs, rhs)
@@ -763,9 +767,11 @@ fn build_numeric_tree_node(
     memo: &mut Vec<Option<ComparisonTreeNodeId>>,
     visiting: &mut Vec<bool>,
 ) -> Result<ComparisonTreeNodeId, ComparisonTreeBuildError> {
-    let idx = usize::try_from(numeric_var_id).map_err(|_| ComparisonTreeBuildError::InvalidNumericVarId {
-        provided: numeric_var_id,
-        len: affected_to_assignment_axiom.len(),
+    let idx = usize::try_from(numeric_var_id).map_err(|_| {
+        ComparisonTreeBuildError::InvalidNumericVarId {
+            provided: numeric_var_id,
+            len: affected_to_assignment_axiom.len(),
+        }
     })?;
     if idx >= affected_to_assignment_axiom.len() {
         return Err(ComparisonTreeBuildError::InvalidNumericVarId {

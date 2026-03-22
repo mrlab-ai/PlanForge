@@ -14,19 +14,19 @@ use std::fs::File;
 use std::io::Read;
 
 use crate::axiom::{
-    strip_axiom_functional_assignment, strip_axiom_functional_comparisons, strip_axiom_relationals,
     AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational,
+    strip_axiom_functional_assignment, strip_axiom_functional_comparisons, strip_axiom_relationals,
 };
 use crate::causal_graph::{CausalGraph, G_DO_NOT_PRUNE_VARIABLES};
 use crate::domain_transition_graph::{
-    are_dtgs_strongly_connected, build_dtgs, DomainTransitionGraph,
+    DomainTransitionGraph, are_dtgs_strongly_connected, build_dtgs,
 };
 use crate::helper_functions::{
-    check_and_repair_empty_axiom_layers, generate_cpp_input_to_path,
-    read_preprocessed_problem_description, GlobalConstraint, InputStream, Metric,
+    GlobalConstraint, InputStream, Metric, check_and_repair_empty_axiom_layers,
+    generate_cpp_input_to_path, read_preprocessed_problem_description,
 };
-use crate::mutex_group::{strip_mutexes, MutexGroup};
-use crate::operator::{strip_operators, Operator};
+use crate::mutex_group::{MutexGroup, strip_mutexes};
+use crate::operator::{Operator, strip_operators};
 use crate::state::State;
 use crate::variable::{NumericVariable, Variable};
 

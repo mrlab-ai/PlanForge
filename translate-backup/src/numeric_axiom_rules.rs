@@ -168,7 +168,7 @@ pub fn identify_constants_checked(
                                 return Err(NumericAxiomError::UnknownOperator {
                                     axiom: ax.name.clone(),
                                     op: op.clone(),
-                                })
+                                });
                             }
                         }
                     }
@@ -235,7 +235,14 @@ pub fn identify_constants_inplace(
                     eval_axiom(*idx, axioms, index_by_effect, cache, visiting)
                 } else {
                     // Fallback: try to evaluate boxed axiom directly
-                    eval_parts(&boxed.op, &boxed.parts, axioms, index_by_effect, cache, visiting)
+                    eval_parts(
+                        &boxed.op,
+                        &boxed.parts,
+                        axioms,
+                        index_by_effect,
+                        cache,
+                        visiting,
+                    )
                 }
             }
         }
@@ -438,10 +445,13 @@ pub fn identify_equivalent_axioms(
     axioms_by_layer: &HashMap<i32, Vec<InstantiatedNumericAxiom>>,
     _axiom_by_pne: &HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom>,
 ) -> HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom> {
-    let mut axiom_map: HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom> = HashMap::new();
+    let mut axiom_map: HashMap<PrimitiveNumericExpression, InstantiatedNumericAxiom> =
+        HashMap::new();
     for (_layer, axioms) in axioms_by_layer {
-        let mut key_to_unique: HashMap<(Option<String>, Vec<AxiomKeyPart>), InstantiatedNumericAxiom> =
-            HashMap::new();
+        let mut key_to_unique: HashMap<
+            (Option<String>, Vec<AxiomKeyPart>),
+            InstantiatedNumericAxiom,
+        > = HashMap::new();
         for ax in axioms {
             let mut mapped_args: Vec<AxiomKeyPart> = Vec::new();
             for part in &ax.parts {

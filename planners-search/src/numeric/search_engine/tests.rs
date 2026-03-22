@@ -84,8 +84,11 @@ fn test_min_action_cost_from_initial_metric_deltas_plus_constants() {
     assert!((d0 - 0.5).abs() < 1e-12);
     assert!((d1 - 0.002).abs() < 1e-12);
 
-    let min_cost =
-        min_action_cost_from_initial_metric_deltas(&state_registry, &initial_state, task.get_operators());
+    let min_cost = min_action_cost_from_initial_metric_deltas(
+        &state_registry,
+        &initial_state,
+        task.get_operators(),
+    );
     assert!((min_cost - 0.002).abs() < 1e-12);
 }
 

@@ -62,4 +62,3 @@ pub fn print_nested_list(nested_list: &SExpr) -> String {
 
     wrap_lines(&stream.lines().map(str::to_string).collect::<Vec<_>>()).join("\n")
 }
-

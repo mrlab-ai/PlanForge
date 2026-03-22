@@ -4,7 +4,7 @@ use std::fmt;
 
 use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
 use super::f_expression::{
-    instantiate_expression, FunctionalExpression, PrimitiveNumericExpression,
+    FunctionalExpression, PrimitiveNumericExpression, instantiate_expression,
 };
 use super::pddl_types::TypedObject;
 
@@ -187,11 +187,7 @@ impl NumericAxiom {
     }
 
     pub fn ntype(&self) -> char {
-        if self.op.is_empty() {
-            'C'
-        } else {
-            'D'
-        }
+        if self.op.is_empty() { 'C' } else { 'D' }
     }
 
     /// Python: def get_head(self)

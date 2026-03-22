@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::helper_functions::check_magic;
 use crate::helper_functions::InputStream;
+use crate::helper_functions::check_magic;
 use crate::variable::{NumericVariable, Variable};
 
 #[derive(Debug, Clone)]

@@ -757,8 +757,14 @@ impl Unifier {
 
                 // Debug: print at conditions
                 if cond.predicate == "at" {
-                    eprintln!("    DEBUG Unifier: Adding rule {} cond {} predicate {} with {:?} const_args, arity {}",
-                             ri, ci, cond.predicate, const_args, cond.args.len());
+                    eprintln!(
+                        "    DEBUG Unifier: Adding rule {} cond {} predicate {} with {:?} const_args, arity {}",
+                        ri,
+                        ci,
+                        cond.predicate,
+                        const_args,
+                        cond.args.len()
+                    );
                 }
 
                 let newroot = entry.insert(&const_args, (ri, ci));

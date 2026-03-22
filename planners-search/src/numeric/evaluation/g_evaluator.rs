@@ -212,4 +212,3 @@ impl Evaluator for MaxEvaluator {
         ]
     }
 }
-

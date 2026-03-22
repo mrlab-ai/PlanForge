@@ -2,12 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use nom::{
+    IResult,
     bytes::complete::tag_no_case,
     character::complete::{char, multispace0, one_of},
     combinator::{all_consuming, cut, map, opt},
-    error::{convert_error, VerboseError},
+    error::{VerboseError, convert_error},
     sequence::{delimited, terminated, tuple},
-    IResult,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -40,11 +40,7 @@ impl fmt::Display for SearchSpec {
 
 pub fn parse_search_spec(raw: &str) -> Result<SearchSpec, String> {
     let input = raw;
-    match all_consuming(ws(terminated(
-        search_spec,
-        opt(ws(one_of(".;"))),
-    )))(input)
-    {
+    match all_consuming(ws(terminated(search_spec, opt(ws(one_of(".;"))))))(input) {
         Ok((_, spec)) => Ok(spec),
         Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => Err(format!(
             "Invalid --search config:\n{}",
@@ -68,9 +64,10 @@ fn empty_parens(input: &str) -> Res<'_, ()> {
 }
 
 fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
-    let blind = map(tuple((ws(tag_no_case("blind")), opt(ws(empty_parens)))), |_| {
-        HeuristicSpec::Blind
-    });
+    let blind = map(
+        tuple((ws(tag_no_case("blind")), opt(ws(empty_parens)))),
+        |_| HeuristicSpec::Blind,
+    );
     ws(blind)(input)
 }
 

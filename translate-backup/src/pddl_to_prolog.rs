@@ -4,8 +4,8 @@ use crate::translate::build_model;
 use crate::translate::normalize;
 use crate::translate::pddl_parser::SExpr;
 use crate::translate::split_rules::{
-    add_object_conditions_to_rules, convert_trivial_rules_to_facts, split_duplicate_arguments,
-    split_rule, RuleWithType, SymRule,
+    RuleWithType, SymRule, add_object_conditions_to_rules, convert_trivial_rules_to_facts,
+    split_duplicate_arguments, split_rule,
 };
 use crate::translate::timers;
 

@@ -33,11 +33,7 @@ fn min_action_cost_from_initial_metric_deltas<'a>(
         min_cost = min_cost.min(delta);
     }
 
-    if min_cost.is_finite() {
-        min_cost
-    } else {
-        0.0
-    }
+    if min_cost.is_finite() { min_cost } else { 0.0 }
 }
 
 /// Search status indicating the outcome of the search

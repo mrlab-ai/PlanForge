@@ -311,24 +311,16 @@ impl SimpleToRestrictedTask {
             Err(_) => return,
         };
 
-        let f1 = self
-            .formulas
-            .get(&var1)
-            .cloned()
-            .unwrap_or_else(|| {
-                let f = self.gen_initial_formula(var1);
-                f
-            });
+        let f1 = self.formulas.get(&var1).cloned().unwrap_or_else(|| {
+            let f = self.gen_initial_formula(var1);
+            f
+        });
         self.formulas.entry(var1).or_insert_with(|| f1.clone());
 
-        let f2 = self
-            .formulas
-            .get(&var2)
-            .cloned()
-            .unwrap_or_else(|| {
-                let f = self.gen_initial_formula(var2);
-                f
-            });
+        let f2 = self.formulas.get(&var2).cloned().unwrap_or_else(|| {
+            let f = self.gen_initial_formula(var2);
+            f
+        });
         self.formulas.entry(var2).or_insert_with(|| f2.clone());
 
         let f3 = self.operate(&f1, &f2, op);
@@ -449,14 +441,10 @@ impl SimpleToRestrictedTask {
     }
 
     pub fn update_var_with_formula(&mut self, var: usize) -> Result<(), String> {
-        let formula = self
-            .formulas
-            .get(&var)
-            .cloned()
-            .unwrap_or_else(|| {
-                let f = self.gen_initial_formula(var);
-                f
-            });
+        let formula = self.formulas.get(&var).cloned().unwrap_or_else(|| {
+            let f = self.gen_initial_formula(var);
+            f
+        });
         self.formulas.entry(var).or_insert_with(|| formula.clone());
 
         let mut total_initial_upd_value = 0.0;
@@ -518,13 +506,13 @@ impl SimpleToRestrictedTask {
                         "C -1 !derived{}from{} : {:?}",
                         total_effect_upd_value, var, formula
                     ));
-                    self.parsed.initial_numeric_state.push(total_effect_upd_value);
+                    self.parsed
+                        .initial_numeric_state
+                        .push(total_effect_upd_value);
                     self.added_constants.insert(key, new_index);
                     new_index
                 };
-                operator
-                    .effects
-                    .push(format!("0 {} + {}", var, add_idx));
+                operator.effects.push(format!("0 {} + {}", var, add_idx));
             }
         }
 
@@ -888,9 +876,7 @@ impl SimpleToRestrictedTask {
     pub fn duplicate_detect_formulas(&mut self) -> HashMap<usize, usize> {
         let old_num_vars = self.parsed.numeric_variables.len();
         let mut useful: Vec<bool> = (0..old_num_vars).map(|i| self.is_var_useful(i)).collect();
-        if self.parsed.metric_index >= 0
-            && (self.parsed.metric_index as usize) < old_num_vars
-        {
+        if self.parsed.metric_index >= 0 && (self.parsed.metric_index as usize) < old_num_vars {
             useful[self.parsed.metric_index as usize] = true;
         }
 
@@ -1262,7 +1248,9 @@ pub fn parse_sas_output(sas_output: &str) -> Result<SasParsedOutput, String> {
                         lines.next();
                         break;
                     }
-                    parsed.numeric_variables.push(lines.next().unwrap().trim().to_string());
+                    parsed
+                        .numeric_variables
+                        .push(lines.next().unwrap().trim().to_string());
                 }
             }
             "begin_rule" => {
@@ -1281,7 +1269,9 @@ pub fn parse_sas_output(sas_output: &str) -> Result<SasParsedOutput, String> {
                         lines.next();
                         break;
                     }
-                    parsed.comparison_axioms.push(lines.next().unwrap().trim().to_string());
+                    parsed
+                        .comparison_axioms
+                        .push(lines.next().unwrap().trim().to_string());
                 }
             }
             "begin_numeric_axioms" => {
@@ -1290,7 +1280,9 @@ pub fn parse_sas_output(sas_output: &str) -> Result<SasParsedOutput, String> {
                         lines.next();
                         break;
                     }
-                    parsed.numeric_axioms.push(lines.next().unwrap().trim().to_string());
+                    parsed
+                        .numeric_axioms
+                        .push(lines.next().unwrap().trim().to_string());
                 }
             }
             "begin_state" => {

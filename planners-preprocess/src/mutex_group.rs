@@ -1,7 +1,7 @@
 use std::io::Write;
 
-use crate::helper_functions::check_magic;
 use crate::helper_functions::InputStream;
+use crate::helper_functions::check_magic;
 use crate::variable::Variable;
 
 #[derive(Debug, Clone)]

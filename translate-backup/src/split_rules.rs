@@ -102,9 +102,7 @@ pub fn add_object_conditions_to_rules(rules: &mut [SymRule]) -> bool {
     inserted
 }
 
-pub fn convert_trivial_rules_to_facts(
-    rules: &[SymRule],
-) -> (Vec<SymRule>, Vec<build_model::Atom>) {
+pub fn convert_trivial_rules_to_facts(rules: &[SymRule]) -> (Vec<SymRule>, Vec<build_model::Atom>) {
     let mut new_rules = Vec::new();
     let mut extra_facts = Vec::new();
     for rule in rules {

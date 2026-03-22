@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::translate::options;
-use crate::translate::pddl_parser::{parse_sexprs, SExpr};
+use crate::translate::pddl_parser::{SExpr, parse_sexprs};
 
 fn read_pddl_text(filename: &Path) -> anyhow::Result<String> {
     let bytes = fs::read(filename)?;

@@ -2,10 +2,8 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::io::Write;
 
-use crate::axiom::{
-    AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational,
-};
-use crate::helper_functions::{GlobalConstraint, DEBUG};
+use crate::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
+use crate::helper_functions::{DEBUG, GlobalConstraint};
 use crate::max_dag::MaxDag;
 use crate::operator::Operator;
 use crate::scc::Scc;

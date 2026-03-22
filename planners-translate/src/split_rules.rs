@@ -1,5 +1,5 @@
 use super::graph::Graph;
-use super::pddl_to_prolog::{get_variables, Rule, RuleType};
+use super::pddl_to_prolog::{Rule, RuleType, get_variables};
 /// Port of split_rules.py
 /// Splits rules with many conditions into binary rules.
 use std::collections::HashSet;

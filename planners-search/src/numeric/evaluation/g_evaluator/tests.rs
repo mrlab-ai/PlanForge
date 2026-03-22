@@ -64,10 +64,12 @@ fn test_sum_evaluator_with_infinity() {
     let result = sum_evaluator.evaluate_state(&mut eval_state).unwrap();
 
     assert!(result.is_infinite());
-    assert!(eval_state
-        .result()
-        .get_heuristic_value("f_inf")
-        .is_infinite());
+    assert!(
+        eval_state
+            .result()
+            .get_heuristic_value("f_inf")
+            .is_infinite()
+    );
 }
 
 #[test]

@@ -1,7 +1,11 @@
 use super::*;
 
-use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
-use planners_sas::numeric::numeric_task::{Fact, Metric, NumericRootTask, NumericType, NumericVariable};
+use planners_sas::numeric::axioms::{
+    AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
+};
+use planners_sas::numeric::numeric_task::{
+    Fact, Metric, NumericRootTask, NumericType, NumericVariable,
+};
 
 #[test]
 fn comparison_tree_interval_evaluates_definitely_and_unknown() {
@@ -12,12 +16,7 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
         NumericVariable::new("c1".into(), NumericType::Constant, -1),
     ];
 
-    let comparison_axioms = vec![ComparisonAxiom::new(
-        0,
-        0,
-        1,
-        ComparisonOperator::LessThan,
-    )];
+    let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
 
     let task = NumericRootTask::new(
         4,
@@ -41,13 +40,25 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
     let intervals = [Interval::closed(0.0, 5.0), Interval::singleton(10.0)];
 
     // precondition var0==0 means comparison is true (we store !result)
-    assert_eq!(index.precondition_is_contradicted(&Fact::new(0, 0), &intervals), false);
-    assert_eq!(index.precondition_is_contradicted(&Fact::new(0, 1), &intervals), true);
+    assert_eq!(
+        index.precondition_is_contradicted(&Fact::new(0, 0), &intervals),
+        false
+    );
+    assert_eq!(
+        index.precondition_is_contradicted(&Fact::new(0, 1), &intervals),
+        true
+    );
 
     // Unknown case: x0 in [0, 20]
     let intervals = [Interval::closed(0.0, 20.0), Interval::singleton(10.0)];
-    assert_eq!(index.precondition_is_contradicted(&Fact::new(0, 0), &intervals), false);
-    assert_eq!(index.precondition_is_contradicted(&Fact::new(0, 1), &intervals), false);
+    assert_eq!(
+        index.precondition_is_contradicted(&Fact::new(0, 0), &intervals),
+        false
+    );
+    assert_eq!(
+        index.precondition_is_contradicted(&Fact::new(0, 1), &intervals),
+        false
+    );
 }
 
 #[test]

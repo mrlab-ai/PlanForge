@@ -28,12 +28,7 @@ fn numeric_partition_transitions_and_comparison_filtering() {
     ];
 
     // Comparison axiom (derived propositional var 0): x0 < c10
-    let comparison_axioms = vec![ComparisonAxiom::new(
-        0,
-        0,
-        1,
-        ComparisonOperator::LessThan,
-    )];
+    let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
 
     // Operator requires comparison to hold (var0 == 0) and applies x0 += c7.
     let op = Operator::new(
@@ -83,8 +78,9 @@ fn numeric_partition_transitions_and_comparison_filtering() {
         partitions,
         numeric_domain_sizes,
         false,
-    );
-    let abs_ops = generator.build_abstract_operators(&task);
+    )
+    .unwrap();
+    let abs_ops = generator.build_abstract_operators(&task).unwrap();
 
     // From x0 in (-inf,10), x0 += 7 can stay in partition 0 or move to 1.
     // From [10,inf), the precondition x0 < 10 is definitely contradicted and filtered.
@@ -108,7 +104,12 @@ fn multiply_out_unconditional_propositional_effects() {
     let op = Operator::new(
         "set".into(),
         vec![],
-        vec![planners_sas::numeric::numeric_task::Effect::new(vec![], 0, 0, 1)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            0,
+            1,
+        )],
         vec![],
         1,
     );
@@ -137,8 +138,9 @@ fn multiply_out_unconditional_propositional_effects() {
         partitions,
         numeric_domain_sizes,
         false,
-    );
-    let abs_ops = generator.build_abstract_operators(&task);
+    )
+    .unwrap();
+    let abs_ops = generator.build_abstract_operators(&task).unwrap();
 
     // multiply_out creates one operator for predecessor value 0 -> 1.
     assert_eq!(abs_ops.len(), 1);
@@ -160,12 +162,7 @@ fn derived_comparison_precondition_forces_unknown_old_value() {
         NumericVariable::new("x0".into(), NumericType::Regular, -1),
         NumericVariable::new("c10".into(), NumericType::Constant, -1),
     ];
-    let comparison_axioms = vec![ComparisonAxiom::new(
-        0,
-        0,
-        1,
-        ComparisonOperator::LessThan,
-    )];
+    let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
 
     let op = Operator::new("op".into(), vec![Fact::new(0, 0)], vec![], vec![], 1);
 
@@ -197,8 +194,9 @@ fn derived_comparison_precondition_forces_unknown_old_value() {
         partitions,
         numeric_domain_sizes,
         false,
-    );
-    let abs_ops = generator.build_abstract_operators(&task);
+    )
+    .unwrap();
+    let abs_ops = generator.build_abstract_operators(&task).unwrap();
     assert_eq!(abs_ops.len(), 1);
     assert_eq!(abs_ops[0].hash_effect, -2);
     assert_eq!(abs_ops[0].preconditions, vec![Fact::new(0, 0)]);
@@ -248,15 +246,22 @@ fn conditional_propositional_effect_branches() {
         partitions,
         numeric_domain_sizes,
         false,
-    );
-    let mut abs_ops = generator.build_abstract_operators(&task);
+    )
+    .unwrap();
+    let mut abs_ops = generator.build_abstract_operators(&task).unwrap();
     abs_ops.sort_by_key(|o| o.hash_effect);
 
     assert_eq!(abs_ops.len(), 2);
     assert_eq!(abs_ops[0].hash_effect, -6);
-    assert_eq!(abs_ops[0].preconditions, vec![Fact::new(0, 1), Fact::new(1, 0), Fact::new(2, 0)]);
+    assert_eq!(
+        abs_ops[0].preconditions,
+        vec![Fact::new(0, 1), Fact::new(1, 0), Fact::new(2, 0)]
+    );
     assert_eq!(abs_ops[1].hash_effect, -2);
-    assert_eq!(abs_ops[1].preconditions, vec![Fact::new(1, 0), Fact::new(2, 0)]);
+    assert_eq!(
+        abs_ops[1].preconditions,
+        vec![Fact::new(1, 0), Fact::new(2, 0)]
+    );
 }
 
 #[test]
@@ -274,7 +279,12 @@ fn conditional_assignment_effect_branches() {
     let op = Operator::new(
         "op".into(),
         vec![Fact::new(1, 0)],
-        vec![planners_sas::numeric::numeric_task::Effect::new(vec![], 1, 0, 1)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            1,
+            0,
+            1,
+        )],
         vec![AssignmentEffect::new(
             0,
             AssignmentOperation::Plus,
@@ -315,8 +325,9 @@ fn conditional_assignment_effect_branches() {
         partitions,
         numeric_domain_sizes,
         false,
-    );
-    let abs_ops = generator.build_abstract_operators(&task);
+    )
+    .unwrap();
+    let abs_ops = generator.build_abstract_operators(&task).unwrap();
 
     // Non-apply branch yields a single propositional operator.
     // Apply branch yields three numeric transitions (0->0, 0->1, 1->1), each with condition c==1.

@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests;
 
+use nom::IResult;
 use nom::branch::alt;
 use nom::bytes::complete::{take_while, take_while1};
 use nom::character::complete::{char, multispace1};
 use nom::combinator::{map, recognize};
-use nom::error::{convert_error, VerboseError};
+use nom::error::{VerboseError, convert_error};
 use nom::multi::many0;
 use nom::sequence::{delimited, preceded};
-use nom::IResult;
 
 const COMMENT_CHAR: char = ';';
 const ERROR_SNIPPET_LEN: usize = 80;

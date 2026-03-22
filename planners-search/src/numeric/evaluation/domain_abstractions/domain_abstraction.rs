@@ -3,7 +3,9 @@ mod tests;
 
 use std::collections::HashMap;
 
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, AssignmentOperation, Fact, NumericType};
+use planners_sas::numeric::numeric_task::{
+    AbstractNumericTask, AssignmentOperation, Fact, NumericType,
+};
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 
@@ -39,7 +41,11 @@ impl NumericPartitions {
             .map(|v| v.as_slice())
     }
 
-    pub fn partition_interval(&self, numeric_var_id: usize, partition_id: usize) -> Option<Interval> {
+    pub fn partition_interval(
+        &self,
+        numeric_var_id: usize,
+        partition_id: usize,
+    ) -> Option<Interval> {
         self.partitions_by_numeric_var
             .get(numeric_var_id)
             .and_then(|parts| parts.get(partition_id).copied())
@@ -52,7 +58,8 @@ impl NumericPartitions {
         operation: &AssignmentOperation,
         rhs: Interval,
     ) -> Vec<usize> {
-        let Some(source_interval) = self.partition_interval(numeric_var_id, source_partition) else {
+        let Some(source_interval) = self.partition_interval(numeric_var_id, source_partition)
+        else {
             return vec![];
         };
 

@@ -9,7 +9,7 @@ use crate::pddl::conditions::*;
 use crate::pddl::effects::*;
 use crate::pddl::f_expression::*;
 use crate::pddl::functions::Function;
-use crate::pddl::pddl_types::{get_type_predicate_name, Type, TypedObject};
+use crate::pddl::pddl_types::{Type, TypedObject, get_type_predicate_name};
 use crate::pddl::predicates::Predicate;
 use crate::pddl::tasks::{Requirements, Task};
 

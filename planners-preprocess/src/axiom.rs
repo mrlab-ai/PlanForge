@@ -1,8 +1,6 @@
 use std::io::Write;
 
-use crate::helper_functions::{
-    check_magic, stringify, CompOperator, FOperator, InputStream,
-};
+use crate::helper_functions::{CompOperator, FOperator, InputStream, check_magic, stringify};
 use crate::variable::{NumericVariable, Variable};
 
 #[derive(Debug, Clone)]
