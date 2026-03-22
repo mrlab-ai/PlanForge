@@ -211,6 +211,14 @@ impl Effect {
         self.var_id
     }
 
+    pub fn precondition_value(&self) -> i32 {
+        self.precondition_value
+    }
+
+    pub fn conditions(&self) -> &Vec<Fact> {
+        &self.conditions
+    }
+
     pub fn value(&self) -> u32 {
         self.effect_value
     }
@@ -286,6 +294,14 @@ impl AssignmentEffect {
 
     pub fn operation(&self) -> &AssignmentOperation {
         &self.operation
+    }
+
+    pub fn is_conditional(&self) -> bool {
+        self.is_conditional
+    }
+
+    pub fn conditions(&self) -> &Vec<Fact> {
+        &self.conditions
     }
 }
 

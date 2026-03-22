@@ -4,7 +4,9 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, Fact, NumericType, Operator};
+use planners_sas::numeric::numeric_task::{
+	AbstractNumericTask, AssignmentEffect, Effect, Fact, NumericType, Operator,
+};
 
 use super::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
@@ -220,87 +222,46 @@ impl AbstractOperatorGenerator {
 		out: &mut Vec<AbstractOperator>,
 		grouping: &mut HashMap<OperatorSignature, usize>,
 	) {
-		let num_variables = task.get_num_variables() as usize;
-		let mut has_precondition_on_var: Vec<i32> = vec![-1; num_variables];
-		let mut has_effect_on_var: Vec<i32> = vec![-1; num_variables];
+		let (unconditional_effects, conditional_effects): (Vec<&Effect>, Vec<&Effect>) = op
+			.effects()
+			.iter()
+			.partition(|e| e.conditions().is_empty());
 
-		let mut prev_pairs: Vec<Fact> = Vec::new();
-		let mut pre_pairs: Vec<Fact> = Vec::new();
-		let mut eff_pairs: Vec<Fact> = Vec::new();
-		let mut effects_without_pre: Vec<Fact> = Vec::new();
+		let (unconditional_ass, conditional_ass): (Vec<&AssignmentEffect>, Vec<&AssignmentEffect>) =
+			op.assignment_effects().iter().partition(|e| !e.is_conditional());
 
-		// Record preconditions.
-		for pre in op.preconditions() {
-			let var_id = pre.var() as usize;
-			if self.variable_is_trivial(var_id) {
-				has_precondition_on_var[var_id] = 0;
-				continue;
-			}
-			let abs_val = self.abstract_value(var_id, pre.value() as usize);
-			has_precondition_on_var[var_id] = abs_val;
+		if conditional_effects.is_empty() && conditional_ass.is_empty() {
+			let ass_effects = op.assignment_effects().clone();
+			build_branch_for_operator(
+				task,
+				op,
+				&unconditional_effects,
+				&ass_effects,
+				op.preconditions(),
+				concrete_op_id,
+				self,
+				out,
+				grouping,
+			);
+			return;
 		}
 
-		// Record propositional effects.
-		for eff in op.effects() {
-			let var_id = eff.var_id() as usize;
-			if self.variable_is_trivial(var_id) {
-				continue;
-			}
+		let mut extra_preconditions: Vec<Fact> = Vec::new();
+		let mut chosen_conditional_effects: Vec<&Effect> = Vec::new();
+		let mut chosen_conditional_ass: Vec<&AssignmentEffect> = Vec::new();
 
-			// Comparison-axiom variables are derived; they must not be modified directly.
-			debug_assert!(!self.derived_prop_vars.contains(&eff.var_id()));
-
-			let abs_val = self.abstract_value(var_id, eff.value() as usize);
-			let pre_val = has_precondition_on_var[var_id];
-			if pre_val < 0 {
-				effects_without_pre.push(Fact::new(var_id as u32, abs_val));
-			} else if pre_val != abs_val {
-				has_effect_on_var[var_id] = abs_val;
-				eff_pairs.push(Fact::new(var_id as u32, abs_val));
-			}
-		}
-
-		// Classify preconditions into pre_pairs vs prev_pairs (skip comparison vars for prev_pairs).
-		for pre in op.preconditions() {
-			let var_id = pre.var() as usize;
-			if self.variable_is_trivial(var_id) {
-				continue;
-			}
-			let abs_val = self.abstract_value(var_id, pre.value() as usize);
-			if has_effect_on_var[var_id] >= 0 {
-				pre_pairs.push(Fact::new(var_id as u32, abs_val));
-			} else if !self.derived_prop_vars.contains(&(var_id as u32)) {
-				prev_pairs.push(Fact::new(var_id as u32, abs_val));
-			}
-		}
-
-		// Comparison-axiom variables with preconditions become UNKNOWN after application.
-		for pre in op.preconditions() {
-			let var_id = pre.var() as usize;
-			if self.variable_is_trivial(var_id) {
-				continue;
-			}
-			if self.derived_prop_vars.contains(&(var_id as u32)) {
-				let abs_val = self.abstract_value(var_id, pre.value() as usize);
-				pre_pairs.push(Fact::new(var_id as u32, abs_val));
-				let unknown_abs = self.abstract_value(var_id, COMPARISON_UNKNOWN_VAL);
-				eff_pairs.push(Fact::new(var_id as u32, unknown_abs));
-			}
-		}
-
-		let ass_effects = op.assignment_effects().clone();
-
-		multiply_out_propositional(
+		enumerate_conditional_propositional_effects(
 			0,
-			op.cost() as f64,
-			&mut prev_pairs,
-			&mut pre_pairs,
-			&mut eff_pairs,
-			&effects_without_pre,
-			&ass_effects,
-			op.preconditions(),
-			concrete_op_id,
 			task,
+			op,
+			&unconditional_effects,
+			&conditional_effects,
+			&unconditional_ass,
+			&conditional_ass,
+			&mut extra_preconditions,
+			&mut chosen_conditional_effects,
+			&mut chosen_conditional_ass,
+			concrete_op_id,
 			self,
 			out,
 			grouping,
@@ -320,6 +281,281 @@ impl AbstractOperatorGenerator {
 		let mapping = &self.domain_mapping[var_id];
 		mapping[concrete_value]
 	}
+}
+
+fn enumerate_conditional_propositional_effects<'a>(
+	idx: usize,
+	task: &dyn AbstractNumericTask,
+	op: &'a Operator,
+	unconditional_effects: &[&'a Effect],
+	conditional_effects: &[&'a Effect],
+	unconditional_ass: &[&'a AssignmentEffect],
+	conditional_ass: &[&'a AssignmentEffect],
+	extra_preconditions: &mut Vec<Fact>,
+	chosen_conditional_effects: &mut Vec<&'a Effect>,
+	chosen_conditional_ass: &mut Vec<&'a AssignmentEffect>,
+	concrete_op_id: usize,
+	generator: &mut AbstractOperatorGenerator,
+	out: &mut Vec<AbstractOperator>,
+	grouping: &mut HashMap<OperatorSignature, usize>,
+) {
+	if idx == conditional_effects.len() {
+		enumerate_conditional_assignment_effects(
+			0,
+			task,
+			op,
+			unconditional_effects,
+			unconditional_ass,
+			conditional_ass,
+			extra_preconditions,
+			chosen_conditional_effects,
+			chosen_conditional_ass,
+			concrete_op_id,
+			generator,
+			out,
+			grouping,
+		);
+		return;
+	}
+
+	// Branch: conditional effect not applied.
+	enumerate_conditional_propositional_effects(
+		idx + 1,
+		task,
+		op,
+		unconditional_effects,
+		conditional_effects,
+		unconditional_ass,
+		conditional_ass,
+		extra_preconditions,
+		chosen_conditional_effects,
+		chosen_conditional_ass,
+		concrete_op_id,
+		generator,
+		out,
+		grouping,
+	);
+
+	// Branch: conditional effect applied.
+	let eff = conditional_effects[idx];
+	let n = eff.conditions().len();
+	extra_preconditions.extend_from_slice(eff.conditions());
+	chosen_conditional_effects.push(eff);
+	enumerate_conditional_propositional_effects(
+		idx + 1,
+		task,
+		op,
+		unconditional_effects,
+		conditional_effects,
+		unconditional_ass,
+		conditional_ass,
+		extra_preconditions,
+		chosen_conditional_effects,
+		chosen_conditional_ass,
+		concrete_op_id,
+		generator,
+		out,
+		grouping,
+	);
+	chosen_conditional_effects.pop();
+	extra_preconditions.truncate(extra_preconditions.len() - n);
+}
+
+fn enumerate_conditional_assignment_effects<'a>(
+	idx: usize,
+	task: &dyn AbstractNumericTask,
+	op: &'a Operator,
+	unconditional_effects: &[&'a Effect],
+	unconditional_ass: &[&'a AssignmentEffect],
+	conditional_ass: &[&'a AssignmentEffect],
+	extra_preconditions: &mut Vec<Fact>,
+	chosen_conditional_effects: &mut Vec<&'a Effect>,
+	chosen_conditional_ass: &mut Vec<&'a AssignmentEffect>,
+	concrete_op_id: usize,
+	generator: &mut AbstractOperatorGenerator,
+	out: &mut Vec<AbstractOperator>,
+	grouping: &mut HashMap<OperatorSignature, usize>,
+) {
+	if idx == conditional_ass.len() {
+		let mut branch_effects: Vec<&Effect> = Vec::with_capacity(
+			unconditional_effects.len() + chosen_conditional_effects.len(),
+		);
+		branch_effects.extend_from_slice(unconditional_effects);
+		branch_effects.extend(chosen_conditional_effects.iter().copied());
+
+		let mut ass_effects: Vec<AssignmentEffect> = Vec::with_capacity(
+			unconditional_ass.len() + chosen_conditional_ass.len(),
+		);
+		ass_effects.extend(unconditional_ass.iter().copied().cloned());
+		ass_effects.extend(chosen_conditional_ass.iter().copied().cloned());
+
+		let mut merged_preconditions: Vec<Fact> = op.preconditions().to_vec();
+		merged_preconditions.extend_from_slice(extra_preconditions);
+		let Some(merged_preconditions) = normalize_preconditions(merged_preconditions) else {
+			return;
+		};
+
+		build_branch_for_operator(
+			task,
+			op,
+			&branch_effects,
+			&ass_effects,
+			&merged_preconditions,
+			concrete_op_id,
+			generator,
+			out,
+			grouping,
+		);
+		return;
+	}
+
+	// Branch: conditional assignment effect not applied.
+	enumerate_conditional_assignment_effects(
+		idx + 1,
+		task,
+		op,
+		unconditional_effects,
+		unconditional_ass,
+		conditional_ass,
+		extra_preconditions,
+		chosen_conditional_effects,
+		chosen_conditional_ass,
+		concrete_op_id,
+		generator,
+		out,
+		grouping,
+	);
+
+	// Branch: conditional assignment effect applied.
+	let eff = conditional_ass[idx];
+	let n = eff.conditions().len();
+	extra_preconditions.extend_from_slice(eff.conditions());
+	chosen_conditional_ass.push(eff);
+	enumerate_conditional_assignment_effects(
+		idx + 1,
+		task,
+		op,
+		unconditional_effects,
+		unconditional_ass,
+		conditional_ass,
+		extra_preconditions,
+		chosen_conditional_effects,
+		chosen_conditional_ass,
+		concrete_op_id,
+		generator,
+		out,
+		grouping,
+	);
+	chosen_conditional_ass.pop();
+	extra_preconditions.truncate(extra_preconditions.len() - n);
+}
+
+fn normalize_preconditions(mut preconditions: Vec<Fact>) -> Option<Vec<Fact>> {
+	preconditions.sort();
+	let mut out: Vec<Fact> = Vec::with_capacity(preconditions.len());
+	for pre in preconditions {
+		if let Some(last) = out.last() {
+			if last.var() == pre.var() {
+				if last.value() != pre.value() {
+					return None;
+				}
+				continue;
+			}
+		}
+		out.push(pre);
+	}
+	Some(out)
+}
+
+fn build_branch_for_operator(
+	task: &dyn AbstractNumericTask,
+	op: &Operator,
+	effects: &[&Effect],
+	ass_effects: &[AssignmentEffect],
+	merged_preconditions: &[Fact],
+	concrete_op_id: usize,
+	generator: &mut AbstractOperatorGenerator,
+	out: &mut Vec<AbstractOperator>,
+	grouping: &mut HashMap<OperatorSignature, usize>,
+) {
+	let num_variables = task.get_num_variables() as usize;
+	let mut has_precondition_on_var: Vec<i32> = vec![-1; num_variables];
+	let mut has_effect_on_var: Vec<i32> = vec![-1; num_variables];
+
+	let mut prev_pairs: Vec<Fact> = Vec::new();
+	let mut pre_pairs: Vec<Fact> = Vec::new();
+	let mut eff_pairs: Vec<Fact> = Vec::new();
+	let mut effects_without_pre: Vec<Fact> = Vec::new();
+
+	for pre in merged_preconditions {
+		let var_id = pre.var() as usize;
+		if generator.variable_is_trivial(var_id) {
+			has_precondition_on_var[var_id] = 0;
+			continue;
+		}
+		let abs_val = generator.abstract_value(var_id, pre.value() as usize);
+		has_precondition_on_var[var_id] = abs_val;
+	}
+
+	for eff in effects {
+		let var_id = eff.var_id() as usize;
+		if generator.variable_is_trivial(var_id) {
+			continue;
+		}
+
+		debug_assert!(!generator.derived_prop_vars.contains(&eff.var_id()));
+
+		let abs_val = generator.abstract_value(var_id, eff.value() as usize);
+		let pre_val = has_precondition_on_var[var_id];
+		if pre_val < 0 {
+			effects_without_pre.push(Fact::new(var_id as u32, abs_val));
+		} else if pre_val != abs_val {
+			has_effect_on_var[var_id] = abs_val;
+			eff_pairs.push(Fact::new(var_id as u32, abs_val));
+		}
+	}
+
+	for pre in merged_preconditions {
+		let var_id = pre.var() as usize;
+		if generator.variable_is_trivial(var_id) {
+			continue;
+		}
+		let abs_val = generator.abstract_value(var_id, pre.value() as usize);
+		if has_effect_on_var[var_id] >= 0 {
+			pre_pairs.push(Fact::new(var_id as u32, abs_val));
+		} else if !generator.derived_prop_vars.contains(&(var_id as u32)) {
+			prev_pairs.push(Fact::new(var_id as u32, abs_val));
+		}
+	}
+
+	for pre in merged_preconditions {
+		let var_id = pre.var() as usize;
+		if generator.variable_is_trivial(var_id) {
+			continue;
+		}
+		if generator.derived_prop_vars.contains(&(var_id as u32)) {
+			let abs_val = generator.abstract_value(var_id, pre.value() as usize);
+			pre_pairs.push(Fact::new(var_id as u32, abs_val));
+			let unknown_abs = generator.abstract_value(var_id, COMPARISON_UNKNOWN_VAL);
+			eff_pairs.push(Fact::new(var_id as u32, unknown_abs));
+		}
+	}
+
+	multiply_out_propositional(
+		0,
+		op.cost() as f64,
+		&mut prev_pairs,
+		&mut pre_pairs,
+		&mut eff_pairs,
+		&effects_without_pre,
+		ass_effects,
+		merged_preconditions,
+		concrete_op_id,
+		task,
+		generator,
+		out,
+		grouping,
+	);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

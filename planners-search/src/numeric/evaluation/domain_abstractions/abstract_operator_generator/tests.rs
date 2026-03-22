@@ -204,3 +204,133 @@ fn derived_comparison_precondition_forces_unknown_old_value() {
     assert_eq!(abs_ops[0].preconditions, vec![Fact::new(0, 0)]);
     assert_eq!(abs_ops[0].regression_preconditions, vec![Fact::new(0, 2)]);
 }
+
+#[test]
+fn conditional_propositional_effect_branches() {
+    let variables = vec![
+        ExplicitVariable::new(2, "c".into(), vec!["0".into(), "1".into()], -1, 0),
+        ExplicitVariable::new(2, "u".into(), vec!["0".into(), "1".into()], -1, 0),
+        ExplicitVariable::new(2, "v".into(), vec!["0".into(), "1".into()], -1, 0),
+    ];
+
+    let op = Operator::new(
+        "op".into(),
+        vec![Fact::new(1, 0), Fact::new(2, 0)],
+        vec![
+            planners_sas::numeric::numeric_task::Effect::new(vec![], 1, 0, 1),
+            planners_sas::numeric::numeric_task::Effect::new(vec![Fact::new(0, 1)], 2, 0, 1),
+        ],
+        vec![],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0, 0, 0],
+        vec![],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![]);
+    let numeric_domain_sizes: Vec<usize> = vec![];
+
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        numeric_domain_sizes,
+        false,
+    );
+    let mut abs_ops = generator.build_abstract_operators(&task);
+    abs_ops.sort_by_key(|o| o.hash_effect);
+
+    assert_eq!(abs_ops.len(), 2);
+    assert_eq!(abs_ops[0].hash_effect, -6);
+    assert_eq!(abs_ops[0].preconditions, vec![Fact::new(0, 1), Fact::new(1, 0), Fact::new(2, 0)]);
+    assert_eq!(abs_ops[1].hash_effect, -2);
+    assert_eq!(abs_ops[1].preconditions, vec![Fact::new(1, 0), Fact::new(2, 0)]);
+}
+
+#[test]
+fn conditional_assignment_effect_branches() {
+    let variables = vec![
+        ExplicitVariable::new(2, "c".into(), vec!["0".into(), "1".into()], -1, 0),
+        ExplicitVariable::new(2, "p".into(), vec!["0".into(), "1".into()], -1, 0),
+    ];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x0".into(), NumericType::Regular, -1),
+        NumericVariable::new("c1".into(), NumericType::Constant, -1),
+    ];
+
+    let op = Operator::new(
+        "op".into(),
+        vec![Fact::new(1, 0)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(vec![], 1, 0, 1)],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            true,
+            vec![Fact::new(0, 1)],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0, 0],
+        vec![0.0, 1.0],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::new(f64::NEG_INFINITY, 0.0, false, false),
+            Interval::new(0.0, f64::INFINITY, true, false),
+        ],
+        vec![Interval::singleton(1.0)],
+    ]);
+    let numeric_domain_sizes = vec![2, 1];
+
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        numeric_domain_sizes,
+        false,
+    );
+    let abs_ops = generator.build_abstract_operators(&task);
+
+    // Non-apply branch yields a single propositional operator.
+    // Apply branch yields three numeric transitions (0->0, 0->1, 1->1), each with condition c==1.
+    assert_eq!(abs_ops.len(), 4);
+    let with_cond: Vec<&AbstractOperator> = abs_ops
+        .iter()
+        .filter(|o| o.preconditions.contains(&Fact::new(0, 1)))
+        .collect();
+    assert_eq!(with_cond.len(), 3);
+    assert_eq!(
+        with_cond
+            .iter()
+            .filter(|o| o.changed_numeric_vars == vec![0])
+            .count(),
+        1
+    );
+}
