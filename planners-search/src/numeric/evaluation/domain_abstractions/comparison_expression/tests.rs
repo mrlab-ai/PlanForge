@@ -1,7 +1,7 @@
 use super::*;
 
-use crate::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
-use crate::numeric::numeric_task::{Metric, NumericRootTask, NumericType, NumericVariable};
+use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planners_sas::numeric::numeric_task::{Metric, NumericRootTask, NumericType, NumericVariable};
 
 #[test]
 fn example_tree() {

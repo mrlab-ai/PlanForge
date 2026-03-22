@@ -7,6 +7,7 @@
 pub mod evaluator;
 pub mod g_evaluator;
 pub mod heuristic;
+pub mod domain_abstractions;
 #[cfg(test)]
 mod tests;
 

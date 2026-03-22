@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests;
 
-use crate::numeric::axioms::{CalOperator, ComparisonOperator};
-use crate::numeric::numeric_task::{AbstractNumericTask, NumericType};
+use planners_sas::numeric::axioms::{CalOperator, ComparisonOperator};
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Interval {
@@ -145,7 +145,7 @@ pub enum ArithOp {
     Add,
     Sub,
     Mul,
-    Div, // optional; handle divide-by-zero as needed
+    Div,
 }
 
 impl ArithOp {
@@ -155,12 +155,12 @@ impl ArithOp {
             ArithOp::Add => lhs + rhs,
             ArithOp::Sub => lhs - rhs,
             ArithOp::Mul => lhs * rhs,
-            ArithOp::Div => lhs / rhs, // You may want to check for rhs == 0.0
+            ArithOp::Div => lhs / rhs,
         }
     }
 
     #[inline]
-    fn apply_interval(self, lhs: Interval, rhs: Interval) -> Interval {
+    pub fn apply_interval(self, lhs: Interval, rhs: Interval) -> Interval {
         match self {
             ArithOp::Add => lhs + rhs,
             ArithOp::Sub => {
@@ -308,17 +308,14 @@ impl CompOp {
                     None
                 }
             }
-            CompOp::Gt => {
-                // Swap sides for Lt.
-                CompOp::Lt.apply_interval(rhs, lhs).map(|b| b)
-            }
-            CompOp::Ge => {
-                CompOp::Le.apply_interval(rhs, lhs).map(|b| b)
-            }
+            CompOp::Gt => CompOp::Lt.apply_interval(rhs, lhs).map(|b| b),
+            CompOp::Ge => CompOp::Le.apply_interval(rhs, lhs).map(|b| b),
             CompOp::Eq => {
                 if lhs.is_singleton() && rhs.is_singleton() && lmin == rmin {
                     Some(true)
-                } else if max_lt_min(lmax, lmax_c, rmin, rmin_c) || max_lt_min(rmax, rmax_c, lmin, lmin_c) {
+                } else if max_lt_min(lmax, lmax_c, rmin, rmin_c)
+                    || max_lt_min(rmax, rmax_c, lmin, lmin_c)
+                {
                     Some(false)
                 } else {
                     None
@@ -327,7 +324,9 @@ impl CompOp {
             CompOp::Ne => {
                 if lhs.is_singleton() && rhs.is_singleton() && lmin == rmin {
                     Some(false)
-                } else if max_lt_min(lmax, lmax_c, rmin, rmin_c) || max_lt_min(rmax, rmax_c, lmin, lmin_c) {
+                } else if max_lt_min(lmax, lmax_c, rmin, rmin_c)
+                    || max_lt_min(rmax, rmax_c, lmin, lmin_c)
+                {
                     Some(true)
                 } else {
                     None
@@ -342,38 +341,30 @@ pub type NodeId = usize;
 
 #[derive(Clone, Debug)]
 pub enum Node {
-    // Leaf reads a value from inputs[input_idx].
     Leaf {
         input_idx: usize,
-        val_cache_idx: usize, // index into arith_cache
+        val_cache_idx: usize,
     },
-    // Internal arithmetic node.
     Arith {
         op: ArithOp,
         left: NodeId,
         right: NodeId,
-        val_cache_idx: usize, // index into arith_cache
+        val_cache_idx: usize,
     },
-    // Root comparison node (only the root should be this variant).
     CompareRoot {
         op: CompOp,
         left: NodeId,
         right: NodeId,
-        cmp_cache_idx: usize, // index into cmp_cache
+        cmp_cache_idx: usize,
     },
 }
 
 pub struct Expr {
     nodes: Vec<Node>,
     root: NodeId,
-    // Caches:
-    // - For arithmetic results (f64)
-    arith_cache: Vec<(bool, f64)>, // (is_computed, value)
-    // - For arithmetic interval results
+    arith_cache: Vec<(bool, f64)>,
     arith_interval_cache: Vec<(bool, Interval)>,
-    // - For comparison result (bool)
-    cmp_cache: Vec<(bool, bool)>, // (is_computed, value)
-    // - For comparison result with interval inputs (tri-valued)
+    cmp_cache: Vec<(bool, bool)>,
     cmp_interval_cache: Vec<(bool, Option<bool>)>,
 }
 
@@ -388,8 +379,6 @@ impl Expr {
             cmp_interval_cache: Vec::new(),
         }
     }
-
-    // Builder helpers ---------------------------------------------------------
 
     fn alloc_arith_cache_slot(&mut self) -> usize {
         let idx = self.arith_cache.len();
@@ -428,7 +417,6 @@ impl Expr {
         id
     }
 
-    // Creates the root as a comparison node and sets `self.root`.
     pub fn set_root_compare(&mut self, op: CompOp, left: NodeId, right: NodeId) -> NodeId {
         let cmp_cache_idx = self.alloc_cmp_cache_slot();
         let id = self.nodes.len();
@@ -442,10 +430,6 @@ impl Expr {
         id
     }
 
-    // Evaluation --------------------------------------------------------------
-
-    // Public entry-point: evaluates from the root node.
-    // Clears caches first, so results always reflect the provided inputs.
     pub fn evaluate(&mut self, inputs: &[f64]) -> bool {
         self.clear_point_caches();
         self.eval_root_compare(self.root, inputs)
@@ -459,7 +443,6 @@ impl Expr {
     fn clear_point_caches(&mut self) {
         for c in &mut self.arith_cache {
             c.0 = false;
-            // c.1 can be left as-is; it’s ignored when c.0 == false
         }
         for c in &mut self.cmp_cache {
             c.0 = false;
@@ -483,7 +466,6 @@ impl Expr {
                 right,
                 cmp_cache_idx,
             } => {
-                // Return cached if available
                 if self.cmp_cache[cmp_cache_idx].0 {
                     return self.cmp_cache[cmp_cache_idx].1;
                 }
@@ -546,9 +528,7 @@ impl Expr {
                 self.arith_cache[val_cache_idx] = (true, v);
                 v
             }
-            Node::CompareRoot { .. } => {
-                panic!("Arithmetic evaluation called on comparison root")
-            }
+            Node::CompareRoot { .. } => panic!("Arithmetic evaluation called on comparison root"),
         }
     }
 
@@ -580,9 +560,7 @@ impl Expr {
                 self.arith_interval_cache[val_cache_idx] = (true, v);
                 v
             }
-            Node::CompareRoot { .. } => {
-                panic!("Arithmetic evaluation called on comparison root")
-            }
+            Node::CompareRoot { .. } => panic!("Arithmetic evaluation called on comparison root"),
         }
     }
 }
@@ -591,17 +569,11 @@ pub type ComparisonTreeNodeId = usize;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComparisonTreeNode {
-    Leaf {
-        /// Original numeric variable id (index into `task.numeric_variables()`).
-        numeric_var_id: i32,
-    },
+    Leaf { numeric_var_id: i32 },
     Arith {
-        /// The numeric variable id this node computes (i.e., assignment axiom affected var id).
         result_numeric_var_id: i32,
-        /// Index into `task.assignment_axioms()`.
         assignment_axiom_id: usize,
         op: ArithOp,
-        /// Original numeric ids referenced by the assignment axiom.
         left_numeric_var_id: i32,
         right_numeric_var_id: i32,
         left: ComparisonTreeNodeId,
@@ -689,9 +661,6 @@ impl ComparisonTree {
         })
     }
 
-    /// Returns the *regular* numeric var ids this comparison depends on.
-    ///
-    /// “Regular” is determined via `task.numeric_variables()[id].get_type() == Regular`.
     pub fn regular_numeric_var_dependencies(&self, task: &dyn AbstractNumericTask) -> Vec<i32> {
         let num_numeric_vars = task.numeric_variables().len();
         let mut seen: Vec<bool> = vec![false; num_numeric_vars];
@@ -721,6 +690,48 @@ impl ComparisonTree {
         out.sort_unstable();
         out.dedup();
         out
+    }
+
+    pub fn evaluate_interval(&self, inputs: &[Interval]) -> Option<bool> {
+        let lhs = self.eval_node_interval(self.left_root, inputs);
+        let rhs = self.eval_node_interval(self.right_root, inputs);
+        self.op.apply_interval(lhs, rhs)
+    }
+
+    pub fn evaluate_point(&self, inputs: &[f64]) -> bool {
+        let lhs = self.eval_node_point(self.left_root, inputs);
+        let rhs = self.eval_node_point(self.right_root, inputs);
+        self.op.apply(lhs, rhs)
+    }
+
+    fn eval_node_interval(&self, node_id: ComparisonTreeNodeId, inputs: &[Interval]) -> Interval {
+        match &self.nodes[node_id] {
+            ComparisonTreeNode::Leaf { numeric_var_id } => {
+                let idx = usize::try_from(*numeric_var_id)
+                    .unwrap_or_else(|_| panic!("negative numeric_var_id {numeric_var_id}"));
+                inputs[idx]
+            }
+            ComparisonTreeNode::Arith { op, left, right, .. } => {
+                let lhs = self.eval_node_interval(*left, inputs);
+                let rhs = self.eval_node_interval(*right, inputs);
+                op.apply_interval(lhs, rhs)
+            }
+        }
+    }
+
+    fn eval_node_point(&self, node_id: ComparisonTreeNodeId, inputs: &[f64]) -> f64 {
+        match &self.nodes[node_id] {
+            ComparisonTreeNode::Leaf { numeric_var_id } => {
+                let idx = usize::try_from(*numeric_var_id)
+                    .unwrap_or_else(|_| panic!("negative numeric_var_id {numeric_var_id}"));
+                inputs[idx]
+            }
+            ComparisonTreeNode::Arith { op, left, right, .. } => {
+                let lhs = self.eval_node_point(*left, inputs);
+                let rhs = self.eval_node_point(*right, inputs);
+                op.apply(lhs, rhs)
+            }
+        }
     }
 }
 
@@ -762,15 +773,14 @@ fn build_numeric_tree_node(
             len: affected_to_assignment_axiom.len(),
         });
     }
+
     if let Some(node_id) = memo[idx] {
         return Ok(node_id);
     }
-    if visiting[idx] {
-        return Err(ComparisonTreeBuildError::CycleDetected {
-            numeric_var_id,
-        });
-    }
 
+    if visiting[idx] {
+        return Err(ComparisonTreeBuildError::CycleDetected { numeric_var_id });
+    }
     visiting[idx] = true;
 
     let node_id = if let Some(assignment_axiom_id) = affected_to_assignment_axiom[idx] {
@@ -778,6 +788,7 @@ fn build_numeric_tree_node(
         let op = arith_op_from_axiom(ax.get_operator());
         let left_numeric_var_id = ax.get_left_var_id() as i32;
         let right_numeric_var_id = ax.get_right_var_id() as i32;
+
         let left = build_numeric_tree_node(
             task,
             left_numeric_var_id,
@@ -794,6 +805,7 @@ fn build_numeric_tree_node(
             memo,
             visiting,
         )?;
+
         let node_id = nodes.len();
         nodes.push(ComparisonTreeNode::Arith {
             result_numeric_var_id: numeric_var_id,
@@ -815,6 +827,3 @@ fn build_numeric_tree_node(
     memo[idx] = Some(node_id);
     Ok(node_id)
 }
-
-
-
