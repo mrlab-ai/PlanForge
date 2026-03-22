@@ -13,6 +13,145 @@ const COMPARISON_TRUE_VAL: i32 = 0;
 const COMPARISON_FALSE_VAL: i32 = 1;
 const COMPARISON_UNKNOWN_VAL: i32 = 2;
 
+#[derive(Debug, Clone, Default)]
+struct MatchTreeNode {
+	value_children: HashMap<i32, Box<MatchTreeNode>>,
+	wildcard_child: Option<Box<MatchTreeNode>>,
+	ops: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct MatchTree {
+	var_order: Vec<usize>,
+	domain_sizes: Vec<i32>,
+	numeric_domain_sizes: Vec<usize>,
+	hash_multipliers: Vec<i32>,
+	root: MatchTreeNode,
+}
+
+impl MatchTree {
+	fn build(
+		domain_sizes: &[i32],
+		numeric_domain_sizes: &[usize],
+		hash_multipliers: &[i32],
+		operators: &[AbstractOperator],
+		comparison_var_ids: &[usize],
+	) -> Self {
+		let mut freq: HashMap<usize, usize> = HashMap::new();
+		for op in operators {
+			for f in op.regression_preconditions.iter() {
+				let Ok(var) = usize::try_from(f.var()) else {
+					continue;
+				};
+				if comparison_var_ids.contains(&var) {
+					continue;
+				}
+				*freq.entry(var).or_insert(0) += 1;
+			}
+		}
+		let mut var_order: Vec<usize> = freq.keys().copied().collect();
+		var_order.sort_by(|a, b| {
+			let fa = freq.get(a).copied().unwrap_or(0);
+			let fb = freq.get(b).copied().unwrap_or(0);
+			fb.cmp(&fa).then_with(|| a.cmp(b))
+		});
+
+		let mut tree = Self {
+			var_order,
+			domain_sizes: domain_sizes.to_vec(),
+			numeric_domain_sizes: numeric_domain_sizes.to_vec(),
+			hash_multipliers: hash_multipliers.to_vec(),
+			root: MatchTreeNode::default(),
+		};
+
+		for (op_id, op) in operators.iter().enumerate() {
+			let mut conds: HashMap<usize, i32> = HashMap::new();
+			for f in op.regression_preconditions.iter() {
+				let Ok(var) = usize::try_from(f.var()) else {
+					continue;
+				};
+				if comparison_var_ids.contains(&var) {
+					continue;
+				}
+				conds.insert(var, f.value());
+			}
+			tree.insert(op_id, &conds);
+		}
+
+		tree
+	}
+
+	fn insert(&mut self, op_id: usize, conds: &HashMap<usize, i32>) {
+		fn insert_rec(
+			node: &mut MatchTreeNode,
+			depth: usize,
+			var_order: &[usize],
+			conds: &HashMap<usize, i32>,
+			op_id: usize,
+		) {
+			if depth == var_order.len() {
+				node.ops.push(op_id);
+				return;
+			}
+			let var = var_order[depth];
+			if let Some(&val) = conds.get(&var) {
+				let child = node
+					.value_children
+					.entry(val)
+					.or_insert_with(|| Box::new(MatchTreeNode::default()));
+				insert_rec(child.as_mut(), depth + 1, var_order, conds, op_id);
+			} else {
+				let child = node
+					.wildcard_child
+					.get_or_insert_with(|| Box::new(MatchTreeNode::default()));
+				insert_rec(child.as_mut(), depth + 1, var_order, conds, op_id);
+			}
+		}
+
+		insert_rec(&mut self.root, 0, &self.var_order, conds, op_id);
+	}
+
+	fn get_applicable_operator_ids(&self, state_hash: i32, out: &mut Vec<usize>) {
+		out.clear();
+		if self.var_order.is_empty() {
+			out.extend_from_slice(&self.root.ops);
+			return;
+		}
+		let mut stack: Vec<(&MatchTreeNode, usize)> = Vec::new();
+		stack.push((&self.root, 0));
+		while let Some((node, depth)) = stack.pop() {
+			if depth == self.var_order.len() {
+				out.extend_from_slice(&node.ops);
+				continue;
+			}
+			let var = self.var_order[depth];
+			let actual = self.get_var_value(state_hash, var);
+			if let Some(child) = node.value_children.get(&actual) {
+				stack.push((child.as_ref(), depth + 1));
+			}
+			if let Some(child) = node.wildcard_child.as_deref() {
+				stack.push((child, depth + 1));
+			}
+		}
+	}
+
+	fn get_var_value(&self, state_hash: i32, var: usize) -> i32 {
+		let num_props = self.domain_sizes.len();
+		let mult = self.hash_multipliers.get(var).copied().unwrap_or(1) as i64;
+		let state = state_hash as i64;
+		let dom_size: i64 = if var < num_props {
+			self.domain_sizes.get(var).copied().unwrap_or(0) as i64
+		} else {
+			let n = var - num_props;
+			self.numeric_domain_sizes.get(n).copied().unwrap_or(0) as i64
+		};
+		if dom_size <= 0 {
+			return 0;
+		}
+		((state / mult) % dom_size) as i32
+	}
+}
+
 #[derive(Debug, Clone)]
 pub struct AbstractTransition {
 	pub op_id: usize,
@@ -221,46 +360,95 @@ impl DomainAbstractionFactory {
 			&[],
 		);
 
+		let num_states = compute_num_states(domain_sizes, numeric_domain_sizes);
+		let mut goal_hashes: Vec<i32> = Vec::new();
+		for s in 0..num_states {
+			let h = s as i32;
+			if !is_goal_state(h, &goal_facts, num_props, domain_sizes, numeric_domain_sizes, hash_multipliers)
+			{
+				continue;
+			}
+			let alts = enumerate_states_with_evaluated_comparisons(
+				h,
+				task,
+				domain_sizes,
+				domain_mapping,
+				hash_multipliers,
+				numeric_domain_sizes,
+				&self.partitions,
+				&self.comparison_trees,
+				&comparison_var_ids,
+				&[],
+			);
+			if alts.binary_search(&h).is_ok() {
+				goal_hashes.push(h);
+			}
+		}
+
+		let match_tree = MatchTree::build(
+			domain_sizes,
+			numeric_domain_sizes,
+			hash_multipliers,
+			operators,
+			&comparison_var_ids,
+		);
+
 		let mut states: Vec<i32> = Vec::new();
 		let mut index_by_hash: HashMap<i32, usize> = HashMap::new();
 		let mut outgoing: Vec<Vec<AbstractTransition>> = Vec::new();
 		let mut incoming: Vec<Vec<(usize, usize, f64)>> = Vec::new();
 		let mut queue: VecDeque<usize> = VecDeque::new();
 
+		// Seed with goal states (regression) like numeric-fd does.
+		for h in goal_hashes {
+			if index_by_hash.contains_key(&h) {
+				continue;
+			}
+			let id = states.len();
+			states.push(h);
+			index_by_hash.insert(h, id);
+			outgoing.push(Vec::new());
+			incoming.push(Vec::new());
+			queue.push_back(id);
+		}
+
+		// Also keep initial states around for plan extraction, but don't expand them.
 		let mut initial_state_ids: Vec<usize> = Vec::new();
 		for h in init_hashes {
-			let id = *index_by_hash.entry(h).or_insert_with(|| {
-				let new_id = states.len();
+			let id = if let Some(&id) = index_by_hash.get(&h) {
+				id
+			} else {
+				let id = states.len();
 				states.push(h);
+				index_by_hash.insert(h, id);
 				outgoing.push(Vec::new());
 				incoming.push(Vec::new());
-				queue.push_back(new_id);
-				new_id
-			});
+				id
+			};
 			initial_state_ids.push(id);
 		}
 		initial_state_ids.sort_unstable();
 		initial_state_ids.dedup();
 
-		while let Some(state_id) = queue.pop_front() {
-			let state_hash = states[state_id];
-			let mut edges: Vec<AbstractTransition> = Vec::new();
+		let mut applicable_operator_ids: Vec<usize> = Vec::new();
+		while let Some(succ_id) = queue.pop_front() {
+			let succ_hash = states[succ_id];
+			let succ_base = reset_comparison_vars_to_unknown_except(
+				succ_hash,
+				domain_sizes,
+				domain_mapping,
+				hash_multipliers,
+				&comparison_var_ids,
+				&[],
+			);
 
-			for (op_id, op) in operators.iter().enumerate() {
-				if !operator_is_applicable(
-					state_hash,
-					op,
-					num_props,
-					domain_sizes,
-					numeric_domain_sizes,
-					hash_multipliers,
-				) {
-					continue;
-				}
-
-				let succ_base = state_hash - op.hash_effect;
-				let successors = enumerate_states_with_evaluated_comparisons(
-					succ_base,
+			match_tree.get_applicable_operator_ids(succ_base, &mut applicable_operator_ids);
+			for &op_id in &applicable_operator_ids {
+				let op = &operators[op_id];
+				let pred_base = succ_base.wrapping_add(op.hash_effect);
+				let fixed_comparisons = get_comparison_preconditions(op, &comparison_var_ids);
+				let predecessors = enumerate_states_with_evaluated_comparisons(
+					pred_base,
 					task,
 					domain_sizes,
 					domain_mapping,
@@ -269,29 +457,30 @@ impl DomainAbstractionFactory {
 					&self.partitions,
 					&self.comparison_trees,
 					&comparison_var_ids,
-					&[],
+					&fixed_comparisons,
 				);
-				for succ_hash in successors {
-					let succ_id = *index_by_hash.entry(succ_hash).or_insert_with(|| {
-						let new_id = states.len();
-						states.push(succ_hash);
+
+				for pred_hash in predecessors {
+					let pred_id = if let Some(&id) = index_by_hash.get(&pred_hash) {
+						id
+					} else {
+						let id = states.len();
+						states.push(pred_hash);
+						index_by_hash.insert(pred_hash, id);
 						outgoing.push(Vec::new());
 						incoming.push(Vec::new());
-						queue.push_back(new_id);
-						new_id
-					});
-					edges.push(AbstractTransition {
+						queue.push_back(id);
+						id
+					};
+
+					outgoing[pred_id].push(AbstractTransition {
 						op_id,
 						successor: succ_id,
 						cost: op.cost,
 					});
+					incoming[succ_id].push((pred_id, op_id, op.cost));
 				}
 			}
-
-			for e in &edges {
-				incoming[e.successor].push((state_id, e.op_id, e.cost));
-			}
-			outgoing[state_id] = edges;
 		}
 
 		AbstractStateSpace {
@@ -302,6 +491,37 @@ impl DomainAbstractionFactory {
 			goal_facts,
 		}
 	}
+}
+
+fn compute_num_states(domain_sizes: &[i32], numeric_domain_sizes: &[usize]) -> i32 {
+	let mut num: i64 = 1;
+	for &s in domain_sizes {
+		num = num.saturating_mul(i64::from(s.max(0)));
+	}
+	for &s in numeric_domain_sizes {
+		num = num.saturating_mul(i64::try_from(s).unwrap_or(0));
+	}
+	if num <= 0 {
+		return 0;
+	}
+	if num > i64::from(i32::MAX) {
+		// If this overflows the hashing scheme, don't attempt a full scan.
+		return 0;
+	}
+	num as i32
+}
+
+fn get_comparison_preconditions(op: &AbstractOperator, comparison_var_ids: &[usize]) -> Vec<planners_sas::numeric::numeric_task::Fact> {
+	let mut out: Vec<planners_sas::numeric::numeric_task::Fact> = Vec::new();
+	for f in &op.preconditions {
+		let Ok(var) = usize::try_from(f.var()) else {
+			continue;
+		};
+		if comparison_var_ids.contains(&var) {
+			out.push(f.clone());
+		}
+	}
+	out
 }
 
 fn compute_wildcard_plan_from_space(
