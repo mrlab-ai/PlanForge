@@ -663,6 +663,33 @@ fn multiply_out_propositional(
     out: &mut Vec<AbstractOperator>,
     grouping: &mut HashMap<OperatorSignature, usize>,
 ) -> Result<()> {
+    fn has_in_list_conflict(facts: &[Fact]) -> bool {
+        facts
+            .windows(2)
+            .any(|w| w[0].var() == w[1].var() && w[0].value() != w[1].value())
+    }
+
+    fn has_cross_list_conflict(a: &[Fact], b: &[Fact]) -> bool {
+        let mut i = 0;
+        let mut j = 0;
+        while i < a.len() && j < b.len() {
+            let va = a[i].var();
+            let vb = b[j].var();
+            if va < vb {
+                i += 1;
+            } else if vb < va {
+                j += 1;
+            } else {
+                if a[i].value() != b[j].value() {
+                    return true;
+                }
+                i += 1;
+                j += 1;
+            }
+        }
+        false
+    }
+
     if pos == effects_without_pre.len() {
         if eff_pairs.is_empty() && ass_effects.is_empty() {
             return Ok(());
@@ -695,6 +722,20 @@ fn multiply_out_propositional(
             extended_pre_pairs.sort();
             extended_eff_pairs.sort();
             extended_prev_pairs.sort();
+
+            // Remove exact duplicates and drop inconsistent operators early.
+            extended_pre_pairs.dedup();
+            extended_eff_pairs.dedup();
+            extended_prev_pairs.dedup();
+
+            if has_in_list_conflict(&extended_pre_pairs)
+                || has_in_list_conflict(&extended_eff_pairs)
+                || has_in_list_conflict(&extended_prev_pairs)
+                || has_cross_list_conflict(&extended_pre_pairs, &extended_prev_pairs)
+                || has_cross_list_conflict(&extended_prev_pairs, &extended_eff_pairs)
+            {
+                continue;
+            }
 
             let signature = OperatorSignature {
                 prev_pairs: extended_prev_pairs
@@ -886,77 +927,9 @@ fn compute_hash_effects_with_preconditions(
             }
         }
 
-        // Cascading comparison facts for affected comparisons (optimistic tri-valued evaluation).
-        if !changed_numeric_vars.is_empty() {
-            let mut affected_tree_indices: HashSet<usize> = HashSet::new();
-            for &v in &changed_numeric_vars {
-                if let Some(list) = generator.comparisons_by_numeric_dep.get(v) {
-                    affected_tree_indices.extend(list.iter().copied());
-                }
-            }
-
-            // Build numeric interval contexts for source and target.
-            let mut source_intervals: Vec<Interval> =
-                vec![Interval::unbounded(); task.numeric_variables().len()];
-            let mut target_intervals: Vec<Interval> =
-                vec![Interval::unbounded(); task.numeric_variables().len()];
-            for (i, v) in task.numeric_variables().iter().enumerate() {
-                if v.get_type() == &NumericType::Constant {
-                    let val = initial_numeric_values[i];
-                    source_intervals[i] = Interval::singleton(val);
-                    target_intervals[i] = Interval::singleton(val);
-                }
-            }
-            for (var_id, src, tgt) in &combo {
-                let iv_src = generator
-                    .partitions
-                    .partition_interval(*var_id, *src)
-                    .with_context(|| {
-                        format!("missing partition interval for var {var_id} part {src}")
-                    })?;
-                source_intervals[*var_id] = iv_src;
-
-                let iv_tgt = generator
-                    .partitions
-                    .partition_interval(*var_id, *tgt)
-                    .with_context(|| {
-                        format!("missing partition interval for var {var_id} part {tgt}")
-                    })?;
-                target_intervals[*var_id] = iv_tgt;
-            }
-
-            for tree_idx in affected_tree_indices {
-                let tree = &generator.comparison_trees[tree_idx];
-                let affected_var_id = tree.affected_var_id as usize;
-                ensure!(
-                    affected_var_id < generator.domain_mapping.len(),
-                    "comparison tree affected_var_id {affected_var_id} out of bounds (domain_mapping len = {})",
-                    generator.domain_mapping.len()
-                );
-                if generator.variable_is_trivial(affected_var_id) {
-                    continue;
-                }
-                let src_val = tri_value_for_comparison(
-                    tree,
-                    &source_intervals,
-                    affected_var_id,
-                    &generator.domain_mapping,
-                );
-                let tgt_val = tri_value_for_comparison(
-                    tree,
-                    &target_intervals,
-                    affected_var_id,
-                    &generator.domain_mapping,
-                );
-
-                if src_val == tgt_val {
-                    prevail_facts.push(Fact::new(affected_var_id as u32, src_val));
-                } else {
-                    source_partition_facts.push(Fact::new(affected_var_id as u32, src_val));
-                    target_partition_facts.push(Fact::new(affected_var_id as u32, tgt_val));
-                }
-            }
-        }
+        // Note: we do NOT encode explicit effects on comparison/derived vars here.
+        // They are treated as implicitly (re-)evaluated from numeric intervals during
+        // regression/predecessor enumeration.
 
         // Optimistic filtering for comparison preconditions based on *source* intervals.
         if let Some(index) = &generator.comparison_index {

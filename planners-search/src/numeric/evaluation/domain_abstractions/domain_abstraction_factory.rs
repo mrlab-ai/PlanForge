@@ -1013,12 +1013,19 @@ impl DomainAbstractionFactory {
             if fixed_map.contains_key(&(var_id as u32)) {
                 // If the fixed value contradicts a definite evaluation, no states are feasible.
                 if let Some(eval) = tree.evaluate_interval(&numeric_intervals) {
-                    let required = if eval {
+                    let required_idx = if eval {
                         COMPARISON_TRUE_VAL
                     } else {
                         COMPARISON_FALSE_VAL
                     };
-                    if fixed_map[&(var_id as u32)] != required {
+                    let required_abs = *self.domain_mapping[var_id]
+                        .get(required_idx as usize)
+                        .with_context(|| {
+                            format!(
+                                "missing comparison mapping for var {var_id} idx {required_idx}"
+                            )
+                        })?;
+                    if fixed_map[&(var_id as u32)] != required_abs {
                         return Ok(Vec::new());
                     }
                 }
@@ -1263,6 +1270,25 @@ impl DomainAbstractionFactory {
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
         let mut generating_op_ids: Vec<Option<usize>> = vec![None; num_states];
 
+        let trace_state: Option<i32> = std::env::var("DA_TRACE_STATE")
+            .ok()
+            .and_then(|s| s.parse::<i32>().ok());
+        let trace_ops: bool = std::env::var("DA_TRACE_OPS").is_ok();
+
+        let mut core_vars: Vec<u32> = Vec::new();
+        for (v, &dom) in self.domain_sizes.iter().enumerate() {
+            if dom > 1 {
+                core_vars.push(v as u32);
+            }
+        }
+        for (n, &dom) in numeric_domain_sizes.iter().enumerate() {
+            if dom > 1 {
+                core_vars.push((num_props + n) as u32);
+            }
+        }
+        core_vars.sort_unstable();
+        core_vars.dedup();
+
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, i32)> = BinaryHeap::new();
 
         // Initialize with feasible goal states.
@@ -1306,12 +1332,29 @@ impl DomainAbstractionFactory {
                 &[],
             )?;
 
+            if trace_ops || trace_state == Some(state_hash) {
+                let mut core_vals: Vec<(u32, i32)> = Vec::new();
+                for &v in &core_vars {
+                    let var = usize::try_from(v).unwrap_or(0);
+                    let val = match_tree.get_var_value(base_state, var);
+                    core_vals.push((v, val));
+                }
+
+                eprintln!(
+                    "[DA_TRACE] pop state_hash={state_hash} d={d:.3} base_state={base_state} core={core_vals:?}"
+                );
+            }
+
             match_tree.get_applicable_operator_ids(base_state, &mut applicable_operator_ids);
             for &op_id in &applicable_operator_ids {
                 let op = &operators[op_id];
                 ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
                 let alternative_cost = d + op.cost;
-                let predecessor_base = base_state.wrapping_add(op.hash_effect);
+                let predecessor_base_i64 = (base_state as i64) + (op.hash_effect as i64);
+                if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
+                    continue;
+                }
+                let predecessor_base = predecessor_base_i64 as i32;
                 let fixed_comparisons = get_comparison_preconditions(op, comparison_var_ids);
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
                     predecessor_base,
@@ -1322,10 +1365,48 @@ impl DomainAbstractionFactory {
                     &fixed_comparisons,
                 )?;
 
+                if trace_ops || trace_state == Some(state_hash) {
+                    let concrete_names: Vec<String> = op
+                        .concrete_op_ids
+                        .iter()
+                        .filter_map(|&cid| i32::try_from(cid).ok())
+                        .map(|cid| task.get_operator_name(cid, false).to_string())
+                        .collect();
+
+                    let mut relevant_reg: Vec<(u32, i32)> = Vec::new();
+                    let mut relevant_pre: Vec<(u32, i32)> = Vec::new();
+                    for f in &op.regression_preconditions {
+                        if core_vars.binary_search(&f.var()).is_ok() {
+                            relevant_reg.push((f.var(), f.value()));
+                        }
+                    }
+                    for f in &op.preconditions {
+                        if core_vars.binary_search(&f.var()).is_ok() {
+                            relevant_pre.push((f.var(), f.value()));
+                        }
+                    }
+                    relevant_reg.sort_unstable();
+                    relevant_pre.sort_unstable();
+
+                    eprintln!(
+                        "[DA_TRACE]  op={op_id} cost={:.3} hash_effect={} reg_core={:?} pre_core={:?} pred_base={} preds={:?} concrete={:?}",
+                        op.cost,
+                        op.hash_effect,
+                        relevant_reg,
+                        relevant_pre,
+                        predecessor_base,
+                        possible_predecessors,
+                        concrete_names
+                    );
+                }
+
                 for pred in possible_predecessors {
-                    let pred_idx =
-                        usize::try_from(pred).context("predecessor hash does not fit usize")?;
-                    ensure!(pred_idx < num_states, "predecessor hash out of range: {pred}");
+                    let Ok(pred_idx) = usize::try_from(pred) else {
+                        continue;
+                    };
+                    if pred_idx >= num_states {
+                        continue;
+                    }
                     if alternative_cost + 1e-12 < distances[pred_idx] {
                         distances[pred_idx] = alternative_cost;
                         generating_op_ids[pred_idx] = Some(op_id);
