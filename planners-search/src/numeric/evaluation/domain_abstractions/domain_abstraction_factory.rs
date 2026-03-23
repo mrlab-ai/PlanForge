@@ -487,6 +487,7 @@ impl DomainAbstractionFactory {
                 }
             }
         }
+        return;
 
         if !non_axiom_vars.is_empty() {
             println!("[PropositionalDomains]");

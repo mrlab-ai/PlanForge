@@ -954,7 +954,7 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 		}
 
 		iteration += 1;
-		if iteration > 4 {
+		if iteration > 6 {
 			unsafe {
 				exit(0);
 			}
@@ -1104,6 +1104,228 @@ fn debug_print_wildcard_plan(
 	}
 
 	println!("[Plan] {}", representative.join(" -> "));
+	debug_print_concrete_trace(task, plan, partitions, shown_steps);
+}
+
+fn debug_print_concrete_trace(
+	task: &dyn AbstractNumericTask,
+	plan: &WildcardPlanResult,
+	partitions: &NumericPartitions,
+	shown_steps: usize,
+) {
+	let state_packer = make_prop_state_packer(task);
+	let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
+
+	let mut buffer = vec![0u64; state_packer.num_bins() as usize];
+	set_initial_prop_values(task, &state_packer, &mut buffer);
+	let mut numeric_state: Vec<f64> = task.get_initial_numeric_state_values().to_vec();
+
+	let _ = axiom_evaluator.evaluate_arithmetic_axioms(&mut numeric_state);
+	let _ = axiom_evaluator.evaluate(&mut buffer, &mut numeric_state);
+
+	let (prop_scope, num_scope) = trace_variable_scope(task, plan, shown_steps);
+	println!("[Concrete Trace] scope: props={} nums={}", prop_scope.len(), num_scope.len());
+	println!(
+		"  s0 props: {}",
+		fmt_concrete_props(task, &state_packer, &buffer, &prop_scope, 200)
+	);
+	println!(
+		"  s0 nums:  {}",
+		fmt_concrete_nums(&numeric_state, &num_scope, partitions, 200)
+	);
+
+	let comparison_index = ComparisonAxiomIndex::from_task(task).ok();
+
+	let max_tries_per_step = 30usize;
+	for step in 0..shown_steps {
+		if step + 1 >= plan.abstract_numeric_states.len() {
+			break;
+		}
+		let expected_abs_numeric_succ = &plan.abstract_numeric_states[step + 1];
+		let choices = plan.wildcard_plan.get(step).map(|v| v.as_slice()).unwrap_or(&[]);
+
+		let mut chosen: Option<(usize, Vec<u64>, Vec<f64>)> = None;
+		let mut tries = 0usize;
+		for &op_id in choices.iter() {
+			if tries >= max_tries_per_step {
+				println!("  step {step}: ... (tried first {max_tries_per_step} options)");
+				break;
+			}
+			let Some(op) = task.get_operators().get(op_id) else {
+				continue;
+			};
+			tries += 1;
+
+			let applicable = if let Some(idx) = comparison_index.as_ref() {
+				get_precondition_flaws(task, partitions, idx, op, &state_packer, &buffer, &numeric_state)
+					.is_empty()
+			} else {
+				op.preconditions().iter().all(|pre| fact_is_true(pre, &state_packer, &buffer))
+			};
+			if !applicable {
+				continue;
+			}
+
+			let mut cand_buffer = buffer.clone();
+			let mut cand_numeric = numeric_state.clone();
+			apply_operator_to_state(op, &state_packer, &mut cand_buffer, &mut cand_numeric);
+			let _ = axiom_evaluator.evaluate_arithmetic_axioms(&mut cand_numeric);
+			let _ = axiom_evaluator.evaluate(&mut cand_buffer, &mut cand_numeric);
+
+			let deviation_flaws = get_numeric_deviation_flaws(
+				op,
+				&numeric_state,
+				&cand_numeric,
+				expected_abs_numeric_succ,
+				partitions,
+			);
+
+			if deviation_flaws.is_empty() {
+				println!("  step {step}: choose [{op_id}:{}]", op.name());
+				chosen = Some((op_id, cand_buffer, cand_numeric));
+				break;
+			} else {
+				// We did encounter this successor state while testing a wildcard option.
+				println!("  step {step}: try    [{op_id}:{}] (reject: numeric deviation)", op.name());
+				println!(
+					"    s{}' props: {}",
+					step + 1,
+					fmt_concrete_props(task, &state_packer, &cand_buffer, &prop_scope, 80)
+				);
+				println!(
+					"    s{}' nums:  {}",
+					step + 1,
+					fmt_concrete_nums(&cand_numeric, &num_scope, partitions, 80)
+				);
+			}
+		}
+
+		let Some((_op_id, next_buffer, next_numeric)) = chosen else {
+			println!("  step {step}: no applicable concrete operator found for wildcard options");
+			break;
+		};
+		buffer = next_buffer;
+		numeric_state = next_numeric;
+
+		println!(
+			"  s{} props: {}",
+			step + 1,
+			fmt_concrete_props(task, &state_packer, &buffer, &prop_scope, 200)
+		);
+		println!(
+			"  s{} nums:  {}",
+			step + 1,
+			fmt_concrete_nums(&numeric_state, &num_scope, partitions, 200)
+		);
+	}
+}
+
+fn trace_variable_scope(
+	task: &dyn AbstractNumericTask,
+	plan: &WildcardPlanResult,
+	shown_steps: usize,
+) -> (Vec<usize>, Vec<usize>) {
+	let ops = task.get_operators();
+	let mut prop_vars: BTreeSet<usize> = BTreeSet::new();
+	let mut num_vars: BTreeSet<usize> = BTreeSet::new();
+
+	for choices in plan.wildcard_plan.iter().take(shown_steps) {
+		for &op_id in choices.iter() {
+			let Some(op) = ops.get(op_id) else {
+				continue;
+			};
+			for pre in op.preconditions().iter() {
+				prop_vars.insert(pre.var() as usize);
+			}
+			for eff in op.effects().iter() {
+				prop_vars.insert(eff.var_id() as usize);
+				for c in eff.conditions().iter() {
+					prop_vars.insert(c.var() as usize);
+				}
+			}
+			for neff in op.assignment_effects().iter() {
+				num_vars.insert(neff.var_id() as usize);
+				num_vars.insert(neff.affected_var_id() as usize);
+				for c in neff.conditions().iter() {
+					prop_vars.insert(c.var() as usize);
+				}
+			}
+		}
+	}
+
+	(prop_vars.into_iter().collect(), num_vars.into_iter().collect())
+}
+
+fn fmt_concrete_props(
+	task: &dyn AbstractNumericTask,
+	packer: &IntDoublePacker,
+	buffer: &[u64],
+	var_ids: &[usize],
+	max_items: usize,
+) -> String {
+	let mut out = String::new();
+	let mut shown = 0usize;
+	for &var_id in var_ids.iter() {
+		if shown >= max_items {
+			let _ = write!(&mut out, " ...");
+			break;
+		}
+		let dom = task.variables().get(var_id).map(|v| v.domain_size()).unwrap_or(0);
+		if dom <= 1 {
+			continue;
+		}
+		if shown > 0 {
+			out.push(' ');
+		}
+		let val = packer.get(buffer, var_id as i32) as i32;
+		let _ = write!(&mut out, "v{var_id}={val}");
+		shown += 1;
+	}
+	if out.is_empty() {
+		"<empty>".to_string()
+	} else {
+		out
+	}
+}
+
+fn fmt_concrete_nums(
+	numeric_state: &[f64],
+	var_ids: &[usize],
+	partitions: &NumericPartitions,
+	max_items: usize,
+) -> String {
+	let mut out = String::new();
+	let mut shown = 0usize;
+	for &num_id in var_ids.iter() {
+		if shown >= max_items {
+			let _ = write!(&mut out, " ...");
+			break;
+		}
+		let Some(&v) = numeric_state.get(num_id) else {
+			continue;
+		};
+		if shown > 0 {
+			out.push(' ');
+		}
+		let mut part_s = String::new();
+		if let Some(parts) = partitions.partitions(num_id) {
+			if let Some(pid) = partition_for_value(parts, v) {
+				let pid_u = usize::try_from(pid).unwrap_or(0);
+				let iv_s = partitions
+					.partition_interval(num_id, pid_u)
+					.map(fmt_interval)
+					.unwrap_or_else(|| "<missing-interval>".to_string());
+				part_s = format!(" p{pid_u}:{iv_s}");
+			}
+		}
+		let _ = write!(&mut out, "n{num_id}={}{}", fmt_f64_compact(v), part_s);
+		shown += 1;
+	}
+	if out.is_empty() {
+		"<empty>".to_string()
+	} else {
+		out
+	}
 }
 
 fn debug_print_flaws(_task: &dyn AbstractNumericTask, flaws: &[Flaw]) {
