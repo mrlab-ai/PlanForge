@@ -426,9 +426,7 @@ impl DomainAbstractionFactory {
     /// - all non-axiom propositional variables with abstract domain size > 1.
     pub fn dump_distances(&self, task: &dyn AbstractNumericTask, table: &AbstractDistanceTable) {
         let num_states = table.distances.len();
-        println!(
-            "\n=== TABLE OF CORE VARIABLES FOR ALL {num_states} STATES ===\n"
-        );
+        println!("\n=== TABLE OF CORE VARIABLES FOR ALL {num_states} STATES ===\n");
 
         let num_prop_vars = self.domain_sizes.len();
         if table.hash_multipliers.len() < num_prop_vars + table.numeric_domain_sizes.len() {
@@ -469,8 +467,98 @@ impl DomainAbstractionFactory {
             })
             .collect();
 
+        // Dump abstract variable domains/partitions.
+        if !refined_numeric_vars.is_empty() || !non_axiom_vars.is_empty() {
+            println!("=== ABSTRACT DOMAINS ===");
+        }
+
+        if !refined_numeric_vars.is_empty() {
+            println!("[NumericPartitions]");
+            for &num_var_id in &refined_numeric_vars {
+                let name = task
+                    .numeric_variables()
+                    .get(num_var_id)
+                    .map(|v| v.name())
+                    .unwrap_or("<unknown>");
+                let parts = self.partitions.partitions(num_var_id).unwrap_or(&[]);
+                println!("  n{num_var_id}({name}) parts={}", parts.len());
+                for (pid, iv) in parts.iter().enumerate() {
+                    println!("    p{pid}: {}", Self::format_interval(*iv));
+                }
+            }
+        }
+
+        if !non_axiom_vars.is_empty() {
+            println!("[PropositionalDomains]");
+            for &var_id in &non_axiom_vars {
+                let abs_dom = self.domain_sizes.get(var_id).copied().unwrap_or(0);
+                let name = task.get_variable_name(var_id as i32).unwrap_or("<unknown>");
+                let mapping = self.domain_mapping.get(var_id);
+                println!("  var{var_id}({name}) abs_dom={abs_dom}");
+
+                let concrete_size = task.get_variable_domain_size(var_id as i32).unwrap_or(0);
+                if abs_dom <= 0 || concrete_size <= 0 {
+                    continue;
+                }
+                let abs_dom_usize = abs_dom as usize;
+                let mut buckets: Vec<Vec<i32>> = vec![Vec::new(); abs_dom_usize];
+                for concrete_val in 0..(concrete_size as usize) {
+                    let abs_val = mapping
+                        .and_then(|m| m.get(concrete_val))
+                        .copied()
+                        .unwrap_or(concrete_val as i32);
+                    let Some(slot) = buckets.get_mut(abs_val as usize) else {
+                        continue;
+                    };
+                    slot.push(concrete_val as i32);
+                }
+
+                for (abs_val, concretes) in buckets.iter().enumerate() {
+                    let mut line = format!("    abs{abs_val}: ");
+                    // Print indices; also include up to a few fact names.
+                    line.push('[');
+                    for (i, cv) in concretes.iter().enumerate() {
+                        if i > 0 {
+                            line.push_str(", ");
+                        }
+                        line.push_str(&cv.to_string());
+                    }
+                    line.push(']');
+
+                    let shown = concretes.len().min(3);
+                    if shown > 0 {
+                        let mut names: Vec<&str> = Vec::new();
+                        for cv in concretes.iter().take(shown) {
+                            let fact = planners_sas::numeric::numeric_task::Fact::new(
+                                var_id as u32,
+                                *cv,
+                            );
+                            let n = task.get_fact_name(&fact);
+                            if !n.is_empty() {
+                                names.push(n);
+                            }
+                        }
+                        if !names.is_empty() {
+                            line.push_str("  names=");
+                            for (i, n) in names.iter().enumerate() {
+                                if i > 0 {
+                                    line.push_str(" | ");
+                                }
+                                line.push_str(n);
+                            }
+                            if concretes.len() > shown {
+                                line.push_str(" | ...");
+                            }
+                        }
+                    }
+                    println!("{line}");
+                }
+            }
+        }
+
         let mut num_headers: Vec<String> = Vec::with_capacity(refined_numeric_vars.len());
         let mut num_widths: Vec<usize> = Vec::with_capacity(refined_numeric_vars.len());
+        let mut num_partition_texts: Vec<Vec<String>> = Vec::with_capacity(refined_numeric_vars.len());
         for &num_var_id in &refined_numeric_vars {
             let name = task
                 .numeric_variables()
@@ -478,9 +566,20 @@ impl DomainAbstractionFactory {
                 .map(|v| v.name())
                 .unwrap_or("<unknown>");
             let header = format!("num{num_var_id}({name})");
-            let width = header.len().max(6);
+
+            let parts = self.partitions.partitions(num_var_id).unwrap_or(&[]);
+            let mut texts: Vec<String> = Vec::with_capacity(parts.len());
+            let mut max_part_len: usize = 0;
+            for (pid, iv) in parts.iter().enumerate() {
+                let s = format!("p{pid}:{}", Self::format_interval(*iv));
+                max_part_len = max_part_len.max(s.len());
+                texts.push(s);
+            }
+
+            let width = header.len().max(6).max(max_part_len);
             num_headers.push(header);
             num_widths.push(width);
+            num_partition_texts.push(texts);
         }
 
         let mut prop_headers: Vec<String> = Vec::with_capacity(non_axiom_vars.len());
@@ -495,7 +594,7 @@ impl DomainAbstractionFactory {
 
         // Header
         let mut header_line = String::new();
-        header_line.push_str("\nState | Distance | ");
+        header_line.push_str("\nState | Flags | Distance | ");
         for (i, h) in num_headers.iter().enumerate() {
             header_line.push_str(&format!("{h:>width$} | ", width = num_widths[i]));
         }
@@ -506,7 +605,7 @@ impl DomainAbstractionFactory {
 
         // Separator
         let mut sep = String::new();
-        sep.push_str("------|----------|");
+        sep.push_str("------|-------|----------|");
         for &w in &num_widths {
             sep.push_str(&"-".repeat(w + 2));
             sep.push('|');
@@ -523,25 +622,48 @@ impl DomainAbstractionFactory {
                 .get(state_hash as usize)
                 .copied()
                 .unwrap_or(f64::INFINITY);
-            if !dist.is_finite() {
-                // Skip unreachable states for brevity (numeric-fd behavior).
+            let is_init = state_hash == table.initial_state_hash;
+            let is_goal = self.is_goal_state(
+                state_hash,
+                &table.goal_facts,
+                &table.numeric_domain_sizes,
+                &table.hash_multipliers,
+            );
+
+            if !dist.is_finite() && !(is_init || is_goal) {
+                // Skip unreachable states for brevity (numeric-fd behavior), but always show
+                // the initial and goal states.
                 continue;
             }
 
+            let flags = match (is_init, is_goal) {
+                (true, true) => "IG",
+                (true, false) => "I",
+                (false, true) => "G",
+                (false, false) => "",
+            };
+
+            let dist_cell = if dist.is_finite() {
+                format!("{dist:>8.3}")
+            } else {
+                format!("{:>8}", "INF")
+            };
+
             let mut line = String::new();
-            line.push_str(&format!("{state_hash:>5} | "));
-            line.push_str(&format!("{:>8} | ", format!("{dist:.3}")));
+            line.push_str(&format!("{state_hash:>5} | {flags:>5} | {dist_cell} | "));
 
             for (i, &num_var_id) in refined_numeric_vars.iter().enumerate() {
                 let abs_var_id = num_prop_vars + num_var_id;
                 let mult = table.hash_multipliers[abs_var_id] as i64;
                 let dom = table.numeric_domain_sizes[num_var_id] as i64;
                 let part = (((state_hash as i64) / mult) % dom) as i64;
-                line.push_str(&format!(
-                    "{val:>width$} | ",
-                    val = part,
-                    width = num_widths[i]
-                ));
+                let part_usize = usize::try_from(part).unwrap_or(0);
+                let val = num_partition_texts
+                    .get(i)
+                    .and_then(|v| v.get(part_usize))
+                    .map(|s| s.as_str())
+                    .unwrap_or("<invalid>");
+                line.push_str(&format!("{val:>width$} | ", width = num_widths[i]));
             }
 
             for (i, &var_id) in non_axiom_vars.iter().enumerate() {
@@ -561,6 +683,40 @@ impl DomainAbstractionFactory {
         println!();
     }
 
+    fn format_interval(iv: Interval) -> String {
+        let left = if iv.lower_closed { '[' } else { '(' };
+        let right = if iv.upper_closed { ']' } else { ')' };
+        format!(
+            "{left}{}, {}{right}",
+            Self::format_f64_bound(iv.lower),
+            Self::format_f64_bound(iv.upper)
+        )
+    }
+
+    fn format_f64_bound(v: f64) -> String {
+        if v.is_infinite() {
+            if v.is_sign_negative() {
+                "-inf".to_string()
+            } else {
+                "inf".to_string()
+            }
+        } else if v.is_nan() {
+            "NaN".to_string()
+        } else {
+            // Compact but stable formatting.
+            let mut s = format!("{v:.6}");
+            while s.contains('.') && s.ends_with('0') {
+                s.pop();
+            }
+            if s.ends_with('.') {
+                s.pop();
+            }
+            if s == "-0" {
+                s = "0".to_string();
+            }
+            s
+        }
+    }
     fn comparison_var_ids(&self) -> Vec<usize> {
         self.comparison_trees
             .iter()
