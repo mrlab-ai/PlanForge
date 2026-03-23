@@ -3,6 +3,7 @@ use std::fmt;
 
 use nom::{
     IResult,
+    branch::alt,
     bytes::complete::tag_no_case,
     character::complete::{char, multispace0, one_of},
     combinator::{all_consuming, cut, map, opt},
@@ -14,6 +15,8 @@ use nom::{
 #[serde(rename_all = "lowercase")]
 pub enum HeuristicSpec {
     Blind,
+    #[serde(rename = "domain_abstraction")]
+    DomainAbstraction,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -26,6 +29,7 @@ impl fmt::Display for HeuristicSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HeuristicSpec::Blind => write!(f, "blind()"),
+            HeuristicSpec::DomainAbstraction => write!(f, "domain_abstraction()"),
         }
     }
 }
@@ -68,7 +72,16 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
         tuple((ws(tag_no_case("blind")), opt(ws(empty_parens)))),
         |_| HeuristicSpec::Blind,
     );
-    ws(blind)(input)
+
+    let domain_abstraction = map(
+        tuple((
+            ws(tag_no_case("domain_abstraction")),
+            opt(ws(empty_parens)),
+        )),
+        |_| HeuristicSpec::DomainAbstraction,
+    );
+
+    ws(alt((domain_abstraction, blind)))(input)
 }
 
 fn search_spec(input: &str) -> Res<'_, SearchSpec> {

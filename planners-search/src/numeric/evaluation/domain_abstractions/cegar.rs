@@ -1,3 +1,7 @@
+#[cfg(test)]
+mod tests;
+
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Context, Result};
@@ -32,6 +36,25 @@ pub enum Flaw {
 	Numeric(NumericFlaw),
 }
 
+/// How `fix_flaws` chooses which flaws to refine.
+///
+/// This mirrors numeric-fd's `FlawTreatment` options, but our defaults aim to
+/// stay deterministic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlawTreatment {
+	RandomSingleAtom,
+	OneSplitPerAtom,
+	OneSplitPerVariable,
+	MaxRefinedSingleAtom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DependentNumericRefinement {
+	None,
+	One,
+	All,
+}
+
 #[derive(Debug, Clone)]
 pub struct CegarConfig {
 	pub max_iterations: usize,
@@ -39,6 +62,9 @@ pub struct CegarConfig {
 	pub use_wildcard_plans: bool,
 	pub combine_labels: bool,
 	pub enable_refinement: bool,
+	pub refinement_batch_size: usize,
+	pub flaw_treatment: FlawTreatment,
+	pub use_progress_weighted_flaw_selection: bool,
 }
 
 impl Default for CegarConfig {
@@ -49,6 +75,9 @@ impl Default for CegarConfig {
 			use_wildcard_plans: true,
 			combine_labels: true,
 			enable_refinement: false,
+			refinement_batch_size: 1,
+			flaw_treatment: FlawTreatment::RandomSingleAtom,
+			use_progress_weighted_flaw_selection: false,
 		}
 	}
 }
@@ -82,6 +111,7 @@ pub struct Cegar {
 impl Cegar {
 	pub fn new(config: CegarConfig) -> Result<Self> {
 		ensure!(config.max_iterations > 0, "max_iterations must be > 0");
+		ensure!(config.refinement_batch_size > 0, "refinement_batch_size must be > 0");
 		Ok(Self { config })
 	}
 
@@ -235,15 +265,562 @@ impl Cegar {
 			Ok(goal_flaws)
 		}
 	}
+
+	/// Port of numeric-fd's refinement step (`fix_flaws`).
+	///
+	/// Returns `true` if any refinement was applied.
+	pub fn fix_flaws(
+		&self,
+		task: &dyn AbstractNumericTask,
+		flaws: &[Flaw],
+		domain_mapping: &mut DomainMapping,
+		domain_sizes: &mut Vec<i32>,
+		partitions: &mut NumericPartitions,
+		numeric_domain_sizes: &mut Vec<usize>,
+	) -> bool {
+		let comparison_var_ids: HashSet<usize> = task
+			.comparison_axioms()
+			.iter()
+			.filter_map(|ax| usize::try_from(ax.get_affected_var_id()).ok())
+			.collect();
+		let abstraction_size = compute_abstraction_size(domain_sizes, numeric_domain_sizes);
+
+		if self.config.refinement_batch_size > 1 {
+			return fix_top_k_flaws(
+				task,
+				flaws,
+				&comparison_var_ids,
+				domain_mapping,
+				domain_sizes,
+				partitions,
+				numeric_domain_sizes,
+				abstraction_size,
+				self.config.refinement_batch_size,
+				self.config.use_progress_weighted_flaw_selection,
+			);
+		}
+
+		match self.config.flaw_treatment {
+			FlawTreatment::RandomSingleAtom => fix_single_flaw_in_order(
+				task,
+				flaws,
+				&comparison_var_ids,
+				domain_mapping,
+				domain_sizes,
+				partitions,
+				numeric_domain_sizes,
+				abstraction_size,
+				self.config.use_progress_weighted_flaw_selection,
+			),
+			FlawTreatment::OneSplitPerAtom => fix_flaws_per_atom(
+				task,
+				flaws,
+				&comparison_var_ids,
+				domain_mapping,
+				domain_sizes,
+				partitions,
+				numeric_domain_sizes,
+				abstraction_size,
+			),
+			FlawTreatment::OneSplitPerVariable => fix_flaws_per_variable(
+				task,
+				flaws,
+				&comparison_var_ids,
+				domain_mapping,
+				domain_sizes,
+				partitions,
+				numeric_domain_sizes,
+				abstraction_size,
+			),
+			FlawTreatment::MaxRefinedSingleAtom => fix_single_flaw_max_refined(
+				task,
+				flaws,
+				&comparison_var_ids,
+				domain_mapping,
+				domain_sizes,
+				partitions,
+				numeric_domain_sizes,
+				abstraction_size,
+			),
+		}
+	}
+}
+
+fn compute_abstraction_size(domain_sizes: &[i32], numeric_domain_sizes: &[usize]) -> usize {
+	let mut size: usize = 1;
+	for &d in domain_sizes.iter() {
+		let d_usize = usize::try_from(d.max(0)).unwrap_or(0);
+		if d_usize == 0 {
+			return 0;
+		}
+		size = size.saturating_mul(d_usize);
+	}
+	for &p in numeric_domain_sizes.iter() {
+		if p == 0 {
+			return 0;
+		}
+		size = size.saturating_mul(p);
+	}
+	size
+}
+
+fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
+	match flaw {
+		Flaw::Propositional(pf) => (0, pf.fact.var() as usize, pf.fact.value() as usize, 0, false),
+		Flaw::Numeric(nf) => (1, nf.numeric_var_id, 0, nf.value.to_bits(), nf.include_in_lower),
+	}
+}
+
+fn flaw_variable_key(flaw: &Flaw) -> (u8, usize) {
+	match flaw {
+		Flaw::Propositional(pf) => (0, pf.fact.var() as usize),
+		Flaw::Numeric(nf) => (1, nf.numeric_var_id),
+	}
+}
+
+fn score_flaw(flaw: &Flaw, domain_sizes: &[i32], numeric_domain_sizes: &[usize], _abstraction_size: usize) -> i64 {
+	match flaw {
+		Flaw::Numeric(nf) => numeric_domain_sizes
+			.get(nf.numeric_var_id)
+			.copied()
+			.unwrap_or(0) as i64,
+		Flaw::Propositional(pf) => {
+			let var_id = pf.fact.var() as usize;
+			let base = domain_sizes.get(var_id).copied().unwrap_or(0) as i64;
+			let max_dep = pf
+				.dependent_numeric_flaws
+				.iter()
+				.filter_map(|nf| numeric_domain_sizes.get(nf.numeric_var_id).copied())
+				.max()
+				.unwrap_or(0) as i64;
+			base + max_dep
+		}
+	}
+}
+
+fn fix_top_k_flaws(
+	task: &dyn AbstractNumericTask,
+	flaws: &[Flaw],
+	comparison_var_ids: &HashSet<usize>,
+	domain_mapping: &mut DomainMapping,
+	domain_sizes: &mut Vec<i32>,
+	partitions: &mut NumericPartitions,
+	numeric_domain_sizes: &mut Vec<usize>,
+	abstraction_size: usize,
+	refinement_batch_size: usize,
+	use_progress_weighted_flaw_selection: bool,
+) -> bool {
+	if flaws.is_empty() {
+		return false;
+	}
+
+	let mut indices: Vec<usize> = (0..flaws.len()).collect();
+	if use_progress_weighted_flaw_selection {
+		indices.sort_by(|&a, &b| {
+			let sa = score_flaw(&flaws[a], domain_sizes, numeric_domain_sizes, abstraction_size);
+			let sb = score_flaw(&flaws[b], domain_sizes, numeric_domain_sizes, abstraction_size);
+			sb.cmp(&sa).then_with(|| flaw_atom_key(&flaws[a]).cmp(&flaw_atom_key(&flaws[b])))
+		});
+	}
+
+	let mut changed = false;
+	let mut applied: usize = 0;
+	let mut refined_prop_vars: HashSet<usize> = HashSet::new();
+	let mut refined_numeric_vars: HashSet<usize> = HashSet::new();
+
+	for idx in indices {
+		if applied >= refinement_batch_size {
+			break;
+		}
+		let local_changed = try_refine_from_flaw(
+			task,
+			&flaws[idx],
+			comparison_var_ids,
+			domain_mapping,
+			domain_sizes,
+			partitions,
+			numeric_domain_sizes,
+			DependentNumericRefinement::One,
+			Some(&mut refined_prop_vars),
+			Some(&mut refined_numeric_vars),
+		);
+		if local_changed {
+			changed = true;
+			applied += 1;
+		}
+	}
+
+	changed
+}
+
+fn fix_single_flaw_in_order(
+	task: &dyn AbstractNumericTask,
+	flaws: &[Flaw],
+	comparison_var_ids: &HashSet<usize>,
+	domain_mapping: &mut DomainMapping,
+	domain_sizes: &mut Vec<i32>,
+	partitions: &mut NumericPartitions,
+	numeric_domain_sizes: &mut Vec<usize>,
+	abstraction_size: usize,
+	use_progress_weighted_flaw_selection: bool,
+) -> bool {
+	if flaws.is_empty() {
+		return false;
+	}
+
+	let mut indices: Vec<usize> = (0..flaws.len()).collect();
+	if use_progress_weighted_flaw_selection {
+		indices.sort_by(|&a, &b| {
+			let sa = score_flaw(&flaws[a], domain_sizes, numeric_domain_sizes, abstraction_size);
+			let sb = score_flaw(&flaws[b], domain_sizes, numeric_domain_sizes, abstraction_size);
+			sb.cmp(&sa).then_with(|| flaw_atom_key(&flaws[a]).cmp(&flaw_atom_key(&flaws[b])))
+		});
+	}
+
+	for idx in indices {
+		if try_refine_from_flaw(
+			task,
+			&flaws[idx],
+			comparison_var_ids,
+			domain_mapping,
+			domain_sizes,
+			partitions,
+			numeric_domain_sizes,
+			DependentNumericRefinement::None,
+			None,
+			None,
+		) {
+			return true;
+		}
+	}
+
+	false
+}
+
+fn fix_flaws_per_atom(
+	task: &dyn AbstractNumericTask,
+	flaws: &[Flaw],
+	comparison_var_ids: &HashSet<usize>,
+	domain_mapping: &mut DomainMapping,
+	domain_sizes: &mut Vec<i32>,
+	partitions: &mut NumericPartitions,
+	numeric_domain_sizes: &mut Vec<usize>,
+	_abstraction_size: usize,
+) -> bool {
+	let mut ordered: Vec<&Flaw> = flaws.iter().collect();
+	ordered.sort_by(|a, b| flaw_atom_key(a).cmp(&flaw_atom_key(b)));
+
+	let mut changed = false;
+	let mut last: Option<(u8, usize, usize, u64, bool)> = None;
+	for flaw in ordered {
+		let key = flaw_atom_key(flaw);
+		if last.as_ref() == Some(&key) {
+			continue;
+		}
+		last = Some(key);
+		let local_changed = try_refine_from_flaw(
+			task,
+			flaw,
+			comparison_var_ids,
+			domain_mapping,
+			domain_sizes,
+			partitions,
+			numeric_domain_sizes,
+			DependentNumericRefinement::All,
+			None,
+			None,
+		);
+		changed = changed || local_changed;
+	}
+	changed
+}
+
+fn fix_flaws_per_variable(
+	task: &dyn AbstractNumericTask,
+	flaws: &[Flaw],
+	comparison_var_ids: &HashSet<usize>,
+	domain_mapping: &mut DomainMapping,
+	domain_sizes: &mut Vec<i32>,
+	partitions: &mut NumericPartitions,
+	numeric_domain_sizes: &mut Vec<usize>,
+	_abstraction_size: usize,
+) -> bool {
+	let mut ordered: Vec<&Flaw> = flaws.iter().collect();
+	ordered.sort_by(|a, b| flaw_variable_key(a).cmp(&flaw_variable_key(b)));
+
+	let mut changed = false;
+	let mut refined_prop_vars: HashSet<usize> = HashSet::new();
+	let mut refined_numeric_vars: HashSet<usize> = HashSet::new();
+	let mut last: Option<(u8, usize)> = None;
+
+	for flaw in ordered {
+		let key = flaw_variable_key(flaw);
+		if last.as_ref() == Some(&key) {
+			continue;
+		}
+		last = Some(key);
+		let local_changed = try_refine_from_flaw(
+			task,
+			flaw,
+			comparison_var_ids,
+			domain_mapping,
+			domain_sizes,
+			partitions,
+			numeric_domain_sizes,
+			DependentNumericRefinement::One,
+			Some(&mut refined_prop_vars),
+			Some(&mut refined_numeric_vars),
+		);
+		changed = changed || local_changed;
+	}
+	changed
+}
+
+fn fix_single_flaw_max_refined(
+	task: &dyn AbstractNumericTask,
+	flaws: &[Flaw],
+	comparison_var_ids: &HashSet<usize>,
+	domain_mapping: &mut DomainMapping,
+	domain_sizes: &mut Vec<i32>,
+	partitions: &mut NumericPartitions,
+	numeric_domain_sizes: &mut Vec<usize>,
+	abstraction_size: usize,
+) -> bool {
+	if flaws.is_empty() {
+		return false;
+	}
+
+	#[derive(Clone)]
+	struct Candidate {
+		idx: usize,
+		score: i64,
+		restricted_dep: Option<Vec<NumericFlaw>>,
+	}
+
+	let mut candidates: Vec<Candidate> = Vec::with_capacity(flaws.len());
+	for (idx, flaw) in flaws.iter().enumerate() {
+		let mut restricted_dep: Option<Vec<NumericFlaw>> = None;
+		let score = match flaw {
+			Flaw::Numeric(nf) => numeric_domain_sizes.get(nf.numeric_var_id).copied().unwrap_or(0) as i64,
+			Flaw::Propositional(pf) => {
+				let var_id = pf.fact.var() as usize;
+				let base = domain_sizes.get(var_id).copied().unwrap_or(0) as i64;
+				if comparison_var_ids.contains(&var_id) && !pf.dependent_numeric_flaws.is_empty() {
+					let mut best: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
+					for nf in pf.dependent_numeric_flaws.iter().cloned() {
+						let partitions = numeric_domain_sizes.get(nf.numeric_var_id).copied().unwrap_or(0);
+						best.entry(partitions).or_default().push(nf);
+					}
+					if let Some((&max_partitions, vec)) = best.iter().next_back() {
+						restricted_dep = Some(vec.clone());
+						base + (max_partitions as i64)
+					} else {
+						base
+					}
+				} else {
+					base
+				}
+			}
+		};
+		candidates.push(Candidate { idx, score, restricted_dep });
+	}
+
+	// Highest score first; tie-break by stable atom key for determinism.
+	candidates.sort_by(|a, b| {
+		b.score
+			.cmp(&a.score)
+			.then_with(|| flaw_atom_key(&flaws[a.idx]).cmp(&flaw_atom_key(&flaws[b.idx])))
+	});
+
+	for cand in candidates {
+		let mut chosen = flaws[cand.idx].clone();
+		if let (Flaw::Propositional(pf), Some(restricted)) = (&mut chosen, cand.restricted_dep) {
+			pf.dependent_numeric_flaws = restricted;
+		}
+
+		if try_refine_from_flaw(
+			task,
+			&chosen,
+			comparison_var_ids,
+			domain_mapping,
+			domain_sizes,
+			partitions,
+			numeric_domain_sizes,
+			DependentNumericRefinement::One,
+			None,
+			None,
+		) {
+			return true;
+		}
+	}
+
+	let _ = abstraction_size;
+	false
+}
+
+fn try_refine_from_flaw(
+	task: &dyn AbstractNumericTask,
+	flaw: &Flaw,
+	comparison_var_ids: &HashSet<usize>,
+	domain_mapping: &mut DomainMapping,
+	domain_sizes: &mut [i32],
+	partitions: &mut NumericPartitions,
+	numeric_domain_sizes: &mut [usize],
+	dependent_numeric_refinement: DependentNumericRefinement,
+	mut refined_prop_vars: Option<&mut HashSet<usize>>,
+	mut refined_numeric_vars: Option<&mut HashSet<usize>>,
+) -> bool {
+	match flaw {
+		Flaw::Numeric(nf) => {
+			let var_id = nf.numeric_var_id;
+			if let Some(set) = refined_numeric_vars.as_ref() {
+				if set.contains(&var_id) {
+					return false;
+				}
+			}
+			if partitions.split_at(var_id, nf.value, nf.include_in_lower) {
+				if let Some(parts) = partitions.partitions(var_id) {
+					if let Some(slot) = numeric_domain_sizes.get_mut(var_id) {
+						*slot = parts.len();
+					}
+				}
+				if let Some(set) = refined_numeric_vars.as_deref_mut() {
+					set.insert(var_id);
+				}
+				return true;
+			}
+			false
+		}
+		Flaw::Propositional(pf) => {
+			let var_id = pf.fact.var() as usize;
+			let value = pf.fact.value() as usize;
+			if let Some(set) = refined_prop_vars.as_ref() {
+				if set.contains(&var_id) {
+					return false;
+				}
+			}
+			if var_id >= domain_mapping.len() || var_id >= domain_sizes.len() {
+				return false;
+			}
+
+			let Ok(var_i32) = i32::try_from(var_id) else {
+				return false;
+			};
+			let Ok(concrete_size) = task.get_variable_domain_size(var_i32) else {
+				return false;
+			};
+			let Ok(concrete_size_usize) = usize::try_from(concrete_size.max(0)) else {
+				return false;
+			};
+			if value >= concrete_size_usize {
+				return false;
+			}
+
+			let mut changed = false;
+
+			if comparison_var_ids.contains(&var_id) {
+				// Comparison axiom vars: split into {false/unknown} vs {true} like numeric-fd.
+				let old_size = domain_sizes[var_id];
+				if domain_sizes[var_id] < 2 {
+					domain_sizes[var_id] = 2;
+					changed = true;
+				}
+				// Ensure mapping values are within the new abstract size.
+				if domain_mapping[var_id].len() >= 1 {
+					if domain_mapping[var_id][0] != 1 {
+						domain_mapping[var_id][0] = 1;
+						changed = true;
+					}
+				}
+				if domain_mapping[var_id].len() >= 2 {
+					if domain_mapping[var_id][1] != 0 {
+						domain_mapping[var_id][1] = 0;
+						changed = true;
+					}
+				}
+				if domain_mapping[var_id].len() >= 3 {
+					if domain_mapping[var_id][2] != 0 {
+						domain_mapping[var_id][2] = 0;
+						changed = true;
+					}
+				}
+				let _ = old_size; // keep structure similar to numeric-fd; size tracking handled elsewhere
+			} else {
+				let abs_size = domain_sizes[var_id];
+				if abs_size <= 0 {
+					return false;
+				}
+				let Ok(abs_size_usize) = usize::try_from(abs_size) else {
+					return false;
+				};
+				// If we've already fully refined this variable, nothing to do.
+				if abs_size_usize >= concrete_size_usize {
+					return false;
+				}
+				// Only refine if the value is still mapped to the default class (0).
+				if domain_mapping[var_id].get(value).copied().unwrap_or(0) != 0 {
+					return false;
+				}
+
+				domain_mapping[var_id][value] = abs_size;
+				domain_sizes[var_id] = abs_size + 1;
+				changed = true;
+			}
+
+			if let Some(set) = refined_prop_vars.as_deref_mut() {
+				set.insert(var_id);
+			}
+
+			// Optional dependent numeric refinements (currently produced only for comparison vars).
+			if dependent_numeric_refinement != DependentNumericRefinement::None
+				&& !pf.dependent_numeric_flaws.is_empty()
+			{
+				let mut any_numeric_changed = false;
+				let iter: Box<dyn Iterator<Item = &NumericFlaw>> = match dependent_numeric_refinement {
+					DependentNumericRefinement::None => Box::new(std::iter::empty()),
+					DependentNumericRefinement::All => Box::new(pf.dependent_numeric_flaws.iter()),
+					DependentNumericRefinement::One => Box::new(pf.dependent_numeric_flaws.iter()),
+				};
+
+				for dep in iter {
+					let num_id = dep.numeric_var_id;
+					if let Some(set) = refined_numeric_vars.as_ref() {
+						if set.contains(&num_id) {
+							continue;
+						}
+					}
+
+					if partitions.split_at(num_id, dep.value, dep.include_in_lower) {
+						if let Some(parts) = partitions.partitions(num_id) {
+							if let Some(slot) = numeric_domain_sizes.get_mut(num_id) {
+								*slot = parts.len();
+							}
+						}
+						if let Some(set) = refined_numeric_vars.as_deref_mut() {
+							set.insert(num_id);
+						}
+						any_numeric_changed = true;
+						if dependent_numeric_refinement == DependentNumericRefinement::One {
+							break;
+						}
+					}
+				}
+				return any_numeric_changed || changed;
+			}
+
+			changed
+		}
+	}
 }
 
 pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<CegarOutcome> {
 	ensure!(config.max_iterations > 0, "max_iterations must be > 0");
 
 	let start = Instant::now();
+	let cegar = Cegar::new(config.clone())?;
 
-	let (mut domain_mapping, mut domain_sizes) = identity_domain_mapping_and_sizes(task)
-		.context("failed to build identity domain mapping")?;
+	let (mut domain_mapping, mut domain_sizes) = trivial_domain_mapping_and_sizes(task)
+		.context("failed to build trivial domain mapping")?;
 
 	let mut partitions = NumericPartitions::trivial(task);
 	let mut numeric_domain_sizes: Vec<usize> = vec![1; task.numeric_variables().len()];
@@ -295,24 +872,34 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 			break;
 		}
 
-		// TDODO: not implemented yet.
-		#[allow(unreachable_code)]
-		{
-			// TODO: collect flaws from the (wildcard) abstract plan and concrete execution.
-			let flaws: Vec<Flaw> = todo!("collect flaws (numeric-fd: get_flaws)");
+		// Refinement requires a wildcard plan (current Rust port mirrors the numeric-fd flow).
+		let Some(plan) = last_step
+			.as_ref()
+			.and_then(|s| s.wildcard_plan.as_ref())
+		else {
+			break;
+		};
 
-			if flaws.is_empty() {
-				break;
-			}
-
-			// TODO: refinement strategies (numeric-fd: fix_flaws + helpers)
-			// This should mutate `domain_mapping` / `partitions` and update size vectors.
-			let _refined: bool = todo!("refine abstraction from flaws");
-
-			// TODO: update `numeric_domain_sizes` from `partitions` if numeric refinement happened.
-
-			iteration += 1;
+		let flaws = cegar
+			.get_flaws(task, &partitions, plan, false)
+			.with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
+		if flaws.is_empty() {
+			break;
 		}
+
+		let refined = cegar.fix_flaws(
+			task,
+			&flaws,
+			&mut domain_mapping,
+			&mut domain_sizes,
+			&mut partitions,
+			&mut numeric_domain_sizes,
+		);
+		if !refined {
+			break;
+		}
+
+		iteration += 1;
 	}
 
 	let last_step = last_step.context("CEGAR did not perform any iterations")?;
@@ -326,6 +913,29 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 		},
 		last_step,
 	})
+}
+
+fn trivial_domain_mapping_and_sizes(
+	task: &dyn AbstractNumericTask,
+) -> Result<(DomainMapping, Vec<i32>)> {
+	let num_vars_i32 = task.get_num_variables();
+	ensure!(num_vars_i32 >= 0, "task.get_num_variables() must be non-negative");
+	let num_vars = usize::try_from(num_vars_i32).context("num_vars does not fit usize")?;
+
+	let mut domain_sizes: Vec<i32> = vec![1; num_vars];
+	let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
+
+	for var in 0..num_vars {
+		let var_i32 = i32::try_from(var).context("var index does not fit i32")?;
+		let size = task
+			.get_variable_domain_size(var_i32)
+			.map_err(|e| anyhow::anyhow!(e.to_string()))
+			.with_context(|| format!("get_variable_domain_size({var}) failed"))?;
+		ensure!(size > 0, "non-positive domain size for var {var}: {size}");
+		domain_mapping.push(vec![0; size as usize]);
+	}
+
+	Ok((domain_mapping, domain_sizes))
 }
 
 fn identity_domain_mapping_and_sizes(task: &dyn AbstractNumericTask) -> Result<(DomainMapping, Vec<i32>)> {
@@ -539,7 +1149,6 @@ fn get_numeric_deviation_flaws(
 	flaws
 }
 
-#[cfg(test)]
-mod tests;
+
 
 

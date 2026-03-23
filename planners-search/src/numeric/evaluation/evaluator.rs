@@ -7,7 +7,9 @@
 mod tests;
 
 use crate::numeric::evaluation::EvaluationResult;
+use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use planners_sas::numeric::state_registry::ConcreteState;
+use planners_sas::numeric::state_registry::StateRegistry;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -46,31 +48,67 @@ impl std::error::Error for EvaluationError {}
 ///
 /// This replaces the C++ `EvaluationContext` by providing a clean interface
 /// for managing evaluation state and caching results across multiple evaluators.
-pub struct EvaluationState<'a> {
+pub struct EvaluationState<'state, 'task> {
     /// The evaluation result being built (heuristic map and flags). The `state`
     /// inside the `EvaluationResult` will be synchronized with `backing_state`
     /// when `into_result` is called.
     result: EvaluationResult,
     /// Borrowed reference to the concrete state used during evaluation
-    backing_state: &'a ConcreteState,
+    backing_state: &'state ConcreteState,
+    task: Option<&'task dyn AbstractNumericTask>,
+    state_registry: Option<&'state StateRegistry<'task>>,
     /// Cache of already computed evaluators to avoid recomputation
     computed_evaluators: RefCell<HashMap<String, bool>>,
     /// Whether the currently evaluated state is a goal
     is_goal: bool,
 }
 
-impl<'a> EvaluationState<'a> {
+impl<'state, 'task> EvaluationState<'state, 'task> {
     /// Creates a new evaluation state that borrows `state`.
     /// The internal `EvaluationResult` will be synchronized with the borrowed
     /// state when `into_result` is called.
-    pub fn new(state: &'a ConcreteState, g_value: f64, is_preferred: bool) -> Self {
+    pub fn new(state: &'state ConcreteState, g_value: f64, is_preferred: bool) -> Self {
         let placeholder = EvaluationResult::new_with_id(state.get_id(), g_value, is_preferred);
         Self {
             result: placeholder,
             backing_state: state,
+            task: None,
+            state_registry: None,
             computed_evaluators: RefCell::new(HashMap::new()),
             is_goal: false,
         }
+    }
+
+    /// Creates a new evaluation state with access to task and state registry.
+    ///
+    /// Heuristics that need to inspect the concrete state's variable values
+    /// should require these to be present.
+    pub fn new_with_registry(
+        state: &'state ConcreteState,
+        g_value: f64,
+        is_preferred: bool,
+        task: &'task dyn AbstractNumericTask,
+        state_registry: &'state StateRegistry<'task>,
+    ) -> Self {
+        let mut s = Self::new(state, g_value, is_preferred);
+        s.task = Some(task);
+        s.state_registry = Some(state_registry);
+        s
+    }
+
+    /// Borrowed concrete state being evaluated.
+    pub fn state(&self) -> &'state ConcreteState {
+        self.backing_state
+    }
+
+    /// Task reference, if provided.
+    pub fn task(&self) -> Option<&'task dyn AbstractNumericTask> {
+        self.task
+    }
+
+    /// State registry reference, if provided.
+    pub fn state_registry(&self) -> Option<&'state StateRegistry<'task>> {
+        self.state_registry
     }
 
     /// Gets the current evaluation result
@@ -152,7 +190,10 @@ pub trait Evaluator {
     ///
     /// This method should update the evaluation state with computed values
     /// and return the primary value for this evaluator.
-    fn evaluate_state(&self, eval_state: &mut EvaluationState<'_>) -> Result<f64, EvaluationError>;
+    fn evaluate_state(
+        &self,
+        eval_state: &mut EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError>;
 
     /// Returns true if dead ends detected by this evaluator are reliable
     fn dead_ends_are_reliable(&self) -> bool {
@@ -241,7 +282,10 @@ impl Evaluator for EvaluatorCollection {
         self.name.clone()
     }
 
-    fn evaluate_state(&self, eval_state: &mut EvaluationState<'_>) -> Result<f64, EvaluationError> {
+    fn evaluate_state(
+        &self,
+        eval_state: &mut EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         let mut last_value = 0.0;
 
         for evaluator in &self.evaluators {

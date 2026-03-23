@@ -197,13 +197,35 @@ impl DomainAbstractionFactory {
             domain_mapping.len() == domain_sizes.len(),
             "domain_mapping/domain_sizes length mismatch"
         );
-        for (var, &size) in domain_sizes.iter().enumerate() {
-            ensure!(size > 0, "non-positive domain size for var {var}: {size}");
+        for (var, &abs_size) in domain_sizes.iter().enumerate() {
+            ensure!(abs_size > 0, "non-positive abstract domain size for var {var}: {abs_size}");
+
+            let var_i32 = i32::try_from(var).context("var index does not fit i32")?;
+            let concrete_size = task
+                .get_variable_domain_size(var_i32)
+                .map_err(|e| anyhow!(e.to_string()))
+                .with_context(|| format!("get_variable_domain_size({var}) failed"))?;
             ensure!(
-                domain_mapping[var].len() == size as usize,
-                "domain_mapping[{var}] has len {}, expected {size}",
+                concrete_size > 0,
+                "non-positive concrete domain size for var {var}: {concrete_size}"
+            );
+            ensure!(
+                abs_size <= concrete_size,
+                "abstract domain size for var {var} exceeds concrete size ({abs_size} > {concrete_size})"
+            );
+
+            ensure!(
+                domain_mapping[var].len() == concrete_size as usize,
+                "domain_mapping[{var}] has len {}, expected concrete size {concrete_size}",
                 domain_mapping[var].len()
             );
+
+            for (val, &mapped) in domain_mapping[var].iter().enumerate() {
+                ensure!(
+                    mapped >= 0 && mapped < abs_size,
+                    "domain_mapping[{var}][{val}]={mapped} out of range for abstract size {abs_size}"
+                );
+            }
         }
         for (n, &parts) in numeric_domain_sizes.iter().enumerate() {
             ensure!(parts > 0, "numeric_domain_sizes[{n}] must be > 0");

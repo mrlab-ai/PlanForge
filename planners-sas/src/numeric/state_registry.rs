@@ -772,13 +772,13 @@ impl<'a> StateRegistry<'a> {
     /// - Using stored constants for constant variables
     /// - Retrieving cost variables from per-state storage
     /// - Evaluating arithmetic axioms to compute derived values
-    fn get_numeric_vars(&self, state: &ConcreteState) -> Result<Vec<f64>, InvalidIndex> {
+    pub fn get_numeric_vars(&self, state: &ConcreteState) -> Result<Vec<f64>, InvalidIndex> {
         let mut result = vec![0.0; self.root_task.numeric_variables().len()];
         self.fill_numeric_vars(state, &mut result)?;
         Ok(result)
     }
 
-    fn fill_numeric_vars(
+    pub fn fill_numeric_vars(
         &self,
         state: &ConcreteState,
         output: &mut Vec<f64>,

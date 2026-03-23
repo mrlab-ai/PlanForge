@@ -83,6 +83,33 @@ impl NumericPartitions {
         }
         out
     }
+
+    /// Splits the partition that contains `value` into two partitions.
+    ///
+    /// Returns `true` if a split was applied.
+    pub fn split_at(&mut self, numeric_var_id: usize, value: f64, include_in_lower: bool) -> bool {
+        let Some(parts) = self.partitions_by_numeric_var.get_mut(numeric_var_id) else {
+            return false;
+        };
+        let Some(part_id) = parts.iter().position(|iv| iv.contains(value)) else {
+            return false;
+        };
+
+        let iv = parts[part_id];
+        if !iv.can_split_at(value, include_in_lower) {
+            return false;
+        }
+
+        let lower = Interval::new(iv.lower, value, iv.lower_closed, include_in_lower);
+        let upper = Interval::new(value, iv.upper, !include_in_lower, iv.upper_closed);
+        if lower.is_empty() || upper.is_empty() {
+            return false;
+        }
+
+        parts[part_id] = lower;
+        parts.insert(part_id + 1, upper);
+        true
+    }
 }
 
 fn intervals_overlap(a: Interval, b: Interval) -> bool {

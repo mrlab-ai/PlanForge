@@ -13,10 +13,27 @@ fn parses_astar_blind_with_or_without_unit_parens() {
 }
 
 #[test]
+fn parses_astar_domain_abstraction_with_or_without_unit_parens() {
+    assert_eq!(
+        parse_search_spec("astar(domain_abstraction)").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::DomainAbstraction)
+    );
+    assert_eq!(
+        parse_search_spec("astar(domain_abstraction())").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::DomainAbstraction)
+    );
+}
+
+#[test]
 fn trims_trailing_punctuation() {
     assert_eq!(
         parse_search_spec("astar(blind()).").unwrap(),
         SearchSpec::Astar(HeuristicSpec::Blind)
+    );
+
+    assert_eq!(
+        parse_search_spec("astar(domain_abstraction());").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::DomainAbstraction)
     );
 }
 

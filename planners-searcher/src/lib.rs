@@ -4,6 +4,9 @@ use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
 use planners_sas::numeric::state_registry::StateRegistry;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
+use planners_search::numeric::evaluation::domain_abstractions::cegar::CegarConfig;
+use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
+use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planners_search::numeric::search_engine::{
     AStarSearch, SearchEngine, SearchResult, SearchStatus,
 };
@@ -31,7 +34,7 @@ pub struct PlannersSearcherCli {
     pub internal_run: bool,
 
     /// Recursive search configuration.
-    /// Examples: "astar(blind())".
+    /// Examples: "astar(blind())", "astar(domain_abstraction())".
     #[arg(
         long,
         value_name = "SPEC",
@@ -99,6 +102,28 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
             let task_ref: &dyn AbstractNumericTask = &task;
             let heuristic_override = match heuristic {
                 crate::recursive_config::HeuristicSpec::Blind => None,
+                crate::recursive_config::HeuristicSpec::DomainAbstraction => {
+                    println!("Building domain abstraction (CEGAR)...");
+                    let mut config = CegarConfig::default();
+                    config.enable_refinement = true;
+
+                    let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("failed to construct DomainAbstractionGenerator: {e:#}"),
+                        )
+                    })?;
+                    let abstraction = generator.generate(task_ref).map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("failed to build domain abstraction: {e:#}"),
+                        )
+                    })?;
+                    Some(
+                        Box::new(DomainAbstractionHeuristic::new(None, abstraction))
+                            as Box<dyn planners_search::numeric::evaluation::Heuristic>,
+                    )
+                }
             };
 
             let mut search = AStarSearch::new(
