@@ -155,6 +155,15 @@ impl ComparisonAxiomIndex {
         })
     }
 
+    pub fn is_comparison_axiom_variable(&self, prop_var_id: i32) -> bool {
+        self.by_affected_var_id.contains_key(&prop_var_id)
+    }
+
+    pub fn comparison_tree(&self, prop_var_id: i32) -> Option<&ComparisonTree> {
+        let tree_idx = *self.by_affected_var_id.get(&prop_var_id)?;
+        self.trees.get(tree_idx)
+    }
+
     /// Returns `true` if the given propositional precondition is *definitively* contradicted
     /// by evaluating its comparison axiom over the provided numeric intervals.
     ///
@@ -162,10 +171,7 @@ impl ComparisonAxiomIndex {
     /// unknown (`None`) never contradicts.
     pub fn precondition_is_contradicted(&self, pre: &Fact, numeric_intervals: &[Interval]) -> bool {
         let var_id = pre.var() as i32;
-        let Some(&tree_idx) = self.by_affected_var_id.get(&var_id) else {
-            return false;
-        };
-        let Some(tree) = self.trees.get(tree_idx) else {
+        let Some(tree) = self.comparison_tree(var_id) else {
             return false;
         };
 

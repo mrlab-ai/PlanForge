@@ -2,6 +2,7 @@
 mod tests;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Context, Result};
@@ -11,6 +12,8 @@ use planners_sas::numeric::numeric_task::{AbstractNumericTask, Fact};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
 use super::abstract_operator_generator::DomainMapping;
+use super::comparison_expression::Interval;
+use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
 
@@ -62,6 +65,7 @@ pub struct CegarConfig {
 	pub use_wildcard_plans: bool,
 	pub combine_labels: bool,
 	pub enable_refinement: bool,
+	pub debug: bool,
 	pub refinement_batch_size: usize,
 	pub flaw_treatment: FlawTreatment,
 	pub use_progress_weighted_flaw_selection: bool,
@@ -75,6 +79,7 @@ impl Default for CegarConfig {
 			use_wildcard_plans: true,
 			combine_labels: true,
 			enable_refinement: false,
+			debug: false,
 			refinement_batch_size: 1,
 			flaw_treatment: FlawTreatment::RandomSingleAtom,
 			use_progress_weighted_flaw_selection: false,
@@ -126,6 +131,9 @@ impl Cegar {
 		wildcard_plan: &WildcardPlanResult,
 		execute_entire_plan: bool,
 	) -> Result<Vec<Flaw>> {
+		let comparison_index =
+			ComparisonAxiomIndex::from_task(task).map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
+
 		let state_packer = make_prop_state_packer(task);
 		let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
 
@@ -159,7 +167,15 @@ impl Cegar {
 					let Some(op) = task.get_operators().get(op_id) else {
 						continue;
 					};
-					let operator_flaws = get_precondition_flaws(op, &state_packer, &buffer);
+					let operator_flaws = get_precondition_flaws(
+						task,
+						partitions,
+						&comparison_index,
+						op,
+						&state_packer,
+						&buffer,
+						&numeric_state,
+					);
 					if operator_flaws.is_empty() {
 						let mut candidate_buffer = buffer.clone();
 						let numeric_state_before_op = numeric_state.clone();
@@ -216,7 +232,15 @@ impl Cegar {
 					fallback_op_id = Some(op_id);
 				}
 				let op = &task.get_operators()[op_id];
-				let operator_flaws = get_precondition_flaws(op, &state_packer, &buffer);
+				let operator_flaws = get_precondition_flaws(
+					task,
+					partitions,
+					&comparison_index,
+					op,
+					&state_packer,
+					&buffer,
+					&numeric_state,
+				);
 				if operator_flaws.is_empty() {
 					chosen_op_id = Some(op_id);
 					step_flaws.clear();
@@ -257,7 +281,14 @@ impl Cegar {
 			step_num += 1;
 		}
 
-		let goal_flaws = get_goal_flaws(task, &state_packer, &buffer);
+		let goal_flaws = get_goal_flaws(
+			task,
+			partitions,
+			&comparison_index,
+			&state_packer,
+			&buffer,
+			&numeric_state,
+		);
 		if execute_entire_plan {
 			collected_flaws.extend(goal_flaws);
 			Ok(collected_flaws)
@@ -486,7 +517,7 @@ fn fix_single_flaw_in_order(
 			domain_sizes,
 			partitions,
 			numeric_domain_sizes,
-			DependentNumericRefinement::None,
+			DependentNumericRefinement::One,
 			None,
 			None,
 		) {
@@ -839,6 +870,10 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 			}
 		}
 
+		if config.debug {
+			debug_print_abstraction_stats(iteration, &domain_sizes, &numeric_domain_sizes);
+		}
+
         // TODO: avoid cloning at all cost. 
 		let factory = DomainAbstractionFactory::new(
 			task,
@@ -861,6 +896,12 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 				})?;
 			None
 		};
+		if config.debug {
+			match wildcard_plan.as_ref() {
+				Some(plan) => debug_print_wildcard_plan(task, plan),
+				None => println!("[Abstract Plan] <none>"),
+			}
+		}
 
 		let step = CegarStep {
 			factory,
@@ -883,10 +924,18 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 		let flaws = cegar
 			.get_flaws(task, &partitions, plan, false)
 			.with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
+		if config.debug {
+			debug_print_flaws(task, &flaws);
+		}
 		if flaws.is_empty() {
 			break;
 		}
 
+		let before_size = if config.debug {
+			compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes)
+		} else {
+			None
+		};
 		let refined = cegar.fix_flaws(
 			task,
 			&flaws,
@@ -895,6 +944,10 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 			&mut partitions,
 			&mut numeric_domain_sizes,
 		);
+		if config.debug {
+			let after_size = compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes);
+			debug_print_refinement_summary(before_size, after_size, &domain_sizes, &numeric_domain_sizes, refined);
+		}
 		if !refined {
 			break;
 		}
@@ -936,6 +989,239 @@ fn trivial_domain_mapping_and_sizes(
 	}
 
 	Ok((domain_mapping, domain_sizes))
+}
+
+fn compute_abstraction_size_u128(domain_sizes: &[i32], numeric_domain_sizes: &[usize]) -> Option<u128> {
+	let mut size: u128 = 1;
+	for &d in domain_sizes.iter() {
+		let du = u128::try_from(d).ok()?;
+		if du == 0 {
+			return Some(0);
+		}
+		size = size.checked_mul(du)?;
+	}
+	for &p in numeric_domain_sizes.iter() {
+		let pu = u128::try_from(p).ok()?;
+		if pu == 0 {
+			return Some(0);
+		}
+		size = size.checked_mul(pu)?;
+	}
+	Some(size)
+}
+
+fn debug_print_abstraction_stats(iteration: usize, domain_sizes: &[i32], numeric_domain_sizes: &[usize]) {
+	let prop_vars = domain_sizes.len();
+	let num_vars = numeric_domain_sizes.len();
+	let refined_props = domain_sizes.iter().filter(|&&s| s > 1).count();
+	let refined_nums = numeric_domain_sizes.iter().filter(|&&s| s > 1).count();
+	let size = compute_abstraction_size_u128(domain_sizes, numeric_domain_sizes)
+		.map(|s| s.to_string())
+		.unwrap_or_else(|| "<overflow>".to_string());
+
+	let prop_max = domain_sizes.iter().copied().max().unwrap_or(0);
+	let num_max = numeric_domain_sizes.iter().copied().max().unwrap_or(0);
+
+	println!(
+		"[CEGAR] iteration {iteration}: abstract_states={size} (prop_vars={prop_vars}, num_vars={num_vars}, refined_prop={refined_props}, refined_num={refined_nums}, max_prop_size={prop_max}, max_num_parts={num_max})"
+	);
+}
+
+fn debug_print_wildcard_plan(task: &dyn AbstractNumericTask, plan: &WildcardPlanResult) {
+	let steps = plan.wildcard_plan.len();
+	println!("[Abstract Plan] steps={steps}");
+
+	let max_steps = 200usize;
+	let shown_steps = steps.min(max_steps);
+	if steps > max_steps {
+		println!("[Abstract Plan] (truncated to first {shown_steps} steps)");
+	}
+
+	// Print initial abstract state snapshot (sparse).
+	if let Some(prop0) = plan.abstract_prop_states.first() {
+		println!("  s0 props: {}", fmt_sparse_i32(prop0, 50));
+	}
+	if let Some(num0) = plan.abstract_numeric_states.first() {
+		println!("  s0 nums:  {}", fmt_sparse_i32(num0, 50));
+	}
+
+	let ops = task.get_operators();
+	let mut representative: Vec<String> = Vec::with_capacity(shown_steps);
+
+	for i in 0..shown_steps {
+		let choices = &plan.wildcard_plan[i];
+		let choice_count = choices.len();
+		let rep = choices
+			.first()
+			.and_then(|&id| ops.get(id).map(|op| format!("{}", op.name())))
+			.unwrap_or_else(|| "<none>".to_string());
+		representative.push(rep);
+
+		let mut line = String::new();
+		let _ = write!(&mut line, "  step {i}: options={choice_count}");
+		let preview = 10usize;
+		for &op_id in choices.iter().take(preview) {
+			let name = ops.get(op_id).map(|op| op.name()).unwrap_or("<bad-op-id>");
+			let _ = write!(&mut line, " [{op_id}:{name}]");
+		}
+		if choice_count > preview {
+			let _ = write!(&mut line, " ...");
+		}
+		println!("{line}");
+
+		// Print abstract state deltas if available.
+		if i + 1 < plan.abstract_prop_states.len() {
+			let prev = &plan.abstract_prop_states[i];
+			let cur = &plan.abstract_prop_states[i + 1];
+			let delta = fmt_delta_i32(prev, cur, 50);
+			if !delta.is_empty() {
+				println!("    props Δ: {delta}");
+			}
+		}
+		if i + 1 < plan.abstract_numeric_states.len() {
+			let prev = &plan.abstract_numeric_states[i];
+			let cur = &plan.abstract_numeric_states[i + 1];
+			let delta = fmt_delta_i32(prev, cur, 50);
+			if !delta.is_empty() {
+				println!("    nums  Δ: {delta}");
+			}
+		}
+	}
+
+	println!("[Plan] {}", representative.join(" -> "));
+}
+
+fn debug_print_flaws(_task: &dyn AbstractNumericTask, flaws: &[Flaw]) {
+	println!("[Flaws] count={}", flaws.len());
+	let max = 200usize;
+	let shown = flaws.len().min(max);
+	for (i, flaw) in flaws.iter().take(shown).enumerate() {
+		match flaw {
+			Flaw::Propositional(pf) => {
+				println!(
+					"  {i}: PropFlaw fact=(var={}, val={}) deps={}",
+					pf.fact.var(),
+					pf.fact.value(),
+					pf.dependent_numeric_flaws.len()
+				);
+				for (j, nf) in pf.dependent_numeric_flaws.iter().enumerate() {
+					println!(
+						"      - dep[{j}]: NumericFlaw var={} value={} include_in_lower={}",
+						nf.numeric_var_id,
+						nf.value,
+						nf.include_in_lower
+					);
+				}
+			}
+			Flaw::Numeric(nf) => {
+				println!(
+					"  {i}: NumericFlaw var={} value={} include_in_lower={}",
+					nf.numeric_var_id,
+					nf.value,
+					nf.include_in_lower
+				);
+			}
+		}
+	}
+	if flaws.len() > max {
+		println!("[Flaws] (truncated: showing {shown} of {})", flaws.len());
+	}
+}
+
+fn debug_print_refinement_summary(
+	before: Option<u128>,
+	after: Option<u128>,
+	domain_sizes: &[i32],
+	numeric_domain_sizes: &[usize],
+	refined: bool,
+) {
+	let before_s = before.map(|v| v.to_string()).unwrap_or_else(|| "<overflow>".to_string());
+	let after_s = after.map(|v| v.to_string()).unwrap_or_else(|| "<overflow>".to_string());
+	println!("[Refine] refined={refined} abstract_states: {before_s} -> {after_s}");
+
+	let mut refined_props: Vec<(usize, i32)> = domain_sizes
+		.iter()
+		.enumerate()
+		.filter_map(|(i, &s)| (s > 1).then_some((i, s)))
+		.collect();
+	refined_props.sort_by_key(|(i, _)| *i);
+	let refined_nums: Vec<(usize, usize)> = numeric_domain_sizes
+		.iter()
+		.enumerate()
+		.filter_map(|(i, &s)| (s > 1).then_some((i, s)))
+		.collect();
+
+	if !refined_props.is_empty() {
+		let preview = 30usize;
+		let mut line = String::new();
+		let _ = write!(&mut line, "[Refine] propositional splits: {} vars", refined_props.len());
+		for (i, s) in refined_props.iter().take(preview) {
+			let _ = write!(&mut line, " v{i}=>{s}");
+		}
+		if refined_props.len() > preview {
+			let _ = write!(&mut line, " ...");
+		}
+		println!("{line}");
+	}
+	if !refined_nums.is_empty() {
+		let preview = 30usize;
+		let mut line = String::new();
+		let _ = write!(&mut line, "[Refine] numeric splits: {} vars", refined_nums.len());
+		for (i, s) in refined_nums.iter().take(preview) {
+			let _ = write!(&mut line, " n{i}=>{s}");
+		}
+		if refined_nums.len() > preview {
+			let _ = write!(&mut line, " ...");
+		}
+		println!("{line}");
+	}
+}
+
+fn fmt_sparse_i32(values: &[i32], max_items: usize) -> String {
+	let mut out = String::new();
+	let mut shown = 0usize;
+	for (i, &v) in values.iter().enumerate() {
+		if v == 0 {
+			continue;
+		}
+		if shown >= max_items {
+			let _ = write!(&mut out, " ...");
+			break;
+		}
+		if shown > 0 {
+			out.push(' ');
+		}
+		let _ = write!(&mut out, "{i}:{v}");
+		shown += 1;
+	}
+	if out.is_empty() {
+		"<all-zero>".to_string()
+	} else {
+		out
+	}
+}
+
+fn fmt_delta_i32(prev: &[i32], cur: &[i32], max_items: usize) -> String {
+	let mut out = String::new();
+	let len = prev.len().min(cur.len());
+	let mut shown = 0usize;
+	for i in 0..len {
+		let a = prev[i];
+		let b = cur[i];
+		if a == b {
+			continue;
+		}
+		if shown >= max_items {
+			let _ = write!(&mut out, " ...");
+			break;
+		}
+		if shown > 0 {
+			out.push(' ');
+		}
+		let _ = write!(&mut out, "{i}:{a}->{b}");
+		shown += 1;
+	}
+	out
 }
 
 fn identity_domain_mapping_and_sizes(task: &dyn AbstractNumericTask) -> Result<(DomainMapping, Vec<i32>)> {
@@ -985,34 +1271,194 @@ fn fact_is_true(fact: &Fact, packer: &IntDoublePacker, buffer: &[u64]) -> bool {
 	current == fact.value()
 }
 
+fn comparison_eval_code(v: Option<bool>) -> i32 {
+	match v {
+		Some(true) => 0,
+		Some(false) => 1,
+		None => 2,
+	}
+}
+
+fn determine_include_in_lower(
+	tree: &super::comparison_expression::ComparisonTree,
+	split_var_id: usize,
+	split_value: f64,
+	concrete_values: &[f64],
+) -> bool {
+	let mut lower_inputs: Vec<Interval> = concrete_values.iter().copied().map(Interval::singleton).collect();
+	let mut upper_inputs = lower_inputs.clone();
+
+	if split_var_id < lower_inputs.len() {
+		// If the split point is included in the lower interval, the current concrete
+		// value belongs to (-inf, split_value].
+		lower_inputs[split_var_id] = Interval::new(f64::NEG_INFINITY, split_value, false, true);
+	}
+	if split_var_id < upper_inputs.len() {
+		// If the split point is included in the upper interval, the current concrete
+		// value belongs to [split_value, inf).
+		upper_inputs[split_var_id] = Interval::new(split_value, f64::INFINITY, true, false);
+	}
+
+	let eval_lower = comparison_eval_code(tree.evaluate_interval(&lower_inputs));
+	let eval_upper = comparison_eval_code(tree.evaluate_interval(&upper_inputs));
+
+	// Mirrors numeric-fd's preference: FALSE (=1) over UNKNOWN (=2) over TRUE (=0).
+	if eval_lower == 1 && eval_upper != 1 {
+		true
+	} else if eval_upper == 1 && eval_lower != 1 {
+		false
+	} else if eval_lower == 1 && eval_upper == 1 {
+		false
+	} else if eval_lower == 2 && eval_upper == 2 {
+		false
+	} else if eval_lower == 2 {
+		true
+	} else if eval_upper == 2 {
+		false
+	} else {
+		false
+	}
+}
+
+fn dependent_numeric_flaws_for_comparison_prop_var(
+	task: &dyn AbstractNumericTask,
+	partitions: &NumericPartitions,
+	comparison_index: &ComparisonAxiomIndex,
+	prop_var_id: i32,
+	numeric_state: &[f64],
+) -> Vec<NumericFlaw> {
+	let Some(tree) = comparison_index.comparison_tree(prop_var_id) else {
+		return vec![];
+	};
+
+	let mut out: Vec<NumericFlaw> = Vec::new();
+	for dep_var_id in tree.regular_numeric_var_dependencies(task) {
+		let Ok(dep_var_usize) = usize::try_from(dep_var_id) else {
+			continue;
+		};
+		let Some(&concrete_value) = numeric_state.get(dep_var_usize) else {
+			continue;
+		};
+		let include_in_lower = determine_include_in_lower(tree, dep_var_usize, concrete_value, numeric_state);
+
+		if can_split_numeric_var(partitions, dep_var_usize, concrete_value, include_in_lower) {
+			out.push(NumericFlaw {
+				numeric_var_id: dep_var_usize,
+				value: concrete_value,
+				include_in_lower,
+			});
+		} else if can_split_numeric_var(partitions, dep_var_usize, concrete_value, !include_in_lower) {
+			out.push(NumericFlaw {
+				numeric_var_id: dep_var_usize,
+				value: concrete_value,
+				include_in_lower: !include_in_lower,
+			});
+		}
+	}
+	out
+}
+
 fn get_precondition_flaws(
+	task: &dyn AbstractNumericTask,
+	partitions: &NumericPartitions,
+	comparison_index: &ComparisonAxiomIndex,
 	op: &planners_sas::numeric::numeric_task::Operator,
 	packer: &IntDoublePacker,
 	buffer: &[u64],
+	numeric_state: &[f64],
 ) -> Vec<Flaw> {
 	let mut out: Vec<Flaw> = Vec::new();
 	for pre in op.preconditions().iter() {
 		if !fact_is_true(pre, packer, buffer) {
+			let prop_var_id = pre.var() as i32;
+			let dependent_numeric_flaws = if comparison_index.is_comparison_axiom_variable(prop_var_id) {
+				dependent_numeric_flaws_for_comparison_prop_var(
+					task,
+					partitions,
+					comparison_index,
+					prop_var_id,
+					numeric_state,
+				)
+			} else {
+				vec![]
+			};
 			out.push(Flaw::Propositional(PropFlaw {
 				fact: pre.clone(),
-				dependent_numeric_flaws: vec![],
+				dependent_numeric_flaws,
 			}));
 		}
 	}
 	out
 }
 
-fn get_goal_flaws(task: &dyn AbstractNumericTask, packer: &IntDoublePacker, buffer: &[u64]) -> Vec<Flaw> {
+fn get_goal_flaws(
+	task: &dyn AbstractNumericTask,
+	partitions: &NumericPartitions,
+	comparison_index: &ComparisonAxiomIndex,
+	packer: &IntDoublePacker,
+	buffer: &[u64],
+	numeric_state: &[f64],
+) -> Vec<Flaw> {
 	let num_goals_i32 = task.get_num_goals();
 	let num_goals = usize::try_from(num_goals_i32.max(0)).unwrap_or(0);
 	let mut out: Vec<Flaw> = Vec::new();
+	let mut seen: BTreeSet<Fact> = BTreeSet::new();
+	let mut derived_goal_vars: BTreeSet<u32> = BTreeSet::new();
 	for goal_id in 0..num_goals {
 		let goal_fact = task.get_goal_fact(goal_id as i32);
-		if !fact_is_true(goal_fact, packer, buffer) {
+		let goal_var = goal_fact.var();
+		let goal_is_derived = task.axioms().iter().any(|ax| ax.var_id() == goal_var);
+		if goal_is_derived {
+			derived_goal_vars.insert(goal_var);
+			continue;
+		}
+		if !fact_is_true(goal_fact, packer, buffer) && seen.insert(goal_fact.clone()) {
+			let prop_var_id = goal_fact.var() as i32;
+			let dependent_numeric_flaws = if comparison_index.is_comparison_axiom_variable(prop_var_id) {
+				dependent_numeric_flaws_for_comparison_prop_var(
+					task,
+					partitions,
+					comparison_index,
+					prop_var_id,
+					numeric_state,
+				)
+			} else {
+				vec![]
+			};
 			out.push(Flaw::Propositional(PropFlaw {
 				fact: goal_fact.clone(),
-				dependent_numeric_flaws: vec![],
+				dependent_numeric_flaws,
 			}));
+		}
+	}
+
+	// Reconstruct (potentially hidden) goal conditions from propositional goal axioms.
+	for ax in task.axioms().iter() {
+		if ax.conditions().is_empty() {
+			continue;
+		}
+		if !derived_goal_vars.is_empty() && !derived_goal_vars.contains(&ax.var_id()) {
+			continue;
+		}
+		for pre in ax.conditions().iter() {
+			if !fact_is_true(pre, packer, buffer) && seen.insert(pre.clone()) {
+				let prop_var_id = pre.var() as i32;
+				let dependent_numeric_flaws = if comparison_index.is_comparison_axiom_variable(prop_var_id) {
+					dependent_numeric_flaws_for_comparison_prop_var(
+						task,
+						partitions,
+						comparison_index,
+						prop_var_id,
+						numeric_state,
+					)
+				} else {
+					vec![]
+				};
+				out.push(Flaw::Propositional(PropFlaw {
+					fact: pre.clone(),
+					dependent_numeric_flaws,
+				}));
+			}
 		}
 	}
 	out

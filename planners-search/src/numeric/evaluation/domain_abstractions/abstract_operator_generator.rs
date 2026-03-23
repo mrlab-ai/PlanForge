@@ -42,11 +42,16 @@ impl AbstractOperator {
         let mut preconditions: Vec<Fact> = pre_pairs.to_vec();
         preconditions.extend_from_slice(prev_pairs);
         preconditions.sort();
+        // We can end up emitting the same fact twice when building abstract operators.
+        // This is benign, but duplicate facts for the same variable with different
+        // values would be a bug (kept guarded by the assertion below).
+        preconditions.dedup();
         debug_assert!(preconditions.windows(2).all(|w| w[0].var() != w[1].var()));
 
         let mut regression_preconditions: Vec<Fact> = prev_pairs.to_vec();
         regression_preconditions.extend_from_slice(eff_pairs);
         regression_preconditions.sort();
+        regression_preconditions.dedup();
         debug_assert!(
             regression_preconditions
                 .windows(2)

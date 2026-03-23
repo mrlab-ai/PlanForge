@@ -115,6 +115,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     println!("Building domain abstraction (CEGAR)...");
                     let mut config = CegarConfig::default();
                     config.enable_refinement = true;
+                    config.debug = true;
 
                     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
                         std::io::Error::new(
