@@ -317,7 +317,7 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
 
     let factory = factory_identity_cutpoints(&task).unwrap();
     let result = factory
-        .compute_wildcard_plan(&task, true)
+        .compute_wildcard_plan(&task, true, false)
         .unwrap()
         .expect("plan exists");
     assert_eq!(result.wildcard_plan.len(), 1);
@@ -360,7 +360,7 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
-    let table = factory.build_abstract_distance_table(&task, true).unwrap();
+    let table = factory.build_abstract_distance_table(&task, true, false).unwrap();
 
     let mut generator = factory.make_operator_generator(&task, true).unwrap();
     let hash_multipliers = generator.hash_multipliers().to_vec();

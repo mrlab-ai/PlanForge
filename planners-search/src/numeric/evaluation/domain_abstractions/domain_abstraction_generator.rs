@@ -39,7 +39,7 @@ impl DomainAbstractionGenerator {
 
         let factory = outcome.last_step.factory;
         let distance_table = factory
-            .build_abstract_distance_table(task, self.config.combine_labels)
+            .build_abstract_distance_table(task, self.config.combine_labels, false)
             .context("failed to build abstract distance table")?;
 
         let hash_multipliers = compute_hash_multipliers(

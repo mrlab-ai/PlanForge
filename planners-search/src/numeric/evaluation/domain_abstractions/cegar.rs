@@ -886,11 +886,11 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 
 		let wildcard_plan = if config.use_wildcard_plans {
 			factory
-				.compute_wildcard_plan(task, config.combine_labels)
+				.compute_wildcard_plan(task, config.combine_labels, config.debug)
 				.with_context(|| format!("failed to compute wildcard plan (iteration {iteration})"))?
 		} else {
 			let _table = factory
-				.build_abstract_distance_table(task, config.combine_labels)
+				.build_abstract_distance_table(task, config.combine_labels, config.debug)
 				.with_context(|| {
 					format!("failed to build abstract distance table (iteration {iteration})")
 				})?;

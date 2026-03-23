@@ -142,6 +142,10 @@ impl NumericVariable {
         }
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn get_type(&self) -> &NumericType {
         &self.numeric_type
     }

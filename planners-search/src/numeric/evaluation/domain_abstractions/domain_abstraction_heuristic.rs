@@ -165,14 +165,7 @@ impl Heuristic for DomainAbstractionHeuristic {
                     self.abstraction.distance_table.distances.len()
                 ))
             })?;
-        // Our current domain abstraction is not yet guaranteed to be an over-approximation.
-        // Returning +inf here would make the search incomplete (it would treat the state as a dead end).
-        // Until dead-end detection is proven sound, fall back to a non-dead-end value.
-        if dist.is_infinite() {
-            Ok(0.0)
-        } else {
-            Ok(dist)
-        }
+        Ok(dist)
     }
 
     fn heuristic_name(&self) -> String {

@@ -50,7 +50,7 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
 	)
 	.unwrap();
 	let plan = factory
-		.compute_wildcard_plan(&task, true)
+		.compute_wildcard_plan(&task, true, false)
 		.unwrap()
 		.expect("plan exists");
 
@@ -105,7 +105,7 @@ fn get_flaws_reports_precondition_violation() {
 	)
 	.unwrap();
 	let plan = factory
-		.compute_wildcard_plan(&task, true)
+		.compute_wildcard_plan(&task, true, false)
 		.unwrap()
 		.expect("plan exists");
 

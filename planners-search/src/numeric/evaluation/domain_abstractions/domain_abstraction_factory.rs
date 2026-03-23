@@ -164,6 +164,8 @@ pub struct AbstractDistanceTable {
     pub generating_op_ids: Vec<Option<usize>>, // per-state operator leading to a goal along a shortest path
     pub initial_state_hash: i32,
     pub goal_facts: Vec<planners_sas::numeric::numeric_task::Fact>,
+    pub hash_multipliers: Vec<i32>,
+    pub numeric_domain_sizes: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -315,10 +317,11 @@ impl DomainAbstractionFactory {
         &self,
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
+        dump_distances: bool,
     ) -> Result<AbstractDistanceTable> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let operators = generator.build_abstract_operators(task)?;
-        self.build_distance_table_with_operators(task, &generator, &operators)
+        self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)
     }
 
     /// Computes an abstract wildcard plan (sequence of per-step concrete-op-ID sets) by:
@@ -329,10 +332,12 @@ impl DomainAbstractionFactory {
         &self,
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
+        dump_distances: bool,
     ) -> Result<Option<WildcardPlanResult>> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let operators = generator.build_abstract_operators(task)?;
-        let table = self.build_distance_table_with_operators(task, &generator, &operators)?;
+        let table =
+            self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)?;
 
         let comparison_var_ids = self.comparison_var_ids();
         let match_tree = MatchTree::build(
@@ -358,6 +363,7 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
+        dump_distances: bool,
     ) -> Result<AbstractDistanceTable> {
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
@@ -397,12 +403,162 @@ impl DomainAbstractionFactory {
             num_states,
         )?;
 
-        Ok(AbstractDistanceTable {
+        let table = AbstractDistanceTable {
             distances,
             generating_op_ids,
             initial_state_hash: init_hash,
             goal_facts,
-        })
+            hash_multipliers: hash_multipliers.to_vec(),
+            numeric_domain_sizes: numeric_domain_sizes.to_vec(),
+        };
+
+        if dump_distances {
+            self.dump_distances(task, &table);
+        }
+
+        Ok(table)
+    }
+
+    /// Prints a numeric-fd style table of core variables for all reachable abstract states.
+    ///
+    /// Core variables are:
+    /// - all numeric variables with more than one partition,
+    /// - all non-axiom propositional variables with abstract domain size > 1.
+    pub fn dump_distances(&self, task: &dyn AbstractNumericTask, table: &AbstractDistanceTable) {
+        let num_states = table.distances.len();
+        println!(
+            "\n=== TABLE OF CORE VARIABLES FOR ALL {num_states} STATES ===\n"
+        );
+
+        let num_prop_vars = self.domain_sizes.len();
+        if table.hash_multipliers.len() < num_prop_vars + table.numeric_domain_sizes.len() {
+            println!(
+                "[dump_distances] invalid hash_multipliers len={} (expected >= {})",
+                table.hash_multipliers.len(),
+                num_prop_vars + table.numeric_domain_sizes.len()
+            );
+            return;
+        }
+
+        // Identify propositional variables derived by propositional axioms.
+        let mut is_axiom_var: Vec<bool> = vec![false; num_prop_vars];
+        for ax in task.axioms().iter() {
+            let v = ax.var_id() as usize;
+            if v < is_axiom_var.len() {
+                is_axiom_var[v] = true;
+            }
+        }
+
+        let refined_numeric_vars: Vec<usize> = table
+            .numeric_domain_sizes
+            .iter()
+            .enumerate()
+            .filter_map(|(n, &parts)| (parts > 1).then_some(n))
+            .collect();
+
+        let non_axiom_vars: Vec<usize> = self
+            .domain_sizes
+            .iter()
+            .enumerate()
+            .filter_map(|(v, &dom)| {
+                if dom > 1 && !is_axiom_var.get(v).copied().unwrap_or(false) {
+                    Some(v)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut num_headers: Vec<String> = Vec::with_capacity(refined_numeric_vars.len());
+        let mut num_widths: Vec<usize> = Vec::with_capacity(refined_numeric_vars.len());
+        for &num_var_id in &refined_numeric_vars {
+            let name = task
+                .numeric_variables()
+                .get(num_var_id)
+                .map(|v| v.name())
+                .unwrap_or("<unknown>");
+            let header = format!("num{num_var_id}({name})");
+            let width = header.len().max(6);
+            num_headers.push(header);
+            num_widths.push(width);
+        }
+
+        let mut prop_headers: Vec<String> = Vec::with_capacity(non_axiom_vars.len());
+        let mut prop_widths: Vec<usize> = Vec::with_capacity(non_axiom_vars.len());
+        for &var_id in &non_axiom_vars {
+            let name = task.get_variable_name(var_id as i32).unwrap_or("<unknown>");
+            let header = format!("var{var_id}({name})");
+            let width = header.len().max(6);
+            prop_headers.push(header);
+            prop_widths.push(width);
+        }
+
+        // Header
+        let mut header_line = String::new();
+        header_line.push_str("\nState | Distance | ");
+        for (i, h) in num_headers.iter().enumerate() {
+            header_line.push_str(&format!("{h:>width$} | ", width = num_widths[i]));
+        }
+        for (i, h) in prop_headers.iter().enumerate() {
+            header_line.push_str(&format!("{h:>width$} | ", width = prop_widths[i]));
+        }
+        println!("{header_line}");
+
+        // Separator
+        let mut sep = String::new();
+        sep.push_str("------|----------|");
+        for &w in &num_widths {
+            sep.push_str(&"-".repeat(w + 2));
+            sep.push('|');
+        }
+        for &w in &prop_widths {
+            sep.push_str(&"-".repeat(w + 2));
+            sep.push('|');
+        }
+        println!("{sep}");
+
+        for state_hash in 0..(num_states as i32) {
+            let dist = table
+                .distances
+                .get(state_hash as usize)
+                .copied()
+                .unwrap_or(f64::INFINITY);
+            if !dist.is_finite() {
+                // Skip unreachable states for brevity (numeric-fd behavior).
+                continue;
+            }
+
+            let mut line = String::new();
+            line.push_str(&format!("{state_hash:>5} | "));
+            line.push_str(&format!("{:>8} | ", format!("{dist:.3}")));
+
+            for (i, &num_var_id) in refined_numeric_vars.iter().enumerate() {
+                let abs_var_id = num_prop_vars + num_var_id;
+                let mult = table.hash_multipliers[abs_var_id] as i64;
+                let dom = table.numeric_domain_sizes[num_var_id] as i64;
+                let part = (((state_hash as i64) / mult) % dom) as i64;
+                line.push_str(&format!(
+                    "{val:>width$} | ",
+                    val = part,
+                    width = num_widths[i]
+                ));
+            }
+
+            for (i, &var_id) in non_axiom_vars.iter().enumerate() {
+                let mult = table.hash_multipliers[var_id] as i64;
+                let dom = self.domain_sizes[var_id] as i64;
+                let value = (((state_hash as i64) / mult) % dom) as i64;
+                line.push_str(&format!(
+                    "{val:>width$} | ",
+                    val = value,
+                    width = prop_widths[i]
+                ));
+            }
+
+            println!("{line}");
+        }
+
+        println!();
     }
 
     fn comparison_var_ids(&self) -> Vec<usize> {
