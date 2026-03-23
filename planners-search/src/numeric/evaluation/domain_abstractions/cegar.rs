@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Context, Result};
 
+use libc::exit;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, Fact};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
@@ -890,7 +891,7 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 				.with_context(|| format!("failed to compute wildcard plan (iteration {iteration})"))?
 		} else {
 			let _table = factory
-				.build_abstract_distance_table(task, config.combine_labels, config.debug)
+				.build_abstract_distance_table(task, config.combine_labels, false)
 				.with_context(|| {
 					format!("failed to build abstract distance table (iteration {iteration})")
 				})?;
@@ -898,7 +899,7 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 		};
 		if config.debug {
 			match wildcard_plan.as_ref() {
-				Some(plan) => debug_print_wildcard_plan(task, plan),
+				Some(plan) => debug_print_wildcard_plan(task, plan, &domain_sizes, &numeric_domain_sizes, &partitions),
 				None => println!("[Abstract Plan] <none>"),
 			}
 		}
@@ -953,6 +954,11 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 		}
 
 		iteration += 1;
+		if iteration > 3 {
+			unsafe {
+				exit(0);
+			}
+		}
 	}
 
 	let last_step = last_step.context("CEGAR did not perform any iterations")?;
@@ -1027,7 +1033,13 @@ fn debug_print_abstraction_stats(iteration: usize, domain_sizes: &[i32], numeric
 	);
 }
 
-fn debug_print_wildcard_plan(task: &dyn AbstractNumericTask, plan: &WildcardPlanResult) {
+fn debug_print_wildcard_plan(
+	task: &dyn AbstractNumericTask,
+	plan: &WildcardPlanResult,
+	domain_sizes: &[i32],
+	numeric_domain_sizes: &[usize],
+	partitions: &NumericPartitions,
+) {
 	let steps = plan.wildcard_plan.len();
 	println!("[Abstract Plan] steps={steps}");
 
@@ -1037,12 +1049,15 @@ fn debug_print_wildcard_plan(task: &dyn AbstractNumericTask, plan: &WildcardPlan
 		println!("[Abstract Plan] (truncated to first {shown_steps} steps)");
 	}
 
-	// Print initial abstract state snapshot (sparse).
+	// Print initial abstract state snapshot (non-trivial vars only; includes zeros).
 	if let Some(prop0) = plan.abstract_prop_states.first() {
-		println!("  s0 props: {}", fmt_sparse_i32(prop0, 50));
+		println!("  s0 props: {}", fmt_nontrivial_props(prop0, domain_sizes, 100));
 	}
 	if let Some(num0) = plan.abstract_numeric_states.first() {
-		println!("  s0 nums:  {}", fmt_sparse_i32(num0, 50));
+		println!(
+			"  s0 nums:  {}",
+			fmt_nontrivial_nums(num0, numeric_domain_sizes, partitions, 100)
+		);
 	}
 
 	let ops = task.get_operators();
@@ -1081,7 +1096,7 @@ fn debug_print_wildcard_plan(task: &dyn AbstractNumericTask, plan: &WildcardPlan
 		if i + 1 < plan.abstract_numeric_states.len() {
 			let prev = &plan.abstract_numeric_states[i];
 			let cur = &plan.abstract_numeric_states[i + 1];
-			let delta = fmt_delta_i32(prev, cur, 50);
+			let delta = fmt_delta_numeric_partitions(prev, cur, partitions, 50);
 			if !delta.is_empty() {
 				println!("    nums  Δ: {delta}");
 			}
@@ -1222,6 +1237,127 @@ fn fmt_delta_i32(prev: &[i32], cur: &[i32], max_items: usize) -> String {
 		shown += 1;
 	}
 	out
+}
+
+fn fmt_nontrivial_props(values: &[i32], domain_sizes: &[i32], max_items: usize) -> String {
+	let mut out = String::new();
+	let mut shown = 0usize;
+	let len = values.len().min(domain_sizes.len());
+	for var_id in 0..len {
+		if domain_sizes[var_id] <= 1 {
+			continue;
+		}
+		if shown >= max_items {
+			let _ = write!(&mut out, " ...");
+			break;
+		}
+		if shown > 0 {
+			out.push(' ');
+		}
+		let _ = write!(&mut out, "v{var_id}:{}", values[var_id]);
+		shown += 1;
+	}
+	if out.is_empty() {
+		"<no-nontrivial-vars>".to_string()
+	} else {
+		out
+	}
+}
+
+fn fmt_nontrivial_nums(
+	values: &[i32],
+	numeric_domain_sizes: &[usize],
+	partitions: &NumericPartitions,
+	max_items: usize,
+) -> String {
+	let mut out = String::new();
+	let mut shown = 0usize;
+	let len = values.len().min(numeric_domain_sizes.len());
+	for num_id in 0..len {
+		if numeric_domain_sizes[num_id] <= 1 {
+			continue;
+		}
+		if shown >= max_items {
+			let _ = write!(&mut out, " ...");
+			break;
+		}
+		if shown > 0 {
+			out.push(' ');
+		}
+		let part_i32 = values[num_id];
+		let part = usize::try_from(part_i32).unwrap_or(0);
+		let iv = partitions.partition_interval(num_id, part);
+		let iv_s = iv.map(fmt_interval).unwrap_or_else(|| "<missing-interval>".to_string());
+		let _ = write!(&mut out, "n{num_id}=p{part}:{iv_s}");
+		shown += 1;
+	}
+	if out.is_empty() {
+		"<no-nontrivial-vars>".to_string()
+	} else {
+		out
+	}
+}
+
+fn fmt_delta_numeric_partitions(
+	prev: &[i32],
+	cur: &[i32],
+	partitions: &NumericPartitions,
+	max_items: usize,
+) -> String {
+	let mut out = String::new();
+	let len = prev.len().min(cur.len());
+	let mut shown = 0usize;
+	for num_id in 0..len {
+		let a = prev[num_id];
+		let b = cur[num_id];
+		if a == b {
+			continue;
+		}
+		if shown >= max_items {
+			let _ = write!(&mut out, " ...");
+			break;
+		}
+		if shown > 0 {
+			out.push(' ');
+		}
+		let a_u = usize::try_from(a).unwrap_or(0);
+		let b_u = usize::try_from(b).unwrap_or(0);
+		let a_iv = partitions.partition_interval(num_id, a_u);
+		let b_iv = partitions.partition_interval(num_id, b_u);
+		let a_s = a_iv.map(fmt_interval).unwrap_or_else(|| "<missing-interval>".to_string());
+		let b_s = b_iv.map(fmt_interval).unwrap_or_else(|| "<missing-interval>".to_string());
+		let _ = write!(&mut out, "n{num_id}:p{a_u}:{a_s}->p{b_u}:{b_s}");
+		shown += 1;
+	}
+	out
+}
+
+fn fmt_interval(iv: Interval) -> String {
+	let l = if iv.lower_closed { '[' } else { '(' };
+	let r = if iv.upper_closed { ']' } else { ')' };
+	let lo = fmt_f64_compact(iv.lower);
+	let hi = fmt_f64_compact(iv.upper);
+	format!("{l}{lo}, {hi}{r}")
+}
+
+fn fmt_f64_compact(v: f64) -> String {
+	if v.is_nan() {
+		return "NaN".to_string();
+	}
+	let mut s = format!("{v}");
+	let is_scientific = s.contains('e') || s.contains('E');
+	if !is_scientific {
+		if let Some(dot) = s.find('.') {
+			let (head, tail) = s.split_at(dot + 1);
+			let trimmed_tail = tail.trim_end_matches('0');
+			s = if trimmed_tail.is_empty() {
+				head.trim_end_matches('.').to_string()
+			} else {
+				format!("{head}{trimmed_tail}")
+			};
+		}
+	}
+	s
 }
 
 fn identity_domain_mapping_and_sizes(task: &dyn AbstractNumericTask) -> Result<(DomainMapping, Vec<i32>)> {
