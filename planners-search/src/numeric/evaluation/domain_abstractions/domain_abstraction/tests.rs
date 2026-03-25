@@ -110,6 +110,41 @@ fn reachable_partitions_overlaps_result_interval() {
 }
 
 #[test]
+fn trivial_partitions_use_singletons_for_constants() {
+    let numeric_variables = vec![
+        NumericVariable::new("x0".into(), NumericType::Regular, -1),
+        NumericVariable::new("c7".into(), NumericType::Constant, -1),
+    ];
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        vec![],
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 7.0],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::trivial(&task);
+
+    assert_eq!(
+        partitions.partitions(0).unwrap(),
+        &[Interval::unbounded()]
+    );
+    assert_eq!(
+        partitions.partitions(1).unwrap(),
+        &[Interval::singleton(7.0)]
+    );
+}
+
+#[test]
 fn comparison_tree_index_can_build_for_assignment_axioms() {
     let numeric_variables = vec![
         NumericVariable::new("x0".into(), NumericType::Regular, -1),

@@ -16,11 +16,20 @@ pub struct NumericPartitions {
 
 impl NumericPartitions {
     pub fn trivial(task: &dyn AbstractNumericTask) -> Self {
+        let initial_numeric_values = task.get_initial_numeric_state_values();
         let partitions_by_numeric_var = task
             .numeric_variables()
             .iter()
-            .map(|v| match v.get_type() {
-                NumericType::Regular => vec![Interval::unbounded()],
+            .enumerate()
+            .map(|(i, v)| match v.get_type() {
+                NumericType::Constant => {
+                    let value = *initial_numeric_values.get(i).unwrap_or(&f64::NAN);
+                    if value.is_finite() {
+                        vec![Interval::singleton(value)]
+                    } else {
+                        vec![Interval::unbounded()]
+                    }
+                }
                 _ => vec![Interval::unbounded()],
             })
             .collect();
