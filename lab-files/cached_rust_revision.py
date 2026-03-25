@@ -61,4 +61,4 @@ class CachedRustPlannerRevision(CachedRevision):
         """
         Return path to compiled binary inside experiment.
         """
-        return self.get_relative_exp_path(f"target/release/{binary_name}")
+        return self.get_relative_exp_path(f"target/{self.profile}/{binary_name}")
