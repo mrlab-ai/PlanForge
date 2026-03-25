@@ -6,26 +6,35 @@ from lab.cached_revision import CachedRevision
 
 
 class CachedRustPlannerRevision(CachedRevision):
-    """
-    Cached revision for a Rust planner.
+    def __init__(
+        self,
+        revision_cache,
+        repo,
+        rev,
+        profile="release",          
+        build_options=None,
+    ):
+        self.profile = profile
+        self.build_options = build_options or []
 
-    Builds the planner using cargo and keeps only the compiled binary.
-    """
+        build_cmd = ["cargo", "build"]
 
-    def __init__(self, revision_cache, repo, rev, build_options=None):
-        build_cmd = ["cargo", "build", "--release"]
-        if build_options:
-            build_cmd += build_options
+        if profile == "release":
+            build_cmd.append("--release")
+        elif profile == "debug":
+            pass  # default cargo build
+        else:
+            raise ValueError(f"Unknown profile: {profile}")
+
+        build_cmd += self.build_options
 
         super().__init__(
             revision_cache,
             repo,
             rev,
             build_cmd=build_cmd,
-            exclude=[".git", "target/debug"],
+            exclude=[".git", "target/debug" if profile == "release" else "target/release"],
         )
-
-        self.build_options = build_options or []
 
     def _cleanup(self):
         """

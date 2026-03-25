@@ -128,6 +128,7 @@ class RustPlannerExperiment(Experiment):
         rev,
         options,
         build_options=None,
+        target="release",
         binary_name="planners",
     ):
         if not isinstance(name, str):
@@ -137,7 +138,7 @@ class RustPlannerExperiment(Experiment):
             logging.critical(f"Duplicate algorithm name: {name}")
 
         cached_rev = CachedRustPlannerRevision(
-            self.revision_cache, repo, rev, build_options
+            self.revision_cache, repo, rev, target, build_options
         )
 
         algo = RustPlannerAlgorithm(
