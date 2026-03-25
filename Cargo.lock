@@ -386,14 +386,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "translate-backup"
-version = "0.1.0"
-dependencies = [
- "nom",
- "ordered-float",
-]
-
-[[package]]
 name = "unicode-ident"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
