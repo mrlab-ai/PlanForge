@@ -107,7 +107,16 @@ fn test_search_result_creation() {
         plan: None,
         solution_cost: None,
         nodes_expanded: 0,
+        nodes_reopened: 0,
+        nodes_evaluated: 0,
+        evaluations: 0,
         nodes_generated: 0,
+        dead_ends: 0,
+        nodes_expanded_until_last_jump: 0,
+        nodes_reopened_until_last_jump: 0,
+        nodes_evaluated_until_last_jump: 0,
+        nodes_generated_until_last_jump: 0,
+        registered_states: 0,
         search_time: Duration::from_millis(100),
     };
 

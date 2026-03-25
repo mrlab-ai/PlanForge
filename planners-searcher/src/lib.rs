@@ -198,8 +198,29 @@ pub fn print_search_result(result: &SearchResult) {
         }
     }
 
+    // Fast Downward-style statistics block.
+    println!("Expanded {} state(s).", result.nodes_expanded);
+    println!("Reopened {} state(s).", result.nodes_reopened);
+    println!("Evaluated {} state(s).", result.nodes_evaluated);
+    println!("Evaluations: {}", result.evaluations);
+    println!("Generated {} state(s).", result.nodes_generated);
+    println!("Dead ends: {} state(s).", result.dead_ends);
     println!(
-        "Statistics: {} expanded, {} generated, {:?}",
-        result.nodes_expanded, result.nodes_generated, result.search_time
+        "Expanded until last jump: {} state(s).",
+        result.nodes_expanded_until_last_jump
     );
+    println!(
+        "Reopened until last jump: {} state(s).",
+        result.nodes_reopened_until_last_jump
+    );
+    println!(
+        "Evaluated until last jump: {} state(s).",
+        result.nodes_evaluated_until_last_jump
+    );
+    println!(
+        "Generated until last jump: {} state(s).",
+        result.nodes_generated_until_last_jump
+    );
+    println!("Number of registered states: {}", result.registered_states);
+    println!("Search time: {:.6}s", result.search_time.as_secs_f64());
 }

@@ -61,8 +61,25 @@ pub struct SearchResult {
     /// Otherwise, it corresponds to the sum of declared operator costs.
     pub solution_cost: Option<f64>,
     pub nodes_expanded: usize,
+    pub nodes_reopened: usize,
+    pub nodes_evaluated: usize,
+    pub evaluations: usize,
     pub nodes_generated: usize,
+    pub dead_ends: usize,
+    pub nodes_expanded_until_last_jump: usize,
+    pub nodes_reopened_until_last_jump: usize,
+    pub nodes_evaluated_until_last_jump: usize,
+    pub nodes_generated_until_last_jump: usize,
+    pub registered_states: usize,
     pub search_time: Duration,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SearchCounters {
+    expanded: usize,
+    reopened: usize,
+    evaluated: usize,
+    generated: usize,
 }
 
 /// Simple search node information for tracking parent relationships
@@ -101,7 +118,10 @@ pub struct AStarSearch<'a> {
     // Statistics
     nodes_evaluated: usize,
     nodes_expanded: usize,
+    nodes_reopened: usize,
     nodes_generated: usize,
+    dead_ends: usize,
+    counters_at_last_jump: SearchCounters,
     last_reported_f_layer: Option<OrderedFloat<f64>>,
     state_values_buffer: Vec<i32>,
     applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
@@ -189,7 +209,10 @@ impl<'a> AStarSearch<'a> {
             initial_state: Some(initial_state),
             nodes_evaluated: 0,
             nodes_expanded: 0,
+            nodes_reopened: 0,
             nodes_generated: 0,
+            dead_ends: 0,
+            counters_at_last_jump: SearchCounters::default(),
             last_reported_f_layer: None,
             state_values_buffer: Vec::with_capacity(task.variables().len()),
             applicable_operators_buffer: Vec::new(),
@@ -221,7 +244,16 @@ impl<'a> AStarSearch<'a> {
             plan: None,
             solution_cost: None,
             nodes_expanded: self.nodes_expanded,
+            nodes_reopened: self.nodes_reopened,
+            nodes_evaluated: self.nodes_evaluated,
+            evaluations: self.nodes_evaluated,
             nodes_generated: self.nodes_generated,
+            dead_ends: self.dead_ends,
+            nodes_expanded_until_last_jump: self.counters_at_last_jump.expanded,
+            nodes_reopened_until_last_jump: self.counters_at_last_jump.reopened,
+            nodes_evaluated_until_last_jump: self.counters_at_last_jump.evaluated,
+            nodes_generated_until_last_jump: self.counters_at_last_jump.generated,
+            registered_states: self.state_registry.num_registered_states(),
             search_time: start_time.elapsed(),
         }
     }
@@ -236,6 +268,15 @@ impl<'a> AStarSearch<'a> {
         }
 
         self.last_reported_f_layer = Some(f_value);
+
+        // Snapshot counters at the start of each new f-layer.
+        // This mirrors Fast Downward's “until last jump” statistics.
+        self.counters_at_last_jump = SearchCounters {
+            expanded: self.nodes_expanded,
+            reopened: self.nodes_reopened,
+            evaluated: self.nodes_evaluated,
+            generated: self.nodes_generated,
+        };
 
         println!(
             "f = {} [{} evaluated, {} expanded, t={:.6}s, {} KB]",
@@ -377,6 +418,9 @@ impl<'a> AStarSearch<'a> {
             };
             let succ_state_id = succ_state.get_id();
 
+            // Count every successfully constructed successor state.
+            self.nodes_generated += 1;
+
             // Skip if already closed
             if self.closed_set.contains(&succ_state_id) {
                 continue;
@@ -405,12 +449,19 @@ impl<'a> AStarSearch<'a> {
                 g_value: new_g_value,
             };
 
+            // Record/update best g-value and parent pointers.
             self.search_nodes.insert(succ_state_id, node_info);
-            self.nodes_generated += 1;
 
             // Evaluate and add to open list
             if let Ok(evaluation) = self.evaluate_state(&succ_state, new_g_value) {
                 self.nodes_evaluated += 1;
+                if evaluation.is_dead_end {
+                    self.dead_ends += 1;
+                    if !self.open_list.accepts_dead_ends() {
+                        continue;
+                    }
+                }
+
                 let search_node = SearchNode::root(succ_state, evaluation);
                 self.open_list.insert(search_node);
             }
@@ -437,8 +488,13 @@ impl<'a> SearchEngine for AStarSearch<'a> {
         // Add initial state to open list
         if let Ok(initial_evaluation) = self.evaluate_state(&initial_state, 0.0) {
             self.nodes_evaluated += 1;
+            if initial_evaluation.is_dead_end {
+                self.dead_ends += 1;
+            }
             let initial_node = SearchNode::root(initial_state.clone(), initial_evaluation);
-            self.open_list.insert(initial_node);
+            if !initial_node.is_dead_end() || self.open_list.accepts_dead_ends() {
+                self.open_list.insert(initial_node);
+            }
         }
 
         // Initialize search node info for initial state
@@ -469,7 +525,16 @@ impl<'a> SearchEngine for AStarSearch<'a> {
                         plan: Some(plan),
                         solution_cost,
                         nodes_expanded: self.nodes_expanded,
+                        nodes_reopened: self.nodes_reopened,
+                        nodes_evaluated: self.nodes_evaluated,
+                        evaluations: self.nodes_evaluated,
                         nodes_generated: self.nodes_generated,
+                        dead_ends: self.dead_ends,
+                        nodes_expanded_until_last_jump: self.counters_at_last_jump.expanded,
+                        nodes_reopened_until_last_jump: self.counters_at_last_jump.reopened,
+                        nodes_evaluated_until_last_jump: self.counters_at_last_jump.evaluated,
+                        nodes_generated_until_last_jump: self.counters_at_last_jump.generated,
+                        registered_states: self.state_registry.num_registered_states(),
                         search_time: start_time.elapsed(),
                     };
                 }
