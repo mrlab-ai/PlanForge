@@ -4,7 +4,7 @@ mod tests;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use ordered_float::NotNan;
 
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
@@ -187,7 +187,6 @@ pub struct DomainAbstractionFactory {
 }
 
 impl DomainAbstractionFactory {
-
     pub fn new(
         task: &dyn AbstractNumericTask,
         domain_mapping: DomainMapping,
@@ -200,7 +199,10 @@ impl DomainAbstractionFactory {
             "domain_mapping/domain_sizes length mismatch"
         );
         for (var, &abs_size) in domain_sizes.iter().enumerate() {
-            ensure!(abs_size > 0, "non-positive abstract domain size for var {var}: {abs_size}");
+            ensure!(
+                abs_size > 0,
+                "non-positive abstract domain size for var {var}: {abs_size}"
+            );
 
             let var_i32 = i32::try_from(var).context("var index does not fit i32")?;
             let concrete_size = task
@@ -231,10 +233,7 @@ impl DomainAbstractionFactory {
         }
         for (n, &parts) in numeric_domain_sizes.iter().enumerate() {
             ensure!(parts > 0, "numeric_domain_sizes[{n}] must be > 0");
-            let actual = partitions
-                .partitions(n)
-                .map(|p| p.len())
-                .unwrap_or(0);
+            let actual = partitions.partitions(n).map(|p| p.len()).unwrap_or(0);
             ensure!(
                 actual == parts,
                 "numeric_domain_sizes[{n}]={parts} does not match partitions len {actual}"
@@ -382,7 +381,8 @@ impl DomainAbstractionFactory {
 
         let num_states_i32 = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
         ensure!(num_states_i32 >= 0, "num_states must be non-negative");
-        let num_states = usize::try_from(num_states_i32).context("num_states does not fit usize")?;
+        let num_states =
+            usize::try_from(num_states_i32).context("num_states does not fit usize")?;
 
         let match_tree = MatchTree::build(
             &self.domain_sizes,
@@ -530,10 +530,8 @@ impl DomainAbstractionFactory {
                     if shown > 0 {
                         let mut names: Vec<&str> = Vec::new();
                         for cv in concretes.iter().take(shown) {
-                            let fact = planners_sas::numeric::numeric_task::Fact::new(
-                                var_id as u32,
-                                *cv,
-                            );
+                            let fact =
+                                planners_sas::numeric::numeric_task::Fact::new(var_id as u32, *cv);
                             let n = task.get_fact_name(&fact);
                             if !n.is_empty() {
                                 names.push(n);
@@ -559,7 +557,8 @@ impl DomainAbstractionFactory {
 
         let mut num_headers: Vec<String> = Vec::with_capacity(refined_numeric_vars.len());
         let mut num_widths: Vec<usize> = Vec::with_capacity(refined_numeric_vars.len());
-        let mut num_partition_texts: Vec<Vec<String>> = Vec::with_capacity(refined_numeric_vars.len());
+        let mut num_partition_texts: Vec<Vec<String>> =
+            Vec::with_capacity(refined_numeric_vars.len());
         for &num_var_id in &refined_numeric_vars {
             let name = task
                 .numeric_variables()
@@ -813,7 +812,10 @@ impl DomainAbstractionFactory {
         let num_props = self.domain_sizes.len();
         let mut is_comparison: Vec<bool> = vec![false; num_props];
         for &v in comparison_var_ids {
-            ensure!(v < is_comparison.len(), "comparison var id out of range: {v}");
+            ensure!(
+                v < is_comparison.len(),
+                "comparison var id out of range: {v}"
+            );
             is_comparison[v] = true;
         }
 
@@ -861,20 +863,15 @@ impl DomainAbstractionFactory {
                     Some(false) => COMPARISON_FALSE_VAL,
                     None => COMPARISON_UNKNOWN_VAL,
                 };
-                *self
-                    .domain_mapping[var]
+                *self.domain_mapping[var]
                     .get(mapped_truth as usize)
                     .with_context(|| {
-                        format!(
-                            "missing mapping for comparison var {var} truth {mapped_truth}"
-                        )
+                        format!("missing mapping for comparison var {var} truth {mapped_truth}")
                     })?
             } else {
                 let concrete_val = prop_init[var];
                 let cidx = usize::try_from(concrete_val).with_context(|| {
-                    format!(
-                        "invalid propositional initial value {concrete_val} at var {var}"
-                    )
+                    format!("invalid propositional initial value {concrete_val} at var {var}")
                 })?;
                 *self.domain_mapping[var].get(cidx).with_context(|| {
                     format!("missing mapping for propositional var {var} value index {cidx}")
@@ -967,9 +964,12 @@ impl DomainAbstractionFactory {
             let mult = hash_multipliers[abs_var] as i64;
             let dom = numeric_domain_sizes[i] as i64;
             let part = (((state_hash as i64) / mult) % dom) as usize;
-            let iv = self.partitions.partition_interval(i, part).with_context(|| {
-                format!("missing partition interval for numeric var {i} part {part}")
-            })?;
+            let iv = self
+                .partitions
+                .partition_interval(i, part)
+                .with_context(|| {
+                    format!("missing partition interval for numeric var {i} part {part}")
+                })?;
             out[i] = iv;
         }
         Ok(out)
@@ -992,8 +992,12 @@ impl DomainAbstractionFactory {
             fixed_comparisons,
         )?;
 
-        let numeric_intervals =
-            self.build_numeric_intervals(base_state_hash, numeric_domain_sizes, hash_multipliers, task)?;
+        let numeric_intervals = self.build_numeric_intervals(
+            base_state_hash,
+            numeric_domain_sizes,
+            hash_multipliers,
+            task,
+        )?;
 
         let mut fixed_map: HashMap<u32, i32> = HashMap::new();
         for f in fixed_comparisons {
@@ -1095,8 +1099,8 @@ impl DomainAbstractionFactory {
         let generating_op = &table.generating_op_ids;
 
         let mut current_hash = table.initial_state_hash;
-        let cur_idx = usize::try_from(current_hash)
-            .context("initial state hash does not fit usize")?;
+        let cur_idx =
+            usize::try_from(current_hash).context("initial state hash does not fit usize")?;
         if cur_idx >= dist.len() || !dist[cur_idx].is_finite() {
             return Ok(None);
         }
@@ -1128,12 +1132,10 @@ impl DomainAbstractionFactory {
             if safety_steps > dist.len() + 1 {
                 bail!("abstract plan extraction exceeded safety limit")
             }
-            let current_idx = usize::try_from(current_hash)
-                .context("current state hash does not fit usize")?;
+            let current_idx =
+                usize::try_from(current_hash).context("current state hash does not fit usize")?;
             let Some(op_id) = generating_op.get(current_idx).copied().flatten() else {
-                bail!(
-                    "missing generating operator for state {current_hash} with finite distance"
-                );
+                bail!("missing generating operator for state {current_hash} with finite distance");
             };
             let op = operators
                 .get(op_id)
@@ -1295,12 +1297,7 @@ impl DomainAbstractionFactory {
         // Initialize with feasible goal states.
         for state_hash in 0..num_states {
             let h = i32::try_from(state_hash).context("state hash does not fit i32")?;
-            if !self.is_goal_state(
-                h,
-                goal_facts,
-                numeric_domain_sizes,
-                hash_multipliers,
-            ) {
+            if !self.is_goal_state(h, goal_facts, numeric_domain_sizes, hash_multipliers) {
                 continue;
             }
             let alts = self.enumerate_states_with_evaluated_comparisons(
@@ -1413,8 +1410,7 @@ impl DomainAbstractionFactory {
                         generating_op_ids[pred_idx] = Some(op_id);
                         heap.push((
                             Reverse(
-                                NotNan::new(alternative_cost)
-                                    .context("alternative cost is NaN")?,
+                                NotNan::new(alternative_cost).context("alternative cost is NaN")?,
                             ),
                             pred,
                         ));

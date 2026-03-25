@@ -289,8 +289,13 @@ impl<'a> AStarSearch<'a> {
         state: &ConcreteState,
         g_value: f64,
     ) -> Result<EvaluationResult, Box<dyn std::error::Error>> {
-        let mut eval_state =
-            EvaluationState::new_with_registry(state, g_value, false, self.task, &self.state_registry);
+        let mut eval_state = EvaluationState::new_with_registry(
+            state,
+            g_value,
+            false,
+            self.task,
+            &self.state_registry,
+        );
         let is_goal = self.is_goal_state(state);
         eval_state.set_is_goal(is_goal);
 

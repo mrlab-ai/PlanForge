@@ -4,7 +4,7 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{Context, Result, anyhow, ensure};
 
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, Fact, NumericType, Operator,
@@ -111,9 +111,15 @@ impl AbstractOperatorGenerator {
         numeric_domain_sizes: Vec<usize>,
         combine_labels: bool,
     ) -> Result<Self> {
-        ensure!(domain_mapping.len() == domain_sizes.len(), "domain_mapping/domain_sizes length mismatch");
+        ensure!(
+            domain_mapping.len() == domain_sizes.len(),
+            "domain_mapping/domain_sizes length mismatch"
+        );
         for (var, &abs_size) in domain_sizes.iter().enumerate() {
-            ensure!(abs_size > 0, "non-positive abstract domain size for var {var}: {abs_size}");
+            ensure!(
+                abs_size > 0,
+                "non-positive abstract domain size for var {var}: {abs_size}"
+            );
 
             let var_i32 = i32::try_from(var).context("var index does not fit i32")?;
             let concrete_size = task
@@ -172,8 +178,9 @@ impl AbstractOperatorGenerator {
             vec![Vec::new(); task.numeric_variables().len()];
         for (tree_idx, tree) in comparison_trees.iter().enumerate() {
             for dep in tree.regular_numeric_var_dependencies(task) {
-                let dep_idx = usize::try_from(dep)
-                    .map_err(|_| anyhow!("regular_numeric_var_dependencies returned non-usize index: {dep}"))?;
+                let dep_idx = usize::try_from(dep).map_err(|_| {
+                    anyhow!("regular_numeric_var_dependencies returned non-usize index: {dep}")
+                })?;
                 ensure!(
                     dep_idx < comparisons_by_numeric_dep.len(),
                     "comparison tree depends on numeric var {dep_idx}, but only {} numeric vars exist",
@@ -695,8 +702,12 @@ fn multiply_out_propositional(
             return Ok(());
         }
 
-        let transitions =
-            compute_hash_effects_with_preconditions(task, generator, op_preconditions, ass_effects)?;
+        let transitions = compute_hash_effects_with_preconditions(
+            task,
+            generator,
+            op_preconditions,
+            ass_effects,
+        )?;
         for trans in transitions {
             let mut extended_pre_pairs = pre_pairs.clone();
             let mut extended_eff_pairs = eff_pairs.clone();
@@ -839,15 +850,12 @@ fn compute_hash_effects_with_preconditions(
     let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
     for eff in ass_effects {
         let v = eff.affected_var_id() as usize;
-        let num_parts = *generator
-            .numeric_domain_sizes
-            .get(v)
-            .with_context(|| {
-                format!(
-                    "assignment effect refers to numeric var {v}, but numeric_domain_sizes has len {}",
-                    generator.numeric_domain_sizes.len()
-                )
-            })?;
+        let num_parts = *generator.numeric_domain_sizes.get(v).with_context(|| {
+            format!(
+                "assignment effect refers to numeric var {v}, but numeric_domain_sizes has len {}",
+                generator.numeric_domain_sizes.len()
+            )
+        })?;
         if num_parts <= 1 {
             continue;
         }
@@ -981,7 +989,10 @@ fn tri_value_for_comparison(
     }
 }
 
-fn compute_hash_multipliers(domain_sizes: &[i32], numeric_domain_sizes: &[usize]) -> Result<Vec<i32>> {
+fn compute_hash_multipliers(
+    domain_sizes: &[i32],
+    numeric_domain_sizes: &[usize],
+) -> Result<Vec<i32>> {
     let mut multipliers: Vec<i32> =
         Vec::with_capacity(domain_sizes.len() + numeric_domain_sizes.len());
     let mut num_states: i64 = 1;

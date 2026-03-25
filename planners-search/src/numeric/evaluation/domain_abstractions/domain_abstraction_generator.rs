@@ -1,4 +1,4 @@
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 
@@ -42,11 +42,9 @@ impl DomainAbstractionGenerator {
             .build_abstract_distance_table(task, self.config.combine_labels, false)
             .context("failed to build abstract distance table")?;
 
-        let hash_multipliers = compute_hash_multipliers(
-            factory.domain_sizes(),
-            factory.numeric_domain_sizes(),
-        )
-        .context("failed to compute hash multipliers")?;
+        let hash_multipliers =
+            compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())
+                .context("failed to compute hash multipliers")?;
 
         Ok(DomainAbstraction {
             factory,
@@ -99,4 +97,3 @@ pub fn compute_hash_multipliers(
 
     Ok(multipliers)
 }
-

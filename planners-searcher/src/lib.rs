@@ -120,10 +120,8 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                             format!("failed to build domain abstraction: {e:#}"),
                         )
                     })?;
-                    Some(
-                        Box::new(DomainAbstractionHeuristic::new(None, abstraction))
-                            as Box<dyn planners_search::numeric::evaluation::Heuristic>,
-                    )
+                    Some(Box::new(DomainAbstractionHeuristic::new(None, abstraction))
+                        as Box<dyn planners_search::numeric::evaluation::Heuristic>)
                 }
             };
 

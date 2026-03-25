@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::numeric::evaluation::EvaluationResult;
 use planners_sas::numeric::state_registry::ConcreteState;

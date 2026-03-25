@@ -35,8 +35,13 @@ impl DomainAbstractionHeuristic {
 
     fn require_task_and_registry<'s, 't>(
         eval_state: &'s EvaluationState<'s, 't>,
-    ) -> Result<(&'t dyn planners_sas::numeric::numeric_task::AbstractNumericTask, &'s StateRegistry<'t>), EvaluationError>
-    {
+    ) -> Result<
+        (
+            &'t dyn planners_sas::numeric::numeric_task::AbstractNumericTask,
+            &'s StateRegistry<'t>,
+        ),
+        EvaluationError,
+    > {
         let task = eval_state.task().ok_or_else(|| {
             EvaluationError::InvalidState(
                 "DomainAbstractionHeuristic requires task in EvaluationState".to_string(),
@@ -70,7 +75,9 @@ impl DomainAbstractionHeuristic {
         let mut numeric = self.numeric_scratch.borrow_mut();
         registry
             .fill_numeric_vars(state, &mut numeric)
-            .map_err(|e| EvaluationError::ComputationFailed(format!("failed to read numeric vars: {e:?}")))?;
+            .map_err(|e| {
+                EvaluationError::ComputationFailed(format!("failed to read numeric vars: {e:?}"))
+            })?;
         if numeric.len() < num_numeric {
             return Err(EvaluationError::InvalidState(format!(
                 "numeric state too short: {} < {num_numeric}",
@@ -97,14 +104,11 @@ impl DomainAbstractionHeuristic {
                     "invalid propositional value {concrete_val} for var {var}"
                 ))
             })?;
-            let abs_val = *mapping
-                .get(var)
-                .and_then(|m| m.get(cidx))
-                .ok_or_else(|| {
-                    EvaluationError::InvalidState(format!(
-                        "missing domain mapping for var {var} value index {cidx}"
-                    ))
-                })?;
+            let abs_val = *mapping.get(var).and_then(|m| m.get(cidx)).ok_or_else(|| {
+                EvaluationError::InvalidState(format!(
+                    "missing domain mapping for var {var} value index {cidx}"
+                ))
+            })?;
             index += i64::from(multipliers[var]) * i64::from(abs_val);
         }
 
@@ -115,13 +119,11 @@ impl DomainAbstractionHeuristic {
                     "numeric value for var {num_var_id} must be finite, got {val}"
                 )));
             }
-            let parts = partitions
-                .partitions(num_var_id)
-                .ok_or_else(|| {
-                    EvaluationError::InvalidState(format!(
-                        "missing partitions for numeric var {num_var_id}"
-                    ))
-                })?;
+            let parts = partitions.partitions(num_var_id).ok_or_else(|| {
+                EvaluationError::InvalidState(format!(
+                    "missing partitions for numeric var {num_var_id}"
+                ))
+            })?;
             let part = partition_for_value(parts, val).ok_or_else(|| {
                 EvaluationError::InvalidState(format!(
                     "numeric value {val} not contained in any partition for var {num_var_id}"
@@ -188,4 +190,3 @@ fn partition_for_value(partitions: &[Interval], value: f64) -> Option<i32> {
         .position(|iv| iv.contains(value))
         .and_then(|i| i32::try_from(i).ok())
 }
-

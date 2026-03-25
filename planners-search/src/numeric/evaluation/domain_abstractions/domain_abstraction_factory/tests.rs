@@ -7,7 +7,9 @@ use planners_sas::numeric::numeric_task::{
     ExplicitVariable, Fact, Metric, NumericRootTask, NumericVariable, Operator,
 };
 
-fn identity_domain_mapping_and_sizes(task: &dyn AbstractNumericTask) -> Result<(DomainMapping, Vec<i32>)> {
+fn identity_domain_mapping_and_sizes(
+    task: &dyn AbstractNumericTask,
+) -> Result<(DomainMapping, Vec<i32>)> {
     let num_vars = task.get_num_variables() as usize;
     let derived_prop: HashSet<u32> = task
         .comparison_axioms()
@@ -47,8 +49,7 @@ fn constant_leaf_values(
     let num_numeric_vars = task.numeric_variables().len();
     let mut out: HashSet<u64> = HashSet::new();
     for node in &tree.nodes {
-        let super::super::comparison_expression::ComparisonTreeNode::Leaf { numeric_var_id } =
-            node
+        let super::super::comparison_expression::ComparisonTreeNode::Leaf { numeric_var_id } = node
         else {
             continue;
         };
@@ -90,8 +91,11 @@ fn partitions_from_cutpoints(cutpoints: &[f64]) -> Vec<Interval> {
     out
 }
 
-fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<(NumericPartitions, Vec<usize>)> {
-    let mut comparison_trees: Vec<ComparisonTree> = Vec::with_capacity(task.comparison_axioms().len());
+fn cutpoint_partitions_for_task(
+    task: &dyn AbstractNumericTask,
+) -> Result<(NumericPartitions, Vec<usize>)> {
+    let mut comparison_trees: Vec<ComparisonTree> =
+        Vec::with_capacity(task.comparison_axioms().len());
     for comparison_axiom_id in 0..task.comparison_axioms().len() {
         let tree = ComparisonTree::from_task(task, comparison_axiom_id).map_err(|e| {
             anyhow!(
@@ -112,8 +116,9 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<(Numer
         }
 
         for dep in tree.regular_numeric_var_dependencies(task) {
-            let dep_idx = usize::try_from(dep)
-                .map_err(|_| anyhow!("regular_numeric_var_dependencies returned non-usize index: {dep}"))?;
+            let dep_idx = usize::try_from(dep).map_err(|_| {
+                anyhow!("regular_numeric_var_dependencies returned non-usize index: {dep}")
+            })?;
             ensure!(
                 dep_idx < cutpoints_by_var.len(),
                 "comparison tree depends on numeric var {dep_idx}, but only {} numeric vars exist",
@@ -134,7 +139,10 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<(Numer
         let parts = match var.get_type() {
             NumericType::Constant => vec![Interval::singleton(initial_numeric_values[var_id])],
             NumericType::Regular => {
-                let cuts: Vec<f64> = cutpoints_by_var[var_id].iter().map(|v| v.into_inner()).collect();
+                let cuts: Vec<f64> = cutpoints_by_var[var_id]
+                    .iter()
+                    .map(|v| v.into_inner())
+                    .collect();
                 if cuts.is_empty() {
                     vec![Interval::unbounded()]
                 } else {
@@ -156,7 +164,13 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<(Numer
 fn factory_identity_cutpoints(task: &dyn AbstractNumericTask) -> Result<DomainAbstractionFactory> {
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task)?;
     let (partitions, numeric_domain_sizes) = cutpoint_partitions_for_task(task)?;
-    DomainAbstractionFactory::new(task, domain_mapping, domain_sizes, partitions, numeric_domain_sizes)
+    DomainAbstractionFactory::new(
+        task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
 }
 
 #[test]
@@ -204,7 +218,10 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
         Interval::new(f64::NEG_INFINITY, 10.0, false, false)
     );
     assert_eq!(x0_parts[1], Interval::singleton(10.0));
-    assert_eq!(x0_parts[2], Interval::new(10.0, f64::INFINITY, false, false));
+    assert_eq!(
+        x0_parts[2],
+        Interval::new(10.0, f64::INFINITY, false, false)
+    );
 
     let c10_parts = factory.partitions().partitions(1).unwrap();
     assert_eq!(c10_parts, &[Interval::singleton(10.0)]);
@@ -288,14 +305,24 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
     let op0 = Operator::new(
         "set0".into(),
         vec![Fact::new(0, 0)],
-        vec![planners_sas::numeric::numeric_task::Effect::new(vec![], 0, 0, 1)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            0,
+            1,
+        )],
         vec![],
         1,
     );
     let op1 = Operator::new(
         "set1".into(),
         vec![Fact::new(0, 0)],
-        vec![planners_sas::numeric::numeric_task::Effect::new(vec![], 0, 0, 1)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            0,
+            1,
+        )],
         vec![],
         1,
     );
@@ -360,7 +387,9 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
-    let table = factory.build_abstract_distance_table(&task, true, false).unwrap();
+    let table = factory
+        .build_abstract_distance_table(&task, true, false)
+        .unwrap();
 
     let mut generator = factory.make_operator_generator(&task, true).unwrap();
     let hash_multipliers = generator.hash_multipliers().to_vec();

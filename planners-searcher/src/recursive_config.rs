@@ -74,10 +74,7 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
     );
 
     let domain_abstraction = map(
-        tuple((
-            ws(tag_no_case("domain_abstraction")),
-            opt(ws(empty_parens)),
-        )),
+        tuple((ws(tag_no_case("domain_abstraction")), opt(ws(empty_parens)))),
         |_| HeuristicSpec::DomainAbstraction,
     );
 
