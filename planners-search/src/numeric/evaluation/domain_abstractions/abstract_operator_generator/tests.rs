@@ -162,22 +162,25 @@ fn numeric_transition_adds_implicit_comparison_preconditions() {
 
     assert_eq!(abs_ops.len(), 3);
 
-    assert_eq!(
-        abs_ops[0].preconditions,
-        vec![Fact::new(0, 0), Fact::new(1, 0)]
-    );
+    assert_eq!(abs_ops[0].preconditions, vec![Fact::new(1, 0)]);
     assert_eq!(
         abs_ops[0].regression_preconditions,
         vec![Fact::new(0, 1), Fact::new(1, 1)]
     );
-    assert_eq!(abs_ops[0].hash_effect, -4);
+    assert_eq!(abs_ops[0].hash_effect, -3);
 
     let trailing_pairs: Vec<(Vec<Fact>, Vec<Fact>)> = abs_ops[1..]
         .iter()
         .map(|op| (op.preconditions.clone(), op.regression_preconditions.clone()))
         .collect();
-    assert!(trailing_pairs.contains(&(vec![Fact::new(1, 0)], vec![Fact::new(1, 0)])));
-    assert!(trailing_pairs.contains(&(vec![Fact::new(1, 1)], vec![Fact::new(1, 1)])));
+    assert!(trailing_pairs.contains(&(
+        vec![Fact::new(1, 0)],
+        vec![Fact::new(1, 0)],
+    )));
+    assert!(trailing_pairs.contains(&(
+        vec![Fact::new(1, 1)],
+        vec![Fact::new(1, 1)],
+    )));
 }
 
 #[test]
@@ -250,12 +253,88 @@ fn implicit_comparison_transition_requires_definite_change_on_both_sides() {
 
     let changed_cmp_ops: Vec<&AbstractOperator> = abs_ops
         .iter()
-        .filter(|op| op.preconditions.contains(&Fact::new(0, 0)))
+        .filter(|op| op.regression_preconditions.iter().any(|fact| fact.var() == 0))
         .collect();
     assert_eq!(changed_cmp_ops.len(), 1);
+    assert_eq!(changed_cmp_ops[0].preconditions, vec![Fact::new(1, 0)]);
     assert_eq!(
         changed_cmp_ops[0].regression_preconditions,
         vec![Fact::new(0, 1), Fact::new(1, 1)]
+    );
+}
+
+#[test]
+fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition() {
+    let variables: Vec<ExplicitVariable> = vec![];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x0".into(), NumericType::Regular, -1),
+        NumericVariable::new("c1".into(), NumericType::Constant, -1),
+    ];
+
+    let op = Operator::new(
+        "op".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 1.0],
+        vec![op.clone()],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::new(f64::NEG_INFINITY, 10.0, false, false),
+            Interval::new(10.0, f64::INFINITY, true, false),
+        ],
+        vec![Interval::singleton(1.0)],
+    ]);
+
+    let numeric_domain_sizes = vec![2, 1];
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        numeric_domain_sizes,
+        false,
+    )
+    .unwrap();
+
+    let transitions = compute_hash_effects_with_preconditions(
+        &task,
+        &mut generator,
+        &[],
+        op.assignment_effects(),
+    )
+    .unwrap();
+
+    let identity_transition = transitions.iter().find(|trans| {
+        trans.source_partition_facts == vec![Fact::new(0, 0)]
+            && trans.target_partition_facts == vec![Fact::new(0, 0)]
+    });
+    assert!(identity_transition.is_some());
+    assert_eq!(
+        identity_transition.unwrap().changed_numeric_vars,
+        vec![0]
     );
 }
 
@@ -511,6 +590,6 @@ fn conditional_assignment_effect_branches() {
             .iter()
             .filter(|o| o.changed_numeric_vars == vec![0])
             .count(),
-        1
+        3
     );
 }

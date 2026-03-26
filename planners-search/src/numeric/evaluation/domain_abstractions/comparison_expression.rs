@@ -143,6 +143,11 @@ impl Interval {
     fn is_singleton(&self) -> bool {
         self.lower == self.upper && self.lower_closed && self.upper_closed
     }
+
+    #[inline]
+    fn contains_zero(&self) -> bool {
+        self.contains(0.0)
+    }
 }
 
 impl std::ops::Add for Interval {
@@ -152,24 +157,6 @@ impl std::ops::Add for Interval {
     fn add(self, rhs: Interval) -> Interval {
         if self.is_empty() || rhs.is_empty() {
             return Interval::open(1.0, 0.0);
-        }
-
-        // Performance-oriented over-approximation:
-        // If one side is unbounded above and the other side is known non-negative,
-        // the result is guaranteed to stay within the unbounded interval.
-        if self.upper.is_infinite()
-            && self.upper.is_sign_positive()
-            && rhs.lower >= 0.0
-            && !rhs.lower.is_nan()
-        {
-            return self;
-        }
-        if rhs.upper.is_infinite()
-            && rhs.upper.is_sign_positive()
-            && self.lower >= 0.0
-            && !self.lower.is_nan()
-        {
-            return rhs;
         }
 
         Interval {
@@ -221,30 +208,54 @@ impl ArithOp {
                 if lhs.is_empty() || rhs.is_empty() {
                     return Interval::open(1.0, 0.0);
                 }
-                // Conservative multiplication (ignores some endpoint openness details).
-                let candidates = [
-                    lhs.lower * rhs.lower,
-                    lhs.lower * rhs.upper,
-                    lhs.upper * rhs.lower,
-                    lhs.upper * rhs.upper,
-                ];
-                let mut lo = f64::INFINITY;
-                let mut hi = f64::NEG_INFINITY;
-                for &v in &candidates {
-                    if v.is_nan() {
-                        continue;
+                let lhs_bounds = [(lhs.lower, lhs.lower_closed), (lhs.upper, lhs.upper_closed)];
+                let rhs_bounds = [(rhs.lower, rhs.lower_closed), (rhs.upper, rhs.upper_closed)];
+                let mut lo: Option<(f64, bool)> = None;
+                let mut hi: Option<(f64, bool)> = None;
+                let mut saw_nan = false;
+
+                for (lhs_value, lhs_closed) in lhs_bounds {
+                    for (rhs_value, rhs_closed) in rhs_bounds {
+                        let value = lhs_value * rhs_value;
+                        if value.is_nan() {
+                            saw_nan = true;
+                            continue;
+                        }
+                        let closed = lhs_closed && rhs_closed;
+                        match lo {
+                            None => lo = Some((value, closed)),
+                            Some((cur, cur_closed)) if value < cur => lo = Some((value, closed)),
+                            Some((cur, cur_closed)) if value == cur => {
+                                lo = Some((cur, cur_closed || closed));
+                            }
+                            _ => {}
+                        }
+                        match hi {
+                            None => hi = Some((value, closed)),
+                            Some((cur, cur_closed)) if value > cur => hi = Some((value, closed)),
+                            Some((cur, cur_closed)) if value == cur => {
+                                hi = Some((cur, cur_closed || closed));
+                            }
+                            _ => {}
+                        }
                     }
-                    lo = lo.min(v);
-                    hi = hi.max(v);
                 }
-                if lo == f64::INFINITY {
+
+                if saw_nan && ((lhs.contains_zero() && !rhs.is_singleton()) || (rhs.contains_zero() && !lhs.is_singleton())) {
                     return Interval::unbounded();
                 }
+
+                let Some((lower, lower_closed)) = lo else {
+                    return Interval::unbounded();
+                };
+                let Some((upper, upper_closed)) = hi else {
+                    return Interval::unbounded();
+                };
                 Interval {
-                    lower: lo,
-                    upper: hi,
-                    lower_closed: false,
-                    upper_closed: false,
+                    lower,
+                    upper,
+                    lower_closed,
+                    upper_closed,
                 }
                 .normalized()
             }
@@ -321,12 +332,17 @@ impl CompOp {
         let (rmin, rmin_c) = rhs.min_bound();
         let (rmax, rmax_c) = rhs.max_bound();
 
-        // Helpers for strict bound comparisons.
         let max_lt_min = |amax: f64, amax_c: bool, bmin: f64, bmin_c: bool| -> bool {
             (amax < bmin) || (amax == bmin && (!amax_c || !bmin_c))
         };
         let min_ge_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
             (amin > bmax) || (amin == bmax && (amin_c && bmax_c))
+        };
+        let min_gt_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
+            (amin > bmax) || (amin == bmax && (!amin_c || !bmax_c))
+        };
+        let intervals_are_disjoint = || {
+            max_lt_min(lmax, lmax_c, rmin, rmin_c) || max_lt_min(rmax, rmax_c, lmin, lmin_c)
         };
 
         match self {
@@ -342,7 +358,7 @@ impl CompOp {
             CompOp::Le => {
                 if lmax <= rmin {
                     Some(true)
-                } else if lmin > rmax {
+                } else if min_gt_max(lmin, lmin_c, rmax, rmax_c) {
                     Some(false)
                 } else {
                     None
@@ -353,9 +369,7 @@ impl CompOp {
             CompOp::Eq => {
                 if lhs.is_singleton() && rhs.is_singleton() && lmin == rmin {
                     Some(true)
-                } else if max_lt_min(lmax, lmax_c, rmin, rmin_c)
-                    || max_lt_min(rmax, rmax_c, lmin, lmin_c)
-                {
+                } else if intervals_are_disjoint() {
                     Some(false)
                 } else {
                     None
@@ -364,9 +378,7 @@ impl CompOp {
             CompOp::Ne => {
                 if lhs.is_singleton() && rhs.is_singleton() && lmin == rmin {
                     Some(false)
-                } else if max_lt_min(lmax, lmax_c, rmin, rmin_c)
-                    || max_lt_min(rmax, rmax_c, lmin, lmin_c)
-                {
+                } else if intervals_are_disjoint() {
                     Some(true)
                 } else {
                     None

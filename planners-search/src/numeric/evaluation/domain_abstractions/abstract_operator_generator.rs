@@ -12,6 +12,9 @@ use planners_sas::numeric::numeric_task::{
 
 use super::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
+use super::numeric_context::{
+    propagate_assignment_axiom_intervals, seed_numeric_intervals_from_initial_state,
+};
 
 const COMPARISON_TRUE_VAL: usize = 0;
 const COMPARISON_FALSE_VAL: usize = 1;
@@ -899,6 +902,7 @@ fn compute_hash_effects_with_preconditions(
     }
 
     let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
+    let mut affected_numeric_vars: HashSet<usize> = HashSet::new();
     for v in 0..num_numeric_vars {
         let num_parts = generator.numeric_domain_sizes[v];
         if num_parts <= 1 {
@@ -913,6 +917,7 @@ fn compute_hash_effects_with_preconditions(
         );
 
         if let Some(eff) = effs.first() {
+            affected_numeric_vars.insert(v);
             let rhs = eff.var_id() as usize;
             let rhs_parts = generator
                 .partitions
@@ -981,11 +986,9 @@ fn compute_hash_effects_with_preconditions(
 
         for (var_id, src, tgt) in &combo {
             let abs_var_id = num_props + (*var_id as u32);
-            if src == tgt {
-                prevail_facts.push(Fact::new(abs_var_id, *src as i32));
-            } else {
-                source_partition_facts.push(Fact::new(abs_var_id, *src as i32));
-                target_partition_facts.push(Fact::new(abs_var_id, *tgt as i32));
+            source_partition_facts.push(Fact::new(abs_var_id, *src as i32));
+            target_partition_facts.push(Fact::new(abs_var_id, *tgt as i32));
+            if affected_numeric_vars.contains(var_id) {
                 changed_numeric_vars.push(*var_id);
             }
         }
@@ -1008,8 +1011,6 @@ fn compute_hash_effects_with_preconditions(
         }
 
         if !changed_numeric_vars.is_empty() {
-            let source_numeric_intervals =
-                build_numeric_intervals_for_combo(task, generator, &combo, false)?;
             let target_numeric_intervals =
                 build_numeric_intervals_for_combo(task, generator, &combo, true)?;
             let mut seen_comparisons: HashSet<usize> = HashSet::new();
@@ -1025,18 +1026,21 @@ fn compute_hash_effects_with_preconditions(
                     let tree = generator.comparison_trees.get(tree_id).with_context(|| {
                         format!("comparison tree id out of bounds while building operators: {tree_id}")
                     })?;
+                    if !comparison_operand_partition_changed(
+                        generator,
+                        tree,
+                        &source_numeric_intervals,
+                        &target_numeric_intervals,
+                    ) {
+                        continue;
+                    }
+
                     let affected_var_id = usize::try_from(tree.affected_var_id).with_context(|| {
                         format!(
                             "comparison tree affected_var_id does not fit usize: {}",
                             tree.affected_var_id
                         )
                     })?;
-                    let source_abs = tri_value_for_comparison(
-                        tree,
-                        &source_numeric_intervals,
-                        affected_var_id,
-                        &generator.domain_mapping,
-                    );
                     let target_abs = tri_value_for_comparison(
                         tree,
                         &target_numeric_intervals,
@@ -1045,12 +1049,7 @@ fn compute_hash_effects_with_preconditions(
                     );
                     let unknown_abs = generator.domain_mapping[affected_var_id]
                         [COMPARISON_UNKNOWN_VAL];
-                    if source_abs != unknown_abs
-                        && target_abs != unknown_abs
-                        && source_abs != target_abs
-                    {
-                        source_partition_facts
-                            .push(Fact::new(affected_var_id as u32, source_abs));
+                    if target_abs != unknown_abs {
                         target_partition_facts
                             .push(Fact::new(affected_var_id as u32, target_abs));
                     }
@@ -1075,14 +1074,7 @@ fn build_numeric_intervals_for_combo(
     combo: &[(usize, usize, usize)],
     use_target_partitions: bool,
 ) -> Result<Vec<Interval>> {
-    let initial_numeric_values = task.get_initial_numeric_state_values();
-    let mut numeric_intervals: Vec<Interval> = vec![Interval::unbounded(); task.numeric_variables().len()];
-
-    for (i, v) in task.numeric_variables().iter().enumerate() {
-        if v.get_type() == &NumericType::Constant {
-            numeric_intervals[i] = Interval::singleton(initial_numeric_values[i]);
-        }
-    }
+    let mut numeric_intervals = seed_numeric_intervals_from_initial_state(task);
 
     for (var_id, src, tgt) in combo {
         let partition_id = if use_target_partitions { *tgt } else { *src };
@@ -1096,6 +1088,8 @@ fn build_numeric_intervals_for_combo(
             })?;
         numeric_intervals[*var_id] = iv;
     }
+
+        propagate_assignment_axiom_intervals(task, &mut numeric_intervals);
 
     Ok(numeric_intervals)
 }
@@ -1111,6 +1105,61 @@ fn tri_value_for_comparison(
         Some(false) => domain_mapping[affected_var_id][COMPARISON_FALSE_VAL],
         None => domain_mapping[affected_var_id][COMPARISON_UNKNOWN_VAL],
     }
+}
+
+fn comparison_operand_partition_changed(
+    generator: &AbstractOperatorGenerator,
+    tree: &ComparisonTree,
+    source_numeric_intervals: &[Interval],
+    target_numeric_intervals: &[Interval],
+) -> bool {
+    [tree.left_numeric_var_id, tree.right_numeric_var_id]
+        .into_iter()
+        .filter_map(|var_id| usize::try_from(var_id).ok())
+        .any(|var_id| {
+            let source_partition = first_overlapping_partition(
+                generator,
+                var_id,
+                source_numeric_intervals.get(var_id).copied().unwrap_or_else(Interval::unbounded),
+            );
+            let target_partition = first_overlapping_partition(
+                generator,
+                var_id,
+                target_numeric_intervals.get(var_id).copied().unwrap_or_else(Interval::unbounded),
+            );
+            match (source_partition, target_partition) {
+                (Some(source_partition), Some(target_partition)) => source_partition != target_partition,
+                _ => false,
+            }
+        })
+}
+
+fn first_overlapping_partition(
+    generator: &AbstractOperatorGenerator,
+    numeric_var_id: usize,
+    interval: Interval,
+) -> Option<usize> {
+    generator
+        .partitions
+        .partitions(numeric_var_id)?
+        .iter()
+        .position(|&candidate| intervals_overlap(interval, candidate))
+}
+
+fn intervals_overlap(a: Interval, b: Interval) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+
+    if (a.upper < b.lower) || (a.upper == b.lower && (!a.upper_closed || !b.lower_closed)) {
+        return false;
+    }
+
+    if (b.upper < a.lower) || (b.upper == a.lower && (!b.upper_closed || !a.lower_closed)) {
+        return false;
+    }
+
+    true
 }
 
 fn compute_hash_multipliers(

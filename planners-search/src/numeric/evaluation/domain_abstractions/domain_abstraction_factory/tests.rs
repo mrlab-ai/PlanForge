@@ -352,6 +352,97 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
 }
 
 #[test]
+fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        0,
+        0,
+    )];
+    let numeric_variables: Vec<NumericVariable> = vec![];
+    let goals = vec![Fact::new(0, 1)];
+    let op0 = Operator::new(
+        "set0".into(),
+        vec![Fact::new(0, 0)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            0,
+            1,
+        )],
+        vec![],
+        1,
+    );
+    let op1 = Operator::new(
+        "set1".into(),
+        vec![Fact::new(0, 0)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            0,
+            1,
+        )],
+        vec![],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        goals,
+        vec![],
+        vec![0],
+        vec![],
+        vec![op0, op1],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let result = factory
+        .compute_wildcard_plan(&task, false, false)
+        .unwrap()
+        .expect("plan exists");
+    assert_eq!(result.wildcard_plan.len(), 1);
+    assert_eq!(result.wildcard_plan[0], vec![0]);
+}
+
+#[test]
+fn match_tree_indexes_comparison_variables() {
+    let operators = vec![
+        super::super::abstract_operator_generator::AbstractOperator {
+            concrete_op_ids: vec![0],
+            cost: 1.0,
+            hash_effect: 0,
+            regression_preconditions: vec![Fact::new(0, COMPARISON_TRUE_VAL)],
+            preconditions: vec![Fact::new(0, COMPARISON_TRUE_VAL)],
+            changed_numeric_vars: vec![],
+        },
+        super::super::abstract_operator_generator::AbstractOperator {
+            concrete_op_ids: vec![1],
+            cost: 1.0,
+            hash_effect: 0,
+            regression_preconditions: vec![Fact::new(0, COMPARISON_FALSE_VAL)],
+            preconditions: vec![Fact::new(0, COMPARISON_FALSE_VAL)],
+            changed_numeric_vars: vec![],
+        },
+    ];
+
+    let tree = MatchTree::build(&[3], &[], &[1], &operators, &[0]);
+    let mut out = Vec::new();
+
+    tree.get_applicable_operator_ids(COMPARISON_TRUE_VAL, &mut out);
+    assert_eq!(out, vec![0]);
+
+    tree.get_applicable_operator_ids(COMPARISON_FALSE_VAL, &mut out);
+    assert_eq!(out, vec![1]);
+}
+
+#[test]
 fn initial_state_is_unique_and_comparisons_are_determined() {
     // One comparison-axiom propositional variable.
     let variables = vec![ExplicitVariable::new(
@@ -375,8 +466,7 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
         numeric_variables,
         vec![],
         vec![],
-        // Even if the SAS initial state encodes UNKNOWN for the comparison var,
-        // the abstraction initial state must be determined from concrete numeric values.
+        // The C++ utility hashes the stored propositional value for comparison vars directly.
         vec![COMPARISON_UNKNOWN_VAL],
         vec![0.0, 0.0],
         vec![op],
@@ -409,6 +499,5 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
         &mut nums,
     );
     assert_eq!(props.len(), 1);
-    // With x=0, y=0, (x < y) is definitely FALSE.
-    assert_eq!(props[0][0], COMPARISON_FALSE_VAL);
+    assert_eq!(props[0][0], COMPARISON_UNKNOWN_VAL);
 }

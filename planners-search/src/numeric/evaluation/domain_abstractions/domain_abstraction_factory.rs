@@ -14,6 +14,9 @@ use super::abstract_operator_generator::{
 };
 use super::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
+use super::numeric_context::{
+    propagate_assignment_axiom_intervals, seed_numeric_intervals_from_initial_state,
+};
 
 const COMPARISON_TRUE_VAL: i32 = 0;
 const COMPARISON_FALSE_VAL: i32 = 1;
@@ -41,7 +44,7 @@ impl MatchTree {
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[i32],
         operators: &[AbstractOperator],
-        comparison_var_ids: &[usize],
+        _comparison_var_ids: &[usize],
     ) -> Self {
         let mut freq: HashMap<usize, usize> = HashMap::new();
         for op in operators {
@@ -49,9 +52,6 @@ impl MatchTree {
                 let Ok(var) = usize::try_from(f.var()) else {
                     continue;
                 };
-                if comparison_var_ids.contains(&var) {
-                    continue;
-                }
                 *freq.entry(var).or_insert(0) += 1;
             }
         }
@@ -76,9 +76,6 @@ impl MatchTree {
                 let Ok(var) = usize::try_from(f.var()) else {
                     continue;
                 };
-                if comparison_var_ids.contains(&var) {
-                    continue;
-                }
                 conds.insert(var, f.value());
             }
             tree.insert(op_id, &conds);
@@ -397,6 +394,7 @@ impl DomainAbstractionFactory {
             operators,
             &match_tree,
             &goal_facts,
+            init_hash,
             numeric_domain_sizes,
             hash_multipliers,
             &comparison_var_ids,
@@ -487,9 +485,6 @@ impl DomainAbstractionFactory {
                 }
             }
         }
-        return;
-        return;
-
         if !non_axiom_vars.is_empty() {
             println!("[PropositionalDomains]");
             for &var_id in &non_axiom_vars {
@@ -808,27 +803,11 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[i32],
-        comparison_var_ids: &[usize],
+        _comparison_var_ids: &[usize],
     ) -> Result<i32> {
-        let num_props = self.domain_sizes.len();
-        let mut is_comparison: Vec<bool> = vec![false; num_props];
-        for &v in comparison_var_ids {
-            ensure!(
-                v < is_comparison.len(),
-                "comparison var id out of range: {v}"
-            );
-            is_comparison[v] = true;
-        }
-
-        let mut tree_by_var: HashMap<usize, &ComparisonTree> = HashMap::new();
-        for t in &self.comparison_trees {
-            if let Ok(v) = usize::try_from(t.affected_var_id) {
-                tree_by_var.entry(v).or_insert(t);
-            }
-        }
-
         let prop_init = task.get_initial_propositional_state_values();
         let num_init = task.get_initial_numeric_state_values();
+        let num_props = self.domain_sizes.len();
         ensure!(
             prop_init.len() >= num_props,
             "initial propositional state too short: {} < {num_props}",
@@ -841,43 +820,16 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes.len()
         );
 
-        let mut singleton_intervals: Vec<Interval> =
-            Vec::with_capacity(task.numeric_variables().len());
-        for (i, _) in task.numeric_variables().iter().enumerate() {
-            let v = *num_init.get(i).unwrap_or(&0.0);
-            if v.is_nan() {
-                singleton_intervals.push(Interval::unbounded());
-            } else {
-                singleton_intervals.push(Interval::singleton(v));
-            }
-        }
-
         let mut index: i64 = 0;
         for var in 0..num_props {
             let mult = hash_multipliers[var] as i64;
-            let abs_val: i32 = if is_comparison[var] {
-                let mapped_truth = match tree_by_var
-                    .get(&var)
-                    .and_then(|t| t.evaluate_interval(&singleton_intervals))
-                {
-                    Some(true) => COMPARISON_TRUE_VAL,
-                    Some(false) => COMPARISON_FALSE_VAL,
-                    None => COMPARISON_UNKNOWN_VAL,
-                };
-                *self.domain_mapping[var]
-                    .get(mapped_truth as usize)
-                    .with_context(|| {
-                        format!("missing mapping for comparison var {var} truth {mapped_truth}")
-                    })?
-            } else {
-                let concrete_val = prop_init[var];
-                let cidx = usize::try_from(concrete_val).with_context(|| {
-                    format!("invalid propositional initial value {concrete_val} at var {var}")
-                })?;
-                *self.domain_mapping[var].get(cidx).with_context(|| {
-                    format!("missing mapping for propositional var {var} value index {cidx}")
-                })?
-            };
+            let concrete_val = prop_init[var];
+            let cidx = usize::try_from(concrete_val).with_context(|| {
+                format!("invalid propositional initial value {concrete_val} at var {var}")
+            })?;
+            let abs_val = *self.domain_mapping[var].get(cidx).with_context(|| {
+                format!("missing mapping for propositional var {var} value index {cidx}")
+            })?;
             index += mult * (abs_val as i64);
         }
 
@@ -954,11 +906,9 @@ impl DomainAbstractionFactory {
             "numeric_domain_sizes length mismatch: {} != {num_numeric_vars}",
             numeric_domain_sizes.len()
         );
-        let initial_numeric_values = task.get_initial_numeric_state_values();
-        let mut out: Vec<Interval> = vec![Interval::unbounded(); num_numeric_vars];
+        let mut out = seed_numeric_intervals_from_initial_state(task);
         for (i, v) in task.numeric_variables().iter().enumerate() {
             if v.get_type() == &NumericType::Constant {
-                out[i] = Interval::singleton(initial_numeric_values[i]);
                 continue;
             }
             let abs_var = num_props + i;
@@ -973,6 +923,7 @@ impl DomainAbstractionFactory {
                 })?;
             out[i] = iv;
         }
+        propagate_assignment_axiom_intervals(task, &mut out);
         Ok(out)
     }
 
@@ -1017,24 +968,6 @@ impl DomainAbstractionFactory {
                 continue;
             }
             if fixed_map.contains_key(&(var_id as u32)) {
-                // If the fixed value contradicts a definite evaluation, no states are feasible.
-                if let Some(eval) = tree.evaluate_interval(&numeric_intervals) {
-                    let required_idx = if eval {
-                        COMPARISON_TRUE_VAL
-                    } else {
-                        COMPARISON_FALSE_VAL
-                    };
-                    let required_abs = *self.domain_mapping[var_id]
-                        .get(required_idx as usize)
-                        .with_context(|| {
-                            format!(
-                                "missing comparison mapping for var {var_id} idx {required_idx}"
-                            )
-                        })?;
-                    if fixed_map[&(var_id as u32)] != required_abs {
-                        return Ok(Vec::new());
-                    }
-                }
                 continue;
             }
 
@@ -1108,6 +1041,7 @@ impl DomainAbstractionFactory {
 
         let mut wildcard_plan: Vec<Vec<usize>> = Vec::new();
         let mut abstract_state_hashes: Vec<i32> = vec![current_hash];
+        let mut seen_states: Vec<i32> = Vec::new();
 
         // For debugging / parity with numeric-fd deviation code.
         let mut abstract_prop_states: Vec<Vec<i32>> = Vec::new();
@@ -1166,9 +1100,12 @@ impl DomainAbstractionFactory {
             let cur_d = dist[current_idx];
             ensure!(cur_d.is_finite(), "current distance must be finite");
             let mut chosen_successor: Option<i32> = None;
-            let mut best_succ_d = f64::INFINITY;
+            let mut lowest_so_far = cur_d;
             for &cand in &possible_successors {
                 if cand == current_hash {
+                    continue;
+                }
+                if seen_states.contains(&cand) {
                     continue;
                 }
                 let cand_idx = match usize::try_from(cand) {
@@ -1182,12 +1119,11 @@ impl DomainAbstractionFactory {
                 if !cd.is_finite() {
                     continue;
                 }
-                // Dijkstra invariant: dist(current) = cost(op) + dist(successor)
-                if (cd + op.cost - cur_d).abs() <= 1e-9 {
-                    if cd < best_succ_d {
-                        best_succ_d = cd;
-                        chosen_successor = Some(cand);
-                    }
+                let valid_progress = (cd < cur_d && op.cost > 0.0)
+                    || ((cd - cur_d).abs() <= 1e-9 && op.cost == 0.0);
+                if valid_progress && cand > chosen_successor.unwrap_or(-1) {
+                    chosen_successor = Some(cand);
+                    lowest_so_far = cd;
                 }
             }
             let successor_hash = chosen_successor.with_context(|| {
@@ -1205,10 +1141,15 @@ impl DomainAbstractionFactory {
                     Ok(i)
                 })?;
 
-            let required_cost = cur_d - dist[successor_idx];
+            ensure!(
+                (lowest_so_far - cur_d + op.cost).abs() <= 1e-6,
+                "chosen successor violates C++ plan-extraction distance relation"
+            );
+            let required_cost = op.cost;
 
-            // Collect cheapest concrete ops like numeric-fd does.
-            let mut concrete_ids: HashSet<usize> = HashSet::new();
+            // Collect cheapest concrete ops like numeric-fd does: from the first
+            // matching abstract operator group only.
+            let mut step: Vec<usize> = Vec::new();
             let mut applicable_operator_ids: Vec<usize> = Vec::new();
             match_tree.get_applicable_operator_ids(base_successor, &mut applicable_operator_ids);
             for &cand_op_id in &applicable_operator_ids {
@@ -1229,15 +1170,15 @@ impl DomainAbstractionFactory {
                     &fixed_comparisons,
                 )?;
                 if possible_predecessors.binary_search(&current_hash).is_ok() {
-                    for &cid in &cand_op.concrete_op_ids {
-                        concrete_ids.insert(cid);
-                    }
+                    step = cand_op.concrete_op_ids.clone();
+                    step.sort_unstable();
+                    step.dedup();
+                    break;
                 }
             }
-            let mut step: Vec<usize> = concrete_ids.into_iter().collect();
-            step.sort_unstable();
             wildcard_plan.push(step);
 
+            seen_states.push(current_hash);
             current_hash = successor_hash;
             abstract_state_hashes.push(current_hash);
             decode_state_to_vectors(
@@ -1265,6 +1206,7 @@ impl DomainAbstractionFactory {
         operators: &[AbstractOperator],
         match_tree: &MatchTree,
         goal_facts: &[planners_sas::numeric::numeric_task::Fact],
+        initial_state_hash: i32,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[i32],
         comparison_var_ids: &[usize],
@@ -1399,6 +1341,8 @@ impl DomainAbstractionFactory {
                     );
                 }
 
+                let representative_predecessor = possible_predecessors.iter().copied().max();
+
                 for pred in possible_predecessors {
                     let Ok(pred_idx) = usize::try_from(pred) else {
                         continue;
@@ -1407,12 +1351,15 @@ impl DomainAbstractionFactory {
                     if alternative_cost + 1e-12 < distances[pred_idx] {
                         distances[pred_idx] = alternative_cost;
                         generating_op_ids[pred_idx] = Some(op_id);
-                        heap.push((
-                            Reverse(
-                                NotNan::new(alternative_cost).context("alternative cost is NaN")?,
-                            ),
-                            pred,
-                        ));
+                        if pred == initial_state_hash || Some(pred) == representative_predecessor {
+                            heap.push((
+                                Reverse(
+                                    NotNan::new(alternative_cost)
+                                        .context("alternative cost is NaN")?,
+                                ),
+                                pred,
+                            ));
+                        }
                     }
                 }
             }

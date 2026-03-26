@@ -29,14 +29,12 @@ fn example_tree() {
 }
 
 #[test]
-fn interval_add_absorbs_unbounded_when_safe() {
+fn interval_add_preserves_exact_bounds() {
     let bounded = Interval::closed(3.0, 4.0);
     let unbounded = Interval::open(-3.0, f64::INFINITY);
 
-    // Fast-path / over-approx: adding a non-negative interval to an interval
-    // unbounded above stays within the unbounded interval.
-    assert_eq!(bounded + unbounded, unbounded);
-    assert_eq!(unbounded + bounded, unbounded);
+    assert_eq!(bounded + unbounded, Interval::new(0.0, f64::INFINITY, false, false));
+    assert_eq!(unbounded + bounded, Interval::new(0.0, f64::INFINITY, false, false));
 }
 
 #[test]
@@ -92,6 +90,26 @@ fn interval_eq_and_ne() {
     expr_ne.set_root_compare(CompOp::Ne, a, b);
     let inputs = [Interval::closed(0.0, 1.0), Interval::closed(2.0, 3.0)];
     assert_eq!(expr_ne.evaluate_interval(&inputs), Some(true));
+}
+
+#[test]
+fn interval_mul_preserves_closed_extrema() {
+    let result = ArithOp::Mul.apply_interval(Interval::singleton(2.0), Interval::closed(3.0, 4.0));
+    assert_eq!(result, Interval::closed(6.0, 8.0));
+}
+
+#[test]
+fn interval_le_handles_open_touching_bounds() {
+    let mut expr = Expr::new();
+    let a = expr.add_leaf(0);
+    let b = expr.add_leaf(1);
+    expr.set_root_compare(CompOp::Le, a, b);
+
+    let always_true = [Interval::open(1.0, 2.0), Interval::closed(2.0, 3.0)];
+    assert_eq!(expr.evaluate_interval(&always_true), Some(true));
+
+    let always_false = [Interval::closed(2.0, 3.0), Interval::open(1.0, 2.0)];
+    assert_eq!(expr.evaluate_interval(&always_false), Some(false));
 }
 
 #[test]
