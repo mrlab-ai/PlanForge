@@ -168,25 +168,94 @@ fn numeric_transition_adds_implicit_comparison_preconditions() {
     );
     assert_eq!(
         abs_ops[0].regression_preconditions,
-        vec![Fact::new(0, 2), Fact::new(1, 1)]
-    );
-
-    assert_eq!(
-        abs_ops[1].preconditions,
-        vec![Fact::new(0, 0), Fact::new(1, 0)]
-    );
-    assert_eq!(
-        abs_ops[1].regression_preconditions,
-        vec![Fact::new(0, 2), Fact::new(1, 0)]
-    );
-
-    assert_eq!(
-        abs_ops[2].preconditions,
         vec![Fact::new(0, 1), Fact::new(1, 1)]
     );
+    assert_eq!(abs_ops[0].hash_effect, -4);
+
+    let trailing_pairs: Vec<(Vec<Fact>, Vec<Fact>)> = abs_ops[1..]
+        .iter()
+        .map(|op| (op.preconditions.clone(), op.regression_preconditions.clone()))
+        .collect();
+    assert!(trailing_pairs.contains(&(vec![Fact::new(1, 0)], vec![Fact::new(1, 0)])));
+    assert!(trailing_pairs.contains(&(vec![Fact::new(1, 1)], vec![Fact::new(1, 1)])));
+}
+
+#[test]
+fn implicit_comparison_transition_requires_definite_change_on_both_sides() {
+    let variables = vec![ExplicitVariable::new(
+        3,
+        "cmp".into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        0,
+        2,
+    )];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x0".into(), NumericType::Regular, -1),
+        NumericVariable::new("c10".into(), NumericType::Constant, -1),
+        NumericVariable::new("c7".into(), NumericType::Constant, -1),
+    ];
+
+    let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
+
+    let op = Operator::new(
+        "op".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            2,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 10.0, 7.0],
+        vec![op],
+        vec![],
+        comparison_axioms,
+        vec![],
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::new(f64::NEG_INFINITY, 10.0, false, false),
+            Interval::new(10.0, f64::INFINITY, true, false),
+        ],
+        vec![Interval::singleton(10.0)],
+        vec![Interval::singleton(7.0)],
+    ]);
+
+    let numeric_domain_sizes = vec![2, 1, 1];
+
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        numeric_domain_sizes,
+        false,
+    )
+    .unwrap();
+    let abs_ops = generator.build_abstract_operators(&task).unwrap();
+
+    let changed_cmp_ops: Vec<&AbstractOperator> = abs_ops
+        .iter()
+        .filter(|op| op.preconditions.contains(&Fact::new(0, 0)))
+        .collect();
+    assert_eq!(changed_cmp_ops.len(), 1);
     assert_eq!(
-        abs_ops[2].regression_preconditions,
-        vec![Fact::new(0, 2), Fact::new(1, 1)]
+        changed_cmp_ops[0].regression_preconditions,
+        vec![Fact::new(0, 1), Fact::new(1, 1)]
     );
 }
 

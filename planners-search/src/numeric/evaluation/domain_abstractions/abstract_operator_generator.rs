@@ -58,15 +58,28 @@ impl AbstractOperator {
                 .all(|w| w[0].var() != w[1].var())
         );
 
-        debug_assert_eq!(pre_pairs.len(), eff_pairs.len());
         let mut hash_effect: i32 = 0;
-        for (pre, eff) in pre_pairs.iter().zip(eff_pairs.iter()) {
-            debug_assert_eq!(pre.var(), eff.var());
+        let mut pre_idx = 0usize;
+        let mut eff_idx = 0usize;
+        while pre_idx < pre_pairs.len() && eff_idx < eff_pairs.len() {
+            let pre = &pre_pairs[pre_idx];
+            let eff = &eff_pairs[eff_idx];
+            if pre.var() < eff.var() {
+                pre_idx += 1;
+                continue;
+            }
+            if eff.var() < pre.var() {
+                eff_idx += 1;
+                continue;
+            }
+
             let var = pre.var() as usize;
             let multiplier = hash_multipliers[var];
             let new_val = pre.value();
             let old_val = eff.value();
             hash_effect += (new_val - old_val) * multiplier;
+            pre_idx += 1;
+            eff_idx += 1;
         }
 
         Self {
@@ -716,14 +729,39 @@ fn multiply_out_propositional(
             // Avoid duplicating variables that already appear in pre_pairs.
             let mut vars_in_pre: HashSet<u32> = pre_pairs.iter().map(|f| f.var()).collect();
 
-            for (src, tgt) in trans
+            let source_by_var: HashMap<u32, Fact> = trans
                 .source_partition_facts
                 .iter()
-                .zip(trans.target_partition_facts.iter())
-            {
-                let var_id: u32 = src.var();
-                if vars_in_pre.insert(var_id) {
+                .cloned()
+                .map(|f| (f.var(), f))
+                .collect();
+            let target_by_var: HashMap<u32, Fact> = trans
+                .target_partition_facts
+                .iter()
+                .cloned()
+                .map(|f| (f.var(), f))
+                .collect();
+
+            let mut transition_vars: Vec<u32> = source_by_var
+                .keys()
+                .chain(target_by_var.keys())
+                .copied()
+                .collect();
+            transition_vars.sort_unstable();
+            transition_vars.dedup();
+
+            for var_id in transition_vars {
+                let source_fact = source_by_var.get(&var_id);
+                let target_fact = target_by_var.get(&var_id);
+
+                if !vars_in_pre.insert(var_id) {
+                    continue;
+                }
+
+                if let Some(src) = source_fact {
                     extended_pre_pairs.push(src.clone());
+                }
+                if let Some(tgt) = target_fact {
                     extended_eff_pairs.push(tgt.clone());
                 }
             }
@@ -970,6 +1008,10 @@ fn compute_hash_effects_with_preconditions(
         }
 
         if !changed_numeric_vars.is_empty() {
+            let source_numeric_intervals =
+                build_numeric_intervals_for_combo(task, generator, &combo, false)?;
+            let target_numeric_intervals =
+                build_numeric_intervals_for_combo(task, generator, &combo, true)?;
             let mut seen_comparisons: HashSet<usize> = HashSet::new();
             for &numeric_var_id in &changed_numeric_vars {
                 let Some(tree_ids) = generator.comparisons_by_numeric_dep.get(numeric_var_id) else {
@@ -989,18 +1031,28 @@ fn compute_hash_effects_with_preconditions(
                             tree.affected_var_id
                         )
                     })?;
-                    let abs_val = tri_value_for_comparison(
+                    let source_abs = tri_value_for_comparison(
                         tree,
                         &source_numeric_intervals,
                         affected_var_id,
                         &generator.domain_mapping,
                     );
+                    let target_abs = tri_value_for_comparison(
+                        tree,
+                        &target_numeric_intervals,
+                        affected_var_id,
+                        &generator.domain_mapping,
+                    );
                     let unknown_abs = generator.domain_mapping[affected_var_id]
                         [COMPARISON_UNKNOWN_VAL];
-                    if abs_val != unknown_abs {
-                        source_partition_facts.push(Fact::new(affected_var_id as u32, abs_val));
+                    if source_abs != unknown_abs
+                        && target_abs != unknown_abs
+                        && source_abs != target_abs
+                    {
+                        source_partition_facts
+                            .push(Fact::new(affected_var_id as u32, source_abs));
                         target_partition_facts
-                            .push(Fact::new(affected_var_id as u32, unknown_abs));
+                            .push(Fact::new(affected_var_id as u32, target_abs));
                     }
                 }
             }
