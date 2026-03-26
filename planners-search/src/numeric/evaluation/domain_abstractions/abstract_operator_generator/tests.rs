@@ -92,6 +92,105 @@ fn numeric_partition_transitions_and_comparison_filtering() {
 }
 
 #[test]
+fn numeric_transition_adds_implicit_comparison_preconditions() {
+    let variables = vec![ExplicitVariable::new(
+        3,
+        "cmp".into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        0,
+        2,
+    )];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x0".into(), NumericType::Regular, -1),
+        NumericVariable::new("c10".into(), NumericType::Constant, -1),
+        NumericVariable::new("c7".into(), NumericType::Constant, -1),
+    ];
+
+    let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
+
+    let op = Operator::new(
+        "op".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            2,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 10.0, 7.0],
+        vec![op],
+        vec![],
+        comparison_axioms,
+        vec![],
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::new(f64::NEG_INFINITY, 10.0, false, false),
+            Interval::new(10.0, f64::INFINITY, true, false),
+        ],
+        vec![Interval::singleton(10.0)],
+        vec![Interval::singleton(7.0)],
+    ]);
+
+    let numeric_domain_sizes = vec![2, 1, 1];
+
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        numeric_domain_sizes,
+        false,
+    )
+    .unwrap();
+    let mut abs_ops = generator.build_abstract_operators(&task).unwrap();
+    abs_ops.sort_by_key(|op| op.hash_effect);
+
+    assert_eq!(abs_ops.len(), 3);
+
+    assert_eq!(
+        abs_ops[0].preconditions,
+        vec![Fact::new(0, 0), Fact::new(1, 0)]
+    );
+    assert_eq!(
+        abs_ops[0].regression_preconditions,
+        vec![Fact::new(0, 2), Fact::new(1, 1)]
+    );
+
+    assert_eq!(
+        abs_ops[1].preconditions,
+        vec![Fact::new(0, 0), Fact::new(1, 0)]
+    );
+    assert_eq!(
+        abs_ops[1].regression_preconditions,
+        vec![Fact::new(0, 2), Fact::new(1, 0)]
+    );
+
+    assert_eq!(
+        abs_ops[2].preconditions,
+        vec![Fact::new(0, 1), Fact::new(1, 1)]
+    );
+    assert_eq!(
+        abs_ops[2].regression_preconditions,
+        vec![Fact::new(0, 2), Fact::new(1, 1)]
+    );
+}
+
+#[test]
 fn multiply_out_unconditional_propositional_effects() {
     let variables = vec![ExplicitVariable::new(
         2,

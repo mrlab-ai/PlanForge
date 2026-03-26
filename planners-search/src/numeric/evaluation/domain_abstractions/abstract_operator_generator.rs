@@ -933,8 +933,6 @@ fn compute_hash_effects_with_preconditions(
         }
     }
 
-    let initial_numeric_values = task.get_initial_numeric_state_values();
-
     let mut out: Vec<TransitionInfo> = Vec::new();
     for combo in combos {
         let mut source_partition_facts: Vec<Fact> = Vec::new();
@@ -959,28 +957,52 @@ fn compute_hash_effects_with_preconditions(
         // regression/predecessor enumeration.
 
         // Optimistic filtering for comparison preconditions based on *source* intervals.
+        let source_numeric_intervals =
+            build_numeric_intervals_for_combo(task, generator, &combo, false)?;
+
         if let Some(index) = &generator.comparison_index {
-            let mut numeric_intervals: Vec<Interval> =
-                vec![Interval::unbounded(); task.numeric_variables().len()];
-            for (i, v) in task.numeric_variables().iter().enumerate() {
-                if v.get_type() == &NumericType::Constant {
-                    numeric_intervals[i] = Interval::singleton(initial_numeric_values[i]);
-                }
-            }
-            for (var_id, src, _) in &combo {
-                let iv = generator
-                    .partitions
-                    .partition_interval(*var_id, *src)
-                    .with_context(|| {
-                        format!("missing partition interval for var {var_id} part {src}")
-                    })?;
-                numeric_intervals[*var_id] = iv;
-            }
             if op_preconditions
                 .iter()
-                .any(|pre| index.precondition_is_contradicted(pre, &numeric_intervals))
+                .any(|pre| index.precondition_is_contradicted(pre, &source_numeric_intervals))
             {
                 continue;
+            }
+        }
+
+        if !changed_numeric_vars.is_empty() {
+            let mut seen_comparisons: HashSet<usize> = HashSet::new();
+            for &numeric_var_id in &changed_numeric_vars {
+                let Some(tree_ids) = generator.comparisons_by_numeric_dep.get(numeric_var_id) else {
+                    continue;
+                };
+                for &tree_id in tree_ids {
+                    if !seen_comparisons.insert(tree_id) {
+                        continue;
+                    }
+
+                    let tree = generator.comparison_trees.get(tree_id).with_context(|| {
+                        format!("comparison tree id out of bounds while building operators: {tree_id}")
+                    })?;
+                    let affected_var_id = usize::try_from(tree.affected_var_id).with_context(|| {
+                        format!(
+                            "comparison tree affected_var_id does not fit usize: {}",
+                            tree.affected_var_id
+                        )
+                    })?;
+                    let abs_val = tri_value_for_comparison(
+                        tree,
+                        &source_numeric_intervals,
+                        affected_var_id,
+                        &generator.domain_mapping,
+                    );
+                    let unknown_abs = generator.domain_mapping[affected_var_id]
+                        [COMPARISON_UNKNOWN_VAL];
+                    if abs_val != unknown_abs {
+                        source_partition_facts.push(Fact::new(affected_var_id as u32, abs_val));
+                        target_partition_facts
+                            .push(Fact::new(affected_var_id as u32, unknown_abs));
+                    }
+                }
             }
         }
 
@@ -993,6 +1015,37 @@ fn compute_hash_effects_with_preconditions(
     }
 
     Ok(out)
+}
+
+fn build_numeric_intervals_for_combo(
+    task: &dyn AbstractNumericTask,
+    generator: &AbstractOperatorGenerator,
+    combo: &[(usize, usize, usize)],
+    use_target_partitions: bool,
+) -> Result<Vec<Interval>> {
+    let initial_numeric_values = task.get_initial_numeric_state_values();
+    let mut numeric_intervals: Vec<Interval> = vec![Interval::unbounded(); task.numeric_variables().len()];
+
+    for (i, v) in task.numeric_variables().iter().enumerate() {
+        if v.get_type() == &NumericType::Constant {
+            numeric_intervals[i] = Interval::singleton(initial_numeric_values[i]);
+        }
+    }
+
+    for (var_id, src, tgt) in combo {
+        let partition_id = if use_target_partitions { *tgt } else { *src };
+        let iv = generator
+            .partitions
+            .partition_interval(*var_id, partition_id)
+            .with_context(|| {
+                format!(
+                    "missing partition interval for var {var_id} part {partition_id}"
+                )
+            })?;
+        numeric_intervals[*var_id] = iv;
+    }
+
+    Ok(numeric_intervals)
 }
 
 fn tri_value_for_comparison(
