@@ -144,9 +144,9 @@ impl Heuristic for DomainAbstractionHeuristic {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
-        if eval_state.is_goal() {
-            return Ok(0.0);
-        }
+        //if eval_state.is_goal() {
+        //    return Ok(0.0);
+        //}
 
         let (_task, registry) = Self::require_task_and_registry(eval_state)?;
         let state = eval_state.state();

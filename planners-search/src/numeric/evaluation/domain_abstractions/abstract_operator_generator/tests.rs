@@ -329,9 +329,10 @@ fn conditional_assignment_effect_branches() {
     .unwrap();
     let abs_ops = generator.build_abstract_operators(&task).unwrap();
 
-    // Non-apply branch yields a single propositional operator.
+    // Non-apply branch yields identity transitions for refined numeric vars.
+    // Here n0 has 2 partitions, so the non-apply branch yields 2 abstract operators.
     // Apply branch yields three numeric transitions (0->0, 0->1, 1->1), each with condition c==1.
-    assert_eq!(abs_ops.len(), 4);
+    assert_eq!(abs_ops.len(), 5);
     let with_cond: Vec<&AbstractOperator> = abs_ops
         .iter()
         .filter(|o| o.preconditions.contains(&Fact::new(0, 1)))

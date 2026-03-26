@@ -835,7 +835,7 @@ fn compute_hash_effects_with_preconditions(
     op_preconditions: &[Fact],
     ass_effects: &[planners_sas::numeric::numeric_task::AssignmentEffect],
 ) -> Result<Vec<TransitionInfo>> {
-    if ass_effects.is_empty() || generator.numeric_domain_sizes.is_empty() {
+    if generator.numeric_domain_sizes.is_empty() {
         return Ok(vec![TransitionInfo {
             source_partition_facts: Vec::new(),
             target_partition_facts: Vec::new(),
@@ -846,46 +846,65 @@ fn compute_hash_effects_with_preconditions(
 
     let num_props = generator.domain_sizes.len() as u32;
 
-    // Enumerate transitions per affected numeric variable.
-    let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
+    // Enumerate transitions per refined numeric variable.
+    // IMPORTANT: numeric-fd also enumerates identity transitions for refined-but-unaffected
+    // numeric vars (frame-like constraints). Without this, abstract operators can become
+    // overly optimistic (e.g., allowing `pour` regardless of x/y partitions).
+    let num_numeric_vars = generator.numeric_domain_sizes.len();
+    let mut effects_by_var: Vec<Vec<&planners_sas::numeric::numeric_task::AssignmentEffect>> =
+        vec![Vec::new(); num_numeric_vars];
     for eff in ass_effects {
         let v = eff.affected_var_id() as usize;
-        let num_parts = *generator.numeric_domain_sizes.get(v).with_context(|| {
-            format!(
-                "assignment effect refers to numeric var {v}, but numeric_domain_sizes has len {}",
-                generator.numeric_domain_sizes.len()
-            )
-        })?;
+        if v < effects_by_var.len() {
+            effects_by_var[v].push(eff);
+        }
+    }
+
+    let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
+    for v in 0..num_numeric_vars {
+        let num_parts = generator.numeric_domain_sizes[v];
         if num_parts <= 1 {
             continue;
         }
 
-        let rhs = eff.var_id() as usize;
-        let rhs_parts = generator
-            .partitions
-            .partitions(rhs)
-            .map(|s| s.len())
-            .ok_or_else(|| anyhow!("missing partitions for rhs numeric var {rhs}"))?;
+        let effs = &effects_by_var[v];
+        ensure!(
+            effs.len() <= 1,
+            "multiple assignment effects on the same numeric var are not supported (var={v}, count={})",
+            effs.len()
+        );
 
-        let mut pairs: HashSet<(usize, usize)> = HashSet::new();
-        for src in 0..num_parts {
-            for rhs_part in 0..rhs_parts {
-                let rhs_iv = generator
-                    .partitions
-                    .partition_interval(rhs, rhs_part)
-                    .with_context(|| {
-                        format!("missing partition interval for rhs var {rhs} part {rhs_part}")
-                    })?;
-                let targets =
-                    generator
+        if let Some(eff) = effs.first() {
+            let rhs = eff.var_id() as usize;
+            let rhs_parts = generator
+                .partitions
+                .partitions(rhs)
+                .map(|s| s.len())
+                .ok_or_else(|| anyhow!("missing partitions for rhs numeric var {rhs}"))?;
+
+            let mut pairs: HashSet<(usize, usize)> = HashSet::new();
+            for src in 0..num_parts {
+                for rhs_part in 0..rhs_parts {
+                    let rhs_iv = generator
+                        .partitions
+                        .partition_interval(rhs, rhs_part)
+                        .with_context(|| {
+                            format!("missing partition interval for rhs var {rhs} part {rhs_part}")
+                        })?;
+                    let targets = generator
                         .partitions
                         .reachable_partitions(v, src, eff.operation(), rhs_iv);
-                for tgt in targets {
-                    pairs.insert((src, tgt));
+                    for tgt in targets {
+                        pairs.insert((src, tgt));
+                    }
                 }
             }
+            per_var.push((v, pairs.into_iter().collect()));
+        } else {
+            // Unaffected refined numeric var: enumerate identity transitions p -> p.
+            let transitions: Vec<(usize, usize)> = (0..num_parts).map(|p| (p, p)).collect();
+            per_var.push((v, transitions));
         }
-        per_var.push((v, pairs.into_iter().collect()));
     }
 
     if per_var.is_empty() {
