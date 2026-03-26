@@ -1097,7 +1097,7 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
         }
 
         iteration += 1;
-        if iteration > 7 {
+        if iteration > 3 {
             unsafe {
                 //exit(0);
             }

@@ -488,6 +488,7 @@ impl DomainAbstractionFactory {
             }
         }
         return;
+        return;
 
         if !non_axiom_vars.is_empty() {
             println!("[PropositionalDomains]");
@@ -1402,9 +1403,7 @@ impl DomainAbstractionFactory {
                     let Ok(pred_idx) = usize::try_from(pred) else {
                         continue;
                     };
-                    if pred_idx >= num_states {
-                        continue;
-                    }
+                    debug_assert!(pred_idx < num_states, "predecessor hash does not fit usize");
                     if alternative_cost + 1e-12 < distances[pred_idx] {
                         distances[pred_idx] = alternative_cost;
                         generating_op_ids[pred_idx] = Some(op_id);
