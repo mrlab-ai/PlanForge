@@ -6,11 +6,13 @@ use std::hash::{Hash, Hasher};
 
 use anyhow::{Context, Result, anyhow, ensure};
 
+use planners_sas::numeric::axioms::CalOperator;
+
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, Fact, NumericType, Operator,
 };
 
-use super::comparison_expression::{ComparisonTree, Interval};
+use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::{
     propagate_assignment_axiom_intervals, seed_numeric_intervals_from_initial_state,
@@ -572,6 +574,7 @@ fn build_branch_for_operator(
     out: &mut Vec<AbstractOperator>,
     grouping: &mut HashMap<OperatorSignature, usize>,
 ) -> Result<()> {
+    let abstract_cost = abstract_operator_cost(task, op);
     let num_variables = task.get_num_variables() as usize;
     let mut has_precondition_on_var: Vec<i32> = vec![-1; num_variables];
     let mut has_effect_on_var: Vec<i32> = vec![-1; num_variables];
@@ -637,7 +640,7 @@ fn build_branch_for_operator(
 
     multiply_out_propositional(
         0,
-        op.cost() as f64,
+        abstract_cost,
         &mut prev_pairs,
         &mut pre_pairs,
         &mut eff_pairs,
@@ -652,6 +655,96 @@ fn build_branch_for_operator(
     )?;
 
     Ok(())
+}
+
+fn abstract_operator_cost(task: &dyn AbstractNumericTask, op: &Operator) -> f64 {
+    if !task.metric().use_metric() {
+        return op.cost() as f64;
+    }
+
+    let initial_numeric_values = task.get_initial_numeric_state_values();
+    let mut numeric_values = initial_numeric_values.to_vec();
+    let old_metric = evaluate_metric_from_values(task, &numeric_values);
+
+    for effect in op.assignment_effects() {
+        let assignment_var_id = effect.var_id() as usize;
+        let affected_var_id = effect.affected_var_id() as usize;
+        if assignment_var_id >= numeric_values.len() || affected_var_id >= numeric_values.len() {
+            continue;
+        }
+        let assignment_value = numeric_values[assignment_var_id];
+        let result = planners_sas::numeric::numeric_task::AssignmentOperation::apply(
+            numeric_values[affected_var_id],
+            effect.operation(),
+            assignment_value,
+        );
+        numeric_values[affected_var_id] = result;
+    }
+
+    propagate_assignment_axiom_values(task, &mut numeric_values);
+    let new_metric = evaluate_metric_from_values(task, &numeric_values);
+    let delta = if task.metric().is_min() {
+        new_metric - old_metric
+    } else {
+        old_metric - new_metric
+    };
+    delta.max(0.0)
+}
+
+fn evaluate_metric_from_values(task: &dyn AbstractNumericTask, numeric_values: &[f64]) -> f64 {
+    let metric_var_id = task.metric().var_id();
+    if metric_var_id < 0 {
+        return 0.0;
+    }
+    numeric_values
+        .get(metric_var_id as usize)
+        .copied()
+        .unwrap_or(0.0)
+}
+
+fn propagate_assignment_axiom_values(task: &dyn AbstractNumericTask, numeric_values: &mut [f64]) {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for axiom in task.assignment_axioms() {
+            let affected_var_id = axiom.get_affected_var_id() as usize;
+            let left_var_id = axiom.get_left_var_id() as usize;
+            let right_var_id = axiom.get_right_var_id() as usize;
+            if affected_var_id >= numeric_values.len()
+                || left_var_id >= numeric_values.len()
+                || right_var_id >= numeric_values.len()
+            {
+                continue;
+            }
+            let new_value = apply_arith_op(
+                arith_op_from_axiom(axiom.get_operator()),
+                numeric_values[left_var_id],
+                numeric_values[right_var_id],
+            );
+            if numeric_values[affected_var_id] != new_value {
+                numeric_values[affected_var_id] = new_value;
+                changed = true;
+            }
+        }
+    }
+}
+
+fn arith_op_from_axiom(op: &CalOperator) -> ArithOp {
+    match op {
+        CalOperator::Sum => ArithOp::Add,
+        CalOperator::Difference => ArithOp::Sub,
+        CalOperator::Product => ArithOp::Mul,
+        CalOperator::Division => ArithOp::Div,
+    }
+}
+
+fn apply_arith_op(op: ArithOp, lhs: f64, rhs: f64) -> f64 {
+    match op {
+        ArithOp::Add => lhs + rhs,
+        ArithOp::Sub => lhs - rhs,
+        ArithOp::Mul => lhs * rhs,
+        ArithOp::Div => lhs / rhs,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -451,6 +451,60 @@ fn derived_comparison_precondition_forces_unknown_old_value() {
 }
 
 #[test]
+fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
+    let variables: Vec<ExplicitVariable> = vec![];
+    let numeric_variables = vec![
+        NumericVariable::new("fuel-used".into(), NumericType::Cost, -1),
+        NumericVariable::new("c5".into(), NumericType::Constant, -1),
+    ];
+
+    let op = Operator::new(
+        "fly".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, 0),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 5.0],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![vec![Interval::unbounded()], vec![Interval::singleton(5.0)]]);
+    let numeric_domain_sizes = vec![1, 1];
+
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        numeric_domain_sizes,
+        false,
+    )
+    .unwrap();
+    let abs_ops = generator.build_abstract_operators(&task).unwrap();
+
+    assert_eq!(abs_ops.len(), 1);
+    assert_eq!(abs_ops[0].cost, 5.0);
+}
+
+#[test]
 fn conditional_propositional_effect_branches() {
     let variables = vec![
         ExplicitVariable::new(2, "c".into(), vec!["0".into(), "1".into()], -1, 0),

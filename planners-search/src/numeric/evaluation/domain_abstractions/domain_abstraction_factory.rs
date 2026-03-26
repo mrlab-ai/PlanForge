@@ -435,6 +435,8 @@ impl DomainAbstractionFactory {
             );
             return;
         }
+        // NOTE: Enable later!
+        //return;
 
         // Identify propositional variables derived by propositional axioms.
         let mut is_axiom_var: Vec<bool> = vec![false; num_prop_vars];
