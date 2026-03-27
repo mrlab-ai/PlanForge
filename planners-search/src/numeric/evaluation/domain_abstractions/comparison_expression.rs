@@ -241,7 +241,10 @@ impl ArithOp {
                     }
                 }
 
-                if saw_nan && ((lhs.contains_zero() && !rhs.is_singleton()) || (rhs.contains_zero() && !lhs.is_singleton())) {
+                if saw_nan
+                    && ((lhs.contains_zero() && !rhs.is_singleton())
+                        || (rhs.contains_zero() && !lhs.is_singleton()))
+                {
                     return Interval::unbounded();
                 }
 
@@ -341,9 +344,8 @@ impl CompOp {
         let min_gt_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
             (amin > bmax) || (amin == bmax && (!amin_c || !bmax_c))
         };
-        let intervals_are_disjoint = || {
-            max_lt_min(lmax, lmax_c, rmin, rmin_c) || max_lt_min(rmax, rmax_c, lmin, lmin_c)
-        };
+        let intervals_are_disjoint =
+            || max_lt_min(lmax, lmax_c, rmin, rmin_c) || max_lt_min(rmax, rmax_c, lmin, lmin_c);
 
         match self {
             CompOp::Lt => {

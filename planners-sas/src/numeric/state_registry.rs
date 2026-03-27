@@ -265,7 +265,10 @@ impl<'a> StateRegistry<'a> {
 
     /// Returns the total number of distinct states registered in this registry.
     pub fn num_registered_states(&self) -> usize {
-        self.registered_states.values().map(|bucket| bucket.len()).sum()
+        self.registered_states
+            .values()
+            .map(|bucket| bucket.len())
+            .sum()
     }
 
     pub fn get_cost_info(&self) -> &RefCell<PerStateInformation<Vec<f64>>> {

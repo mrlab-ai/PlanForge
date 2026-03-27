@@ -36,8 +36,10 @@ pub fn propagate_assignment_axiom_intervals(
                 continue;
             }
 
-            let next = arith_op_from_axiom(axiom.get_operator())
-                .apply_interval(numeric_intervals[left_var_id], numeric_intervals[right_var_id]);
+            let next = arith_op_from_axiom(axiom.get_operator()).apply_interval(
+                numeric_intervals[left_var_id],
+                numeric_intervals[right_var_id],
+            );
             if numeric_intervals[affected_var_id] != next {
                 numeric_intervals[affected_var_id] = next;
                 changed = true;
@@ -51,7 +53,8 @@ pub fn propagate_assignment_axiom_intervals(
 
 pub fn seed_numeric_intervals_from_initial_state(task: &dyn AbstractNumericTask) -> Vec<Interval> {
     let initial_numeric_values = task.get_initial_numeric_state_values();
-    let mut numeric_intervals: Vec<Interval> = vec![Interval::unbounded(); task.numeric_variables().len()];
+    let mut numeric_intervals: Vec<Interval> =
+        vec![Interval::unbounded(); task.numeric_variables().len()];
     for (i, v) in task.numeric_variables().iter().enumerate() {
         if v.get_type() == &NumericType::Constant {
             numeric_intervals[i] = Interval::singleton(initial_numeric_values[i]);

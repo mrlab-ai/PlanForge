@@ -167,7 +167,7 @@ impl Heuristic for DomainAbstractionHeuristic {
                     self.abstraction.distance_table.distances.len()
                 ))
             })?;
-            
+
         // Debugging
         if std::env::var("DA_TRACE_STATE_EVAL").unwrap_or_else(|_| "0".to_string()) == "1" {
             let num_props = self.abstraction.factory.domain_sizes().len();
@@ -175,12 +175,12 @@ impl Heuristic for DomainAbstractionHeuristic {
             state.fill_state(registry, &mut prop);
             let mut num = vec![];
             registry.fill_numeric_vars(state, &mut num).unwrap();
-            
+
             let abstract_prop_sizes = self.abstraction.factory.domain_sizes();
             let abstract_num_sizes = self.abstraction.factory.numeric_domain_sizes();
             let multipliers = &self.abstraction.hash_multipliers;
             let partitions = self.abstraction.factory.partitions();
-            
+
             let mut prop_str_vec = vec![];
             for (var, val) in prop.iter().enumerate() {
                 prop_str_vec.push(format!("v{}={}", var, val));
@@ -194,47 +194,65 @@ impl Heuristic for DomainAbstractionHeuristic {
                 let val = (((hash as i64) / mult) % (dom as i64)) as i32;
                 abs_prop_str.push(format!("v{}={}", var, val));
             }
-            
+
             let mut num_str_vec = vec![];
             let mut abs_num_str = vec![];
-            
+
             for (num_id, &dom) in abstract_num_sizes.iter().enumerate() {
                 let nv = &_task.numeric_variables()[num_id];
-                if matches!(nv.get_type(), planners_sas::numeric::numeric_task::NumericType::Constant | planners_sas::numeric::numeric_task::NumericType::Derived) {
+                if matches!(
+                    nv.get_type(),
+                    planners_sas::numeric::numeric_task::NumericType::Constant
+                        | planners_sas::numeric::numeric_task::NumericType::Derived
+                ) {
                     continue;
                 }
-                
+
                 let abs_var = num_props + num_id;
                 let mult = multipliers[abs_var] as i64;
                 let part = (((hash as i64) / mult) % (dom as i64)) as usize;
-                
-                let is_inf = partitions.partition_interval(num_id, part).map_or(false, |iv| {
-                    iv.lower == f64::NEG_INFINITY && iv.upper == f64::INFINITY
-                });
-                
+
+                let is_inf = partitions
+                    .partition_interval(num_id, part)
+                    .map_or(false, |iv| {
+                        iv.lower == f64::NEG_INFINITY && iv.upper == f64::INFINITY
+                    });
+
                 if is_inf {
                     continue;
                 }
-                
-                let iv_str = partitions.partition_interval(num_id, part).map(|iv| {
-                    let left = if iv.lower_closed { '[' } else { '(' };
-                    let right = if iv.upper_closed { ']' } else { ')' };
-                    let l_str = if iv.lower == f64::NEG_INFINITY { "-inf".to_string() } else { iv.lower.to_string() };
-                    let r_str = if iv.upper == f64::INFINITY { "inf".to_string() } else { iv.upper.to_string() };
-                    format!("{}{}, {}{}", left, l_str, r_str, right)
-                }).unwrap_or_else(|| "<invalid>".to_string());
-                
+
+                let iv_str = partitions
+                    .partition_interval(num_id, part)
+                    .map(|iv| {
+                        let left = if iv.lower_closed { '[' } else { '(' };
+                        let right = if iv.upper_closed { ']' } else { ')' };
+                        let l_str = if iv.lower == f64::NEG_INFINITY {
+                            "-inf".to_string()
+                        } else {
+                            iv.lower.to_string()
+                        };
+                        let r_str = if iv.upper == f64::INFINITY {
+                            "inf".to_string()
+                        } else {
+                            iv.upper.to_string()
+                        };
+                        format!("{}{}, {}{}", left, l_str, r_str, right)
+                    })
+                    .unwrap_or_else(|| "<invalid>".to_string());
+
                 num_str_vec.push(format!("n{}={}", num_id, num[num_id]));
                 abs_num_str.push(format!("n{}={}", num_id, iv_str));
             }
-            
+
             println!("[Evaluate State]");
             println!("  concrete props: {}", prop_str);
             println!("  concrete nums:  {}", num_str_vec.join(" "));
             println!("  abstract props: {}", abs_prop_str.join(" "));
             println!("  abstract nums:  {}", abs_num_str.join(" "));
             println!("  distance:       {}", dist);
-        }        Ok(dist)
+        }
+        Ok(dist)
     }
 
     fn heuristic_name(&self) -> String {

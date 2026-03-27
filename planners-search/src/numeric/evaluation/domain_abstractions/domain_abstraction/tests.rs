@@ -134,10 +134,7 @@ fn trivial_partitions_use_singletons_for_constants() {
 
     let partitions = NumericPartitions::trivial(&task);
 
-    assert_eq!(
-        partitions.partitions(0).unwrap(),
-        &[Interval::unbounded()]
-    );
+    assert_eq!(partitions.partitions(0).unwrap(), &[Interval::unbounded()]);
     assert_eq!(
         partitions.partitions(1).unwrap(),
         &[Interval::singleton(7.0)]

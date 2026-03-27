@@ -171,16 +171,15 @@ fn numeric_transition_adds_implicit_comparison_preconditions() {
 
     let trailing_pairs: Vec<(Vec<Fact>, Vec<Fact>)> = abs_ops[1..]
         .iter()
-        .map(|op| (op.preconditions.clone(), op.regression_preconditions.clone()))
+        .map(|op| {
+            (
+                op.preconditions.clone(),
+                op.regression_preconditions.clone(),
+            )
+        })
         .collect();
-    assert!(trailing_pairs.contains(&(
-        vec![Fact::new(1, 0)],
-        vec![Fact::new(1, 0)],
-    )));
-    assert!(trailing_pairs.contains(&(
-        vec![Fact::new(1, 1)],
-        vec![Fact::new(1, 1)],
-    )));
+    assert!(trailing_pairs.contains(&(vec![Fact::new(1, 0)], vec![Fact::new(1, 0)],)));
+    assert!(trailing_pairs.contains(&(vec![Fact::new(1, 1)], vec![Fact::new(1, 1)],)));
 }
 
 #[test]
@@ -253,7 +252,11 @@ fn implicit_comparison_transition_requires_definite_change_on_both_sides() {
 
     let changed_cmp_ops: Vec<&AbstractOperator> = abs_ops
         .iter()
-        .filter(|op| op.regression_preconditions.iter().any(|fact| fact.var() == 0))
+        .filter(|op| {
+            op.regression_preconditions
+                .iter()
+                .any(|fact| fact.var() == 0)
+        })
         .collect();
     assert_eq!(changed_cmp_ops.len(), 1);
     assert_eq!(changed_cmp_ops[0].preconditions, vec![Fact::new(1, 0)]);
@@ -332,10 +335,7 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
             && trans.target_partition_facts == vec![Fact::new(0, 0)]
     });
     assert!(identity_transition.is_some());
-    assert_eq!(
-        identity_transition.unwrap().changed_numeric_vars,
-        vec![0]
-    );
+    assert_eq!(identity_transition.unwrap().changed_numeric_vars, vec![0]);
 }
 
 #[test]
@@ -488,7 +488,10 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
         (0, 0),
     );
 
-    let partitions = NumericPartitions::with_partitions(vec![vec![Interval::unbounded()], vec![Interval::singleton(5.0)]]);
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::unbounded()],
+        vec![Interval::singleton(5.0)],
+    ]);
     let numeric_domain_sizes = vec![1, 1];
 
     let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(

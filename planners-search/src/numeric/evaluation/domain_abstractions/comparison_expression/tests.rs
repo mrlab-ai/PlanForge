@@ -33,8 +33,14 @@ fn interval_add_preserves_exact_bounds() {
     let bounded = Interval::closed(3.0, 4.0);
     let unbounded = Interval::open(-3.0, f64::INFINITY);
 
-    assert_eq!(bounded + unbounded, Interval::new(0.0, f64::INFINITY, false, false));
-    assert_eq!(unbounded + bounded, Interval::new(0.0, f64::INFINITY, false, false));
+    assert_eq!(
+        bounded + unbounded,
+        Interval::new(0.0, f64::INFINITY, false, false)
+    );
+    assert_eq!(
+        unbounded + bounded,
+        Interval::new(0.0, f64::INFINITY, false, false)
+    );
 }
 
 #[test]

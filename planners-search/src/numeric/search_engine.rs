@@ -82,6 +82,11 @@ struct SearchCounters {
     generated: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ProgressSnapshot {
+    improved: bool,
+}
+
 /// Simple search node information for tracking parent relationships
 #[derive(Debug, Clone)]
 struct SearchNodeInfo {
@@ -123,6 +128,7 @@ pub struct AStarSearch<'a> {
     dead_ends: usize,
     counters_at_last_jump: SearchCounters,
     last_reported_f_layer: Option<OrderedFloat<f64>>,
+    best_reported_heuristic_value: Option<OrderedFloat<f64>>,
     state_values_buffer: Vec<i32>,
     applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
     successor_numeric_values_buffer: Vec<f64>,
@@ -214,6 +220,7 @@ impl<'a> AStarSearch<'a> {
             dead_ends: 0,
             counters_at_last_jump: SearchCounters::default(),
             last_reported_f_layer: None,
+            best_reported_heuristic_value: None,
             state_values_buffer: Vec::with_capacity(task.variables().len()),
             applicable_operators_buffer: Vec::new(),
             successor_numeric_values_buffer: Vec::with_capacity(task.numeric_variables().len()),
@@ -258,11 +265,8 @@ impl<'a> AStarSearch<'a> {
         }
     }
 
-    fn maybe_print_f_layer(&mut self, node: &SearchNode, start_time: &Instant) {
-        let f_value = OrderedFloat(
-            node.evaluation
-                .get_heuristic_value(&self.f_evaluator.name()),
-        );
+    fn maybe_print_f_value(&mut self, f_value: f64, start_time: &Instant) {
+        let f_value = OrderedFloat(f_value);
         if self.last_reported_f_layer == Some(f_value) {
             return;
         }
@@ -280,7 +284,49 @@ impl<'a> AStarSearch<'a> {
 
         println!(
             "f = {} [{} evaluated, {} expanded, t={:.6}s, {} KB]",
-            format_f_value(f_value.into_inner()),
+            format_progress_value(f_value.into_inner()),
+            self.nodes_evaluated,
+            self.nodes_expanded,
+            start_time.elapsed().as_secs_f64(),
+            current_memory_kb(),
+        );
+    }
+
+    fn maybe_print_f_layer(&mut self, node: &SearchNode, start_time: &Instant) {
+        let f_value = node
+            .evaluation
+            .get_heuristic_value(&self.f_evaluator.name());
+        self.maybe_print_f_value(f_value, start_time);
+    }
+
+    fn maybe_report_heuristic_progress(
+        &mut self,
+        evaluation: &EvaluationResult,
+        start_time: &Instant,
+    ) -> ProgressSnapshot {
+        let h_value = OrderedFloat(evaluation.get_heuristic_value(&self.heuristic.name()));
+        if self
+            .best_reported_heuristic_value
+            .is_some_and(|best| h_value >= best)
+        {
+            return ProgressSnapshot { improved: false };
+        }
+
+        self.best_reported_heuristic_value = Some(h_value);
+        println!(
+            "New best heuristic value for {}: {}",
+            self.heuristic.name(),
+            format_progress_value(h_value.into_inner()),
+        );
+        self.print_checkpoint_line(evaluation.g_value, start_time);
+
+        ProgressSnapshot { improved: true }
+    }
+
+    fn print_checkpoint_line(&self, g_value: f64, start_time: &Instant) {
+        println!(
+            "[g={}, {} evaluated, {} expanded, t={:.6}s, {} KB]",
+            format_progress_value(g_value),
             self.nodes_evaluated,
             self.nodes_expanded,
             start_time.elapsed().as_secs_f64(),
@@ -462,6 +508,10 @@ impl<'a> AStarSearch<'a> {
                     }
                 }
 
+                if !evaluation.is_dead_end {
+                    let _ = self.maybe_report_heuristic_progress(&evaluation, start_time);
+                }
+
                 let search_node = SearchNode::root(succ_state, evaluation);
                 self.open_list.insert(search_node);
             }
@@ -490,11 +540,23 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             self.nodes_evaluated += 1;
             if initial_evaluation.is_dead_end {
                 self.dead_ends += 1;
+            } else {
+                let progress =
+                    self.maybe_report_heuristic_progress(&initial_evaluation, &start_time);
+                if progress.improved {
+                    self.maybe_print_f_value(
+                        initial_evaluation.get_heuristic_value(&self.f_evaluator.name()),
+                        &start_time,
+                    );
+                }
             }
+
             let initial_node = SearchNode::root(initial_state.clone(), initial_evaluation);
             if !initial_node.is_dead_end() || self.open_list.accepts_dead_ends() {
                 self.open_list.insert(initial_node);
             }
+
+            self.print_initial_h_values();
         }
 
         // Initialize search node info for initial state
@@ -558,13 +620,17 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             println!(
                 "Initial heuristic value for {}: {}",
                 self.heuristic.name(),
-                evaluation.get_heuristic_value(&self.heuristic.name())
+                format_progress_value(evaluation.get_heuristic_value(&self.heuristic.name()))
             );
         }
     }
 }
 
-fn format_f_value(value: f64) -> String {
+fn format_progress_value(value: f64) -> String {
+    if value.is_infinite() && value.is_sign_positive() {
+        return "infinity".to_string();
+    }
+
     if value.fract().abs() < 1e-9 {
         format!("{:.0}", value)
     } else {

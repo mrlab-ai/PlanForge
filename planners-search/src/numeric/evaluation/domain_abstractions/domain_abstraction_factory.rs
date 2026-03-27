@@ -1121,8 +1121,8 @@ impl DomainAbstractionFactory {
                 if !cd.is_finite() {
                     continue;
                 }
-                let valid_progress = (cd < cur_d && op.cost > 0.0)
-                    || ((cd - cur_d).abs() <= 1e-9 && op.cost == 0.0);
+                let valid_progress =
+                    (cd < cur_d && op.cost > 0.0) || ((cd - cur_d).abs() <= 1e-9 && op.cost == 0.0);
                 if valid_progress && cand > chosen_successor.unwrap_or(-1) {
                     chosen_successor = Some(cand);
                     lowest_so_far = cd;
