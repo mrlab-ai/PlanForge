@@ -158,16 +158,11 @@ pub fn exit_code_for_search_status(status: &SearchStatus) -> i32 {
 pub fn print_search_result(result: &SearchResult) {
     match result.status {
         SearchStatus::Solved(_) => {
-            println!("SOLVED!");
+            println!("Solution found!");
             if let Some(plan) = result.plan.as_ref() {
                 let plan_cost = result
                     .solution_cost
                     .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum());
-                println!(
-                    "Solution plan ({} steps, cost {:.6}):",
-                    plan.len(),
-                    plan_cost
-                );
 
                 let mut plan_content = String::new();
                 for op in plan.iter() {
@@ -175,13 +170,16 @@ pub fn print_search_result(result: &SearchResult) {
                 }
 
                 match fs::write("sas_plan", plan_content) {
-                    Ok(()) => println!("Plan written to sas_plan file"),
+                    Ok(()) => {}
                     Err(e) => eprintln!("Error writing plan file: {}", e),
                 }
 
                 for (i, op) in plan.iter().enumerate() {
                     println!("  {}: {}", i + 1, op.name());
                 }
+
+                println!("Plan length: {} step(s).", plan.len());
+                println!("Plan cost: {:.6}", plan_cost);
             }
         }
         SearchStatus::Failed => {
