@@ -852,7 +852,7 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[i32],
-        _comparison_var_ids: &[usize],
+        comparison_var_ids: &[usize],
     ) -> Result<i32> {
         let prop_init = task.get_initial_propositional_state_values();
         let num_init = task.get_initial_numeric_state_values();
@@ -869,10 +869,37 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes.len()
         );
 
+        let comparison_var_ids: HashSet<usize> = comparison_var_ids.iter().copied().collect();
+        let mut initial_numeric_intervals: Vec<Interval> = Vec::with_capacity(num_init.len());
+        for (numeric_var_id, &value) in num_init.iter().enumerate() {
+            ensure!(
+                value.is_finite() && !value.is_nan(),
+                "initial numeric value for var {numeric_var_id} must be finite, got {value}"
+            );
+            initial_numeric_intervals.push(Interval::singleton(value));
+        }
+        propagate_assignment_axiom_intervals(task, &mut initial_numeric_intervals);
+
         let mut index: i64 = 0;
         for var in 0..num_props {
             let mult = hash_multipliers[var] as i64;
-            let concrete_val = prop_init[var];
+            let concrete_val = if comparison_var_ids.contains(&var) {
+                if let Some(tree) = self
+                    .comparison_trees
+                    .iter()
+                    .find(|tree| usize::try_from(tree.affected_var_id).ok() == Some(var))
+                {
+                    match tree.evaluate_interval(&initial_numeric_intervals) {
+                        Some(true) => COMPARISON_TRUE_VAL,
+                        Some(false) => COMPARISON_FALSE_VAL,
+                        None => prop_init[var],
+                    }
+                } else {
+                    prop_init[var]
+                }
+            } else {
+                prop_init[var]
+            };
             let cidx = usize::try_from(concrete_val).with_context(|| {
                 format!("invalid propositional initial value {concrete_val} at var {var}")
             })?;

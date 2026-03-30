@@ -78,7 +78,7 @@ impl Default for CegarConfig {
             max_iterations: 10_000,
             max_time: None,
             use_wildcard_plans: true,
-            combine_labels: true,
+            combine_labels: false,
             enable_refinement: false,
             debug: false,
             refinement_batch_size: 1,

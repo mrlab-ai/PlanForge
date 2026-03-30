@@ -467,7 +467,7 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
         numeric_variables,
         vec![],
         vec![],
-        // The C++ utility hashes the stored propositional value for comparison vars directly.
+        // The concrete initial state used by numeric-fd has comparisons evaluated.
         vec![COMPARISON_UNKNOWN_VAL],
         vec![0.0, 0.0],
         vec![op],
@@ -500,7 +500,7 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
         &mut nums,
     );
     assert_eq!(props.len(), 1);
-    assert_eq!(props[0][0], COMPARISON_UNKNOWN_VAL);
+    assert_eq!(props[0][0], COMPARISON_FALSE_VAL);
 }
 
 #[test]

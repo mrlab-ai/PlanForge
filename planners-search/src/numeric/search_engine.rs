@@ -466,11 +466,7 @@ impl<'a> AStarSearch<'a> {
 
             // Count every successfully constructed successor state.
             self.nodes_generated += 1;
-
-            // Skip if already closed
-            if self.closed_set.contains(&succ_state_id) {
-                continue;
-            }
+            let was_closed = self.closed_set.contains(&succ_state_id);
 
             let op_cost = if self.task.metric().use_metric() {
                 self.state_registry
@@ -486,6 +482,11 @@ impl<'a> AStarSearch<'a> {
                 if existing_info.g_value <= new_g_value {
                     continue; // We already have a better or equal path
                 }
+            }
+
+            if was_closed {
+                self.closed_set.remove(&succ_state_id);
+                self.nodes_reopened += 1;
             }
 
             // Create new search node info
