@@ -119,13 +119,9 @@ impl Interval {
             self.upper_closed = false;
         }
 
-        if self.is_empty() {
-            // Canonical empty interval.
-            self.lower = 1.0;
-            self.upper = 0.0;
-            self.lower_closed = false;
-            self.upper_closed = false;
-        }
+        // TODO: Does not work at the moment because it is used in can_split(). Fix that in future releases cause assertions are our friend
+        //debug_assert!(!self.is_empty());
+
         self
     }
 
@@ -155,9 +151,7 @@ impl std::ops::Add for Interval {
 
     #[inline]
     fn add(self, rhs: Interval) -> Interval {
-        if self.is_empty() || rhs.is_empty() {
-            return Interval::open(1.0, 0.0);
-        }
+        debug_assert!(!self.is_empty() && !rhs.is_empty());
 
         Interval {
             lower: self.lower + rhs.lower,

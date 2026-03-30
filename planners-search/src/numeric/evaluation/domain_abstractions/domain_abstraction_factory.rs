@@ -46,21 +46,31 @@ impl MatchTree {
         operators: &[AbstractOperator],
         _comparison_var_ids: &[usize],
     ) -> Self {
-        let mut freq: HashMap<usize, usize> = HashMap::new();
+        let num_props = domain_sizes.len();
+        let mut vars_seen: HashSet<usize> = HashSet::new();
         for op in operators {
             for f in op.regression_preconditions.iter() {
                 let Ok(var) = usize::try_from(f.var()) else {
+                    debug_assert!(
+                        false,
+                        "negative regression precondition var id: {}",
+                        f.var()
+                    );
                     continue;
                 };
-                *freq.entry(var).or_insert(0) += 1;
+                let domain_size = if var < num_props {
+                    domain_sizes.get(var).copied().unwrap_or(0) as usize
+                } else {
+                    let numeric_var = var - num_props;
+                    numeric_domain_sizes.get(numeric_var).copied().unwrap_or(0)
+                };
+                if domain_size > 1 {
+                    vars_seen.insert(var);
+                }
             }
         }
-        let mut var_order: Vec<usize> = freq.keys().copied().collect();
-        var_order.sort_by(|a, b| {
-            let fa = freq.get(a).copied().unwrap_or(0);
-            let fb = freq.get(b).copied().unwrap_or(0);
-            fb.cmp(&fa).then_with(|| a.cmp(b))
-        });
+        let mut var_order: Vec<usize> = vars_seen.into_iter().collect();
+        var_order.sort_unstable();
 
         let mut tree = Self {
             var_order,
@@ -74,6 +84,11 @@ impl MatchTree {
             let mut conds: HashMap<usize, i32> = HashMap::new();
             for f in op.regression_preconditions.iter() {
                 let Ok(var) = usize::try_from(f.var()) else {
+                    debug_assert!(
+                        false,
+                        "negative regression precondition var id: {}",
+                        f.var()
+                    );
                     continue;
                 };
                 conds.insert(var, f.value());
@@ -129,29 +144,53 @@ impl MatchTree {
             }
             let var = self.var_order[depth];
             let actual = self.get_var_value(state_hash, var);
-            if let Some(child) = node.value_children.get(&actual) {
-                stack.push((child.as_ref(), depth + 1));
-            }
             if let Some(child) = node.wildcard_child.as_deref() {
                 stack.push((child, depth + 1));
+            }
+            if let Some(child) = node.value_children.get(&actual) {
+                stack.push((child.as_ref(), depth + 1));
             }
         }
     }
 
     fn get_var_value(&self, state_hash: i32, var: usize) -> i32 {
         let num_props = self.domain_sizes.len();
-        let mult = self.hash_multipliers.get(var).copied().unwrap_or(1) as i64;
+        debug_assert!(
+            var < self.hash_multipliers.len(),
+            "match tree var out of bounds for hash multipliers: {} >= {}",
+            var,
+            self.hash_multipliers.len()
+        );
+        let Some(mult) = self.hash_multipliers.get(var).copied() else {
+            return 0;
+        };
         let state = state_hash as i64;
         let dom_size: i64 = if var < num_props {
+            debug_assert!(
+                var < self.domain_sizes.len(),
+                "match tree propositional var out of bounds: {} >= {}",
+                var,
+                self.domain_sizes.len()
+            );
             self.domain_sizes.get(var).copied().unwrap_or(0) as i64
         } else {
             let n = var - num_props;
+            debug_assert!(
+                n < self.numeric_domain_sizes.len(),
+                "match tree numeric var out of bounds: {} >= {}",
+                n,
+                self.numeric_domain_sizes.len()
+            );
             self.numeric_domain_sizes.get(n).copied().unwrap_or(0) as i64
         };
+        debug_assert!(
+            dom_size > 0,
+            "match tree domain size must be positive for var {var}"
+        );
         if dom_size <= 0 {
             return 0;
         }
-        ((state / mult) % dom_size) as i32
+        ((state / (mult as i64)) % dom_size) as i32
     }
 }
 
@@ -435,8 +474,7 @@ impl DomainAbstractionFactory {
             );
             return;
         }
-        // NOTE: Enable later!
-        return;
+
 
         // Identify propositional variables derived by propositional axioms.
         let mut is_axiom_var: Vec<bool> = vec![false; num_prop_vars];
@@ -487,6 +525,11 @@ impl DomainAbstractionFactory {
                 }
             }
         }
+
+        if std::env::var_os("DA_ENABLE_CORE_TABLE_DUMP").is_none() {
+            return;
+        }
+
         if !non_axiom_vars.is_empty() {
             println!("[PropositionalDomains]");
             for &var_id in &non_axiom_vars {
@@ -743,6 +786,9 @@ impl DomainAbstractionFactory {
                 let ax = &task.axioms()[ax_idx];
                 for cond in ax.conditions() {
                     let v = cond.var() as usize;
+                    if self.domain_sizes.get(v).copied().unwrap_or(1) <= 1 {
+                        continue;
+                    }
                     let val = cond.value() as usize;
                     let mapped = self
                         .domain_mapping
@@ -754,6 +800,9 @@ impl DomainAbstractionFactory {
                 }
             } else {
                 let v = g.var() as usize;
+                if self.domain_sizes.get(v).copied().unwrap_or(1) <= 1 {
+                    continue;
+                }
                 let val = g.value() as usize;
                 let mapped = self
                     .domain_mapping
@@ -765,8 +814,6 @@ impl DomainAbstractionFactory {
             }
         }
 
-        out.sort();
-        out.dedup();
         out
     }
 
@@ -1011,9 +1058,6 @@ impl DomainAbstractionFactory {
                 }
             }
         }
-
-        states.sort_unstable();
-        states.dedup();
         Ok(states)
     }
 
@@ -1171,7 +1215,7 @@ impl DomainAbstractionFactory {
                     comparison_var_ids,
                     &fixed_comparisons,
                 )?;
-                if possible_predecessors.binary_search(&current_hash).is_ok() {
+                if possible_predecessors.contains(&current_hash) {
                     step = cand_op.concrete_op_ids.clone();
                     step.sort_unstable();
                     step.dedup();
@@ -1222,6 +1266,9 @@ impl DomainAbstractionFactory {
             .ok()
             .and_then(|s| s.parse::<i32>().ok());
         let trace_ops: bool = std::env::var("DA_TRACE_OPS").is_ok();
+        let trace_distance_update_state: Option<i32> = std::env::var("DA_TRACE_DISTANCE_UPDATE_STATE")
+            .ok()
+            .and_then(|s| s.parse::<i32>().ok());
 
         let mut core_vars: Vec<u32> = Vec::new();
         for (v, &dom) in self.domain_sizes.iter().enumerate() {
@@ -1240,6 +1287,7 @@ impl DomainAbstractionFactory {
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, i32)> = BinaryHeap::new();
 
         // Initialize with feasible goal states.
+        let mut goal_state_count = 0usize;
         for state_hash in 0..num_states {
             let h = i32::try_from(state_hash).context("state hash does not fit i32")?;
             if !self.is_goal_state(h, goal_facts, numeric_domain_sizes, hash_multipliers) {
@@ -1253,11 +1301,22 @@ impl DomainAbstractionFactory {
                 comparison_var_ids,
                 &[],
             )?;
-            if alts.binary_search(&h).is_err() {
+            if !alts.contains(&h) {
                 continue;
             }
+            goal_state_count += 1;
             distances[state_hash] = 0.0;
             heap.push((Reverse(NotNan::new(0.0).unwrap()), h));
+        }
+
+        // Debug: print operators whose hash_effect could connect goal states to init_hash.
+        if initial_state_hash != 0 {
+            let goal_hashes: Vec<i32> = (0..num_states)
+                .filter_map(|s| {
+                    let h = i32::try_from(s).ok()?;
+                    if distances[s] == 0.0 { Some(h) } else { None }
+                })
+                .collect();
         }
 
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
@@ -1295,6 +1354,10 @@ impl DomainAbstractionFactory {
                 let alternative_cost = d + op.cost;
                 let predecessor_base_i64 = (base_state as i64) + (op.hash_effect as i64);
                 if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
+                    eprintln!(
+                        "[DA_OOB] SKIPPED predecessor_base={predecessor_base_i64} num_states={num_states} base_state={base_state} hash_effect={}",
+                        op.hash_effect
+                    );
                     continue;
                 }
                 let predecessor_base = predecessor_base_i64 as i32;
@@ -1345,14 +1408,36 @@ impl DomainAbstractionFactory {
 
                 let representative_predecessor = possible_predecessors.iter().copied().max();
 
-                for pred in possible_predecessors {
+                for pred in possible_predecessors.iter().copied() {
                     let Ok(pred_idx) = usize::try_from(pred) else {
                         continue;
                     };
                     debug_assert!(pred_idx < num_states, "predecessor hash does not fit usize");
+ 
                     if alternative_cost + 1e-12 < distances[pred_idx] {
+                        let previous_cost = distances[pred_idx];
                         distances[pred_idx] = alternative_cost;
                         generating_op_ids[pred_idx] = Some(op_id);
+                        if Some(pred) == trace_distance_update_state {
+                            let concrete_names: Vec<String> = op
+                                .concrete_op_ids
+                                .iter()
+                                .filter_map(|&cid| i32::try_from(cid).ok())
+                                .map(|cid| task.get_operator_name(cid, false).to_string())
+                                .collect();
+                            eprintln!(
+                                "[DA_TRACE_UPDATE] state_hash={} old_dist={:.3} new_dist={:.3} via_op={} hash_effect={} base_state={} pred_base={} preds={:?} concrete={:?}",
+                                pred,
+                                previous_cost,
+                                alternative_cost,
+                                op_id,
+                                op.hash_effect,
+                                base_state,
+                                predecessor_base,
+                                possible_predecessors,
+                                concrete_names,
+                            );
+                        }
                         if pred == initial_state_hash || Some(pred) == representative_predecessor {
                             heap.push((
                                 Reverse(

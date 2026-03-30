@@ -1,13 +1,23 @@
+#[cfg(test)]
+mod tests;
+
 use std::cell::RefCell;
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
 
-use planners_sas::numeric::numeric_task::Operator;
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType, Operator};
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 
 use super::comparison_expression::Interval;
 use super::domain_abstraction_generator::DomainAbstraction;
+use super::numeric_context::{
+    propagate_assignment_axiom_intervals, seed_numeric_intervals_from_initial_state,
+};
+
+const COMPARISON_TRUE_VAL: usize = 0;
+const COMPARISON_FALSE_VAL: usize = 1;
+const COMPARISON_UNKNOWN_VAL: usize = 2;
 
 /// Heuristic that evaluates a concrete state by mapping it to an abstract state
 /// and looking up its precomputed goal distance.
@@ -57,6 +67,7 @@ impl DomainAbstractionHeuristic {
 
     fn compute_abstract_hash<'s, 't>(
         &self,
+        task: &'t dyn AbstractNumericTask,
         state: &ConcreteState,
         registry: &'s StateRegistry<'t>,
     ) -> Result<i32, EvaluationError> {
@@ -97,21 +108,6 @@ impl DomainAbstractionHeuristic {
 
         let mut index: i64 = 0;
 
-        for var in 0..num_props {
-            let concrete_val = prop[var];
-            let cidx = usize::try_from(concrete_val).map_err(|_| {
-                EvaluationError::InvalidState(format!(
-                    "invalid propositional value {concrete_val} for var {var}"
-                ))
-            })?;
-            let abs_val = *mapping.get(var).and_then(|m| m.get(cidx)).ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "missing domain mapping for var {var} value index {cidx}"
-                ))
-            })?;
-            index += i64::from(multipliers[var]) * i64::from(abs_val);
-        }
-
         for num_var_id in 0..num_numeric {
             let val = numeric[num_var_id];
             if !val.is_finite() || val.is_nan() {
@@ -133,10 +129,37 @@ impl DomainAbstractionHeuristic {
             index += i64::from(multipliers[abs_var]) * i64::from(part);
         }
 
-        i32::try_from(index).map_err(|_| {
+        let mut prop_index: i64 = 0;
+        for var in 0..num_props {
+            let abs_val = abstract_propositional_value(var, prop[var], mapping)?;
+            prop_index += i64::from(multipliers[var]) * i64::from(abs_val);
+        }
+
+        i32::try_from(index + prop_index).map_err(|_| {
             EvaluationError::InvalidState("abstract hash does not fit i32".to_string())
         })
     }
+}
+
+fn abstract_propositional_value(
+    var: usize,
+    concrete_val: i32,
+    mapping: &[Vec<i32>],
+) -> Result<i32, EvaluationError> {
+    let cidx = usize::try_from(concrete_val).map_err(|_| {
+        EvaluationError::InvalidState(format!(
+            "invalid propositional value {concrete_val} for var {var}"
+        ))
+    })?;
+    mapping
+        .get(var)
+        .and_then(|m| m.get(cidx))
+        .copied()
+        .ok_or_else(|| {
+            EvaluationError::InvalidState(format!(
+                "missing domain mapping for var {var} value index {cidx}"
+            ))
+        })
 }
 
 impl Heuristic for DomainAbstractionHeuristic {
@@ -148,10 +171,10 @@ impl Heuristic for DomainAbstractionHeuristic {
         //    return Ok(0.0);
         //}
 
-        let (_task, registry) = Self::require_task_and_registry(eval_state)?;
+        let (task, registry) = Self::require_task_and_registry(eval_state)?;
         let state = eval_state.state();
 
-        let hash = self.compute_abstract_hash(state, registry)?;
+        let hash = self.compute_abstract_hash(task, state, registry)?;
         let idx = usize::try_from(hash).map_err(|_| {
             EvaluationError::InvalidState(format!("abstract hash negative: {hash}"))
         })?;
@@ -171,6 +194,7 @@ impl Heuristic for DomainAbstractionHeuristic {
         // Debugging
         if std::env::var("DA_TRACE_STATE_EVAL").unwrap_or_else(|_| "0".to_string()) == "1" {
             let num_props = self.abstraction.factory.domain_sizes().len();
+            let domain_mapping = self.abstraction.factory.domain_mapping();
             let mut prop = vec![];
             state.fill_state(registry, &mut prop);
             let mut num = vec![];
@@ -183,6 +207,11 @@ impl Heuristic for DomainAbstractionHeuristic {
 
             let mut prop_str_vec = vec![];
             for (var, val) in prop.iter().enumerate() {
+                if abstract_prop_sizes.get(var).copied().unwrap_or(0) <= 1
+                    || domain_mapping.get(var).is_some_and(|entry| entry.is_empty())
+                {
+                    continue;
+                }
                 prop_str_vec.push(format!("v{}={}", var, val));
             }
             let prop_str = prop_str_vec.join(" ");
@@ -190,6 +219,9 @@ impl Heuristic for DomainAbstractionHeuristic {
             let mut abs_prop_str = vec![];
             for var in 0..num_props {
                 let dom = abstract_prop_sizes[var];
+                if dom <= 1 || domain_mapping.get(var).is_some_and(|entry| entry.is_empty()) {
+                    continue;
+                }
                 let mult = multipliers[var] as i64;
                 let val = (((hash as i64) / mult) % (dom as i64)) as i32;
                 abs_prop_str.push(format!("v{}={}", var, val));
@@ -199,7 +231,10 @@ impl Heuristic for DomainAbstractionHeuristic {
             let mut abs_num_str = vec![];
 
             for (num_id, &dom) in abstract_num_sizes.iter().enumerate() {
-                let nv = &_task.numeric_variables()[num_id];
+                let nv = &task.numeric_variables()[num_id];
+                if dom <= 1 {
+                    continue;
+                }
                 if matches!(
                     nv.get_type(),
                     planners_sas::numeric::numeric_task::NumericType::Constant
@@ -251,6 +286,54 @@ impl Heuristic for DomainAbstractionHeuristic {
             println!("  abstract props: {}", abs_prop_str.join(" "));
             println!("  abstract nums:  {}", abs_num_str.join(" "));
             println!("  distance:       {}", dist);
+
+            if std::env::var("DA_TRACE_COMPARISON_MISMATCH")
+                .unwrap_or_else(|_| "0".to_string())
+                == "1"
+            {
+                let mut abstract_intervals = seed_numeric_intervals_from_initial_state(task);
+                for num_var_id in 0..task.numeric_variables().len() {
+                    if task.numeric_variables()[num_var_id].get_type() != &NumericType::Regular {
+                        continue;
+                    }
+                    let val = num[num_var_id];
+                    let Some(parts) = partitions.partitions(num_var_id) else {
+                        continue;
+                    };
+                    let Some(part) = partition_for_value(parts, val) else {
+                        continue;
+                    };
+                    if let Some(iv) = partitions.partition_interval(num_var_id, part as usize) {
+                        abstract_intervals[num_var_id] = iv;
+                    }
+                }
+                propagate_assignment_axiom_intervals(task, &mut abstract_intervals);
+
+                for tree in self.abstraction.factory.comparison_trees() {
+                    let Ok(var_id) = usize::try_from(tree.affected_var_id) else {
+                        continue;
+                    };
+                    if var_id >= prop.len() {
+                        continue;
+                    }
+                    let point_value = if tree.evaluate_point(&num) { 0 } else { 1 };
+                    let interval_value = match tree.evaluate_interval(&abstract_intervals) {
+                        Some(true) => 0,
+                        Some(false) => 1,
+                        None => 2,
+                    };
+                    let hash_value = abs_prop_str_value(var_id, abstract_prop_sizes, multipliers, hash);
+                    if point_value != prop[var_id]
+                        || interval_value != hash_value
+                        || point_value != interval_value
+                    {
+                        println!(
+                            "  cmp mismatch: v{var_id} concrete={} point={} interval={} hash={}",
+                            prop[var_id], point_value, interval_value, hash_value
+                        );
+                    }
+                }
+            }
         }
         Ok(dist)
     }
@@ -267,6 +350,12 @@ impl Heuristic for DomainAbstractionHeuristic {
     ) -> bool {
         true
     }
+}
+
+fn abs_prop_str_value(var: usize, abstract_prop_sizes: &[i32], multipliers: &[i32], hash: i32) -> i32 {
+    let dom = abstract_prop_sizes[var];
+    let mult = multipliers[var] as i64;
+    (((hash as i64) / mult) % (dom as i64)) as i32
 }
 
 fn partition_for_value(partitions: &[Interval], value: f64) -> Option<i32> {

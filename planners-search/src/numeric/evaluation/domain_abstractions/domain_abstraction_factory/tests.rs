@@ -2,6 +2,7 @@ use super::*;
 
 use std::collections::BTreeSet;
 
+use planners_sas::numeric::axioms::PropositionalAxiom;
 use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
 use planners_sas::numeric::numeric_task::{
     ExplicitVariable, Fact, Metric, NumericRootTask, NumericVariable, Operator,
@@ -500,4 +501,104 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
     );
     assert_eq!(props.len(), 1);
     assert_eq!(props[0][0], COMPARISON_UNKNOWN_VAL);
+}
+
+#[test]
+fn abstract_goals_skip_trivial_goal_axiom_preconditions() {
+    let variables = vec![
+        ExplicitVariable::new(1, "trivial".into(), vec!["only".into()], 0, 0),
+        ExplicitVariable::new(2, "goal".into(), vec!["off".into(), "on".into()], 1, 0),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        vec![],
+        vec![Fact::new(1, 1)],
+        vec![],
+        vec![0, 0],
+        vec![],
+        vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
+        vec![PropositionalAxiom::new(vec![Fact::new(0, 0)], 1, 0, 1)],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let goals = factory.compute_abstract_goals(&task);
+    assert!(goals.is_empty());
+}
+
+#[test]
+fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
+    let variables = vec![
+        ExplicitVariable::new(
+            3,
+            "cmp0".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            0,
+            2,
+        ),
+        ExplicitVariable::new(
+            3,
+            "cmp1".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            0,
+            2,
+        ),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, -1),
+        NumericVariable::new("y".into(), NumericType::Regular, -1),
+        NumericVariable::new("z".into(), NumericType::Regular, -1),
+    ];
+    let comparison_axioms = vec![
+        ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan),
+        ComparisonAxiom::new(1, 0, 2, ComparisonOperator::LessThan),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![
+            Fact::new(0, COMPARISON_TRUE_VAL),
+            Fact::new(1, COMPARISON_FALSE_VAL),
+        ],
+        vec![],
+        vec![COMPARISON_UNKNOWN_VAL, COMPARISON_UNKNOWN_VAL],
+        vec![0.0, 0.0, 0.0],
+        vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
+        vec![],
+        comparison_axioms,
+        vec![],
+        (0, 0),
+    );
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let generator = factory.make_operator_generator(&task, true).unwrap();
+    let hash_multipliers = generator.hash_multipliers().to_vec();
+    let comparison_var_ids = vec![0usize, 1usize];
+
+    let unsorted_goal_hash = COMPARISON_TRUE_VAL + 3 * COMPARISON_FALSE_VAL;
+    let states = factory
+        .enumerate_states_with_evaluated_comparisons(
+            unsorted_goal_hash,
+            &task,
+            generator.numeric_domain_sizes(),
+            &hash_multipliers,
+            &comparison_var_ids,
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(states, vec![0, 3, 1, 4]);
+    assert!(states.contains(&unsorted_goal_hash));
+    assert!(states.binary_search(&unsorted_goal_hash).is_err());
+
+    let table = factory
+        .build_abstract_distance_table(&task, true, false)
+        .unwrap();
+    assert_eq!(table.distances[unsorted_goal_hash as usize], 0.0);
 }

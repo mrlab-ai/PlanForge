@@ -1,6 +1,8 @@
 use super::*;
 
-use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
+use planners_sas::numeric::axioms::{
+    AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
+};
 use planners_sas::numeric::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitVariable, Fact, Metric, NumericRootTask,
     NumericType, NumericVariable, Operator,
@@ -92,6 +94,91 @@ fn numeric_partition_transitions_and_comparison_filtering() {
 }
 
 #[test]
+fn repeated_numeric_operator_generation_is_deterministic() {
+    let variables = vec![ExplicitVariable::new(
+        3,
+        "cmp".into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        0,
+        2,
+    )];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x0".into(), NumericType::Regular, -1),
+        NumericVariable::new("c10".into(), NumericType::Constant, -1),
+        NumericVariable::new("c7".into(), NumericType::Constant, -1),
+    ];
+
+    let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
+
+    let op = Operator::new(
+        "op".into(),
+        vec![Fact::new(0, 0)],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            2,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 10.0, 7.0],
+        vec![op],
+        vec![],
+        comparison_axioms,
+        vec![],
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::new(f64::NEG_INFINITY, 10.0, false, false),
+            Interval::new(10.0, f64::INFINITY, true, false),
+        ],
+        vec![Interval::singleton(10.0)],
+        vec![Interval::singleton(7.0)],
+    ]);
+
+    let mut signatures: Vec<Vec<(i32, Vec<Fact>, Vec<Fact>)>> = Vec::new();
+    for _ in 0..12 {
+        let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+            &task,
+            partitions.clone(),
+            vec![2, 1, 1],
+            false,
+        )
+        .unwrap();
+        let ops = generator.build_abstract_operators(&task).unwrap();
+        signatures.push(
+            ops.iter()
+                .map(|op| {
+                    (
+                        op.hash_effect,
+                        op.preconditions.clone(),
+                        op.regression_preconditions.clone(),
+                    )
+                })
+                .collect(),
+        );
+    }
+
+    for sig in signatures.iter().skip(1) {
+        assert_eq!(sig, &signatures[0]);
+    }
+}
+
+#[test]
 fn numeric_transition_adds_implicit_comparison_preconditions() {
     let variables = vec![ExplicitVariable::new(
         3,
@@ -162,12 +249,15 @@ fn numeric_transition_adds_implicit_comparison_preconditions() {
 
     assert_eq!(abs_ops.len(), 3);
 
-    assert_eq!(abs_ops[0].preconditions, vec![Fact::new(1, 0)]);
+    assert_eq!(
+        abs_ops[0].preconditions,
+        vec![Fact::new(0, 0), Fact::new(1, 0)]
+    );
     assert_eq!(
         abs_ops[0].regression_preconditions,
         vec![Fact::new(0, 1), Fact::new(1, 1)]
     );
-    assert_eq!(abs_ops[0].hash_effect, -3);
+    assert_eq!(abs_ops[0].hash_effect, -4);
 
     let trailing_pairs: Vec<(Vec<Fact>, Vec<Fact>)> = abs_ops[1..]
         .iter()
@@ -259,7 +349,10 @@ fn implicit_comparison_transition_requires_definite_change_on_both_sides() {
         })
         .collect();
     assert_eq!(changed_cmp_ops.len(), 1);
-    assert_eq!(changed_cmp_ops[0].preconditions, vec![Fact::new(1, 0)]);
+    assert_eq!(
+        changed_cmp_ops[0].preconditions,
+        vec![Fact::new(0, 0), Fact::new(1, 0)]
+    );
     assert_eq!(
         changed_cmp_ops[0].regression_preconditions,
         vec![Fact::new(0, 1), Fact::new(1, 1)]
@@ -508,6 +601,144 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
 }
 
 #[test]
+fn assignment_axiom_cascade_requires_both_operands_changed() {
+    let variables = vec![ExplicitVariable::new(
+        3,
+        "cmp".into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        0,
+        2,
+    )];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, -1),
+        NumericVariable::new("c1".into(), NumericType::Constant, -1),
+        NumericVariable::new("y".into(), NumericType::Regular, -1),
+        NumericVariable::new("c2".into(), NumericType::Constant, -1),
+    ];
+
+    let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
+    let comparison_axioms = vec![ComparisonAxiom::new(0, 2, 3, ComparisonOperator::LessThan)];
+
+    let op = Operator::new(
+        "inc-x".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 1.0, 1.0, 2.0],
+        vec![op],
+        vec![],
+        comparison_axioms,
+        assignment_axioms,
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::singleton(0.0), Interval::singleton(1.0)],
+        vec![Interval::singleton(1.0)],
+        vec![Interval::singleton(1.0), Interval::singleton(2.0)],
+        vec![Interval::singleton(2.0)],
+    ]);
+    let numeric_domain_sizes = vec![2, 1, 2, 1];
+
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        numeric_domain_sizes,
+        false,
+    )
+    .unwrap();
+    let abs_ops = generator.build_abstract_operators(&task).unwrap();
+
+    assert!(
+        abs_ops
+            .iter()
+            .all(|op| !op.regression_preconditions.iter().any(|fact| fact.var() == 0)),
+        "abs_ops={abs_ops:#?}"
+    );
+}
+
+#[test]
+fn duplicate_assignment_effects_use_first_matching_effect() {
+    let variables: Vec<ExplicitVariable> = vec![];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, -1),
+        NumericVariable::new("c1".into(), NumericType::Constant, -1),
+        NumericVariable::new("c2".into(), NumericType::Constant, -1),
+    ];
+
+    let op = Operator::new(
+        "dup-ass".into(),
+        vec![],
+        vec![],
+        vec![
+            AssignmentEffect::new(0, AssignmentOperation::Plus, 1, false, vec![]),
+            AssignmentEffect::new(0, AssignmentOperation::Plus, 2, false, vec![]),
+        ],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 1.0, 2.0],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::singleton(0.0),
+            Interval::singleton(1.0),
+            Interval::singleton(2.0),
+            Interval::singleton(3.0),
+        ],
+        vec![Interval::singleton(1.0)],
+        vec![Interval::singleton(2.0)],
+    ]);
+    let numeric_domain_sizes = vec![4, 1, 1];
+
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        numeric_domain_sizes,
+        false,
+    )
+    .unwrap();
+    let abs_ops = generator.build_abstract_operators(&task).unwrap();
+
+    assert!(!abs_ops.is_empty());
+    assert!(abs_ops.iter().any(|op| op.hash_effect == -1));
+    assert!(!abs_ops.iter().any(|op| op.hash_effect == -2));
+}
+
+#[test]
 fn conditional_propositional_effect_branches() {
     let variables = vec![
         ExplicitVariable::new(2, "c".into(), vec!["0".into(), "1".into()], -1, 0),
@@ -552,20 +783,10 @@ fn conditional_propositional_effect_branches() {
         false,
     )
     .unwrap();
-    let mut abs_ops = generator.build_abstract_operators(&task).unwrap();
-    abs_ops.sort_by_key(|o| o.hash_effect);
-
-    assert_eq!(abs_ops.len(), 2);
-    assert_eq!(abs_ops[0].hash_effect, -6);
-    assert_eq!(
-        abs_ops[0].preconditions,
-        vec![Fact::new(0, 1), Fact::new(1, 0), Fact::new(2, 0)]
-    );
-    assert_eq!(abs_ops[1].hash_effect, -2);
-    assert_eq!(
-        abs_ops[1].preconditions,
-        vec![Fact::new(1, 0), Fact::new(2, 0)]
-    );
+    let err = generator.build_abstract_operators(&task).unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("conditional propositional or numeric effects are unsupported"));
 }
 
 #[test]
@@ -631,22 +852,63 @@ fn conditional_assignment_effect_branches() {
         false,
     )
     .unwrap();
-    let abs_ops = generator.build_abstract_operators(&task).unwrap();
+    let err = generator.build_abstract_operators(&task).unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("conditional propositional or numeric effects are unsupported"));
+}
 
-    // Non-apply branch yields identity transitions for refined numeric vars.
-    // Here n0 has 2 partitions, so the non-apply branch yields 2 abstract operators.
-    // Apply branch yields three numeric transitions (0->0, 0->1, 1->1), each with condition c==1.
-    assert_eq!(abs_ops.len(), 5);
-    let with_cond: Vec<&AbstractOperator> = abs_ops
-        .iter()
-        .filter(|o| o.preconditions.contains(&Fact::new(0, 1)))
-        .collect();
-    assert_eq!(with_cond.len(), 3);
-    assert_eq!(
-        with_cond
-            .iter()
-            .filter(|o| o.changed_numeric_vars == vec![0])
-            .count(),
-        3
+#[test]
+fn variable_rhs_assignment_effect_is_rejected_for_parity() {
+    let variables: Vec<ExplicitVariable> = vec![];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, -1),
+        NumericVariable::new("y".into(), NumericType::Regular, -1),
+    ];
+
+    let op = Operator::new(
+        "assign-var".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
     );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 0.0],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::unbounded()],
+        vec![Interval::unbounded()],
+    ]);
+    let numeric_domain_sizes = vec![1, 1];
+
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        numeric_domain_sizes,
+        false,
+    )
+    .unwrap();
+    let err = generator.build_abstract_operators(&task).unwrap_err();
+    assert!(err.to_string().contains("assignment effects require constant RHS"));
 }

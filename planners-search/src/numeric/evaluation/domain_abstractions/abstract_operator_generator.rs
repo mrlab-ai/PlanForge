@@ -6,7 +6,7 @@ use std::hash::{Hash, Hasher};
 
 use anyhow::{Context, Result, anyhow, ensure};
 
-use planners_sas::numeric::axioms::CalOperator;
+use planners_sas::numeric::axioms::{CalOperator, ComparisonOperator};
 
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, Fact, NumericType, Operator,
@@ -47,44 +47,41 @@ impl AbstractOperator {
         let mut preconditions: Vec<Fact> = pre_pairs.to_vec();
         preconditions.extend_from_slice(prev_pairs);
         preconditions.sort();
-        // We can end up emitting the same fact twice when building abstract operators.
-        // This is benign, but duplicate facts for the same variable with different
-        // values would be a bug (kept guarded by the assertion below).
-        preconditions.dedup();
+        debug_assert!(
+            preconditions
+                .windows(2)
+                .all(|w| w[0].var() != w[1].var())
+        );
         debug_assert!(preconditions.windows(2).all(|w| w[0].var() != w[1].var()));
 
         let mut regression_preconditions: Vec<Fact> = prev_pairs.to_vec();
         regression_preconditions.extend_from_slice(eff_pairs);
         regression_preconditions.sort();
-        regression_preconditions.dedup();
         debug_assert!(
             regression_preconditions
                 .windows(2)
                 .all(|w| w[0].var() != w[1].var())
         );
 
+        debug_assert_eq!(
+            pre_pairs.len(),
+            eff_pairs.len(),
+            "abstract operator pre/eff pair mismatch: pre_pairs={pre_pairs:?} eff_pairs={eff_pairs:?}"
+        );
+
         let mut hash_effect: i32 = 0;
-        let mut pre_idx = 0usize;
-        let mut eff_idx = 0usize;
-        while pre_idx < pre_pairs.len() && eff_idx < eff_pairs.len() {
-            let pre = &pre_pairs[pre_idx];
-            let eff = &eff_pairs[eff_idx];
-            if pre.var() < eff.var() {
-                pre_idx += 1;
-                continue;
-            }
-            if eff.var() < pre.var() {
-                eff_idx += 1;
-                continue;
-            }
+        for (pre, eff) in pre_pairs.iter().zip(eff_pairs.iter()) {
+            debug_assert_eq!(
+                pre.var(),
+                eff.var(),
+                "abstract operator transition var mismatch: pre={pre:?} eff={eff:?}"
+            );
 
             let var = pre.var() as usize;
             let multiplier = hash_multipliers[var];
             let new_val = pre.value();
             let old_val = eff.value();
             hash_effect += (new_val - old_val) * multiplier;
-            pre_idx += 1;
-            eff_idx += 1;
         }
 
         Self {
@@ -322,37 +319,34 @@ impl AbstractOperatorGenerator {
                 .iter()
                 .partition(|e| !e.is_conditional());
 
-        if conditional_effects.is_empty() && conditional_ass.is_empty() {
-            let ass_effects = op.assignment_effects().clone();
-            build_branch_for_operator(
-                task,
-                op,
-                &unconditional_effects,
-                &ass_effects,
-                op.preconditions(),
-                concrete_op_id,
-                self,
-                out,
-                grouping,
-            )?;
-            return Ok(());
+        ensure!(
+            conditional_effects.is_empty() && conditional_ass.is_empty(),
+            "numeric-fd parity: conditional propositional or numeric effects are unsupported in abstract operator generation"
+        );
+
+        for eff in op.assignment_effects() {
+            let rhs_var_id = eff.var_id() as usize;
+            ensure!(
+                rhs_var_id < task.numeric_variables().len(),
+                "assignment effect rhs var id out of bounds: {} >= {}",
+                rhs_var_id,
+                task.numeric_variables().len()
+            );
+            ensure!(
+                task.numeric_variables()[rhs_var_id].get_type() == &NumericType::Constant,
+                "numeric-fd parity: assignment effects require constant RHS, got {:?} for numeric var {}",
+                task.numeric_variables()[rhs_var_id].get_type(),
+                rhs_var_id
+            );
         }
 
-        let mut extra_preconditions: Vec<Fact> = Vec::new();
-        let mut chosen_conditional_effects: Vec<&Effect> = Vec::new();
-        let mut chosen_conditional_ass: Vec<&AssignmentEffect> = Vec::new();
-
-        enumerate_conditional_propositional_effects(
-            0,
+        let ass_effects = op.assignment_effects().clone();
+        build_branch_for_operator(
             task,
             op,
             &unconditional_effects,
-            &conditional_effects,
-            &unconditional_ass,
-            &conditional_ass,
-            &mut extra_preconditions,
-            &mut chosen_conditional_effects,
-            &mut chosen_conditional_ass,
+            &ass_effects,
+            op.preconditions(),
             concrete_op_id,
             self,
             out,
@@ -372,178 +366,148 @@ impl AbstractOperatorGenerator {
 
     #[inline]
     fn abstract_value(&self, var_id: usize, concrete_value: usize) -> i32 {
-        let mapping = &self.domain_mapping[var_id];
-        mapping[concrete_value]
+        let mapping = self
+            .domain_mapping
+            .get(var_id)
+            .unwrap_or_else(|| panic!("abstract_value: var_id {var_id} out of bounds"));
+        *mapping.get(concrete_value).unwrap_or_else(|| {
+            panic!(
+                "abstract_value: concrete value {concrete_value} out of bounds for variable {var_id}"
+            )
+        })
     }
 }
 
-fn enumerate_conditional_propositional_effects<'a>(
-    idx: usize,
-    task: &dyn AbstractNumericTask,
-    op: &'a Operator,
-    unconditional_effects: &[&'a Effect],
-    conditional_effects: &[&'a Effect],
-    unconditional_ass: &[&'a AssignmentEffect],
-    conditional_ass: &[&'a AssignmentEffect],
-    extra_preconditions: &mut Vec<Fact>,
-    chosen_conditional_effects: &mut Vec<&'a Effect>,
-    chosen_conditional_ass: &mut Vec<&'a AssignmentEffect>,
-    concrete_op_id: usize,
-    generator: &mut AbstractOperatorGenerator,
-    out: &mut Vec<AbstractOperator>,
-    grouping: &mut HashMap<OperatorSignature, usize>,
-) -> Result<()> {
-    if idx == conditional_effects.len() {
-        enumerate_conditional_assignment_effects(
-            0,
-            task,
-            op,
-            unconditional_effects,
-            unconditional_ass,
-            conditional_ass,
-            extra_preconditions,
-            chosen_conditional_effects,
-            chosen_conditional_ass,
-            concrete_op_id,
-            generator,
-            out,
-            grouping,
-        )?;
-        return Ok(());
-    }
-
-    // Branch: conditional effect not applied.
-    enumerate_conditional_propositional_effects(
-        idx + 1,
-        task,
-        op,
-        unconditional_effects,
-        conditional_effects,
-        unconditional_ass,
-        conditional_ass,
-        extra_preconditions,
-        chosen_conditional_effects,
-        chosen_conditional_ass,
-        concrete_op_id,
-        generator,
-        out,
-        grouping,
-    )?;
-
-    // Branch: conditional effect applied.
-    let eff = conditional_effects[idx];
-    let n = eff.conditions().len();
-    extra_preconditions.extend_from_slice(eff.conditions());
-    chosen_conditional_effects.push(eff);
-    enumerate_conditional_propositional_effects(
-        idx + 1,
-        task,
-        op,
-        unconditional_effects,
-        conditional_effects,
-        unconditional_ass,
-        conditional_ass,
-        extra_preconditions,
-        chosen_conditional_effects,
-        chosen_conditional_ass,
-        concrete_op_id,
-        generator,
-        out,
-        grouping,
-    )?;
-    chosen_conditional_effects.pop();
-    extra_preconditions.truncate(extra_preconditions.len() - n);
-
-    Ok(())
+fn format_interval(iv: Interval) -> String {
+    let left = if iv.lower_closed { '[' } else { '(' };
+    let right = if iv.upper_closed { ']' } else { ')' };
+    format!(
+        "{left}{}, {}{right}",
+        format_f64_bound(iv.lower),
+        format_f64_bound(iv.upper)
+    )
 }
 
-fn enumerate_conditional_assignment_effects<'a>(
-    idx: usize,
+fn format_f64_bound(v: f64) -> String {
+    if v.is_infinite() {
+        if v.is_sign_negative() {
+            "-inf".to_string()
+        } else {
+            "inf".to_string()
+        }
+    } else if v.is_nan() {
+        "NaN".to_string()
+    } else if v.fract() == 0.0 {
+        format!("{:.0}", v)
+    } else {
+        format!("{}", v)
+    }
+}
+
+fn format_abstract_fact(
     task: &dyn AbstractNumericTask,
-    op: &'a Operator,
-    unconditional_effects: &[&'a Effect],
-    unconditional_ass: &[&'a AssignmentEffect],
-    conditional_ass: &[&'a AssignmentEffect],
-    extra_preconditions: &mut Vec<Fact>,
-    chosen_conditional_effects: &mut Vec<&'a Effect>,
-    chosen_conditional_ass: &mut Vec<&'a AssignmentEffect>,
+    generator: &AbstractOperatorGenerator,
+    fact: &Fact,
+) -> String {
+    let num_props = generator.domain_sizes.len();
+    let var_id = fact.var() as usize;
+    if var_id < num_props {
+        let var_name = task.get_variable_name(var_id as i32).unwrap_or("<unknown>");
+        let concrete_size = task.get_variable_domain_size(var_id as i32).unwrap_or(0).max(0) as usize;
+        let mapping = generator.domain_mapping.get(var_id);
+        let mut mapped_concretes: Vec<String> = Vec::new();
+        for concrete_val in 0..concrete_size {
+            let Some(abs_val) = mapping.and_then(|m| m.get(concrete_val)).copied() else {
+                continue;
+            };
+            if abs_val == fact.value() {
+                mapped_concretes.push(task.get_fact_name(&Fact::new(fact.var(), concrete_val as i32)).to_string());
+            }
+        }
+        if mapped_concretes.is_empty() {
+            format!("var{var_id}({var_name})=abs{}", fact.value())
+        } else {
+            format!(
+                "var{var_id}({var_name})=abs{} => [{}]",
+                fact.value(),
+                mapped_concretes.join(" | ")
+            )
+        }
+    } else {
+        let numeric_var_id = var_id - num_props;
+        let var_name = task
+            .numeric_variables()
+            .get(numeric_var_id)
+            .map(|v| v.name())
+            .unwrap_or("<unknown>");
+        let interval = usize::try_from(fact.value())
+            .ok()
+            .and_then(|pid| generator.partitions.partition_interval(numeric_var_id, pid));
+        match interval {
+            Some(iv) => format!(
+                "num{numeric_var_id}({var_name})=p{}:{}",
+                fact.value(),
+                format_interval(iv)
+            ),
+            None => format!("num{numeric_var_id}({var_name})=p{}", fact.value()),
+        }
+    }
+}
+
+fn maybe_dump_pour_operator(
+    task: &dyn AbstractNumericTask,
+    generator: &AbstractOperatorGenerator,
     concrete_op_id: usize,
-    generator: &mut AbstractOperatorGenerator,
-    out: &mut Vec<AbstractOperator>,
-    grouping: &mut HashMap<OperatorSignature, usize>,
-) -> Result<()> {
-    if idx == conditional_ass.len() {
-        let mut branch_effects: Vec<&Effect> =
-            Vec::with_capacity(unconditional_effects.len() + chosen_conditional_effects.len());
-        branch_effects.extend_from_slice(unconditional_effects);
-        branch_effects.extend(chosen_conditional_effects.iter().copied());
-
-        let mut ass_effects: Vec<AssignmentEffect> =
-            Vec::with_capacity(unconditional_ass.len() + chosen_conditional_ass.len());
-        ass_effects.extend(unconditional_ass.iter().copied().cloned());
-        ass_effects.extend(chosen_conditional_ass.iter().copied().cloned());
-
-        let mut merged_preconditions: Vec<Fact> = op.preconditions().to_vec();
-        merged_preconditions.extend_from_slice(extra_preconditions);
-        let Some(merged_preconditions) = normalize_preconditions(merged_preconditions) else {
-            return Ok(());
-        };
-
-        build_branch_for_operator(
-            task,
-            op,
-            &branch_effects,
-            &ass_effects,
-            &merged_preconditions,
-            concrete_op_id,
-            generator,
-            out,
-            grouping,
-        )?;
-        return Ok(());
+    prev_pairs: &[Fact],
+    pre_pairs: &[Fact],
+    eff_pairs: &[Fact],
+    trans: &TransitionInfo,
+) {
+    if std::env::var_os("DA_DUMP_POUR_OPERATORS").is_none() {
+        return;
     }
 
-    // Branch: conditional assignment effect not applied.
-    enumerate_conditional_assignment_effects(
-        idx + 1,
-        task,
-        op,
-        unconditional_effects,
-        unconditional_ass,
-        conditional_ass,
-        extra_preconditions,
-        chosen_conditional_effects,
-        chosen_conditional_ass,
-        concrete_op_id,
-        generator,
-        out,
-        grouping,
-    )?;
+    let op_name = task.get_operator_name(concrete_op_id as i32, false);
+    if !op_name.contains("pour") {
+        return;
+    }
 
-    // Branch: conditional assignment effect applied.
-    let eff = conditional_ass[idx];
-    let n = eff.conditions().len();
-    extra_preconditions.extend_from_slice(eff.conditions());
-    chosen_conditional_ass.push(eff);
-    enumerate_conditional_assignment_effects(
-        idx + 1,
-        task,
-        op,
-        unconditional_effects,
-        unconditional_ass,
-        conditional_ass,
-        extra_preconditions,
-        chosen_conditional_effects,
-        chosen_conditional_ass,
-        concrete_op_id,
-        generator,
-        out,
-        grouping,
-    )?;
-    chosen_conditional_ass.pop();
-    extra_preconditions.truncate(extra_preconditions.len() - n);
+    let prevail: Vec<String> = prev_pairs
+        .iter()
+        .map(|fact| format_abstract_fact(task, generator, fact))
+        .collect();
+    let preconditions: Vec<String> = pre_pairs
+        .iter()
+        .map(|fact| format_abstract_fact(task, generator, fact))
+        .collect();
+    let effects: Vec<String> = eff_pairs
+        .iter()
+        .map(|fact| format_abstract_fact(task, generator, fact))
+        .collect();
+    let source_parts: Vec<String> = trans
+        .source_partition_facts
+        .iter()
+        .map(|fact| format_abstract_fact(task, generator, fact))
+        .collect();
+    let target_parts: Vec<String> = trans
+        .target_partition_facts
+        .iter()
+        .map(|fact| format_abstract_fact(task, generator, fact))
+        .collect();
+    let trans_prevail: Vec<String> = trans
+        .prevail_facts
+        .iter()
+        .map(|fact| format_abstract_fact(task, generator, fact))
+        .collect();
 
-    Ok(())
+    println!("[DA_POUR_OP] concrete={op_name} id={concrete_op_id}");
+    println!("  prevail={prevail:?}");
+    println!("  preconditions={preconditions:?}");
+    println!("  effects={effects:?}");
+    println!("  numeric_source={source_parts:?}");
+    println!("  numeric_target={target_parts:?}");
+    println!("  numeric_prevail={trans_prevail:?}");
+    println!("  changed_numeric_vars={:?}", trans.changed_numeric_vars);
 }
 
 fn normalize_preconditions(mut preconditions: Vec<Fact>) -> Option<Vec<Fact>> {
@@ -669,6 +633,13 @@ fn abstract_operator_cost(task: &dyn AbstractNumericTask, op: &Operator) -> f64 
     for effect in op.assignment_effects() {
         let assignment_var_id = effect.var_id() as usize;
         let affected_var_id = effect.affected_var_id() as usize;
+        debug_assert!(
+            assignment_var_id < numeric_values.len() && affected_var_id < numeric_values.len(),
+            "operator assignment effect uses out-of-bounds numeric var ids: rhs={} lhs={} len={}",
+            assignment_var_id,
+            affected_var_id,
+            numeric_values.len()
+        );
         if assignment_var_id >= numeric_values.len() || affected_var_id >= numeric_values.len() {
             continue;
         }
@@ -696,10 +667,14 @@ fn evaluate_metric_from_values(task: &dyn AbstractNumericTask, numeric_values: &
     if metric_var_id < 0 {
         return 0.0;
     }
-    numeric_values
-        .get(metric_var_id as usize)
-        .copied()
-        .unwrap_or(0.0)
+    let metric_var_id = metric_var_id as usize;
+    debug_assert!(
+        metric_var_id < numeric_values.len(),
+        "metric var id out of bounds: {} >= {}",
+        metric_var_id,
+        numeric_values.len()
+    );
+    numeric_values.get(metric_var_id).copied().unwrap_or(0.0)
 }
 
 fn propagate_assignment_axiom_values(task: &dyn AbstractNumericTask, numeric_values: &mut [f64]) {
@@ -710,6 +685,16 @@ fn propagate_assignment_axiom_values(task: &dyn AbstractNumericTask, numeric_val
             let affected_var_id = axiom.get_affected_var_id() as usize;
             let left_var_id = axiom.get_left_var_id() as usize;
             let right_var_id = axiom.get_right_var_id() as usize;
+            debug_assert!(
+                affected_var_id < numeric_values.len()
+                    && left_var_id < numeric_values.len()
+                    && right_var_id < numeric_values.len(),
+                "assignment axiom uses out-of-bounds numeric var ids: affected={} left={} right={} len={}",
+                affected_var_id,
+                left_var_id,
+                right_var_id,
+                numeric_values.len()
+            );
             if affected_var_id >= numeric_values.len()
                 || left_var_id >= numeric_values.len()
                 || right_var_id >= numeric_values.len()
@@ -882,6 +867,16 @@ fn multiply_out_propositional(
                 continue;
             }
 
+            maybe_dump_pour_operator(
+                task,
+                generator,
+                concrete_op_id,
+                &extended_prev_pairs,
+                &extended_pre_pairs,
+                &extended_eff_pairs,
+                &trans,
+            );
+
             let signature = OperatorSignature {
                 prev_pairs: extended_prev_pairs
                     .iter()
@@ -989,9 +984,15 @@ fn compute_hash_effects_with_preconditions(
         vec![Vec::new(); num_numeric_vars];
     for eff in ass_effects {
         let v = eff.affected_var_id() as usize;
-        if v < effects_by_var.len() {
-            effects_by_var[v].push(eff);
+        debug_assert!(
+            v < effects_by_var.len(),
+            "assignment effect affected_var_id out of bounds: {v} >= {}",
+            effects_by_var.len()
+        );
+        if v >= effects_by_var.len() {
+            continue;
         }
+        effects_by_var[v].push(eff);
     }
 
     let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
@@ -1003,12 +1004,6 @@ fn compute_hash_effects_with_preconditions(
         }
 
         let effs = &effects_by_var[v];
-        ensure!(
-            effs.len() <= 1,
-            "multiple assignment effects on the same numeric var are not supported (var={v}, count={})",
-            effs.len()
-        );
-
         if let Some(eff) = effs.first() {
             affected_numeric_vars.insert(v);
             let rhs = eff.var_id() as usize;
@@ -1036,7 +1031,9 @@ fn compute_hash_effects_with_preconditions(
                     }
                 }
             }
-            per_var.push((v, pairs.into_iter().collect()));
+            let mut transitions: Vec<(usize, usize)> = pairs.into_iter().collect();
+            transitions.sort_unstable();
+            per_var.push((v, transitions));
         } else {
             // Unaffected refined numeric var: enumerate identity transitions p -> p.
             let transitions: Vec<(usize, usize)> = (0..num_parts).map(|p| (p, p)).collect();
@@ -1105,53 +1102,44 @@ fn compute_hash_effects_with_preconditions(
         }
 
         if !changed_numeric_vars.is_empty() {
-            let target_numeric_intervals =
-                build_numeric_intervals_for_combo(task, generator, &combo, true)?;
-            let mut seen_comparisons: HashSet<usize> = HashSet::new();
-            for &numeric_var_id in &changed_numeric_vars {
-                let Some(tree_ids) = generator.comparisons_by_numeric_dep.get(numeric_var_id)
-                else {
-                    continue;
-                };
-                for &tree_id in tree_ids {
-                    if !seen_comparisons.insert(tree_id) {
-                        continue;
-                    }
-
-                    let tree = generator.comparison_trees.get(tree_id).with_context(|| {
-                        format!(
-                            "comparison tree id out of bounds while building operators: {tree_id}"
-                        )
-                    })?;
-                    if !comparison_operand_partition_changed(
-                        generator,
-                        tree,
-                        &source_numeric_intervals,
-                        &target_numeric_intervals,
-                    ) {
-                        continue;
-                    }
-
-                    let affected_var_id =
-                        usize::try_from(tree.affected_var_id).with_context(|| {
-                            format!(
-                                "comparison tree affected_var_id does not fit usize: {}",
-                                tree.affected_var_id
-                            )
-                        })?;
-                    let target_abs = tri_value_for_comparison(
-                        tree,
-                        &target_numeric_intervals,
-                        affected_var_id,
-                        &generator.domain_mapping,
-                    );
-                    let unknown_abs =
-                        generator.domain_mapping[affected_var_id][COMPARISON_UNKNOWN_VAL];
-                    if target_abs != unknown_abs {
-                        target_partition_facts.push(Fact::new(affected_var_id as u32, target_abs));
-                    }
+            let mut old_partitions: Vec<usize> = Vec::with_capacity(changed_numeric_vars.len());
+            let mut new_partitions: Vec<usize> = Vec::with_capacity(changed_numeric_vars.len());
+            for (var_id, src, tgt) in &combo {
+                if affected_numeric_vars.contains(var_id) {
+                    old_partitions.push(*src);
+                    new_partitions.push(*tgt);
                 }
             }
+
+            source_partition_facts.extend(compute_direct_comparison_cascades(
+                task,
+                generator,
+                &changed_numeric_vars,
+                &old_partitions,
+                &new_partitions,
+                &old_partitions,
+            )?);
+            target_partition_facts.extend(compute_direct_comparison_cascades(
+                task,
+                generator,
+                &changed_numeric_vars,
+                &old_partitions,
+                &new_partitions,
+                &new_partitions,
+            )?);
+
+            source_partition_facts.extend(compute_assignment_axiom_cascades(
+                task,
+                generator,
+                &combo,
+                true,
+            )?);
+            target_partition_facts.extend(compute_assignment_axiom_cascades(
+                task,
+                generator,
+                &combo,
+                false,
+            )?);
         }
 
         out.push(TransitionInfo {
@@ -1202,51 +1190,315 @@ fn tri_value_for_comparison(
     }
 }
 
-fn comparison_operand_partition_changed(
+fn compute_direct_comparison_cascades(
+    task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
-    tree: &ComparisonTree,
-    source_numeric_intervals: &[Interval],
-    target_numeric_intervals: &[Interval],
-) -> bool {
-    [tree.left_numeric_var_id, tree.right_numeric_var_id]
-        .into_iter()
-        .filter_map(|var_id| usize::try_from(var_id).ok())
-        .any(|var_id| {
-            let source_partition = first_overlapping_partition(
-                generator,
-                var_id,
-                source_numeric_intervals
-                    .get(var_id)
-                    .copied()
-                    .unwrap_or_else(Interval::unbounded),
-            );
-            let target_partition = first_overlapping_partition(
-                generator,
-                var_id,
-                target_numeric_intervals
-                    .get(var_id)
-                    .copied()
-                    .unwrap_or_else(Interval::unbounded),
-            );
-            match (source_partition, target_partition) {
-                (Some(source_partition), Some(target_partition)) => {
-                    source_partition != target_partition
-                }
-                _ => false,
-            }
-        })
+    changed_numeric_vars: &[usize],
+    old_partitions: &[usize],
+    new_partitions: &[usize],
+    eval_partitions: &[usize],
+) -> Result<Vec<Fact>> {
+    let old_by_var: HashMap<usize, usize> = changed_numeric_vars
+        .iter()
+        .copied()
+        .zip(old_partitions.iter().copied())
+        .collect();
+    let new_by_var: HashMap<usize, usize> = changed_numeric_vars
+        .iter()
+        .copied()
+        .zip(new_partitions.iter().copied())
+        .collect();
+    let eval_by_var: HashMap<usize, usize> = changed_numeric_vars
+        .iter()
+        .copied()
+        .zip(eval_partitions.iter().copied())
+        .collect();
+
+    let mut affected_facts: Vec<Fact> = Vec::new();
+    for comparison_axiom in task.comparison_axioms() {
+        let left_var_id = comparison_axiom.get_left_var_id() as usize;
+        let right_var_id = comparison_axiom.get_right_var_id() as usize;
+        if !old_by_var.contains_key(&left_var_id) && !old_by_var.contains_key(&right_var_id) {
+            continue;
+        }
+
+        let left_old = old_by_var.get(&left_var_id).copied();
+        let left_new = new_by_var.get(&left_var_id).copied();
+        let right_old = old_by_var.get(&right_var_id).copied();
+        let right_new = new_by_var.get(&right_var_id).copied();
+
+        let partition_changed = left_old != left_new || right_old != right_new;
+        if !partition_changed {
+            continue;
+        }
+
+        let Some(eval_left_partition) = eval_by_var
+            .get(&left_var_id)
+            .copied()
+            .or_else(|| constant_partition(task, left_var_id))
+        else {
+            continue;
+        };
+        let Some(eval_right_partition) = eval_by_var
+            .get(&right_var_id)
+            .copied()
+            .or_else(|| constant_partition(task, right_var_id))
+        else {
+            continue;
+        };
+
+        let Some(left_interval) = generator
+            .partitions
+            .partition_interval(left_var_id, eval_left_partition)
+        else {
+            continue;
+        };
+        let Some(right_interval) = generator
+            .partitions
+            .partition_interval(right_var_id, eval_right_partition)
+        else {
+            continue;
+        };
+
+        let affected_var_id = comparison_axiom.get_affected_var_id() as usize;
+        match apply_comparison_interval(comparison_axiom.get_operator(), left_interval, right_interval)
+        {
+            Some(true) => affected_facts.push(Fact::new(
+                affected_var_id as u32,
+                generator.domain_mapping[affected_var_id][COMPARISON_TRUE_VAL],
+            )),
+            Some(false) => affected_facts.push(Fact::new(
+                affected_var_id as u32,
+                generator.domain_mapping[affected_var_id][COMPARISON_FALSE_VAL],
+            )),
+            None => {}
+        }
+    }
+
+    Ok(affected_facts)
 }
 
-fn first_overlapping_partition(
+fn constant_partition(task: &dyn AbstractNumericTask, var_id: usize) -> Option<usize> {
+    let numeric_var = task.numeric_variables().get(var_id)?;
+    (numeric_var.get_type() == &NumericType::Constant).then_some(0)
+}
+
+fn compute_assignment_axiom_cascades(
+    task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
-    numeric_var_id: usize,
-    interval: Interval,
-) -> Option<usize> {
-    generator
-        .partitions
-        .partitions(numeric_var_id)?
+    combo: &[(usize, usize, usize)],
+    evaluate_old_partitions: bool,
+) -> Result<Vec<Fact>> {
+    let old_by_var: HashMap<usize, usize> = combo
         .iter()
-        .position(|&candidate| intervals_overlap(interval, candidate))
+        .map(|(var_id, src, _)| (*var_id, *src))
+        .collect();
+    let new_by_var: HashMap<usize, usize> = combo
+        .iter()
+        .map(|(var_id, _, tgt)| (*var_id, *tgt))
+        .collect();
+
+    let mut derived_changed_vars: Vec<usize> = Vec::new();
+    let mut derived_old_partitions: Vec<usize> = Vec::new();
+    let mut derived_new_partitions: Vec<usize> = Vec::new();
+
+    for axiom in task.assignment_axioms() {
+        let derived_var_id = axiom.get_affected_var_id() as usize;
+        let left_var_id = axiom.get_left_var_id() as usize;
+        let right_var_id = axiom.get_right_var_id() as usize;
+
+        let Some(left_old_partition) = old_by_var
+            .get(&left_var_id)
+            .copied()
+            .or_else(|| constant_partition(task, left_var_id))
+        else {
+            continue;
+        };
+        let Some(right_old_partition) = old_by_var
+            .get(&right_var_id)
+            .copied()
+            .or_else(|| constant_partition(task, right_var_id))
+        else {
+            continue;
+        };
+        let Some(left_new_partition) = new_by_var
+            .get(&left_var_id)
+            .copied()
+            .or_else(|| constant_partition(task, left_var_id))
+        else {
+            continue;
+        };
+        let Some(right_new_partition) = new_by_var
+            .get(&right_var_id)
+            .copied()
+            .or_else(|| constant_partition(task, right_var_id))
+        else {
+            continue;
+        };
+
+        if left_old_partition == left_new_partition && right_old_partition == right_new_partition {
+            continue;
+        }
+
+        let Some(left_old_interval) = generator
+            .partitions
+            .partition_interval(left_var_id, left_old_partition)
+        else {
+            continue;
+        };
+        let Some(right_old_interval) = generator
+            .partitions
+            .partition_interval(right_var_id, right_old_partition)
+        else {
+            continue;
+        };
+        let Some(left_new_interval) = generator
+            .partitions
+            .partition_interval(left_var_id, left_new_partition)
+        else {
+            continue;
+        };
+        let Some(right_new_interval) = generator
+            .partitions
+            .partition_interval(right_var_id, right_new_partition)
+        else {
+            continue;
+        };
+
+        let old_range = arith_op_from_axiom(axiom.get_operator())
+            .apply_interval(left_old_interval, right_old_interval);
+        let new_range = arith_op_from_axiom(axiom.get_operator())
+            .apply_interval(left_new_interval, right_new_interval);
+
+        let Some(derived_partitions) = generator.partitions.partitions(derived_var_id) else {
+            continue;
+        };
+        let old_derived_partition = derived_partitions
+            .iter()
+            .position(|partition| intervals_overlap(*partition, old_range));
+        let new_derived_partition = derived_partitions
+            .iter()
+            .position(|partition| intervals_overlap(*partition, new_range));
+
+        let (Some(old_derived_partition), Some(new_derived_partition)) =
+            (old_derived_partition, new_derived_partition)
+        else {
+            continue;
+        };
+        if old_derived_partition == new_derived_partition {
+            continue;
+        }
+
+        derived_changed_vars.push(derived_var_id);
+        derived_old_partitions.push(old_derived_partition);
+        derived_new_partitions.push(new_derived_partition);
+    }
+
+    compute_direct_comparison_cascades(
+        task,
+        generator,
+        &derived_changed_vars,
+        &derived_old_partitions,
+        &derived_new_partitions,
+        if evaluate_old_partitions {
+            &derived_old_partitions
+        } else {
+            &derived_new_partitions
+        },
+    )
+}
+
+fn apply_comparison_interval(
+    op: &ComparisonOperator,
+    lhs: Interval,
+    rhs: Interval,
+) -> Option<bool> {
+    if lhs.is_empty() || rhs.is_empty() {
+        return Some(false);
+    }
+
+    let (lmin, lmin_c) = (lhs.lower, lhs.lower_closed);
+    let (lmax, lmax_c) = (lhs.upper, lhs.upper_closed);
+    let (rmin, rmin_c) = (rhs.lower, rhs.lower_closed);
+    let (rmax, rmax_c) = (rhs.upper, rhs.upper_closed);
+
+    let max_lt_min = |amax: f64, amax_c: bool, bmin: f64, bmin_c: bool| -> bool {
+        (amax < bmin) || (amax == bmin && (!amax_c || !bmin_c))
+    };
+    let min_ge_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
+        (amin > bmax) || (amin == bmax && (amin_c && bmax_c))
+    };
+    let min_gt_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
+        (amin > bmax) || (amin == bmax && (!amin_c || !bmax_c))
+    };
+    let intervals_are_disjoint = || {
+        max_lt_min(lmax, lmax_c, rmin, rmin_c) || max_lt_min(rmax, rmax_c, lmin, lmin_c)
+    };
+
+    match op {
+        ComparisonOperator::LessThan => {
+            if max_lt_min(lmax, lmax_c, rmin, rmin_c) {
+                Some(true)
+            } else if min_ge_max(lmin, lmin_c, rmax, rmax_c) {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        ComparisonOperator::LessThanOrEqual => {
+            if lmax <= rmin {
+                Some(true)
+            } else if min_gt_max(lmin, lmin_c, rmax, rmax_c) {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        ComparisonOperator::GreaterThan => apply_comparison_interval(opposite_comparison(op), rhs, lhs),
+        ComparisonOperator::GreaterThanOrEqual => {
+            apply_comparison_interval(opposite_comparison(op), rhs, lhs)
+        }
+        ComparisonOperator::Equal => {
+            if lhs.lower == lhs.upper
+                && lhs.lower_closed
+                && lhs.upper_closed
+                && rhs.lower == rhs.upper
+                && rhs.lower_closed
+                && rhs.upper_closed
+                && lmin == rmin
+            {
+                Some(true)
+            } else if intervals_are_disjoint() {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        ComparisonOperator::UnEqual => {
+            if lhs.lower == lhs.upper
+                && lhs.lower_closed
+                && lhs.upper_closed
+                && rhs.lower == rhs.upper
+                && rhs.lower_closed
+                && rhs.upper_closed
+                && lmin == rmin
+            {
+                Some(false)
+            } else if intervals_are_disjoint() {
+                Some(true)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn opposite_comparison(op: &ComparisonOperator) -> &ComparisonOperator {
+    match op {
+        ComparisonOperator::GreaterThan => &ComparisonOperator::LessThan,
+        ComparisonOperator::GreaterThanOrEqual => &ComparisonOperator::LessThanOrEqual,
+        _ => op,
+    }
 }
 
 fn intervals_overlap(a: Interval, b: Interval) -> bool {
@@ -1263,6 +1515,23 @@ fn intervals_overlap(a: Interval, b: Interval) -> bool {
     }
 
     true
+}
+
+fn comparison_dependency_partition_changed(
+    task: &dyn AbstractNumericTask,
+    tree: &ComparisonTree,
+    combo: &[(usize, usize, usize)],
+) -> bool {
+    tree.regular_numeric_var_dependencies(task)
+        .into_iter()
+        .filter_map(|var_id| usize::try_from(var_id).ok())
+        .any(|var_id| {
+            combo
+                .iter()
+                .any(|(changed_var_id, source_partition, target_partition)| {
+                    *changed_var_id == var_id && source_partition != target_partition
+                })
+        })
 }
 
 fn compute_hash_multipliers(
