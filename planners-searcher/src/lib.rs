@@ -34,7 +34,7 @@ pub struct PlannersSearcherCli {
     pub internal_run: bool,
 
     /// Recursive search configuration.
-    /// Examples: "astar(blind())", "astar(domain_abstraction())".
+    /// Examples: `astar(blind())`, `astar(domain_abstraction())`, `da_debug()`.
     #[arg(
         long,
         value_name = "SPEC",
@@ -139,6 +139,16 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
 
             println!("Starting A* search with {:?}...", heuristic);
             search.search()
+        }
+        crate::recursive_config::SearchSpec::DaDebug => {
+            return Err(std::io::Error::other(
+                "`da_debug()` is implemented in the `planners` binary path, not `planners-searcher`",
+            ));
+        }
+        crate::recursive_config::SearchSpec::AstarDaDebug => {
+            return Err(std::io::Error::other(
+                "`astar_da_debug()` is implemented in the `planners` binary path, not `planners-searcher`",
+            ));
         }
     };
 

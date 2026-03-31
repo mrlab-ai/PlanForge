@@ -3,7 +3,7 @@ use super::*;
 use std::collections::BTreeSet;
 
 use planners_sas::numeric::axioms::PropositionalAxiom;
-use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
+use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planners_sas::numeric::numeric_task::{
     ExplicitVariable, Fact, Metric, NumericRootTask, NumericVariable, Operator,
 };
@@ -601,4 +601,59 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
         .build_abstract_distance_table(&task, true, false)
         .unwrap();
     assert_eq!(table.distances[unsorted_goal_hash as usize], 0.0);
+}
+
+#[test]
+fn factory_numeric_context_recomputes_derived_intervals_from_regular_vars() {
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, -1),
+        NumericVariable::new("c2".into(), NumericType::Constant, -1),
+        NumericVariable::new("d".into(), NumericType::Derived, -1),
+    ];
+    let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        vec![],
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 2.0, 0.0],
+        vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
+        vec![],
+        vec![],
+        assignment_axioms,
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::singleton(0.0), Interval::singleton(1.0)],
+        vec![Interval::singleton(2.0)],
+        vec![Interval::singleton(2.0), Interval::singleton(100.0)],
+    ]);
+    let numeric_domain_sizes = vec![2, 1, 2];
+    let factory = DomainAbstractionFactory::new(&task, vec![], vec![], partitions, numeric_domain_sizes).unwrap();
+    let generator = factory.make_operator_generator(&task, true).unwrap();
+    let hash_multipliers = generator.hash_multipliers().to_vec();
+
+    let x_partition = 0i32;
+    let c2_partition = 0i32;
+    let derived_partition = 1i32;
+    let state_hash = x_partition * hash_multipliers[0]
+        + c2_partition * hash_multipliers[1]
+        + derived_partition * hash_multipliers[2];
+
+    let numeric_intervals = factory
+        .build_numeric_intervals(
+            state_hash,
+            generator.numeric_domain_sizes(),
+            &hash_multipliers,
+            &task,
+        )
+        .unwrap();
+
+    assert_eq!(numeric_intervals[0], Interval::singleton(0.0));
+    assert_eq!(numeric_intervals[1], Interval::singleton(2.0));
+    assert_eq!(numeric_intervals[2], Interval::singleton(2.0));
 }

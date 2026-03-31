@@ -14,9 +14,7 @@ use planners_sas::numeric::numeric_task::{
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
-use super::numeric_context::{
-    propagate_assignment_axiom_intervals, seed_numeric_intervals_from_initial_state,
-};
+use super::numeric_context::propagate_assignment_axiom_intervals;
 
 const COMPARISON_TRUE_VAL: usize = 0;
 const COMPARISON_FALSE_VAL: usize = 1;
@@ -998,6 +996,9 @@ fn compute_hash_effects_with_preconditions(
     let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
     let mut affected_numeric_vars: HashSet<usize> = HashSet::new();
     for v in 0..num_numeric_vars {
+        if task.numeric_variables()[v].get_type() == &NumericType::Derived {
+            continue;
+        }
         let num_parts = generator.numeric_domain_sizes[v];
         if num_parts <= 1 {
             continue;
@@ -1091,7 +1092,6 @@ fn compute_hash_effects_with_preconditions(
         // Optimistic filtering for comparison preconditions based on *source* intervals.
         let source_numeric_intervals =
             build_numeric_intervals_for_combo(task, generator, &combo, false)?;
-
         if let Some(index) = &generator.comparison_index {
             if op_preconditions
                 .iter()
@@ -1142,6 +1142,13 @@ fn compute_hash_effects_with_preconditions(
             )?);
         }
 
+        source_partition_facts.sort();
+        source_partition_facts.dedup();
+        target_partition_facts.sort();
+        target_partition_facts.dedup();
+        changed_numeric_vars.sort_unstable();
+        changed_numeric_vars.dedup();
+
         out.push(TransitionInfo {
             source_partition_facts,
             target_partition_facts,
@@ -1159,7 +1166,18 @@ fn build_numeric_intervals_for_combo(
     combo: &[(usize, usize, usize)],
     use_target_partitions: bool,
 ) -> Result<Vec<Interval>> {
-    let mut numeric_intervals = seed_numeric_intervals_from_initial_state(task);
+    let initial_numeric_values = task.get_initial_numeric_state_values();
+    let mut numeric_intervals: Vec<Interval> = vec![Interval::new(0.0, 0.0, false, false); task.numeric_variables().len()];
+
+    for (var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
+        if numeric_var.get_type() == &NumericType::Constant {
+            numeric_intervals[var_id] = Interval::singleton(initial_numeric_values[var_id]);
+        } else if numeric_var.get_type() != &NumericType::Derived
+            && generator.numeric_domain_sizes.get(var_id).copied().unwrap_or(0) == 1
+        {
+            numeric_intervals[var_id] = Interval::unbounded();
+        }
+    }
 
     for (var_id, src, tgt) in combo {
         let partition_id = if use_target_partitions { *tgt } else { *src };
@@ -1172,9 +1190,57 @@ fn build_numeric_intervals_for_combo(
         numeric_intervals[*var_id] = iv;
     }
 
-    propagate_assignment_axiom_intervals(task, &mut numeric_intervals);
+    propagate_assignment_axiom_intervals_known_only(task, &mut numeric_intervals);
+
+    for interval in &mut numeric_intervals {
+        if interval.is_empty() {
+            *interval = Interval::unbounded();
+        }
+    }
 
     Ok(numeric_intervals)
+}
+
+fn propagate_assignment_axiom_intervals_known_only(
+    task: &dyn AbstractNumericTask,
+    numeric_intervals: &mut [Interval],
+) {
+    let max_iterations = task.assignment_axioms().len().saturating_add(1).max(1);
+    for _ in 0..max_iterations {
+        let mut changed = false;
+        for axiom in task.assignment_axioms() {
+            let Ok(affected_var_id) = usize::try_from(axiom.get_affected_var_id()) else {
+                continue;
+            };
+            let Ok(left_var_id) = usize::try_from(axiom.get_left_var_id()) else {
+                continue;
+            };
+            let Ok(right_var_id) = usize::try_from(axiom.get_right_var_id()) else {
+                continue;
+            };
+            if affected_var_id >= numeric_intervals.len()
+                || left_var_id >= numeric_intervals.len()
+                || right_var_id >= numeric_intervals.len()
+            {
+                continue;
+            }
+
+            let lhs = numeric_intervals[left_var_id];
+            let rhs = numeric_intervals[right_var_id];
+            if lhs.is_empty() || rhs.is_empty() {
+                continue;
+            }
+
+            let next = arith_op_from_axiom(axiom.get_operator()).apply_interval(lhs, rhs);
+            if numeric_intervals[affected_var_id] != next {
+                numeric_intervals[affected_var_id] = next;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
 }
 
 fn tri_value_for_comparison(

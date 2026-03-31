@@ -7,12 +7,13 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use ordered_float::NotNan;
 
+use planners_sas::numeric::axioms::CalOperator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
 
 use super::abstract_operator_generator::{
     AbstractOperator, AbstractOperatorGenerator, DomainMapping,
 };
-use super::comparison_expression::{ComparisonTree, Interval};
+use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::{
     propagate_assignment_axiom_intervals, seed_numeric_intervals_from_initial_state,
@@ -982,9 +983,14 @@ impl DomainAbstractionFactory {
             "numeric_domain_sizes length mismatch: {} != {num_numeric_vars}",
             numeric_domain_sizes.len()
         );
-        let mut out = seed_numeric_intervals_from_initial_state(task);
+        let initial_numeric_values = task.get_initial_numeric_state_values();
+        let mut out = vec![Interval::new(0.0, 0.0, false, false); num_numeric_vars];
         for (i, v) in task.numeric_variables().iter().enumerate() {
             if v.get_type() == &NumericType::Constant {
+                out[i] = Interval::singleton(initial_numeric_values[i]);
+                continue;
+            }
+            if v.get_type() == &NumericType::Derived {
                 continue;
             }
             let abs_var = num_props + i;
@@ -999,8 +1005,64 @@ impl DomainAbstractionFactory {
                 })?;
             out[i] = iv;
         }
-        propagate_assignment_axiom_intervals(task, &mut out);
+        Self::propagate_assignment_axiom_intervals_known_only(task, &mut out);
+        for interval in &mut out {
+            if interval.is_empty() {
+                *interval = Interval::unbounded();
+            }
+        }
         Ok(out)
+    }
+
+    fn arith_op_from_axiom(op: &CalOperator) -> ArithOp {
+        match op {
+            CalOperator::Sum => ArithOp::Add,
+            CalOperator::Difference => ArithOp::Sub,
+            CalOperator::Product => ArithOp::Mul,
+            CalOperator::Division => ArithOp::Div,
+        }
+    }
+
+    fn propagate_assignment_axiom_intervals_known_only(
+        task: &dyn AbstractNumericTask,
+        numeric_intervals: &mut [Interval],
+    ) {
+        let max_iterations = task.assignment_axioms().len().saturating_add(1).max(1);
+        for _ in 0..max_iterations {
+            let mut changed = false;
+            for axiom in task.assignment_axioms() {
+                let Ok(affected_var_id) = usize::try_from(axiom.get_affected_var_id()) else {
+                    continue;
+                };
+                let Ok(left_var_id) = usize::try_from(axiom.get_left_var_id()) else {
+                    continue;
+                };
+                let Ok(right_var_id) = usize::try_from(axiom.get_right_var_id()) else {
+                    continue;
+                };
+                if affected_var_id >= numeric_intervals.len()
+                    || left_var_id >= numeric_intervals.len()
+                    || right_var_id >= numeric_intervals.len()
+                {
+                    continue;
+                }
+
+                let lhs = numeric_intervals[left_var_id];
+                let rhs = numeric_intervals[right_var_id];
+                if lhs.is_empty() || rhs.is_empty() {
+                    continue;
+                }
+
+                let next = Self::arith_op_from_axiom(axiom.get_operator()).apply_interval(lhs, rhs);
+                if numeric_intervals[affected_var_id] != next {
+                    numeric_intervals[affected_var_id] = next;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
     }
 
     fn enumerate_states_with_evaluated_comparisons(

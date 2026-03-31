@@ -35,6 +35,30 @@ fn trims_trailing_punctuation() {
         parse_search_spec("astar(domain_abstraction());").unwrap(),
         SearchSpec::Astar(HeuristicSpec::DomainAbstraction)
     );
+
+    assert_eq!(parse_search_spec("da_debug();").unwrap(), SearchSpec::DaDebug);
+    assert_eq!(
+        parse_search_spec("astar_da_debug();").unwrap(),
+        SearchSpec::AstarDaDebug
+    );
+}
+
+#[test]
+fn parses_top_level_da_debug_with_or_without_unit_parens() {
+    assert_eq!(parse_search_spec("da_debug").unwrap(), SearchSpec::DaDebug);
+    assert_eq!(parse_search_spec("da_debug()").unwrap(), SearchSpec::DaDebug);
+}
+
+#[test]
+fn parses_top_level_astar_da_debug_with_or_without_unit_parens() {
+    assert_eq!(
+        parse_search_spec("astar_da_debug").unwrap(),
+        SearchSpec::AstarDaDebug
+    );
+    assert_eq!(
+        parse_search_spec("astar_da_debug()").unwrap(),
+        SearchSpec::AstarDaDebug
+    );
 }
 
 #[test]

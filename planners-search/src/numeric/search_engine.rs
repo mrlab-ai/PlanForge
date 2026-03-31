@@ -36,6 +36,25 @@ fn min_action_cost_from_initial_metric_deltas<'a>(
     if min_cost.is_finite() { min_cost } else { 0.0 }
 }
 
+pub fn compute_effective_operator_costs<'a>(
+    task: &'a dyn AbstractNumericTask,
+    state_registry: &StateRegistry<'a>,
+    initial_state: &ConcreteState,
+) -> Vec<f64> {
+    task.get_operators()
+        .iter()
+        .map(|op| {
+            if task.metric().use_metric() {
+                state_registry
+                    .metric_delta_applying_operator(initial_state, op)
+                    .unwrap_or(op.cost() as f64)
+            } else {
+                op.cost() as f64
+            }
+        })
+        .collect()
+}
+
 /// Search status indicating the outcome of the search
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchStatus {
@@ -104,6 +123,7 @@ pub struct AStarSearch<'a> {
     task: &'a dyn AbstractNumericTask,
     state_registry: StateRegistry<'a>,
     successor_generator: Box<dyn Node<'a> + 'a>,
+    operator_costs: Vec<f64>,
 
     // Search components
     open_list: TieBreakingOpenList,
@@ -161,27 +181,16 @@ impl<'a> AStarSearch<'a> {
         // (Required to derive a correct min_action_cost under metric.)
         let mut state_registry = state_registry;
         let initial_state = state_registry.get_initial_state();
+        let operator_costs = compute_effective_operator_costs(task, &state_registry, &initial_state);
 
         // Determine min_action_cost.
-        //
-        // Numeric-fd mirror: in metric tasks, blind returns the minimum operator cost,
-        // where each operator cost is the raw metric delta when applying the operator
-        // in the initial state.
-        let declared_min_cost = task
-            .get_operators()
+        let min_action_cost = operator_costs
             .iter()
-            .map(|op| op.cost() as f64)
+            .copied()
             .fold(f64::INFINITY, |a, b| a.min(b));
 
-        let uses_metric = task.metric().use_metric();
-        let min_action_cost = if uses_metric {
-            min_action_cost_from_initial_metric_deltas(
-                &state_registry,
-                &initial_state,
-                task.get_operators(),
-            )
-        } else if declared_min_cost.is_finite() {
-            declared_min_cost.max(0.0)
+        let min_action_cost = if min_action_cost.is_finite() {
+            min_action_cost.max(0.0)
         } else {
             1.0
         };
@@ -204,6 +213,7 @@ impl<'a> AStarSearch<'a> {
             task,
             state_registry,
             successor_generator,
+            operator_costs,
             open_list,
             closed_set: HashSet::new(),
             search_nodes: HashMap::new(),
@@ -468,13 +478,11 @@ impl<'a> AStarSearch<'a> {
             self.nodes_generated += 1;
             let was_closed = self.closed_set.contains(&succ_state_id);
 
-            let op_cost = if self.task.metric().use_metric() {
-                self.state_registry
-                    .transition_cost(&node.state, &succ_state)
-                    .unwrap_or(1.0)
-            } else {
-                operator.cost() as f64
-            };
+            let op_cost = self
+                .operator_costs
+                .get(operator_id)
+                .copied()
+                .unwrap_or(operator.cost() as f64);
             let new_g_value = current_g + op_cost;
 
             // Check if we've seen this state before

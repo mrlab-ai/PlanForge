@@ -432,6 +432,92 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
 }
 
 #[test]
+fn derived_numeric_partitions_are_not_materialized_in_transitions() {
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, -1),
+        NumericVariable::new("c1".into(), NumericType::Constant, -1),
+        NumericVariable::new("c5".into(), NumericType::Constant, -1),
+        NumericVariable::new("d1".into(), NumericType::Derived, -1),
+        NumericVariable::new("d2".into(), NumericType::Derived, -1),
+    ];
+
+    let assignment_axioms = vec![
+        AssignmentAxiom::new(3, CalOperator::Sum, 0, 1),
+        AssignmentAxiom::new(4, CalOperator::Difference, 3, 2),
+    ];
+
+    let op = Operator::new(
+        "inc".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        vec![],
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![3.0, 1.0, 5.0, 4.0, -1.0],
+        vec![op.clone()],
+        vec![],
+        vec![],
+        assignment_axioms,
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::singleton(3.0), Interval::singleton(4.0)],
+        vec![Interval::singleton(1.0)],
+        vec![Interval::singleton(5.0)],
+        vec![Interval::singleton(4.0), Interval::singleton(5.0)],
+        vec![Interval::singleton(-1.0), Interval::singleton(0.0)],
+    ]);
+
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        vec![2, 1, 1, 2, 2],
+        false,
+    )
+    .unwrap();
+
+    let transitions = compute_hash_effects_with_preconditions(
+        &task,
+        &mut generator,
+        &[],
+        op.assignment_effects(),
+    )
+    .unwrap();
+
+    assert!(transitions.iter().any(|trans| {
+        trans.source_partition_facts.contains(&Fact::new(0, 0))
+            && trans.target_partition_facts.contains(&Fact::new(0, 1))
+    }));
+    assert!(transitions.iter().all(|trans| {
+        trans.source_partition_facts
+            .iter()
+            .all(|fact| fact.var() < 3)
+            && trans
+                .target_partition_facts
+                .iter()
+                .all(|fact| fact.var() < 3)
+            && !trans.changed_numeric_vars.contains(&3)
+            && !trans.changed_numeric_vars.contains(&4)
+    }));
+}
+
+#[test]
 fn multiply_out_unconditional_propositional_effects() {
     let variables = vec![ExplicitVariable::new(
         2,
@@ -601,7 +687,7 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
 }
 
 #[test]
-fn assignment_axiom_cascade_requires_both_operands_changed() {
+fn assignment_axiom_chain_can_propagate_through_changed_var_and_constant() {
     let variables = vec![ExplicitVariable::new(
         3,
         "cmp".into(),
@@ -670,9 +756,55 @@ fn assignment_axiom_cascade_requires_both_operands_changed() {
     assert!(
         abs_ops
             .iter()
-            .all(|op| !op.regression_preconditions.iter().any(|fact| fact.var() == 0)),
+            .any(|op| op.regression_preconditions.iter().any(|fact| fact.var() == 0)),
         "abs_ops={abs_ops:#?}"
     );
+}
+
+#[test]
+fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation() {
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        vec![],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, -1),
+            NumericVariable::new("c0".into(), NumericType::Constant, -1),
+            NumericVariable::new("ghost".into(), NumericType::Derived, -1),
+            NumericVariable::new("d".into(), NumericType::Derived, -1),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        vec![5.0, 0.0, 0.0, 0.0],
+        vec![],
+        vec![],
+        vec![],
+        vec![AssignmentAxiom::new(3, CalOperator::Product, 2, 1)],
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::singleton(5.0), Interval::singleton(6.0)],
+        vec![Interval::singleton(0.0)],
+        vec![Interval::unbounded()],
+        vec![Interval::singleton(0.0), Interval::unbounded()],
+    ]);
+
+    let generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        vec![2, 1, 1, 2],
+        false,
+    )
+    .unwrap();
+
+    let intervals = build_numeric_intervals_for_combo(&task, &generator, &[(0, 0, 1)], false).unwrap();
+
+    assert_eq!(intervals[0], Interval::singleton(5.0));
+    assert_eq!(intervals[1], Interval::singleton(0.0));
+    assert_eq!(intervals[2], Interval::unbounded());
+    assert_eq!(intervals[3], Interval::unbounded());
 }
 
 #[test]

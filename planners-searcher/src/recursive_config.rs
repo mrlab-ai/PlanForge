@@ -23,6 +23,10 @@ pub enum HeuristicSpec {
 #[serde(rename_all = "lowercase")]
 pub enum SearchSpec {
     Astar(HeuristicSpec),
+    #[serde(rename = "da_debug")]
+    DaDebug,
+    #[serde(rename = "astar_da_debug")]
+    AstarDaDebug,
 }
 
 impl fmt::Display for HeuristicSpec {
@@ -38,6 +42,8 @@ impl fmt::Display for SearchSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SearchSpec::Astar(h) => write!(f, "astar({h})"),
+            SearchSpec::DaDebug => write!(f, "da_debug()"),
+            SearchSpec::AstarDaDebug => write!(f, "astar_da_debug()"),
         }
     }
 }
@@ -82,6 +88,16 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
 }
 
 fn search_spec(input: &str) -> Res<'_, SearchSpec> {
+    let da_debug = map(
+        tuple((ws(tag_no_case("da_debug")), opt(ws(empty_parens)))),
+        |_| SearchSpec::DaDebug,
+    );
+
+    let astar_da_debug = map(
+        tuple((ws(tag_no_case("astar_da_debug")), opt(ws(empty_parens)))),
+        |_| SearchSpec::AstarDaDebug,
+    );
+
     let astar = map(
         tuple((
             ws(tag_no_case("astar")),
@@ -91,7 +107,7 @@ fn search_spec(input: &str) -> Res<'_, SearchSpec> {
         )),
         |(_, _, h, _)| SearchSpec::Astar(h),
     );
-    ws(astar)(input)
+    ws(alt((astar, astar_da_debug, da_debug)))(input)
 }
 
 #[cfg(test)]
