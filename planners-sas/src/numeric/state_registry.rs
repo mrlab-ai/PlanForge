@@ -720,7 +720,7 @@ impl<'a> StateRegistry<'a> {
             let cost_info_borrow = self.cost_info.borrow();
             let old_cost_info = cost_info_borrow.get(&successor, self);
             let selected_result = self.select_cost_information(
-                current_state,
+                &successor,
                 successor_values,
                 old_cost_info,
                 cost_values,
@@ -1076,7 +1076,7 @@ impl<'a> StateRegistry<'a> {
     /// Returns the cost information that should be kept based on metric optimization.
     fn select_cost_information(
         &self,
-        predecessor_state: &ConcreteState,
+        existing_state: &ConcreteState,
         successor_numeric_vals: &[f64],
         old_cost_info: &[f64],
         new_cost_info: &[f64],
@@ -1086,7 +1086,7 @@ impl<'a> StateRegistry<'a> {
             return Ok(new_cost_info.to_vec());
         }
 
-        let old_metric_val = self.metric_value_for_state(predecessor_state)?;
+        let old_metric_val = self.metric_value_for_state(existing_state)?;
         let new_metric_val = self.evaluate_metric(successor_numeric_vals)?;
 
         let metric_minimizes = self.root_task.metric().is_min();
