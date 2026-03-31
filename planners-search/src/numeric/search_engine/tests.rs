@@ -8,7 +8,7 @@ use planners_sas::numeric::state_registry::StateRegistry;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
 #[test]
-fn test_min_action_cost_from_initial_metric_deltas_plus_constants() {
+fn test_compute_effective_operator_costs_plus_constants() {
     // Metric var 0 (cost), incremented by constants 1 and 2.
     let version = 4;
     let metric = Metric::new(true, 0);
@@ -84,11 +84,14 @@ fn test_min_action_cost_from_initial_metric_deltas_plus_constants() {
     assert!((d0 - 0.5).abs() < 1e-12);
     assert!((d1 - 0.002).abs() < 1e-12);
 
-    let min_cost = min_action_cost_from_initial_metric_deltas(
-        &state_registry,
-        &initial_state,
-        task.get_operators(),
-    );
+    let operator_costs = compute_effective_operator_costs(&task, &state_registry, &initial_state);
+    assert_eq!(operator_costs.len(), 2);
+    assert!((operator_costs[0] - 0.5).abs() < 1e-12);
+    assert!((operator_costs[1] - 0.002).abs() < 1e-12);
+    let min_cost = operator_costs
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, |left, right| left.min(right));
     assert!((min_cost - 0.002).abs() < 1e-12);
 }
 

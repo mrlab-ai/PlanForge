@@ -19,23 +19,6 @@ use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistr
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
-fn min_action_cost_from_initial_metric_deltas<'a>(
-    state_registry: &StateRegistry<'a>,
-    initial_state: &ConcreteState,
-    operators: &[Operator],
-) -> f64 {
-    let mut min_cost = f64::INFINITY;
-    for op in operators {
-        let delta = match state_registry.metric_delta_applying_operator(initial_state, op) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        min_cost = min_cost.min(delta);
-    }
-
-    if min_cost.is_finite() { min_cost } else { 0.0 }
-}
-
 pub fn compute_effective_operator_costs<'a>(
     task: &'a dyn AbstractNumericTask,
     state_registry: &StateRegistry<'a>,
