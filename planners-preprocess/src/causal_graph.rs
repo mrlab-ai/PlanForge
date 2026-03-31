@@ -1,230 +1,178 @@
-use std::cmp::Ordering;
+use std::cell::RefCell;
+use std::cmp::max;
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::ops::Deref;
 
-use crate::axiom::{
-    AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational,
-};
-use crate::helper_functions::{GlobalConstraint, DEBUG};
+use crate::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
+use crate::fact::ExplicitFact;
 use crate::max_dag::MaxDag;
+use crate::mutex_group::MutexGroup;
 use crate::operator::Operator;
 use crate::scc::Scc;
-use crate::variable::{NumType, NumericVariable, Variable};
+use crate::variable::{ExplicitVariable, NumType, NumericVariable};
+use crate::{DEBUG, GlobalConstraint};
 
-#[derive(Clone, Copy, Debug)]
-pub struct CGVar {
-    pub var: *mut Variable,
-    pub nvar: *mut NumericVariable,
-    pub numeric: bool,
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum EitherVar {
+    ExplicitVariable(usize),
+    NumericVariable(usize),
 }
 
-impl CGVar {
-    pub fn new_var(var: *mut Variable) -> Self {
-        Self {
-            var,
-            nvar: std::ptr::null_mut(),
-            numeric: false,
-        }
-    }
-
-    pub fn new_nvar(nvar: *mut NumericVariable) -> Self {
-        Self {
-            var: std::ptr::null_mut(),
-            nvar,
-            numeric: true,
-        }
-    }
-
-    pub fn get_name(&self) -> String {
-        if self.numeric {
-            assert!(!self.nvar.is_null());
-            unsafe { &*self.nvar }.get_name()
-        } else {
-            assert!(!self.var.is_null());
-            unsafe { &*self.var }.get_name()
-        }
-    }
-
-    pub fn set_necessary(&self) {
-        if self.numeric {
-            assert!(!self.nvar.is_null());
-            unsafe { &mut *self.nvar }.set_necessary();
-        } else {
-            assert!(!self.var.is_null());
-            unsafe { &mut *self.var }.set_necessary();
-        }
-    }
-
-    pub fn is_necessary(&self) -> bool {
-        if self.numeric {
-            assert!(!self.nvar.is_null());
-            unsafe { &*self.nvar }.is_necessary()
-        } else {
-            assert!(!self.var.is_null());
-            unsafe { &*self.var }.is_necessary()
+impl EitherVar {
+    pub fn get_name(&self, vars: &[ExplicitVariable], numeric_vars: &[NumericVariable]) -> String {
+        match self {
+            EitherVar::ExplicitVariable(v) => vars[*v].get_name(),
+            EitherVar::NumericVariable(v) => numeric_vars[*v].get_name(),
         }
     }
 }
 
-impl PartialEq for CGVar {
-    fn eq(&self, other: &Self) -> bool {
-        self.numeric == other.numeric && self.var == other.var && self.nvar == other.nvar
-    }
-}
+impl Deref for EitherVar {
+    type Target = usize;
 
-impl Eq for CGVar {}
-
-impl PartialOrd for CGVar {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for CGVar {
-    fn cmp(&self, other: &Self) -> Ordering {
-        if self.numeric == other.numeric {
-            if self.numeric {
-                (self.nvar as usize).cmp(&(other.nvar as usize))
-            } else {
-                (self.var as usize).cmp(&(other.var as usize))
-            }
-        } else if self.numeric {
-            Ordering::Greater
-        } else {
-            Ordering::Less
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::ExplicitVariable(i) => i,
+            Self::NumericVariable(i) => i,
         }
     }
 }
 
-pub type WeightedSuccessors = BTreeMap<CGVar, i32>;
-pub type WeightedGraph = BTreeMap<CGVar, WeightedSuccessors>;
-pub type Predecessors = BTreeMap<CGVar, i32>;
-pub type PredecessorGraph = BTreeMap<CGVar, Predecessors>;
+pub type WeightedSuccessors = BTreeMap<EitherVar, u64>;
+pub type WeightedGraph = BTreeMap<EitherVar, WeightedSuccessors>;
+pub type Predecessors = BTreeMap<EitherVar, u64>;
+pub type PredecessorGraph = BTreeMap<EitherVar, Predecessors>;
 
-pub type Partition = Vec<Vec<CGVar>>;
-pub type OrderingVars = Vec<CGVar>;
-
-pub static mut G_DO_NOT_PRUNE_VARIABLES: bool = false;
+pub type Partition = Vec<Vec<EitherVar>>;
+pub type OrderingVars = Vec<EitherVar>;
+pub type ExplicitOrderingVars = Vec<usize>;
+pub type NumericOrderingVars = Vec<usize>;
 
 #[derive(Debug)]
-pub struct CausalGraph<'a> {
-    variables: Vec<*mut Variable>,
-    numeric_variables: Vec<*mut NumericVariable>,
-    operators: &'a [Operator],
-    axioms: &'a [AxiomRelational],
-    ass_axioms: &'a [AxiomNumericComputation],
-    comp_axioms: &'a [AxiomFunctionalComparison],
-    goals: &'a Vec<(*mut Variable, i32)>,
-    global_constraint: GlobalConstraint,
-    metric_var: *mut NumericVariable,
+pub struct CausalGraph {
+    variables: RefCell<Vec<ExplicitVariable>>,
+    numeric_variables: RefCell<Vec<NumericVariable>>,
+    operators: Vec<Operator>,
+    axioms: Vec<AxiomRelational>,
+    ass_axioms: Vec<AxiomNumericComputation>,
+    comp_axioms: Vec<AxiomFunctionalComparison>,
+    mutexes: Vec<MutexGroup>,
+    goals: Vec<ExplicitFact>,
+    global_constraint: Option<GlobalConstraint>,
+    metric_var: usize,
+    prune_variables: bool,
 
     weighted_graph: WeightedGraph,
     predecessor_graph: PredecessorGraph,
 
     ordering: OrderingVars,
-    propositional_ordering: Vec<*mut Variable>,
-    numeric_ordering: Vec<*mut NumericVariable>,
+    propositional_ordering: ExplicitOrderingVars,
+    numeric_ordering: NumericOrderingVars,
     acyclic: bool,
 }
 
-impl<'a> CausalGraph<'a> {
+impl CausalGraph {
     pub fn new(
-        variables: &mut [*mut Variable],
-        numeric_variables: &mut [*mut NumericVariable],
-        operators: &'a [Operator],
-        axioms: &'a [AxiomRelational],
-        ass_axioms: &'a [AxiomNumericComputation],
-        comp_axioms: &'a [AxiomFunctionalComparison],
-        goals: &'a Vec<(*mut Variable, i32)>,
-        global_constraint: GlobalConstraint,
-        metric_var: *mut NumericVariable,
+        variables: Vec<ExplicitVariable>,
+        numeric_variables: Vec<NumericVariable>,
+        operators: Vec<Operator>,
+        axioms: Vec<AxiomRelational>,
+        ass_axioms: Vec<AxiomNumericComputation>,
+        comp_axioms: Vec<AxiomFunctionalComparison>,
+        mutexes: Vec<MutexGroup>,
+        goals: Vec<ExplicitFact>,
+        global_constraint: Option<GlobalConstraint>,
+        metric_var: usize,
+        prune_variables: bool,
     ) -> Self {
         let mut weighted_graph: WeightedGraph = BTreeMap::new();
-        for var in variables.iter_mut() {
-            weighted_graph.insert(CGVar::new_var(*var), BTreeMap::new());
+        for v in variables.iter() {
+            weighted_graph.insert(EitherVar::ExplicitVariable(v.index), BTreeMap::new());
         }
-        for nvar in numeric_variables.iter_mut() {
-            weighted_graph.insert(CGVar::new_nvar(*nvar), BTreeMap::new());
+        for v in numeric_variables.iter() {
+            weighted_graph.insert(EitherVar::NumericVariable(v.index), BTreeMap::new());
         }
 
+        let (weighted_graph, predecessor_graph) =
+            Self::weigh_graph_from_ops(&operators, weighted_graph);
+        let (weighted_graph, predecessor_graph) =
+            Self::weigh_graph_from_axioms(&axioms, weighted_graph, predecessor_graph);
+        let (weighted_graph, predecessor_graph) =
+            Self::weigh_graph_from_comp_axioms(&comp_axioms, weighted_graph, predecessor_graph);
+        let (weighted_graph, predecessor_graph) =
+            Self::weigh_graph_from_ass_axioms(&ass_axioms, weighted_graph, predecessor_graph);
+
+        let (sccs, weighted_graph) =
+            Self::get_strongly_connected_components(&variables, &numeric_variables, weighted_graph);
+        let (ordering, weighted_graph) =
+            Self::calculate_topological_pseudo_sort(&goals, weighted_graph, &sccs);
+
+        let acyclic = sccs.len() == (variables.len() + numeric_variables.len());
+        println!(
+            "The causal graph is {}acyclic.",
+            if acyclic { "" } else { "not " }
+        );
+
         let mut cg = Self {
-            variables: variables.to_vec(),
-            numeric_variables: numeric_variables.to_vec(),
+            variables: RefCell::new(variables),
+            numeric_variables: RefCell::new(numeric_variables),
             operators,
             axioms,
             ass_axioms,
             comp_axioms,
+            mutexes,
             goals,
             global_constraint,
             metric_var,
+            prune_variables,
             weighted_graph,
-            predecessor_graph: BTreeMap::new(),
-            ordering: Vec::new(),
+            predecessor_graph,
+            ordering,
             propositional_ordering: Vec::new(),
             numeric_ordering: Vec::new(),
-            acyclic: false,
+            acyclic,
         };
 
-        cg.weigh_graph_from_ops(operators, goals);
-        cg.weigh_graph_from_axioms(axioms, goals);
-        cg.weigh_graph_from_comp_axioms(comp_axioms);
-        cg.weigh_graph_from_ass_axioms(ass_axioms);
-
-        let mut sccs: Partition = Vec::new();
-        cg.get_strongly_connected_components(&mut sccs);
-
-        println!(
-            "The causal graph is {}acyclic.",
-            if sccs.len() == (variables.len() + numeric_variables.len()) {
-                ""
-            } else {
-                "not "
-            }
-        );
-
-        cg.calculate_topological_pseudo_sort(&sccs);
         cg.calculate_important_vars();
 
         cg
     }
 
     fn weigh_graph_from_ops(
-        &mut self,
-        operators: &'a [Operator],
-        _goals: &'a Vec<(*mut Variable, i32)>,
-    ) {
-        for op in operators {
+        operators: &[Operator],
+        mut weighted_graph: WeightedGraph,
+    ) -> (WeightedGraph, PredecessorGraph) {
+        let mut predecessor_graph: PredecessorGraph = BTreeMap::new();
+        for op in operators.iter() {
             let prevail = op.get_prevail();
             let pre_posts = op.get_pre_post();
             let ass_effs = op.get_num_eff();
-            let mut source_vars: Vec<CGVar> = Vec::new();
-            for prev in prevail {
-                source_vars.push(CGVar::new_var(prev.var as *mut Variable));
+            let mut source_vars: Vec<EitherVar> = Vec::new();
+            for prev in prevail.iter() {
+                source_vars.push(EitherVar::ExplicitVariable(prev.var));
             }
-            for pre_post in pre_posts {
-                if pre_post.pre != -1 {
-                    source_vars.push(CGVar::new_var(pre_post.var as *mut Variable));
+            for pre_post in pre_posts.iter() {
+                if pre_post.pre.is_some() {
+                    source_vars.push(EitherVar::ExplicitVariable(pre_post.var));
                 }
             }
 
-            for pre_post in pre_posts {
-                let curr_target = CGVar::new_var(pre_post.var as *mut Variable);
+            for pre_post in pre_posts.iter() {
+                let curr_target = EitherVar::ExplicitVariable(pre_post.var);
                 if pre_post.is_conditional_effect {
                     for eff_cond in &pre_post.effect_conds {
-                        source_vars.push(CGVar::new_var(eff_cond.var as *mut Variable));
+                        source_vars.push(EitherVar::ExplicitVariable(eff_cond.var));
                     }
                 }
 
                 for curr_source in &source_vars {
-                    let weighted_succ = self.weighted_graph.entry(*curr_source).or_default();
+                    let weighted_succ = weighted_graph.entry(*curr_source).or_default();
 
-                    if !self.predecessor_graph.contains_key(&curr_target) {
-                        self.predecessor_graph.insert(curr_target, BTreeMap::new());
-                    }
+                    predecessor_graph.entry(curr_target).or_default();
                     if *curr_source != curr_target {
                         let entry = weighted_succ.entry(curr_target).or_insert(0);
                         *entry += 1;
-                        let pred = self.predecessor_graph.get_mut(&curr_target).unwrap();
+                        let pred = predecessor_graph.get_mut(&curr_target).unwrap();
                         let pred_entry = pred.entry(*curr_source).or_insert(0);
                         *pred_entry += 1;
                     }
@@ -237,24 +185,22 @@ impl<'a> CausalGraph<'a> {
                 }
             }
 
-            for ass_eff in ass_effs {
-                let curr_target = CGVar::new_nvar(ass_eff.var as *mut NumericVariable);
+            for ass_eff in ass_effs.iter() {
+                let curr_target = EitherVar::NumericVariable(ass_eff.var);
                 if ass_eff.is_conditional_effect {
                     for eff_cond in &ass_eff.effect_conds {
-                        source_vars.push(CGVar::new_var(eff_cond.var as *mut Variable));
+                        source_vars.push(EitherVar::ExplicitVariable(eff_cond.var));
                     }
                 }
-                source_vars.push(CGVar::new_nvar(ass_eff.foperand as *mut NumericVariable));
+                source_vars.push(EitherVar::NumericVariable(ass_eff.foperand));
 
                 for curr_source in &source_vars {
-                    let weighted_succ = self.weighted_graph.entry(*curr_source).or_default();
-                    if !self.predecessor_graph.contains_key(&curr_target) {
-                        self.predecessor_graph.insert(curr_target, BTreeMap::new());
-                    }
+                    let weighted_succ = weighted_graph.entry(*curr_source).or_default();
+                    predecessor_graph.entry(curr_target).or_default();
                     if *curr_source != curr_target {
                         let entry = weighted_succ.entry(curr_target).or_insert(0);
                         *entry += 1;
-                        let pred = self.predecessor_graph.get_mut(&curr_target).unwrap();
+                        let pred = predecessor_graph.get_mut(&curr_target).unwrap();
                         let pred_entry = pred.entry(*curr_source).or_insert(0);
                         *pred_entry += 1;
                     }
@@ -264,144 +210,159 @@ impl<'a> CausalGraph<'a> {
                 source_vars.truncate(len - remove_count);
             }
         }
+
+        (weighted_graph, predecessor_graph)
     }
 
     fn weigh_graph_from_axioms(
-        &mut self,
-        axioms: &'a [AxiomRelational],
-        _goals: &'a Vec<(*mut Variable, i32)>,
-    ) {
-        for axiom in axioms {
-            let conds = axiom.get_conditions();
-            let mut source_vars: Vec<CGVar> = Vec::new();
-            for cond in conds {
-                source_vars.push(CGVar::new_var(cond.var as *mut Variable));
-            }
-            for curr_source in &source_vars {
-                let weighted_succ = self.weighted_graph.entry(*curr_source).or_default();
-                let curr_target = CGVar::new_var(axiom.get_effect_var() as *mut Variable);
-                if !self.predecessor_graph.contains_key(&curr_target) {
-                    self.predecessor_graph.insert(curr_target, BTreeMap::new());
-                }
-                if *curr_source != curr_target {
+        axioms: &[AxiomRelational],
+        mut weighted_graph: WeightedGraph,
+        mut predecessor_graph: PredecessorGraph,
+    ) -> (WeightedGraph, PredecessorGraph) {
+        for axiom in axioms.iter() {
+            for cond in axiom.get_conditions().iter() {
+                let curr_source = EitherVar::ExplicitVariable(cond.var);
+                let weighted_succ = weighted_graph.entry(curr_source).or_default();
+                let curr_target = EitherVar::ExplicitVariable(axiom.get_effect_var());
+                predecessor_graph.entry(curr_target).or_default();
+                if curr_source != curr_target {
                     let entry = weighted_succ.entry(curr_target).or_insert(0);
                     *entry += 1;
-                    let pred = self.predecessor_graph.get_mut(&curr_target).unwrap();
-                    let pred_entry = pred.entry(*curr_source).or_insert(0);
+                    let pred = predecessor_graph.get_mut(&curr_target).unwrap();
+                    let pred_entry = pred.entry(curr_source).or_insert(0);
                     *pred_entry += 1;
                 }
             }
         }
+
+        (weighted_graph, predecessor_graph)
     }
 
-    fn weigh_graph_from_comp_axioms(&mut self, comp_axioms: &'a [AxiomFunctionalComparison]) {
+    fn weigh_graph_from_comp_axioms(
+        comp_axioms: &[AxiomFunctionalComparison],
+        mut weighted_graph: WeightedGraph,
+        mut predecessor_graph: PredecessorGraph,
+    ) -> (WeightedGraph, PredecessorGraph) {
         for cax in comp_axioms {
-            let mut source_vars: Vec<CGVar> = Vec::new();
-            source_vars.push(CGVar::new_nvar(cax.get_left_var() as *mut NumericVariable));
-            source_vars.push(CGVar::new_nvar(cax.get_right_var() as *mut NumericVariable));
-            let target = CGVar::new_var(cax.get_effect_var() as *mut Variable);
+            let target = EitherVar::ExplicitVariable(cax.get_effect_var());
 
-            for curr_source in &source_vars {
-                let weighted_succ = self.weighted_graph.entry(*curr_source).or_default();
-                if !self.predecessor_graph.contains_key(&target) {
-                    self.predecessor_graph.insert(target, BTreeMap::new());
-                }
+            for curr_source in [
+                EitherVar::NumericVariable(cax.get_left_var()),
+                EitherVar::NumericVariable(cax.get_right_var()),
+            ] {
+                let weighted_succ = weighted_graph.entry(curr_source).or_default();
+                predecessor_graph.entry(target).or_default();
                 let entry = weighted_succ.entry(target).or_insert(0);
                 *entry += 1;
-                let pred = self.predecessor_graph.get_mut(&target).unwrap();
-                let pred_entry = pred.entry(*curr_source).or_insert(0);
+                let pred = predecessor_graph.get_mut(&target).unwrap();
+                let pred_entry = pred.entry(curr_source).or_insert(0);
                 *pred_entry += 1;
             }
         }
+
+        (weighted_graph, predecessor_graph)
     }
 
-    fn weigh_graph_from_ass_axioms(&mut self, ass_axioms: &'a [AxiomNumericComputation]) {
+    fn weigh_graph_from_ass_axioms(
+        ass_axioms: &[AxiomNumericComputation],
+        mut weighted_graph: WeightedGraph,
+        mut predecessor_graph: PredecessorGraph,
+    ) -> (WeightedGraph, PredecessorGraph) {
         for ass_ax in ass_axioms {
-            let mut source_vars: Vec<CGVar> = Vec::new();
-            source_vars.push(CGVar::new_nvar(
-                ass_ax.get_left_var() as *mut NumericVariable
-            ));
-            source_vars.push(CGVar::new_nvar(
-                ass_ax.get_right_var() as *mut NumericVariable
-            ));
-            let target = CGVar::new_nvar(ass_ax.get_effect_var() as *mut NumericVariable);
+            let target = EitherVar::NumericVariable(ass_ax.get_effect_var());
 
-            for curr_source in &source_vars {
-                let weighted_succ = self.weighted_graph.entry(*curr_source).or_default();
-                if !self.predecessor_graph.contains_key(&target) {
-                    self.predecessor_graph.insert(target, BTreeMap::new());
-                }
-                if *curr_source != target {
+            for curr_source in [
+                EitherVar::NumericVariable(ass_ax.get_left_var()),
+                EitherVar::NumericVariable(ass_ax.get_right_var()),
+            ] {
+                let weighted_succ = weighted_graph.entry(curr_source).or_default();
+                predecessor_graph.entry(target).or_default();
+                if curr_source != target {
                     let entry = weighted_succ.entry(target).or_insert(0);
                     *entry += 1;
-                    let pred = self.predecessor_graph.get_mut(&target).unwrap();
-                    let pred_entry = pred.entry(*curr_source).or_insert(0);
+                    let pred = predecessor_graph.get_mut(&target).unwrap();
+                    let pred_entry = pred.entry(curr_source).or_insert(0);
                     *pred_entry += 1;
                 }
             }
         }
+
+        (weighted_graph, predecessor_graph)
     }
 
-    fn get_strongly_connected_components(&mut self, result: &mut Partition) {
-        let mut variable_to_index: BTreeMap<CGVar, i32> = BTreeMap::new();
-        let num_vars = self.variables.len();
-        for (i, var) in self.variables.iter().enumerate() {
-            variable_to_index.insert(CGVar::new_var(*var), i as i32);
+    fn get_strongly_connected_components(
+        variables: &[ExplicitVariable],
+        numeric_variables: &[NumericVariable],
+        weighted_graph: WeightedGraph,
+    ) -> (Partition, WeightedGraph) {
+        let mut result = Vec::new();
+        let mut variable_to_index: BTreeMap<EitherVar, usize> = BTreeMap::new();
+        let num_vars = variables.len();
+        for (i, var) in variables.iter().enumerate() {
+            variable_to_index.insert(EitherVar::ExplicitVariable(var.index), i);
         }
-        let num_numeric_vars = self.numeric_variables.len();
-        for (i, nvar) in self.numeric_variables.iter().enumerate() {
-            variable_to_index.insert(CGVar::new_nvar(*nvar), (num_vars + i) as i32);
+        let num_numeric_vars = numeric_variables.len();
+        for (i, nvar) in numeric_variables.iter().enumerate() {
+            variable_to_index.insert(EitherVar::NumericVariable(nvar.index), num_vars + i);
         }
 
-        let mut unweighted_graph: Vec<Vec<i32>> = vec![Vec::new(); num_vars + num_numeric_vars];
-        for (weighted_node, weighted_succ) in &self.weighted_graph {
-            let index = *variable_to_index.get(weighted_node).unwrap() as usize;
+        let mut unweighted_graph: Vec<Vec<usize>> = vec![Vec::new(); num_vars + num_numeric_vars];
+        for (weighted_node, weighted_succ) in weighted_graph.iter() {
+            let index = *variable_to_index.get(weighted_node).unwrap();
             let succ = &mut unweighted_graph[index];
-            for (weighted_succ_node, _) in weighted_succ {
+            for weighted_succ_node in weighted_succ.keys() {
                 succ.push(*variable_to_index.get(weighted_succ_node).unwrap());
             }
         }
 
         let int_result = Scc::new(unweighted_graph).get_result();
-        result.clear();
         for int_component in int_result {
-            let mut component: Vec<CGVar> = Vec::new();
+            let mut component: Vec<EitherVar> = Vec::new();
             for var_id in int_component {
-                if var_id < num_vars as i32 {
-                    component.push(CGVar::new_var(self.variables[var_id as usize]));
+                if var_id < num_vars {
+                    assert!(var_id == variables[var_id].index);
+                    component.push(EitherVar::ExplicitVariable(var_id));
                 } else {
-                    let idx = (var_id as usize) - num_vars;
-                    component.push(CGVar::new_nvar(self.numeric_variables[idx]));
+                    let idx = var_id - num_vars;
+                    assert!(idx == numeric_variables[idx].index);
+                    component.push(EitherVar::NumericVariable(idx));
                 }
             }
             result.push(component);
         }
+
+        (result, weighted_graph)
     }
 
-    fn calculate_topological_pseudo_sort(&mut self, sccs: &Partition) {
-        let mut goal_map: BTreeMap<*mut Variable, i32> = BTreeMap::new();
-        for goal in self.goals.iter() {
-            goal_map.insert(goal.0, goal.1);
+    fn calculate_topological_pseudo_sort(
+        goals: &[ExplicitFact],
+        weighted_graph: WeightedGraph,
+        sccs: &Partition,
+    ) -> (OrderingVars, WeightedGraph) {
+        let mut ordering: OrderingVars = Vec::new();
+        let mut goal_map: BTreeMap<usize, usize> = BTreeMap::new();
+        for goal in goals.iter() {
+            goal_map.insert(goal.var, goal.value);
         }
         for curr_scc in sccs {
             let num_scc_vars = curr_scc.len();
             if num_scc_vars > 1 {
-                let mut variable_to_index: BTreeMap<CGVar, i32> = BTreeMap::new();
+                let mut variable_to_index: BTreeMap<EitherVar, usize> = BTreeMap::new();
                 for (i, v) in curr_scc.iter().enumerate() {
-                    variable_to_index.insert(*v, i as i32);
+                    variable_to_index.insert(*v, i);
                 }
 
-                let mut subgraph: Vec<Vec<(i32, i32)>> = Vec::new();
+                let mut subgraph: Vec<Vec<(usize, u64)>> = Vec::new();
                 for i in 0..num_scc_vars {
-                    let all_edges = self.weighted_graph.get(&curr_scc[i]).unwrap();
-                    let mut subgraph_edges: Vec<(i32, i32)> = Vec::new();
+                    let all_edges = weighted_graph.get(&curr_scc[i]).unwrap();
+                    let mut subgraph_edges: Vec<(usize, u64)> = Vec::new();
                     for (target, cost) in all_edges {
                         if let Some(index_it) = variable_to_index.get(target) {
                             let new_index = *index_it;
-                            if !target.numeric {
-                                if goal_map.contains_key(&(target.var as *mut Variable)) {
-                                    subgraph_edges.push((new_index, 100000 + *cost));
-                                }
+                            if let EitherVar::ExplicitVariable(v) = target
+                                && goal_map.contains_key(v)
+                            {
+                                subgraph_edges.push((new_index, 100000 + *cost));
                             }
                             subgraph_edges.push((new_index, *cost));
                         }
@@ -411,46 +372,64 @@ impl<'a> CausalGraph<'a> {
 
                 let order = MaxDag::new(subgraph).get_result();
                 for i in order {
-                    self.ordering.push(curr_scc[i as usize]);
+                    ordering.push(curr_scc[i]);
                 }
             } else {
-                self.ordering.push(curr_scc[0]);
+                ordering.push(curr_scc[0]);
             }
         }
+
+        (ordering, weighted_graph)
     }
 
     fn calculate_important_vars(&mut self) {
+        let mut variables = self.variables.borrow_mut();
+        let mut numeric_variables = self.numeric_variables.borrow_mut();
         for goal in self.goals.iter() {
-            let var = unsafe { &mut *goal.0 };
-            if !var.is_necessary() {
+            let var = goal.var;
+            if !variables[var].is_necessary() {
                 if DEBUG {
-                    println!("var {} is directly neccessary (goal).", var.get_name());
+                    println!(
+                        "var {} is directly necessary (goal).",
+                        variables[var].get_name()
+                    );
                 }
-                var.set_necessary();
-                self.dfs(CGVar::new_var(goal.0));
-            }
-        }
-
-        let gc_var = unsafe { &mut *self.global_constraint.var };
-        if !gc_var.is_necessary() {
-            if DEBUG {
-                println!(
-                    "var {} is directly neccessary (global constraint).",
-                    gc_var.get_name()
+                variables[var].set_necessary();
+                self.dfs(
+                    EitherVar::ExplicitVariable(goal.var),
+                    &mut variables,
+                    &mut numeric_variables,
                 );
             }
-            gc_var.set_necessary();
-            self.dfs(CGVar::new_var(self.global_constraint.var));
         }
 
-        self.set_variable_instrumentation_necessary(self.metric_var);
-        for op in self.operators {
+        if let Some(gc) = self.global_constraint {
+            let gc_var = gc.var;
+            if !variables[gc_var].is_necessary() {
+                if DEBUG {
+                    println!(
+                        "var {} is directly necessary (global constraint).",
+                        variables[gc_var].get_name()
+                    );
+                }
+                variables[gc_var].set_necessary();
+                self.dfs(
+                    EitherVar::ExplicitVariable(gc.var),
+                    &mut variables,
+                    &mut numeric_variables,
+                );
+            }
+        }
+
+        self.set_variable_instrumentation_necessary(&mut numeric_variables, self.metric_var);
+        for op in &self.operators {
             for num_eff in op.get_num_eff() {
-                let var = unsafe { &*num_eff.var };
-                if var.get_type() == NumType::Instrumentation {
-                    assert!(var.is_necessary());
+                let var = num_eff.var;
+                if numeric_variables[var].get_type() == NumType::Instrumentation {
+                    assert!(numeric_variables[var].is_necessary());
                     self.set_variable_instrumentation_necessary(
-                        num_eff.foperand as *mut NumericVariable,
+                        &mut numeric_variables,
+                        num_eff.foperand,
                     );
                 }
             }
@@ -458,82 +437,138 @@ impl<'a> CausalGraph<'a> {
 
         assert!(self.propositional_ordering.is_empty());
         assert!(self.numeric_ordering.is_empty());
-        assert!(self.ordering.len() == self.numeric_variables.len() + self.variables.len());
+        assert!(self.ordering.len() == numeric_variables.len() + variables.len());
         for cg_var in &self.ordering {
-            if cg_var.numeric {
-                let nvar = unsafe { &mut *cg_var.nvar };
-                if nvar.is_necessary() || unsafe { G_DO_NOT_PRUNE_VARIABLES } {
-                    self.numeric_ordering.push(cg_var.nvar);
+            match cg_var {
+                EitherVar::ExplicitVariable(v) => {
+                    if variables[*v].is_necessary() || !self.prune_variables {
+                        self.propositional_ordering.push(*v);
+                    }
                 }
-            } else {
-                let var = unsafe { &mut *cg_var.var };
-                if var.is_necessary() || unsafe { G_DO_NOT_PRUNE_VARIABLES } {
-                    self.propositional_ordering.push(cg_var.var);
+                EitherVar::NumericVariable(v) => {
+                    if numeric_variables[*v].is_necessary() || !self.prune_variables {
+                        self.numeric_ordering.push(*v);
+                    }
                 }
             }
         }
         for (i, var) in self.propositional_ordering.iter().enumerate() {
-            unsafe { &mut **var }.set_level(i as i32);
+            variables[*var].set_level(i as i32);
         }
         for (i, nvar) in self.numeric_ordering.iter().enumerate() {
-            unsafe { &mut **nvar }.set_level(i as i32);
+            numeric_variables[*nvar].set_level(i as i32);
         }
         println!(
             "{} variables of {} necessary",
             self.propositional_ordering.len(),
-            self.variables.len()
+            variables.len()
         );
         println!(
             "{} numeric variables of {} necessary",
             self.numeric_ordering.len(),
-            self.numeric_variables.len()
+            numeric_variables.len()
         );
     }
 
-    fn dfs(&self, from: CGVar) {
+    fn dfs(
+        &self,
+        from: EitherVar,
+        vars: &mut [ExplicitVariable],
+        numeric_vars: &mut [NumericVariable],
+    ) {
         if let Some(preds) = self.predecessor_graph.get(&from) {
-            for (pred, _) in preds {
+            for pred in preds.keys() {
                 let curr_predecessor = *pred;
-                if !curr_predecessor.is_necessary() {
-                    curr_predecessor.set_necessary();
-                    if DEBUG {
-                        println!("var {} is neccessary.", curr_predecessor.get_name());
+                match curr_predecessor {
+                    EitherVar::ExplicitVariable(v) => {
+                        if !vars[v].is_necessary() {
+                            vars[v].set_necessary();
+                            if DEBUG {
+                                println!("var {} is necessary.", vars[v].get_name());
+                            }
+                            self.dfs(curr_predecessor, vars, numeric_vars);
+                        }
                     }
-                    self.dfs(curr_predecessor);
+                    EitherVar::NumericVariable(v) => {
+                        if !numeric_vars[v].is_necessary() {
+                            numeric_vars[v].set_necessary();
+                            if DEBUG {
+                                println!("var {} is necessary.", numeric_vars[v].get_name());
+                            }
+                            self.dfs(curr_predecessor, vars, numeric_vars);
+                        }
+                    }
                 }
             }
         }
     }
 
-    fn set_variable_instrumentation_necessary(&self, inst_var: *mut NumericVariable) {
-        let var = unsafe { &mut *inst_var };
-        if !var.is_necessary() {
+    fn set_variable_instrumentation_necessary(
+        &self,
+        numeric_variables: &mut [NumericVariable],
+        inst_var: usize,
+    ) {
+        if !numeric_variables[inst_var].is_necessary() {
             if DEBUG {
-                println!("{} is necessary for the metric", var.get_name());
+                println!(
+                    "{} is necessary for the metric",
+                    numeric_variables[inst_var].get_name()
+                );
             }
-            var.set_instrumentation();
+            numeric_variables[inst_var].set_instrumentation();
         }
-        for ass_ax in self.ass_axioms {
-            if inst_var == ass_ax.get_effect_var() as *mut NumericVariable {
+        for ass_ax in self.ass_axioms.iter() {
+            if inst_var == ass_ax.get_effect_var() {
                 self.set_variable_instrumentation_necessary(
-                    ass_ax.get_left_var() as *mut NumericVariable
+                    numeric_variables,
+                    ass_ax.get_left_var(),
                 );
                 self.set_variable_instrumentation_necessary(
-                    ass_ax.get_right_var() as *mut NumericVariable
+                    numeric_variables,
+                    ass_ax.get_right_var(),
                 );
             }
         }
     }
 
-    pub fn get_metric_index(&self) -> i32 {
-        unsafe { &*self.metric_var }.get_level()
+    pub fn check_and_repair_empty_axiom_layers(&self) {
+        let mut max_num_index_before = -1;
+        let mut max_num_index_after = -1;
+        for nvar in self.numeric_variables.borrow().iter() {
+            max_num_index_before = max(max_num_index_before, nvar.get_layer());
+            if nvar.is_necessary() {
+                max_num_index_after = max(max_num_index_after, nvar.get_layer());
+            }
+        }
+        if max_num_index_before != max_num_index_after {
+            if DEBUG {
+                println!(
+                    "index before = {} after = {}",
+                    max_num_index_before, max_num_index_after
+                );
+            }
+            let decrement = max_num_index_before - max_num_index_after;
+
+            let mut vars = self.variables.borrow_mut();
+            for var in vars.iter_mut() {
+                var.decrement_layer(decrement);
+                assert!(var.get_layer() == -1 || var.get_layer() > max_num_index_after);
+            }
+        }
     }
 
-    pub fn get_variable_ordering(&self) -> &Vec<*mut Variable> {
+    pub fn get_metric_index(&self) -> usize {
+        let index = self.numeric_variables.borrow()[self.metric_var].get_level();
+        assert!(index >= 0);
+
+        index as usize
+    }
+
+    pub fn get_variable_ordering(&self) -> &ExplicitOrderingVars {
         &self.propositional_ordering
     }
 
-    pub fn get_numeric_variable_ordering(&self) -> &Vec<*mut NumericVariable> {
+    pub fn get_numeric_variable_ordering(&self) -> &NumericOrderingVars {
         &self.numeric_ordering
     }
 
@@ -543,52 +578,147 @@ impl<'a> CausalGraph<'a> {
 
     pub fn dump(&self) {
         for (source, succs) in &self.weighted_graph {
-            println!("dependent on var {}: ", source.get_name());
+            println!(
+                "dependent on var {}: ",
+                source.get_name(&self.variables.borrow(), &self.numeric_variables.borrow())
+            );
             for (succ, weight) in succs {
-                println!("  [{}, {}]", succ.get_name(), weight);
+                println!(
+                    "  [{}, {}]",
+                    succ.get_name(&self.variables.borrow(), &self.numeric_variables.borrow()),
+                    weight
+                );
             }
         }
         for (source, succs) in &self.predecessor_graph {
-            println!("var {} is dependent of: ", source.get_name());
+            println!(
+                "var {} is dependent of: ",
+                source.get_name(&self.variables.borrow(), &self.numeric_variables.borrow())
+            );
             for (succ, weight) in succs {
-                println!("  [{}, {}]", succ.get_name(), weight);
+                println!(
+                    "  [{}, {}]",
+                    succ.get_name(&self.variables.borrow(), &self.numeric_variables.borrow()),
+                    weight
+                );
             }
         }
     }
 
-    pub fn generate_cpp_input<W: Write>(&self, out: &mut W, ordered_vars: &Vec<*mut Variable>) {
-        let mut succs: Vec<Option<WeightedSuccessors>> = vec![None; ordered_vars.len()];
-        let mut number_of_succ: Vec<i32> = vec![0; ordered_vars.len()];
-        for (source, succ) in &self.weighted_graph {
-            if !source.numeric {
-                let source_var = unsafe { &*source.var };
-                if source_var.get_level() != -1 {
-                    let mut num = 0;
-                    for (succ_var, _) in succ {
-                        if !succ_var.numeric {
-                            let var = unsafe { &*succ_var.var };
-                            if var.get_level() != -1 {
-                                num += 1;
-                            }
-                        }
-                    }
-                    succs[source_var.get_level() as usize] = Some(succ.clone());
-                    number_of_succ[source_var.get_level() as usize] = num;
-                }
-            }
+    pub fn strip_operators(&mut self) {
+        let old_count = self.operators.len();
+        for op in self.operators.iter_mut() {
+            op.strip_unimportant_effects(&self.numeric_variables.borrow());
         }
-        let num_vars = ordered_vars.len();
-        for i in 0..num_vars {
-            let curr = succs[i].clone().unwrap_or_default();
-            writeln!(out, "{}", number_of_succ[i]).unwrap();
-            for (succ, weight) in &curr {
-                if !succ.numeric {
-                    let var = unsafe { &*succ.var };
-                    if var.get_level() != -1 {
-                        writeln!(out, "{} {}", var.get_level(), weight).unwrap();
-                    }
-                }
-            }
+        self.operators
+            .retain(|op| !op.is_redundant(&self.numeric_variables.borrow()));
+        println!(
+            "{} of {} operators necessary.",
+            self.operators.len(),
+            old_count
+        );
+    }
+
+    pub fn strip_mutexes(&mut self) {
+        let old_count = self.mutexes.len();
+        for mutex in self.mutexes.iter_mut() {
+            mutex.strip_unimportant_facts(&self.variables.borrow());
         }
+        self.mutexes.retain(|m| !m.is_redundant());
+        println!(
+            "{} of {} mutex groups necessary.",
+            self.mutexes.len(),
+            old_count
+        );
+    }
+
+    pub fn strip_axiom_relationals(&mut self) {
+        let old_count = self.axioms.len();
+        self.axioms
+            .retain(|axiom| !axiom.is_redundant(&self.variables.borrow()));
+        println!(
+            "{} of {} axiom rules necessary.",
+            self.axioms.len(),
+            old_count
+        );
+    }
+
+    pub fn strip_axiom_functional_comparisons(&mut self) {
+        let old_count = self.comp_axioms.len();
+        self.comp_axioms.retain(|axiom| {
+            !axiom.is_redundant(&self.variables.borrow(), &self.numeric_variables.borrow())
+        });
+        println!(
+            "{} of {} axiom_functional assignment rules necessary.",
+            self.comp_axioms.len(),
+            old_count
+        );
+    }
+
+    pub fn strip_axiom_functional_assignment(&mut self) {
+        let old_count = self.ass_axioms.len();
+        self.ass_axioms
+            .retain(|axiom| !axiom.is_redundant(&self.numeric_variables.borrow()));
+        println!(
+            "{} of {} axiom_functional comparison rules necessary.",
+            self.ass_axioms.len(),
+            old_count
+        );
+    }
+
+    pub fn finalize(
+        mut self,
+    ) -> (
+        Vec<ExplicitVariable>,
+        Vec<NumericVariable>,
+        Vec<ExplicitVariable>,
+        Vec<NumericVariable>,
+        Vec<Operator>,
+        Vec<AxiomRelational>,
+        Vec<AxiomNumericComputation>,
+        Vec<AxiomFunctionalComparison>,
+        Vec<MutexGroup>,
+        Vec<ExplicitFact>,
+        Option<GlobalConstraint>,
+        bool,
+        usize,
+    ) {
+        self.strip_mutexes();
+        self.strip_operators();
+        self.strip_axiom_relationals();
+        self.strip_axiom_functional_comparisons();
+        self.strip_axiom_functional_assignment();
+
+        self.check_and_repair_empty_axiom_layers();
+
+        let is_acyclic = self.is_acyclic();
+        let metric_index = self.get_metric_index();
+
+        let variables: Vec<ExplicitVariable> = self.variables.take();
+        let numeric_variables: Vec<NumericVariable> = self.numeric_variables.take();
+        let mut ordered_vars = Vec::with_capacity(self.propositional_ordering.len());
+        for v in &self.propositional_ordering {
+            ordered_vars.push(variables[*v].clone());
+        }
+        let mut ordered_numeric_vars = Vec::with_capacity(self.numeric_ordering.len());
+        for v in &self.numeric_ordering {
+            ordered_numeric_vars.push(numeric_variables[*v].clone());
+        }
+
+        (
+            variables,
+            numeric_variables,
+            ordered_vars,
+            ordered_numeric_vars,
+            self.operators,
+            self.axioms,
+            self.ass_axioms,
+            self.comp_axioms,
+            self.mutexes,
+            self.goals,
+            self.global_constraint,
+            is_acyclic,
+            metric_index,
+        )
     }
 }

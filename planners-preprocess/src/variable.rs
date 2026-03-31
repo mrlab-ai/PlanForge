@@ -1,8 +1,8 @@
 use std::fmt;
 use std::io::Write;
 
-use crate::helper_functions::check_magic;
 use crate::helper_functions::InputStream;
+use crate::helper_functions::check_magic;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NumType {
@@ -26,30 +26,58 @@ impl fmt::Display for NumType {
 }
 
 #[derive(Debug, Clone)]
-pub struct Variable {
-    values: Vec<String>,
+pub struct ExplicitVariable {
+    pub index: usize,
     name: String,
+    values: Vec<String>,
     layer: i32,
     level: i32,
     necessary: bool,
     comparison: bool,
 }
 
-impl Variable {
-    pub fn from_stream(stream: &mut InputStream) -> Self {
+impl PartialEq for ExplicitVariable {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Eq for ExplicitVariable {}
+
+impl PartialOrd for ExplicitVariable {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ExplicitVariable {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        if self.index < other.index {
+            std::cmp::Ordering::Less
+        } else if self.index > other.index {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    }
+}
+
+impl ExplicitVariable {
+    pub fn from_stream(stream: &mut InputStream, index: usize) -> Self {
         check_magic(stream, "begin_variable");
         let name = stream.read_token();
         let layer = stream.read_i32();
-        let range = stream.read_i32();
+        let range = stream.read_usize();
         stream.skip_ws();
-        let mut values = Vec::with_capacity(range as usize);
+        let mut values = Vec::with_capacity(range);
         for _ in 0..range {
             values.push(stream.read_line());
         }
         check_magic(stream, "end_variable");
         Self {
-            values,
+            index,
             name,
+            values,
             layer,
             level: -1,
             necessary: false,
@@ -75,8 +103,8 @@ impl Variable {
         self.necessary
     }
 
-    pub fn get_range(&self) -> i32 {
-        self.values.len() as i32
+    pub fn get_range(&self) -> usize {
+        self.values.len()
     }
 
     pub fn is_comparison(&self) -> bool {
@@ -105,7 +133,7 @@ impl Variable {
         self.layer != -1
     }
 
-    pub fn generate_cpp_input<W: Write>(&self, out: &mut W) {
+    pub fn to_sas<W: Write>(&self, out: &mut W) {
         writeln!(out, "begin_variable").unwrap();
         writeln!(out, "{}", self.name).unwrap();
         writeln!(out, "{}", self.layer).unwrap();
@@ -143,6 +171,7 @@ impl Variable {
 
 #[derive(Debug, Clone)]
 pub struct NumericVariable {
+    pub index: usize,
     name: String,
     value: f64,
     layer: i32,
@@ -152,8 +181,34 @@ pub struct NumericVariable {
     ntype: NumType,
 }
 
+impl PartialEq for NumericVariable {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Eq for NumericVariable {}
+
+impl PartialOrd for NumericVariable {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for NumericVariable {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        if self.index < other.index {
+            std::cmp::Ordering::Less
+        } else if self.index > other.index {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    }
+}
+
 impl NumericVariable {
-    pub fn from_stream(stream: &mut InputStream) -> Self {
+    pub fn from_stream(stream: &mut InputStream, index: usize) -> Self {
         let nvtype = stream.read_char();
         stream.skip_ws();
         let layer_str = stream.read_until(' ');
@@ -169,6 +224,7 @@ impl NumericVariable {
         }
 
         Self {
+            index,
             name,
             value: 0.0,
             layer,
@@ -240,7 +296,7 @@ impl NumericVariable {
         self.ntype
     }
 
-    pub fn generate_cpp_input<W: Write>(&self, out: &mut W) {
+    pub fn to_sas<W: Write>(&self, out: &mut W) {
         assert!(self.necessary);
         assert!(self.layer >= -1);
         writeln!(out, "{} {} {}", self.ntype, self.layer, self.name).unwrap();

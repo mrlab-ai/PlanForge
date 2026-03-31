@@ -1,40 +1,37 @@
 use std::io::Write;
 
-use crate::helper_functions::check_magic;
+use crate::fact::ExplicitFact;
 use crate::helper_functions::InputStream;
-use crate::variable::Variable;
+use crate::helper_functions::check_magic;
+use crate::variable::ExplicitVariable;
 
 #[derive(Debug, Clone)]
 pub struct MutexGroup {
-    facts: Vec<(*const Variable, i32)>,
+    facts: Vec<ExplicitFact>,
 }
 
 impl MutexGroup {
-    pub fn from_stream(stream: &mut InputStream, variables: &Vec<*mut Variable>) -> Self {
+    pub fn from_stream(stream: &mut InputStream) -> Self {
         check_magic(stream, "begin_mutex_group");
-        let size = stream.read_i32();
-        let mut facts = Vec::with_capacity(size as usize);
+        let size = stream.read_usize();
+        let mut facts = Vec::with_capacity(size);
         for _ in 0..size {
-            let var_no = stream.read_i32();
-            let value = stream.read_i32();
-            let var = variables[var_no as usize] as *const Variable;
-            facts.push((var, value));
+            let var_no = stream.read_usize();
+            let value = stream.read_usize();
+            facts.push(ExplicitFact { var: var_no, value });
         }
         check_magic(stream, "end_mutex_group");
         Self { facts }
     }
 
-    pub fn strip_unimportant_facts(&mut self) {
-        self.facts.retain(|fact| {
-            let var = unsafe { &*fact.0 };
-            var.get_level() != -1
-        });
+    pub fn strip_unimportant_facts(&mut self, vars: &[ExplicitVariable]) {
+        self.facts.retain(|fact| vars[fact.var].get_level() != -1);
     }
 
     pub fn is_redundant(&self) -> bool {
         let num_facts = self.facts.len();
         for i in 1..num_facts {
-            if self.facts[i].0 != self.facts[i - 1].0 {
+            if self.facts[i].var != self.facts[i - 1].var {
                 return false;
             }
         }
@@ -45,36 +42,27 @@ impl MutexGroup {
         self.facts.len()
     }
 
-    pub fn generate_cpp_input<W: Write>(&self, out: &mut W) {
+    pub fn to_sas<W: Write>(&self, out: &mut W, vars: &[ExplicitVariable]) {
         writeln!(out, "begin_mutex_group").unwrap();
         writeln!(out, "{}", self.facts.len()).unwrap();
         for fact in &self.facts {
-            let var = unsafe { &*fact.0 };
-            writeln!(out, "{} {}", var.get_level(), fact.1).unwrap();
+            let var = fact.var;
+            writeln!(out, "{} {}", vars[var].get_level(), fact.value).unwrap();
         }
         writeln!(out, "end_mutex_group").unwrap();
     }
 
-    pub fn dump(&self) {
+    pub fn dump(&self, vars: &[ExplicitVariable]) {
         println!("mutex group of size {}:", self.facts.len());
         for fact in &self.facts {
-            let var = unsafe { &*fact.0 };
-            let value = fact.1;
+            let var = fact.var;
+            let value = fact.value;
             println!(
                 "   {} = {} ({})",
-                var.get_name(),
+                vars[var].get_name(),
                 value,
-                var.get_fact_name(value as usize)
+                vars[var].get_fact_name(value)
             );
         }
     }
-}
-
-pub fn strip_mutexes(mutexes: &mut Vec<MutexGroup>) {
-    let old_count = mutexes.len();
-    for mutex in mutexes.iter_mut() {
-        mutex.strip_unimportant_facts();
-    }
-    mutexes.retain(|m| !m.is_redundant());
-    println!("{} of {} mutex groups necessary.", mutexes.len(), old_count);
 }

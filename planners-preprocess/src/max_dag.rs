@@ -2,19 +2,19 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct MaxDag {
-    weighted_graph: Vec<Vec<(i32, i32)>>,
+    weighted_graph: Vec<Vec<(usize, u64)>>,
     debug: bool,
 }
 
 impl MaxDag {
-    pub fn new(graph: Vec<Vec<(i32, i32)>>) -> Self {
+    pub fn new(graph: Vec<Vec<(usize, u64)>>) -> Self {
         Self {
             weighted_graph: graph,
             debug: false,
         }
     }
 
-    pub fn get_result(&self) -> Vec<i32> {
+    pub fn get_result(&self) -> Vec<usize> {
         let num_nodes = self.weighted_graph.len();
         if self.debug {
             for i in 0..num_nodes {
@@ -26,26 +26,26 @@ impl MaxDag {
             }
         }
 
-        let mut incoming_weights: Vec<i32> = vec![0; num_nodes];
+        let mut incoming_weights: Vec<u64> = vec![0; num_nodes];
         for weighted_edges in &self.weighted_graph {
             for edge in weighted_edges {
-                incoming_weights[edge.0 as usize] += edge.1;
+                incoming_weights[edge.0] += edge.1;
             }
         }
 
-        let mut heap: BTreeMap<(i32, i32), i32> = BTreeMap::new();
-        let mut heap_positions: Vec<(i32, i32)> = Vec::new();
+        let mut heap: BTreeMap<(u64, usize), usize> = BTreeMap::new();
+        let mut heap_positions: Vec<(u64, usize)> = Vec::new();
         for node in 0..num_nodes {
             if self.debug {
                 println!("node {} has {} edges", node, incoming_weights[node]);
             }
-            let key = (incoming_weights[node], node as i32);
-            heap.insert(key, node as i32);
+            let key = (incoming_weights[node], node);
+            heap.insert(key, node);
             heap_positions.push(key);
         }
 
         let mut done: Vec<bool> = vec![false; num_nodes];
-        let mut result: Vec<i32> = Vec::new();
+        let mut result: Vec<usize> = Vec::new();
 
         while !heap.is_empty() {
             let first_key = *heap.keys().next().unwrap();
@@ -53,11 +53,11 @@ impl MaxDag {
             if self.debug {
                 println!("minimal element is {}", removed);
             }
-            done[removed as usize] = true;
+            done[removed] = true;
             result.push(removed);
-            let succs = &self.weighted_graph[removed as usize];
+            let succs = &self.weighted_graph[removed];
             for succ in succs {
-                let target = succ.0 as usize;
+                let target = succ.0;
                 if !done[target] {
                     let mut arc_weight = succ.1;
                     while arc_weight >= 100000 {
@@ -66,8 +66,8 @@ impl MaxDag {
                     let old_key = heap_positions[target];
                     let new_weight = old_key.0 - arc_weight;
                     heap.remove(&old_key);
-                    let new_key = (new_weight, target as i32);
-                    heap.insert(new_key, target as i32);
+                    let new_key = (new_weight, target);
+                    heap.insert(new_key, target);
                     heap_positions[target] = new_key;
                     if self.debug {
                         println!("node {} has now {} edges", target, new_weight);
