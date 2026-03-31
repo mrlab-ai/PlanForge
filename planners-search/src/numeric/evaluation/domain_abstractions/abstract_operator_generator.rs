@@ -9,7 +9,8 @@ use anyhow::{Context, Result, anyhow, ensure};
 use planners_sas::numeric::axioms::{CalOperator, ComparisonOperator};
 
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, Effect, Fact, NumericType, Operator,
+    metric_operator_cost_from_initial_values, AbstractNumericTask, AssignmentEffect, Effect,
+    Fact, NumericType, Operator,
 };
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
@@ -99,6 +100,23 @@ pub struct TransitionInfo {
     pub target_partition_facts: Vec<Fact>,
     pub prevail_facts: Vec<Fact>,
     pub changed_numeric_vars: Vec<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct OperatorSignature {
+    prev_pairs: Vec<(u32, i32)>,
+    pre_pairs: Vec<(u32, i32)>,
+    eff_pairs: Vec<(u32, i32)>,
+    cost_bits: u64,
+}
+
+fn arith_op_from_axiom(operator: &CalOperator) -> ArithOp {
+    match operator {
+        CalOperator::Sum => ArithOp::Add,
+        CalOperator::Difference => ArithOp::Sub,
+        CalOperator::Product => ArithOp::Mul,
+        CalOperator::Division => ArithOp::Div,
+    }
 }
 
 #[derive(Clone)]
@@ -620,131 +638,7 @@ fn build_branch_for_operator(
 }
 
 fn abstract_operator_cost(task: &dyn AbstractNumericTask, op: &Operator) -> f64 {
-    if !task.metric().use_metric() {
-        return op.cost() as f64;
-    }
-
-    let initial_numeric_values = task.get_initial_numeric_state_values();
-    let mut numeric_values = initial_numeric_values.to_vec();
-    let old_metric = evaluate_metric_from_values(task, &numeric_values);
-
-    for effect in op.assignment_effects() {
-        let assignment_var_id = effect.var_id() as usize;
-        let affected_var_id = effect.affected_var_id() as usize;
-        debug_assert!(
-            assignment_var_id < numeric_values.len() && affected_var_id < numeric_values.len(),
-            "operator assignment effect uses out-of-bounds numeric var ids: rhs={} lhs={} len={}",
-            assignment_var_id,
-            affected_var_id,
-            numeric_values.len()
-        );
-        if assignment_var_id >= numeric_values.len() || affected_var_id >= numeric_values.len() {
-            continue;
-        }
-        let assignment_value = numeric_values[assignment_var_id];
-        let result = planners_sas::numeric::numeric_task::AssignmentOperation::apply(
-            numeric_values[affected_var_id],
-            effect.operation(),
-            assignment_value,
-        );
-        numeric_values[affected_var_id] = result;
-    }
-
-    propagate_assignment_axiom_values(task, &mut numeric_values);
-    let new_metric = evaluate_metric_from_values(task, &numeric_values);
-    let delta = if task.metric().is_min() {
-        new_metric - old_metric
-    } else {
-        old_metric - new_metric
-    };
-    delta.max(0.0)
-}
-
-fn evaluate_metric_from_values(task: &dyn AbstractNumericTask, numeric_values: &[f64]) -> f64 {
-    let metric_var_id = task.metric().var_id();
-    if metric_var_id < 0 {
-        return 0.0;
-    }
-    let metric_var_id = metric_var_id as usize;
-    debug_assert!(
-        metric_var_id < numeric_values.len(),
-        "metric var id out of bounds: {} >= {}",
-        metric_var_id,
-        numeric_values.len()
-    );
-    numeric_values.get(metric_var_id).copied().unwrap_or(0.0)
-}
-
-fn propagate_assignment_axiom_values(task: &dyn AbstractNumericTask, numeric_values: &mut [f64]) {
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for axiom in task.assignment_axioms() {
-            let affected_var_id = axiom.get_affected_var_id() as usize;
-            let left_var_id = axiom.get_left_var_id() as usize;
-            let right_var_id = axiom.get_right_var_id() as usize;
-            debug_assert!(
-                affected_var_id < numeric_values.len()
-                    && left_var_id < numeric_values.len()
-                    && right_var_id < numeric_values.len(),
-                "assignment axiom uses out-of-bounds numeric var ids: affected={} left={} right={} len={}",
-                affected_var_id,
-                left_var_id,
-                right_var_id,
-                numeric_values.len()
-            );
-            if affected_var_id >= numeric_values.len()
-                || left_var_id >= numeric_values.len()
-                || right_var_id >= numeric_values.len()
-            {
-                continue;
-            }
-            let new_value = apply_arith_op(
-                arith_op_from_axiom(axiom.get_operator()),
-                numeric_values[left_var_id],
-                numeric_values[right_var_id],
-            );
-            if numeric_values[affected_var_id] != new_value {
-                numeric_values[affected_var_id] = new_value;
-                changed = true;
-            }
-        }
-    }
-}
-
-fn arith_op_from_axiom(op: &CalOperator) -> ArithOp {
-    match op {
-        CalOperator::Sum => ArithOp::Add,
-        CalOperator::Difference => ArithOp::Sub,
-        CalOperator::Product => ArithOp::Mul,
-        CalOperator::Division => ArithOp::Div,
-    }
-}
-
-fn apply_arith_op(op: ArithOp, lhs: f64, rhs: f64) -> f64 {
-    match op {
-        ArithOp::Add => lhs + rhs,
-        ArithOp::Sub => lhs - rhs,
-        ArithOp::Mul => lhs * rhs,
-        ArithOp::Div => lhs / rhs,
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct OperatorSignature {
-    prev_pairs: Vec<(u32, i32)>,
-    pre_pairs: Vec<(u32, i32)>,
-    eff_pairs: Vec<(u32, i32)>,
-    cost_bits: u64,
-}
-
-impl Hash for OperatorSignature {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.prev_pairs.hash(state);
-        self.pre_pairs.hash(state);
-        self.eff_pairs.hash(state);
-        self.cost_bits.hash(state);
-    }
+    metric_operator_cost_from_initial_values(task, op)
 }
 
 fn multiply_out_propositional(
@@ -754,7 +648,7 @@ fn multiply_out_propositional(
     pre_pairs: &mut Vec<Fact>,
     eff_pairs: &mut Vec<Fact>,
     effects_without_pre: &[Fact],
-    ass_effects: &[planners_sas::numeric::numeric_task::AssignmentEffect],
+    ass_effects: &[AssignmentEffect],
     op_preconditions: &[Fact],
     concrete_op_id: usize,
     task: &dyn AbstractNumericTask,

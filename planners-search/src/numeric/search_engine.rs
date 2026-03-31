@@ -14,27 +14,21 @@ use crate::numeric::{
     successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node},
 };
 use ordered_float::OrderedFloat;
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, Fact, Operator};
+use planners_sas::numeric::numeric_task::{
+    metric_operator_cost_from_initial_values, AbstractNumericTask, Fact, Operator,
+};
 use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistry};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 pub fn compute_effective_operator_costs<'a>(
     task: &'a dyn AbstractNumericTask,
-    state_registry: &StateRegistry<'a>,
-    initial_state: &ConcreteState,
+    _state_registry: &StateRegistry<'a>,
+    _initial_state: &ConcreteState,
 ) -> Vec<f64> {
     task.get_operators()
         .iter()
-        .map(|op| {
-            if task.metric().use_metric() {
-                state_registry
-                    .metric_delta_applying_operator(initial_state, op)
-                    .unwrap_or(op.cost() as f64)
-            } else {
-                op.cost() as f64
-            }
-        })
+        .map(|op| metric_operator_cost_from_initial_values(task, op))
         .collect()
 }
 
