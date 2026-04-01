@@ -29,6 +29,18 @@ fn parses_astar_domain_abstraction_with_or_without_unit_parens() {
 }
 
 #[test]
+fn parses_astar_greedy_numeric_pdb_with_or_without_unit_parens() {
+    assert_eq!(
+        parse_search_spec("astar(greedy_numeric_pdb)").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb)
+    );
+    assert_eq!(
+        parse_search_spec("astar(greedy_numeric_pdb())").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb)
+    );
+}
+
+#[test]
 fn parses_astar_multi_domain_abstractions_with_or_without_parens() {
     assert_eq!(
         parse_search_spec("astar(multi_domain_abstractions)").unwrap(),
@@ -109,6 +121,11 @@ fn trims_trailing_punctuation() {
     assert_eq!(
         parse_search_spec("astar(domain_abstraction());").unwrap(),
         SearchSpec::Astar(HeuristicSpec::DomainAbstraction)
+    );
+
+    assert_eq!(
+        parse_search_spec("astar(greedy_numeric_pdb());").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb)
     );
 
     assert!(matches!(

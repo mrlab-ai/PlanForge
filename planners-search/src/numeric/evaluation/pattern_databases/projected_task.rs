@@ -7,11 +7,13 @@ use planners_sas::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, PropositionalAxiom,
 };
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, Effect, ExplicitVariable, Fact, Metric, NumericType,
-    NumericVariable, Operator,
+    AbstractNumericTask, AssignmentEffect, Effect, ExplicitVariable, Fact, Metric, NumericRootTask,
+    NumericType, NumericVariable, Operator,
 };
 
-use super::super::comparison_expression::{ArithOp, ComparisonTree, ComparisonTreeNode};
+use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
+    ArithOp, ComparisonTree, ComparisonTreeNode,
+};
 
 #[derive(Debug, Clone)]
 enum ArithmeticExpr {
@@ -599,6 +601,114 @@ impl<'task> ProjectedTask<'task> {
             variable_names,
             fact_names,
         })
+    }
+
+    pub fn to_numeric_root_task(&self) -> NumericRootTask {
+        NumericRootTask::new(
+            1,
+            self.metric.clone(),
+            self.variables.clone(),
+            self.numeric_variables.clone(),
+            self.goals.clone(),
+            vec![],
+            self.state.borrow().clone(),
+            self.numeric_state.borrow().clone(),
+            self.operators.clone(),
+            self.axioms.clone(),
+            self.comparison_axioms.clone(),
+            self.assignment_axioms.clone(),
+            (0, 0),
+        )
+    }
+
+    pub fn project_state_values(
+        &self,
+        propositional_values: &[i32],
+        numeric_values: &[f64],
+    ) -> Result<(Vec<i32>, Vec<f64>), String> {
+        if propositional_values.len() < self.base.variables().len() {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base.variables().len()
+            ));
+        }
+        if numeric_values.len() < self.base.numeric_variables().len() {
+            return Err(format!(
+                "numeric state too short: {} < {}",
+                numeric_values.len(),
+                self.base.numeric_variables().len()
+            ));
+        }
+
+        let projected_prop_values = self
+            .projected_var_to_original
+            .iter()
+            .map(|&original_var_id| propositional_values[original_var_id])
+            .collect();
+
+        let assignment_lookup = build_assignment_axiom_lookup(self.base);
+        let auxiliary_numeric_vars =
+            build_auxiliary_numeric_vars(self.base, &assignment_lookup, numeric_values)
+                .map_err(|err| err.to_string())?;
+        let mut helper_values = numeric_values.to_vec();
+        helper_values.resize(
+            self.base.numeric_variables().len() + auxiliary_numeric_vars.len(),
+            0.0,
+        );
+        for auxiliary_numeric_var in &auxiliary_numeric_vars {
+            helper_values[auxiliary_numeric_var.helper_id] = auxiliary_numeric_var.initial_value;
+        }
+
+        let mut projected_numeric_values =
+            Vec::with_capacity(self.projected_num_var_to_original.len());
+        for projected_index in 0..self.projected_num_var_to_original.len() {
+            if self.is_auxiliary_constant[projected_index] {
+                projected_numeric_values.push(self.numeric_state.borrow()[projected_index]);
+                continue;
+            }
+
+            if self.is_auxiliary_num_var[projected_index] {
+                let expr = self.auxiliary_exprs[projected_index]
+                    .as_ref()
+                    .ok_or_else(|| {
+                        "missing auxiliary expression for projected numeric variable".to_string()
+                    })?;
+                projected_numeric_values.push(expr.evaluate(&helper_values));
+                continue;
+            }
+
+            let original_numeric_var = self.projected_num_var_to_original[projected_index]
+                .ok_or_else(|| {
+                    "missing original numeric variable for projected numeric variable".to_string()
+                })?;
+            projected_numeric_values.push(numeric_values[original_numeric_var]);
+        }
+
+        Ok((projected_prop_values, projected_numeric_values))
+    }
+
+    pub fn is_goal_state_values(&self, propositional_values: &[i32]) -> bool {
+        self.goals.iter().all(|goal| {
+            propositional_values.get(goal.var() as usize).copied() == Some(goal.value())
+        })
+    }
+
+    pub fn min_operator_cost(&self) -> f64 {
+        self.operators
+            .iter()
+            .map(|operator| operator.cost() as f64)
+            .fold(f64::INFINITY, f64::min)
+            .max(0.0)
+            .is_finite()
+            .then(|| {
+                self.operators
+                    .iter()
+                    .map(|operator| operator.cost() as f64)
+                    .fold(f64::INFINITY, f64::min)
+                    .max(0.0)
+            })
+            .unwrap_or(0.0)
     }
 }
 

@@ -8,6 +8,7 @@ pub mod domain_abstractions;
 pub mod evaluator;
 pub mod g_evaluator;
 pub mod heuristic;
+pub mod pattern_databases;
 #[cfg(test)]
 mod tests;
 

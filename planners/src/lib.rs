@@ -18,6 +18,7 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planners_search::numeric::evaluation::domain_abstractions::max_domain_abstraction_heuristic::MaxDomainAbstractionHeuristic;
 use planners_search::numeric::evaluation::evaluator::EvaluationState;
+use planners_search::numeric::evaluation::pattern_databases::pdb_heuristic::GreedyNumericPdbHeuristic;
 use planners_search::numeric::evaluation::{EvaluationResult, Evaluator};
 use planners_search::numeric::open_lists::{OpenList, SearchNode, TieBreakingOpenList};
 use planners_search::numeric::search_engine::{compute_effective_operator_costs, SearchResult, SearchStatus};
@@ -141,8 +142,18 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                         )
                     })?;
                     Some(Box::new(DomainAbstractionHeuristic::new(None, abstraction))
-                        as Box<dyn planners_search::numeric::evaluation::Heuristic>)
+                        as Box<
+                            dyn planners_search::numeric::evaluation::Heuristic + '_,
+                        >)
                 }
+                planners_searcher::HeuristicSpec::GreedyNumericPdb => Some(Box::new(
+                    GreedyNumericPdbHeuristic::new(task_ref).map_err(|e| {
+                        std::io::Error::other(format!(
+                            "failed to build greedy numeric pdb heuristic: {e}"
+                        ))
+                    })?,
+                )
+                    as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>),
                 planners_searcher::HeuristicSpec::MultiDomainAbstractions(config) => {
                     let generator =
                         DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
@@ -154,7 +165,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     })?;
                     Some(
                         Box::new(MaxDomainAbstractionHeuristic::new(None, abstractions))
-                            as Box<dyn planners_search::numeric::evaluation::Heuristic>,
+                            as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>,
                     )
                 }
             };

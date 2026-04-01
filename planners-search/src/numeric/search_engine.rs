@@ -108,7 +108,7 @@ pub struct AStarSearch<'a> {
     search_nodes: HashMap<StateID, SearchNodeInfo>,
 
     // Evaluators
-    heuristic: Box<dyn Heuristic>,
+    heuristic: Box<dyn Heuristic + 'a>,
     g_evaluator: GEvaluator,
     f_evaluator: SumEvaluator,
 
@@ -148,7 +148,7 @@ impl<'a> AStarSearch<'a> {
     pub fn new(
         task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
-        heuristic: Option<Box<dyn Heuristic>>,
+        heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
     ) -> Self {

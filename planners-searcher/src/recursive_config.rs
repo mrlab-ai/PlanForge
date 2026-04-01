@@ -23,6 +23,8 @@ pub enum HeuristicSpec {
     Blind,
     #[serde(rename = "domain_abstraction")]
     DomainAbstraction,
+    #[serde(rename = "greedy_numeric_pdb")]
+    GreedyNumericPdb,
     #[serde(rename = "multi_domain_abstractions")]
     MultiDomainAbstractions(DomainAbstractionCollectionGeneratorMultipleCegarConfig),
 }
@@ -42,6 +44,7 @@ impl fmt::Display for HeuristicSpec {
         match self {
             HeuristicSpec::Blind => write!(f, "blind()"),
             HeuristicSpec::DomainAbstraction => write!(f, "domain_abstraction()"),
+            HeuristicSpec::GreedyNumericPdb => write!(f, "greedy_numeric_pdb()"),
             HeuristicSpec::MultiDomainAbstractions(config) => {
                 write!(f, "multi_domain_abstractions({config})")
             }
@@ -266,6 +269,11 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
         |_| HeuristicSpec::DomainAbstraction,
     );
 
+    let greedy_numeric_pdb = map(
+        tuple((ws(tag_no_case("greedy_numeric_pdb")), opt(ws(empty_parens)))),
+        |_| HeuristicSpec::GreedyNumericPdb,
+    );
+
     let multi_domain_abstractions = map(
         tuple((
             ws(tag_no_case("multi_domain_abstractions")),
@@ -274,7 +282,12 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
         |(_, config)| HeuristicSpec::MultiDomainAbstractions(config.unwrap_or_default()),
     );
 
-    ws(alt((multi_domain_abstractions, domain_abstraction, blind)))(input)
+    ws(alt((
+        multi_domain_abstractions,
+        greedy_numeric_pdb,
+        domain_abstraction,
+        blind,
+    )))(input)
 }
 
 fn search_spec(input: &str) -> Res<'_, SearchSpec> {

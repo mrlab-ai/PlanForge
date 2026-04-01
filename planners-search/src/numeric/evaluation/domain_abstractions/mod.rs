@@ -4,7 +4,6 @@ pub mod domain_abstraction;
 pub mod domain_abstraction_collection_generator_multiple_cegar;
 pub mod max_domain_abstraction_heuristic;
 pub mod numeric_context;
-pub mod pattern_databases;
 
 // Placeholders / upcoming ports.
 pub mod cegar;
