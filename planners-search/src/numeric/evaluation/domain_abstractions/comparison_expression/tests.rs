@@ -217,3 +217,52 @@ fn comparison_tree_cycle_detection() {
         ComparisonTreeBuildError::CycleDetected { numeric_var_id: 1 }
     );
 }
+
+#[test]
+fn comparison_tree_interval_evaluation_fills_derived_intervals() {
+    let numeric_variables = vec![
+        NumericVariable::new("x0".into(), NumericType::Regular, -1),
+        NumericVariable::new("c2".into(), NumericType::Constant, -1),
+        NumericVariable::new("d2".into(), NumericType::Derived, -1),
+        NumericVariable::new("d3".into(), NumericType::Derived, -1),
+    ];
+
+    let assignment_axioms = vec![
+        AssignmentAxiom::new(2, CalOperator::Sum, 0, 1),
+        AssignmentAxiom::new(3, CalOperator::Product, 2, 1),
+    ];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        0,
+        3,
+        1,
+        ComparisonOperator::GreaterThan,
+    )];
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        vec![],
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![1.0, 2.0, 0.0, 0.0],
+        vec![],
+        vec![],
+        comparison_axioms,
+        assignment_axioms,
+        (0, 0),
+    );
+
+    let tree = ComparisonTree::from_task(&task, 0).unwrap();
+    let mut intervals = vec![
+        Interval::singleton(1.0),
+        Interval::singleton(2.0),
+        Interval::new(0.0, 0.0, false, false),
+        Interval::new(0.0, 0.0, false, false),
+    ];
+
+    assert_eq!(tree.evaluate_interval_and_fill(&mut intervals), Some(true));
+    assert_eq!(intervals[2], Interval::singleton(3.0));
+    assert_eq!(intervals[3], Interval::singleton(6.0));
+}

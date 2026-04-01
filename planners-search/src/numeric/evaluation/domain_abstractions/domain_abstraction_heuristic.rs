@@ -12,7 +12,7 @@ use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 use super::comparison_expression::Interval;
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::numeric_context::{
-    propagate_assignment_axiom_intervals, seed_numeric_intervals_from_initial_state,
+    fill_derived_numeric_intervals_from_comparison_trees, seed_numeric_intervals_from_initial_state,
 };
 use super::utils;
 
@@ -388,7 +388,10 @@ impl Heuristic for DomainAbstractionHeuristic {
                         abstract_intervals[num_var_id] = iv;
                     }
                 }
-                propagate_assignment_axiom_intervals(task, &mut abstract_intervals);
+                fill_derived_numeric_intervals_from_comparison_trees(
+                    self.abstraction.factory.comparison_trees(),
+                    &mut abstract_intervals,
+                );
 
                 for tree in self.abstraction.factory.comparison_trees() {
                     let Ok(var_id) = usize::try_from(tree.affected_var_id) else {

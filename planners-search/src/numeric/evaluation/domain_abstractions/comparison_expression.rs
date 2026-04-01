@@ -748,6 +748,12 @@ impl ComparisonTree {
         self.op.apply_interval(lhs, rhs)
     }
 
+    pub fn evaluate_interval_and_fill(&self, intervals: &mut [Interval]) -> Option<bool> {
+        let lhs = self.eval_node_interval_and_fill(self.left_root, intervals);
+        let rhs = self.eval_node_interval_and_fill(self.right_root, intervals);
+        self.op.apply_interval(lhs, rhs)
+    }
+
     pub fn evaluate_point(&self, inputs: &[f64]) -> bool {
         let lhs = self.eval_node_point(self.left_root, inputs);
         let rhs = self.eval_node_point(self.right_root, inputs);
@@ -767,6 +773,36 @@ impl ComparisonTree {
                 let lhs = self.eval_node_interval(*left, inputs);
                 let rhs = self.eval_node_interval(*right, inputs);
                 op.apply_interval(lhs, rhs)
+            }
+        }
+    }
+
+    fn eval_node_interval_and_fill(
+        &self,
+        node_id: ComparisonTreeNodeId,
+        intervals: &mut [Interval],
+    ) -> Interval {
+        match &self.nodes[node_id] {
+            ComparisonTreeNode::Leaf { numeric_var_id } => {
+                let idx = usize::try_from(*numeric_var_id)
+                    .unwrap_or_else(|_| panic!("negative numeric_var_id {numeric_var_id}"));
+                intervals[idx]
+            }
+            ComparisonTreeNode::Arith {
+                op,
+                left,
+                right,
+                result_numeric_var_id,
+                ..
+            } => {
+                let lhs = self.eval_node_interval_and_fill(*left, intervals);
+                let rhs = self.eval_node_interval_and_fill(*right, intervals);
+                let result = op.apply_interval(lhs, rhs);
+                let idx = usize::try_from(*result_numeric_var_id).unwrap_or_else(|_| {
+                    panic!("negative result_numeric_var_id {result_numeric_var_id}")
+                });
+                intervals[idx] = result;
+                result
             }
         }
     }

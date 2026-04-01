@@ -7,16 +7,16 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use ordered_float::NotNan;
 
-use planners_sas::numeric::axioms::CalOperator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
 
 use super::abstract_operator_generator::{
     AbstractOperator, AbstractOperatorGenerator, DomainMapping,
 };
-use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
+use super::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::{
-    propagate_assignment_axiom_intervals, seed_numeric_intervals_from_initial_state,
+    evaluate_comparison_tree_from_abstract_state, evaluate_comparison_tree_from_initial_state,
+    prepare_comparison_tree_inputs_from_abstract_state,
 };
 use super::utils;
 
@@ -578,16 +578,6 @@ impl DomainAbstractionFactory {
         );
 
         let comparison_var_ids: HashSet<usize> = comparison_var_ids.iter().copied().collect();
-        let mut initial_numeric_intervals: Vec<Interval> = Vec::with_capacity(num_init.len());
-        for (numeric_var_id, &value) in num_init.iter().enumerate() {
-            ensure!(
-                value.is_finite() && !value.is_nan(),
-                "initial numeric value for var {numeric_var_id} must be finite, got {value}"
-            );
-            initial_numeric_intervals.push(Interval::singleton(value));
-        }
-        propagate_assignment_axiom_intervals(task, &mut initial_numeric_intervals);
-
         let mut index: i64 = 0;
         for var in 0..num_props {
             let mult = hash_multipliers[var] as i64;
@@ -597,7 +587,7 @@ impl DomainAbstractionFactory {
                     .iter()
                     .find(|tree| usize::try_from(tree.affected_var_id).ok() == Some(var))
                 {
-                    match tree.evaluate_interval(&initial_numeric_intervals) {
+                    match evaluate_comparison_tree_from_initial_state(task, tree)? {
                         Some(true) => COMPARISON_TRUE_VAL,
                         Some(false) => COMPARISON_FALSE_VAL,
                         None => prop_init[var],
@@ -683,93 +673,15 @@ impl DomainAbstractionFactory {
         hash_multipliers: &[i32],
         task: &dyn AbstractNumericTask,
     ) -> Result<Vec<Interval>> {
-        let num_props = self.domain_sizes.len();
-        let num_numeric_vars = task.numeric_variables().len();
-        ensure!(
-            numeric_domain_sizes.len() == num_numeric_vars,
-            "numeric_domain_sizes length mismatch: {} != {num_numeric_vars}",
-            numeric_domain_sizes.len()
-        );
-        let initial_numeric_values = task.get_initial_numeric_state_values();
-        let mut out = vec![Interval::new(0.0, 0.0, false, false); num_numeric_vars];
-        for (i, v) in task.numeric_variables().iter().enumerate() {
-            if v.get_type() == &NumericType::Constant {
-                out[i] = Interval::singleton(initial_numeric_values[i]);
-                continue;
-            }
-            if v.get_type() == &NumericType::Derived {
-                continue;
-            }
-            let abs_var = num_props + i;
-            let mult = hash_multipliers[abs_var] as i64;
-            let dom = numeric_domain_sizes[i] as i64;
-            let part = (((state_hash as i64) / mult) % dom) as usize;
-            let iv = self
-                .partitions
-                .partition_interval(i, part)
-                .with_context(|| {
-                    format!("missing partition interval for numeric var {i} part {part}")
-                })?;
-            out[i] = iv;
-        }
-        Self::propagate_assignment_axiom_intervals_known_only(task, &mut out);
-        for interval in &mut out {
-            if interval.is_empty() {
-                *interval = Interval::unbounded();
-            }
-        }
-        Ok(out)
-    }
-
-    fn arith_op_from_axiom(op: &CalOperator) -> ArithOp {
-        match op {
-            CalOperator::Sum => ArithOp::Add,
-            CalOperator::Difference => ArithOp::Sub,
-            CalOperator::Product => ArithOp::Mul,
-            CalOperator::Division => ArithOp::Div,
-        }
-    }
-
-    fn propagate_assignment_axiom_intervals_known_only(
-        task: &dyn AbstractNumericTask,
-        numeric_intervals: &mut [Interval],
-    ) {
-        let max_iterations = task.assignment_axioms().len().saturating_add(1).max(1);
-        for _ in 0..max_iterations {
-            let mut changed = false;
-            for axiom in task.assignment_axioms() {
-                let Ok(affected_var_id) = usize::try_from(axiom.get_affected_var_id()) else {
-                    continue;
-                };
-                let Ok(left_var_id) = usize::try_from(axiom.get_left_var_id()) else {
-                    continue;
-                };
-                let Ok(right_var_id) = usize::try_from(axiom.get_right_var_id()) else {
-                    continue;
-                };
-                if affected_var_id >= numeric_intervals.len()
-                    || left_var_id >= numeric_intervals.len()
-                    || right_var_id >= numeric_intervals.len()
-                {
-                    continue;
-                }
-
-                let lhs = numeric_intervals[left_var_id];
-                let rhs = numeric_intervals[right_var_id];
-                if lhs.is_empty() || rhs.is_empty() {
-                    continue;
-                }
-
-                let next = Self::arith_op_from_axiom(axiom.get_operator()).apply_interval(lhs, rhs);
-                if numeric_intervals[affected_var_id] != next {
-                    numeric_intervals[affected_var_id] = next;
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
+        prepare_comparison_tree_inputs_from_abstract_state(
+            task,
+            &self.comparison_trees,
+            &self.partitions,
+            state_hash,
+            self.domain_sizes.len(),
+            numeric_domain_sizes,
+            hash_multipliers,
+        )
     }
 
     fn enumerate_states_with_evaluated_comparisons(
@@ -787,13 +699,6 @@ impl DomainAbstractionFactory {
             hash_multipliers,
             comparison_var_ids,
             fixed_comparisons,
-        )?;
-
-        let numeric_intervals = self.build_numeric_intervals(
-            base_state_hash,
-            numeric_domain_sizes,
-            hash_multipliers,
-            task,
         )?;
 
         let mut fixed_map: HashMap<u32, i32> = HashMap::new();
@@ -833,7 +738,15 @@ impl DomainAbstractionFactory {
                 - unknown_abs)
                 * mult;
 
-            match tree.evaluate_interval(&numeric_intervals) {
+            match evaluate_comparison_tree_from_abstract_state(
+                task,
+                tree,
+                &self.partitions,
+                base_state_hash,
+                num_props,
+                numeric_domain_sizes,
+                hash_multipliers,
+            )? {
                 Some(true) => {
                     for s in &mut states {
                         *s += delta_true;
@@ -1216,7 +1129,7 @@ fn get_comparison_preconditions(
         let Ok(var) = usize::try_from(f.var()) else {
             continue;
         };
-        if comparison_var_ids.contains(&var) {
+        if comparison_var_ids.contains(&var) && f.value() != COMPARISON_UNKNOWN_VAL {
             out.push(f.clone());
         }
     }

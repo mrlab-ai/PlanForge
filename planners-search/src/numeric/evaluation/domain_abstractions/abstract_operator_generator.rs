@@ -15,7 +15,7 @@ use planners_sas::numeric::numeric_task::{
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
-use super::numeric_context::propagate_assignment_axiom_intervals;
+use super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees;
 use super::utils;
 
 const COMPARISON_TRUE_VAL: usize = 0;
@@ -896,7 +896,7 @@ fn compute_hash_effects_with_preconditions(
 
         // Optimistic filtering for comparison preconditions based on *source* intervals.
         let source_numeric_intervals =
-            build_numeric_intervals_for_combo(task, generator, &combo, false)?;
+            prepare_comparison_tree_inputs_for_combo(task, generator, &combo, false)?;
         if let Some(index) = &generator.comparison_index {
             if op_preconditions
                 .iter()
@@ -907,38 +907,10 @@ fn compute_hash_effects_with_preconditions(
         }
 
         if !changed_numeric_vars.is_empty() {
-            let mut old_partitions: Vec<usize> = Vec::with_capacity(changed_numeric_vars.len());
-            let mut new_partitions: Vec<usize> = Vec::with_capacity(changed_numeric_vars.len());
-            for (var_id, src, tgt) in &combo {
-                if affected_numeric_vars.contains(var_id) {
-                    old_partitions.push(*src);
-                    new_partitions.push(*tgt);
-                }
-            }
-
-            source_partition_facts.extend(compute_direct_comparison_cascades(
-                task,
-                generator,
-                &changed_numeric_vars,
-                &old_partitions,
-                &new_partitions,
-                &old_partitions,
-            )?);
-            target_partition_facts.extend(compute_direct_comparison_cascades(
-                task,
-                generator,
-                &changed_numeric_vars,
-                &old_partitions,
-                &new_partitions,
-                &new_partitions,
-            )?);
-
-            source_partition_facts.extend(compute_assignment_axiom_cascades(
-                task, generator, &combo, true,
-            )?);
-            target_partition_facts.extend(compute_assignment_axiom_cascades(
-                task, generator, &combo, false,
-            )?);
+            let (source_comparison_facts, target_comparison_facts) =
+                compute_comparison_tree_cascades(task, generator, &combo)?;
+            source_partition_facts.extend(source_comparison_facts);
+            target_partition_facts.extend(target_comparison_facts);
         }
 
         source_partition_facts.sort();
@@ -959,7 +931,7 @@ fn compute_hash_effects_with_preconditions(
     Ok(out)
 }
 
-fn build_numeric_intervals_for_combo(
+fn prepare_comparison_tree_inputs_for_combo(
     task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
     combo: &[(usize, usize, usize)],
@@ -995,7 +967,10 @@ fn build_numeric_intervals_for_combo(
         numeric_intervals[*var_id] = iv;
     }
 
-    propagate_assignment_axiom_intervals_known_only(task, &mut numeric_intervals);
+    fill_derived_numeric_intervals_from_comparison_trees(
+        &generator.comparison_trees,
+        &mut numeric_intervals,
+    );
 
     for interval in &mut numeric_intervals {
         if interval.is_empty() {
@@ -1004,48 +979,6 @@ fn build_numeric_intervals_for_combo(
     }
 
     Ok(numeric_intervals)
-}
-
-fn propagate_assignment_axiom_intervals_known_only(
-    task: &dyn AbstractNumericTask,
-    numeric_intervals: &mut [Interval],
-) {
-    let max_iterations = task.assignment_axioms().len().saturating_add(1).max(1);
-    for _ in 0..max_iterations {
-        let mut changed = false;
-        for axiom in task.assignment_axioms() {
-            let Ok(affected_var_id) = usize::try_from(axiom.get_affected_var_id()) else {
-                continue;
-            };
-            let Ok(left_var_id) = usize::try_from(axiom.get_left_var_id()) else {
-                continue;
-            };
-            let Ok(right_var_id) = usize::try_from(axiom.get_right_var_id()) else {
-                continue;
-            };
-            if affected_var_id >= numeric_intervals.len()
-                || left_var_id >= numeric_intervals.len()
-                || right_var_id >= numeric_intervals.len()
-            {
-                continue;
-            }
-
-            let lhs = numeric_intervals[left_var_id];
-            let rhs = numeric_intervals[right_var_id];
-            if lhs.is_empty() || rhs.is_empty() {
-                continue;
-            }
-
-            let next = arith_op_from_axiom(axiom.get_operator()).apply_interval(lhs, rhs);
-            if numeric_intervals[affected_var_id] != next {
-                numeric_intervals[affected_var_id] = next;
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
 }
 
 fn tri_value_for_comparison(
@@ -1061,335 +994,78 @@ fn tri_value_for_comparison(
     }
 }
 
-fn compute_direct_comparison_cascades(
-    task: &dyn AbstractNumericTask,
-    generator: &AbstractOperatorGenerator,
-    changed_numeric_vars: &[usize],
-    old_partitions: &[usize],
-    new_partitions: &[usize],
-    eval_partitions: &[usize],
-) -> Result<Vec<Fact>> {
-    let old_by_var: HashMap<usize, usize> = changed_numeric_vars
-        .iter()
-        .copied()
-        .zip(old_partitions.iter().copied())
-        .collect();
-    let new_by_var: HashMap<usize, usize> = changed_numeric_vars
-        .iter()
-        .copied()
-        .zip(new_partitions.iter().copied())
-        .collect();
-    let eval_by_var: HashMap<usize, usize> = changed_numeric_vars
-        .iter()
-        .copied()
-        .zip(eval_partitions.iter().copied())
-        .collect();
-
-    let mut affected_facts: Vec<Fact> = Vec::new();
-    for comparison_axiom in task.comparison_axioms() {
-        let left_var_id = comparison_axiom.get_left_var_id() as usize;
-        let right_var_id = comparison_axiom.get_right_var_id() as usize;
-        if !old_by_var.contains_key(&left_var_id) && !old_by_var.contains_key(&right_var_id) {
-            continue;
-        }
-
-        let left_old = old_by_var.get(&left_var_id).copied();
-        let left_new = new_by_var.get(&left_var_id).copied();
-        let right_old = old_by_var.get(&right_var_id).copied();
-        let right_new = new_by_var.get(&right_var_id).copied();
-
-        let partition_changed = left_old != left_new || right_old != right_new;
-        if !partition_changed {
-            continue;
-        }
-
-        let Some(eval_left_partition) = eval_by_var
-            .get(&left_var_id)
-            .copied()
-            .or_else(|| constant_partition(task, left_var_id))
-        else {
-            continue;
-        };
-        let Some(eval_right_partition) = eval_by_var
-            .get(&right_var_id)
-            .copied()
-            .or_else(|| constant_partition(task, right_var_id))
-        else {
-            continue;
-        };
-
-        let Some(left_interval) = generator
-            .partitions
-            .partition_interval(left_var_id, eval_left_partition)
-        else {
-            continue;
-        };
-        let Some(right_interval) = generator
-            .partitions
-            .partition_interval(right_var_id, eval_right_partition)
-        else {
-            continue;
-        };
-
-        let affected_var_id = comparison_axiom.get_affected_var_id() as usize;
-        match apply_comparison_interval(
-            comparison_axiom.get_operator(),
-            left_interval,
-            right_interval,
-        ) {
-            Some(true) => affected_facts.push(Fact::new(
-                affected_var_id as u32,
-                generator.domain_mapping[affected_var_id][COMPARISON_TRUE_VAL],
-            )),
-            Some(false) => affected_facts.push(Fact::new(
-                affected_var_id as u32,
-                generator.domain_mapping[affected_var_id][COMPARISON_FALSE_VAL],
-            )),
-            None => {}
-        }
-    }
-
-    Ok(affected_facts)
-}
-
-fn constant_partition(task: &dyn AbstractNumericTask, var_id: usize) -> Option<usize> {
-    let numeric_var = task.numeric_variables().get(var_id)?;
-    (numeric_var.get_type() == &NumericType::Constant).then_some(0)
-}
-
-fn compute_assignment_axiom_cascades(
+fn compute_comparison_tree_cascades(
     task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
     combo: &[(usize, usize, usize)],
-    evaluate_old_partitions: bool,
-) -> Result<Vec<Fact>> {
-    let old_by_var: HashMap<usize, usize> = combo
-        .iter()
-        .map(|(var_id, src, _)| (*var_id, *src))
-        .collect();
-    let new_by_var: HashMap<usize, usize> = combo
-        .iter()
-        .map(|(var_id, _, tgt)| (*var_id, *tgt))
-        .collect();
+) -> Result<(Vec<Fact>, Vec<Fact>)> {
+    let source_inputs = prepare_comparison_tree_inputs_for_combo(task, generator, combo, false)?;
+    let target_inputs = prepare_comparison_tree_inputs_for_combo(task, generator, combo, true)?;
 
-    let mut derived_changed_vars: Vec<usize> = Vec::new();
-    let mut derived_old_partitions: Vec<usize> = Vec::new();
-    let mut derived_new_partitions: Vec<usize> = Vec::new();
-
-    for axiom in task.assignment_axioms() {
-        let derived_var_id = axiom.get_affected_var_id() as usize;
-        let left_var_id = axiom.get_left_var_id() as usize;
-        let right_var_id = axiom.get_right_var_id() as usize;
-
-        let Some(left_old_partition) = old_by_var
-            .get(&left_var_id)
-            .copied()
-            .or_else(|| constant_partition(task, left_var_id))
-        else {
-            continue;
-        };
-        let Some(right_old_partition) = old_by_var
-            .get(&right_var_id)
-            .copied()
-            .or_else(|| constant_partition(task, right_var_id))
-        else {
-            continue;
-        };
-        let Some(left_new_partition) = new_by_var
-            .get(&left_var_id)
-            .copied()
-            .or_else(|| constant_partition(task, left_var_id))
-        else {
-            continue;
-        };
-        let Some(right_new_partition) = new_by_var
-            .get(&right_var_id)
-            .copied()
-            .or_else(|| constant_partition(task, right_var_id))
-        else {
-            continue;
-        };
-
-        if left_old_partition == left_new_partition && right_old_partition == right_new_partition {
+    let mut affected_tree_ids: Vec<usize> = Vec::new();
+    let mut seen_tree_ids: HashSet<usize> = HashSet::new();
+    for (var_id, source_partition, target_partition) in combo {
+        if source_partition == target_partition {
             continue;
         }
-
-        let Some(left_old_interval) = generator
-            .partitions
-            .partition_interval(left_var_id, left_old_partition)
-        else {
-            continue;
-        };
-        let Some(right_old_interval) = generator
-            .partitions
-            .partition_interval(right_var_id, right_old_partition)
-        else {
-            continue;
-        };
-        let Some(left_new_interval) = generator
-            .partitions
-            .partition_interval(left_var_id, left_new_partition)
-        else {
-            continue;
-        };
-        let Some(right_new_interval) = generator
-            .partitions
-            .partition_interval(right_var_id, right_new_partition)
-        else {
-            continue;
-        };
-
-        let old_range = arith_op_from_axiom(axiom.get_operator())
-            .apply_interval(left_old_interval, right_old_interval);
-        let new_range = arith_op_from_axiom(axiom.get_operator())
-            .apply_interval(left_new_interval, right_new_interval);
-
-        let Some(derived_partitions) = generator.partitions.partitions(derived_var_id) else {
-            continue;
-        };
-        let old_derived_partition = derived_partitions
-            .iter()
-            .position(|partition| intervals_overlap(*partition, old_range));
-        let new_derived_partition = derived_partitions
-            .iter()
-            .position(|partition| intervals_overlap(*partition, new_range));
-
-        let (Some(old_derived_partition), Some(new_derived_partition)) =
-            (old_derived_partition, new_derived_partition)
-        else {
-            continue;
-        };
-        if old_derived_partition == new_derived_partition {
-            continue;
-        }
-
-        derived_changed_vars.push(derived_var_id);
-        derived_old_partitions.push(old_derived_partition);
-        derived_new_partitions.push(new_derived_partition);
-    }
-
-    compute_direct_comparison_cascades(
-        task,
-        generator,
-        &derived_changed_vars,
-        &derived_old_partitions,
-        &derived_new_partitions,
-        if evaluate_old_partitions {
-            &derived_old_partitions
-        } else {
-            &derived_new_partitions
-        },
-    )
-}
-
-fn apply_comparison_interval(
-    op: &ComparisonOperator,
-    lhs: Interval,
-    rhs: Interval,
-) -> Option<bool> {
-    if lhs.is_empty() || rhs.is_empty() {
-        return Some(false);
-    }
-
-    let (lmin, lmin_c) = (lhs.lower, lhs.lower_closed);
-    let (lmax, lmax_c) = (lhs.upper, lhs.upper_closed);
-    let (rmin, rmin_c) = (rhs.lower, rhs.lower_closed);
-    let (rmax, rmax_c) = (rhs.upper, rhs.upper_closed);
-
-    let max_lt_min = |amax: f64, amax_c: bool, bmin: f64, bmin_c: bool| -> bool {
-        (amax < bmin) || (amax == bmin && (!amax_c || !bmin_c))
-    };
-    let min_ge_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
-        (amin > bmax) || (amin == bmax && (amin_c && bmax_c))
-    };
-    let min_gt_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
-        (amin > bmax) || (amin == bmax && (!amin_c || !bmax_c))
-    };
-    let intervals_are_disjoint =
-        || max_lt_min(lmax, lmax_c, rmin, rmin_c) || max_lt_min(rmax, rmax_c, lmin, lmin_c);
-
-    match op {
-        ComparisonOperator::LessThan => {
-            if max_lt_min(lmax, lmax_c, rmin, rmin_c) {
-                Some(true)
-            } else if min_ge_max(lmin, lmin_c, rmax, rmax_c) {
-                Some(false)
-            } else {
-                None
-            }
-        }
-        ComparisonOperator::LessThanOrEqual => {
-            if lmax <= rmin {
-                Some(true)
-            } else if min_gt_max(lmin, lmin_c, rmax, rmax_c) {
-                Some(false)
-            } else {
-                None
-            }
-        }
-        ComparisonOperator::GreaterThan => {
-            apply_comparison_interval(opposite_comparison(op), rhs, lhs)
-        }
-        ComparisonOperator::GreaterThanOrEqual => {
-            apply_comparison_interval(opposite_comparison(op), rhs, lhs)
-        }
-        ComparisonOperator::Equal => {
-            if lhs.lower == lhs.upper
-                && lhs.lower_closed
-                && lhs.upper_closed
-                && rhs.lower == rhs.upper
-                && rhs.lower_closed
-                && rhs.upper_closed
-                && lmin == rmin
-            {
-                Some(true)
-            } else if intervals_are_disjoint() {
-                Some(false)
-            } else {
-                None
-            }
-        }
-        ComparisonOperator::UnEqual => {
-            if lhs.lower == lhs.upper
-                && lhs.lower_closed
-                && lhs.upper_closed
-                && rhs.lower == rhs.upper
-                && rhs.lower_closed
-                && rhs.upper_closed
-                && lmin == rmin
-            {
-                Some(false)
-            } else if intervals_are_disjoint() {
-                Some(true)
-            } else {
-                None
+        let tree_ids = generator
+            .comparisons_by_numeric_dep
+            .get(*var_id)
+            .with_context(|| {
+                format!("missing comparison dependency bucket for numeric var {var_id}")
+            })?;
+        for &tree_id in tree_ids {
+            if seen_tree_ids.insert(tree_id) {
+                affected_tree_ids.push(tree_id);
             }
         }
     }
-}
 
-fn opposite_comparison(op: &ComparisonOperator) -> &ComparisonOperator {
-    match op {
-        ComparisonOperator::GreaterThan => &ComparisonOperator::LessThan,
-        ComparisonOperator::GreaterThanOrEqual => &ComparisonOperator::LessThanOrEqual,
-        _ => op,
+    let mut source_facts: Vec<Fact> = Vec::new();
+    let mut target_facts: Vec<Fact> = Vec::new();
+    for tree_id in affected_tree_ids {
+        let tree = generator
+            .comparison_trees
+            .get(tree_id)
+            .with_context(|| format!("missing comparison tree {tree_id}"))?;
+        let affected_var_id = usize::try_from(tree.affected_var_id).with_context(|| {
+            format!(
+                "comparison tree {tree_id} affected var id does not fit usize: {}",
+                tree.affected_var_id
+            )
+        })?;
+        ensure!(
+            affected_var_id < generator.domain_mapping.len(),
+            "comparison tree {tree_id} affected var {affected_var_id} out of range for domain mapping of len {}",
+            generator.domain_mapping.len()
+        );
+
+        let source_value = tri_value_for_comparison(
+            tree,
+            &source_inputs,
+            affected_var_id,
+            &generator.domain_mapping,
+        );
+        let target_value = tri_value_for_comparison(
+            tree,
+            &target_inputs,
+            affected_var_id,
+            &generator.domain_mapping,
+        );
+
+        let unknown_value = generator.domain_mapping[affected_var_id][COMPARISON_UNKNOWN_VAL];
+        if source_value == target_value
+            || source_value == unknown_value
+            || target_value == unknown_value
+        {
+            continue;
+        }
+
+        source_facts.push(Fact::new(affected_var_id as u32, source_value));
+        target_facts.push(Fact::new(affected_var_id as u32, target_value));
     }
-}
 
-fn intervals_overlap(a: Interval, b: Interval) -> bool {
-    if a.is_empty() || b.is_empty() {
-        return false;
-    }
-
-    if (a.upper < b.lower) || (a.upper == b.lower && (!a.upper_closed || !b.lower_closed)) {
-        return false;
-    }
-
-    if (b.upper < a.lower) || (b.upper == a.lower && (!b.upper_closed || !a.lower_closed)) {
-        return false;
-    }
-
-    true
+    Ok((source_facts, target_facts))
 }
 
 fn comparison_dependency_partition_changed(

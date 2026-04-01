@@ -59,6 +59,10 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
         index.precondition_is_contradicted(&Fact::new(0, 1), &intervals),
         false
     );
+    assert_eq!(
+        index.precondition_is_contradicted(&Fact::new(0, 2), &intervals),
+        false
+    );
 }
 
 #[test]

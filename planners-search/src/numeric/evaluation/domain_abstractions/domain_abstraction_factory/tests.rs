@@ -295,6 +295,74 @@ fn enumerate_states_branches_on_undecidable_comparison() {
 }
 
 #[test]
+fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
+    let variables = vec![ExplicitVariable::new(
+        3,
+        "cmp".into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        0,
+        2,
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, -1),
+        NumericVariable::new("c2".into(), NumericType::Constant, -1),
+        NumericVariable::new("d".into(), NumericType::Derived, -1),
+    ];
+    let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        0,
+        2,
+        1,
+        ComparisonOperator::GreaterThan,
+    )];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![COMPARISON_UNKNOWN_VAL],
+        vec![1.0, 2.0, 0.0],
+        vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
+        vec![],
+        comparison_axioms,
+        assignment_axioms,
+        (0, 0),
+    );
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let generator = factory.make_operator_generator(&task, true).unwrap();
+    let hash_multipliers = generator.hash_multipliers().to_vec();
+    let init_hash = factory
+        .compute_initial_state_hash_determined(
+            &task,
+            generator.numeric_domain_sizes(),
+            &hash_multipliers,
+            &[0],
+        )
+        .unwrap();
+
+    let comparison_abs_value = init_hash / hash_multipliers[0];
+    assert_eq!(comparison_abs_value, COMPARISON_TRUE_VAL);
+}
+
+#[test]
+fn unknown_comparison_preconditions_are_not_treated_as_fixed() {
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![0],
+        cost: 1.0,
+        hash_effect: 0,
+        regression_preconditions: vec![Fact::new(0, COMPARISON_UNKNOWN_VAL)],
+        preconditions: vec![Fact::new(0, COMPARISON_UNKNOWN_VAL), Fact::new(1, 7)],
+        changed_numeric_vars: vec![],
+    };
+
+    let fixed = get_comparison_preconditions(&op, &[0]);
+    assert!(fixed.is_empty());
+}
+
+#[test]
 fn wildcard_plan_collects_all_equivalent_concrete_ops() {
     let variables = vec![ExplicitVariable::new(
         2,

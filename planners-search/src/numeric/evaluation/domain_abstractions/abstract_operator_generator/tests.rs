@@ -764,6 +764,183 @@ fn assignment_axiom_chain_can_propagate_through_changed_var_and_constant() {
 }
 
 #[test]
+fn derived_comparison_transition_is_recomputed_from_tree_snapshots() {
+    let variables = vec![ExplicitVariable::new(
+        3,
+        "cmp".into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        0,
+        2,
+    )];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, -1),
+        NumericVariable::new("c1".into(), NumericType::Constant, -1),
+        NumericVariable::new("y".into(), NumericType::Derived, -1),
+        NumericVariable::new("c2".into(), NumericType::Constant, -1),
+    ];
+
+    let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
+    let comparison_axioms = vec![ComparisonAxiom::new(0, 2, 3, ComparisonOperator::LessThan)];
+
+    let op = Operator::new(
+        "inc-x".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 1.0, 1.0, 2.0],
+        vec![op.clone()],
+        vec![],
+        comparison_axioms,
+        assignment_axioms,
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::singleton(0.0), Interval::singleton(1.0)],
+        vec![Interval::singleton(1.0)],
+        vec![Interval::singleton(1.0), Interval::singleton(2.0)],
+        vec![Interval::singleton(2.0)],
+    ]);
+
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        vec![2, 1, 2, 1],
+        false,
+    )
+    .unwrap();
+
+    let transitions = compute_hash_effects_with_preconditions(
+        &task,
+        &mut generator,
+        &[],
+        op.assignment_effects(),
+    )
+    .unwrap();
+
+    assert!(
+        transitions.iter().any(|trans| {
+            trans
+                .source_partition_facts
+                .contains(&Fact::new(0, COMPARISON_TRUE_VAL as i32))
+                && trans
+                    .target_partition_facts
+                    .contains(&Fact::new(0, COMPARISON_FALSE_VAL as i32))
+        }),
+        "transitions={transitions:#?}"
+    );
+}
+
+#[test]
+fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
+    let variables = vec![ExplicitVariable::new(
+        3,
+        "cmp".into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        0,
+        2,
+    )];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, -1),
+        NumericVariable::new("c0_5".into(), NumericType::Constant, -1),
+        NumericVariable::new("y".into(), NumericType::Derived, -1),
+        NumericVariable::new("c1".into(), NumericType::Constant, -1),
+    ];
+
+    let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
+    let comparison_axioms = vec![ComparisonAxiom::new(0, 2, 3, ComparisonOperator::LessThan)];
+
+    let op = Operator::new(
+        "inc-x".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 0.5, 0.5, 1.0],
+        vec![op.clone()],
+        vec![],
+        comparison_axioms,
+        assignment_axioms,
+        (0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::singleton(0.0),
+            Interval::new(0.0, 1.0, false, true),
+        ],
+        vec![Interval::singleton(0.5)],
+        vec![
+            Interval::singleton(0.5),
+            Interval::new(0.5, 1.5, false, true),
+        ],
+        vec![Interval::singleton(1.0)],
+    ]);
+
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        vec![2, 1, 2, 1],
+        false,
+    )
+    .unwrap();
+
+    let transitions = compute_hash_effects_with_preconditions(
+        &task,
+        &mut generator,
+        &[],
+        op.assignment_effects(),
+    )
+    .unwrap();
+
+    assert!(
+        transitions.iter().all(|trans| {
+            trans
+                .source_partition_facts
+                .iter()
+                .chain(trans.target_partition_facts.iter())
+                .all(|fact| fact.var() != 0)
+        }),
+        "transitions={transitions:#?}"
+    );
+}
+
+#[test]
 fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation() {
     let task = NumericRootTask::new(
         4,
@@ -802,7 +979,7 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
     .unwrap();
 
     let intervals =
-        build_numeric_intervals_for_combo(&task, &generator, &[(0, 0, 1)], false).unwrap();
+        prepare_comparison_tree_inputs_for_combo(&task, &generator, &[(0, 0, 1)], false).unwrap();
 
     assert_eq!(intervals[0], Interval::singleton(5.0));
     assert_eq!(intervals[1], Interval::singleton(0.0));

@@ -184,9 +184,13 @@ impl ComparisonAxiomIndex {
             return false;
         };
 
-        let required_truth = pre.value() == 0;
+        let required_truth = match pre.value() {
+            0 => Some(true),
+            1 => Some(false),
+            _ => None,
+        };
         match tree.evaluate_interval(numeric_intervals) {
-            Some(actual_truth) => actual_truth != required_truth,
+            Some(actual_truth) => required_truth.is_some_and(|truth| actual_truth != truth),
             None => false,
         }
     }
