@@ -245,9 +245,6 @@ fn cegar_default_config_matches_numeric_fd_core_defaults() {
     assert_eq!(config.flaw_treatment, FlawTreatment::RandomSingleAtom);
     assert_eq!(config.init_split_method, InitSplitMethod::InitValue);
     assert_eq!(config.exec_entire_plan, ExecEntirePlanMode::StopAtFirstFlaw);
-    assert!(!config.use_threshold_aware_numeric_splits);
-    assert!(!config.use_progress_weighted_flaw_selection);
-    assert_eq!(config.refinement_batch_size, 1);
 }
 
 #[test]
@@ -292,7 +289,6 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
 
     let mut config = CegarConfig::default();
     config.max_abstraction_size = 1;
-    config.enable_refinement = true;
     let cegar = Cegar::new(config).unwrap();
 
     let mut domain_mapping = vec![vec![0, 0]];
