@@ -16,6 +16,7 @@ use planners_sas::numeric::numeric_task::{
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::propagate_assignment_axiom_intervals;
+use super::utils;
 
 const COMPARISON_TRUE_VAL: usize = 0;
 const COMPARISON_FALSE_VAL: usize = 1;
@@ -394,32 +395,6 @@ impl AbstractOperatorGenerator {
     }
 }
 
-fn format_interval(iv: Interval) -> String {
-    let left = if iv.lower_closed { '[' } else { '(' };
-    let right = if iv.upper_closed { ']' } else { ')' };
-    format!(
-        "{left}{}, {}{right}",
-        format_f64_bound(iv.lower),
-        format_f64_bound(iv.upper)
-    )
-}
-
-fn format_f64_bound(v: f64) -> String {
-    if v.is_infinite() {
-        if v.is_sign_negative() {
-            "-inf".to_string()
-        } else {
-            "inf".to_string()
-        }
-    } else if v.is_nan() {
-        "NaN".to_string()
-    } else if v.fract() == 0.0 {
-        format!("{:.0}", v)
-    } else {
-        format!("{}", v)
-    }
-}
-
 fn format_abstract_fact(
     task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
@@ -463,7 +438,7 @@ fn format_abstract_fact(
             Some(iv) => format!(
                 "num{numeric_var_id}({var_name})=p{}:{}",
                 fact.value(),
-                format_interval(iv)
+                utils::fmt_interval(iv)
             ),
             None => format!("num{numeric_var_id}({var_name})=p{}", fact.value()),
         }

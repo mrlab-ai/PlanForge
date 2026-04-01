@@ -67,9 +67,7 @@ pub struct CegarConfig {
     pub combine_labels: bool,
     pub enable_refinement: bool,
     pub debug: bool,
-    pub refinement_batch_size: usize,
     pub flaw_treatment: FlawTreatment,
-    pub use_progress_weighted_flaw_selection: bool,
 }
 
 impl Default for CegarConfig {
@@ -81,9 +79,7 @@ impl Default for CegarConfig {
             combine_labels: false,
             enable_refinement: false,
             debug: false,
-            refinement_batch_size: 1,
             flaw_treatment: FlawTreatment::RandomSingleAtom,
-            use_progress_weighted_flaw_selection: false,
         }
     }
 }
@@ -117,10 +113,6 @@ pub struct Cegar {
 impl Cegar {
     pub fn new(config: CegarConfig) -> Result<Self> {
         ensure!(config.max_iterations > 0, "max_iterations must be > 0");
-        ensure!(
-            config.refinement_batch_size > 0,
-            "refinement_batch_size must be > 0"
-        );
         Ok(Self { config })
     }
 
@@ -334,21 +326,6 @@ impl Cegar {
             .collect();
         let abstraction_size = compute_abstraction_size(domain_sizes, numeric_domain_sizes);
 
-        if self.config.refinement_batch_size > 1 {
-            return fix_top_k_flaws(
-                task,
-                flaws,
-                &comparison_var_ids,
-                domain_mapping,
-                domain_sizes,
-                partitions,
-                numeric_domain_sizes,
-                abstraction_size,
-                self.config.refinement_batch_size,
-                self.config.use_progress_weighted_flaw_selection,
-            );
-        }
-
         match self.config.flaw_treatment {
             FlawTreatment::RandomSingleAtom => fix_single_flaw_in_order(
                 task,
@@ -359,7 +336,6 @@ impl Cegar {
                 partitions,
                 numeric_domain_sizes,
                 abstraction_size,
-                self.config.use_progress_weighted_flaw_selection,
             ),
             FlawTreatment::OneSplitPerAtom => fix_flaws_per_atom(
                 task,
@@ -464,72 +440,6 @@ fn score_flaw(
     }
 }
 
-fn fix_top_k_flaws(
-    task: &dyn AbstractNumericTask,
-    flaws: &[Flaw],
-    comparison_var_ids: &HashSet<usize>,
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut Vec<i32>,
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut Vec<usize>,
-    abstraction_size: usize,
-    refinement_batch_size: usize,
-    use_progress_weighted_flaw_selection: bool,
-) -> Result<bool> {
-    if flaws.is_empty() {
-        return Ok(false);
-    }
-
-    let mut indices: Vec<usize> = (0..flaws.len()).collect();
-    if use_progress_weighted_flaw_selection {
-        indices.sort_by(|&a, &b| {
-            let sa = score_flaw(
-                &flaws[a],
-                domain_sizes,
-                numeric_domain_sizes,
-                abstraction_size,
-            );
-            let sb = score_flaw(
-                &flaws[b],
-                domain_sizes,
-                numeric_domain_sizes,
-                abstraction_size,
-            );
-            sb.cmp(&sa)
-                .then_with(|| flaw_atom_key(&flaws[a]).cmp(&flaw_atom_key(&flaws[b])))
-        });
-    }
-
-    let mut changed = false;
-    let mut applied: usize = 0;
-    let mut refined_prop_vars: HashSet<usize> = HashSet::new();
-    let mut refined_numeric_vars: HashSet<usize> = HashSet::new();
-
-    for idx in indices {
-        if applied >= refinement_batch_size {
-            break;
-        }
-        let local_changed = try_refine_from_flaw(
-            task,
-            &flaws[idx],
-            comparison_var_ids,
-            domain_mapping,
-            domain_sizes,
-            partitions,
-            numeric_domain_sizes,
-            DependentNumericRefinement::One,
-            Some(&mut refined_prop_vars),
-            Some(&mut refined_numeric_vars),
-        )?;
-        if local_changed {
-            changed = true;
-            applied += 1;
-        }
-    }
-
-    Ok(changed)
-}
-
 fn fix_single_flaw_in_order(
     task: &dyn AbstractNumericTask,
     flaws: &[Flaw],
@@ -539,33 +449,14 @@ fn fix_single_flaw_in_order(
     partitions: &mut NumericPartitions,
     numeric_domain_sizes: &mut Vec<usize>,
     abstraction_size: usize,
-    use_progress_weighted_flaw_selection: bool,
 ) -> Result<bool> {
     if flaws.is_empty() {
         return Ok(false);
     }
 
     let mut indices: Vec<usize> = (0..flaws.len()).collect();
-    if use_progress_weighted_flaw_selection {
-        indices.sort_by(|&a, &b| {
-            let sa = score_flaw(
-                &flaws[a],
-                domain_sizes,
-                numeric_domain_sizes,
-                abstraction_size,
-            );
-            let sb = score_flaw(
-                &flaws[b],
-                domain_sizes,
-                numeric_domain_sizes,
-                abstraction_size,
-            );
-            sb.cmp(&sa)
-                .then_with(|| flaw_atom_key(&flaws[a]).cmp(&flaw_atom_key(&flaws[b])))
-        });
-    } else {
-        //shuffle indices
-    }
+    //shuffle indices uniformly randomly
+
 
     for idx in indices {
         if try_refine_from_flaw(
@@ -1031,7 +922,7 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
         };
         if config.debug {
             match wildcard_plan.as_ref() {
-                Some(plan) => debug_print_wildcard_plan(
+                Some(plan) => super::utils::debug_print_wildcard_plan(
                     task,
                     plan,
                     &domain_sizes,
@@ -1061,14 +952,14 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
             .get_flaws(task, &partitions, plan, false)
             .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
         if config.debug {
-            debug_print_flaws(task, &flaws);
+            super::utils::debug_print_flaws(&flaws);
         }
         if flaws.is_empty() {
             break;
         }
 
         let before_size = if config.debug {
-            compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes)
+            super::utils::compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes)
         } else {
             None
         };
@@ -1083,8 +974,9 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
         if config.debug {
-            let after_size = compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes);
-            debug_print_refinement_summary(
+            let after_size =
+                super::utils::compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes);
+            super::utils::debug_print_refinement_summary(
                 before_size,
                 after_size,
                 &domain_sizes,
@@ -1097,11 +989,6 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
         }
 
         iteration += 1;
-        if iteration > 3 {
-            unsafe {
-                //exit(0);
-            }
-        }
     }
 
     let last_step = last_step.context("CEGAR did not perform any iterations")?;
@@ -2042,7 +1929,7 @@ fn get_goal_flaws(
     out
 }
 
-fn apply_operator_to_state(
+pub(crate) fn apply_operator_to_state(
     op: &planners_sas::numeric::numeric_task::Operator,
     packer: &IntDoublePacker,
     buffer: &mut [u64],

@@ -14,6 +14,7 @@ use super::domain_abstraction_generator::DomainAbstraction;
 use super::numeric_context::{
     propagate_assignment_axiom_intervals, seed_numeric_intervals_from_initial_state,
 };
+use super::utils;
 
 const COMPARISON_TRUE_VAL: usize = 0;
 const COMPARISON_FALSE_VAL: usize = 1;
@@ -120,7 +121,7 @@ impl DomainAbstractionHeuristic {
                     "missing partitions for numeric var {num_var_id}"
                 ))
             })?;
-            let part = partition_for_value(parts, val).ok_or_else(|| {
+            let part = utils::partition_for_value(parts, val).ok_or_else(|| {
                 EvaluationError::InvalidState(format!(
                     "numeric value {val} not contained in any partition for var {num_var_id}"
                 ))
@@ -338,12 +339,13 @@ impl Heuristic for DomainAbstractionHeuristic {
                 abs_num_str.push(format!("n{}={}", num_id, iv_str));
             }
 
-            println!("[Evaluate State]");
-            println!("  concrete props: {}", prop_str);
-            println!("  concrete nums:  {}", num_str_vec.join(" "));
-            println!("  abstract props: {}", abs_prop_str.join(" "));
-            println!("  abstract nums:  {}", abs_num_str.join(" "));
-            println!("  distance:       {}", dist);
+            utils::debug_print_evaluate_state(
+                &prop_str,
+                &num_str_vec,
+                &abs_prop_str,
+                &abs_num_str,
+                dist,
+            );
 
             if std::env::var("DA_TRACE_REAL_DISTANCE_CHECK")
                 .unwrap_or_else(|_| "0".to_string())
@@ -375,7 +377,7 @@ impl Heuristic for DomainAbstractionHeuristic {
                     let Some(parts) = partitions.partitions(num_var_id) else {
                         continue;
                     };
-                    let Some(part) = partition_for_value(parts, val) else {
+                    let Some(part) = utils::partition_for_value(parts, val) else {
                         continue;
                     };
                     if let Some(iv) = partitions.partition_interval(num_var_id, part as usize) {
@@ -433,9 +435,3 @@ fn abs_prop_str_value(var: usize, abstract_prop_sizes: &[i32], multipliers: &[i3
     (((hash as i64) / mult) % (dom as i64)) as i32
 }
 
-fn partition_for_value(partitions: &[Interval], value: f64) -> Option<i32> {
-    partitions
-        .iter()
-        .position(|iv| iv.contains(value))
-        .and_then(|i| i32::try_from(i).ok())
-}
