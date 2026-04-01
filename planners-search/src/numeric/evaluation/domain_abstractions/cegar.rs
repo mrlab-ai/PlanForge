@@ -1343,11 +1343,6 @@ fn trivial_domain_mapping_and_sizes(
     Ok((domain_mapping, domain_sizes))
 }
 
-
-
-
-
-
 fn identity_domain_mapping_and_sizes(
     task: &dyn AbstractNumericTask,
 ) -> Result<(DomainMapping, Vec<i32>)> {

@@ -67,7 +67,7 @@ pub trait AbstractNumericTask {
     fn get_num_cmp_axioms(&self) -> i32;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Metric {
     is_min: bool,
     var_id: i32,
@@ -91,7 +91,7 @@ impl Metric {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExplicitVariable {
     domain_size: u32,
     name: String,
@@ -126,7 +126,7 @@ impl ExplicitVariable {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NumericVariable {
     name: String,
     numeric_type: NumericType,
@@ -504,7 +504,7 @@ impl NumericRootTask {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum NumericType {
     Constant,
     Derived,

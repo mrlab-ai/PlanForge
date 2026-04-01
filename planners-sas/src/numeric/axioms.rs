@@ -8,7 +8,7 @@ use crate::numeric::numeric_task::{AbstractNumericTask, Fact};
 use crate::numeric::utils::errors::{AxiomEvalError, InvalidIndex, WrongAxiomLayer};
 use crate::numeric::utils::int_packer::IntDoublePacker;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PropositionalAxiom {
     conditions: Vec<Fact>,
     var_id: u32,
@@ -35,19 +35,27 @@ impl PropositionalAxiom {
         self.var_id
     }
 
+    pub fn precondition_value(&self) -> u32 {
+        self.precondition_value
+    }
+
+    pub fn effect_value(&self) -> u32 {
+        self.effect_value
+    }
+
     pub fn conditions(&self) -> &Vec<Fact> {
         &self.conditions
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CalOperator {
     Sum,
     Difference,
     Product,
     Division,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AssignmentAxiom {
     affected_var_id: u32,
     operator: CalOperator,
@@ -122,7 +130,7 @@ impl AssignmentAxiom {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ComparisonOperator {
     LessThan,
     LessThanOrEqual,
@@ -149,7 +157,7 @@ impl ComparisonOperator {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ComparisonAxiom {
     affected_var_id: i32,
     left_hand_side: i32,
