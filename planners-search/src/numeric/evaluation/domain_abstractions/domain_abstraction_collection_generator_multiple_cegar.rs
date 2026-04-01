@@ -116,7 +116,6 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     }
 }
 
-
 fn fmt_f64(value: f64) -> String {
     if value.is_infinite() {
         "infinity".to_string()

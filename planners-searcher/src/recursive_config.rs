@@ -232,20 +232,7 @@ fn build_multi_domain_abstractions_config(
                 config.numeric_split_strategy = parse_numeric_split_strategy(&value)?
             }
             "exec_entire_plan" => config.exec_entire_plan = parse_exec_entire_plan_mode(&value)?,
-            "use_threshold_aware_numeric_splits" => {
-                config.use_threshold_aware_numeric_splits = parse_bool(&value)?
-            }
-            "use_interval_numeric_splits" => {
-                config.use_interval_numeric_splits = parse_bool(&value)?
-            }
-            "use_progress_weighted_flaw_selection" => {
-                config.use_progress_weighted_flaw_selection = parse_bool(&value)?
-            }
-            "use_residual_distance_flaw_selection" => {
-                config.use_residual_distance_flaw_selection = parse_bool(&value)?
-            }
-            "refinement_batch_size" => config.refinement_batch_size = parse_usize(&value)?,
-            _ => return Err(format!("unknown multi_domain_abstractions option `{key}`")),
+            _ => return Err(format!("unknown option `{key}`")),
         }
     }
 
@@ -258,7 +245,10 @@ fn multi_domain_abstractions_parens(
     map_res(
         delimited(
             ws(char('(')),
-            separated_list0(ws(char(',')), key_value_argument),
+            terminated(
+                separated_list0(ws(char(',')), key_value_argument),
+                opt(ws(char(','))),
+            ),
             ws(char(')')),
         ),
         build_multi_domain_abstractions_config,
