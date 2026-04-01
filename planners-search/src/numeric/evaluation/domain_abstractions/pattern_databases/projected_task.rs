@@ -13,13 +13,111 @@ use planners_sas::numeric::numeric_task::{
 
 use super::super::comparison_expression::{ArithOp, ComparisonTree, ComparisonTreeNode};
 
+#[derive(Debug, Clone)]
+enum ArithmeticExpr {
+    Var(usize),
+    Const(f64),
+    Op {
+        lhs: Box<ArithmeticExpr>,
+        op: CalOperator,
+        rhs: Box<ArithmeticExpr>,
+    },
+}
+
+impl ArithmeticExpr {
+    fn constant(value: f64) -> Self {
+        Self::Const(value)
+    }
+
+    fn op(lhs: ArithmeticExpr, op: CalOperator, rhs: ArithmeticExpr) -> Self {
+        if lhs.is_constant() && rhs.is_constant() {
+            let lhs_value = lhs.evaluate(&[]);
+            let rhs_value = rhs.evaluate(&[]);
+            return Self::Const(apply_cal_operator(&op, lhs_value, rhs_value));
+        }
+        Self::Op {
+            lhs: Box::new(lhs),
+            op,
+            rhs: Box::new(rhs),
+        }
+    }
+
+    fn is_constant(&self) -> bool {
+        matches!(self, Self::Const(_))
+    }
+
+    fn evaluate(&self, values: &[f64]) -> f64 {
+        match self {
+            Self::Var(var_id) => values[*var_id],
+            Self::Const(value) => *value,
+            Self::Op { lhs, op, rhs } => {
+                apply_cal_operator(op, lhs.evaluate(values), rhs.evaluate(values))
+            }
+        }
+    }
+
+    fn evaluate_ignore_additive_consts(&self, values: &[f64]) -> f64 {
+        match self {
+            Self::Var(var_id) => values[*var_id],
+            Self::Const(value) => *value,
+            Self::Op { lhs, op, rhs } => match op {
+                CalOperator::Sum => {
+                    if lhs.is_constant() {
+                        rhs.evaluate_ignore_additive_consts(values)
+                    } else if rhs.is_constant() {
+                        lhs.evaluate_ignore_additive_consts(values)
+                    } else {
+                        lhs.evaluate_ignore_additive_consts(values)
+                            + rhs.evaluate_ignore_additive_consts(values)
+                    }
+                }
+                CalOperator::Difference => {
+                    if lhs.is_constant() {
+                        -rhs.evaluate_ignore_additive_consts(values)
+                    } else if rhs.is_constant() {
+                        lhs.evaluate_ignore_additive_consts(values)
+                    } else {
+                        lhs.evaluate_ignore_additive_consts(values)
+                            - rhs.evaluate_ignore_additive_consts(values)
+                    }
+                }
+                CalOperator::Product => {
+                    lhs.evaluate_ignore_additive_consts(values)
+                        * rhs.evaluate_ignore_additive_consts(values)
+                }
+                CalOperator::Division => {
+                    lhs.evaluate_ignore_additive_consts(values)
+                        / rhs.evaluate_ignore_additive_consts(values)
+                }
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AuxiliaryNumericVar {
+    helper_id: usize,
+    source_numeric_var_id: usize,
+    expr: ArithmeticExpr,
+    initial_value: f64,
+}
+
+fn apply_cal_operator(op: &CalOperator, lhs: f64, rhs: f64) -> f64 {
+    match op {
+        CalOperator::Sum => lhs + rhs,
+        CalOperator::Difference => lhs - rhs,
+        CalOperator::Product => lhs * rhs,
+        CalOperator::Division => lhs / rhs,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pattern {
     pub regular: Vec<usize>,
     pub numeric: Vec<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ProjectedTaskBuildError {
     InvalidRegularVarId {
         provided: usize,
@@ -28,6 +126,14 @@ pub enum ProjectedTaskBuildError {
     InvalidNumericVarId {
         provided: usize,
         len: usize,
+    },
+    InvalidAuxiliaryNumericVarId {
+        provided: usize,
+        len: usize,
+    },
+    UnsupportedPatternNumericVarType {
+        numeric_var_id: usize,
+        numeric_type: NumericType,
     },
     MissingAssignmentAxiom {
         numeric_var_id: usize,
@@ -39,6 +145,10 @@ pub enum ProjectedTaskBuildError {
     },
     UnsupportedComparisonTree {
         comparison_axiom_id: usize,
+        reason: &'static str,
+    },
+    UnsupportedOperatorEffect {
+        operator_name: String,
         reason: &'static str,
     },
 }
@@ -53,6 +163,18 @@ impl fmt::Display for ProjectedTaskBuildError {
             Self::InvalidNumericVarId { provided, len } => write!(
                 formatter,
                 "invalid projected numeric variable {provided}; task has {len} numeric variables"
+            ),
+            Self::InvalidAuxiliaryNumericVarId { provided, len } => write!(
+                formatter,
+                "invalid projected auxiliary numeric variable {provided}; helper space has {len} numeric variables"
+            ),
+            Self::UnsupportedPatternNumericVarType {
+                numeric_var_id,
+                numeric_type,
+            } => write!(
+                formatter,
+                "pattern numeric variable {numeric_var_id} has unsupported type {:?}; only regular numeric variables are accepted directly, while numeric-fd-style lifted auxiliaries are not implemented here",
+                numeric_type
             ),
             Self::MissingAssignmentAxiom { numeric_var_id } => write!(
                 formatter,
@@ -72,6 +194,13 @@ impl fmt::Display for ProjectedTaskBuildError {
             } => write!(
                 formatter,
                 "comparison axiom {comparison_axiom_id} is unsupported for projected tasks: {reason}"
+            ),
+            Self::UnsupportedOperatorEffect {
+                operator_name,
+                reason,
+            } => write!(
+                formatter,
+                "operator {operator_name} uses unsupported numeric effects for projected tasks: {reason}"
             ),
         }
     }
@@ -94,9 +223,12 @@ pub struct ProjectedTask<'task> {
     state: Rc<RefCell<Vec<i32>>>,
     numeric_state: Rc<RefCell<Vec<f64>>>,
     projected_var_to_original: Vec<usize>,
-    projected_num_var_to_original: Vec<usize>,
+    projected_num_var_to_original: Vec<Option<usize>>,
     original_var_to_projected: Vec<Option<usize>>,
     original_num_var_to_projected: Vec<Option<usize>>,
+    is_auxiliary_num_var: Vec<bool>,
+    is_auxiliary_constant: Vec<bool>,
+    auxiliary_exprs: Vec<Option<ArithmeticExpr>>,
     variable_names: Vec<String>,
     fact_names: Vec<Vec<String>>,
 }
@@ -109,10 +241,26 @@ impl<'task> ProjectedTask<'task> {
         let num_vars = base.variables().len();
         let num_numeric_vars = base.numeric_variables().len();
 
+        let affected_to_assignment_axiom = build_assignment_axiom_lookup(base);
+        let base_initial_numeric_values = {
+            let values = base.get_initial_numeric_state_values();
+            values.to_vec()
+        };
+        let auxiliary_numeric_vars = build_auxiliary_numeric_vars(
+            base,
+            &affected_to_assignment_axiom,
+            &base_initial_numeric_values,
+        )?;
+        let helper_space_len = num_numeric_vars + auxiliary_numeric_vars.len();
+
         let mut projected_var_to_original: Vec<usize> = Vec::new();
-        let mut projected_num_var_to_original: Vec<usize> = Vec::new();
+        let mut projected_num_var_to_original: Vec<Option<usize>> = Vec::new();
         let mut original_var_to_projected = vec![None; num_vars];
         let mut original_num_var_to_projected = vec![None; num_numeric_vars];
+        let mut is_auxiliary_num_var: Vec<bool> = Vec::new();
+        let mut is_auxiliary_constant: Vec<bool> = Vec::new();
+        let mut auxiliary_exprs: Vec<Option<ArithmeticExpr>> = Vec::new();
+        let mut projected_aux_initial_values: Vec<Option<f64>> = Vec::new();
 
         for &var_id in &pattern.regular {
             if var_id >= num_vars {
@@ -129,17 +277,41 @@ impl<'task> ProjectedTask<'task> {
         }
 
         for &numeric_var_id in &pattern.numeric {
-            if numeric_var_id >= num_numeric_vars {
-                return Err(ProjectedTaskBuildError::InvalidNumericVarId {
+            if numeric_var_id < num_numeric_vars {
+                let numeric_type = base.numeric_variables()[numeric_var_id].get_type().clone();
+                if numeric_type != NumericType::Regular {
+                    return Err(ProjectedTaskBuildError::UnsupportedPatternNumericVarType {
+                        numeric_var_id,
+                        numeric_type,
+                    });
+                }
+                push_projected_base_numeric_var(
+                    numeric_var_id,
+                    &mut projected_num_var_to_original,
+                    &mut original_num_var_to_projected,
+                    &mut is_auxiliary_num_var,
+                    &mut is_auxiliary_constant,
+                    &mut auxiliary_exprs,
+                    &mut projected_aux_initial_values,
+                );
+            } else if let Some(auxiliary_numeric_var) =
+                auxiliary_numeric_vars.get(numeric_var_id - num_numeric_vars)
+            {
+                push_projected_auxiliary_numeric_var(
+                    auxiliary_numeric_var,
+                    &mut projected_num_var_to_original,
+                    &mut original_num_var_to_projected,
+                    &mut is_auxiliary_num_var,
+                    &mut is_auxiliary_constant,
+                    &mut auxiliary_exprs,
+                    &mut projected_aux_initial_values,
+                );
+            } else {
+                return Err(ProjectedTaskBuildError::InvalidAuxiliaryNumericVarId {
                     provided: numeric_var_id,
-                    len: num_numeric_vars,
+                    len: helper_space_len,
                 });
             }
-            push_unique_mapping(
-                numeric_var_id,
-                &mut projected_num_var_to_original,
-                &mut original_num_var_to_projected,
-            );
         }
 
         for (numeric_var_id, numeric_var) in base.numeric_variables().iter().enumerate() {
@@ -147,15 +319,17 @@ impl<'task> ProjectedTask<'task> {
                 numeric_var.get_type(),
                 NumericType::Constant | NumericType::Cost
             ) {
-                push_unique_mapping(
+                push_projected_base_numeric_var(
                     numeric_var_id,
                     &mut projected_num_var_to_original,
                     &mut original_num_var_to_projected,
+                    &mut is_auxiliary_num_var,
+                    &mut is_auxiliary_constant,
+                    &mut auxiliary_exprs,
+                    &mut projected_aux_initial_values,
                 );
             }
         }
-
-        let affected_to_assignment_axiom = build_assignment_axiom_lookup(base);
 
         let mut changed = true;
         while changed {
@@ -167,16 +341,25 @@ impl<'task> ProjectedTask<'task> {
                     continue;
                 }
                 ensure_supported_assignment_operator(axiom_id, affected, axiom.get_operator())?;
-                let deps =
-                    regular_numeric_dependencies(base, affected, &affected_to_assignment_axiom)?;
+                let deps = regular_numeric_dependencies(
+                    base,
+                    affected,
+                    &affected_to_assignment_axiom,
+                    &original_num_var_to_projected,
+                    &is_auxiliary_num_var,
+                )?;
                 if deps
                     .iter()
                     .all(|&dep| original_num_var_to_projected[dep].is_some())
                 {
-                    push_unique_mapping(
+                    push_projected_base_numeric_var(
                         affected,
                         &mut projected_num_var_to_original,
                         &mut original_num_var_to_projected,
+                        &mut is_auxiliary_num_var,
+                        &mut is_auxiliary_constant,
+                        &mut auxiliary_exprs,
+                        &mut projected_aux_initial_values,
                     );
                     changed = true;
                 }
@@ -241,10 +424,6 @@ impl<'task> ProjectedTask<'task> {
             .iter()
             .map(|&original| base.variables()[original].clone())
             .collect();
-        let numeric_variables: Vec<NumericVariable> = projected_num_var_to_original
-            .iter()
-            .map(|&original| base.numeric_variables()[original].clone())
-            .collect();
 
         let mut variable_names: Vec<String> = Vec::with_capacity(projected_var_to_original.len());
         let mut fact_names: Vec<Vec<String>> = Vec::with_capacity(projected_var_to_original.len());
@@ -281,12 +460,37 @@ impl<'task> ProjectedTask<'task> {
             .collect();
         drop(initial_prop_values);
 
-        let initial_numeric_values = base.get_initial_numeric_state_values();
-        let projected_numeric_values: Vec<f64> = projected_num_var_to_original
-            .iter()
-            .map(|&original| initial_numeric_values[original])
-            .collect();
-        drop(initial_numeric_values);
+        let mut numeric_variables: Vec<NumericVariable> =
+            Vec::with_capacity(projected_num_var_to_original.len());
+        let mut projected_numeric_values: Vec<f64> =
+            Vec::with_capacity(projected_num_var_to_original.len());
+        for projected_index in 0..projected_num_var_to_original.len() {
+            if is_auxiliary_constant[projected_index] {
+                numeric_variables.push(NumericVariable::new(
+                    format!("projected-const-{projected_index}"),
+                    NumericType::Constant,
+                    -1,
+                ));
+                projected_numeric_values
+                    .push(projected_aux_initial_values[projected_index].unwrap_or(0.0));
+                continue;
+            }
+
+            let source_original = projected_num_var_to_original[projected_index]
+                .expect("non-constant projected numeric vars must map to a base numeric var");
+            if is_auxiliary_num_var[projected_index] {
+                numeric_variables.push(NumericVariable::new(
+                    base.numeric_variables()[source_original].name().to_string(),
+                    NumericType::Regular,
+                    -1,
+                ));
+                projected_numeric_values
+                    .push(projected_aux_initial_values[projected_index].unwrap_or(0.0));
+            } else {
+                numeric_variables.push(base.numeric_variables()[source_original].clone());
+                projected_numeric_values.push(base_initial_numeric_values[source_original]);
+            }
+        }
 
         let goals: Vec<Fact> = (0..usize::try_from(base.get_num_goals().max(0)).unwrap_or(0))
             .filter_map(|goal_index| {
@@ -295,17 +499,26 @@ impl<'task> ProjectedTask<'task> {
             })
             .collect();
 
-        let operators: Vec<Operator> = base
-            .get_operators()
-            .iter()
-            .filter_map(|operator| {
-                project_operator(
-                    operator,
-                    &original_var_to_projected,
-                    &original_num_var_to_projected,
-                )
-            })
-            .collect();
+        let mut operators: Vec<Operator> = Vec::new();
+        for operator in base.get_operators().iter() {
+            if let Some(projected_operator) = project_operator(
+                base,
+                operator,
+                &base_initial_numeric_values,
+                &auxiliary_numeric_vars,
+                &original_var_to_projected,
+                &original_num_var_to_projected,
+                &mut projected_num_var_to_original,
+                &mut is_auxiliary_num_var,
+                &mut is_auxiliary_constant,
+                &mut auxiliary_exprs,
+                &mut projected_aux_initial_values,
+                &mut numeric_variables,
+                &mut projected_numeric_values,
+            )? {
+                operators.push(projected_operator);
+            }
+        }
 
         let axioms: Vec<PropositionalAxiom> = base
             .axioms()
@@ -328,7 +541,13 @@ impl<'task> ProjectedTask<'task> {
         let assignment_axioms: Vec<AssignmentAxiom> = base
             .assignment_axioms()
             .iter()
-            .filter_map(|axiom| project_assignment_axiom(axiom, &original_num_var_to_projected))
+            .filter_map(|axiom| {
+                project_assignment_axiom(
+                    axiom,
+                    &original_num_var_to_projected,
+                    &is_auxiliary_num_var,
+                )
+            })
             .collect();
 
         let operator_effect_facts: Vec<Vec<Fact>> = operators
@@ -374,6 +593,9 @@ impl<'task> ProjectedTask<'task> {
             projected_num_var_to_original,
             original_var_to_projected,
             original_num_var_to_projected,
+            is_auxiliary_num_var,
+            is_auxiliary_constant,
+            auxiliary_exprs,
             variable_names,
             fact_names,
         })
@@ -654,6 +876,124 @@ fn push_unique_mapping(
     }
 }
 
+fn push_projected_base_numeric_var(
+    original_id: usize,
+    projected_to_original: &mut Vec<Option<usize>>,
+    original_to_projected: &mut [Option<usize>],
+    is_auxiliary_num_var: &mut Vec<bool>,
+    is_auxiliary_constant: &mut Vec<bool>,
+    auxiliary_exprs: &mut Vec<Option<ArithmeticExpr>>,
+    projected_aux_initial_values: &mut Vec<Option<f64>>,
+) {
+    if original_to_projected[original_id].is_none() {
+        original_to_projected[original_id] = Some(projected_to_original.len());
+        projected_to_original.push(Some(original_id));
+        is_auxiliary_num_var.push(false);
+        is_auxiliary_constant.push(false);
+        auxiliary_exprs.push(None);
+        projected_aux_initial_values.push(None);
+    }
+}
+
+fn push_projected_auxiliary_numeric_var(
+    auxiliary_numeric_var: &AuxiliaryNumericVar,
+    projected_to_original: &mut Vec<Option<usize>>,
+    original_to_projected: &mut [Option<usize>],
+    is_auxiliary_num_var: &mut Vec<bool>,
+    is_auxiliary_constant: &mut Vec<bool>,
+    auxiliary_exprs: &mut Vec<Option<ArithmeticExpr>>,
+    projected_aux_initial_values: &mut Vec<Option<f64>>,
+) {
+    let original_id = auxiliary_numeric_var.source_numeric_var_id;
+    if original_to_projected[original_id].is_none() {
+        original_to_projected[original_id] = Some(projected_to_original.len());
+        projected_to_original.push(Some(original_id));
+        is_auxiliary_num_var.push(true);
+        is_auxiliary_constant.push(false);
+        auxiliary_exprs.push(Some(auxiliary_numeric_var.expr.clone()));
+        projected_aux_initial_values.push(Some(auxiliary_numeric_var.initial_value));
+    }
+}
+
+fn build_auxiliary_numeric_vars(
+    task: &dyn AbstractNumericTask,
+    assignment_lookup: &[Option<usize>],
+    base_initial_numeric_values: &[f64],
+) -> Result<Vec<AuxiliaryNumericVar>, ProjectedTaskBuildError> {
+    struct Builder<'a> {
+        task: &'a dyn AbstractNumericTask,
+        assignment_lookup: &'a [Option<usize>],
+        base_initial_numeric_values: &'a [f64],
+        auxiliary_numeric_vars: Vec<AuxiliaryNumericVar>,
+        derived_to_helper_id: Vec<Option<usize>>,
+    }
+
+    impl<'a> Builder<'a> {
+        fn parse_numeric_expression(
+            &mut self,
+            numeric_var_id: usize,
+        ) -> Result<ArithmeticExpr, ProjectedTaskBuildError> {
+            match self.task.numeric_variables()[numeric_var_id].get_type() {
+                NumericType::Regular => Ok(ArithmeticExpr::Var(numeric_var_id)),
+                NumericType::Constant | NumericType::Cost => Ok(ArithmeticExpr::constant(
+                    self.base_initial_numeric_values[numeric_var_id],
+                )),
+                NumericType::Derived => {
+                    if let Some(helper_id) = self.derived_to_helper_id[numeric_var_id] {
+                        return Ok(ArithmeticExpr::Var(helper_id));
+                    }
+                    let Some(axiom_id) = self.assignment_lookup[numeric_var_id] else {
+                        return Err(ProjectedTaskBuildError::MissingAssignmentAxiom {
+                            numeric_var_id,
+                        });
+                    };
+                    let axiom = &self.task.assignment_axioms()[axiom_id];
+                    let lhs = self.parse_numeric_expression(axiom.get_left_var_id() as usize)?;
+                    let rhs = self.parse_numeric_expression(axiom.get_right_var_id() as usize)?;
+                    let expr =
+                        ArithmeticExpr::op(lhs.clone(), axiom.get_operator().clone(), rhs.clone());
+
+                    if !lhs.is_constant() && !rhs.is_constant() {
+                        let helper_id =
+                            self.task.numeric_variables().len() + self.auxiliary_numeric_vars.len();
+                        let mut helper_values = self.base_initial_numeric_values.to_vec();
+                        for auxiliary_numeric_var in &self.auxiliary_numeric_vars {
+                            helper_values.push(auxiliary_numeric_var.initial_value);
+                        }
+                        let initial_value = expr.evaluate(&helper_values);
+                        self.auxiliary_numeric_vars.push(AuxiliaryNumericVar {
+                            helper_id,
+                            source_numeric_var_id: numeric_var_id,
+                            expr: expr.clone(),
+                            initial_value,
+                        });
+                        self.derived_to_helper_id[numeric_var_id] = Some(helper_id);
+                        Ok(ArithmeticExpr::Var(helper_id))
+                    } else {
+                        Ok(expr)
+                    }
+                }
+            }
+        }
+    }
+
+    let mut builder = Builder {
+        task,
+        assignment_lookup,
+        base_initial_numeric_values,
+        auxiliary_numeric_vars: Vec::new(),
+        derived_to_helper_id: vec![None; task.numeric_variables().len()],
+    };
+
+    for numeric_var_id in 0..task.numeric_variables().len() {
+        if task.numeric_variables()[numeric_var_id].get_type() == &NumericType::Derived {
+            builder.parse_numeric_expression(numeric_var_id)?;
+        }
+    }
+
+    Ok(builder.auxiliary_numeric_vars)
+}
+
 fn build_assignment_axiom_lookup(task: &dyn AbstractNumericTask) -> Vec<Option<usize>> {
     let mut lookup = vec![None; task.numeric_variables().len()];
     for (axiom_id, axiom) in task.assignment_axioms().iter().enumerate() {
@@ -669,6 +1009,8 @@ fn regular_numeric_dependencies(
     task: &dyn AbstractNumericTask,
     numeric_var_id: usize,
     assignment_lookup: &[Option<usize>],
+    original_num_var_to_projected: &[Option<usize>],
+    is_auxiliary_num_var: &[bool],
 ) -> Result<BTreeSet<usize>, ProjectedTaskBuildError> {
     let mut out = BTreeSet::new();
     let mut seen = HashSet::new();
@@ -676,6 +1018,8 @@ fn regular_numeric_dependencies(
         task,
         numeric_var_id,
         assignment_lookup,
+        original_num_var_to_projected,
+        is_auxiliary_num_var,
         &mut seen,
         &mut out,
     )?;
@@ -686,11 +1030,20 @@ fn regular_numeric_dependencies_recursive(
     task: &dyn AbstractNumericTask,
     numeric_var_id: usize,
     assignment_lookup: &[Option<usize>],
+    original_num_var_to_projected: &[Option<usize>],
+    is_auxiliary_num_var: &[bool],
     seen: &mut HashSet<usize>,
     out: &mut BTreeSet<usize>,
 ) -> Result<(), ProjectedTaskBuildError> {
     if !seen.insert(numeric_var_id) {
         return Ok(());
+    }
+
+    if let Some(projected_id) = original_num_var_to_projected[numeric_var_id] {
+        if is_auxiliary_num_var[projected_id] {
+            out.insert(numeric_var_id);
+            return Ok(());
+        }
     }
 
     match task.numeric_variables()[numeric_var_id].get_type() {
@@ -709,6 +1062,8 @@ fn regular_numeric_dependencies_recursive(
                 task,
                 axiom.get_left_var_id() as usize,
                 assignment_lookup,
+                original_num_var_to_projected,
+                is_auxiliary_num_var,
                 seen,
                 out,
             )?;
@@ -716,6 +1071,8 @@ fn regular_numeric_dependencies_recursive(
                 task,
                 axiom.get_right_var_id() as usize,
                 assignment_lookup,
+                original_num_var_to_projected,
+                is_auxiliary_num_var,
                 seen,
                 out,
             )?;
@@ -855,10 +1212,20 @@ fn project_assignment_effect(
 }
 
 fn project_operator(
+    base: &dyn AbstractNumericTask,
     operator: &Operator,
+    base_initial_numeric_values: &[f64],
+    auxiliary_numeric_vars: &[AuxiliaryNumericVar],
     var_map: &[Option<usize>],
     num_var_map: &[Option<usize>],
-) -> Option<Operator> {
+    projected_num_var_to_original: &mut Vec<Option<usize>>,
+    is_auxiliary_num_var: &mut Vec<bool>,
+    is_auxiliary_constant: &mut Vec<bool>,
+    auxiliary_exprs: &mut Vec<Option<ArithmeticExpr>>,
+    projected_aux_initial_values: &mut Vec<Option<f64>>,
+    numeric_variables: &mut Vec<NumericVariable>,
+    projected_numeric_values: &mut Vec<f64>,
+) -> Result<Option<Operator>, ProjectedTaskBuildError> {
     let preconditions: Vec<Fact> = operator
         .preconditions()
         .iter()
@@ -869,23 +1236,150 @@ fn project_operator(
         .iter()
         .filter_map(|effect| project_effect(effect, var_map))
         .collect();
-    let assignment_effects: Vec<AssignmentEffect> = operator
+    let mut assignment_effects: Vec<AssignmentEffect> = operator
         .assignment_effects()
         .iter()
         .filter_map(|effect| project_assignment_effect(effect, var_map, num_var_map))
         .collect();
 
-    if effects.is_empty() && assignment_effects.is_empty() {
-        None
+    let mut relevant = !effects.is_empty() || !assignment_effects.is_empty();
+
+    if !auxiliary_numeric_vars.is_empty() {
+        let mut additive_effects =
+            vec![0.0; base.numeric_variables().len() + auxiliary_numeric_vars.len()];
+        let mut has_assign_effect = false;
+
+        for effect in operator.assignment_effects() {
+            if effect.is_conditional() {
+                return Err(ProjectedTaskBuildError::UnsupportedOperatorEffect {
+                    operator_name: operator.name().to_string(),
+                    reason: "conditional numeric effects are not supported",
+                });
+            }
+
+            let source_var_id = effect.var_id() as usize;
+            let source_type = base.numeric_variables()[source_var_id].get_type();
+            let source_value = base_initial_numeric_values[source_var_id];
+
+            match effect.operation() {
+                planners_sas::numeric::numeric_task::AssignmentOperation::Assign => {
+                    has_assign_effect = true;
+                }
+                planners_sas::numeric::numeric_task::AssignmentOperation::Plus => {
+                    if source_type != &NumericType::Constant {
+                        return Err(ProjectedTaskBuildError::UnsupportedOperatorEffect {
+                            operator_name: operator.name().to_string(),
+                            reason: "lifted numeric effects require constant right-hand sides",
+                        });
+                    }
+                    additive_effects[effect.affected_var_id() as usize] += source_value;
+                }
+                planners_sas::numeric::numeric_task::AssignmentOperation::Minus => {
+                    if source_type != &NumericType::Constant {
+                        return Err(ProjectedTaskBuildError::UnsupportedOperatorEffect {
+                            operator_name: operator.name().to_string(),
+                            reason: "lifted numeric effects require constant right-hand sides",
+                        });
+                    }
+                    additive_effects[effect.affected_var_id() as usize] -= source_value;
+                }
+                planners_sas::numeric::numeric_task::AssignmentOperation::Times
+                | planners_sas::numeric::numeric_task::AssignmentOperation::Divide => {
+                    return Err(ProjectedTaskBuildError::UnsupportedOperatorEffect {
+                        operator_name: operator.name().to_string(),
+                        reason: "non-additive numeric effects are not supported",
+                    });
+                }
+            }
+        }
+
+        if has_assign_effect {
+            return Err(ProjectedTaskBuildError::UnsupportedOperatorEffect {
+                operator_name: operator.name().to_string(),
+                reason: "mixed assignment and lifted additive effects are not supported",
+            });
+        }
+
+        for auxiliary_numeric_var in auxiliary_numeric_vars {
+            additive_effects[auxiliary_numeric_var.helper_id] = auxiliary_numeric_var
+                .expr
+                .evaluate_ignore_additive_consts(&additive_effects);
+        }
+
+        for auxiliary_numeric_var in auxiliary_numeric_vars {
+            let projected_target = num_var_map[auxiliary_numeric_var.source_numeric_var_id];
+            let Some(projected_target) = projected_target else {
+                continue;
+            };
+
+            let delta = additive_effects[auxiliary_numeric_var.helper_id];
+            if delta != 0.0 {
+                let projected_constant = get_or_add_projected_constant(
+                    delta,
+                    projected_num_var_to_original,
+                    is_auxiliary_num_var,
+                    is_auxiliary_constant,
+                    auxiliary_exprs,
+                    projected_aux_initial_values,
+                    numeric_variables,
+                    projected_numeric_values,
+                );
+                assignment_effects.push(AssignmentEffect::new(
+                    projected_target as u32,
+                    planners_sas::numeric::numeric_task::AssignmentOperation::Plus,
+                    projected_constant as u32,
+                    false,
+                    vec![],
+                ));
+                relevant = true;
+            }
+        }
+    }
+
+    if !relevant {
+        Ok(None)
     } else {
-        Some(Operator::new(
+        Ok(Some(Operator::new(
             operator.name().to_string(),
             preconditions,
             effects,
             assignment_effects,
             operator.cost(),
-        ))
+        )))
     }
+}
+
+fn get_or_add_projected_constant(
+    value: f64,
+    projected_num_var_to_original: &mut Vec<Option<usize>>,
+    is_auxiliary_num_var: &mut Vec<bool>,
+    is_auxiliary_constant: &mut Vec<bool>,
+    auxiliary_exprs: &mut Vec<Option<ArithmeticExpr>>,
+    projected_aux_initial_values: &mut Vec<Option<f64>>,
+    numeric_variables: &mut Vec<NumericVariable>,
+    projected_numeric_values: &mut Vec<f64>,
+) -> usize {
+    for (projected_id, numeric_variable) in numeric_variables.iter().enumerate() {
+        if numeric_variable.get_type() == &NumericType::Constant
+            && projected_numeric_values.get(projected_id).copied() == Some(value)
+        {
+            return projected_id;
+        }
+    }
+
+    let projected_id = numeric_variables.len();
+    numeric_variables.push(NumericVariable::new(
+        format!("projected-const-{projected_id}"),
+        NumericType::Constant,
+        -1,
+    ));
+    projected_numeric_values.push(value);
+    projected_num_var_to_original.push(None);
+    is_auxiliary_num_var.push(false);
+    is_auxiliary_constant.push(true);
+    auxiliary_exprs.push(None);
+    projected_aux_initial_values.push(Some(value));
+    projected_id
 }
 
 fn project_propositional_axiom(
@@ -933,10 +1427,14 @@ fn project_comparison_axiom(
 fn project_assignment_axiom(
     axiom: &AssignmentAxiom,
     num_var_map: &[Option<usize>],
+    is_auxiliary_num_var: &[bool],
 ) -> Option<AssignmentAxiom> {
     let affected = num_var_map
         .get(axiom.get_affected_var_id() as usize)
         .and_then(|mapped| *mapped)?;
+    if is_auxiliary_num_var[affected] {
+        return None;
+    }
     let left = num_var_map
         .get(axiom.get_left_var_id() as usize)
         .and_then(|mapped| *mapped)?;
@@ -1090,5 +1588,95 @@ mod tests {
             result,
             Err(ProjectedTaskBuildError::UnsupportedAssignmentOperator { .. })
         ));
+    }
+
+    #[test]
+    fn projected_task_rejects_raw_derived_numeric_pattern_vars() {
+        let task = sample_task();
+
+        let result = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![0],
+                numeric: vec![2],
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(ProjectedTaskBuildError::UnsupportedPatternNumericVarType {
+                numeric_var_id: 2,
+                numeric_type: NumericType::Derived,
+            })
+        ));
+    }
+
+    #[test]
+    fn projected_task_helper_pattern_var_gets_lifted_additive_effect() {
+        let variables = vec![simple_var("goal", -1)];
+        let numeric_variables = vec![
+            NumericVariable::new("const5".to_string(), NumericType::Constant, -1),
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
+        ];
+        let operators = vec![Operator::new(
+            "inc-x".to_string(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                1,
+                AssignmentOperation::Plus,
+                0,
+                false,
+                vec![],
+            )],
+            1,
+        )];
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![],
+            vec![],
+            vec![0],
+            vec![5.0, 2.0, 3.0, 5.0],
+            operators,
+            vec![],
+            vec![],
+            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+            (0, 0),
+        );
+
+        let helper_pattern_numeric_id = task.numeric_variables().len();
+        let projected = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![],
+                numeric: vec![helper_pattern_numeric_id],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(projected.numeric_variables().len(), 2);
+        assert_eq!(
+            projected.numeric_variables()[0].get_type(),
+            &NumericType::Regular
+        );
+
+        let initial_numeric_values = projected.get_initial_numeric_state_values();
+        assert_eq!(initial_numeric_values.as_slice(), &[5.0, 5.0]);
+        drop(initial_numeric_values);
+
+        assert_eq!(projected.get_num_operators(), 1);
+        let op = &projected.get_operators()[0];
+        assert_eq!(op.assignment_effects().len(), 1);
+        assert_eq!(op.assignment_effects()[0].affected_var_id(), 0);
+        assert_eq!(
+            op.assignment_effects()[0].operation(),
+            &AssignmentOperation::Plus
+        );
+        assert_eq!(op.assignment_effects()[0].var_id(), 1);
     }
 }
