@@ -1,5 +1,6 @@
 /target
 
+output.sas # no idea why but the wildcard below does not remove it for me
 ./*.sas
 *.out
 .vscode
