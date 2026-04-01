@@ -470,62 +470,6 @@ fn format_abstract_fact(
     }
 }
 
-fn maybe_dump_pour_operator(
-    task: &dyn AbstractNumericTask,
-    generator: &AbstractOperatorGenerator,
-    concrete_op_id: usize,
-    prev_pairs: &[Fact],
-    pre_pairs: &[Fact],
-    eff_pairs: &[Fact],
-    trans: &TransitionInfo,
-) {
-    if std::env::var_os("DA_DUMP_POUR_OPERATORS").is_none() {
-        return;
-    }
-
-    let op_name = task.get_operator_name(concrete_op_id as i32, false);
-    if !op_name.contains("pour") {
-        return;
-    }
-
-    let prevail: Vec<String> = prev_pairs
-        .iter()
-        .map(|fact| format_abstract_fact(task, generator, fact))
-        .collect();
-    let preconditions: Vec<String> = pre_pairs
-        .iter()
-        .map(|fact| format_abstract_fact(task, generator, fact))
-        .collect();
-    let effects: Vec<String> = eff_pairs
-        .iter()
-        .map(|fact| format_abstract_fact(task, generator, fact))
-        .collect();
-    let source_parts: Vec<String> = trans
-        .source_partition_facts
-        .iter()
-        .map(|fact| format_abstract_fact(task, generator, fact))
-        .collect();
-    let target_parts: Vec<String> = trans
-        .target_partition_facts
-        .iter()
-        .map(|fact| format_abstract_fact(task, generator, fact))
-        .collect();
-    let trans_prevail: Vec<String> = trans
-        .prevail_facts
-        .iter()
-        .map(|fact| format_abstract_fact(task, generator, fact))
-        .collect();
-
-    println!("[DA_POUR_OP] concrete={op_name} id={concrete_op_id}");
-    println!("  prevail={prevail:?}");
-    println!("  preconditions={preconditions:?}");
-    println!("  effects={effects:?}");
-    println!("  numeric_source={source_parts:?}");
-    println!("  numeric_target={target_parts:?}");
-    println!("  numeric_prevail={trans_prevail:?}");
-    println!("  changed_numeric_vars={:?}", trans.changed_numeric_vars);
-}
-
 fn normalize_preconditions(mut preconditions: Vec<Fact>) -> Option<Vec<Fact>> {
     preconditions.sort();
     let mut out: Vec<Fact> = Vec::with_capacity(preconditions.len());
@@ -758,16 +702,6 @@ fn multiply_out_propositional(
             {
                 continue;
             }
-
-            maybe_dump_pour_operator(
-                task,
-                generator,
-                concrete_op_id,
-                &extended_prev_pairs,
-                &extended_pre_pairs,
-                &extended_eff_pairs,
-                &trans,
-            );
 
             let signature = OperatorSignature {
                 prev_pairs: extended_prev_pairs

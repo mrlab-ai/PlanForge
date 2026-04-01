@@ -1933,7 +1933,7 @@ fn dependent_numeric_flaws_for_comparison_prop_var(
     out
 }
 
-fn get_precondition_flaws(
+pub fn get_precondition_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
     comparison_index: &ComparisonAxiomIndex,
@@ -2117,7 +2117,7 @@ fn can_split_numeric_var(
     parts[part_id].can_split_at(value, include_in_lower)
 }
 
-fn get_numeric_deviation_flaws(
+pub fn get_numeric_deviation_flaws(
     op: &planners_sas::numeric::numeric_task::Operator,
     numeric_current_state: &[f64],
     numeric_successor_state: &[f64],

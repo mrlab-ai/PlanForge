@@ -818,7 +818,7 @@ impl DomainAbstractionFactory {
         out
     }
 
-    fn is_goal_state(
+    pub fn is_goal_state(
         &self,
         state_hash: i32,
         goals: &[planners_sas::numeric::numeric_task::Fact],
@@ -1351,14 +1351,6 @@ impl DomainAbstractionFactory {
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
         let mut generating_op_ids: Vec<Option<usize>> = vec![None; num_states];
 
-        let trace_state: Option<i32> = std::env::var("DA_TRACE_STATE")
-            .ok()
-            .and_then(|s| s.parse::<i32>().ok());
-        let trace_ops: bool = std::env::var("DA_TRACE_OPS").is_ok();
-        let trace_distance_update_state: Option<i32> = std::env::var("DA_TRACE_DISTANCE_UPDATE_STATE")
-            .ok()
-            .and_then(|s| s.parse::<i32>().ok());
-
         let mut core_vars: Vec<u32> = Vec::new();
         for (v, &dom) in self.domain_sizes.iter().enumerate() {
             if dom > 1 {
@@ -1423,32 +1415,24 @@ impl DomainAbstractionFactory {
                 &[],
             )?;
 
-            if trace_ops || trace_state == Some(state_hash) {
-                let mut core_vals: Vec<(u32, i32)> = Vec::new();
-                for &v in &core_vars {
-                    let var = usize::try_from(v).unwrap_or(0);
-                    let val = match_tree.get_var_value(base_state, var);
-                    core_vals.push((v, val));
-                }
-
-                eprintln!(
-                    "[DA_TRACE] pop state_hash={state_hash} d={d:.3} base_state={base_state} core={core_vals:?}"
-                );
-            }
-
             match_tree.get_applicable_operator_ids(base_state, &mut applicable_operator_ids);
             for &op_id in &applicable_operator_ids {
                 let op = &operators[op_id];
                 ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
                 let alternative_cost = d + op.cost;
                 let predecessor_base_i64 = (base_state as i64) + (op.hash_effect as i64);
-                if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
-                    eprintln!(
-                        "[DA_OOB] SKIPPED predecessor_base={predecessor_base_i64} num_states={num_states} base_state={base_state} hash_effect={}",
-                        op.hash_effect
-                    );
-                    continue;
-                }
+                debug_assert!(
+                    predecessor_base_i64 >= 0 && predecessor_base_i64 < num_states as i64,
+                    "[DA] predecessor base hash is out of bounds: {predecessor_base_i64}"
+                );
+                // TODO: The next line should be impossible. Debug
+                // if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
+                //     eprintln!(
+                //         "[DA_OOB] SKIPPED predecessor_base={predecessor_base_i64} num_states={num_states} base_state={base_state} hash_effect={}",
+                //         op.hash_effect
+                //     );
+                //     continue;
+                // }
                 let predecessor_base = predecessor_base_i64 as i32;
                 let fixed_comparisons = get_comparison_preconditions(op, comparison_var_ids);
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
@@ -1460,40 +1444,7 @@ impl DomainAbstractionFactory {
                     &fixed_comparisons,
                 )?;
 
-                if trace_ops || trace_state == Some(state_hash) {
-                    let concrete_names: Vec<String> = op
-                        .concrete_op_ids
-                        .iter()
-                        .filter_map(|&cid| i32::try_from(cid).ok())
-                        .map(|cid| task.get_operator_name(cid, false).to_string())
-                        .collect();
-
-                    let mut relevant_reg: Vec<(u32, i32)> = Vec::new();
-                    let mut relevant_pre: Vec<(u32, i32)> = Vec::new();
-                    for f in &op.regression_preconditions {
-                        if core_vars.binary_search(&f.var()).is_ok() {
-                            relevant_reg.push((f.var(), f.value()));
-                        }
-                    }
-                    for f in &op.preconditions {
-                        if core_vars.binary_search(&f.var()).is_ok() {
-                            relevant_pre.push((f.var(), f.value()));
-                        }
-                    }
-                    relevant_reg.sort_unstable();
-                    relevant_pre.sort_unstable();
-
-                    eprintln!(
-                        "[DA_TRACE]  op={op_id} cost={:.3} hash_effect={} reg_core={:?} pre_core={:?} pred_base={} preds={:?} concrete={:?}",
-                        op.cost,
-                        op.hash_effect,
-                        relevant_reg,
-                        relevant_pre,
-                        predecessor_base,
-                        possible_predecessors,
-                        concrete_names
-                    );
-                }
+                
 
                 let representative_predecessor = possible_predecessors.iter().copied().max();
 
@@ -1507,26 +1458,6 @@ impl DomainAbstractionFactory {
                         let previous_cost = distances[pred_idx];
                         distances[pred_idx] = alternative_cost;
                         generating_op_ids[pred_idx] = Some(op_id);
-                        if Some(pred) == trace_distance_update_state {
-                            let concrete_names: Vec<String> = op
-                                .concrete_op_ids
-                                .iter()
-                                .filter_map(|&cid| i32::try_from(cid).ok())
-                                .map(|cid| task.get_operator_name(cid, false).to_string())
-                                .collect();
-                            eprintln!(
-                                "[DA_TRACE_UPDATE] state_hash={} old_dist={:.3} new_dist={:.3} via_op={} hash_effect={} base_state={} pred_base={} preds={:?} concrete={:?}",
-                                pred,
-                                previous_cost,
-                                alternative_cost,
-                                op_id,
-                                op.hash_effect,
-                                base_state,
-                                predecessor_base,
-                                possible_predecessors,
-                                concrete_names,
-                            );
-                        }
                         if pred == initial_state_hash || Some(pred) == representative_predecessor {
                             heap.push((
                                 Reverse(
