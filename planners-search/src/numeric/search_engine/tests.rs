@@ -127,3 +127,9 @@ fn test_search_result_creation() {
     assert!(result.plan.is_none());
     assert_eq!(result.nodes_expanded, 0);
 }
+
+#[test]
+fn test_progress_format_dedupes_rounding_equal_f_layers() {
+    assert_eq!(format_progress_value(95.4940004), "95.494000");
+    assert_eq!(format_progress_value(95.49400049), "95.494000");
+}

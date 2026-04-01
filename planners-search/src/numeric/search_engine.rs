@@ -124,7 +124,7 @@ pub struct AStarSearch<'a> {
     nodes_generated: usize,
     dead_ends: usize,
     counters_at_last_jump: SearchCounters,
-    last_reported_f_layer: Option<OrderedFloat<f64>>,
+    last_reported_f_layer: Option<String>,
     best_reported_heuristic_value: Option<OrderedFloat<f64>>,
     state_values_buffer: Vec<i32>,
     applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
@@ -253,12 +253,12 @@ impl<'a> AStarSearch<'a> {
     }
 
     fn maybe_print_f_value(&mut self, f_value: f64, start_time: &Instant) {
-        let f_value = OrderedFloat(f_value);
-        if self.last_reported_f_layer == Some(f_value) {
+        let display_value = format_progress_value(f_value);
+        if self.last_reported_f_layer.as_ref() == Some(&display_value) {
             return;
         }
 
-        self.last_reported_f_layer = Some(f_value);
+        self.last_reported_f_layer = Some(display_value.clone());
 
         // Snapshot counters at the start of each new f-layer.
         // This mirrors Fast Downward's “until last jump” statistics.
@@ -271,7 +271,7 @@ impl<'a> AStarSearch<'a> {
 
         println!(
             "f = {} [{} evaluated, {} expanded, t={:.6}s, {} KB]",
-            format_progress_value(f_value.into_inner()),
+            display_value,
             self.nodes_evaluated,
             self.nodes_expanded,
             start_time.elapsed().as_secs_f64(),
