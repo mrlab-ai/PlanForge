@@ -11,10 +11,12 @@ use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use planners_search::numeric::evaluation::g_evaluator::{GEvaluator, SumEvaluator};
 use planners_search::numeric::evaluation::domain_abstractions::cegar::{Cegar, CegarConfig};
+use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegar;
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, compute_hash_multipliers,
 };
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
+use planners_search::numeric::evaluation::domain_abstractions::max_domain_abstraction_heuristic::MaxDomainAbstractionHeuristic;
 use planners_search::numeric::evaluation::evaluator::EvaluationState;
 use planners_search::numeric::evaluation::{EvaluationResult, Evaluator};
 use planners_search::numeric::open_lists::{OpenList, SearchNode, TieBreakingOpenList};
@@ -141,6 +143,20 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     Some(Box::new(DomainAbstractionHeuristic::new(None, abstraction))
                         as Box<dyn planners_search::numeric::evaluation::Heuristic>)
                 }
+                planners_searcher::HeuristicSpec::MultiDomainAbstractions(config) => {
+                    let generator =
+                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
+                    println!("Building multiple domain abstractions (CEGAR)...");
+                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
+                        std::io::Error::other(format!(
+                            "failed to build multi domain abstractions: {e:#}"
+                        ))
+                    })?;
+                    Some(
+                        Box::new(MaxDomainAbstractionHeuristic::new(None, abstractions))
+                            as Box<dyn planners_search::numeric::evaluation::Heuristic>,
+                    )
+                }
             };
 
             let mut search = AStarSearch::new(
@@ -158,20 +174,16 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
             println!("Starting A* search with {:?}...", heuristic);
             search.search()
         }
-        planners_searcher::SearchSpec::DaDebug => {
-            run_da_debug(
-                &task,
-                state_registry,
-                if cli.internal_run { None } else { cli.max_time },
-            )?
-        }
-        planners_searcher::SearchSpec::AstarDaDebug => {
-            run_astar_da_debug(
-                &task,
-                state_registry,
-                if cli.internal_run { None } else { cli.max_time },
-            )?
-        }
+        planners_searcher::SearchSpec::DaDebug => run_da_debug(
+            &task,
+            state_registry,
+            if cli.internal_run { None } else { cli.max_time },
+        )?,
+        planners_searcher::SearchSpec::AstarDaDebug => run_astar_da_debug(
+            &task,
+            state_registry,
+            if cli.internal_run { None } else { cli.max_time },
+        )?,
     };
 
     print_search_result(&result);
@@ -186,7 +198,9 @@ fn build_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn N
     }
 
     let mut generator = GroundedSuccessorGenerator::new(task);
-    generator.construct(&mut 0, &mut queue).expect("successor generator construction must succeed")
+    generator
+        .construct(&mut 0, &mut queue)
+        .expect("successor generator construction must succeed")
 }
 
 fn state_is_goal(
@@ -217,7 +231,8 @@ fn evaluate_da_heuristic(
     state: &ConcreteState,
     g_value: f64,
 ) -> std::io::Result<f64> {
-    let mut eval_state = EvaluationState::new_with_registry(state, g_value, false, task, state_registry);
+    let mut eval_state =
+        EvaluationState::new_with_registry(state, g_value, false, task, state_registry);
     eval_state.set_is_goal(state_is_goal(task, state_registry, state));
     eval_state
         .get_or_compute_heuristic(heuristic)
@@ -233,7 +248,8 @@ fn evaluate_da_state(
     state: &ConcreteState,
     g_value: f64,
 ) -> std::io::Result<EvaluationResult> {
-    let mut eval_state = EvaluationState::new_with_registry(state, g_value, false, task, state_registry);
+    let mut eval_state =
+        EvaluationState::new_with_registry(state, g_value, false, task, state_registry);
     eval_state.set_is_goal(state_is_goal(task, state_registry, state));
     g_evaluator
         .evaluate_state(&mut eval_state)
@@ -247,17 +263,22 @@ fn evaluate_da_state(
     Ok(eval_state.into_result())
 }
 
-fn build_da_heuristic(task: &dyn AbstractNumericTask, name: Option<String>) -> std::io::Result<DomainAbstractionHeuristic> {
+fn build_da_heuristic(
+    task: &dyn AbstractNumericTask,
+    name: Option<String>,
+) -> std::io::Result<DomainAbstractionHeuristic> {
     println!("Building domain abstraction (CEGAR)...");
     let mut config = CegarConfig::default();
     config.debug = true;
 
     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
-        std::io::Error::other(format!("failed to construct DomainAbstractionGenerator: {e:#}"))
+        std::io::Error::other(format!(
+            "failed to construct DomainAbstractionGenerator: {e:#}"
+        ))
     })?;
-    let abstraction = generator.generate(task).map_err(|e| {
-        std::io::Error::other(format!("failed to build domain abstraction: {e:#}"))
-    })?;
+    let abstraction = generator
+        .generate(task)
+        .map_err(|e| std::io::Error::other(format!("failed to build domain abstraction: {e:#}")))?;
     Ok(DomainAbstractionHeuristic::new(name, abstraction))
 }
 
@@ -294,9 +315,7 @@ fn first_witness_line(prefix: &str, witness: &Option<AdmissibilityWitness>) {
     }
 }
 
-fn blind_min_action_cost(
-    operator_costs: &[f64],
-) -> f64 {
+fn blind_min_action_cost(operator_costs: &[f64]) -> f64 {
     let min_cost = operator_costs
         .iter()
         .copied()
@@ -321,7 +340,8 @@ fn blind_remaining_distance(
 
     let min_action_cost = blind_min_action_cost(operator_costs);
     let mut best_g: HashMap<usize, f64> = HashMap::new();
-    let mut open: BinaryHeap<(Reverse<NotNan<f64>>, Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+    let mut open: BinaryHeap<(Reverse<NotNan<f64>>, Reverse<NotNan<f64>>, usize)> =
+        BinaryHeap::new();
     let successor_generator = build_successor_generator(task);
     let mut state_values_buffer: Vec<i32> = Vec::new();
     let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
@@ -436,13 +456,8 @@ fn record_admissibility_check(
     let f_value = evaluation
         .get_heuristic_value_optional(&h_name)
         .unwrap_or_else(|| evaluation.get_f_value(prefix));
-    let blind_remaining = blind_remaining_distance_cached(
-        task,
-        state_registry,
-        blind_cache,
-        state,
-        operator_costs,
-    )?;
+    let blind_remaining =
+        blind_remaining_distance_cached(task, state_registry, blind_cache, state, operator_costs)?;
 
     if first_witness.is_none() && h_value > blind_remaining + 1e-9 {
         *first_witness = Some(AdmissibilityWitness {
@@ -517,7 +532,9 @@ fn format_state_snapshot(
         .iter()
         .enumerate()
         .filter(|(_, numeric_var)| numeric_var.get_type() == &NumericType::Regular)
-        .map(|(var_id, numeric_var)| format!("{}={:.3}", numeric_var.name(), numeric_values[var_id]))
+        .map(|(var_id, numeric_var)| {
+            format!("{}={:.3}", numeric_var.name(), numeric_values[var_id])
+        })
         .collect::<Vec<_>>()
         .join(", ");
 
@@ -620,7 +637,10 @@ fn print_witness_details(
     };
 
     let witness_state = state_registry.lookup_state(witness.state_id).map_err(|e| {
-        std::io::Error::other(format!("failed to look up witness state {}: {e:?}", witness.state_id))
+        std::io::Error::other(format!(
+            "failed to look up witness state {}: {e:?}",
+            witness.state_id
+        ))
     })?;
     let prefix_plan = extract_debug_plan(task, search_nodes, witness.state_id);
     let (exact_suffix_cost, exact_suffix_plan) =
@@ -733,7 +753,9 @@ fn run_da_debug(
     mut state_registry: StateRegistry<'_>,
     _time_limit: Option<Duration>,
 ) -> std::io::Result<SearchResult> {
-    println!("Running da_debug(): build terminal domain abstraction, replay wildcard plan, and compare h(s) to exact remaining distance.");
+    println!(
+        "Running da_debug(): build terminal domain abstraction, replay wildcard plan, and compare h(s) to exact remaining distance."
+    );
 
     let mut config = CegarConfig::default();
     config.debug = true;
@@ -751,8 +773,10 @@ fn run_da_debug(
     let distance_table = factory
         .build_abstract_distance_table(task, config.combine_labels, false)
         .map_err(|e| std::io::Error::other(format!("failed to build distance table: {e:#}")))?;
-    let hash_multipliers = compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())
-        .map_err(|e| std::io::Error::other(format!("failed to compute hash multipliers: {e:#}")))?;
+    let hash_multipliers =
+        compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes()).map_err(
+            |e| std::io::Error::other(format!("failed to compute hash multipliers: {e:#}")),
+        )?;
     let abstraction = DomainAbstraction {
         factory,
         distance_table,
@@ -766,10 +790,14 @@ fn run_da_debug(
     let mut total_cost = 0.0;
     let mut witness: Option<(usize, f64, f64)> = None;
 
-    println!("[DA_DEBUG] wildcard steps={}", wildcard_plan.wildcard_plan.len());
+    println!(
+        "[DA_DEBUG] wildcard steps={}",
+        wildcard_plan.wildcard_plan.len()
+    );
 
     let initial_h = evaluate_da_heuristic(task, &state_registry, &heuristic, &current_state, 0.0)?;
-    let initial_exact = exact_remaining_distance(task, &mut state_registry, &current_state, &operator_costs)?;
+    let initial_exact =
+        exact_remaining_distance(task, &mut state_registry, &current_state, &operator_costs)?;
     println!(
         "[DA_DEBUG] state=0 g=0.000 h={initial_h:.3} exact_remaining={initial_exact:.3} delta={:.3}",
         initial_h - initial_exact
@@ -816,8 +844,15 @@ fn run_da_debug(
         concrete_plan.push(operator.clone());
         current_state = successor;
 
-        let h_value = evaluate_da_heuristic(task, &state_registry, &heuristic, &current_state, total_cost)?;
-        let exact_remaining = exact_remaining_distance(task, &mut state_registry, &current_state, &operator_costs)?;
+        let h_value = evaluate_da_heuristic(
+            task,
+            &state_registry,
+            &heuristic,
+            &current_state,
+            total_cost,
+        )?;
+        let exact_remaining =
+            exact_remaining_distance(task, &mut state_registry, &current_state, &operator_costs)?;
         println!(
             "[DA_DEBUG] state={} g={:.3} step={} op=[{}:{}] h={:.3} exact_remaining={:.3} delta={:.3}",
             step_idx + 1,
@@ -843,7 +878,9 @@ fn run_da_debug(
             h_value - exact_remaining
         );
     } else {
-        println!("[DA_DEBUG] no inadmissibility witness found along the final wildcard-plan execution.");
+        println!(
+            "[DA_DEBUG] no inadmissibility witness found along the final wildcard-plan execution."
+        );
     }
 
     let solved = state_is_goal(task, &state_registry, &current_state);
@@ -881,7 +918,9 @@ fn run_astar_da_debug(
     mut state_registry: StateRegistry<'_>,
     _time_limit: Option<Duration>,
 ) -> std::io::Result<SearchResult> {
-    println!("Running astar_da_debug(): execute DA-guided A* and compare h(s) to exact remaining distance on the states A* actually touches.");
+    println!(
+        "Running astar_da_debug(): execute DA-guided A* and compare h(s) to exact remaining distance on the states A* actually touches."
+    );
 
     let heuristic = build_da_heuristic(task, Some("astar_da_debug".to_string()))?;
     let g_evaluator = GEvaluator::new(None);
@@ -1034,11 +1073,16 @@ fn run_astar_da_debug(
             };
         }
 
-        let current_g = search_nodes.get(&state_id).map(|info| info.g_value).unwrap_or(0.0);
+        let current_g = search_nodes
+            .get(&state_id)
+            .map(|info| info.g_value)
+            .unwrap_or(0.0);
 
-        node.state.fill_state(&state_registry, &mut state_values_buffer);
+        node.state
+            .fill_state(&state_registry, &mut state_values_buffer);
         applicable_operators.clear();
-        successor_generator.get_applicable_operators(&state_values_buffer, &mut applicable_operators);
+        successor_generator
+            .get_applicable_operators(&state_values_buffer, &mut applicable_operators);
 
         for (operator, operator_id) in applicable_operators.iter().copied() {
             let succ_state = match state_registry.get_successor_state_with_buffers(
@@ -1153,8 +1197,7 @@ fn run_astar_da_debug(
 
     println!(
         "[ASTAR_DA_DEBUG] checked {} evaluated state(s) and {} expanded state(s).",
-        evaluated_checks,
-        expanded_checks
+        evaluated_checks, expanded_checks
     );
     first_witness_line("ASTAR_DA_DEBUG", &first_evaluated_witness);
     print_witness_details(

@@ -9,7 +9,9 @@ use super::cegar::Flaw;
 use super::comparison_expression::Interval;
 use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction::NumericPartitions;
-use super::domain_abstraction_factory::{AbstractDistanceTable, DomainAbstractionFactory, WildcardPlanResult};
+use super::domain_abstraction_factory::{
+    AbstractDistanceTable, DomainAbstractionFactory, WildcardPlanResult,
+};
 
 pub(crate) fn compute_abstraction_size_u128(
     domain_sizes: &[i32],
@@ -180,11 +182,7 @@ pub(crate) fn fmt_f64_compact(v: f64) -> String {
             };
         }
     }
-    if s == "-0" {
-        "0".to_string()
-    } else {
-        s
-    }
+    if s == "-0" { "0".to_string() } else { s }
 }
 
 pub(crate) fn partition_for_value(partitions: &[Interval], value: f64) -> Option<i32> {
@@ -257,11 +255,12 @@ pub(crate) fn apply_operator_to_state(
             continue;
         }
         let operand = numeric_state[assignment_var_id];
-        numeric_state[affected_var_id] = planners_sas::numeric::numeric_task::AssignmentOperation::apply(
-            numeric_state[affected_var_id],
-            eff.operation(),
-            operand,
-        );
+        numeric_state[affected_var_id] =
+            planners_sas::numeric::numeric_task::AssignmentOperation::apply(
+                numeric_state[affected_var_id],
+                eff.operation(),
+                operand,
+            );
     }
 }
 
@@ -282,7 +281,10 @@ pub(crate) fn debug_print_wildcard_plan(
     }
 
     if let Some(prop0) = plan.abstract_prop_states.first() {
-        println!("  s0 props: {}", fmt_nontrivial_props(prop0, domain_sizes, 100));
+        println!(
+            "  s0 props: {}",
+            fmt_nontrivial_props(prop0, domain_sizes, 100)
+        );
     }
     if let Some(num0) = plan.abstract_numeric_states.first() {
         println!(
@@ -354,7 +356,11 @@ fn debug_print_concrete_trace(
     let _ = axiom_evaluator.evaluate(&mut buffer, &mut numeric_state);
 
     let (prop_scope, num_scope) = trace_variable_scope(task, plan, shown_steps);
-    println!("[Concrete Trace] scope: props={} nums={}", prop_scope.len(), num_scope.len());
+    println!(
+        "[Concrete Trace] scope: props={} nums={}",
+        prop_scope.len(),
+        num_scope.len()
+    );
     println!(
         "  s0 props: {}",
         fmt_concrete_props(task, &state_packer, &buffer, &prop_scope, 200)
@@ -371,7 +377,11 @@ fn debug_print_concrete_trace(
             break;
         }
         let expected_abs_numeric_succ = &plan.abstract_numeric_states[step + 1];
-        let choices = plan.wildcard_plan.get(step).map(|v| v.as_slice()).unwrap_or(&[]);
+        let choices = plan
+            .wildcard_plan
+            .get(step)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
 
         let mut chosen: Option<(usize, Vec<u64>, Vec<f64>)> = None;
         let mut tries = 0usize;
@@ -494,7 +504,10 @@ fn trace_variable_scope(
         }
     }
 
-    (prop_vars.into_iter().collect(), num_vars.into_iter().collect())
+    (
+        prop_vars.into_iter().collect(),
+        num_vars.into_iter().collect(),
+    )
 }
 
 fn fmt_concrete_props(
@@ -511,7 +524,11 @@ fn fmt_concrete_props(
             let _ = write!(&mut out, " ...");
             break;
         }
-        let dom = task.variables().get(var_id).map(|v| v.domain_size()).unwrap_or(0);
+        let dom = task
+            .variables()
+            .get(var_id)
+            .map(|v| v.domain_size())
+            .unwrap_or(0);
         if dom <= 1 {
             continue;
         }
@@ -522,7 +539,11 @@ fn fmt_concrete_props(
         let _ = write!(&mut out, "v{var_id}={val}");
         shown += 1;
     }
-    if out.is_empty() { "<empty>".to_string() } else { out }
+    if out.is_empty() {
+        "<empty>".to_string()
+    } else {
+        out
+    }
 }
 
 fn fmt_concrete_nums(
@@ -558,7 +579,11 @@ fn fmt_concrete_nums(
         let _ = write!(&mut out, "n{num_id}={}{}", fmt_f64_compact(v), part_s);
         shown += 1;
     }
-    if out.is_empty() { "<empty>".to_string() } else { out }
+    if out.is_empty() {
+        "<empty>".to_string()
+    } else {
+        out
+    }
 }
 
 fn fmt_delta_i32(prev: &[i32], cur: &[i32], max_items: usize) -> String {
@@ -808,7 +833,8 @@ pub(crate) fn dump_distances(
                 if shown > 0 {
                     let mut names: Vec<&str> = Vec::new();
                     for cv in concretes.iter().take(shown) {
-                        let fact = planners_sas::numeric::numeric_task::Fact::new(var_id as u32, *cv);
+                        let fact =
+                            planners_sas::numeric::numeric_task::Fact::new(var_id as u32, *cv);
                         let n = task.get_fact_name(&fact);
                         if !n.is_empty() {
                             names.push(n);
@@ -891,7 +917,11 @@ pub(crate) fn dump_distances(
     println!("{sep}");
 
     for state_hash in 0..(num_states as i32) {
-        let dist = table.distances.get(state_hash as usize).copied().unwrap_or(f64::INFINITY);
+        let dist = table
+            .distances
+            .get(state_hash as usize)
+            .copied()
+            .unwrap_or(f64::INFINITY);
         let is_init = state_hash == table.initial_state_hash;
         let is_goal = factory.is_goal_state(
             state_hash,
@@ -938,7 +968,11 @@ pub(crate) fn dump_distances(
             let mult = table.hash_multipliers[var_id] as i64;
             let dom = factory.domain_sizes()[var_id] as i64;
             let value = (((state_hash as i64) / mult) % dom) as i64;
-            line.push_str(&format!("{val:>width$} | ", val = value, width = prop_widths[i]));
+            line.push_str(&format!(
+                "{val:>width$} | ",
+                val = value,
+                width = prop_widths[i]
+            ));
         }
 
         println!("{line}");

@@ -267,7 +267,9 @@ impl Heuristic for DomainAbstractionHeuristic {
             let mut prop_str_vec = vec![];
             for (var, val) in prop.iter().enumerate() {
                 if abstract_prop_sizes.get(var).copied().unwrap_or(0) <= 1
-                    || domain_mapping.get(var).is_some_and(|entry| entry.is_empty())
+                    || domain_mapping
+                        .get(var)
+                        .is_some_and(|entry| entry.is_empty())
                 {
                     continue;
                 }
@@ -278,7 +280,11 @@ impl Heuristic for DomainAbstractionHeuristic {
             let mut abs_prop_str = vec![];
             for var in 0..num_props {
                 let dom = abstract_prop_sizes[var];
-                if dom <= 1 || domain_mapping.get(var).is_some_and(|entry| entry.is_empty()) {
+                if dom <= 1
+                    || domain_mapping
+                        .get(var)
+                        .is_some_and(|entry| entry.is_empty())
+                {
                     continue;
                 }
                 let mult = multipliers[var] as i64;
@@ -347,8 +353,7 @@ impl Heuristic for DomainAbstractionHeuristic {
                 dist,
             );
 
-            if std::env::var("DA_TRACE_REAL_DISTANCE_CHECK")
-                .unwrap_or_else(|_| "0".to_string())
+            if std::env::var("DA_TRACE_REAL_DISTANCE_CHECK").unwrap_or_else(|_| "0".to_string())
                 == "1"
             {
                 if let Some((real_distance, admissible, details)) =
@@ -364,8 +369,7 @@ impl Heuristic for DomainAbstractionHeuristic {
                 }
             }
 
-            if std::env::var("DA_TRACE_COMPARISON_MISMATCH")
-                .unwrap_or_else(|_| "0".to_string())
+            if std::env::var("DA_TRACE_COMPARISON_MISMATCH").unwrap_or_else(|_| "0".to_string())
                 == "1"
             {
                 let mut abstract_intervals = seed_numeric_intervals_from_initial_state(task);
@@ -399,7 +403,8 @@ impl Heuristic for DomainAbstractionHeuristic {
                         Some(false) => 1,
                         None => 2,
                     };
-                    let hash_value = abs_prop_str_value(var_id, abstract_prop_sizes, multipliers, hash);
+                    let hash_value =
+                        abs_prop_str_value(var_id, abstract_prop_sizes, multipliers, hash);
                     if point_value != prop[var_id]
                         || interval_value != hash_value
                         || point_value != interval_value
@@ -429,9 +434,13 @@ impl Heuristic for DomainAbstractionHeuristic {
     }
 }
 
-fn abs_prop_str_value(var: usize, abstract_prop_sizes: &[i32], multipliers: &[i32], hash: i32) -> i32 {
+fn abs_prop_str_value(
+    var: usize,
+    abstract_prop_sizes: &[i32],
+    multipliers: &[i32],
+    hash: i32,
+) -> i32 {
     let dom = abstract_prop_sizes[var];
     let mult = multipliers[var] as i64;
     (((hash as i64) / mult) % (dom as i64)) as i32
 }
-

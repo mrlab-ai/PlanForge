@@ -89,6 +89,7 @@ pub struct CegarConfig {
     pub flaw_treatment: FlawTreatment,
     pub init_split_method: InitSplitMethod,
     pub exec_entire_plan: ExecEntirePlanMode,
+    pub init_split_var_ids: Option<HashSet<usize>>,
 }
 
 impl Default for CegarConfig {
@@ -103,6 +104,7 @@ impl Default for CegarConfig {
             flaw_treatment: FlawTreatment::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
+            init_split_var_ids: None,
         }
     }
 }
@@ -135,7 +137,10 @@ pub struct Cegar {
 
 impl Cegar {
     pub fn new(config: CegarConfig) -> Result<Self> {
-        ensure!(config.max_abstraction_size > 0, "max_abstraction_size must be > 0");
+        ensure!(
+            config.max_abstraction_size > 0,
+            "max_abstraction_size must be > 0"
+        );
         ensure!(config.max_iterations > 0, "max_iterations must be > 0");
         Ok(Self { config })
     }
@@ -221,14 +226,13 @@ impl Cegar {
                                 anyhow::anyhow!("failed to evaluate axioms after operator: {e:?}")
                             })?;
 
-                        let deviation_flaws =
-                            get_numeric_deviation_flaws(
-                                op,
-                                &numeric_state_before_op,
-                                &candidate_numeric_state,
-                                expected_abs_numeric_state,
-                                partitions,
-                            );
+                        let deviation_flaws = get_numeric_deviation_flaws(
+                            op,
+                            &numeric_state_before_op,
+                            &candidate_numeric_state,
+                            expected_abs_numeric_state,
+                            partitions,
+                        );
                         if deviation_flaws.is_empty() {
                             buffer = candidate_buffer;
                             numeric_state = candidate_numeric_state;
@@ -559,7 +563,6 @@ fn fix_single_random_flaw(
     let mut refined_numeric_vars: HashSet<usize> = HashSet::new();
 
     for idx in indices {
-
         if try_refine_from_flaw(
             task,
             &flaws[idx],
@@ -1001,7 +1004,8 @@ fn compute_initial_split_mapping(
     goal_value: Option<i32>,
 ) -> Option<(i32, Vec<i32>)> {
     let var_i32 = i32::try_from(var_id).ok()?;
-    let concrete_domain_size = usize::try_from(task.get_variable_domain_size(var_i32).ok()?.max(0)).ok()?;
+    let concrete_domain_size =
+        usize::try_from(task.get_variable_domain_size(var_i32).ok()?.max(0)).ok()?;
     if concrete_domain_size == 0 {
         return None;
     }
@@ -1024,7 +1028,8 @@ fn compute_initial_split_mapping(
             Some((2, mapping))
         }
         InitSplitMethod::GoalValueOrRandomIfNonGoal => {
-            let chosen = goal_value_usize.unwrap_or_else(|| choose_random_domain_value(concrete_domain_size));
+            let chosen = goal_value_usize
+                .unwrap_or_else(|| choose_random_domain_value(concrete_domain_size));
             let mut mapping = vec![0; concrete_domain_size];
             mapping[chosen] = 1;
             Some((2, mapping))
@@ -1069,7 +1074,10 @@ fn compute_initial_split_mapping(
                 Some((2, mapping))
             }
         }
-        InitSplitMethod::Identity => Some((concrete_domain_size as i32, (0..concrete_domain_size as i32).collect())),
+        InitSplitMethod::Identity => Some((
+            concrete_domain_size as i32,
+            (0..concrete_domain_size as i32).collect(),
+        )),
     }
 }
 
@@ -1081,10 +1089,15 @@ fn apply_initial_goal_splits(
     numeric_domain_sizes: &[usize],
 ) {
     let goal_values: HashMap<usize, i32> = goal_variable_values(task).into_iter().collect();
-    let mut goal_vars: Vec<usize> = goal_values.keys().copied().collect();
-    goal_vars.sort_unstable();
+    let mut candidate_var_ids: Vec<usize> = config
+        .init_split_var_ids
+        .as_ref()
+        .map(|var_ids| var_ids.iter().copied().collect())
+        .unwrap_or_else(|| goal_values.keys().copied().collect());
+    candidate_var_ids.sort_unstable();
+    candidate_var_ids.dedup();
 
-    for var_id in goal_vars {
+    for var_id in candidate_var_ids {
         let Some((new_domain_size, mapping)) =
             compute_initial_split_mapping(task, config, var_id, goal_values.get(&var_id).copied())
         else {
@@ -1112,7 +1125,10 @@ fn apply_initial_goal_splits(
 }
 
 pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<CegarOutcome> {
-    ensure!(config.max_abstraction_size > 0, "max_abstraction_size must be > 0");
+    ensure!(
+        config.max_abstraction_size > 0,
+        "max_abstraction_size must be > 0"
+    );
     ensure!(config.max_iterations > 0, "max_iterations must be > 0");
 
     let start = Instant::now();
@@ -1190,7 +1206,6 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
             wildcard_plan,
         };
         last_step = Some(step);
-
 
         // Refinement requires a wildcard plan (current Rust port mirrors the numeric-fd flow).
         let Some(plan) = last_step.as_ref().and_then(|s| s.wildcard_plan.as_ref()) else {

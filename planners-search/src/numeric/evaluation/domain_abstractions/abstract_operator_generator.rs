@@ -9,8 +9,8 @@ use anyhow::{Context, Result, anyhow, ensure};
 use planners_sas::numeric::axioms::{CalOperator, ComparisonOperator};
 
 use planners_sas::numeric::numeric_task::{
-    metric_operator_cost_from_initial_values, AbstractNumericTask, AssignmentEffect, Effect,
-    Fact, NumericType, Operator,
+    AbstractNumericTask, AssignmentEffect, Effect, Fact, NumericType, Operator,
+    metric_operator_cost_from_initial_values,
 };
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
@@ -47,11 +47,7 @@ impl AbstractOperator {
         let mut preconditions: Vec<Fact> = pre_pairs.to_vec();
         preconditions.extend_from_slice(prev_pairs);
         preconditions.sort();
-        debug_assert!(
-            preconditions
-                .windows(2)
-                .all(|w| w[0].var() != w[1].var())
-        );
+        debug_assert!(preconditions.windows(2).all(|w| w[0].var() != w[1].var()));
         debug_assert!(preconditions.windows(2).all(|w| w[0].var() != w[1].var()));
 
         let mut regression_preconditions: Vec<Fact> = prev_pairs.to_vec();
@@ -404,7 +400,10 @@ fn format_abstract_fact(
     let var_id = fact.var() as usize;
     if var_id < num_props {
         let var_name = task.get_variable_name(var_id as i32).unwrap_or("<unknown>");
-        let concrete_size = task.get_variable_domain_size(var_id as i32).unwrap_or(0).max(0) as usize;
+        let concrete_size = task
+            .get_variable_domain_size(var_id as i32)
+            .unwrap_or(0)
+            .max(0) as usize;
         let mapping = generator.domain_mapping.get(var_id);
         let mut mapped_concretes: Vec<String> = Vec::new();
         for concrete_val in 0..concrete_size {
@@ -412,7 +411,10 @@ fn format_abstract_fact(
                 continue;
             };
             if abs_val == fact.value() {
-                mapped_concretes.push(task.get_fact_name(&Fact::new(fact.var(), concrete_val as i32)).to_string());
+                mapped_concretes.push(
+                    task.get_fact_name(&Fact::new(fact.var(), concrete_val as i32))
+                        .to_string(),
+                );
             }
         }
         if mapped_concretes.is_empty() {
@@ -932,16 +934,10 @@ fn compute_hash_effects_with_preconditions(
             )?);
 
             source_partition_facts.extend(compute_assignment_axiom_cascades(
-                task,
-                generator,
-                &combo,
-                true,
+                task, generator, &combo, true,
             )?);
             target_partition_facts.extend(compute_assignment_axiom_cascades(
-                task,
-                generator,
-                &combo,
-                false,
+                task, generator, &combo, false,
             )?);
         }
 
@@ -970,13 +966,19 @@ fn build_numeric_intervals_for_combo(
     use_target_partitions: bool,
 ) -> Result<Vec<Interval>> {
     let initial_numeric_values = task.get_initial_numeric_state_values();
-    let mut numeric_intervals: Vec<Interval> = vec![Interval::new(0.0, 0.0, false, false); task.numeric_variables().len()];
+    let mut numeric_intervals: Vec<Interval> =
+        vec![Interval::new(0.0, 0.0, false, false); task.numeric_variables().len()];
 
     for (var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
         if numeric_var.get_type() == &NumericType::Constant {
             numeric_intervals[var_id] = Interval::singleton(initial_numeric_values[var_id]);
         } else if numeric_var.get_type() != &NumericType::Derived
-            && generator.numeric_domain_sizes.get(var_id).copied().unwrap_or(0) == 1
+            && generator
+                .numeric_domain_sizes
+                .get(var_id)
+                .copied()
+                .unwrap_or(0)
+                == 1
         {
             numeric_intervals[var_id] = Interval::unbounded();
         }
@@ -1130,8 +1132,11 @@ fn compute_direct_comparison_cascades(
         };
 
         let affected_var_id = comparison_axiom.get_affected_var_id() as usize;
-        match apply_comparison_interval(comparison_axiom.get_operator(), left_interval, right_interval)
-        {
+        match apply_comparison_interval(
+            comparison_axiom.get_operator(),
+            left_interval,
+            right_interval,
+        ) {
             Some(true) => affected_facts.push(Fact::new(
                 affected_var_id as u32,
                 generator.domain_mapping[affected_var_id][COMPARISON_TRUE_VAL],
@@ -1300,9 +1305,8 @@ fn apply_comparison_interval(
     let min_gt_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
         (amin > bmax) || (amin == bmax && (!amin_c || !bmax_c))
     };
-    let intervals_are_disjoint = || {
-        max_lt_min(lmax, lmax_c, rmin, rmin_c) || max_lt_min(rmax, rmax_c, lmin, lmin_c)
-    };
+    let intervals_are_disjoint =
+        || max_lt_min(lmax, lmax_c, rmin, rmin_c) || max_lt_min(rmax, rmax_c, lmin, lmin_c);
 
     match op {
         ComparisonOperator::LessThan => {
@@ -1323,7 +1327,9 @@ fn apply_comparison_interval(
                 None
             }
         }
-        ComparisonOperator::GreaterThan => apply_comparison_interval(opposite_comparison(op), rhs, lhs),
+        ComparisonOperator::GreaterThan => {
+            apply_comparison_interval(opposite_comparison(op), rhs, lhs)
+        }
         ComparisonOperator::GreaterThanOrEqual => {
             apply_comparison_interval(opposite_comparison(op), rhs, lhs)
         }

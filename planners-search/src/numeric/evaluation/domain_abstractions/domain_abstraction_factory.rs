@@ -629,7 +629,7 @@ impl DomainAbstractionFactory {
                 .partitions
                 .partitions(num_var_id)
                 .with_context(|| format!("missing partitions for numeric var {num_var_id}"))?;
-                let part = utils::partition_for_value(parts, val).with_context(|| {
+            let part = utils::partition_for_value(parts, val).with_context(|| {
                 format!(
                     "initial numeric value {val} not contained in any partition for numeric var {num_var_id}"
                 )
@@ -1151,8 +1151,6 @@ impl DomainAbstractionFactory {
                     &fixed_comparisons,
                 )?;
 
-                
-
                 let representative_predecessor = possible_predecessors.iter().copied().max();
 
                 for pred in possible_predecessors.iter().copied() {
@@ -1160,7 +1158,7 @@ impl DomainAbstractionFactory {
                         continue;
                     };
                     debug_assert!(pred_idx < num_states, "predecessor hash does not fit usize");
- 
+
                     if alternative_cost + 1e-12 < distances[pred_idx] {
                         let previous_cost = distances[pred_idx];
                         distances[pred_idx] = alternative_cost;
@@ -1252,4 +1250,3 @@ fn decode_state_to_vectors(
     prop_out.push(props);
     num_out.push(nums);
 }
-

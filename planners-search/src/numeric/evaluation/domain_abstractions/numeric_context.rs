@@ -3,6 +3,7 @@ use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
 
 use super::comparison_expression::{ArithOp, Interval};
 
+// TODO: Redundant? Hopefully we can implement without performance drop all the functions into the successor generator, maybe even with Interval support
 fn arith_op_from_axiom(op: &CalOperator) -> ArithOp {
     match op {
         CalOperator::Sum => ArithOp::Add,

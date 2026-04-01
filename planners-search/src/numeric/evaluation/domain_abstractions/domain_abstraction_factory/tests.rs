@@ -3,7 +3,9 @@ use super::*;
 use std::collections::BTreeSet;
 
 use planners_sas::numeric::axioms::PropositionalAxiom;
-use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planners_sas::numeric::axioms::{
+    AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
+};
 use planners_sas::numeric::numeric_task::{
     ExplicitVariable, Fact, Metric, NumericRootTask, NumericVariable, Operator,
 };
@@ -633,7 +635,9 @@ fn factory_numeric_context_recomputes_derived_intervals_from_regular_vars() {
         vec![Interval::singleton(2.0), Interval::singleton(100.0)],
     ]);
     let numeric_domain_sizes = vec![2, 1, 2];
-    let factory = DomainAbstractionFactory::new(&task, vec![], vec![], partitions, numeric_domain_sizes).unwrap();
+    let factory =
+        DomainAbstractionFactory::new(&task, vec![], vec![], partitions, numeric_domain_sizes)
+            .unwrap();
     let generator = factory.make_operator_generator(&task, true).unwrap();
     let hash_multipliers = generator.hash_multipliers().to_vec();
 

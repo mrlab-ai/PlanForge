@@ -108,5 +108,10 @@ fn duplicate_state_keeps_better_metric_cost_information() {
 
     assert_eq!(expensive_successor.get_id(), cheap_successor.get_id());
     assert_eq!(state_registry.get_cost_information(&cheap_successor), [1.0]);
-    assert_eq!(state_registry.transition_cost(&initial_state, &cheap_successor).unwrap(), 1.0);
+    assert_eq!(
+        state_registry
+            .transition_cost(&initial_state, &cheap_successor)
+            .unwrap(),
+        1.0
+    );
 }

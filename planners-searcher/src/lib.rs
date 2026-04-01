@@ -5,8 +5,10 @@ use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
 use planners_sas::numeric::state_registry::StateRegistry;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use planners_search::numeric::evaluation::domain_abstractions::cegar::CegarConfig;
+use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegar;
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
+use planners_search::numeric::evaluation::domain_abstractions::max_domain_abstraction_heuristic::MaxDomainAbstractionHeuristic;
 use planners_search::numeric::search_engine::{
     AStarSearch, SearchEngine, SearchResult, SearchStatus,
 };
@@ -121,6 +123,20 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                     })?;
                     Some(Box::new(DomainAbstractionHeuristic::new(None, abstraction))
                         as Box<dyn planners_search::numeric::evaluation::Heuristic>)
+                }
+                crate::recursive_config::HeuristicSpec::MultiDomainAbstractions(config) => {
+                    let generator =
+                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
+                    println!("Building multiple domain abstractions (CEGAR)...");
+                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
+                        std::io::Error::other(format!(
+                            "failed to build multi domain abstractions: {e:#}"
+                        ))
+                    })?;
+                    Some(
+                        Box::new(MaxDomainAbstractionHeuristic::new(None, abstractions))
+                            as Box<dyn planners_search::numeric::evaluation::Heuristic>,
+                    )
                 }
             };
 

@@ -15,7 +15,7 @@ use crate::numeric::{
 };
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::numeric_task::{
-    metric_operator_cost_from_initial_values, AbstractNumericTask, Fact, Operator,
+    AbstractNumericTask, Fact, Operator, metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistry};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -158,7 +158,8 @@ impl<'a> AStarSearch<'a> {
         // (Required to derive a correct min_action_cost under metric.)
         let mut state_registry = state_registry;
         let initial_state = state_registry.get_initial_state();
-        let operator_costs = compute_effective_operator_costs(task, &state_registry, &initial_state);
+        let operator_costs =
+            compute_effective_operator_costs(task, &state_registry, &initial_state);
 
         // Determine min_action_cost.
         let min_action_cost = operator_costs

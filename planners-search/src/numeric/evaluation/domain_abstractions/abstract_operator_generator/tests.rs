@@ -505,7 +505,8 @@ fn derived_numeric_partitions_are_not_materialized_in_transitions() {
             && trans.target_partition_facts.contains(&Fact::new(0, 1))
     }));
     assert!(transitions.iter().all(|trans| {
-        trans.source_partition_facts
+        trans
+            .source_partition_facts
             .iter()
             .all(|fact| fact.var() < 3)
             && trans
@@ -754,9 +755,10 @@ fn assignment_axiom_chain_can_propagate_through_changed_var_and_constant() {
     let abs_ops = generator.build_abstract_operators(&task).unwrap();
 
     assert!(
-        abs_ops
+        abs_ops.iter().any(|op| op
+            .regression_preconditions
             .iter()
-            .any(|op| op.regression_preconditions.iter().any(|fact| fact.var() == 0)),
+            .any(|fact| fact.var() == 0)),
         "abs_ops={abs_ops:#?}"
     );
 }
@@ -799,7 +801,8 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
     )
     .unwrap();
 
-    let intervals = build_numeric_intervals_for_combo(&task, &generator, &[(0, 0, 1)], false).unwrap();
+    let intervals =
+        build_numeric_intervals_for_combo(&task, &generator, &[(0, 0, 1)], false).unwrap();
 
     assert_eq!(intervals[0], Interval::singleton(5.0));
     assert_eq!(intervals[1], Interval::singleton(0.0));
@@ -916,9 +919,10 @@ fn conditional_propositional_effect_branches() {
     )
     .unwrap();
     let err = generator.build_abstract_operators(&task).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("conditional propositional or numeric effects are unsupported"));
+    assert!(
+        err.to_string()
+            .contains("conditional propositional or numeric effects are unsupported")
+    );
 }
 
 #[test]
@@ -985,9 +989,10 @@ fn conditional_assignment_effect_branches() {
     )
     .unwrap();
     let err = generator.build_abstract_operators(&task).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("conditional propositional or numeric effects are unsupported"));
+    assert!(
+        err.to_string()
+            .contains("conditional propositional or numeric effects are unsupported")
+    );
 }
 
 #[test]
@@ -1042,5 +1047,8 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
     )
     .unwrap();
     let err = generator.build_abstract_operators(&task).unwrap_err();
-    assert!(err.to_string().contains("assignment effects require constant RHS"));
+    assert!(
+        err.to_string()
+            .contains("assignment effects require constant RHS")
+    );
 }
