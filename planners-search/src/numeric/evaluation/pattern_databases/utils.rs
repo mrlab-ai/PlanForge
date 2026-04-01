@@ -55,8 +55,10 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
         fmt_distance(pdb.min_operator_cost)
     );
 
-    let prop_headers: Vec<String> = (0..pdb.task.variables().len())
-        .map(|var_id| {
+    let pattern_regular_projected_ids = pdb.task.pattern_regular_projected_ids();
+    let prop_headers: Vec<String> = pattern_regular_projected_ids
+        .iter()
+        .map(|&var_id| {
             let name = pdb
                 .task
                 .get_variable_name(var_id as i32)
@@ -72,8 +74,8 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
 
     let prop_widths: Vec<usize> = prop_headers
         .iter()
-        .enumerate()
-        .map(|(var_id, header)| {
+        .zip(pattern_regular_projected_ids.iter())
+        .map(|(header, &var_id)| {
             let value_width = pdb
                 .states
                 .iter()
@@ -134,8 +136,14 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
             fmt_distance(pdb.distances[state_id])
         );
 
-        for (value, width) in state.propositional.iter().zip(prop_widths.iter()) {
-            line.push_str(&format!("{value:>width$} | ", width = *width));
+        for (&projected_var_id, width) in
+            pattern_regular_projected_ids.iter().zip(prop_widths.iter())
+        {
+            line.push_str(&format!(
+                "{:>width$} | ",
+                state.propositional[projected_var_id],
+                width = *width
+            ));
         }
         for (&projected_numeric_id, width) in
             pattern_numeric_projected_ids.iter().zip(num_widths.iter())

@@ -24,7 +24,7 @@ pub fn generate_greedy_pattern(
     task: &dyn AbstractNumericTask,
     config: GreedyPatternGeneratorConfig,
 ) -> Pattern {
-    let (goal_regular, goal_numeric) = collect_goal_variables(task);
+    let (goal_regular, goal_numeric, true_goal_regular) = collect_goal_variables(task);
 
     let mut pattern = Pattern {
         regular: Vec::new(),
@@ -45,6 +45,21 @@ pub fn generate_greedy_pattern(
         }
         pattern.regular.push(var_id);
         size *= domain_size;
+    }
+
+    if pattern.regular.is_empty() {
+        for &var_id in &true_goal_regular {
+            let domain_size = task
+                .get_variable_domain_size(var_id as i32)
+                .unwrap_or(1)
+                .max(1) as usize;
+            if size.saturating_mul(domain_size) > config.max_pdb_states {
+                break;
+            }
+            pattern.regular.push(var_id);
+            size *= domain_size;
+            break;
+        }
     }
 
     for numeric_var_id in 0..task.numeric_variables().len() {
@@ -94,9 +109,12 @@ pub fn generate_greedy_pattern(
     pattern
 }
 
-fn collect_goal_variables(task: &dyn AbstractNumericTask) -> (BTreeSet<usize>, BTreeSet<usize>) {
+fn collect_goal_variables(
+    task: &dyn AbstractNumericTask,
+) -> (BTreeSet<usize>, BTreeSet<usize>, BTreeSet<usize>) {
     let mut regular = BTreeSet::new();
     let mut numeric = BTreeSet::new();
+    let mut true_goal_regular = collect_goal_related_propositional_vars(task);
 
     for goal_index in 0..usize::try_from(task.get_num_goals().max(0)).unwrap_or(0) {
         let goal = task.get_goal_fact(goal_index as i32);
@@ -107,6 +125,7 @@ fn collect_goal_variables(task: &dyn AbstractNumericTask) -> (BTreeSet<usize>, B
             == -1
         {
             regular.insert(goal_var_id);
+            true_goal_regular.insert(goal_var_id);
         }
 
         for comparison_axiom in task.comparison_axioms() {
@@ -133,7 +152,35 @@ fn collect_goal_variables(task: &dyn AbstractNumericTask) -> (BTreeSet<usize>, B
         }
     }
 
-    (regular, numeric)
+    (regular, numeric, true_goal_regular)
+}
+
+fn collect_goal_related_propositional_vars(task: &dyn AbstractNumericTask) -> BTreeSet<usize> {
+    let mut goal_related: BTreeSet<usize> = (0..task.get_num_goals())
+        .filter_map(|goal_id| usize::try_from(task.get_goal_fact(goal_id).var()).ok())
+        .collect();
+
+    loop {
+        let mut changed = false;
+
+        for axiom in task.axioms() {
+            let affected_var_id = axiom.var_id() as usize;
+            if goal_related.contains(&affected_var_id) {
+                for condition in axiom.conditions() {
+                    if let Ok(condition_var_id) = usize::try_from(condition.var()) {
+                        changed |= goal_related.insert(condition_var_id);
+                    }
+                }
+            }
+        }
+
+        if !changed {
+            break;
+        }
+    }
+
+    goal_related.retain(|&var_id| task.get_variable_axiom_layer(var_id as i32).unwrap_or(-1) == -1);
+    goal_related
 }
 
 #[cfg(test)]
@@ -209,5 +256,37 @@ mod tests {
         let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
 
         assert!(pattern.numeric.contains(&1));
+    }
+
+    #[test]
+    fn greedy_pattern_includes_true_goal_support_var() {
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            vec![
+                simple_var("support", -1),
+                ExplicitVariable::new(
+                    2,
+                    "goal".to_string(),
+                    vec!["off".to_string(), "on".to_string()],
+                    1,
+                    0,
+                ),
+            ],
+            vec![],
+            vec![Fact::new(1, 1)],
+            vec![],
+            vec![0, 0],
+            vec![],
+            vec![],
+            vec![PropositionalAxiom::new(vec![Fact::new(0, 1)], 1, 0, 1)],
+            vec![],
+            vec![],
+            (0, 0),
+        );
+
+        let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
+
+        assert!(pattern.regular.contains(&0));
     }
 }
