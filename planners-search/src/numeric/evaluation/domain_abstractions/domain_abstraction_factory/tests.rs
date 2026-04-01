@@ -7,7 +7,7 @@ use planners_sas::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
 };
 use planners_sas::numeric::numeric_task::{
-    ExplicitVariable, Fact, Metric, NumericRootTask, NumericVariable, Operator,
+    ExplicitVariable, Fact, Metric, NumericRootTask, NumericType, NumericVariable, Operator,
 };
 
 fn identity_domain_mapping_and_sizes(
@@ -674,25 +674,39 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
 }
 
 #[test]
-fn factory_numeric_context_recomputes_derived_intervals_from_regular_vars() {
+fn factory_numeric_context_recomputes_tree_reachable_derived_intervals_from_regular_vars() {
+    let variables = vec![ExplicitVariable::new(
+        3,
+        "cmp".into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        0,
+        2,
+    )];
+
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, -1),
         NumericVariable::new("c2".into(), NumericType::Constant, -1),
         NumericVariable::new("d".into(), NumericType::Derived, -1),
     ];
     let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        0,
+        2,
+        1,
+        ComparisonOperator::GreaterThan,
+    )];
     let task = NumericRootTask::new(
         4,
         Metric::new(true, -1),
-        vec![],
+        variables,
         numeric_variables,
         vec![],
         vec![],
-        vec![],
+        vec![0],
         vec![0.0, 2.0, 0.0],
         vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
         vec![],
-        vec![],
+        comparison_axioms,
         assignment_axioms,
         (0, 0),
     );
@@ -703,18 +717,24 @@ fn factory_numeric_context_recomputes_derived_intervals_from_regular_vars() {
         vec![Interval::singleton(2.0), Interval::singleton(100.0)],
     ]);
     let numeric_domain_sizes = vec![2, 1, 2];
-    let factory =
-        DomainAbstractionFactory::new(&task, vec![], vec![], partitions, numeric_domain_sizes)
-            .unwrap();
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .unwrap();
     let generator = factory.make_operator_generator(&task, true).unwrap();
     let hash_multipliers = generator.hash_multipliers().to_vec();
 
     let x_partition = 0i32;
     let c2_partition = 0i32;
     let derived_partition = 1i32;
-    let state_hash = x_partition * hash_multipliers[0]
-        + c2_partition * hash_multipliers[1]
-        + derived_partition * hash_multipliers[2];
+    let state_hash = x_partition * hash_multipliers[1]
+        + c2_partition * hash_multipliers[2]
+        + derived_partition * hash_multipliers[3];
 
     let numeric_intervals = factory
         .build_numeric_intervals(

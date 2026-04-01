@@ -236,12 +236,12 @@ fn get_flaws_reports_numeric_deviation_flaw() {
 }
 
 #[test]
-fn cegar_default_config_matches_numeric_fd_core_defaults() {
+fn cegar_default_config_matches_current_port_defaults() {
     let config = CegarConfig::default();
 
-    assert_eq!(config.max_abstraction_size, 100_000);
+    assert_eq!(config.max_abstraction_size, i64::MAX as usize);
     assert_eq!(config.max_iterations, 10_000);
-    assert!(!config.use_wildcard_plans);
+    assert!(config.use_wildcard_plans);
     assert_eq!(config.flaw_treatment, FlawTreatment::RandomSingleAtom);
     assert_eq!(config.init_split_method, InitSplitMethod::InitValue);
     assert_eq!(config.exec_entire_plan, ExecEntirePlanMode::StopAtFirstFlaw);
