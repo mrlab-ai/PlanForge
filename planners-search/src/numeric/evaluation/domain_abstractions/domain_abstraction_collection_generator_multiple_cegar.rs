@@ -90,11 +90,6 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub init_split_method: InitSplitMethod,
     pub numeric_split_strategy: NumericSplitStrategy,
     pub exec_entire_plan: ExecEntirePlanMode,
-    pub use_threshold_aware_numeric_splits: bool,
-    pub use_interval_numeric_splits: bool,
-    pub use_progress_weighted_flaw_selection: bool,
-    pub use_residual_distance_flaw_selection: bool,
-    pub refinement_batch_size: usize,
 }
 
 impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
@@ -117,24 +112,10 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,
             exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
-            use_threshold_aware_numeric_splits: false,
-            use_interval_numeric_splits: false,
-            use_progress_weighted_flaw_selection: false,
-            use_residual_distance_flaw_selection: false,
-            refinement_batch_size: 1,
         }
     }
 }
 
-impl DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-    pub fn effective_use_threshold_aware_numeric_splits(&self) -> bool {
-        self.use_threshold_aware_numeric_splits || self.use_interval_numeric_splits
-    }
-
-    pub fn effective_use_progress_weighted_flaw_selection(&self) -> bool {
-        self.use_progress_weighted_flaw_selection || self.use_residual_distance_flaw_selection
-    }
-}
 
 fn fmt_f64(value: f64) -> String {
     if value.is_infinite() {
@@ -166,11 +147,6 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "init_split_method={}, ",
                 "numeric_split_strategy={}, ",
                 "exec_entire_plan={}, ",
-                "use_threshold_aware_numeric_splits={}, ",
-                "use_interval_numeric_splits={}, ",
-                "use_progress_weighted_flaw_selection={}, ",
-                "use_residual_distance_flaw_selection={}, ",
-                "refinement_batch_size={}"
             ),
             self.max_abstraction_size,
             self.max_collection_size,
@@ -189,11 +165,6 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.init_split_method,
             self.numeric_split_strategy,
             self.exec_entire_plan,
-            self.use_threshold_aware_numeric_splits,
-            self.use_interval_numeric_splits,
-            self.use_progress_weighted_flaw_selection,
-            self.use_residual_distance_flaw_selection,
-            self.refinement_batch_size,
         )
     }
 }
@@ -218,19 +189,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         }
         if self.config.numeric_split_strategy != NumericSplitStrategy::Standard {
             bail!("`numeric_split_strategy=exclusion` is not supported in the current Rust port");
-        }
-        if self.config.effective_use_threshold_aware_numeric_splits() {
-            bail!(
-                "`use_threshold_aware_numeric_splits`/`use_interval_numeric_splits` is not supported in the current Rust port"
-            );
-        }
-        if self.config.effective_use_progress_weighted_flaw_selection() {
-            bail!(
-                "`use_progress_weighted_flaw_selection`/`use_residual_distance_flaw_selection` is not supported in the current Rust port"
-            );
-        }
-        if self.config.refinement_batch_size != 1 {
-            bail!("`refinement_batch_size != 1` is not supported in the current Rust port");
         }
         Ok(())
     }
