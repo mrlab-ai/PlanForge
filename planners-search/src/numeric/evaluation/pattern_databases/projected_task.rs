@@ -1197,12 +1197,7 @@ fn ensure_supported_assignment_operator(
     operator: &CalOperator,
 ) -> Result<(), ProjectedTaskBuildError> {
     match operator {
-        CalOperator::Sum | CalOperator::Product => Ok(()),
-        CalOperator::Difference => Err(ProjectedTaskBuildError::UnsupportedAssignmentOperator {
-            axiom_id,
-            numeric_var_id,
-            operator: "-",
-        }),
+        CalOperator::Sum | CalOperator::Difference | CalOperator::Product => Ok(()),
         CalOperator::Division => Err(ProjectedTaskBuildError::UnsupportedAssignmentOperator {
             axiom_id,
             numeric_var_id,
@@ -1217,10 +1212,10 @@ fn ensure_supported_comparison_tree(
 ) -> Result<(), ProjectedTaskBuildError> {
     for node in &tree.nodes {
         if let ComparisonTreeNode::Arith { op, .. } = node {
-            if !matches!(op, ArithOp::Add | ArithOp::Mul) {
+            if !matches!(op, ArithOp::Add | ArithOp::Sub | ArithOp::Mul) {
                 return Err(ProjectedTaskBuildError::UnsupportedComparisonTree {
                     comparison_axiom_id: tree.comparison_axiom_id,
-                    reason: "comparison tree uses subtraction or division",
+                    reason: "comparison tree uses division",
                 });
             }
         }
@@ -1658,7 +1653,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_task_rejects_subtraction_based_numeric_conditions() {
+    fn projected_task_accepts_subtraction_based_numeric_conditions() {
         let variables = vec![simple_var("p", -1), simple_var("cmp", 0)];
         let numeric_variables = vec![
             NumericVariable::new("const1".to_string(), NumericType::Constant, -1),
@@ -1686,18 +1681,18 @@ mod tests {
             (0, 0),
         );
 
-        let result = ProjectedTask::new(
+        let projected = ProjectedTask::new(
             &task,
             &Pattern {
                 regular: vec![0],
                 numeric: vec![1],
             },
-        );
+        )
+        .unwrap();
 
-        assert!(matches!(
-            result,
-            Err(ProjectedTaskBuildError::UnsupportedAssignmentOperator { .. })
-        ));
+        assert_eq!(projected.get_num_cmp_axioms(), 1);
+        let init_num = projected.get_initial_numeric_state_values();
+        assert_eq!(init_num.as_slice(), &[2.0, 1.0, 1.0]);
     }
 
     #[test]
