@@ -124,7 +124,6 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                 planners_searcher::HeuristicSpec::DomainAbstraction => {
                     println!("Building domain abstraction (CEGAR)...");
                     let mut config = CegarConfig::default();
-                    config.enable_refinement = true;
                     config.debug = true;
 
                     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
@@ -251,7 +250,6 @@ fn evaluate_da_state(
 fn build_da_heuristic(task: &dyn AbstractNumericTask, name: Option<String>) -> std::io::Result<DomainAbstractionHeuristic> {
     println!("Building domain abstraction (CEGAR)...");
     let mut config = CegarConfig::default();
-    config.enable_refinement = true;
     config.debug = true;
 
     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
@@ -738,7 +736,6 @@ fn run_da_debug(
     println!("Running da_debug(): build terminal domain abstraction, replay wildcard plan, and compare h(s) to exact remaining distance.");
 
     let mut config = CegarConfig::default();
-    config.enable_refinement = true;
     config.debug = true;
 
     let cegar = Cegar::new(config.clone())

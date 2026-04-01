@@ -105,7 +105,6 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 crate::recursive_config::HeuristicSpec::DomainAbstraction => {
                     println!("Building domain abstraction (CEGAR)...");
                     let mut config = CegarConfig::default();
-                    config.enable_refinement = true;
                     config.debug = true;
 
                     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {

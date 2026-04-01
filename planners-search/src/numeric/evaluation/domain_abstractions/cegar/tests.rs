@@ -1,4 +1,5 @@
 use super::*;
+use rand::{SeedableRng, rngs::SmallRng};
 
 use planners_sas::numeric::numeric_task::{
     ExplicitVariable, Metric, NumericRootTask, NumericVariable, Operator,
@@ -232,4 +233,89 @@ fn get_flaws_reports_numeric_deviation_flaw() {
         flaws.iter().any(|f| matches!(f, Flaw::Numeric(_))),
         "expected a numeric deviation flaw"
     );
+}
+
+#[test]
+fn cegar_default_config_matches_numeric_fd_core_defaults() {
+    let config = CegarConfig::default();
+
+    assert_eq!(config.max_abstraction_size, 100_000);
+    assert_eq!(config.max_iterations, 10_000);
+    assert!(!config.use_wildcard_plans);
+    assert_eq!(config.flaw_treatment, FlawTreatment::RandomSingleAtom);
+    assert_eq!(config.init_split_method, InitSplitMethod::InitValue);
+    assert_eq!(config.exec_entire_plan, ExecEntirePlanMode::StopAtFirstFlaw);
+    assert!(!config.use_threshold_aware_numeric_splits);
+    assert!(!config.use_progress_weighted_flaw_selection);
+    assert_eq!(config.refinement_batch_size, 1);
+}
+
+#[test]
+fn seeded_shuffle_indices_is_not_identity() {
+    let mut indices = vec![0, 1, 2, 3, 4, 5];
+    let original = indices.clone();
+    let mut rng = SmallRng::seed_from_u64(7);
+
+    shuffle_indices_with_rng(&mut indices, &mut rng);
+
+    assert_eq!(indices.len(), original.len());
+    let mut sorted = indices.clone();
+    sorted.sort_unstable();
+    assert_eq!(sorted, original);
+    assert_ne!(indices, original);
+}
+
+#[test]
+fn fix_flaws_respects_max_abstraction_size_limit() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        -1,
+        0,
+    )];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        vec![],
+        vec![Fact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let mut config = CegarConfig::default();
+    config.max_abstraction_size = 1;
+    config.enable_refinement = true;
+    let cegar = Cegar::new(config).unwrap();
+
+    let mut domain_mapping = vec![vec![0, 0]];
+    let mut domain_sizes = vec![1];
+    let mut partitions = NumericPartitions::trivial(&task);
+    let mut numeric_domain_sizes = vec![];
+    let flaws = vec![Flaw::Propositional(PropFlaw {
+        fact: Fact::new(0, 1),
+        dependent_numeric_flaws: vec![],
+    })];
+
+    let refined = cegar
+        .fix_flaws(
+            &task,
+            &flaws,
+            &mut domain_mapping,
+            &mut domain_sizes,
+            &mut partitions,
+            &mut numeric_domain_sizes,
+        )
+        .unwrap();
+
+    assert!(!refined);
+    assert_eq!(domain_sizes, vec![1]);
+    assert_eq!(domain_mapping, vec![vec![0, 0]]);
 }
