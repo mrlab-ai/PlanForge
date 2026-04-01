@@ -78,6 +78,13 @@ fn display_round_trips_multi_domain_abstractions() {
 }
 
 #[test]
+fn rejects_removed_exec_entire_plan_randomize_option() {
+    assert!(
+        parse_search_spec("astar(multi_domain_abstractions(exec_entire_plan=randomize))",).is_err()
+    );
+}
+
+#[test]
 fn trims_trailing_punctuation() {
     assert_eq!(
         parse_search_spec("astar(blind()).").unwrap(),

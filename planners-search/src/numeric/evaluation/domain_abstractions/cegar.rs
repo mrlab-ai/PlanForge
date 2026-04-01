@@ -2,12 +2,13 @@
 mod tests;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
+use serde::{Deserialize, Serialize};
 
 use libc::exit;
 use planners_sas::numeric::axioms::AxiomEvaluator;
@@ -46,7 +47,8 @@ pub enum Flaw {
 ///
 /// This mirrors numeric-fd's `FlawTreatment` options, but our defaults aim to
 /// stay deterministic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum FlawTreatment {
     RandomSingleAtom,
     OneSplitPerAtom,
@@ -54,7 +56,19 @@ pub enum FlawTreatment {
     MaxRefinedSingleAtom,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+impl fmt::Display for FlawTreatment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RandomSingleAtom => write!(f, "random_single_atom"),
+            Self::OneSplitPerAtom => write!(f, "one_split_per_atom"),
+            Self::OneSplitPerVariable => write!(f, "one_split_per_variable"),
+            Self::MaxRefinedSingleAtom => write!(f, "max_refined_single_atom"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum InitSplitMethod {
     GoalValue,
     GoalValueOrRandomIfNonGoal,
@@ -65,10 +79,36 @@ pub enum InitSplitMethod {
     Identity,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+impl fmt::Display for InitSplitMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GoalValue => write!(f, "goal_value"),
+            Self::GoalValueOrRandomIfNonGoal => write!(f, "goal_value_or_random_if_non_goal"),
+            Self::InitValue => write!(f, "init_value"),
+            Self::RandomValue => write!(f, "random_value"),
+            Self::RandomPartition => write!(f, "random_partition"),
+            Self::RandomBinaryPartitionSeparatingInitGoal => {
+                write!(f, "random_binary_partition_separating_init_goal")
+            }
+            Self::Identity => write!(f, "identity"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ExecEntirePlanMode {
     StopAtFirstFlaw,
     ExecuteEntirePlan,
+}
+
+impl fmt::Display for ExecEntirePlanMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StopAtFirstFlaw => write!(f, "stop_at_first_flaw"),
+            Self::ExecuteEntirePlan => write!(f, "execute_entire_plan"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

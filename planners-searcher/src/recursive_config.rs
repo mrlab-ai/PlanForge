@@ -187,7 +187,6 @@ fn parse_exec_entire_plan_mode(value: &str) -> Result<ExecEntirePlanMode, String
     match value {
         "stop_at_first_flaw" => Ok(ExecEntirePlanMode::StopAtFirstFlaw),
         "execute_entire_plan" => Ok(ExecEntirePlanMode::ExecuteEntirePlan),
-        "randomize" => Ok(ExecEntirePlanMode::Randomize),
         _ => Err(format!("invalid ExecEntirePlanMode `{value}`")),
     }
 }

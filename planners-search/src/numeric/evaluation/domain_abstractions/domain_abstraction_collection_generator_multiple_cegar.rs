@@ -13,10 +13,8 @@ use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 
-use super::cegar::{
-    CegarConfig, ExecEntirePlanMode as CegarExecEntirePlanMode,
-    FlawTreatment as CegarFlawTreatment, InitSplitMethod as CegarInitSplitMethod,
-};
+use super::cegar::CegarConfig;
+pub use super::cegar::{ExecEntirePlanMode, FlawTreatment, InitSplitMethod};
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::domain_abstraction_generator::DomainAbstractionGenerator;
 use super::utils::compute_abstraction_size_u128;
@@ -59,54 +57,6 @@ impl fmt::Display for InitSplitQuantity {
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum FlawTreatment {
-    RandomSingleAtom,
-    OneSplitPerAtom,
-    OneSplitPerVariable,
-    MaxRefinedSingleAtom,
-}
-
-impl fmt::Display for FlawTreatment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::RandomSingleAtom => write!(f, "random_single_atom"),
-            Self::OneSplitPerAtom => write!(f, "one_split_per_atom"),
-            Self::OneSplitPerVariable => write!(f, "one_split_per_variable"),
-            Self::MaxRefinedSingleAtom => write!(f, "max_refined_single_atom"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum InitSplitMethod {
-    GoalValue,
-    GoalValueOrRandomIfNonGoal,
-    InitValue,
-    RandomValue,
-    RandomPartition,
-    RandomBinaryPartitionSeparatingInitGoal,
-    Identity,
-}
-
-impl fmt::Display for InitSplitMethod {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::GoalValue => write!(f, "goal_value"),
-            Self::GoalValueOrRandomIfNonGoal => write!(f, "goal_value_or_random_if_non_goal"),
-            Self::InitValue => write!(f, "init_value"),
-            Self::RandomValue => write!(f, "random_value"),
-            Self::RandomPartition => write!(f, "random_partition"),
-            Self::RandomBinaryPartitionSeparatingInitGoal => {
-                write!(f, "random_binary_partition_separating_init_goal")
-            }
-            Self::Identity => write!(f, "identity"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub enum NumericSplitStrategy {
     Standard,
     Exclusion,
@@ -117,24 +67,6 @@ impl fmt::Display for NumericSplitStrategy {
         match self {
             Self::Standard => write!(f, "standard"),
             Self::Exclusion => write!(f, "exclusion"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecEntirePlanMode {
-    StopAtFirstFlaw,
-    ExecuteEntirePlan,
-    Randomize,
-}
-
-impl fmt::Display for ExecEntirePlanMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::StopAtFirstFlaw => write!(f, "stop_at_first_flaw"),
-            Self::ExecuteEntirePlan => write!(f, "execute_entire_plan"),
-            Self::Randomize => write!(f, "randomize"),
         }
     }
 }
@@ -168,7 +100,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
 impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     fn default() -> Self {
         Self {
-            max_abstraction_size: 1_000_000,
+            max_abstraction_size: 10_000,
             max_collection_size: 10_000_000,
             abstraction_generation_max_time: f64::INFINITY,
             total_max_time: 10.0,
@@ -179,7 +111,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             init_split_candidates: VariableSubset::All,
             init_split_quantity: InitSplitQuantity::Single,
             random_seed: -1,
-            use_wildcard_plans: false,
+            use_wildcard_plans: true,
             deviation_flaws: true,
             flaw_treatment: FlawTreatment::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
@@ -287,9 +219,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         if self.config.numeric_split_strategy != NumericSplitStrategy::Standard {
             bail!("`numeric_split_strategy=exclusion` is not supported in the current Rust port");
         }
-        if self.config.exec_entire_plan == ExecEntirePlanMode::Randomize {
-            bail!("`exec_entire_plan=randomize` is not supported in the current Rust port");
-        }
         if self.config.effective_use_threshold_aware_numeric_splits() {
             bail!(
                 "`use_threshold_aware_numeric_splits`/`use_interval_numeric_splits` is not supported in the current Rust port"
@@ -335,35 +264,12 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             use_wildcard_plans: self.config.use_wildcard_plans,
             combine_labels: false,
             debug: false,
-            flaw_treatment: match self.config.flaw_treatment {
-                FlawTreatment::RandomSingleAtom => CegarFlawTreatment::RandomSingleAtom,
-                FlawTreatment::OneSplitPerAtom => CegarFlawTreatment::OneSplitPerAtom,
-                FlawTreatment::OneSplitPerVariable => CegarFlawTreatment::OneSplitPerVariable,
-                FlawTreatment::MaxRefinedSingleAtom => CegarFlawTreatment::MaxRefinedSingleAtom,
-            },
+            flaw_treatment: self.config.flaw_treatment,
             init_split_method: match self.config.init_split_quantity {
-                InitSplitQuantity::None => CegarInitSplitMethod::Identity,
-                InitSplitQuantity::Single | InitSplitQuantity::All => {
-                    match self.config.init_split_method {
-                        InitSplitMethod::GoalValue => CegarInitSplitMethod::GoalValue,
-                        InitSplitMethod::GoalValueOrRandomIfNonGoal => {
-                            CegarInitSplitMethod::GoalValueOrRandomIfNonGoal
-                        }
-                        InitSplitMethod::InitValue => CegarInitSplitMethod::InitValue,
-                        InitSplitMethod::RandomValue => CegarInitSplitMethod::RandomValue,
-                        InitSplitMethod::RandomPartition => CegarInitSplitMethod::RandomPartition,
-                        InitSplitMethod::RandomBinaryPartitionSeparatingInitGoal => {
-                            CegarInitSplitMethod::RandomBinaryPartitionSeparatingInitGoal
-                        }
-                        InitSplitMethod::Identity => CegarInitSplitMethod::Identity,
-                    }
-                }
+                InitSplitQuantity::None => InitSplitMethod::Identity,
+                InitSplitQuantity::Single | InitSplitQuantity::All => self.config.init_split_method,
             },
-            exec_entire_plan: match self.config.exec_entire_plan {
-                ExecEntirePlanMode::StopAtFirstFlaw => CegarExecEntirePlanMode::StopAtFirstFlaw,
-                ExecEntirePlanMode::ExecuteEntirePlan => CegarExecEntirePlanMode::ExecuteEntirePlan,
-                ExecEntirePlanMode::Randomize => CegarExecEntirePlanMode::ExecuteEntirePlan,
-            },
+            exec_entire_plan: self.config.exec_entire_plan,
             init_split_var_ids,
         }
     }
