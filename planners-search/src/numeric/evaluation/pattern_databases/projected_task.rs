@@ -228,6 +228,7 @@ pub struct ProjectedTask<'task> {
     projected_num_var_to_original: Vec<Option<usize>>,
     original_var_to_projected: Vec<Option<usize>>,
     original_num_var_to_projected: Vec<Option<usize>>,
+    pattern_numeric_projected_ids: Vec<usize>,
     is_auxiliary_num_var: Vec<bool>,
     is_auxiliary_constant: Vec<bool>,
     auxiliary_exprs: Vec<Option<ArithmeticExpr>>,
@@ -259,6 +260,7 @@ impl<'task> ProjectedTask<'task> {
         let mut projected_num_var_to_original: Vec<Option<usize>> = Vec::new();
         let mut original_var_to_projected = vec![None; num_vars];
         let mut original_num_var_to_projected = vec![None; num_numeric_vars];
+        let mut pattern_numeric_projected_ids: Vec<usize> = Vec::new();
         let mut is_auxiliary_num_var: Vec<bool> = Vec::new();
         let mut is_auxiliary_constant: Vec<bool> = Vec::new();
         let mut auxiliary_exprs: Vec<Option<ArithmeticExpr>> = Vec::new();
@@ -296,6 +298,12 @@ impl<'task> ProjectedTask<'task> {
                     &mut auxiliary_exprs,
                     &mut projected_aux_initial_values,
                 );
+                if let Some(projected_id) = original_num_var_to_projected[numeric_var_id] {
+                    push_unique_numeric_projected_id(
+                        projected_id,
+                        &mut pattern_numeric_projected_ids,
+                    );
+                }
             } else if let Some(auxiliary_numeric_var) =
                 auxiliary_numeric_vars.get(numeric_var_id - num_numeric_vars)
             {
@@ -308,6 +316,14 @@ impl<'task> ProjectedTask<'task> {
                     &mut auxiliary_exprs,
                     &mut projected_aux_initial_values,
                 );
+                if let Some(projected_id) =
+                    original_num_var_to_projected[auxiliary_numeric_var.source_numeric_var_id]
+                {
+                    push_unique_numeric_projected_id(
+                        projected_id,
+                        &mut pattern_numeric_projected_ids,
+                    );
+                }
             } else {
                 return Err(ProjectedTaskBuildError::InvalidAuxiliaryNumericVarId {
                     provided: numeric_var_id,
@@ -595,6 +611,7 @@ impl<'task> ProjectedTask<'task> {
             projected_num_var_to_original,
             original_var_to_projected,
             original_num_var_to_projected,
+            pattern_numeric_projected_ids,
             is_auxiliary_num_var,
             is_auxiliary_constant,
             auxiliary_exprs,
@@ -709,6 +726,10 @@ impl<'task> ProjectedTask<'task> {
                     .max(0.0)
             })
             .unwrap_or(0.0)
+    }
+
+    pub fn pattern_numeric_projected_ids(&self) -> &[usize] {
+        &self.pattern_numeric_projected_ids
     }
 }
 
@@ -1022,6 +1043,12 @@ fn push_projected_auxiliary_numeric_var(
         is_auxiliary_constant.push(false);
         auxiliary_exprs.push(Some(auxiliary_numeric_var.expr.clone()));
         projected_aux_initial_values.push(Some(auxiliary_numeric_var.initial_value));
+    }
+}
+
+fn push_unique_numeric_projected_id(projected_id: usize, ids: &mut Vec<usize>) {
+    if !ids.contains(&projected_id) {
+        ids.push(projected_id);
     }
 }
 

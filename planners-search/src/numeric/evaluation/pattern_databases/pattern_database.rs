@@ -14,9 +14,9 @@ use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorG
 use super::projected_task::ProjectedTask;
 
 #[derive(Debug, Clone)]
-struct PdbState {
-    propositional: Vec<i32>,
-    numeric: Vec<f64>,
+pub(super) struct PdbState {
+    pub(super) propositional: Vec<i32>,
+    pub(super) numeric: Vec<f64>,
 }
 
 impl PartialEq for PdbState {
@@ -43,11 +43,11 @@ impl Hash for PdbState {
 }
 
 pub struct PatternDatabase<'task> {
-    task: ProjectedTask<'task>,
-    state_to_id: HashMap<PdbState, usize>,
-    states: Vec<PdbState>,
-    distances: Vec<f64>,
-    min_operator_cost: f64,
+    pub(super) task: ProjectedTask<'task>,
+    pub(super) state_to_id: HashMap<PdbState, usize>,
+    pub(super) states: Vec<PdbState>,
+    pub(super) distances: Vec<f64>,
+    pub(super) min_operator_cost: f64,
 }
 
 impl<'task> PatternDatabase<'task> {
@@ -71,6 +71,7 @@ impl<'task> PatternDatabase<'task> {
             min_operator_cost,
         };
         pdb.build(max_states)?;
+        super::utils::dump_distance_table(&pdb);
         Ok(pdb)
     }
 
