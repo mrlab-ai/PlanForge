@@ -14,10 +14,23 @@ use crate::numeric::{
     successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node},
 };
 use ordered_float::OrderedFloat;
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, Fact, Operator};
+use planners_sas::numeric::numeric_task::{
+    AbstractNumericTask, Fact, Operator, metric_operator_cost_from_initial_values,
+};
 use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistry};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
+
+pub fn compute_effective_operator_costs<'a>(
+    task: &'a dyn AbstractNumericTask,
+    _state_registry: &StateRegistry<'a>,
+    _initial_state: &ConcreteState,
+) -> Vec<f64> {
+    task.get_operators()
+        .iter()
+        .map(|op| metric_operator_cost_from_initial_values(task, op))
+        .collect()
+}
 
 /// Search status indicating the outcome of the search
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,8 +57,30 @@ pub struct SearchResult {
     /// Otherwise, it corresponds to the sum of declared operator costs.
     pub solution_cost: Option<f64>,
     pub nodes_expanded: usize,
+    pub nodes_reopened: usize,
+    pub nodes_evaluated: usize,
+    pub evaluations: usize,
     pub nodes_generated: usize,
+    pub dead_ends: usize,
+    pub nodes_expanded_until_last_jump: usize,
+    pub nodes_reopened_until_last_jump: usize,
+    pub nodes_evaluated_until_last_jump: usize,
+    pub nodes_generated_until_last_jump: usize,
+    pub registered_states: usize,
     pub search_time: Duration,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SearchCounters {
+    expanded: usize,
+    reopened: usize,
+    evaluated: usize,
+    generated: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ProgressSnapshot {
+    improved: bool,
 }
 
 /// Simple search node information for tracking parent relationships
@@ -65,6 +100,7 @@ pub struct AStarSearch<'a> {
     task: &'a dyn AbstractNumericTask,
     state_registry: StateRegistry<'a>,
     successor_generator: Box<dyn Node<'a> + 'a>,
+    operator_costs: Vec<f64>,
 
     // Search components
     open_list: TieBreakingOpenList,
@@ -72,7 +108,7 @@ pub struct AStarSearch<'a> {
     search_nodes: HashMap<StateID, SearchNodeInfo>,
 
     // Evaluators
-    heuristic: Box<dyn Heuristic>,
+    heuristic: Box<dyn Heuristic + 'a>,
     g_evaluator: GEvaluator,
     f_evaluator: SumEvaluator,
 
@@ -84,8 +120,12 @@ pub struct AStarSearch<'a> {
     // Statistics
     nodes_evaluated: usize,
     nodes_expanded: usize,
+    nodes_reopened: usize,
     nodes_generated: usize,
-    last_reported_f_layer: Option<OrderedFloat<f64>>,
+    dead_ends: usize,
+    counters_at_last_jump: SearchCounters,
+    last_reported_f_layer: Option<String>,
+    best_reported_heuristic_value: Option<OrderedFloat<f64>>,
     state_values_buffer: Vec<i32>,
     applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
     successor_numeric_values_buffer: Vec<f64>,
@@ -108,31 +148,27 @@ impl<'a> AStarSearch<'a> {
     pub fn new(
         task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
-        heuristic: Option<Box<dyn Heuristic>>,
+        heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
     ) -> Self {
         let successor_generator = Self::create_successor_generator(task);
 
-        // Determine min_action_cost following FD semantics
-        let declared_min_cost = task
-            .get_operators()
+        // Build initial state early so numeric constants are initialized in the registry.
+        // (Required to derive a correct min_action_cost under metric.)
+        let mut state_registry = state_registry;
+        let initial_state = state_registry.get_initial_state();
+        let operator_costs =
+            compute_effective_operator_costs(task, &state_registry, &initial_state);
+
+        // Determine min_action_cost.
+        let min_action_cost = operator_costs
             .iter()
-            .map(|op| op.cost() as f64)
+            .copied()
             .fold(f64::INFINITY, |a, b| a.min(b));
 
-        // If a metric is used, evaluate cost at initial state for true costs later; for blind we need a lower bound
-        let uses_metric = task.metric().use_metric();
-        let min_action_cost = if uses_metric {
-            // FD uses declared operator cost when metric is used at parse time.
-            // Use the minimum declared operator cost as min_action_cost.
-            if declared_min_cost.is_finite() {
-                declared_min_cost.max(0.0)
-            } else {
-                1.0
-            }
-        } else if declared_min_cost.is_finite() {
-            declared_min_cost.max(0.0)
+        let min_action_cost = if min_action_cost.is_finite() {
+            min_action_cost.max(0.0)
         } else {
             1.0
         };
@@ -151,14 +187,11 @@ impl<'a> AStarSearch<'a> {
         let open_list = TieBreakingOpenList::new(evaluator_names, true)
             .expect("A* tie-breaking open list must have at least one evaluator");
 
-        // Build initial state now to allow potential cost initializations (matches FD ordering)
-        let mut state_registry = state_registry;
-        let initial_state = state_registry.get_initial_state();
-
         Self {
             task,
             state_registry,
             successor_generator,
+            operator_costs,
             open_list,
             closed_set: HashSet::new(),
             search_nodes: HashMap::new(),
@@ -170,8 +203,12 @@ impl<'a> AStarSearch<'a> {
             initial_state: Some(initial_state),
             nodes_evaluated: 0,
             nodes_expanded: 0,
+            nodes_reopened: 0,
             nodes_generated: 0,
+            dead_ends: 0,
+            counters_at_last_jump: SearchCounters::default(),
             last_reported_f_layer: None,
+            best_reported_heuristic_value: None,
             state_values_buffer: Vec::with_capacity(task.variables().len()),
             applicable_operators_buffer: Vec::new(),
             successor_numeric_values_buffer: Vec::with_capacity(task.numeric_variables().len()),
@@ -202,25 +239,82 @@ impl<'a> AStarSearch<'a> {
             plan: None,
             solution_cost: None,
             nodes_expanded: self.nodes_expanded,
+            nodes_reopened: self.nodes_reopened,
+            nodes_evaluated: self.nodes_evaluated,
+            evaluations: self.nodes_evaluated,
             nodes_generated: self.nodes_generated,
+            dead_ends: self.dead_ends,
+            nodes_expanded_until_last_jump: self.counters_at_last_jump.expanded,
+            nodes_reopened_until_last_jump: self.counters_at_last_jump.reopened,
+            nodes_evaluated_until_last_jump: self.counters_at_last_jump.evaluated,
+            nodes_generated_until_last_jump: self.counters_at_last_jump.generated,
+            registered_states: self.state_registry.num_registered_states(),
             search_time: start_time.elapsed(),
         }
     }
 
-    fn maybe_print_f_layer(&mut self, node: &SearchNode, start_time: &Instant) {
-        let f_value = OrderedFloat(
-            node.evaluation
-                .get_heuristic_value(&self.f_evaluator.name()),
-        );
-        if self.last_reported_f_layer == Some(f_value) {
+    fn maybe_print_f_value(&mut self, f_value: f64, start_time: &Instant) {
+        let display_value = format_progress_value(f_value);
+        if self.last_reported_f_layer.as_ref() == Some(&display_value) {
             return;
         }
 
-        self.last_reported_f_layer = Some(f_value);
+        self.last_reported_f_layer = Some(display_value.clone());
+
+        // Snapshot counters at the start of each new f-layer.
+        // This mirrors Fast Downward's “until last jump” statistics.
+        self.counters_at_last_jump = SearchCounters {
+            expanded: self.nodes_expanded,
+            reopened: self.nodes_reopened,
+            evaluated: self.nodes_evaluated,
+            generated: self.nodes_generated,
+        };
 
         println!(
             "f = {} [{} evaluated, {} expanded, t={:.6}s, {} KB]",
-            format_f_value(f_value.into_inner()),
+            display_value,
+            self.nodes_evaluated,
+            self.nodes_expanded,
+            start_time.elapsed().as_secs_f64(),
+            current_memory_kb(),
+        );
+    }
+
+    fn maybe_print_f_layer(&mut self, node: &SearchNode, start_time: &Instant) {
+        let f_value = node
+            .evaluation
+            .get_heuristic_value(&self.f_evaluator.name());
+        self.maybe_print_f_value(f_value, start_time);
+    }
+
+    fn maybe_report_heuristic_progress(
+        &mut self,
+        evaluation: &EvaluationResult,
+        start_time: &Instant,
+    ) -> ProgressSnapshot {
+        let h_value = OrderedFloat(evaluation.get_heuristic_value(&self.heuristic.name()));
+        if self
+            .best_reported_heuristic_value
+            .is_some_and(|best| h_value >= best)
+        {
+            return ProgressSnapshot { improved: false };
+        }
+
+        self.best_reported_heuristic_value = Some(h_value);
+        println!(
+            "New best heuristic value for {}: {}",
+            self.heuristic.name(),
+            format_progress_value(h_value.into_inner()),
+        );
+        self.print_checkpoint_line(evaluation.g_value, start_time);
+
+        ProgressSnapshot { improved: true }
+    }
+
+    fn print_checkpoint_line(&self, g_value: f64, start_time: &Instant) {
+        println!(
+            "[g={}, {} evaluated, {} expanded, t={:.6}s, {} KB]",
+            format_progress_value(g_value),
             self.nodes_evaluated,
             self.nodes_expanded,
             start_time.elapsed().as_secs_f64(),
@@ -270,7 +364,13 @@ impl<'a> AStarSearch<'a> {
         state: &ConcreteState,
         g_value: f64,
     ) -> Result<EvaluationResult, Box<dyn std::error::Error>> {
-        let mut eval_state = EvaluationState::new(state, g_value, false);
+        let mut eval_state = EvaluationState::new_with_registry(
+            state,
+            g_value,
+            false,
+            self.task,
+            &self.state_registry,
+        );
         let is_goal = self.is_goal_state(state);
         eval_state.set_is_goal(is_goal);
 
@@ -352,18 +452,15 @@ impl<'a> AStarSearch<'a> {
             };
             let succ_state_id = succ_state.get_id();
 
-            // Skip if already closed
-            if self.closed_set.contains(&succ_state_id) {
-                continue;
-            }
+            // Count every successfully constructed successor state.
+            self.nodes_generated += 1;
+            let was_closed = self.closed_set.contains(&succ_state_id);
 
-            let op_cost = if self.task.metric().use_metric() {
-                self.state_registry
-                    .transition_cost(&node.state, &succ_state)
-                    .unwrap_or(1.0)
-            } else {
-                operator.cost() as f64
-            };
+            let op_cost = self
+                .operator_costs
+                .get(operator_id)
+                .copied()
+                .unwrap_or(operator.cost() as f64);
             let new_g_value = current_g + op_cost;
 
             // Check if we've seen this state before
@@ -373,6 +470,11 @@ impl<'a> AStarSearch<'a> {
                 }
             }
 
+            if was_closed {
+                self.closed_set.remove(&succ_state_id);
+                self.nodes_reopened += 1;
+            }
+
             // Create new search node info
             let node_info = SearchNodeInfo {
                 parent_state: Some(state_id),
@@ -380,12 +482,23 @@ impl<'a> AStarSearch<'a> {
                 g_value: new_g_value,
             };
 
+            // Record/update best g-value and parent pointers.
             self.search_nodes.insert(succ_state_id, node_info);
-            self.nodes_generated += 1;
 
             // Evaluate and add to open list
             if let Ok(evaluation) = self.evaluate_state(&succ_state, new_g_value) {
                 self.nodes_evaluated += 1;
+                if evaluation.is_dead_end {
+                    self.dead_ends += 1;
+                    if !self.open_list.accepts_dead_ends() {
+                        continue;
+                    }
+                }
+
+                if !evaluation.is_dead_end {
+                    let _ = self.maybe_report_heuristic_progress(&evaluation, start_time);
+                }
+
                 let search_node = SearchNode::root(succ_state, evaluation);
                 self.open_list.insert(search_node);
             }
@@ -412,8 +525,25 @@ impl<'a> SearchEngine for AStarSearch<'a> {
         // Add initial state to open list
         if let Ok(initial_evaluation) = self.evaluate_state(&initial_state, 0.0) {
             self.nodes_evaluated += 1;
+            if initial_evaluation.is_dead_end {
+                self.dead_ends += 1;
+            } else {
+                let progress =
+                    self.maybe_report_heuristic_progress(&initial_evaluation, &start_time);
+                if progress.improved {
+                    self.maybe_print_f_value(
+                        initial_evaluation.get_heuristic_value(&self.f_evaluator.name()),
+                        &start_time,
+                    );
+                }
+            }
+
             let initial_node = SearchNode::root(initial_state.clone(), initial_evaluation);
-            self.open_list.insert(initial_node);
+            if !initial_node.is_dead_end() || self.open_list.accepts_dead_ends() {
+                self.open_list.insert(initial_node);
+            }
+
+            self.print_initial_h_values();
         }
 
         // Initialize search node info for initial state
@@ -444,7 +574,16 @@ impl<'a> SearchEngine for AStarSearch<'a> {
                         plan: Some(plan),
                         solution_cost,
                         nodes_expanded: self.nodes_expanded,
+                        nodes_reopened: self.nodes_reopened,
+                        nodes_evaluated: self.nodes_evaluated,
+                        evaluations: self.nodes_evaluated,
                         nodes_generated: self.nodes_generated,
+                        dead_ends: self.dead_ends,
+                        nodes_expanded_until_last_jump: self.counters_at_last_jump.expanded,
+                        nodes_reopened_until_last_jump: self.counters_at_last_jump.reopened,
+                        nodes_evaluated_until_last_jump: self.counters_at_last_jump.evaluated,
+                        nodes_generated_until_last_jump: self.counters_at_last_jump.generated,
+                        registered_states: self.state_registry.num_registered_states(),
                         search_time: start_time.elapsed(),
                     };
                 }
@@ -468,13 +607,17 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             println!(
                 "Initial heuristic value for {}: {}",
                 self.heuristic.name(),
-                evaluation.get_heuristic_value(&self.heuristic.name())
+                format_progress_value(evaluation.get_heuristic_value(&self.heuristic.name()))
             );
         }
     }
 }
 
-fn format_f_value(value: f64) -> String {
+fn format_progress_value(value: f64) -> String {
+    if value.is_infinite() && value.is_sign_positive() {
+        return "infinity".to_string();
+    }
+
     if value.fract().abs() < 1e-9 {
         format!("{:.0}", value)
     } else {

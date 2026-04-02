@@ -4,9 +4,11 @@
 //! that combines the functionality of the C++ EvaluationContext and EvaluationResult
 //! into a unified design.
 
+pub mod domain_abstractions;
 pub mod evaluator;
 pub mod g_evaluator;
 pub mod heuristic;
+pub mod pattern_databases;
 #[cfg(test)]
 mod tests;
 

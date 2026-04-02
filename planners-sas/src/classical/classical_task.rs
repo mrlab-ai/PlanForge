@@ -14,7 +14,7 @@ trait AbstractTask {
     fn get_operator_precondition(&self, index: i32, precond_index: i32, is_axiom: bool) -> &Fact;
     fn get_num_operator_effects(&self, index: i32, is_axiom: bool) -> i32;
     fn get_num_operator_effect_conditions(&self, index: i32, eff_index: i32, is_axiom: bool)
-        -> i32;
+    -> i32;
     fn get_operator_effect_condition(
         &self,
         index: i32,

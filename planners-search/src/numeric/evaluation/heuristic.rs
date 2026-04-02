@@ -20,7 +20,10 @@ pub trait Heuristic: Evaluator {
     ///
     /// This is the core method that subclasses must implement.
     /// Returns the estimated cost to reach the goal, or infinity for dead ends.
-    fn compute_heuristic(&self, eval_state: &EvaluationState) -> Result<f64, EvaluationError>;
+    fn compute_heuristic(
+        &self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError>;
 
     /// Gets the name of this heuristic (allows custom names)
     fn heuristic_name(&self) -> String {
@@ -83,7 +86,10 @@ impl<H: Heuristic> Evaluator for H {
         self.heuristic_name()
     }
 
-    fn evaluate_state(&self, eval_state: &mut EvaluationState) -> Result<f64, EvaluationError> {
+    fn evaluate_state(
+        &self,
+        eval_state: &mut EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         let heuristic_name = self.name();
 
         // Check if already computed
@@ -149,7 +155,10 @@ impl BlindHeuristic {
 }
 
 impl Heuristic for BlindHeuristic {
-    fn compute_heuristic(&self, eval_state: &EvaluationState) -> Result<f64, EvaluationError> {
+    fn compute_heuristic(
+        &self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         // Blind heuristic: 0 for goal states, 1 otherwise
         Ok(if eval_state.is_goal() {
             0.0
@@ -200,7 +209,10 @@ impl<H: Heuristic> CachedHeuristic<H> {
 }
 
 impl<H: Heuristic> Heuristic for CachedHeuristic<H> {
-    fn compute_heuristic(&self, eval_state: &EvaluationState) -> Result<f64, EvaluationError> {
+    fn compute_heuristic(
+        &self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         // For the direct interface, we bypass caching
         self.inner.compute_heuristic(eval_state)
     }

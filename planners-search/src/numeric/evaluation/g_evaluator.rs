@@ -29,7 +29,10 @@ impl Evaluator for GEvaluator {
         self.name.clone()
     }
 
-    fn evaluate_state(&self, eval_state: &mut EvaluationState) -> Result<f64, EvaluationError> {
+    fn evaluate_state(
+        &self,
+        eval_state: &mut EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         let g_value = eval_state.result().g_value;
         eval_state
             .result_mut()
@@ -77,7 +80,10 @@ impl Evaluator for SumEvaluator {
         self.name.clone()
     }
 
-    fn evaluate_state(&self, eval_state: &mut EvaluationState) -> Result<f64, EvaluationError> {
+    fn evaluate_state(
+        &self,
+        eval_state: &mut EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         let first_value = eval_state
             .result()
             .get_heuristic_value(&self.first_evaluator_name);
@@ -135,7 +141,10 @@ impl Evaluator for WeightedEvaluator {
         self.name.clone()
     }
 
-    fn evaluate_state(&self, eval_state: &mut EvaluationState) -> Result<f64, EvaluationError> {
+    fn evaluate_state(
+        &self,
+        eval_state: &mut EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         let base_value = eval_state
             .result()
             .get_heuristic_value(&self.base_evaluator_name);
@@ -185,7 +194,10 @@ impl Evaluator for MaxEvaluator {
         self.name.clone()
     }
 
-    fn evaluate_state(&self, eval_state: &mut EvaluationState) -> Result<f64, EvaluationError> {
+    fn evaluate_state(
+        &self,
+        eval_state: &mut EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         let first_value = eval_state
             .result()
             .get_heuristic_value(&self.first_evaluator_name);
@@ -212,4 +224,3 @@ impl Evaluator for MaxEvaluator {
         ]
     }
 }
-

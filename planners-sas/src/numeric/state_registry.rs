@@ -241,8 +241,34 @@ impl<'a> StateRegistry<'a> {
         &self.numeric_indices
     }
 
+    /// Returns the value of a numeric constant variable, if available.
+    ///
+    /// Constant values are initialized when the initial state is created.
+    pub fn get_numeric_constant_value(&self, numeric_var_id: usize) -> Option<f64> {
+        if numeric_var_id >= self.root_task.numeric_variables().len() {
+            return None;
+        }
+        if self.root_task.numeric_variables()[numeric_var_id].get_type() != &NumericType::Constant {
+            return None;
+        }
+
+        let constant_index = *self.numeric_indices.get(numeric_var_id)?;
+        if constant_index < 0 {
+            return None;
+        }
+        self.numeric_constants.get(constant_index as usize).copied()
+    }
+
     pub fn get_registered_states(&self) -> &HashMap<u64, Vec<usize>> {
         &self.registered_states
+    }
+
+    /// Returns the total number of distinct states registered in this registry.
+    pub fn num_registered_states(&self) -> usize {
+        self.registered_states
+            .values()
+            .map(|bucket| bucket.len())
+            .sum()
     }
 
     pub fn get_cost_info(&self) -> &RefCell<PerStateInformation<Vec<f64>>> {
@@ -694,7 +720,7 @@ impl<'a> StateRegistry<'a> {
             let cost_info_borrow = self.cost_info.borrow();
             let old_cost_info = cost_info_borrow.get(&successor, self);
             let selected_result = self.select_cost_information(
-                current_state,
+                &successor,
                 successor_values,
                 old_cost_info,
                 cost_values,
@@ -754,13 +780,13 @@ impl<'a> StateRegistry<'a> {
     /// - Using stored constants for constant variables
     /// - Retrieving cost variables from per-state storage
     /// - Evaluating arithmetic axioms to compute derived values
-    fn get_numeric_vars(&self, state: &ConcreteState) -> Result<Vec<f64>, InvalidIndex> {
+    pub fn get_numeric_vars(&self, state: &ConcreteState) -> Result<Vec<f64>, InvalidIndex> {
         let mut result = vec![0.0; self.root_task.numeric_variables().len()];
         self.fill_numeric_vars(state, &mut result)?;
         Ok(result)
     }
 
-    fn fill_numeric_vars(
+    pub fn fill_numeric_vars(
         &self,
         state: &ConcreteState,
         output: &mut Vec<f64>,
@@ -916,6 +942,65 @@ impl<'a> StateRegistry<'a> {
         Ok(numeric_state[metric_fluent_id as usize])
     }
 
+    /// Computes the *raw* metric delta obtained by applying `operator` in `state`.
+    /// - Evaluate the metric in the given state
+    /// - Apply the operator's propositional + numeric effects (without checking applicability)
+    /// - Evaluate the metric in the resulting values
+    /// - Return `metric_after - metric_before`
+    pub fn metric_delta_applying_operator(
+        &self,
+        state: &ConcreteState,
+        operator: &Operator,
+    ) -> Result<f64, StateInsertError> {
+        if !self.root_task.metric().use_metric() {
+            // numeric-fd treats non-metric tasks as unit-cost.
+            return Ok(1.0);
+        }
+
+        let old_metric = self
+            .metric_value_for_state(state)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to read metric value for state: {e:?}"),
+            })?;
+
+        let previous_buffer = state.buffer(self);
+        let mut next_buffer = previous_buffer.to_vec();
+
+        // Reconstruct numeric values for the given state (including constants and cost vars).
+        let mut successor_numeric_values =
+            Vec::with_capacity(self.root_task.numeric_variables().len());
+        self.fill_numeric_vars(state, &mut successor_numeric_values)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to read numeric variables for state: {e:?}"),
+            })?;
+
+        // Reconstruct cost-information (instrumentation) part.
+        let mut cost_values = Vec::new();
+        self.fill_cost_information(state, &mut cost_values);
+        let expected_cost_vars = self.count_cost_variables();
+        if cost_values.len() < expected_cost_vars {
+            cost_values.resize(expected_cost_vars, 0.0);
+        }
+
+        // Apply effects into the local buffer/value copies.
+        self.apply_propositional_effects(&mut next_buffer, state, operator);
+        self.apply_numeric_effects(
+            &mut successor_numeric_values,
+            cost_values.as_mut_slice(),
+            operator,
+            &mut next_buffer,
+            previous_buffer,
+        )?;
+
+        let new_metric = self
+            .evaluate_metric(&successor_numeric_values)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to evaluate metric after applying operator: {e:?}"),
+            })?;
+
+        Ok(new_metric - old_metric)
+    }
+
     fn metric_value_for_state(&self, state: &ConcreteState) -> Result<f64, InvalidIndex> {
         let metric_fluent_id = self.root_task.metric().var_id();
 
@@ -991,7 +1076,7 @@ impl<'a> StateRegistry<'a> {
     /// Returns the cost information that should be kept based on metric optimization.
     fn select_cost_information(
         &self,
-        predecessor_state: &ConcreteState,
+        existing_state: &ConcreteState,
         successor_numeric_vals: &[f64],
         old_cost_info: &[f64],
         new_cost_info: &[f64],
@@ -1001,7 +1086,7 @@ impl<'a> StateRegistry<'a> {
             return Ok(new_cost_info.to_vec());
         }
 
-        let old_metric_val = self.metric_value_for_state(predecessor_state)?;
+        let old_metric_val = self.metric_value_for_state(existing_state)?;
         let new_metric_val = self.evaluate_metric(successor_numeric_vals)?;
 
         let metric_minimizes = self.root_task.metric().is_min();

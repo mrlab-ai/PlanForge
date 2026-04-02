@@ -23,7 +23,6 @@ members = [
     "planners",
     "planners-cli-utils",
     "tests",
-    "translate-backup",
 ]
 
 resolver = "2"

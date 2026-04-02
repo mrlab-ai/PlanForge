@@ -19,3 +19,4 @@ planners-cli-utils = { path = "../planners-cli-utils" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
+ordered-float = "5.1.0"

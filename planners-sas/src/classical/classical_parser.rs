@@ -1,10 +1,10 @@
 use crate::classical::classical_task::{Axiom, Effect, ExplicitVariable, Fact, Operator, RootTask};
 use nom::{
+    IResult,
     bytes::complete::tag,
     character::complete::{alphanumeric1, digit1, i32, line_ending, not_line_ending, u32},
     combinator::map_res,
     sequence::separated_pair,
-    IResult,
 };
 use std::vec;
 

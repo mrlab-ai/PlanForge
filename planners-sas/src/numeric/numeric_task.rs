@@ -33,7 +33,7 @@ pub trait AbstractNumericTask {
     fn get_operator_precondition(&self, index: i32, precond_index: i32, is_axiom: bool) -> &Fact;
     fn get_num_operator_effects(&self, index: i32, is_axiom: bool) -> i32;
     fn get_num_operator_effect_conditions(&self, index: i32, eff_index: i32, is_axiom: bool)
-        -> i32;
+    -> i32;
     fn get_operator_effect_condition(
         &self,
         index: i32,
@@ -67,7 +67,7 @@ pub trait AbstractNumericTask {
     fn get_num_cmp_axioms(&self) -> i32;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Metric {
     is_min: bool,
     var_id: i32,
@@ -91,7 +91,7 @@ impl Metric {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExplicitVariable {
     domain_size: u32,
     name: String,
@@ -126,7 +126,7 @@ impl ExplicitVariable {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NumericVariable {
     name: String,
     numeric_type: NumericType,
@@ -140,6 +140,10 @@ impl NumericVariable {
             numeric_type,
             axiom_layer,
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn get_type(&self) -> &NumericType {
@@ -211,6 +215,14 @@ impl Effect {
         self.var_id
     }
 
+    pub fn precondition_value(&self) -> i32 {
+        self.precondition_value
+    }
+
+    pub fn conditions(&self) -> &Vec<Fact> {
+        &self.conditions
+    }
+
     pub fn value(&self) -> u32 {
         self.effect_value
     }
@@ -251,6 +263,80 @@ impl AssignmentOperation {
     }
 }
 
+pub fn evaluate_metric_from_values(task: &dyn AbstractNumericTask, numeric_values: &[f64]) -> f64 {
+    let metric_var_id = task.metric().var_id();
+    if metric_var_id < 0 {
+        return 0.0;
+    }
+
+    numeric_values
+        .get(metric_var_id as usize)
+        .copied()
+        .unwrap_or(0.0)
+}
+
+pub fn propagate_assignment_axiom_values(
+    task: &dyn AbstractNumericTask,
+    numeric_values: &mut Vec<f64>,
+) {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for axiom in task.assignment_axioms() {
+            let affected_var_id = axiom.get_affected_var_id() as usize;
+            if affected_var_id >= numeric_values.len() {
+                continue;
+            }
+
+            let previous_value = numeric_values[affected_var_id];
+            let Ok(updated_value) = axiom.update_values(numeric_values) else {
+                continue;
+            };
+            if updated_value != previous_value {
+                changed = true;
+            }
+        }
+    }
+}
+
+pub fn metric_operator_cost_from_initial_values(
+    task: &dyn AbstractNumericTask,
+    operator: &Operator,
+) -> f64 {
+    if !task.metric().use_metric() {
+        return operator.cost() as f64;
+    }
+
+    let initial_numeric_values = task.get_initial_numeric_state_values();
+    let mut numeric_values = initial_numeric_values.to_vec();
+    let old_metric = evaluate_metric_from_values(task, &numeric_values);
+
+    for effect in operator.assignment_effects() {
+        let assignment_var_id = effect.var_id() as usize;
+        let affected_var_id = effect.affected_var_id() as usize;
+        if assignment_var_id >= numeric_values.len() || affected_var_id >= numeric_values.len() {
+            continue;
+        }
+
+        let assignment_value = numeric_values[assignment_var_id];
+        let result = AssignmentOperation::apply(
+            numeric_values[affected_var_id],
+            effect.operation(),
+            assignment_value,
+        );
+        numeric_values[affected_var_id] = result;
+    }
+
+    propagate_assignment_axiom_values(task, &mut numeric_values);
+    let new_metric = evaluate_metric_from_values(task, &numeric_values);
+    let delta = if task.metric().is_min() {
+        new_metric - old_metric
+    } else {
+        old_metric - new_metric
+    };
+    delta.max(0.0)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssignmentEffect {
     affected_var_id: u32,
@@ -286,6 +372,14 @@ impl AssignmentEffect {
 
     pub fn operation(&self) -> &AssignmentOperation {
         &self.operation
+    }
+
+    pub fn is_conditional(&self) -> bool {
+        self.is_conditional
+    }
+
+    pub fn conditions(&self) -> &Vec<Fact> {
+        &self.conditions
     }
 }
 
@@ -410,7 +504,7 @@ impl NumericRootTask {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum NumericType {
     Constant,
     Derived,

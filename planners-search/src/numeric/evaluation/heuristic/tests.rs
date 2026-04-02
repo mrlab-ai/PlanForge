@@ -21,7 +21,10 @@ impl TestHeuristic {
 }
 
 impl Heuristic for TestHeuristic {
-    fn compute_heuristic(&self, _eval_state: &EvaluationState) -> Result<f64, EvaluationError> {
+    fn compute_heuristic(
+        &self,
+        _eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         if self.value.is_infinite() && self.value.is_sign_positive() {
             Err(EvaluationError::DeadEnd {
                 reliable: self.is_reliable,

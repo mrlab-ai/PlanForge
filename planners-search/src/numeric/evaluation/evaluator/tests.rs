@@ -23,7 +23,10 @@ impl Evaluator for TestEvaluator {
         self.name.clone()
     }
 
-    fn evaluate_state(&self, eval_state: &mut EvaluationState<'_>) -> Result<f64, EvaluationError> {
+    fn evaluate_state(
+        &self,
+        eval_state: &mut EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         eval_state
             .result_mut()
             .set_heuristic_value(self.name(), self.value);

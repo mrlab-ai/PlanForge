@@ -1,4 +1,4 @@
-use super::pddl_to_prolog::{get_variables, Rule, RuleType};
+use super::pddl_to_prolog::{Rule, RuleType, get_variables};
 /// Port of greedy_join.py
 /// Greedy algorithm for splitting rules into binary joins.
 use std::collections::{HashMap, HashSet};

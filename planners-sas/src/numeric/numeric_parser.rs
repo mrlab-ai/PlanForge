@@ -9,6 +9,7 @@ use nom::bytes::complete::take_while1;
 use nom::combinator::{map, opt, recognize};
 use nom::number::complete::double;
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::tag,
     character::complete::{
@@ -16,7 +17,6 @@ use nom::{
     },
     combinator::map_res,
     sequence::separated_pair,
-    IResult,
 };
 use std::vec;
 
