@@ -1,8 +1,6 @@
 [workspace]
 default-members = [
     "planners-sas",
-    "planners-translate",
-    "planners-translator",
     "planners-preprocess",
     "planners-preprocessor",
     "planners-search",
