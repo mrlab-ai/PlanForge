@@ -351,16 +351,6 @@ pub fn read_preprocessed_problem_description(
         println!("reading global constraint");
     }
     let global_constraint = read_global_constraint(stream);
-    dump_preprocessed_problem_description(
-        &variables,
-        &numeric_variables,
-        &initial_state,
-        &goal,
-        &operators,
-        &axioms_rel,
-        &axioms_numeric,
-        &axioms_func_comp,
-    );
 
     (
         metric,
