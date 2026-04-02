@@ -2,7 +2,9 @@ use crate::classical::classical_task::{Axiom, Effect, ExplicitVariable, Fact, Op
 use nom::{
     IResult, Parser,
     bytes::complete::tag,
-    character::complete::{alphanumeric1, digit1, i32, line_ending, not_line_ending, u32},
+    character::complete::{
+        alphanumeric1, digit1, i32, line_ending, not_line_ending, u32, u64, usize,
+    },
     combinator::map_res,
     sequence::separated_pair,
 };
@@ -36,10 +38,10 @@ fn parse_variable(input: &str) -> IResult<&str, ExplicitVariable> {
     let (input, _) = line_ending(input)?;
     let (input, ws) = i32(input)?;
     let (input, _) = line_ending(input)?;
-    let (input, domain_size) = u32(input)?;
+    let (input, domain_size) = usize(input)?;
     let (input, _) = line_ending(input)?;
 
-    let mut fact_names = Vec::with_capacity(domain_size as usize);
+    let mut fact_names = Vec::with_capacity(domain_size);
     let mut input = input;
     for _ in 0..domain_size {
         let (loop_input, fact_name) = not_line_ending(input)?;
@@ -67,8 +69,8 @@ fn parse_all_variables(input: &str) -> IResult<&str, Vec<ExplicitVariable>> {
     Ok((input, variables))
 }
 
-fn parse_integer(input: &str) -> IResult<&str, u32> {
-    map_res(digit1, str::parse::<u32>).parse(input)
+fn parse_integer(input: &str) -> IResult<&str, usize> {
+    map_res(digit1, str::parse::<usize>).parse(input)
 }
 
 fn parse_mutex_group(input: &str) -> IResult<&str, Vec<Fact>> {
@@ -111,7 +113,7 @@ fn parse_mutexes(input: &str) -> IResult<&str, Vec<Vec<Fact>>> {
     Ok((input, mutexes))
 }
 
-fn parse_state(input: &str) -> IResult<&str, Vec<i32>> {
+fn parse_state(input: &str) -> IResult<&str, Vec<usize>> {
     let (input, _) = tag("begin_state")(input)?;
     let (input, _) = line_ending(input)?;
     let mut input = input;
@@ -122,7 +124,7 @@ fn parse_state(input: &str) -> IResult<&str, Vec<i32>> {
             input = loop_input;
             break;
         }
-        let (_, state) = i32(state)?;
+        let (_, state) = usize(state)?;
         states.push(state);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
@@ -192,11 +194,11 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
             let (loop_input2, _) = tag(" ")(loop_input2)?;
             loop_input = loop_input2;
         }
-        let (loop_input, effect_var_id) = u32(loop_input)?;
+        let (loop_input, effect_var_id) = usize(loop_input)?;
         let (loop_input, _) = tag(" ")(loop_input)?;
         let (loop_input, precondition_value) = i32(loop_input)?; // NOTE: -1 if there is no precondition
         let (loop_input, _) = tag(" ")(loop_input)?;
-        let (loop_input, effect_value) = u32(loop_input)?;
+        let (loop_input, effect_value) = usize(loop_input)?;
 
         let effect = Effect::new(
             effect_conditions,
@@ -208,7 +210,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
     }
-    let (input, cost) = u32(input)?;
+    let (input, cost) = u64(input)?;
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_operator")(input)?;
     let (input, _) = line_ending(input)?;
@@ -248,11 +250,11 @@ fn parse_axiom(input: &str) -> IResult<&str, Axiom> {
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
     }
-    let (input, var_id) = u32(input)?;
+    let (input, var_id) = usize(input)?;
     let (input, _) = tag(" ")(input)?;
-    let (input, precondition_value) = u32(input)?;
+    let (input, precondition_value) = i32(input)?;
     let (input, _) = tag(" ")(input)?;
-    let (input, effect_value) = u32(input)?;
+    let (input, effect_value) = usize(input)?;
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_rule")(input)?;
     let (input, _) = line_ending(input)?;
