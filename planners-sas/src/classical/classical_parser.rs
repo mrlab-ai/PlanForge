@@ -295,9 +295,16 @@ pub fn parse_sas_output(input: &str) -> IResult<&str, RootTask> {
 
     let (input, axioms) = parse_axioms(input)?;
 
-    let output = RootTask::new(
-        version, metric, variables, goals, mutexes, states, operators, axioms,
-    );
+    let output = RootTask {
+        version,
+        metric,
+        variables,
+        goals,
+        mutexes,
+        states,
+        operators,
+        axioms,
+    };
 
     Ok((input, output))
 }

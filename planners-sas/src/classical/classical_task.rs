@@ -164,30 +164,6 @@ pub struct RootTask {
     pub axioms: Vec<Axiom>,
 }
 
-impl RootTask {
-    pub fn new(
-        version: u32,
-        metric: bool,
-        variables: Vec<ExplicitVariable>,
-        goals: Vec<Fact>,
-        mutexes: Vec<Vec<Fact>>,
-        states: Vec<usize>,
-        operators: Vec<Operator>,
-        axioms: Vec<Axiom>,
-    ) -> Self {
-        RootTask {
-            version,
-            metric,
-            variables,
-            goals,
-            mutexes,
-            states,
-            operators,
-            axioms,
-        }
-    }
-}
-
 impl AbstractTask for RootTask {
     fn get_num_variables(&self) -> usize {
         self.variables.len()
