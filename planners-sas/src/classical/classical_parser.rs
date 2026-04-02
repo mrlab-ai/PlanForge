@@ -1,6 +1,6 @@
 use crate::classical::classical_task::{Axiom, Effect, ExplicitVariable, Fact, Operator, RootTask};
 use nom::{
-    IResult,
+    IResult, Parser,
     bytes::complete::tag,
     character::complete::{alphanumeric1, digit1, i32, line_ending, not_line_ending, u32},
     combinator::map_res,
@@ -68,7 +68,7 @@ fn parse_all_variables(input: &str) -> IResult<&str, Vec<ExplicitVariable>> {
 }
 
 fn parse_integer(input: &str) -> IResult<&str, u32> {
-    map_res(digit1, str::parse::<u32>)(input)
+    map_res(digit1, str::parse::<u32>).parse(input)
 }
 
 fn parse_mutex_group(input: &str) -> IResult<&str, Vec<Fact>> {
@@ -82,7 +82,7 @@ fn parse_mutex_group(input: &str) -> IResult<&str, Vec<Fact>> {
     let mut mutex_group = Vec::with_capacity(num_facts as usize);
     for _ in 0..num_facts {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
-        let (new_input, fact) = parser(input)?;
+        let (new_input, fact) = parser.parse(input)?;
         let fact = Fact::new(fact.0, fact.1);
 
         mutex_group.push(fact);
@@ -141,7 +141,7 @@ fn parse_goal(input: &str) -> IResult<&str, Vec<Fact>> {
     let mut goals = vec![];
     for _ in 0..num_goals {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
-        let (loop_input, goal) = parser(input)?;
+        let (loop_input, goal) = parser.parse(input)?;
         let goal = Fact::new(goal.0, goal.1);
         goals.push(goal);
         let (loop_input, _) = line_ending(loop_input)?;
@@ -164,7 +164,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
     let mut input = input;
     for _ in 0..num_prevail_cond {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
-        let (loop_input, prevail_cond) = parser(input)?;
+        let (loop_input, prevail_cond) = parser.parse(input)?;
 
         let prevail_cond = Fact::new(prevail_cond.0, prevail_cond.1);
 
@@ -186,7 +186,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         let mut loop_input = loop_input;
         for _ in 0..num_conditions {
             let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
-            let (loop_input2, condition) = parser(loop_input)?;
+            let (loop_input2, condition) = parser.parse(loop_input)?;
             let condition = Fact::new(condition.0, condition.1);
             effect_conditions.push(condition);
             let (loop_input2, _) = tag(" ")(loop_input2)?;
@@ -242,7 +242,7 @@ fn parse_axiom(input: &str) -> IResult<&str, Axiom> {
     let mut conditions = vec![];
     for _ in 0..num_conditions {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
-        let (loop_input, condition) = parser(input)?;
+        let (loop_input, condition) = parser.parse(input)?;
         let condition = Fact::new(condition.0, condition.1);
         conditions.push(condition);
         let (loop_input, _) = line_ending(loop_input)?;

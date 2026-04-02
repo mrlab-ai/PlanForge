@@ -5,6 +5,7 @@ use crate::numeric::numeric_task::{
     AssignmentEffect, AssignmentOperation, Metric, NumericType, NumericVariable,
 };
 use crate::numeric::numeric_task::{Effect, ExplicitVariable, Fact, NumericRootTask, Operator};
+use nom::Parser;
 use nom::bytes::complete::take_while1;
 use nom::combinator::{map, opt, recognize};
 use nom::number::complete::double;
@@ -33,7 +34,7 @@ fn parse_version(input: &str) -> IResult<&str, u32> {
 fn parse_metric(input: &str) -> IResult<&str, Metric> {
     let (input, _) = tag("begin_metric")(input)?;
     let (input, _) = line_ending(input)?;
-    let (input, min_or_max) = alt((char('<'), char('>')))(input)?;
+    let (input, min_or_max) = alt((char('<'), char('>'))).parse(input)?;
     let is_min = min_or_max == '<';
     let (input, _) = space1(input)?;
     let (input, metric) = i32(input)?;
@@ -94,7 +95,8 @@ fn parse_line_type(input: &str) -> IResult<&str, NumericType> {
         map(tag("D"), |_| NumericType::Derived),
         map(tag("I"), |_| NumericType::Cost),
         map(tag("R"), |_| NumericType::Regular),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_plus_or_minus(input: &str) -> IResult<&str, AssignmentOperation> {
@@ -104,7 +106,8 @@ fn parse_plus_or_minus(input: &str) -> IResult<&str, AssignmentOperation> {
         map(tag("-"), |_| AssignmentOperation::Minus),
         map(tag("*"), |_| AssignmentOperation::Times),
         map(tag("/"), |_| AssignmentOperation::Divide),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_layer(input: &str) -> IResult<&str, i32> {
@@ -112,7 +115,8 @@ fn parse_layer(input: &str) -> IResult<&str, i32> {
         // We recognize an optional minus sign followed by one or more digits.
         recognize(nom::sequence::pair(opt(char('-')), digit1)),
         |s: &str| s.parse::<i32>().unwrap(),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn parse_name(input: &str) -> IResult<&str, String> {
@@ -150,7 +154,7 @@ fn parse_all_numeric_variables(input: &str) -> IResult<&str, Vec<NumericVariable
 }
 
 fn parse_integer(input: &str) -> IResult<&str, u32> {
-    map_res(digit1, str::parse::<u32>)(input)
+    map_res(digit1, str::parse::<u32>).parse(input)
 }
 
 fn parse_mutex_group(input: &str) -> IResult<&str, Vec<Fact>> {
@@ -164,7 +168,7 @@ fn parse_mutex_group(input: &str) -> IResult<&str, Vec<Fact>> {
     let mut mutex_group = Vec::with_capacity(num_facts as usize);
     for _ in 0..num_facts {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
-        let (new_input, fact) = parser(input)?;
+        let (new_input, fact) = parser.parse(input)?;
         let fact = Fact::new(fact.0, fact.1 as i32);
 
         mutex_group.push(fact);
@@ -243,7 +247,7 @@ fn parse_goal(input: &str) -> IResult<&str, Vec<Fact>> {
     let mut goals = vec![];
     for _ in 0..num_goals {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
-        let (loop_input, goal) = parser(input)?;
+        let (loop_input, goal) = parser.parse(input)?;
         let goal = Fact::new(goal.0, goal.1 as i32);
         goals.push(goal);
         let (loop_input, _) = line_ending(loop_input)?;
@@ -266,7 +270,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
     let mut input = input;
     for _ in 0..num_prevail_cond {
         let mut parser = separated_pair(parse_integer, space1, parse_integer);
-        let (loop_input, prevail_cond) = parser(input)?;
+        let (loop_input, prevail_cond) = parser.parse(input)?;
         let prevail_cond = Fact::new(prevail_cond.0, prevail_cond.1 as i32);
         preconditions.push(prevail_cond);
         let (loop_input, _) = line_ending(loop_input)?;
@@ -285,7 +289,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         let mut loop_input = loop_input;
         for _ in 0..num_conditions {
             let mut parser = separated_pair(parse_integer, space1, parse_integer);
-            let (loop_input2, condition) = parser(loop_input)?;
+            let (loop_input2, condition) = parser.parse(loop_input)?;
             let condition = Fact::new(condition.0, condition.1 as i32);
             effect_conditions.push(condition);
             let (loop_input2, _) = space1(loop_input2)?;
@@ -387,7 +391,7 @@ fn parse_axiom(input: &str) -> IResult<&str, PropositionalAxiom> {
     let mut conditions = vec![];
     for _ in 0..num_conditions {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
-        let (loop_input, condition) = parser(input)?;
+        let (loop_input, condition) = parser.parse(input)?;
         let condition = Fact::new(condition.0, condition.1 as i32);
         conditions.push(condition);
         let (loop_input, _) = line_ending(loop_input)?;
@@ -427,7 +431,8 @@ fn parse_comparison_operator(input: &str) -> IResult<&str, ComparisonOperator> {
         map(tag(">"), |_| ComparisonOperator::GreaterThan),
         map(tag("<"), |_| ComparisonOperator::LessThan),
         map(tag("="), |_| ComparisonOperator::Equal),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_comparison_axiom(input: &str) -> IResult<&str, ComparisonAxiom> {
@@ -477,7 +482,8 @@ fn parse_cal_operator(input: &str) -> IResult<&str, CalOperator> {
         map(tag("-"), |_| CalOperator::Difference),
         map(tag("*"), |_| CalOperator::Product),
         map(tag("/"), |_| CalOperator::Division),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_assignment_axiom(input: &str) -> IResult<&str, AssignmentAxiom> {
