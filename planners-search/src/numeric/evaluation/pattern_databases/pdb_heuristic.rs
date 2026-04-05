@@ -7,9 +7,7 @@ use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use planners_sas::numeric::state_registry::StateRegistry;
 
 use super::pattern_database::PatternDatabase;
-use super::pattern_generator_greedy::{
-    DEFAULT_MAX_PDB_STATES, GreedyPatternGeneratorConfig, generate_greedy_pattern,
-};
+use super::pattern_generator_greedy::{GreedyPatternGeneratorConfig, generate_greedy_pattern};
 use super::projected_task::ProjectedTask;
 use super::utils;
 
@@ -21,11 +19,14 @@ pub struct GreedyNumericPdbHeuristic<'task> {
 }
 
 impl<'task> GreedyNumericPdbHeuristic<'task> {
-    pub fn new(task: &'task dyn AbstractNumericTask) -> Result<Self, String> {
-        let pattern = generate_greedy_pattern(task, GreedyPatternGeneratorConfig::default());
+    pub fn new(
+        task: &'task dyn AbstractNumericTask,
+        config: GreedyPatternGeneratorConfig,
+    ) -> Result<Self, String> {
+        let pattern = generate_greedy_pattern(task, config);
         let projected_task = ProjectedTask::new(task, &pattern).map_err(|err| err.to_string())?;
         utils::print_projection_summary(task, &pattern, &projected_task);
-        let pdb = PatternDatabase::new(projected_task, DEFAULT_MAX_PDB_STATES)?;
+        let pdb = PatternDatabase::new(projected_task, config.max_pdb_states)?;
 
         Ok(Self {
             name: "greedy_numeric_pdb".to_string(),

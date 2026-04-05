@@ -17,7 +17,7 @@ use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
 };
 
 #[derive(Debug, Clone)]
-enum ArithmeticExpr {
+pub(crate) enum ArithmeticExpr {
     Var(usize),
     Const(f64),
     Op {
@@ -28,11 +28,11 @@ enum ArithmeticExpr {
 }
 
 impl ArithmeticExpr {
-    fn constant(value: f64) -> Self {
+    pub(crate) fn constant(value: f64) -> Self {
         Self::Const(value)
     }
 
-    fn op(lhs: ArithmeticExpr, op: CalOperator, rhs: ArithmeticExpr) -> Self {
+    pub(crate) fn op(lhs: ArithmeticExpr, op: CalOperator, rhs: ArithmeticExpr) -> Self {
         if lhs.is_constant() && rhs.is_constant() {
             let lhs_value = lhs.evaluate(&[]);
             let rhs_value = rhs.evaluate(&[]);
@@ -45,11 +45,11 @@ impl ArithmeticExpr {
         }
     }
 
-    fn is_constant(&self) -> bool {
+    pub(crate) fn is_constant(&self) -> bool {
         matches!(self, Self::Const(_))
     }
 
-    fn evaluate(&self, values: &[f64]) -> f64 {
+    pub(crate) fn evaluate(&self, values: &[f64]) -> f64 {
         match self {
             Self::Var(var_id) => values[*var_id],
             Self::Const(value) => *value,
@@ -59,7 +59,7 @@ impl ArithmeticExpr {
         }
     }
 
-    fn evaluate_ignore_additive_consts(&self, values: &[f64]) -> f64 {
+    pub(crate) fn evaluate_ignore_additive_consts(&self, values: &[f64]) -> f64 {
         match self {
             Self::Var(var_id) => values[*var_id],
             Self::Const(value) => *value,
@@ -98,11 +98,11 @@ impl ArithmeticExpr {
 }
 
 #[derive(Debug, Clone)]
-struct AuxiliaryNumericVar {
-    helper_id: usize,
-    source_numeric_var_id: usize,
-    expr: ArithmeticExpr,
-    initial_value: f64,
+pub(crate) struct AuxiliaryNumericVar {
+    pub(crate) helper_id: usize,
+    pub(crate) source_numeric_var_id: usize,
+    pub(crate) expr: ArithmeticExpr,
+    pub(crate) initial_value: f64,
 }
 
 fn apply_cal_operator(op: &CalOperator, lhs: f64, rhs: f64) -> f64 {
@@ -1117,7 +1117,7 @@ fn push_unique_projected_id(projected_id: usize, ids: &mut Vec<usize>) {
     }
 }
 
-fn build_auxiliary_numeric_vars(
+pub(crate) fn build_auxiliary_numeric_vars(
     task: &dyn AbstractNumericTask,
     assignment_lookup: &[Option<usize>],
     base_initial_numeric_values: &[f64],
@@ -1196,7 +1196,7 @@ fn build_auxiliary_numeric_vars(
     Ok(builder.auxiliary_numeric_vars)
 }
 
-fn build_assignment_axiom_lookup(task: &dyn AbstractNumericTask) -> Vec<Option<usize>> {
+pub(crate) fn build_assignment_axiom_lookup(task: &dyn AbstractNumericTask) -> Vec<Option<usize>> {
     let mut lookup = vec![None; task.numeric_variables().len()];
     for (axiom_id, axiom) in task.assignment_axioms().iter().enumerate() {
         let affected = axiom.get_affected_var_id() as usize;

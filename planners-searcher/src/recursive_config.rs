@@ -16,6 +16,8 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
     FlawTreatment, InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
 };
+use planners_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
+use planners_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -24,7 +26,7 @@ pub enum HeuristicSpec {
     #[serde(rename = "domain_abstraction")]
     DomainAbstraction,
     #[serde(rename = "greedy_numeric_pdb")]
-    GreedyNumericPdb,
+    GreedyNumericPdb(GreedyPatternGeneratorConfig),
     #[serde(rename = "multi_domain_abstractions")]
     MultiDomainAbstractions(DomainAbstractionCollectionGeneratorMultipleCegarConfig),
 }
@@ -44,7 +46,13 @@ impl fmt::Display for HeuristicSpec {
         match self {
             HeuristicSpec::Blind => write!(f, "blind()"),
             HeuristicSpec::DomainAbstraction => write!(f, "domain_abstraction()"),
-            HeuristicSpec::GreedyNumericPdb => write!(f, "greedy_numeric_pdb()"),
+            HeuristicSpec::GreedyNumericPdb(config) => {
+                if *config == GreedyPatternGeneratorConfig::default() {
+                    write!(f, "greedy_numeric_pdb()")
+                } else {
+                    write!(f, "greedy_numeric_pdb({config})")
+                }
+            }
             HeuristicSpec::MultiDomainAbstractions(config) => {
                 write!(f, "multi_domain_abstractions({config})")
             }
@@ -123,6 +131,16 @@ fn parse_i32(value: &str) -> Result<i32, String> {
     value
         .parse::<i32>()
         .map_err(|_| format!("expected integer, got `{value}`"))
+}
+
+fn parse_greedy_variable_order_type(value: &str) -> Result<GreedyVariableOrderType, String> {
+    match value {
+        "cg_goal_level" => Ok(GreedyVariableOrderType::CgGoalLevel),
+        "random" => Ok(GreedyVariableOrderType::Random),
+        "level" => Ok(GreedyVariableOrderType::Level),
+        "reverse_level" => Ok(GreedyVariableOrderType::ReverseLevel),
+        _ => Err(format!("invalid GreedyVariableOrderType `{value}`")),
+    }
 }
 
 fn parse_f64_or_infinity(value: &str) -> Result<f64, String> {
@@ -242,6 +260,31 @@ fn build_multi_domain_abstractions_config(
     Ok(config)
 }
 
+fn build_greedy_numeric_pdb_config(
+    args: Vec<(String, String)>,
+) -> Result<GreedyPatternGeneratorConfig, String> {
+    let mut config = GreedyPatternGeneratorConfig::default();
+    let mut seen = std::collections::BTreeSet::new();
+
+    for (key, value) in args {
+        if !seen.insert(key.clone()) {
+            return Err(format!("duplicate option `{key}`"));
+        }
+
+        match key.as_str() {
+            "max_pdb_states" => config.max_pdb_states = parse_usize(&value)?,
+            "numeric_first" => config.numeric_first = parse_bool(&value)?,
+            "random_seed" => config.random_seed = parse_i32(&value)?,
+            "variable_order_type" => {
+                config.variable_order_type = parse_greedy_variable_order_type(&value)?
+            }
+            _ => return Err(format!("unknown option `{key}`")),
+        }
+    }
+
+    Ok(config)
+}
+
 fn multi_domain_abstractions_parens(
     input: &str,
 ) -> Res<'_, DomainAbstractionCollectionGeneratorMultipleCegarConfig> {
@@ -258,6 +301,20 @@ fn multi_domain_abstractions_parens(
     )(input)
 }
 
+fn greedy_numeric_pdb_parens(input: &str) -> Res<'_, GreedyPatternGeneratorConfig> {
+    map_res(
+        delimited(
+            ws(char('(')),
+            terminated(
+                separated_list0(ws(char(',')), key_value_argument),
+                opt(ws(char(','))),
+            ),
+            ws(char(')')),
+        ),
+        build_greedy_numeric_pdb_config,
+    )(input)
+}
+
 fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
     let blind = map(
         tuple((ws(tag_no_case("blind")), opt(ws(empty_parens)))),
@@ -270,8 +327,14 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
     );
 
     let greedy_numeric_pdb = map(
-        tuple((ws(tag_no_case("greedy_numeric_pdb")), opt(ws(empty_parens)))),
-        |_| HeuristicSpec::GreedyNumericPdb,
+        tuple((
+            ws(tag_no_case("greedy_numeric_pdb")),
+            opt(ws(alt((
+                map(empty_parens, |_| GreedyPatternGeneratorConfig::default()),
+                greedy_numeric_pdb_parens,
+            )))),
+        )),
+        |(_, config)| HeuristicSpec::GreedyNumericPdb(config.unwrap_or_default()),
     );
 
     let multi_domain_abstractions = map(

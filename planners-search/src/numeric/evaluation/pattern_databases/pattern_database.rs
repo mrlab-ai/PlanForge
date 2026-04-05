@@ -13,6 +13,12 @@ use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorG
 
 use super::projected_task::ProjectedTask;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct AbstractStateKey {
+    propositional: Vec<i32>,
+    numeric: Vec<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct PdbState {
     pub(super) propositional: Vec<i32>,
@@ -44,7 +50,7 @@ impl Hash for PdbState {
 
 pub struct PatternDatabase<'task> {
     pub(super) task: ProjectedTask<'task>,
-    pub(super) state_to_id: HashMap<PdbState, usize>,
+    pub(super) state_to_id: HashMap<AbstractStateKey, usize>,
     pub(super) states: Vec<PdbState>,
     pub(super) distances: Vec<f64>,
     pub(super) min_operator_cost: f64,
@@ -82,10 +88,7 @@ impl<'task> PatternDatabase<'task> {
     }
 
     pub fn lookup(&self, propositional: &[i32], numeric: &[f64]) -> Option<f64> {
-        let key = PdbState {
-            propositional: propositional.to_vec(),
-            numeric: numeric.to_vec(),
-        };
+        let key = make_abstract_state_key_from_values(&self.task, propositional, numeric)?;
         self.state_to_id
             .get(&key)
             .and_then(|&state_id| self.distances.get(state_id))
@@ -124,7 +127,20 @@ impl<'task> PatternDatabase<'task> {
         propositional: &[i32],
         numeric: &[f64],
     ) -> Result<(Vec<i32>, Vec<f64>), String> {
-        self.task.project_state_values(propositional, numeric)
+        let (projected_prop, projected_num) =
+            self.task.project_state_values(propositional, numeric)?;
+        Ok((
+            self.task
+                .pattern_regular_projected_ids()
+                .iter()
+                .map(|&var_id| projected_prop[var_id])
+                .collect(),
+            self.task
+                .pattern_numeric_projected_ids()
+                .iter()
+                .map(|&var_id| projected_num[var_id])
+                .collect(),
+        ))
     }
 
     fn build(&mut self, max_states: usize) -> Result<(), String> {
@@ -142,7 +158,8 @@ impl<'task> PatternDatabase<'task> {
             propositional: initial_propositional,
             numeric: initial_numeric,
         };
-        self.state_to_id.insert(initial_state.clone(), 0);
+        self.state_to_id
+            .insert(make_abstract_state_key(&self.task, &initial_state), 0);
         self.states.push(initial_state);
         predecessors.push(Vec::new());
 
@@ -175,24 +192,26 @@ impl<'task> PatternDatabase<'task> {
                     continue;
                 }
 
-                let next_id = if let Some(existing_id) = self.state_to_id.get(&successor).copied() {
-                    existing_id
-                } else {
-                    if self.states.len() >= max_states {
-                        self.truncated = true;
-                        frontier_seed_costs
-                            .entry(state_id)
-                            .and_modify(|cost| *cost = cost.min(operator.cost() as f64))
-                            .or_insert(operator.cost() as f64);
-                        continue;
-                    }
-                    let new_id = self.states.len();
-                    self.state_to_id.insert(successor.clone(), new_id);
-                    self.states.push(successor);
-                    predecessors.push(Vec::new());
-                    queue.push_back(new_id);
-                    new_id
-                };
+                let successor_key = make_abstract_state_key(&self.task, &successor);
+                let next_id =
+                    if let Some(existing_id) = self.state_to_id.get(&successor_key).copied() {
+                        existing_id
+                    } else {
+                        if self.states.len() >= max_states {
+                            self.truncated = true;
+                            frontier_seed_costs
+                                .entry(state_id)
+                                .and_modify(|cost| *cost = cost.min(operator.cost() as f64))
+                                .or_insert(operator.cost() as f64);
+                            continue;
+                        }
+                        let new_id = self.states.len();
+                        self.state_to_id.insert(successor_key, new_id);
+                        self.states.push(successor);
+                        predecessors.push(Vec::new());
+                        queue.push_back(new_id);
+                        new_id
+                    };
 
                 predecessors[next_id].push((state_id, operator.cost() as f64));
             }
@@ -243,6 +262,50 @@ impl<'task> PatternDatabase<'task> {
 
         Ok(())
     }
+}
+
+fn make_abstract_state_key(task: &ProjectedTask<'_>, state: &PdbState) -> AbstractStateKey {
+    AbstractStateKey {
+        propositional: task
+            .pattern_regular_projected_ids()
+            .iter()
+            .map(|&var_id| state.propositional[var_id])
+            .collect(),
+        numeric: task
+            .pattern_numeric_projected_ids()
+            .iter()
+            .map(|&var_id| state.numeric[var_id].to_bits())
+            .collect(),
+    }
+}
+
+fn make_abstract_state_key_from_values(
+    task: &ProjectedTask<'_>,
+    propositional: &[i32],
+    numeric: &[f64],
+) -> Option<AbstractStateKey> {
+    let propositional_values = if propositional.len() == task.variables().len() {
+        task.pattern_regular_projected_ids()
+            .iter()
+            .map(|&var_id| propositional.get(var_id).copied())
+            .collect::<Option<Vec<_>>>()?
+    } else {
+        propositional.to_vec()
+    };
+
+    let numeric_values = if numeric.len() == task.numeric_variables().len() {
+        task.pattern_numeric_projected_ids()
+            .iter()
+            .map(|&var_id| numeric.get(var_id).copied().map(f64::to_bits))
+            .collect::<Option<Vec<_>>>()?
+    } else {
+        numeric.iter().map(|value| value.to_bits()).collect()
+    };
+
+    Some(AbstractStateKey {
+        propositional: propositional_values,
+        numeric: numeric_values,
+    })
 }
 
 fn facts_hold(propositional: &[i32], facts: &[Fact]) -> bool {
@@ -469,6 +532,59 @@ mod tests {
         )
     }
 
+    fn cost_only_hidden_numeric_task() -> NumericRootTask {
+        NumericRootTask::new(
+            1,
+            Metric::new(true, 0),
+            vec![simple_var("p", -1)],
+            vec![
+                NumericVariable::new("total-cost".to_string(), NumericType::Cost, -1),
+                NumericVariable::new("c1".to_string(), NumericType::Constant, -1),
+            ],
+            vec![Fact::new(0, 1)],
+            vec![],
+            vec![0],
+            vec![0.0, 1.0],
+            vec![
+                Operator::new(
+                    "wait".to_string(),
+                    vec![Fact::new(0, 0)],
+                    vec![],
+                    vec![AssignmentEffect::new(
+                        0,
+                        AssignmentOperation::Plus,
+                        1,
+                        false,
+                        vec![],
+                    )],
+                    1,
+                ),
+                Operator::new(
+                    "finish".to_string(),
+                    vec![Fact::new(0, 0)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(
+                        vec![],
+                        0,
+                        0,
+                        1,
+                    )],
+                    vec![AssignmentEffect::new(
+                        0,
+                        AssignmentOperation::Plus,
+                        1,
+                        false,
+                        vec![],
+                    )],
+                    1,
+                ),
+            ],
+            vec![],
+            vec![],
+            vec![],
+            (0, 0),
+        )
+    }
+
     #[test]
     fn lookup_returns_distance_for_reached_state() {
         let task = propositional_task();
@@ -562,5 +678,24 @@ mod tests {
         assert_eq!(pdb.lookup(&[1], &[]), Some(5.0));
         assert_eq!(pdb.lookup(&[0], &[]), Some(10.0));
         assert_eq!(pdb.lookup_or_fallback(&[0], &[]), 10.0);
+    }
+
+    #[test]
+    fn pdb_collapses_hidden_cost_dimensions_outside_pattern() {
+        let task = cost_only_hidden_numeric_task();
+        let projected_task = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![0],
+                numeric: vec![],
+            },
+        )
+        .unwrap();
+
+        let pdb = PatternDatabase::new(projected_task, 64).unwrap();
+
+        assert_eq!(pdb.states.len(), 2);
+        assert_eq!(pdb.lookup(&[0], &[]), Some(1.0));
+        assert_eq!(pdb.lookup(&[1], &[]), Some(0.0));
     }
 }

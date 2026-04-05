@@ -3,6 +3,8 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
     InitSplitQuantity, VariableSubset,
 };
+use planners_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
+use planners_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 
 #[test]
 fn parses_astar_blind_with_or_without_unit_parens() {
@@ -32,11 +34,35 @@ fn parses_astar_domain_abstraction_with_or_without_unit_parens() {
 fn parses_astar_greedy_numeric_pdb_with_or_without_unit_parens() {
     assert_eq!(
         parse_search_spec("astar(greedy_numeric_pdb)").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb)
+        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(
+            GreedyPatternGeneratorConfig::default()
+        ))
     );
     assert_eq!(
         parse_search_spec("astar(greedy_numeric_pdb())").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb)
+        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(
+            GreedyPatternGeneratorConfig::default()
+        ))
+    );
+}
+
+#[test]
+fn parses_astar_greedy_numeric_pdb_with_named_options() {
+    let spec = parse_search_spec(
+        "astar(greedy_numeric_pdb(max_pdb_states=321, numeric_first=false, random_seed=7, variable_order_type=reverse_level))",
+    )
+    .unwrap();
+
+    let SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(config)) = spec else {
+        panic!("expected greedy_numeric_pdb config");
+    };
+
+    assert_eq!(config.max_pdb_states, 321);
+    assert!(!config.numeric_first);
+    assert_eq!(config.random_seed, 7);
+    assert_eq!(
+        config.variable_order_type,
+        GreedyVariableOrderType::ReverseLevel
     );
 }
 
@@ -105,6 +131,16 @@ fn display_round_trips_multi_domain_abstractions() {
 }
 
 #[test]
+fn display_round_trips_greedy_numeric_pdb() {
+    let parsed = parse_search_spec(
+        "astar(greedy_numeric_pdb(max_pdb_states=42, numeric_first=false, random_seed=9, variable_order_type=random))",
+    )
+    .unwrap();
+    let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
+    assert_eq!(parsed, reparsed);
+}
+
+#[test]
 fn rejects_removed_exec_entire_plan_randomize_option() {
     assert!(
         parse_search_spec("astar(multi_domain_abstractions(exec_entire_plan=randomize))",).is_err()
@@ -125,7 +161,9 @@ fn trims_trailing_punctuation() {
 
     assert_eq!(
         parse_search_spec("astar(greedy_numeric_pdb());").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb)
+        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(
+            GreedyPatternGeneratorConfig::default()
+        ))
     );
 
     assert!(matches!(
