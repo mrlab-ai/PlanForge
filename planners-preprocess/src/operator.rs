@@ -263,9 +263,12 @@ impl Operator {
         }
     }
 
-    pub fn strip_unimportant_effects(&mut self, num_vars: &[NumericVariable]) {
-        self.pre_post
-            .retain(|eff| num_vars[eff.var].get_level() != -1);
+    pub fn strip_unimportant_effects(
+        &mut self,
+        vars: &[ExplicitVariable],
+        num_vars: &[NumericVariable],
+    ) {
+        self.pre_post.retain(|eff| vars[eff.var].get_level() != -1);
 
         self.assign_effects
             .retain(|eff| num_vars[eff.var].get_level() != -1);

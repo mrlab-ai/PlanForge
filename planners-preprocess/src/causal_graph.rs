@@ -608,7 +608,10 @@ impl CausalGraph {
     pub fn strip_operators(&mut self) {
         let old_count = self.operators.len();
         for op in self.operators.iter_mut() {
-            op.strip_unimportant_effects(&self.numeric_variables.borrow());
+            op.strip_unimportant_effects(
+                &self.variables.borrow(),
+                &self.numeric_variables.borrow(),
+            );
         }
         self.operators
             .retain(|op| !op.is_redundant(&self.numeric_variables.borrow()));
