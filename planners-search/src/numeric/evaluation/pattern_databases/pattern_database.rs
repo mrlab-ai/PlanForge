@@ -83,7 +83,7 @@ impl<T: NumericAbstractTask> PatternDatabase<T> {
             frontier_states: Vec::new(),
         };
         pdb.build(max_states)?;
-        super::utils::dump_distance_table(&pdb);
+        //super::utils::dump_distance_table(&pdb);
         Ok(pdb)
     }
 
