@@ -15,6 +15,7 @@ use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
     ArithOp, ComparisonTree, ComparisonTreeNode,
 };
+use crate::numeric::evaluation::pattern_databases::NumericAbstractTask;
 
 #[derive(Debug, Clone)]
 pub(crate) enum ArithmeticExpr {
@@ -1088,6 +1089,28 @@ impl AbstractNumericTask for ProjectedTask<'_> {
 
     fn get_num_cmp_axioms(&self) -> i32 {
         self.comparison_axioms.len() as i32
+    }
+}
+
+impl NumericAbstractTask for ProjectedTask<'_> {
+    fn abstract_state_values(
+        &self,
+        propositional_values: &[i32],
+        numeric_values: &[f64],
+    ) -> Result<(Vec<i32>, Vec<f64>), String> {
+        ProjectedTask::project_state_values(self, propositional_values, numeric_values)
+    }
+
+    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<i32>, Vec<f64>), String> {
+        ProjectedTask::evaluated_initial_state_values(self).map_err(|err| err.to_string())
+    }
+
+    fn abstract_propositional_var_ids(&self) -> &[usize] {
+        self.pattern_regular_projected_ids()
+    }
+
+    fn abstract_numeric_var_ids(&self) -> &[usize] {
+        self.pattern_numeric_projected_ids()
     }
 }
 

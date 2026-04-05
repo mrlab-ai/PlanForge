@@ -1,5 +1,6 @@
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 
+use super::NumericAbstractTask;
 use super::pattern_database::PatternDatabase;
 use super::projected_task::{Pattern, ProjectedTask};
 
@@ -28,7 +29,7 @@ pub(crate) fn print_projection_summary(
     );
 }
 
-pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
+pub(crate) fn dump_distance_table<T: NumericAbstractTask>(pdb: &PatternDatabase<T>) {
     let goal_states: Vec<usize> = pdb
         .states
         .iter()
@@ -57,7 +58,7 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
         fmt_distance(pdb.min_operator_cost)
     );
 
-    let pattern_regular_projected_ids = pdb.task.pattern_regular_projected_ids();
+    let pattern_regular_projected_ids = pdb.task.abstract_propositional_var_ids();
     let prop_headers: Vec<String> = pattern_regular_projected_ids
         .iter()
         .map(|&var_id| {
@@ -68,7 +69,7 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
             format!("p{var_id}({name})")
         })
         .collect();
-    let pattern_numeric_projected_ids = pdb.task.pattern_numeric_projected_ids();
+    let pattern_numeric_projected_ids = pdb.task.abstract_numeric_var_ids();
     let num_headers: Vec<String> = pattern_numeric_projected_ids
         .iter()
         .map(|&var_id| format!("n{var_id}({})", pdb.task.numeric_variables()[var_id].name()))

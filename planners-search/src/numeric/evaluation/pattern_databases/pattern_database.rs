@@ -11,7 +11,7 @@ use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
 use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node};
 
-use super::projected_task::ProjectedTask;
+use super::NumericAbstractTask;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct AbstractStateKey {
@@ -48,8 +48,8 @@ impl Hash for PdbState {
     }
 }
 
-pub struct PatternDatabase<'task> {
-    pub(super) task: ProjectedTask<'task>,
+pub struct PatternDatabase<T: NumericAbstractTask> {
+    pub(super) task: T,
     pub(super) state_to_id: HashMap<AbstractStateKey, usize>,
     pub(super) states: Vec<PdbState>,
     pub(super) distances: Vec<f64>,
@@ -59,9 +59,9 @@ pub struct PatternDatabase<'task> {
     pub(super) frontier_states: Vec<usize>,
 }
 
-impl<'task> PatternDatabase<'task> {
-    pub fn new(projected_task: ProjectedTask<'task>, max_states: usize) -> Result<Self, String> {
-        let min_operator_cost = projected_task
+impl<T: NumericAbstractTask> PatternDatabase<T> {
+    pub fn new(task: T, max_states: usize) -> Result<Self, String> {
+        let min_operator_cost = task
             .get_operators()
             .iter()
             .map(|operator| operator.cost() as f64)
@@ -73,7 +73,7 @@ impl<'task> PatternDatabase<'task> {
         };
 
         let mut pdb = Self {
-            task: projected_task,
+            task,
             state_to_id: HashMap::new(),
             states: Vec::new(),
             distances: Vec::new(),
@@ -122,23 +122,22 @@ impl<'task> PatternDatabase<'task> {
         self.min_operator_cost
     }
 
-    pub fn project_state_values(
+    pub fn abstract_state_values(
         &self,
         propositional: &[i32],
         numeric: &[f64],
     ) -> Result<(Vec<i32>, Vec<f64>), String> {
-        let (projected_prop, projected_num) =
-            self.task.project_state_values(propositional, numeric)?;
+        let (abstract_prop, abstract_num) = self.task.abstract_state_values(propositional, numeric)?;
         Ok((
             self.task
-                .pattern_regular_projected_ids()
+                .abstract_propositional_var_ids()
                 .iter()
-                .map(|&var_id| projected_prop[var_id])
+                .map(|&var_id| abstract_prop[var_id])
                 .collect(),
             self.task
-                .pattern_numeric_projected_ids()
+                .abstract_numeric_var_ids()
                 .iter()
-                .map(|&var_id| projected_num[var_id])
+                .map(|&var_id| abstract_num[var_id])
                 .collect(),
         ))
     }
@@ -152,8 +151,8 @@ impl<'task> PatternDatabase<'task> {
         let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
         let (initial_propositional, initial_numeric) = self
             .task
-            .evaluated_initial_state_values()
-            .map_err(|err| err.to_string())?;
+            .evaluated_initial_abstract_state_values()
+            ?;
         let initial_state = PdbState {
             propositional: initial_propositional,
             numeric: initial_numeric,
@@ -264,15 +263,15 @@ impl<'task> PatternDatabase<'task> {
     }
 }
 
-fn make_abstract_state_key(task: &ProjectedTask<'_>, state: &PdbState) -> AbstractStateKey {
+fn make_abstract_state_key<T: NumericAbstractTask>(task: &T, state: &PdbState) -> AbstractStateKey {
     AbstractStateKey {
         propositional: task
-            .pattern_regular_projected_ids()
+            .abstract_propositional_var_ids()
             .iter()
             .map(|&var_id| state.propositional[var_id])
             .collect(),
         numeric: task
-            .pattern_numeric_projected_ids()
+            .abstract_numeric_var_ids()
             .iter()
             .map(|&var_id| state.numeric[var_id].to_bits())
             .collect(),
@@ -280,12 +279,12 @@ fn make_abstract_state_key(task: &ProjectedTask<'_>, state: &PdbState) -> Abstra
 }
 
 fn make_abstract_state_key_from_values(
-    task: &ProjectedTask<'_>,
+    task: &impl NumericAbstractTask,
     propositional: &[i32],
     numeric: &[f64],
 ) -> Option<AbstractStateKey> {
     let propositional_values = if propositional.len() == task.variables().len() {
-        task.pattern_regular_projected_ids()
+        task.abstract_propositional_var_ids()
             .iter()
             .map(|&var_id| propositional.get(var_id).copied())
             .collect::<Option<Vec<_>>>()?
@@ -294,7 +293,7 @@ fn make_abstract_state_key_from_values(
     };
 
     let numeric_values = if numeric.len() == task.numeric_variables().len() {
-        task.pattern_numeric_projected_ids()
+        task.abstract_numeric_var_ids()
             .iter()
             .map(|&var_id| numeric.get(var_id).copied().map(f64::to_bits))
             .collect::<Option<Vec<_>>>()?
@@ -401,7 +400,15 @@ mod tests {
     };
 
     use super::*;
+    use crate::numeric::evaluation::pattern_databases::NumericAbstractTask;
     use crate::numeric::evaluation::pattern_databases::projected_task::{Pattern, ProjectedTask};
+
+    fn build_pdb_from_abstract_task<T: NumericAbstractTask>(
+        task: T,
+        max_states: usize,
+    ) -> PatternDatabase<T> {
+        PatternDatabase::new(task, max_states).unwrap()
+    }
 
     fn simple_var(name: &str, axiom_layer: i32) -> ExplicitVariable {
         ExplicitVariable::new(
@@ -600,6 +607,23 @@ mod tests {
 
         assert_eq!(pdb.lookup(&[0], &[0.0]), Some(3.0));
         assert_eq!(pdb.lookup(&[1], &[0.0]), Some(0.0));
+    }
+
+    #[test]
+    fn pattern_database_accepts_numeric_abstract_task_boundary() {
+        let task = propositional_task();
+        let projected_task = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![0],
+                numeric: vec![0],
+            },
+        )
+        .unwrap();
+
+        let pdb = build_pdb_from_abstract_task(projected_task, 32);
+
+        assert_eq!(pdb.lookup(&[0], &[0.0]), Some(3.0));
     }
 
     #[test]

@@ -13,7 +13,7 @@ use super::utils;
 
 pub struct GreedyNumericPdbHeuristic<'task> {
     name: String,
-    pdb: PatternDatabase<'task>,
+    pdb: PatternDatabase<ProjectedTask<'task>>,
     prop_scratch: RefCell<Vec<i32>>,
     numeric_scratch: RefCell<Vec<f64>>,
 }
@@ -74,7 +74,7 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
 
         let (projected_prop, projected_num) = self
             .pdb
-            .project_state_values(&propositional_values, &numeric_values)
+            .abstract_state_values(&propositional_values, &numeric_values)
             .map_err(EvaluationError::ComputationFailed)?;
 
         Ok(self.pdb.lookup_or_fallback(&projected_prop, &projected_num))
