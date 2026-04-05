@@ -445,13 +445,11 @@ impl<'task> ProjectedTask<'task> {
             }
         }
 
-        let variables: Vec<ExplicitVariable> = projected_var_to_original
-            .iter()
-            .map(|&original| base.variables()[original].clone())
-            .collect();
-
         let mut variable_names: Vec<String> = Vec::with_capacity(projected_var_to_original.len());
         let mut fact_names: Vec<Vec<String>> = Vec::with_capacity(projected_var_to_original.len());
+        let mut variable_domain_sizes: Vec<u32> = Vec::with_capacity(projected_var_to_original.len());
+        let mut variable_default_values: Vec<u32> =
+            Vec::with_capacity(projected_var_to_original.len());
         for &original_var_id in &projected_var_to_original {
             let variable_name = base
                 .get_variable_name(original_var_id as i32)
@@ -474,6 +472,12 @@ impl<'task> ProjectedTask<'task> {
                 })
                 .collect();
 
+            variable_domain_sizes.push(domain_size as u32);
+            variable_default_values.push(
+                base.get_variable_default_axiom_value(original_var_id as i32)
+                    .unwrap_or(0)
+                    .max(0) as u32,
+            );
             variable_names.push(variable_name);
             fact_names.push(var_fact_names);
         }
@@ -573,6 +577,32 @@ impl<'task> ProjectedTask<'task> {
                     &is_auxiliary_num_var,
                 )
             })
+            .collect();
+
+        let variable_layers = normalize_projected_variable_layers(
+            projected_var_to_original.len(),
+            &numeric_variables,
+            &comparison_axioms,
+            &axioms,
+        );
+        let variables: Vec<ExplicitVariable> = variable_names
+            .iter()
+            .cloned()
+            .zip(fact_names.iter().cloned())
+            .zip(variable_domain_sizes.iter().copied())
+            .zip(variable_default_values.iter().copied())
+            .zip(variable_layers.iter().copied())
+            .map(
+                |((((name, fact_names), domain_size), axiom_default_value), axiom_layer)| {
+                    ExplicitVariable::new(
+                        domain_size,
+                        name,
+                        fact_names,
+                        axiom_layer,
+                        axiom_default_value,
+                    )
+                },
+            )
             .collect();
 
         let operator_effect_facts: Vec<Vec<Fact>> = operators
@@ -1646,6 +1676,115 @@ fn project_assignment_axiom(
     ))
 }
 
+fn normalize_projected_variable_layers(
+    num_variables: usize,
+    numeric_variables: &[NumericVariable],
+    comparison_axioms: &[ComparisonAxiom],
+    axioms: &[PropositionalAxiom],
+) -> Vec<i32> {
+    let last_arithmetic_layer = numeric_variables
+        .iter()
+        .map(NumericVariable::axiom_layer)
+        .max()
+        .unwrap_or(-1);
+    let comparison_layer = if comparison_axioms.is_empty() {
+        -1
+    } else {
+        last_arithmetic_layer + 1
+    };
+    let base_propositional_layer = if comparison_axioms.is_empty() {
+        last_arithmetic_layer + 1
+    } else {
+        comparison_layer + 1
+    };
+
+    let mut affects_comparison = vec![false; num_variables];
+    for axiom in comparison_axioms {
+        if let Ok(var_id) = usize::try_from(axiom.get_affected_var_id()) {
+            if var_id < num_variables {
+                affects_comparison[var_id] = true;
+            }
+        }
+    }
+
+    let mut axioms_by_var: Vec<Vec<&PropositionalAxiom>> = vec![Vec::new(); num_variables];
+    for axiom in axioms {
+        let affected_var = axiom.var_id() as usize;
+        if affected_var < num_variables {
+            axioms_by_var[affected_var].push(axiom);
+        }
+    }
+
+    let mut layers = vec![-1; num_variables];
+    let mut visiting = vec![false; num_variables];
+
+    fn compute_layer(
+        var_id: usize,
+        layers: &mut [i32],
+        visiting: &mut [bool],
+        affects_comparison: &[bool],
+        axioms_by_var: &[Vec<&PropositionalAxiom>],
+        comparison_layer: i32,
+        base_propositional_layer: i32,
+    ) -> i32 {
+        if layers[var_id] != -1 {
+            return layers[var_id];
+        }
+        if affects_comparison[var_id] {
+            layers[var_id] = comparison_layer;
+            return comparison_layer;
+        }
+        if axioms_by_var[var_id].is_empty() {
+            return -1;
+        }
+        if visiting[var_id] {
+            return base_propositional_layer;
+        }
+
+        visiting[var_id] = true;
+        let mut layer = base_propositional_layer;
+        for axiom in &axioms_by_var[var_id] {
+            for condition in axiom.conditions() {
+                let condition_var = condition.var() as usize;
+                if condition_var >= layers.len() {
+                    continue;
+                }
+                let dependency_layer = compute_layer(
+                    condition_var,
+                    layers,
+                    visiting,
+                    affects_comparison,
+                    axioms_by_var,
+                    comparison_layer,
+                    base_propositional_layer,
+                );
+                if dependency_layer >= 0 {
+                    layer = layer.max(dependency_layer + 1);
+                }
+            }
+        }
+        visiting[var_id] = false;
+        layers[var_id] = layer;
+        layer
+    }
+
+    for var_id in 0..num_variables {
+        if affects_comparison[var_id] || !axioms_by_var[var_id].is_empty() {
+            compute_layer(
+                var_id,
+                &mut layers,
+                &mut visiting,
+                &affects_comparison,
+                &axioms_by_var,
+                comparison_layer,
+                base_propositional_layer,
+            );
+        }
+    }
+
+    layers
+}
+
 #[cfg(test)]
 mod tests {
     use planners_sas::numeric::axioms::{ComparisonOperator, PropositionalAxiom};
@@ -1875,5 +2014,63 @@ mod tests {
             &AssignmentOperation::Plus
         );
         assert_eq!(op.assignment_effects()[0].var_id(), 1);
+    }
+
+    #[test]
+    fn projected_task_relayers_helper_backed_comparison_chain() {
+        let variables = vec![
+            simple_var("goal", 6),
+            ExplicitVariable::new(
+                3,
+                "cmp".to_string(),
+                vec![
+                    "cmp-true".to_string(),
+                    "cmp-false".to_string(),
+                    "cmp-unk".to_string(),
+                ],
+                5,
+                2,
+            ),
+        ];
+        let numeric_variables = vec![
+            NumericVariable::new("zero".to_string(), NumericType::Constant, -1),
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("sum".to_string(), NumericType::Derived, 4),
+        ];
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![Fact::new(0, 1)],
+            vec![],
+            vec![0, 2],
+            vec![0.0, 1.0, 2.0, 3.0],
+            vec![],
+            vec![PropositionalAxiom::new(vec![Fact::new(1, 0)], 0, 0, 1)],
+            vec![ComparisonAxiom::new(
+                1,
+                3,
+                0,
+                ComparisonOperator::GreaterThanOrEqual,
+            )],
+            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+            (0, 0),
+        );
+
+        let helper_var_id = task.numeric_variables().len();
+        let projected = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![0],
+                numeric: vec![helper_var_id],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(projected.get_variable_axiom_layer(1).unwrap(), 0);
+        assert_eq!(projected.get_variable_axiom_layer(0).unwrap(), 1);
+        projected.evaluated_initial_state_values().unwrap();
     }
 }
