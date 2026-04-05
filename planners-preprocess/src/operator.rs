@@ -375,7 +375,7 @@ impl Operator {
                 out,
                 " {} {:?} {}",
                 vars[eff.var].get_level(),
-                eff.pre,
+                eff.pre.map_or(-1, |x| x as i32),
                 eff.post
             )
             .unwrap();
