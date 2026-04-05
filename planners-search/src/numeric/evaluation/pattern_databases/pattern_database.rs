@@ -48,6 +48,9 @@ pub struct PatternDatabase<'task> {
     pub(super) states: Vec<PdbState>,
     pub(super) distances: Vec<f64>,
     pub(super) min_operator_cost: f64,
+    pub(super) reached_goal_states: usize,
+    pub(super) truncated: bool,
+    pub(super) frontier_states: Vec<usize>,
 }
 
 impl<'task> PatternDatabase<'task> {
@@ -69,6 +72,9 @@ impl<'task> PatternDatabase<'task> {
             states: Vec::new(),
             distances: Vec::new(),
             min_operator_cost,
+            reached_goal_states: 0,
+            truncated: false,
+            frontier_states: Vec::new(),
         };
         pdb.build(max_states)?;
         super::utils::dump_distance_table(&pdb);
@@ -87,13 +93,19 @@ impl<'task> PatternDatabase<'task> {
     }
 
     pub fn lookup_or_fallback(&self, propositional: &[i32], numeric: &[f64]) -> f64 {
-        self.lookup(propositional, numeric).unwrap_or_else(|| {
-            if self.is_goal_state(propositional) {
-                0.0
-            } else {
-                self.min_operator_cost()
+        match self.lookup(propositional, numeric) {
+            Some(distance) if distance.is_finite() => distance,
+            Some(_) if self.is_goal_state(propositional) => 0.0,
+            Some(_) if self.truncated => self.min_operator_cost(),
+            Some(distance) => distance,
+            None => {
+                if self.is_goal_state(propositional) {
+                    0.0
+                } else {
+                    self.min_operator_cost()
+                }
             }
-        })
+        }
     }
 
     pub fn is_goal_state(&self, propositional: &[i32]) -> bool {
@@ -117,6 +129,7 @@ impl<'task> PatternDatabase<'task> {
 
     fn build(&mut self, max_states: usize) -> Result<(), String> {
         let mut predecessors: Vec<Vec<(usize, f64)>> = Vec::new();
+        let mut frontier_seed_costs: HashMap<usize, f64> = HashMap::new();
         let packer = propositional_packer(&self.task);
         let axiom_evaluator = AxiomEvaluator::new(&self.task, &packer);
         let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&self.task);
@@ -136,6 +149,17 @@ impl<'task> PatternDatabase<'task> {
         let mut queue = VecDeque::from([0usize]);
         while let Some(state_id) = queue.pop_front() {
             if self.states.len() >= max_states {
+                self.truncated = true;
+                frontier_seed_costs
+                    .entry(state_id)
+                    .and_modify(|cost| *cost = cost.min(self.min_operator_cost))
+                    .or_insert(self.min_operator_cost);
+                for queued_state_id in queue.iter().copied() {
+                    frontier_seed_costs
+                        .entry(queued_state_id)
+                        .and_modify(|cost| *cost = cost.min(self.min_operator_cost))
+                        .or_insert(self.min_operator_cost);
+                }
                 break;
             }
             let state = self.states[state_id].clone();
@@ -155,6 +179,11 @@ impl<'task> PatternDatabase<'task> {
                     existing_id
                 } else {
                     if self.states.len() >= max_states {
+                        self.truncated = true;
+                        frontier_seed_costs
+                            .entry(state_id)
+                            .and_modify(|cost| *cost = cost.min(operator.cost() as f64))
+                            .or_insert(operator.cost() as f64);
                         continue;
                     }
                     let new_id = self.states.len();
@@ -172,11 +201,29 @@ impl<'task> PatternDatabase<'task> {
         self.distances = vec![f64::INFINITY; self.states.len()];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
 
+        self.reached_goal_states = 0;
         for (state_id, state) in self.states.iter().enumerate() {
             if self.is_goal_state(&state.propositional) {
+                self.reached_goal_states += 1;
                 self.distances[state_id] = 0.0;
                 heap.push((Reverse(NotNan::new(0.0).unwrap()), state_id));
             }
+        }
+
+        if self.truncated {
+            let mut frontier_states: Vec<usize> = frontier_seed_costs.keys().copied().collect();
+            frontier_states.sort_unstable();
+            frontier_states.dedup();
+            self.frontier_states = frontier_states;
+
+            for (&state_id, &seed_cost) in &frontier_seed_costs {
+                if seed_cost + 1e-12 < self.distances[state_id] {
+                    self.distances[state_id] = seed_cost;
+                    heap.push((Reverse(NotNan::new(seed_cost).unwrap()), state_id));
+                }
+            }
+        } else {
+            self.frontier_states.clear();
         }
 
         while let Some((Reverse(distance), state_id)) = heap.pop() {
@@ -373,6 +420,55 @@ mod tests {
         )
     }
 
+    fn truncated_chain_task() -> NumericRootTask {
+        NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            vec![ExplicitVariable::new(
+                3,
+                "p".to_string(),
+                vec!["p=0".to_string(), "p=1".to_string(), "p=2".to_string()],
+                -1,
+                2,
+            )],
+            vec![],
+            vec![Fact::new(0, 2)],
+            vec![],
+            vec![0],
+            vec![],
+            vec![
+                Operator::new(
+                    "step-1".to_string(),
+                    vec![Fact::new(0, 0)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(
+                        vec![],
+                        0,
+                        0,
+                        1,
+                    )],
+                    vec![],
+                    5,
+                ),
+                Operator::new(
+                    "step-2".to_string(),
+                    vec![Fact::new(0, 1)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(
+                        vec![],
+                        0,
+                        1,
+                        2,
+                    )],
+                    vec![],
+                    5,
+                ),
+            ],
+            vec![],
+            vec![],
+            vec![],
+            (0, 0),
+        )
+    }
+
     #[test]
     fn lookup_returns_distance_for_reached_state() {
         let task = propositional_task();
@@ -444,5 +540,27 @@ mod tests {
         assert!(pdb.states.len() > 1);
         assert_eq!(pdb.lookup(&initial_prop, &initial_num), Some(1.0));
         assert!(pdb.distances.iter().any(|&distance| distance == 0.0));
+    }
+
+    #[test]
+    fn truncated_pdb_propagates_frontier_seed_costs() {
+        let task = truncated_chain_task();
+        let projected_task = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![0],
+                numeric: vec![],
+            },
+        )
+        .unwrap();
+
+        let pdb = PatternDatabase::new(projected_task, 2).unwrap();
+
+        assert!(pdb.truncated);
+        assert_eq!(pdb.reached_goal_states, 0);
+        assert_eq!(pdb.frontier_states, vec![1]);
+        assert_eq!(pdb.lookup(&[1], &[]), Some(5.0));
+        assert_eq!(pdb.lookup(&[0], &[]), Some(10.0));
+        assert_eq!(pdb.lookup_or_fallback(&[0], &[]), 10.0);
     }
 }

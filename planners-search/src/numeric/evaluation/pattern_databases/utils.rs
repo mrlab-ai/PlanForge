@@ -49,6 +49,8 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
         goal_states.len(),
         goal_states
     );
+    println!("  truncated:          {}", pdb.truncated);
+    println!("  frontier states:    {:?}", pdb.frontier_states);
     println!("  dead ends:          {}", dead_end_count);
     println!(
         "  min operator cost:  {}",
