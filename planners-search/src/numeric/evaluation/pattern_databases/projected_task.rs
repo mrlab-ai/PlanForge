@@ -4,12 +4,13 @@ use std::fmt;
 use std::rc::Rc;
 
 use planners_sas::numeric::axioms::{
-    AssignmentAxiom, CalOperator, ComparisonAxiom, PropositionalAxiom,
+    AssignmentAxiom, AxiomEvaluator, CalOperator, ComparisonAxiom, PropositionalAxiom,
 };
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitVariable, Fact, Metric, NumericRootTask,
     NumericType, NumericVariable, Operator,
 };
+use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
 use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
     ArithOp, ComparisonTree, ComparisonTreeNode,
@@ -153,6 +154,9 @@ pub enum ProjectedTaskBuildError {
         operator_name: String,
         reason: &'static str,
     },
+    InitialStateEvaluationFailed {
+        reason: String,
+    },
 }
 
 impl fmt::Display for ProjectedTaskBuildError {
@@ -203,6 +207,10 @@ impl fmt::Display for ProjectedTaskBuildError {
             } => write!(
                 formatter,
                 "operator {operator_name} uses unsupported numeric effects for projected tasks: {reason}"
+            ),
+            Self::InitialStateEvaluationFailed { reason } => write!(
+                formatter,
+                "failed to evaluate projected initial state: {reason}"
             ),
         }
     }
@@ -705,6 +713,15 @@ impl<'task> ProjectedTask<'task> {
         Ok((projected_prop_values, projected_numeric_values))
     }
 
+    pub fn evaluated_initial_state_values(
+        &self,
+    ) -> Result<(Vec<i32>, Vec<f64>), ProjectedTaskBuildError> {
+        let mut propositional = self.state.borrow().clone();
+        let mut numeric = self.numeric_state.borrow().clone();
+        self.evaluate_axiom_closure(&mut propositional, &mut numeric)?;
+        Ok((propositional, numeric))
+    }
+
     pub fn is_goal_state_values(&self, propositional_values: &[i32]) -> bool {
         self.goals.iter().all(|goal| {
             propositional_values.get(goal.var() as usize).copied() == Some(goal.value())
@@ -735,6 +752,50 @@ impl<'task> ProjectedTask<'task> {
     pub fn pattern_regular_projected_ids(&self) -> &[usize] {
         &self.pattern_regular_projected_ids
     }
+
+    fn evaluate_axiom_closure(
+        &self,
+        propositional: &mut Vec<i32>,
+        numeric: &mut Vec<f64>,
+    ) -> Result<(), ProjectedTaskBuildError> {
+        let packer = projected_propositional_packer(self);
+        let axiom_evaluator = AxiomEvaluator::new(self, &packer);
+        let mut buffer = vec![0u64; packer.num_bins() as usize];
+
+        for (var_id, value) in propositional.iter().enumerate() {
+            packer.set(&mut buffer, var_id as i32, *value as u64);
+        }
+
+        axiom_evaluator
+            .evaluate_arithmetic_axioms(numeric)
+            .map_err(
+                |err| ProjectedTaskBuildError::InitialStateEvaluationFailed {
+                    reason: format!("arithmetic axioms: {err:?}"),
+                },
+            )?;
+        axiom_evaluator
+            .evaluate(&mut buffer, numeric)
+            .map_err(
+                |err| ProjectedTaskBuildError::InitialStateEvaluationFailed {
+                    reason: format!("propositional axioms: {err:?}"),
+                },
+            )?;
+
+        for (var_id, slot) in propositional.iter_mut().enumerate() {
+            *slot = packer.get(&buffer, var_id as i32) as i32;
+        }
+
+        Ok(())
+    }
+}
+
+fn projected_propositional_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {
+    let ranges: Vec<u64> = task
+        .variables()
+        .iter()
+        .map(|variable| variable.domain_size() as u64)
+        .collect();
+    IntDoublePacker::new(&ranges)
 }
 
 impl AbstractNumericTask for ProjectedTask<'_> {

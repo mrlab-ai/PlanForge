@@ -121,9 +121,13 @@ impl<'task> PatternDatabase<'task> {
         let axiom_evaluator = AxiomEvaluator::new(&self.task, &packer);
         let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&self.task);
         let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
+        let (initial_propositional, initial_numeric) = self
+            .task
+            .evaluated_initial_state_values()
+            .map_err(|err| err.to_string())?;
         let initial_state = PdbState {
-            propositional: self.task.get_initial_propositional_state_values().to_vec(),
-            numeric: self.task.get_initial_numeric_state_values().to_vec(),
+            propositional: initial_propositional,
+            numeric: initial_numeric,
         };
         self.state_to_id.insert(initial_state.clone(), 0);
         self.states.push(initial_state);
@@ -278,10 +282,12 @@ fn propositional_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {
 
 #[cfg(test)]
 mod tests {
-    use planners_sas::numeric::axioms::AssignmentAxiom;
-    use planners_sas::numeric::axioms::CalOperator;
+    use planners_sas::numeric::axioms::{
+        AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
+    };
     use planners_sas::numeric::numeric_task::{
-        ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
+        AssignmentEffect, AssignmentOperation, ExplicitVariable, Metric, NumericRootTask,
+        NumericType, NumericVariable,
     };
 
     use super::*;
@@ -326,6 +332,43 @@ mod tests {
             vec![],
             vec![],
             vec![AssignmentAxiom::new(0, CalOperator::Sum, 0, 0)],
+            (0, 0),
+        )
+    }
+
+    fn comparison_guarded_task() -> NumericRootTask {
+        NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            vec![simple_var("cmp", 0), simple_var("goal", -1)],
+            vec![
+                NumericVariable::new("threshold".to_string(), NumericType::Constant, -1),
+                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            ],
+            vec![Fact::new(1, 1)],
+            vec![],
+            vec![2, 0],
+            vec![0.0, 0.0],
+            vec![Operator::new(
+                "advance".to_string(),
+                vec![Fact::new(0, 0)],
+                vec![planners_sas::numeric::numeric_task::Effect::new(
+                    vec![],
+                    1,
+                    0,
+                    1,
+                )],
+                vec![],
+                1,
+            )],
+            vec![],
+            vec![ComparisonAxiom::new(
+                0,
+                1,
+                0,
+                ComparisonOperator::GreaterThanOrEqual,
+            )],
+            vec![],
             (0, 0),
         )
     }
@@ -379,5 +422,27 @@ mod tests {
 
         assert_eq!(pdb.lookup(&[0], &[42.0]), None);
         assert_eq!(pdb.lookup_or_fallback(&[0], &[42.0]), 3.0);
+    }
+
+    #[test]
+    fn pdb_build_expands_from_axiom_closed_initial_state() {
+        let task = comparison_guarded_task();
+        let projected_task = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![1],
+                numeric: vec![1],
+            },
+        )
+        .unwrap();
+
+        let (initial_prop, initial_num) = projected_task.evaluated_initial_state_values().unwrap();
+        assert_eq!(initial_prop, vec![0, 0]);
+
+        let pdb = PatternDatabase::new(projected_task, 16).unwrap();
+
+        assert!(pdb.states.len() > 1);
+        assert_eq!(pdb.lookup(&initial_prop, &initial_num), Some(1.0));
+        assert!(pdb.distances.iter().any(|&distance| distance == 0.0));
     }
 }
