@@ -2,7 +2,7 @@ pub trait AbstractTask {
     fn get_num_variables(&self) -> usize;
     fn get_variable_name(&self, index: usize) -> Result<&str, &str>;
     fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str>;
-    fn get_variable_axiom_layer(&self, index: usize) -> Result<i32, &str>;
+    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str>;
     fn get_variable_default_axiom_value(&self, index: usize) -> Result<u32, &str>;
     fn get_fact_name(&self, fact: &Fact) -> &str;
 
@@ -53,7 +53,7 @@ pub struct ExplicitVariable {
     pub domain_size: usize,
     pub name: String,
     pub fact_names: Vec<String>,
-    pub axiom_layer: i32,
+    pub axiom_layer: Option<usize>,
     pub axiom_default_value: u32,
 }
 
@@ -62,7 +62,7 @@ impl ExplicitVariable {
         domain_size: usize,
         name: String,
         fact_names: Vec<String>,
-        axiom_layer: i32,
+        axiom_layer: Option<usize>,
         axiom_default_value: u32,
     ) -> Self {
         ExplicitVariable {
@@ -91,7 +91,7 @@ impl Fact {
 pub struct Effect {
     pub conditions: Vec<Fact>,
     pub var_id: usize,
-    pub precondition_value: i32,
+    pub precondition_value: Option<usize>,
     pub effect_value: usize,
 }
 
@@ -99,7 +99,7 @@ impl Effect {
     pub fn new(
         conditions: Vec<Fact>,
         var_id: usize,
-        precondition_value: i32,
+        precondition_value: Option<usize>,
         effect_value: usize,
     ) -> Self {
         Effect {
@@ -132,7 +132,7 @@ impl Operator {
 pub struct Axiom {
     pub conditions: Vec<Fact>,
     pub var_id: usize,
-    pub precondition_value: i32,
+    pub precondition_value: Option<usize>,
     pub effect_value: usize,
 }
 
@@ -140,7 +140,7 @@ impl Axiom {
     pub fn new(
         conditions: Vec<Fact>,
         var_id: usize,
-        precondition_value: i32,
+        precondition_value: Option<usize>,
         effect_value: usize,
     ) -> Self {
         Axiom {
@@ -183,7 +183,7 @@ impl AbstractTask for RootTask {
         Ok(self.variables[index].domain_size)
     }
 
-    fn get_variable_axiom_layer(&self, index: usize) -> Result<i32, &str> {
+    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str> {
         if index >= self.variables.len() {
             return Err("Index out of bounds");
         }

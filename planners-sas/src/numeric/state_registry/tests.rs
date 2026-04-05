@@ -1,10 +1,8 @@
-use std::collections::VecDeque;
-
 use crate::numeric::{
     axioms::AxiomEvaluator,
     numeric_task::{
-        AbstractNumericTask, Effect, ExplicitVariable, Fact, Metric, NumericRootTask, NumericType,
-        NumericVariable, Operator,
+        AbstractNumericTask, Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
+        NumericType, NumericVariable, Operator,
     },
     state_registry::StateRegistry,
     utils::int_packer::IntDoublePacker,
@@ -42,19 +40,19 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         2,
         "v0".to_string(),
         vec!["off".to_string(), "on".to_string()],
-        -1,
+        None,
         0,
     )];
     let numeric_variables = vec![
-        NumericVariable::new("total_cost()".to_string(), NumericType::Cost, -1),
-        NumericVariable::new("cheap".to_string(), NumericType::Constant, -1),
-        NumericVariable::new("expensive".to_string(), NumericType::Constant, -1),
+        NumericVariable::new("total_cost()".to_string(), NumericType::Cost, None),
+        NumericVariable::new("cheap".to_string(), NumericType::Constant, None),
+        NumericVariable::new("expensive".to_string(), NumericType::Constant, None),
     ];
 
     let expensive_op = Operator::new(
         "expensive".to_string(),
-        vec![Fact::new(0, 0)],
-        vec![Effect::new(Vec::new(), 0, 0, 1)],
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(Vec::new(), 0, Some(0), 1)],
         vec![crate::numeric::numeric_task::AssignmentEffect::new(
             0,
             crate::numeric::numeric_task::AssignmentOperation::Plus,
@@ -66,8 +64,8 @@ fn duplicate_state_keeps_better_metric_cost_information() {
     );
     let cheap_op = Operator::new(
         "cheap".to_string(),
-        vec![Fact::new(0, 0)],
-        vec![Effect::new(Vec::new(), 0, 0, 1)],
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(Vec::new(), 0, Some(0), 1)],
         vec![crate::numeric::numeric_task::AssignmentEffect::new(
             0,
             crate::numeric::numeric_task::AssignmentOperation::Plus,
@@ -80,10 +78,10 @@ fn duplicate_state_keeps_better_metric_cost_information() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, 0),
+        Metric::new(true, Some(0)),
         variables,
         numeric_variables,
-        vec![Fact::new(0, 1)],
+        vec![ExplicitFact::new(0, 1)],
         vec![],
         vec![0],
         vec![0.0, 1.0, 5.0],
@@ -91,7 +89,7 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact { var: 0, value: 0 },
     );
 
     let state_packer = IntDoublePacker::from_task(&task);

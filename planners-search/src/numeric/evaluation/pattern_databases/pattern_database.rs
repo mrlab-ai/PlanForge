@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use ordered_float::NotNan;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, Fact, Operator,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, Operator,
 };
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
@@ -15,7 +15,7 @@ use super::projected_task::ProjectedTask;
 
 #[derive(Debug, Clone)]
 pub(super) struct PdbState {
-    pub(super) propositional: Vec<i32>,
+    pub(super) propositional: Vec<usize>,
     pub(super) numeric: Vec<f64>,
 }
 
@@ -75,7 +75,7 @@ impl<'task> PatternDatabase<'task> {
         Ok(pdb)
     }
 
-    pub fn lookup(&self, propositional: &[i32], numeric: &[f64]) -> Option<f64> {
+    pub fn lookup(&self, propositional: &[usize], numeric: &[f64]) -> Option<f64> {
         let key = PdbState {
             propositional: propositional.to_vec(),
             numeric: numeric.to_vec(),
@@ -86,7 +86,7 @@ impl<'task> PatternDatabase<'task> {
             .copied()
     }
 
-    pub fn lookup_or_fallback(&self, propositional: &[i32], numeric: &[f64]) -> f64 {
+    pub fn lookup_or_fallback(&self, propositional: &[usize], numeric: &[f64]) -> f64 {
         self.lookup(propositional, numeric).unwrap_or_else(|| {
             if self.is_goal_state(propositional) {
                 0.0
@@ -96,10 +96,10 @@ impl<'task> PatternDatabase<'task> {
         })
     }
 
-    pub fn is_goal_state(&self, propositional: &[i32]) -> bool {
-        (0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0)).all(|goal_index| {
-            let goal = self.task.get_goal_fact(goal_index as i32);
-            propositional.get(goal.var() as usize).copied() == Some(goal.value())
+    pub fn is_goal_state(&self, propositional: &[usize]) -> bool {
+        (0..self.task.get_num_goals().max(0)).all(|goal_index| {
+            let goal = self.task.get_goal_fact(goal_index);
+            propositional.get(goal.var).copied() == Some(goal.value)
         })
     }
 
@@ -109,9 +109,9 @@ impl<'task> PatternDatabase<'task> {
 
     pub fn project_state_values(
         &self,
-        propositional: &[i32],
+        propositional: &[usize],
         numeric: &[f64],
-    ) -> Result<(Vec<i32>, Vec<f64>), String> {
+    ) -> Result<(Vec<usize>, Vec<f64>), String> {
         self.task.project_state_values(propositional, numeric)
     }
 
@@ -194,13 +194,13 @@ impl<'task> PatternDatabase<'task> {
     }
 }
 
-fn facts_hold(propositional: &[i32], facts: &[Fact]) -> bool {
+fn facts_hold(propositional: &[usize], facts: &[ExplicitFact]) -> bool {
     facts
         .iter()
-        .all(|fact| propositional.get(fact.var() as usize).copied() == Some(fact.value()))
+        .all(|fact| propositional.get(fact.var).copied() == Some(fact.value))
 }
 
-fn assignment_effect_holds(propositional: &[i32], effect: &AssignmentEffect) -> bool {
+fn assignment_effect_holds(propositional: &[usize], effect: &AssignmentEffect) -> bool {
     !effect.is_conditional() || facts_hold(propositional, effect.conditions())
 }
 
@@ -216,8 +216,8 @@ fn apply_operator(
 
     for effect in operator.effects() {
         if facts_hold(&state.propositional, effect.conditions()) {
-            if let Some(slot) = propositional.get_mut(effect.var_id() as usize) {
-                *slot = effect.value() as i32;
+            if let Some(slot) = propositional.get_mut(effect.var_id()) {
+                *slot = effect.value();
             }
         }
     }
@@ -247,7 +247,7 @@ fn apply_operator(
 
     let mut buffer = vec![0u64; packer.num_bins() as usize];
     for (var_id, value) in propositional.iter().enumerate() {
-        packer.set(&mut buffer, var_id as i32, *value as u64);
+        packer.set(&mut buffer, var_id, *value as u64);
     }
 
     axiom_evaluator
@@ -258,7 +258,7 @@ fn apply_operator(
         .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
 
     for (var_id, slot) in propositional.iter_mut().enumerate() {
-        *slot = packer.get(&buffer, var_id as i32) as i32;
+        *slot = packer.get(&buffer, var_id) as usize;
     }
 
     Ok(PdbState {
@@ -287,7 +287,7 @@ mod tests {
     use super::*;
     use crate::numeric::evaluation::pattern_databases::projected_task::{Pattern, ProjectedTask};
 
-    fn simple_var(name: &str, axiom_layer: i32) -> ExplicitVariable {
+    fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
         ExplicitVariable::new(
             2,
             name.to_string(),
@@ -300,24 +300,24 @@ mod tests {
     fn propositional_task() -> NumericRootTask {
         NumericRootTask::new(
             1,
-            Metric::new(true, -1),
-            vec![simple_var("p", -1)],
+            Metric::new(true, None),
+            vec![simple_var("p", None)],
             vec![NumericVariable::new(
                 "x".to_string(),
                 NumericType::Regular,
-                -1,
+                None,
             )],
-            vec![Fact::new(0, 1)],
+            vec![ExplicitFact::new(0, 1)],
             vec![],
             vec![0],
             vec![0.0],
             vec![Operator::new(
                 "set-goal".to_string(),
-                vec![Fact::new(0, 0)],
+                vec![ExplicitFact::new(0, 0)],
                 vec![planners_sas::numeric::numeric_task::Effect::new(
                     vec![],
                     0,
-                    0,
+                    Some(0),
                     1,
                 )],
                 vec![],
@@ -326,7 +326,7 @@ mod tests {
             vec![],
             vec![],
             vec![AssignmentAxiom::new(0, CalOperator::Sum, 0, 0)],
-            (0, 0),
+            ExplicitFact::new(0, 0),
         )
     }
 

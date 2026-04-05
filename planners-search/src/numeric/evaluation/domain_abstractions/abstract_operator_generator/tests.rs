@@ -4,7 +4,7 @@ use planners_sas::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
 };
 use planners_sas::numeric::numeric_task::{
-    AssignmentEffect, AssignmentOperation, ExplicitVariable, Fact, Metric, NumericRootTask,
+    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
     NumericType, NumericVariable, Operator,
 };
 
@@ -18,15 +18,15 @@ fn numeric_partition_transitions_and_comparison_filtering() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
 
     // Numeric vars: x0 (regular), c10 (constant), c7 (constant)
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("c10".into(), NumericType::Constant, -1),
-        NumericVariable::new("c7".into(), NumericType::Constant, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c10".into(), NumericType::Constant, None),
+        NumericVariable::new("c7".into(), NumericType::Constant, None),
     ];
 
     // Comparison axiom (derived propositional var 0): x0 < c10
@@ -35,7 +35,7 @@ fn numeric_partition_transitions_and_comparison_filtering() {
     // Operator requires comparison to hold (var0 == 0) and applies x0 += c7.
     let op = Operator::new(
         "op".into(),
-        vec![Fact::new(0, 0)],
+        vec![ExplicitFact::new(0, 0)],
         vec![],
         vec![AssignmentEffect::new(
             0,
@@ -49,7 +49,7 @@ fn numeric_partition_transitions_and_comparison_filtering() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -60,7 +60,7 @@ fn numeric_partition_transitions_and_comparison_filtering() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     // Partitions for x0: (-inf,10) and [10,inf)
@@ -99,21 +99,21 @@ fn repeated_numeric_operator_generation_is_deterministic() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
 
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("c10".into(), NumericType::Constant, -1),
-        NumericVariable::new("c7".into(), NumericType::Constant, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c10".into(), NumericType::Constant, None),
+        NumericVariable::new("c7".into(), NumericType::Constant, None),
     ];
 
     let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
 
     let op = Operator::new(
         "op".into(),
-        vec![Fact::new(0, 0)],
+        vec![ExplicitFact::new(0, 0)],
         vec![],
         vec![AssignmentEffect::new(
             0,
@@ -127,7 +127,7 @@ fn repeated_numeric_operator_generation_is_deterministic() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -138,7 +138,7 @@ fn repeated_numeric_operator_generation_is_deterministic() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -150,7 +150,8 @@ fn repeated_numeric_operator_generation_is_deterministic() {
         vec![Interval::singleton(7.0)],
     ]);
 
-    let mut signatures: Vec<Vec<(i32, Vec<Fact>, Vec<Fact>)>> = Vec::new();
+    #[allow(clippy::type_complexity)]
+    let mut signatures: Vec<Vec<(i32, Vec<ExplicitFact>, Vec<ExplicitFact>)>> = Vec::new();
     for _ in 0..12 {
         let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
             &task,
@@ -184,14 +185,14 @@ fn numeric_transition_adds_implicit_comparison_preconditions() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
 
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("c10".into(), NumericType::Constant, -1),
-        NumericVariable::new("c7".into(), NumericType::Constant, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c10".into(), NumericType::Constant, None),
+        NumericVariable::new("c7".into(), NumericType::Constant, None),
     ];
 
     let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
@@ -212,7 +213,7 @@ fn numeric_transition_adds_implicit_comparison_preconditions() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -223,7 +224,7 @@ fn numeric_transition_adds_implicit_comparison_preconditions() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -251,15 +252,15 @@ fn numeric_transition_adds_implicit_comparison_preconditions() {
 
     assert_eq!(
         abs_ops[0].preconditions,
-        vec![Fact::new(0, 0), Fact::new(1, 0)]
+        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)]
     );
     assert_eq!(
         abs_ops[0].regression_preconditions,
-        vec![Fact::new(0, 1), Fact::new(1, 1)]
+        vec![ExplicitFact::new(0, 1), ExplicitFact::new(1, 1)]
     );
     assert_eq!(abs_ops[0].hash_effect, -4);
 
-    let trailing_pairs: Vec<(Vec<Fact>, Vec<Fact>)> = abs_ops[1..]
+    let trailing_pairs: Vec<(Vec<ExplicitFact>, Vec<ExplicitFact>)> = abs_ops[1..]
         .iter()
         .map(|op| {
             (
@@ -268,8 +269,12 @@ fn numeric_transition_adds_implicit_comparison_preconditions() {
             )
         })
         .collect();
-    assert!(trailing_pairs.contains(&(vec![Fact::new(1, 0)], vec![Fact::new(1, 0)],)));
-    assert!(trailing_pairs.contains(&(vec![Fact::new(1, 1)], vec![Fact::new(1, 1)],)));
+    assert!(
+        trailing_pairs.contains(&(vec![ExplicitFact::new(1, 0)], vec![ExplicitFact::new(1, 0)],))
+    );
+    assert!(
+        trailing_pairs.contains(&(vec![ExplicitFact::new(1, 1)], vec![ExplicitFact::new(1, 1)],))
+    );
 }
 
 #[test]
@@ -278,14 +283,14 @@ fn implicit_comparison_transition_requires_definite_change_on_both_sides() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
 
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("c10".into(), NumericType::Constant, -1),
-        NumericVariable::new("c7".into(), NumericType::Constant, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c10".into(), NumericType::Constant, None),
+        NumericVariable::new("c7".into(), NumericType::Constant, None),
     ];
 
     let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
@@ -306,7 +311,7 @@ fn implicit_comparison_transition_requires_definite_change_on_both_sides() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -317,7 +322,7 @@ fn implicit_comparison_transition_requires_definite_change_on_both_sides() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -342,20 +347,16 @@ fn implicit_comparison_transition_requires_definite_change_on_both_sides() {
 
     let changed_cmp_ops: Vec<&AbstractOperator> = abs_ops
         .iter()
-        .filter(|op| {
-            op.regression_preconditions
-                .iter()
-                .any(|fact| fact.var() == 0)
-        })
+        .filter(|op| op.regression_preconditions.iter().any(|fact| fact.var == 0))
         .collect();
     assert_eq!(changed_cmp_ops.len(), 1);
     assert_eq!(
         changed_cmp_ops[0].preconditions,
-        vec![Fact::new(0, 0), Fact::new(1, 0)]
+        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)]
     );
     assert_eq!(
         changed_cmp_ops[0].regression_preconditions,
-        vec![Fact::new(0, 1), Fact::new(1, 1)]
+        vec![ExplicitFact::new(0, 1), ExplicitFact::new(1, 1)]
     );
 }
 
@@ -364,8 +365,8 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
     let variables: Vec<ExplicitVariable> = vec![];
 
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("c1".into(), NumericType::Constant, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
     ];
 
     let op = Operator::new(
@@ -384,7 +385,7 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -395,7 +396,7 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -424,8 +425,8 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
     .unwrap();
 
     let identity_transition = transitions.iter().find(|trans| {
-        trans.source_partition_facts == vec![Fact::new(0, 0)]
-            && trans.target_partition_facts == vec![Fact::new(0, 0)]
+        trans.source_partition_facts == vec![ExplicitFact::new(0, 0)]
+            && trans.target_partition_facts == vec![ExplicitFact::new(0, 0)]
     });
     assert!(identity_transition.is_some());
     assert_eq!(identity_transition.unwrap().changed_numeric_vars, vec![0]);
@@ -434,11 +435,11 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
 #[test]
 fn derived_numeric_partitions_are_not_materialized_in_transitions() {
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("c1".into(), NumericType::Constant, -1),
-        NumericVariable::new("c5".into(), NumericType::Constant, -1),
-        NumericVariable::new("d1".into(), NumericType::Derived, -1),
-        NumericVariable::new("d2".into(), NumericType::Derived, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
+        NumericVariable::new("c5".into(), NumericType::Constant, None),
+        NumericVariable::new("d1".into(), NumericType::Derived, None),
+        NumericVariable::new("d2".into(), NumericType::Derived, None),
     ];
 
     let assignment_axioms = vec![
@@ -462,7 +463,7 @@ fn derived_numeric_partitions_are_not_materialized_in_transitions() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         vec![],
         numeric_variables,
         vec![],
@@ -473,7 +474,7 @@ fn derived_numeric_partitions_are_not_materialized_in_transitions() {
         vec![],
         vec![],
         assignment_axioms,
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -501,18 +502,16 @@ fn derived_numeric_partitions_are_not_materialized_in_transitions() {
     .unwrap();
 
     assert!(transitions.iter().any(|trans| {
-        trans.source_partition_facts.contains(&Fact::new(0, 0))
-            && trans.target_partition_facts.contains(&Fact::new(0, 1))
-    }));
-    assert!(transitions.iter().all(|trans| {
         trans
             .source_partition_facts
-            .iter()
-            .all(|fact| fact.var() < 3)
+            .contains(&ExplicitFact::new(0, 0))
             && trans
                 .target_partition_facts
-                .iter()
-                .all(|fact| fact.var() < 3)
+                .contains(&ExplicitFact::new(0, 1))
+    }));
+    assert!(transitions.iter().all(|trans| {
+        trans.source_partition_facts.iter().all(|fact| fact.var < 3)
+            && trans.target_partition_facts.iter().all(|fact| fact.var < 3)
             && !trans.changed_numeric_vars.contains(&3)
             && !trans.changed_numeric_vars.contains(&4)
     }));
@@ -524,7 +523,7 @@ fn multiply_out_unconditional_propositional_effects() {
         2,
         "v".into(),
         vec!["0".into(), "1".into()],
-        -1,
+        None,
         0,
     )];
 
@@ -534,7 +533,7 @@ fn multiply_out_unconditional_propositional_effects() {
         vec![planners_sas::numeric::numeric_task::Effect::new(
             vec![],
             0,
-            0,
+            Some(0),
             1,
         )],
         vec![],
@@ -543,7 +542,7 @@ fn multiply_out_unconditional_propositional_effects() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         vec![],
         vec![],
@@ -554,7 +553,7 @@ fn multiply_out_unconditional_propositional_effects() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![]);
@@ -572,8 +571,11 @@ fn multiply_out_unconditional_propositional_effects() {
     // multiply_out creates one operator for predecessor value 0 -> 1.
     assert_eq!(abs_ops.len(), 1);
     assert_eq!(abs_ops[0].hash_effect, -1);
-    assert_eq!(abs_ops[0].preconditions, vec![Fact::new(0, 0)]);
-    assert_eq!(abs_ops[0].regression_preconditions, vec![Fact::new(0, 1)]);
+    assert_eq!(abs_ops[0].preconditions, vec![ExplicitFact::new(0, 0)]);
+    assert_eq!(
+        abs_ops[0].regression_preconditions,
+        vec![ExplicitFact::new(0, 1)]
+    );
 }
 
 #[test]
@@ -582,20 +584,26 @@ fn derived_comparison_precondition_forces_unknown_old_value() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("c10".into(), NumericType::Constant, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c10".into(), NumericType::Constant, None),
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
 
-    let op = Operator::new("op".into(), vec![Fact::new(0, 0)], vec![], vec![], 1);
+    let op = Operator::new(
+        "op".into(),
+        vec![ExplicitFact::new(0, 0)],
+        vec![],
+        vec![],
+        1,
+    );
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -606,7 +614,7 @@ fn derived_comparison_precondition_forces_unknown_old_value() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -626,16 +634,19 @@ fn derived_comparison_precondition_forces_unknown_old_value() {
     let abs_ops = generator.build_abstract_operators(&task).unwrap();
     assert_eq!(abs_ops.len(), 1);
     assert_eq!(abs_ops[0].hash_effect, -2);
-    assert_eq!(abs_ops[0].preconditions, vec![Fact::new(0, 0)]);
-    assert_eq!(abs_ops[0].regression_preconditions, vec![Fact::new(0, 2)]);
+    assert_eq!(abs_ops[0].preconditions, vec![ExplicitFact::new(0, 0)]);
+    assert_eq!(
+        abs_ops[0].regression_preconditions,
+        vec![ExplicitFact::new(0, 2)]
+    );
 }
 
 #[test]
 fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
     let variables: Vec<ExplicitVariable> = vec![];
     let numeric_variables = vec![
-        NumericVariable::new("fuel-used".into(), NumericType::Cost, -1),
-        NumericVariable::new("c5".into(), NumericType::Constant, -1),
+        NumericVariable::new("fuel-used".into(), NumericType::Cost, None),
+        NumericVariable::new("c5".into(), NumericType::Constant, None),
     ];
 
     let op = Operator::new(
@@ -654,7 +665,7 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, 0),
+        Metric::new(true, Some(0)),
         variables,
         numeric_variables,
         vec![],
@@ -665,7 +676,7 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -693,15 +704,15 @@ fn assignment_axiom_chain_can_propagate_through_changed_var_and_constant() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
 
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("c1".into(), NumericType::Constant, -1),
-        NumericVariable::new("y".into(), NumericType::Regular, -1),
-        NumericVariable::new("c2".into(), NumericType::Constant, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("c2".into(), NumericType::Constant, None),
     ];
 
     let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
@@ -723,7 +734,7 @@ fn assignment_axiom_chain_can_propagate_through_changed_var_and_constant() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -734,7 +745,7 @@ fn assignment_axiom_chain_can_propagate_through_changed_var_and_constant() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -755,10 +766,9 @@ fn assignment_axiom_chain_can_propagate_through_changed_var_and_constant() {
     let abs_ops = generator.build_abstract_operators(&task).unwrap();
 
     assert!(
-        abs_ops.iter().any(|op| op
-            .regression_preconditions
+        abs_ops
             .iter()
-            .any(|fact| fact.var() == 0)),
+            .any(|op| op.regression_preconditions.iter().any(|fact| fact.var == 0)),
         "abs_ops={abs_ops:#?}"
     );
 }
@@ -769,15 +779,15 @@ fn derived_comparison_transition_is_recomputed_from_tree_snapshots() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
 
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("c1".into(), NumericType::Constant, -1),
-        NumericVariable::new("y".into(), NumericType::Derived, -1),
-        NumericVariable::new("c2".into(), NumericType::Constant, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
+        NumericVariable::new("y".into(), NumericType::Derived, None),
+        NumericVariable::new("c2".into(), NumericType::Constant, None),
     ];
 
     let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
@@ -799,7 +809,7 @@ fn derived_comparison_transition_is_recomputed_from_tree_snapshots() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -810,7 +820,7 @@ fn derived_comparison_transition_is_recomputed_from_tree_snapshots() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -840,10 +850,10 @@ fn derived_comparison_transition_is_recomputed_from_tree_snapshots() {
         transitions.iter().any(|trans| {
             trans
                 .source_partition_facts
-                .contains(&Fact::new(0, COMPARISON_TRUE_VAL as i32))
+                .contains(&ExplicitFact::new(0, COMPARISON_TRUE_VAL))
                 && trans
                     .target_partition_facts
-                    .contains(&Fact::new(0, COMPARISON_FALSE_VAL as i32))
+                    .contains(&ExplicitFact::new(0, COMPARISON_FALSE_VAL))
         }),
         "transitions={transitions:#?}"
     );
@@ -855,15 +865,15 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
 
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("c0_5".into(), NumericType::Constant, -1),
-        NumericVariable::new("y".into(), NumericType::Derived, -1),
-        NumericVariable::new("c1".into(), NumericType::Constant, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c0_5".into(), NumericType::Constant, None),
+        NumericVariable::new("y".into(), NumericType::Derived, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
     ];
 
     let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
@@ -885,7 +895,7 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -896,7 +906,7 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -934,7 +944,7 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
                 .source_partition_facts
                 .iter()
                 .chain(trans.target_partition_facts.iter())
-                .all(|fact| fact.var() != 0)
+                .all(|fact| fact.var != 0)
         }),
         "transitions={transitions:#?}"
     );
@@ -944,13 +954,13 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
 fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation() {
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         vec![],
         vec![
-            NumericVariable::new("x".into(), NumericType::Regular, -1),
-            NumericVariable::new("c0".into(), NumericType::Constant, -1),
-            NumericVariable::new("ghost".into(), NumericType::Derived, -1),
-            NumericVariable::new("d".into(), NumericType::Derived, -1),
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("c0".into(), NumericType::Constant, None),
+            NumericVariable::new("ghost".into(), NumericType::Derived, None),
+            NumericVariable::new("d".into(), NumericType::Derived, None),
         ],
         vec![],
         vec![],
@@ -960,7 +970,7 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
         vec![],
         vec![],
         vec![AssignmentAxiom::new(3, CalOperator::Product, 2, 1)],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -992,9 +1002,9 @@ fn duplicate_assignment_effects_use_first_matching_effect() {
     let variables: Vec<ExplicitVariable> = vec![];
 
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("c1".into(), NumericType::Constant, -1),
-        NumericVariable::new("c2".into(), NumericType::Constant, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
+        NumericVariable::new("c2".into(), NumericType::Constant, None),
     ];
 
     let op = Operator::new(
@@ -1010,7 +1020,7 @@ fn duplicate_assignment_effects_use_first_matching_effect() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -1021,7 +1031,7 @@ fn duplicate_assignment_effects_use_first_matching_effect() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -1053,17 +1063,17 @@ fn duplicate_assignment_effects_use_first_matching_effect() {
 #[test]
 fn conditional_propositional_effect_branches() {
     let variables = vec![
-        ExplicitVariable::new(2, "c".into(), vec!["0".into(), "1".into()], -1, 0),
-        ExplicitVariable::new(2, "u".into(), vec!["0".into(), "1".into()], -1, 0),
-        ExplicitVariable::new(2, "v".into(), vec!["0".into(), "1".into()], -1, 0),
+        ExplicitVariable::new(2, "c".into(), vec!["0".into(), "1".into()], None, 0),
+        ExplicitVariable::new(2, "u".into(), vec!["0".into(), "1".into()], None, 0),
+        ExplicitVariable::new(2, "v".into(), vec!["0".into(), "1".into()], None, 0),
     ];
 
     let op = Operator::new(
         "op".into(),
-        vec![Fact::new(1, 0), Fact::new(2, 0)],
+        vec![ExplicitFact::new(1, 0), ExplicitFact::new(2, 0)],
         vec![
-            planners_sas::numeric::numeric_task::Effect::new(vec![], 1, 0, 1),
-            planners_sas::numeric::numeric_task::Effect::new(vec![Fact::new(0, 1)], 2, 0, 1),
+            Effect::new(vec![], 1, Some(0), 1),
+            Effect::new(vec![ExplicitFact::new(0, 1)], 2, Some(0), 1),
         ],
         vec![],
         1,
@@ -1071,7 +1081,7 @@ fn conditional_propositional_effect_branches() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         vec![],
         vec![],
@@ -1082,7 +1092,7 @@ fn conditional_propositional_effect_branches() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![]);
@@ -1105,22 +1115,22 @@ fn conditional_propositional_effect_branches() {
 #[test]
 fn conditional_assignment_effect_branches() {
     let variables = vec![
-        ExplicitVariable::new(2, "c".into(), vec!["0".into(), "1".into()], -1, 0),
-        ExplicitVariable::new(2, "p".into(), vec!["0".into(), "1".into()], -1, 0),
+        ExplicitVariable::new(2, "c".into(), vec!["0".into(), "1".into()], None, 0),
+        ExplicitVariable::new(2, "p".into(), vec!["0".into(), "1".into()], None, 0),
     ];
 
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("c1".into(), NumericType::Constant, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
     ];
 
     let op = Operator::new(
         "op".into(),
-        vec![Fact::new(1, 0)],
+        vec![ExplicitFact::new(1, 0)],
         vec![planners_sas::numeric::numeric_task::Effect::new(
             vec![],
             1,
-            0,
+            Some(0),
             1,
         )],
         vec![AssignmentEffect::new(
@@ -1128,14 +1138,14 @@ fn conditional_assignment_effect_branches() {
             AssignmentOperation::Plus,
             1,
             true,
-            vec![Fact::new(0, 1)],
+            vec![ExplicitFact::new(0, 1)],
         )],
         1,
     );
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -1146,7 +1156,7 @@ fn conditional_assignment_effect_branches() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -1176,8 +1186,8 @@ fn conditional_assignment_effect_branches() {
 fn variable_rhs_assignment_effect_is_rejected_for_parity() {
     let variables: Vec<ExplicitVariable> = vec![];
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("y".into(), NumericType::Regular, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
     ];
 
     let op = Operator::new(
@@ -1196,7 +1206,7 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -1207,7 +1217,7 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![

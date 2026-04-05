@@ -1,28 +1,28 @@
-//! State Registry for Numeric Planning
+//! State Registry for Numeric Planning.
 //!
 //! This module provides the `StateRegistry` which is responsible for managing
 //! planning states in a numeric planning context. It handles:
 //!
-//! - State creation and deduplication
-//! - Efficient state representation using bit packing
-//! - Numeric variable management (regular, constant, cost, derived)
-//! - Axiom evaluation for derived predicates and variables
-//! - Successor state generation
+//! - State creation and deduplication.
+//! - Efficient state representation using bit packing.
+//! - Numeric variable management (regular, constant, cost, derived).
+//! - Axiom evaluation for derived predicates and variables.
+//! - Successor state generation.
 //!
-//! # Key Components
+//! # Key Components:
 //!
-//! - `ConcreteState`: Represents a concrete planning state
-//! - `StateRegistry`: Central registry for state management
-//! - Efficient storage using segmented vectors and bit packing
-//! - Integration with axiom evaluation system
+//! - `ConcreteState`: Represents a concrete planning state.
+//! - `StateRegistry`: Central registry for state management.
+//! - Efficient storage using segmented vectors and bit packing.
+//! - Integration with axiom evaluation system.
 
 #[cfg(test)]
 mod tests;
 
 use crate::numeric::axioms::AxiomEvaluator;
-use crate::numeric::numeric_task::{AbstractNumericTask, AssignmentOperation, Fact, Operator};
+use crate::numeric::numeric_task::{AbstractNumericTask, AssignmentOperation, Operator};
 use crate::numeric::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
-use crate::numeric::utils::per_state_info::{PerStateInformation, PerStateInformationBase};
+use crate::numeric::utils::per_state_info::PerStateInformation;
 use crate::numeric::utils::segmented_vector2::SegmentedArrayVector;
 use crate::numeric::{
     numeric_task::{NumericRootTask, NumericType},
@@ -30,57 +30,56 @@ use crate::numeric::{
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt;
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Type alias for the state packer used throughout the system
+/// Type alias for the state packer used throughout the system.
 type StatePacker = IntDoublePacker;
 
-/// Type alias for state identifiers
+/// Type alias for state identifiers.
 pub type StateID = usize;
 
-/// Type alias for the underlying data storage
+/// Type alias for the underlying data storage.
 type DataStorage = SegmentedArrayVector<u64>;
 
-/// Represents a concrete state in the planning problem
+/// Represent a concrete state in the planning problem.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcreteState {
     pool_offset: usize,
 }
 
 impl ConcreteState {
-    /// Creates a new concrete state with the given pool offset
+    /// Create a new concrete state with the given pool offset.
     pub const fn new(pool_offset: usize) -> Self {
         Self { pool_offset }
     }
 
-    /// Gets the state ID (equivalent to C++ GlobalState::get_id())
-    /// This is the index into the state registry's data pool
+    /// Get the state ID (equivalent to C++ `GlobalState::get_id()`).
+    /// This is the index into the state registry's data pool.
     pub fn get_id(&self) -> usize {
         self.pool_offset
     }
 
     /// Gets the propositional state values as a vector
-    pub fn get_state(&self, state_registry: &StateRegistry) -> Vec<i32> {
+    pub fn get_state(&self, state_registry: &StateRegistry) -> Vec<usize> {
         let mut values = Vec::with_capacity(state_registry.root_task.variables().len());
         self.fill_state(state_registry, &mut values);
         values
     }
 
     /// Fills `output` with the propositional state values without allocating a new vector.
-    pub fn fill_state(&self, state_registry: &StateRegistry, output: &mut Vec<i32>) {
-        output.clear();
-
+    pub fn fill_state(&self, state_registry: &StateRegistry, output: &mut Vec<usize>) {
         let buffer = state_registry.get_buffer(self.pool_offset);
         let task = state_registry.root_task;
         let state_packer = state_registry.global_state_packer;
 
+        output.resize(task.variables().len(), 0);
         output
-            .extend((0..task.variables().len()).map(|i| state_packer.get(buffer, i as i32) as i32));
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, x)| *x = state_packer.get(buffer, i) as usize);
     }
 
-    /// Gets the numeric state values for regular variables
+    /// Get the numeric state values for regular variables.
     pub fn get_numeric_state(&self, state_registry: &StateRegistry) -> Vec<f64> {
         let buffer = state_registry.get_buffer(self.pool_offset);
         let task = state_registry.root_task;
@@ -91,7 +90,7 @@ impl ConcreteState {
             .enumerate()
             .filter_map(|(i, var)| {
                 if var.get_type() == &NumericType::Regular {
-                    Some(state_packer.get_double(buffer, i as i32))
+                    Some(state_packer.get_double(buffer, i))
                 } else {
                     None
                 }
@@ -99,22 +98,22 @@ impl ConcreteState {
             .collect()
     }
 
-    /// Gets a reference to the underlying buffer for this state
+    /// Get a reference to the underlying buffer for this state.
     pub fn buffer<'a>(&self, state_registry: &'a StateRegistry) -> &'a [u64] {
         state_registry.get_buffer(self.pool_offset)
     }
 
-    /// Returns the number of propositional variables in this state
+    /// Return the number of propositional variables in this state.
     pub fn len(&self, state_registry: &StateRegistry) -> usize {
         state_registry.root_task.variables().len()
     }
 
-    /// Returns true if the state has no variables (should never happen in practice)
+    /// Return `true` if the state has no variables (should never happen in practice).
     pub fn is_empty(&self, state_registry: &StateRegistry) -> bool {
         self.len(state_registry) == 0
     }
 
-    /// Creates a debug representation of this state with variable values
+    /// Create a debug representation of this state with variable values.
     pub fn debug_with_registry(&self, registry: &StateRegistry) -> String {
         let task = registry.root_task;
         let num_variables = task.variables().len();
@@ -129,16 +128,16 @@ impl ConcreteState {
 
         let mut result = format!("ConcreteState with {} bins\n", buffer.len());
 
-        // Add propositional variables
+        // Add propositional variables.
         for i in 0..num_variables {
-            let value = state_packer.get(buffer, i as i32);
+            let value = state_packer.get(buffer, i);
             result.push_str(&format!("Var {}: {}\n", i, value));
         }
 
-        // Add numeric variables
+        // Add numeric variables.
         for i in 0..num_regular_numeric_vars {
             let numeric_var_id = i + num_variables;
-            let packed_value = state_packer.get(buffer, numeric_var_id as i32);
+            let packed_value = state_packer.get(buffer, numeric_var_id);
             let numeric_value = state_packer.unpack_double(packed_value);
             result.push_str(&format!(
                 "Numeric Var {}: {}\n",
@@ -150,13 +149,13 @@ impl ConcreteState {
     }
 }
 
-// No external-key comparator like C++ unordered_set functors in Rust.
-// We use a bucketed map from content hash -> list of StateIDs, then compare
+// No external-key comparator like C++ `unordered_set` functors in Rust.
+// We use a bucketed map from content hash -> list of `StateID`s, then compare
 // only within the bucket using the packed bins for semantic equality.
 
 #[inline]
 fn fast_hash_bins(bins: &[u64]) -> u64 {
-    // 64-bit FNV-1a
+    // 64-bit `FNV-1a`.
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x00000100000001B3;
     let mut hash = FNV_OFFSET;
@@ -170,39 +169,39 @@ fn fast_hash_bins(bins: &[u64]) -> u64 {
     hash
 }
 
-/// Static counter for generating unique registry IDs
+/// Static counter for generating unique registry IDs.
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
-/// Central registry for managing planning states with deduplication and axiom evaluation
+/// Central registry for managing planning states with deduplication and axiom evaluation.
 ///
-/// The StateRegistry is responsible for:
-/// - Creating and managing planning states
-/// - Deduplicating identical states to save memory
-/// - Evaluating axioms when states change
-/// - Managing numeric variables and cost information
+/// The `StateRegistry` is responsible for:
+/// - Creating and managing planning states.
+/// - Deduplicating identical states to save memory.
+/// - Evaluating axioms when states change.
+/// - Managing numeric variables and cost information.
 pub struct StateRegistry<'a> {
-    /// Unique identifier for this registry instance
+    /// Unique identifier for this registry instance.
     id: usize,
-    /// Reference to the root planning task
+    /// Reference to the root planning task.
     root_task: &'a NumericRootTask,
-    /// Axiom evaluator for handling derived predicates and numeric axioms
+    /// Axiom evaluator for handling derived predicates and numeric axioms.
     axiom_evaluator: &'a AxiomEvaluator<'a>,
-    /// State packer for efficient bit-level state representation
+    /// State packer for efficient bit-level state representation.
     global_state_packer: &'a StatePacker,
-    /// Pool of state data - each entry is a packed state representation
+    /// Pool of state data, each entry is a packed state representation.
     state_data_pool: DataStorage,
-    /// Constants for numeric variables
+    /// Constants for numeric variables.
     numeric_constants: Vec<f64>,
-    /// Mapping from numeric variable index to packed state index
-    numeric_indices: Vec<i32>,
-    /// Buckets of registered states for duplicate detection (hash -> IDs)
+    /// Mapping from numeric variable index to packed state index.
+    numeric_indices: Vec<Option<usize>>,
+    /// Buckets of registered states for duplicate detection (hash -> `Vec<StateID>`).
     registered_states: HashMap<u64, Vec<StateID>>,
-    /// Per-state cost information storage
+    /// Per-state cost information storage.
     cost_info: RefCell<PerStateInformation<Vec<f64>>>,
 }
 
 impl<'a> StateRegistry<'a> {
-    /// Creates a new state registry for the given planning task
+    /// Create a new state registry for the given planning task.
     pub fn new(
         root_task: &'a NumericRootTask,
         global_state_packer: &'a StatePacker,
@@ -219,16 +218,16 @@ impl<'a> StateRegistry<'a> {
             id,
             root_task,
             global_state_packer,
-            state_data_pool: DataStorage::new(global_state_packer.num_bins() as usize),
+            state_data_pool: DataStorage::new(global_state_packer.num_bins()),
             numeric_constants: Vec::new(),
-            numeric_indices: vec![-1; number_numeric_vars],
+            numeric_indices: vec![None; number_numeric_vars],
             registered_states: HashMap::with_capacity(1024),
             axiom_evaluator,
             cost_info: RefCell::new(cost_info),
         }
     }
 
-    /// Returns the unique ID of this registry
+    /// Return the unique ID of this registry.
     pub const fn id(&self) -> usize {
         self.id
     }
@@ -237,11 +236,11 @@ impl<'a> StateRegistry<'a> {
         &self.state_data_pool
     }
 
-    pub fn get_numeric_indices(&self) -> &[i32] {
+    pub fn get_numeric_indices(&self) -> &[Option<usize>] {
         &self.numeric_indices
     }
 
-    /// Returns the value of a numeric constant variable, if available.
+    /// Return the value of a numeric constant variable, if available.
     ///
     /// Constant values are initialized when the initial state is created.
     pub fn get_numeric_constant_value(&self, numeric_var_id: usize) -> Option<f64> {
@@ -253,17 +252,18 @@ impl<'a> StateRegistry<'a> {
         }
 
         let constant_index = *self.numeric_indices.get(numeric_var_id)?;
-        if constant_index < 0 {
-            return None;
+        if let Some(index) = constant_index {
+            self.numeric_constants.get(index).copied()
+        } else {
+            None
         }
-        self.numeric_constants.get(constant_index as usize).copied()
     }
 
     pub fn get_registered_states(&self) -> &HashMap<u64, Vec<usize>> {
         &self.registered_states
     }
 
-    /// Returns the total number of distinct states registered in this registry.
+    /// Return the total number of distinct states registered in this registry.
     pub fn num_registered_states(&self) -> usize {
         self.registered_states
             .values()
@@ -275,19 +275,20 @@ impl<'a> StateRegistry<'a> {
         &self.cost_info
     }
 
-    /// Subscribe to another registry (placeholder for future functionality)
+    /// Subscribe to another registry (placeholder for future functionality).
     pub fn subscribe(&mut self, _registry: &StateRegistry) {
         todo!("Registry subscription not yet implemented")
     }
 
-    /// Subscribes a PerStateInformation instance to this registry
+    /// Subscribe a `PerStateInformation` instance to this registry.
     ///
-    /// When this registry is dropped, it will notify the subscribed PerStateInformation
+    /// When this registry is dropped, it will notify the subscribed `PerStateInformation`
     /// instances to clean up their data. This follows the C++ Fast Downward pattern
-    /// where PerStateInformation instances register themselves with StateRegistry instances.
+    /// where `PerStateInformation` instances register themselves with
+    /// `StateRegistry` instances.
     ///
-    /// Note: In Rust, we can't hold mutable references to the PerStateInformation,
-    /// so this method just ensures the PerStateInformation knows about this registry.
+    /// Note: In Rust, we can't hold mutable references to the `PerStateInformation`,
+    /// so this method just ensures the `PerStateInformation` knows about this registry.
     pub fn subscribe_per_state_info<T>(&self, per_state_info: &mut PerStateInformation<T>)
     where
         T: Clone + Default,
@@ -295,7 +296,7 @@ impl<'a> StateRegistry<'a> {
         per_state_info.subscribe(self.id);
     }
 
-    /// Unsubscribes a PerStateInformation instance from this registry
+    /// Unsubscribes a PerStateInformation instance from this registry.
     pub fn unsubscribe_per_state_info<T>(&self, per_state_info: &mut PerStateInformation<T>)
     where
         T: Clone + Default,
@@ -303,10 +304,10 @@ impl<'a> StateRegistry<'a> {
         per_state_info.unsubscribe(self.id);
     }
 
-    /// Gets the buffer at the specified index
+    /// Get the buffer at the specified index.
     ///
     /// # Panics
-    /// Panics if the index is out of bounds
+    /// Panics if the index is out of bounds.
     pub fn get_buffer(&self, index: usize) -> &[u64] {
         self.state_data_pool
             .get(index)
@@ -319,13 +320,13 @@ impl<'a> StateRegistry<'a> {
             .expect("State index out of bounds")
     }
 
-    /// Returns a reference to the global state packer
+    /// Return a reference to the global state packer.
     pub const fn global_state_packer(&self) -> &StatePacker {
         self.global_state_packer
     }
 
     fn num_state_bins(&self) -> usize {
-        self.global_state_packer.num_bins() as usize
+        self.global_state_packer.num_bins()
     }
 
     fn find_registered_state_id(&self, key: u64, bins: &[u64]) -> Option<StateID> {
@@ -362,48 +363,48 @@ impl<'a> StateRegistry<'a> {
         (state_id, true)
     }
 
-    /// Creates and registers the initial state of the planning problem
+    /// Create and registers the initial state of the planning problem.
     ///
     /// This method:
-    /// 1. Packs propositional variables into the state buffer
-    /// 2. Processes numeric variables by type (regular, constant, cost, derived)
-    /// 3. Evaluates axioms to compute derived values
-    /// 4. Registers the resulting state
+    /// 1. Packs propositional variables into the state buffer.
+    /// 2. Processes numeric variables by type (regular, constant, cost, derived).
+    /// 3. Evaluates axioms to compute derived values.
+    /// 4. Registers the resulting state.
     pub fn get_initial_state(&mut self) -> ConcreteState {
-        let mut init_buffer = vec![0u64; self.global_state_packer.num_bins() as usize];
+        let mut init_buffer = vec![0u64; self.global_state_packer.num_bins()];
 
-        // Get copies of initial state values to avoid borrowing conflicts
+        // Get copies of initial state values to avoid borrowing conflicts.
         let initial_propositional_values = self
             .root_task
             .get_initial_propositional_state_values()
             .clone();
         let initial_numeric_values = self.root_task.get_initial_numeric_state_values().clone();
 
-        // Pack propositional variables
+        // Pack propositional variables.
         self.pack_propositional_variables(&mut init_buffer, &initial_propositional_values);
 
-        // Process numeric variables and get cost variables
+        // Process numeric variables and get cost variables.
         let _cost_variables =
             self.process_numeric_variables(&mut init_buffer, &initial_numeric_values);
 
-        // Evaluate axioms
+        // Evaluate axioms.
         let mut numeric_state_copy = initial_numeric_values;
         self.evaluate_axioms(&mut init_buffer, &mut numeric_state_copy)
             .expect("Failed to evaluate axioms during initial state creation");
 
-        // Register the state
+        // Register the state.
         self.state_data_pool.push_back(&init_buffer);
         let (state_id, _) = self.insert_id_or_pop_state();
 
         let init_state = ConcreteState::new(state_id);
 
-        // Update the task's initial state values to reflect axiom evaluation
+        // Update the task's initial state values to reflect axiom evaluation.
         *self.root_task.get_initial_propositional_state_values_mut() = init_state.get_state(self);
         *self.root_task.get_initial_numeric_state_values_mut() = self
             .get_numeric_vars(&init_state)
             .expect("Failed to get numeric variables for initial state");
 
-        // Store cost information for the initial state (after other operations)
+        // Store cost information for the initial state (after other operations).
         if !_cost_variables.is_empty() {
             let cost_variables_copy = _cost_variables.clone();
             self.set_cost_information(&init_state, cost_variables_copy);
@@ -415,21 +416,19 @@ impl<'a> StateRegistry<'a> {
         init_state
     }
 
-    /// Packs propositional variables into the state buffer
-    fn pack_propositional_variables(&self, buffer: &mut [u64], initial_values: &[i32]) {
+    /// Pack propositional variables into the state buffer.
+    fn pack_propositional_variables(&self, buffer: &mut [u64], initial_values: &[usize]) {
         for (i, &value) in initial_values.iter().enumerate() {
-            self.global_state_packer.set(buffer, i as i32, value as u64);
+            self.global_state_packer.set(buffer, i, value as u64);
         }
     }
 
-    /// Processes numeric variables by type and returns cost variables
+    /// Process numeric variables by type and returns cost variables.
     fn process_numeric_variables(
         &mut self,
         buffer: &mut [u64],
         initial_numeric_values: &[f64],
     ) -> Vec<f64> {
-        let initial_propositional_len = initial_numeric_values.len(); // This should be the correct length calculation
-
         let mut numeric_var_index = self
             .root_task
             .get_initial_propositional_state_values()
@@ -442,22 +441,22 @@ impl<'a> StateRegistry<'a> {
 
             match numeric_var.get_type() {
                 NumericType::Cost => {
-                    self.numeric_indices[i] = cost_variables.len() as i32;
+                    self.numeric_indices[i] = Some(cost_variables.len());
                     cost_variables.push(value);
                 }
                 NumericType::Constant => {
-                    self.numeric_indices[i] = constant_index;
+                    self.numeric_indices[i] = Some(constant_index);
                     self.numeric_constants.push(value);
                     constant_index += 1;
                 }
                 NumericType::Derived => {
-                    // Derived variables don't get indices as they're computed by axioms
+                    // Derived variables don't get indices as they're computed by axioms.
                 }
                 NumericType::Regular => {
-                    self.numeric_indices[i] = numeric_var_index as i32;
+                    self.numeric_indices[i] = Some(numeric_var_index);
                     let packed_value = self.global_state_packer.pack_double(value);
                     self.global_state_packer
-                        .set(buffer, numeric_var_index as i32, packed_value);
+                        .set(buffer, numeric_var_index, packed_value);
                     numeric_var_index += 1;
                 }
             }
@@ -466,11 +465,11 @@ impl<'a> StateRegistry<'a> {
         cost_variables
     }
 
-    /// Evaluates axioms on the given state
+    /// Evaluate axioms on the given state.
     fn evaluate_axioms(
         &self,
         buffer: &mut [u64],
-        numeric_state: &mut Vec<f64>,
+        numeric_state: &mut [f64],
     ) -> Result<(), StateInsertError> {
         self.axiom_evaluator
             .evaluate_arithmetic_axioms(numeric_state)
@@ -487,7 +486,7 @@ impl<'a> StateRegistry<'a> {
         Ok(())
     }
 
-    /// Logs initial state information in debug builds
+    /// Log initial state information in debug builds.
     #[cfg(debug_assertions)]
     fn log_initial_state_info(&self, cost_variables: &[f64]) {
         let initial_propositional_len = self
@@ -497,7 +496,7 @@ impl<'a> StateRegistry<'a> {
         let regular_count = self
             .numeric_indices
             .iter()
-            .filter(|&&idx| idx >= initial_propositional_len as i32)
+            .filter(|&&idx| idx.is_some() && idx.unwrap() >= initial_propositional_len)
             .count();
         let constant_count = self.numeric_constants.len();
         let derived_count = self
@@ -516,7 +515,7 @@ impl<'a> StateRegistry<'a> {
         );
     }
 
-    /// Registers a new state with the given propositional and numeric values
+    /// Register a new state with the given propositional and numeric values.
     ///
     /// This method creates a new state from the provided values, evaluates axioms,
     /// and registers it in the state pool.
@@ -525,11 +524,11 @@ impl<'a> StateRegistry<'a> {
         values: Vec<u64>,
         numeric_values: Vec<f64>,
     ) -> Result<ConcreteState, StateInsertError> {
-        let mut buffer = vec![0; self.global_state_packer.num_bins() as usize];
+        let mut buffer = vec![0; self.global_state_packer.num_bins()];
 
         // Pack propositional variables
         for (i, &value) in values.iter().enumerate() {
-            self.global_state_packer.set(&mut buffer, i as i32, value);
+            self.global_state_packer.set(&mut buffer, i, value);
         }
 
         // Process numeric variables
@@ -537,10 +536,6 @@ impl<'a> StateRegistry<'a> {
             self.process_register_numeric_variables(&mut buffer, &numeric_values)?;
 
         // Evaluate axioms
-        let propositional_initial_state = self
-            .root_task
-            .get_initial_propositional_state_values()
-            .clone();
         let mut numeric_values_copy = numeric_values;
         self.evaluate_axioms(&mut buffer, &mut numeric_values_copy)?;
 
@@ -549,14 +544,14 @@ impl<'a> StateRegistry<'a> {
 
         let new_state = ConcreteState::new(id);
 
-        // Handle cost information based on whether this is a new or existing state
+        // Handle cost information based on whether this is a new or existing state.
         if is_new_state {
-            // New state - store cost information
+            // New state: store cost information.
             if !_cost_variables.is_empty() {
                 self.set_cost_information(&new_state, _cost_variables);
             }
         } else {
-            // Existing state - use metric optimization to determine which cost info to keep
+            // Existing state: use metric optimization to determine which cost info to keep.
             let cost_info_borrow = self.cost_info.borrow();
             let old_cost_info = cost_info_borrow.get(&new_state, self);
             let selected_result = self.select_cost_information(
@@ -565,7 +560,7 @@ impl<'a> StateRegistry<'a> {
                 old_cost_info,
                 &_cost_variables,
             );
-            drop(cost_info_borrow); // Drop the borrow before calling set
+            drop(cost_info_borrow); // Drop the borrow before calling set.
 
             match selected_result {
                 Ok(selected_cost_info) => {
@@ -582,7 +577,7 @@ impl<'a> StateRegistry<'a> {
         Ok(new_state)
     }
 
-    /// Processes numeric variables during state registration
+    /// Process numeric variables during state registration.
     fn process_register_numeric_variables(
         &mut self,
         buffer: &mut [u64],
@@ -591,7 +586,7 @@ impl<'a> StateRegistry<'a> {
         let mut regular_index = self
             .root_task
             .get_initial_propositional_state_values()
-            .len() as i32;
+            .len();
         let mut cost_variables = Vec::new();
 
         for (i, &value) in numeric_values.iter().enumerate() {
@@ -605,21 +600,24 @@ impl<'a> StateRegistry<'a> {
 
             match numeric_variable.get_type() {
                 NumericType::Cost => {
-                    // Initialize the index if not set
-                    if self.numeric_indices[i] == -1 {
-                        self.numeric_indices[i] = cost_variables.len() as i32;
+                    // Initialize the index if not set.
+                    if self.numeric_indices[i].is_none() {
+                        self.numeric_indices[i] = Some(cost_variables.len());
                     }
                     cost_variables.push(value);
                 }
                 NumericType::Regular => {
-                    // Initialize the index if not set
-                    if self.numeric_indices[i] == -1 {
-                        self.numeric_indices[i] = regular_index;
+                    // Initialize the index if not set.
+                    if self.numeric_indices[i].is_none() {
+                        self.numeric_indices[i] = Some(regular_index);
                         regular_index += 1;
                     }
                     let packed_value = self.global_state_packer.pack_double(value);
-                    self.global_state_packer
-                        .set(buffer, self.numeric_indices[i], packed_value);
+                    self.global_state_packer.set(
+                        buffer,
+                        self.numeric_indices[i].unwrap(),
+                        packed_value,
+                    );
                 }
                 _ => {
                     return Err(StateInsertError {
@@ -635,9 +633,9 @@ impl<'a> StateRegistry<'a> {
         Ok(cost_variables)
     }
 
-    /// Looks up a state by its index in the state pool
+    /// Look up a state by its index in the state pool.
     ///
-    /// Returns an error if the index is out of bounds
+    /// Returns an error if the index is out of bounds.
     pub fn lookup_state(&self, index: usize) -> Result<ConcreteState, StateNotFoundError> {
         if index >= self.state_data_pool.len() {
             Err(StateNotFoundError { index })
@@ -742,7 +740,7 @@ impl<'a> StateRegistry<'a> {
         Ok(successor)
     }
 
-    /// Applies propositional effects of an operator to the state buffer
+    /// Apply propositional effects of an operator to the state buffer.
     fn apply_propositional_effects(
         &self,
         buffer: &mut [u64],
@@ -751,14 +749,14 @@ impl<'a> StateRegistry<'a> {
     ) {
         for effect in operator.effects() {
             if effect.conditions_met(current_state, self) {
-                let var_id = effect.var_id() as i32;
+                let var_id = effect.var_id();
                 let value = effect.value() as u64;
                 self.global_state_packer.set(buffer, var_id, value);
             }
         }
     }
 
-    /// Counts the number of cost variables in the planning task
+    /// Count the number of cost variables in the planning task.
     fn count_cost_variables(&self) -> usize {
         self.root_task
             .numeric_variables()
@@ -768,18 +766,19 @@ impl<'a> StateRegistry<'a> {
     }
 
     fn fill_cost_information(&self, state: &ConcreteState, output: &mut Vec<f64>) {
-        output.clear();
         let cost_info_borrow = self.cost_info.borrow();
-        output.extend_from_slice(cost_info_borrow.get(state, self));
+        let cost_info_data = cost_info_borrow.get(state, self);
+        output.resize(cost_info_data.len(), 0.0);
+        output.copy_from_slice(cost_info_data);
     }
 
-    /// Retrieves all numeric variable values for a given state
+    /// Retrieve all numeric variable values for a given state.
     ///
     /// This method reconstructs the complete numeric state by:
-    /// - Reading regular variables from the packed state buffer
-    /// - Using stored constants for constant variables
-    /// - Retrieving cost variables from per-state storage
-    /// - Evaluating arithmetic axioms to compute derived values
+    /// - Reading regular variables from the packed state buffer.
+    /// - Using stored constants for constant variables.
+    /// - Retrieving cost variables from per-state storage.
+    /// - Evaluating arithmetic axioms to compute derived values.
     pub fn get_numeric_vars(&self, state: &ConcreteState) -> Result<Vec<f64>, InvalidIndex> {
         let mut result = vec![0.0; self.root_task.numeric_variables().len()];
         self.fill_numeric_vars(state, &mut result)?;
@@ -791,33 +790,34 @@ impl<'a> StateRegistry<'a> {
         state: &ConcreteState,
         output: &mut Vec<f64>,
     ) -> Result<(), InvalidIndex> {
-        output.clear();
         output.resize(self.root_task.numeric_variables().len(), 0.0);
 
         let buffer = state.buffer(self);
 
-        // Get cost information for this state
+        // Get cost information for this state.
         let cost_info_borrow = self.cost_info.borrow();
         let cost_variables = cost_info_borrow.get(state, self);
 
-        // Fill in values by variable type
+        // Fill in values by variable type.
         for (i, numeric_var) in self.root_task.numeric_variables().iter().enumerate() {
             output[i] = match numeric_var.get_type() {
                 NumericType::Cost => {
-                    // Retrieve cost variable from per-state storage
-                    let cost_index = self.numeric_indices[i];
-                    if cost_index >= 0 && (cost_index as usize) < cost_variables.len() {
-                        cost_variables[cost_index as usize]
+                    // Retrieve cost variable from per-state storage.
+                    if let Some(cost_index) = self.numeric_indices[i]
+                        && cost_index < cost_variables.len()
+                    {
+                        cost_variables[cost_index]
                     } else {
-                        0.0 // Default if not found
+                        // Default if not found.
+                        0.0
                     }
                 }
-                NumericType::Constant => self.numeric_constants[self.numeric_indices[i] as usize],
+                NumericType::Constant => self.numeric_constants[self.numeric_indices[i].unwrap()],
                 NumericType::Regular => self
                     .global_state_packer
-                    .get_double(buffer, self.numeric_indices[i]),
+                    .get_double(buffer, self.numeric_indices[i].unwrap()),
                 NumericType::Derived => {
-                    // Derived variables are computed by axioms
+                    // Derived variables are computed by axioms.
                     0.0
                 }
             };
@@ -829,7 +829,7 @@ impl<'a> StateRegistry<'a> {
             "Numeric variables length mismatch"
         );
 
-        // Evaluate arithmetic axioms if present
+        // Evaluate arithmetic axioms if present.
         if self.axiom_evaluator.has_numeric_axioms() {
             self.axiom_evaluator.evaluate_arithmetic_axioms(output)?;
         }
@@ -837,20 +837,20 @@ impl<'a> StateRegistry<'a> {
         Ok(())
     }
 
-    /// Applies numeric assignment effects to create a successor state
+    /// Apply numeric assignment effects to create a successor state.
     ///
-    /// This is the improved version that works directly with buffers for efficiency
+    /// This is the improved version that works directly with buffers for efficiency.
     fn apply_numeric_effects(
         &self,
-        current_values: &mut Vec<f64>,
+        current_values: &mut [f64],
         cost_part: &mut [f64],
         operator: &Operator,
         next_buffer: &mut [u64],
         previous_buffer: &[u64],
     ) -> Result<(), StateInsertError> {
         for effect in operator.assignment_effects() {
-            let assignment_var_id = effect.var_id() as usize;
-            let affected_var_id = effect.affected_var_id() as usize;
+            let assignment_var_id = effect.var_id();
+            let affected_var_id = effect.affected_var_id();
 
             if assignment_var_id >= current_values.len() {
                 return Err(StateInsertError {
@@ -862,8 +862,10 @@ impl<'a> StateRegistry<'a> {
             let affected_var = &self.root_task.numeric_variables()[affected_var_id];
 
             let assignment_value = if assignment_var.get_type() == &NumericType::Regular {
-                self.global_state_packer
-                    .get_double(previous_buffer, self.numeric_indices[assignment_var_id])
+                self.global_state_packer.get_double(
+                    previous_buffer,
+                    self.numeric_indices[assignment_var_id].unwrap(),
+                )
             } else {
                 current_values[assignment_var_id]
             };
@@ -876,7 +878,7 @@ impl<'a> StateRegistry<'a> {
 
             match affected_var.get_type() {
                 NumericType::Cost => {
-                    let cost_index = self.numeric_indices[affected_var_id] as usize;
+                    let cost_index = self.numeric_indices[affected_var_id].unwrap();
                     if cost_index >= cost_part.len() {
                         return Err(StateInsertError {
                             message: format!("Cost variable index {} out of bounds", cost_index),
@@ -889,7 +891,7 @@ impl<'a> StateRegistry<'a> {
                     let packed_result = self.global_state_packer.pack_double(result);
                     self.global_state_packer.set(
                         next_buffer,
-                        self.numeric_indices[affected_var_id],
+                        self.numeric_indices[affected_var_id].unwrap(),
                         packed_result,
                     );
                     current_values[affected_var_id] = result;
@@ -920,40 +922,40 @@ impl<'a> StateRegistry<'a> {
         Ok(())
     }
 
-    /// Evaluates the metric value for a given numeric state
+    /// Evaluate the metric value for a given numeric state.
     ///
     /// This corresponds to the C++ evaluate_metric function that retrieves
     /// the value of the metric fluent from the numeric state.
     pub fn evaluate_metric(&self, numeric_state: &[f64]) -> Result<f64, InvalidIndex> {
         let metric_fluent_id = self.root_task.metric().var_id();
 
-        if metric_fluent_id < 0 {
-            // No metric defined
-            return Ok(0.0);
+        match metric_fluent_id {
+            Some(metric) => {
+                if metric < numeric_state.len() {
+                    Ok(numeric_state[metric])
+                } else {
+                    Err(InvalidIndex {
+                        length: numeric_state.len(),
+                        index: metric,
+                    })
+                }
+            }
+            None => Ok(0.0),
         }
-
-        if metric_fluent_id as usize >= numeric_state.len() {
-            return Err(InvalidIndex {
-                length: numeric_state.len() as u32,
-                index: metric_fluent_id as u32,
-            });
-        }
-
-        Ok(numeric_state[metric_fluent_id as usize])
     }
 
-    /// Computes the *raw* metric delta obtained by applying `operator` in `state`.
-    /// - Evaluate the metric in the given state
-    /// - Apply the operator's propositional + numeric effects (without checking applicability)
-    /// - Evaluate the metric in the resulting values
-    /// - Return `metric_after - metric_before`
+    /// Compute the *raw* metric delta obtained by applying `operator` in `state`.
+    /// - Evaluate the metric in the given state.
+    /// - Apply the operator's propositional + numeric effects (without checking applicability).
+    /// - Evaluate the metric in the resulting values.
+    /// - Return `metric_after - metric_before`.
     pub fn metric_delta_applying_operator(
         &self,
         state: &ConcreteState,
         operator: &Operator,
     ) -> Result<f64, StateInsertError> {
         if !self.root_task.metric().use_metric() {
-            // numeric-fd treats non-metric tasks as unit-cost.
+            // Numeric-FD treats non-metric tasks as unit-cost.
             return Ok(1.0);
         }
 
@@ -1003,51 +1005,53 @@ impl<'a> StateRegistry<'a> {
 
     fn metric_value_for_state(&self, state: &ConcreteState) -> Result<f64, InvalidIndex> {
         let metric_fluent_id = self.root_task.metric().var_id();
+        match metric_fluent_id {
+            Some(metric) => {
+                if metric >= self.root_task.numeric_variables().len() {
+                    return Err(InvalidIndex {
+                        length: self.root_task.numeric_variables().len(),
+                        index: metric,
+                    });
+                }
 
-        if metric_fluent_id < 0 {
-            return Ok(0.0);
-        }
-
-        let metric_fluent_id = metric_fluent_id as usize;
-        if metric_fluent_id >= self.root_task.numeric_variables().len() {
-            return Err(InvalidIndex {
-                length: self.root_task.numeric_variables().len() as u32,
-                index: metric_fluent_id as u32,
-            });
-        }
-
-        let metric_var = &self.root_task.numeric_variables()[metric_fluent_id];
-        match metric_var.get_type() {
-            NumericType::Regular => {
-                let buffer = state.buffer(self);
-                Ok(self
-                    .global_state_packer
-                    .get_double(buffer, self.numeric_indices[metric_fluent_id]))
-            }
-            NumericType::Cost => {
-                let cost_index = self.numeric_indices[metric_fluent_id];
-                let cost_info_borrow = self.cost_info.borrow();
-                let cost_values = cost_info_borrow.get(state, self);
-                if cost_index >= 0 && (cost_index as usize) < cost_values.len() {
-                    Ok(cost_values[cost_index as usize])
-                } else {
-                    Ok(0.0)
+                let metric_var = &self.root_task.numeric_variables()[metric];
+                match metric_var.get_type() {
+                    NumericType::Regular => {
+                        let buffer = state.buffer(self);
+                        Ok(self
+                            .global_state_packer
+                            .get_double(buffer, self.numeric_indices[metric].unwrap()))
+                    }
+                    NumericType::Cost => {
+                        let cost_index = self.numeric_indices[metric];
+                        let cost_info_borrow = self.cost_info.borrow();
+                        let cost_values = cost_info_borrow.get(state, self);
+                        if let Some(index) = cost_index
+                            && index < cost_values.len()
+                        {
+                            Ok(cost_values[index])
+                        } else {
+                            Ok(0.0)
+                        }
+                    }
+                    NumericType::Constant => {
+                        Ok(self.numeric_constants[self.numeric_indices[metric].unwrap()])
+                    }
+                    NumericType::Derived => {
+                        let numeric_vals = self.get_numeric_vars(state)?;
+                        self.evaluate_metric(&numeric_vals)
+                    }
                 }
             }
-            NumericType::Constant => {
-                Ok(self.numeric_constants[self.numeric_indices[metric_fluent_id] as usize])
-            }
-            NumericType::Derived => {
-                let numeric_vals = self.get_numeric_vars(state)?;
-                self.evaluate_metric(&numeric_vals)
-            }
+            None => Ok(0.0),
         }
     }
 
-    /// Computes the transition cost between two states based on the metric fluent.
+    /// Compute the transition cost between two states based on the metric fluent.
     /// If a metric is defined, the cost is the absolute change according to min/max:
-    /// - For minimizing metrics, cost = max(0, new - old)
-    /// - For maximizing metrics, cost = max(0, old - new)
+    /// - For minimizing metrics, cost = max(0, new - old).
+    /// - For maximizing metrics, cost = max(0, old - new).
+    ///
     /// If no metric is defined, returns 1.0 as a default unit cost.
     pub fn transition_cost(
         &self,
@@ -1070,10 +1074,10 @@ impl<'a> StateRegistry<'a> {
         Ok(delta.max(0.0))
     }
 
-    /// Determines which cost information to keep when states are deduplicated
+    /// Determine which cost information to keep when states are deduplicated.
     ///
     /// This implements the C++ logic for metric optimization when duplicate states are found.
-    /// Returns the cost information that should be kept based on metric optimization.
+    /// Return the cost information that should be kept based on metric optimization.
     fn select_cost_information(
         &self,
         existing_state: &ConcreteState,
@@ -1092,44 +1096,45 @@ impl<'a> StateRegistry<'a> {
         let metric_minimizes = self.root_task.metric().is_min();
 
         if metric_minimizes && old_metric_val < new_metric_val {
-            // Metric minimizes and old value is better, keep old cost info
+            // Metric minimizes and old value is better, keep old cost info.
             Ok(old_cost_info.to_vec())
         } else if !metric_minimizes && old_metric_val > new_metric_val {
-            // Metric maximizes and old value is better, keep old cost info
+            // Metric maximizes and old value is better, keep old cost info.
             Ok(old_cost_info.to_vec())
         } else {
-            // New value is better or equal, keep new cost info
+            // New value is better or equal, keep new cost info.
             Ok(new_cost_info.to_vec())
         }
     }
 
-    /// Gets cost information for a given state
+    /// Get cost information for a given state.
     ///
     /// This corresponds to the C++ g_cost_information[state] access pattern.
-    /// Returns an empty vector if no cost information is stored for the state.
+    /// Return an empty vector if no cost information is stored for the state.
     pub fn get_cost_information(&self, state: &ConcreteState) -> Vec<f64> {
         self.cost_info.borrow().get(state, self).clone()
     }
 
-    /// Sets cost information for a given state
+    /// Set cost information for a given state.
     ///
     /// This corresponds to the C++ g_cost_information[state] = values assignment.
-    /// Uses RefCell for interior mutability to resolve borrowing conflicts.
+    /// It uses `RefCell` for interior mutability to resolve borrowing conflicts.
     fn set_cost_information(&self, state: &ConcreteState, values: Vec<f64>) {
         self.cost_info.borrow_mut().set(state, self, values);
     }
 }
 
 impl<'a> Drop for StateRegistry<'a> {
-    /// Implements the C++ StateRegistry destructor pattern
+    /// Implements the C++ `StateRegistry` destructor pattern.
     ///
-    /// When a StateRegistry is destroyed, it notifies all subscribed
-    /// PerStateInformation instances to clean up their data for this registry.
+    /// When a `StateRegistry` is destroyed, it notifies all subscribed
+    /// `PerStateInformation` instances to clean up their data for this registry.
     /// This prevents memory leaks and dangling references.
     fn drop(&mut self) {
-        // Notify the cost_info that this registry is being destroyed
+        // Notify the cost_info that this registry is being destroyed.
         // This follows the C++ pattern where StateRegistry destructor
-        // calls remove_state_registry on all subscribed PerStateInformation instances
+        // calls remove_state_registry on all subscribed `PerStateInformation`
+        // instances.
         self.cost_info.borrow_mut().cleanup_registry(self.id);
     }
 }

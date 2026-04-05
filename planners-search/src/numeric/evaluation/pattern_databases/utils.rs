@@ -59,10 +59,7 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
     let prop_headers: Vec<String> = pattern_regular_projected_ids
         .iter()
         .map(|&var_id| {
-            let name = pdb
-                .task
-                .get_variable_name(var_id as i32)
-                .unwrap_or("<unknown>");
+            let name = pdb.task.get_variable_name(var_id).unwrap_or("<unknown>");
             format!("p{var_id}({name})")
         })
         .collect();

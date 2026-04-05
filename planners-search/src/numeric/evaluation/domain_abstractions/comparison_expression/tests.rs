@@ -3,7 +3,9 @@ use super::*;
 use planners_sas::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
 };
-use planners_sas::numeric::numeric_task::{Metric, NumericRootTask, NumericType, NumericVariable};
+use planners_sas::numeric::numeric_task::{
+    ExplicitFact, Metric, NumericRootTask, NumericType, NumericVariable,
+};
 
 #[test]
 fn example_tree() {
@@ -121,10 +123,10 @@ fn interval_le_handles_open_touching_bounds() {
 #[test]
 fn comparison_tree_build_and_dependencies() {
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("x1".into(), NumericType::Regular, -1),
-        NumericVariable::new("d2".into(), NumericType::Derived, -1),
-        NumericVariable::new("d3".into(), NumericType::Derived, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("x1".into(), NumericType::Regular, None),
+        NumericVariable::new("d2".into(), NumericType::Derived, None),
+        NumericVariable::new("d3".into(), NumericType::Derived, None),
     ];
 
     // d2 = x0 + x1
@@ -144,7 +146,7 @@ fn comparison_tree_build_and_dependencies() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         vec![],
         numeric_variables,
         vec![],
@@ -155,7 +157,7 @@ fn comparison_tree_build_and_dependencies() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let tree = ComparisonTree::from_task(&task, 0).unwrap();
@@ -186,8 +188,8 @@ fn comparison_tree_build_and_dependencies() {
 #[test]
 fn comparison_tree_cycle_detection() {
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("d1".into(), NumericType::Derived, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("d1".into(), NumericType::Derived, None),
     ];
 
     // d1 = d1 + x0 (cycle)
@@ -197,7 +199,7 @@ fn comparison_tree_cycle_detection() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         vec![],
         numeric_variables,
         vec![],
@@ -208,7 +210,7 @@ fn comparison_tree_cycle_detection() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let err = ComparisonTree::from_task(&task, 0).unwrap_err();
@@ -221,10 +223,10 @@ fn comparison_tree_cycle_detection() {
 #[test]
 fn comparison_tree_interval_evaluation_fills_derived_intervals() {
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("c2".into(), NumericType::Constant, -1),
-        NumericVariable::new("d2".into(), NumericType::Derived, -1),
-        NumericVariable::new("d3".into(), NumericType::Derived, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c2".into(), NumericType::Constant, None),
+        NumericVariable::new("d2".into(), NumericType::Derived, None),
+        NumericVariable::new("d3".into(), NumericType::Derived, None),
     ];
 
     let assignment_axioms = vec![
@@ -240,7 +242,7 @@ fn comparison_tree_interval_evaluation_fills_derived_intervals() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         vec![],
         numeric_variables,
         vec![],
@@ -251,7 +253,7 @@ fn comparison_tree_interval_evaluation_fills_derived_intervals() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let tree = ComparisonTree::from_task(&task, 0).unwrap();

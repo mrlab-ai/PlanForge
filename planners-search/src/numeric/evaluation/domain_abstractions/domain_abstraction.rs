@@ -4,7 +4,7 @@ mod tests;
 use std::collections::HashMap;
 
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, Fact, NumericType,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
 };
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
@@ -142,13 +142,13 @@ fn intervals_overlap(a: Interval, b: Interval) -> bool {
 #[derive(Debug, Clone)]
 pub struct ComparisonAxiomIndex {
     trees: Vec<ComparisonTree>,
-    by_affected_var_id: HashMap<i32, usize>,
+    by_affected_var_id: HashMap<usize, usize>,
 }
 
 impl ComparisonAxiomIndex {
     pub fn from_task(task: &dyn AbstractNumericTask) -> Result<Self, String> {
         let mut trees: Vec<ComparisonTree> = Vec::new();
-        let mut by_affected_var_id: HashMap<i32, usize> = HashMap::new();
+        let mut by_affected_var_id: HashMap<usize, usize> = HashMap::new();
 
         for comparison_axiom_id in 0..task.comparison_axioms().len() {
             let tree = ComparisonTree::from_task(task, comparison_axiom_id)
@@ -164,11 +164,11 @@ impl ComparisonAxiomIndex {
         })
     }
 
-    pub fn is_comparison_axiom_variable(&self, prop_var_id: i32) -> bool {
+    pub fn is_comparison_axiom_variable(&self, prop_var_id: usize) -> bool {
         self.by_affected_var_id.contains_key(&prop_var_id)
     }
 
-    pub fn comparison_tree(&self, prop_var_id: i32) -> Option<&ComparisonTree> {
+    pub fn comparison_tree(&self, prop_var_id: usize) -> Option<&ComparisonTree> {
         let tree_idx = *self.by_affected_var_id.get(&prop_var_id)?;
         self.trees.get(tree_idx)
     }
@@ -178,13 +178,17 @@ impl ComparisonAxiomIndex {
     ///
     /// This mirrors numeric-fd's “optimistic filtering”: reject only if definite contradiction;
     /// unknown (`None`) never contradicts.
-    pub fn precondition_is_contradicted(&self, pre: &Fact, numeric_intervals: &[Interval]) -> bool {
-        let var_id = pre.var() as i32;
+    pub fn precondition_is_contradicted(
+        &self,
+        pre: &ExplicitFact,
+        numeric_intervals: &[Interval],
+    ) -> bool {
+        let var_id = pre.var;
         let Some(tree) = self.comparison_tree(var_id) else {
             return false;
         };
 
-        let required_truth = match pre.value() {
+        let required_truth = match pre.value {
             0 => Some(true),
             1 => Some(false),
             _ => None,

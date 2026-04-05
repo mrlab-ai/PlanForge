@@ -2,13 +2,13 @@
 mod tests;
 
 use planners_sas::numeric::{
-    numeric_task::{AbstractNumericTask, Fact, Operator},
+    numeric_task::{AbstractNumericTask, ExplicitFact, Operator},
     utils::errors::ConstructError,
 };
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
-type Condition<'a> = Vec<&'a Fact>;
+type Condition<'a> = Vec<&'a ExplicitFact>;
 pub type ApplicableOperator<'a> = (&'a Operator, usize);
 
 pub struct GroundedSuccessorGenerator<'a> {
@@ -29,7 +29,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
                 condition.push(precondition);
             }
             // Sort by (var, value) to group by variable and keep order stable
-            condition.sort_by_key(|f| (f.var(), f.value()));
+            condition.sort_by_key(|f| (f.var, f.value));
             conditions.push(condition);
             next_condition_by_operator.push(0);
         }
@@ -56,7 +56,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 
     pub fn construct(
         &mut self,
-        branch_var_id: &mut u32,
+        branch_var_id: &mut usize,
         queue: &mut VecDeque<ApplicableOperator<'a>>,
     ) -> Result<Box<dyn Node<'a>>, ConstructError> {
         if queue.is_empty() {
@@ -91,16 +91,16 @@ impl<'a> GroundedSuccessorGenerator<'a> {
                 } else {
                     all_ops_immediate = false;
                     let fact = &self.conditions[op_id as usize][condition_index];
-                    if fact.var() == *branch_var_id {
+                    if fact.var == *branch_var_id {
                         var_interesting = true;
                         let mut new_index = condition_index;
                         while new_index < self.conditions[op_id as usize].len()
-                            && self.conditions[op_id as usize][new_index].var() == *branch_var_id
+                            && self.conditions[op_id as usize][new_index].var == *branch_var_id
                         {
                             new_index += 1;
                         }
                         self.next_condition_by_operator[op_id as usize] = new_index;
-                        operators_for_value[fact.value() as usize].push_back((op, op_id));
+                        operators_for_value[fact.value as usize].push_back((op, op_id));
                     } else {
                         default_operators.push_back((op, op_id));
                     }
@@ -133,14 +133,14 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 pub trait Node<'a>: 'a + Debug {
     fn get_applicable_operators(
         &self,
-        state: &[i32],
+        state: &[usize],
         applicable_operators: &mut Vec<ApplicableOperator<'a>>,
     );
 }
 
 #[derive(Debug)]
 struct BranchNode<'a> {
-    var_id: u32,
+    var_id: usize,
     immediate_operators: Vec<ApplicableOperator<'a>>,
     value_children: Vec<Box<dyn Node<'a>>>,
     default_child: Option<Box<dyn Node<'a>>>,
@@ -148,7 +148,7 @@ struct BranchNode<'a> {
 
 impl<'a> BranchNode<'a> {
     pub fn new(
-        var_id: u32,
+        var_id: usize,
         immediate_operators: Vec<ApplicableOperator<'a>>,
         value_children: Vec<Box<dyn Node<'a>>>,
         default_child: Option<Box<dyn Node<'a>>>,
@@ -165,7 +165,7 @@ impl<'a> BranchNode<'a> {
 impl<'a> Node<'a> for BranchNode<'a> {
     fn get_applicable_operators(
         &self,
-        state: &[i32],
+        state: &[usize],
         applicable_operators: &mut Vec<ApplicableOperator<'a>>,
     ) {
         applicable_operators.extend(self.immediate_operators.iter().copied());
@@ -195,7 +195,7 @@ impl<'a> LeafNode<'a> {
 impl<'a> Node<'a> for LeafNode<'a> {
     fn get_applicable_operators(
         &self,
-        _state: &[i32],
+        _state: &[usize],
         applicable_operators: &mut Vec<ApplicableOperator<'a>>,
     ) {
         if let Some(operators) = &self.applicable_operators {

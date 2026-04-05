@@ -7,37 +7,33 @@ use planners_sas::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
 };
 use planners_sas::numeric::numeric_task::{
-    ExplicitVariable, Fact, Metric, NumericRootTask, NumericType, NumericVariable, Operator,
+    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
+    Operator,
 };
 
 fn identity_domain_mapping_and_sizes(
     task: &dyn AbstractNumericTask,
-) -> Result<(DomainMapping, Vec<i32>)> {
-    let num_vars = task.get_num_variables() as usize;
-    let derived_prop: HashSet<u32> = task
+) -> Result<(DomainMapping, Vec<usize>)> {
+    let num_vars = task.get_num_variables();
+    let derived_prop: HashSet<usize> = task
         .comparison_axioms()
         .iter()
-        .map(|ax| ax.get_affected_var_id() as u32)
+        .map(|ax| ax.get_affected_var_id())
         .collect();
 
     let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
-    let mut domain_sizes: Vec<i32> = Vec::with_capacity(num_vars);
+    let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
     for var_id in 0..num_vars {
-        if derived_prop.contains(&(var_id as u32)) {
+        if derived_prop.contains(&(var_id)) {
             domain_mapping.push(vec![0, 1, 2]);
             domain_sizes.push(3);
         } else {
-            let size_i32 = task
-                .get_variable_domain_size(var_id as i32)
+            let size = task
+                .get_variable_domain_size(var_id)
                 .map_err(|e| anyhow!(e.to_string()))
                 .with_context(|| format!("failed to get domain size for variable {var_id}"))?;
-            ensure!(
-                size_i32 > 0,
-                "non-positive domain size for variable {var_id}: {size_i32}"
-            );
-            let size = size_i32 as usize;
-            domain_mapping.push((0..size as i32).collect());
-            domain_sizes.push(size_i32);
+            domain_mapping.push((0..size).collect());
+            domain_sizes.push(size);
         }
     }
 
@@ -56,16 +52,13 @@ fn constant_leaf_values(
         else {
             continue;
         };
-        let Ok(idx) = usize::try_from(*numeric_var_id) else {
-            continue;
-        };
-        if idx >= num_numeric_vars {
+        if *numeric_var_id >= num_numeric_vars {
             continue;
         }
-        if task.numeric_variables()[idx].get_type() != &NumericType::Constant {
+        if task.numeric_variables()[*numeric_var_id].get_type() != &NumericType::Constant {
             continue;
         }
-        let v = initial_numeric_values[idx];
+        let v = initial_numeric_values[*numeric_var_id];
         if v.is_nan() {
             continue;
         }
@@ -182,22 +175,28 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
 
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("c10".into(), NumericType::Constant, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c10".into(), NumericType::Constant, None),
     ];
 
     let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
 
-    let op = Operator::new("op".into(), vec![Fact::new(0, 0)], vec![], vec![], 1);
+    let op = Operator::new(
+        "op".into(),
+        vec![ExplicitFact::new(0, 0)],
+        vec![],
+        vec![],
+        1,
+    );
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -208,7 +207,7 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -239,18 +238,18 @@ fn enumerate_states_branches_on_undecidable_comparison() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("y".into(), NumericType::Regular, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
     let op = Operator::new("noop".into(), vec![], vec![], vec![], 1);
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -261,7 +260,7 @@ fn enumerate_states_branches_on_undecidable_comparison() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -300,13 +299,13 @@ fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("c2".into(), NumericType::Constant, -1),
-        NumericVariable::new("d".into(), NumericType::Derived, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c2".into(), NumericType::Constant, None),
+        NumericVariable::new("d".into(), NumericType::Derived, None),
     ];
     let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
     let comparison_axioms = vec![ComparisonAxiom::new(
@@ -317,7 +316,7 @@ fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
     )];
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -328,7 +327,7 @@ fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -353,8 +352,11 @@ fn unknown_comparison_preconditions_are_not_treated_as_fixed() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![Fact::new(0, COMPARISON_UNKNOWN_VAL)],
-        preconditions: vec![Fact::new(0, COMPARISON_UNKNOWN_VAL), Fact::new(1, 7)],
+        regression_preconditions: vec![ExplicitFact::new(0, COMPARISON_UNKNOWN_VAL)],
+        preconditions: vec![
+            ExplicitFact::new(0, COMPARISON_UNKNOWN_VAL),
+            ExplicitFact::new(1, 7),
+        ],
         changed_numeric_vars: vec![],
     };
 
@@ -368,38 +370,28 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
         2,
         "v".into(),
         vec!["v0".into(), "v1".into()],
-        0,
+        Some(0),
         0,
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![Fact::new(0, 1)];
+    let goals = vec![ExplicitFact::new(0, 1)];
     let op0 = Operator::new(
         "set0".into(),
-        vec![Fact::new(0, 0)],
-        vec![planners_sas::numeric::numeric_task::Effect::new(
-            vec![],
-            0,
-            0,
-            1,
-        )],
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(vec![], 0, Some(0), 1)],
         vec![],
         1,
     );
     let op1 = Operator::new(
         "set1".into(),
-        vec![Fact::new(0, 0)],
-        vec![planners_sas::numeric::numeric_task::Effect::new(
-            vec![],
-            0,
-            0,
-            1,
-        )],
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(vec![], 0, Some(0), 1)],
         vec![],
         1,
     );
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         goals,
@@ -410,7 +402,7 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -428,18 +420,18 @@ fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
         2,
         "v".into(),
         vec!["v0".into(), "v1".into()],
-        0,
+        Some(0),
         0,
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![Fact::new(0, 1)];
+    let goals = vec![ExplicitFact::new(0, 1)];
     let op0 = Operator::new(
         "set0".into(),
-        vec![Fact::new(0, 0)],
+        vec![ExplicitFact::new(0, 0)],
         vec![planners_sas::numeric::numeric_task::Effect::new(
             vec![],
             0,
-            0,
+            Some(0),
             1,
         )],
         vec![],
@@ -447,11 +439,11 @@ fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
     );
     let op1 = Operator::new(
         "set1".into(),
-        vec![Fact::new(0, 0)],
+        vec![ExplicitFact::new(0, 0)],
         vec![planners_sas::numeric::numeric_task::Effect::new(
             vec![],
             0,
-            0,
+            Some(0),
             1,
         )],
         vec![],
@@ -459,7 +451,7 @@ fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
     );
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         goals,
@@ -470,7 +462,7 @@ fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -489,16 +481,16 @@ fn match_tree_indexes_comparison_variables() {
             concrete_op_ids: vec![0],
             cost: 1.0,
             hash_effect: 0,
-            regression_preconditions: vec![Fact::new(0, COMPARISON_TRUE_VAL)],
-            preconditions: vec![Fact::new(0, COMPARISON_TRUE_VAL)],
+            regression_preconditions: vec![ExplicitFact::new(0, COMPARISON_TRUE_VAL)],
+            preconditions: vec![ExplicitFact::new(0, COMPARISON_TRUE_VAL)],
             changed_numeric_vars: vec![],
         },
         super::super::abstract_operator_generator::AbstractOperator {
             concrete_op_ids: vec![1],
             cost: 1.0,
             hash_effect: 0,
-            regression_preconditions: vec![Fact::new(0, COMPARISON_FALSE_VAL)],
-            preconditions: vec![Fact::new(0, COMPARISON_FALSE_VAL)],
+            regression_preconditions: vec![ExplicitFact::new(0, COMPARISON_FALSE_VAL)],
+            preconditions: vec![ExplicitFact::new(0, COMPARISON_FALSE_VAL)],
             changed_numeric_vars: vec![],
         },
     ];
@@ -520,19 +512,19 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
     // Two regular numeric vars with no constants -> partitions are unbounded.
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("y".into(), NumericType::Regular, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
     let op = Operator::new("noop".into(), vec![], vec![], vec![], 1);
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -544,7 +536,7 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -558,8 +550,8 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
     let numeric_domain_sizes = generator.numeric_domain_sizes().to_vec();
     let init_hash = table.initial_state_hash;
 
-    let mut props: Vec<Vec<i32>> = Vec::new();
-    let mut nums: Vec<Vec<i32>> = Vec::new();
+    let mut props: Vec<Vec<usize>> = Vec::new();
+    let mut nums: Vec<Vec<usize>> = Vec::new();
     decode_state_to_vectors(
         init_hash,
         domain_sizes.len(),
@@ -576,23 +568,34 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
 #[test]
 fn abstract_goals_skip_trivial_goal_axiom_preconditions() {
     let variables = vec![
-        ExplicitVariable::new(1, "trivial".into(), vec!["only".into()], 0, 0),
-        ExplicitVariable::new(2, "goal".into(), vec!["off".into(), "on".into()], 1, 0),
+        ExplicitVariable::new(1, "trivial".into(), vec!["only".into()], Some(0), 0),
+        ExplicitVariable::new(
+            2,
+            "goal".into(),
+            vec!["off".into(), "on".into()],
+            Some(1),
+            0,
+        ),
     ];
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         vec![],
-        vec![Fact::new(1, 1)],
+        vec![ExplicitFact::new(1, 1)],
         vec![],
         vec![0, 0],
         vec![],
         vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
-        vec![PropositionalAxiom::new(vec![Fact::new(0, 0)], 1, 0, 1)],
+        vec![PropositionalAxiom::new(
+            vec![ExplicitFact::new(0, 0)],
+            1,
+            0,
+            1,
+        )],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -607,21 +610,21 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
             3,
             "cmp0".into(),
             vec!["true".into(), "false".into(), "unknown".into()],
-            0,
+            Some(0),
             2,
         ),
         ExplicitVariable::new(
             3,
             "cmp1".into(),
             vec!["true".into(), "false".into(), "unknown".into()],
-            0,
+            Some(0),
             2,
         ),
     ];
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("y".into(), NumericType::Regular, -1),
-        NumericVariable::new("z".into(), NumericType::Regular, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("z".into(), NumericType::Regular, None),
     ];
     let comparison_axioms = vec![
         ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan),
@@ -629,12 +632,12 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
     ];
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![
-            Fact::new(0, COMPARISON_TRUE_VAL),
-            Fact::new(1, COMPARISON_FALSE_VAL),
+            ExplicitFact::new(0, COMPARISON_TRUE_VAL),
+            ExplicitFact::new(1, COMPARISON_FALSE_VAL),
         ],
         vec![],
         vec![COMPARISON_UNKNOWN_VAL, COMPARISON_UNKNOWN_VAL],
@@ -643,7 +646,7 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -679,14 +682,14 @@ fn factory_numeric_context_recomputes_tree_reachable_derived_intervals_from_regu
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
 
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("c2".into(), NumericType::Constant, -1),
-        NumericVariable::new("d".into(), NumericType::Derived, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c2".into(), NumericType::Constant, None),
+        NumericVariable::new("d".into(), NumericType::Derived, None),
     ];
     let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
     let comparison_axioms = vec![ComparisonAxiom::new(
@@ -697,7 +700,7 @@ fn factory_numeric_context_recomputes_tree_reachable_derived_intervals_from_regu
     )];
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         vec![],
@@ -708,7 +711,7 @@ fn factory_numeric_context_recomputes_tree_reachable_derived_intervals_from_regu
         vec![],
         comparison_axioms,
         assignment_axioms,
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -729,9 +732,9 @@ fn factory_numeric_context_recomputes_tree_reachable_derived_intervals_from_regu
     let generator = factory.make_operator_generator(&task, true).unwrap();
     let hash_multipliers = generator.hash_multipliers().to_vec();
 
-    let x_partition = 0i32;
-    let c2_partition = 0i32;
-    let derived_partition = 1i32;
+    let x_partition = 0;
+    let c2_partition = 0;
+    let derived_partition = 1;
     let state_hash = x_partition * hash_multipliers[1]
         + c2_partition * hash_multipliers[2]
         + derived_partition * hash_multipliers[3];

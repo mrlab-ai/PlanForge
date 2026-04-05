@@ -618,14 +618,14 @@ pub type ComparisonTreeNodeId = usize;
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComparisonTreeNode {
     Leaf {
-        numeric_var_id: i32,
+        numeric_var_id: usize,
     },
     Arith {
-        result_numeric_var_id: i32,
+        result_numeric_var_id: usize,
         assignment_axiom_id: usize,
         op: ArithOp,
-        left_numeric_var_id: i32,
-        right_numeric_var_id: i32,
+        left_numeric_var_id: usize,
+        right_numeric_var_id: usize,
         left: ComparisonTreeNodeId,
         right: ComparisonTreeNodeId,
     },
@@ -634,10 +634,10 @@ pub enum ComparisonTreeNode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComparisonTree {
     pub comparison_axiom_id: usize,
-    pub affected_var_id: i32,
+    pub affected_var_id: usize,
     pub op: CompOp,
-    pub left_numeric_var_id: i32,
-    pub right_numeric_var_id: i32,
+    pub left_numeric_var_id: usize,
+    pub right_numeric_var_id: usize,
     pub nodes: Vec<ComparisonTreeNode>,
     pub left_root: ComparisonTreeNodeId,
     pub right_root: ComparisonTreeNodeId,
@@ -646,8 +646,8 @@ pub struct ComparisonTree {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComparisonTreeBuildError {
     InvalidComparisonAxiomId { provided: usize, len: usize },
-    InvalidNumericVarId { provided: i32, len: usize },
-    CycleDetected { numeric_var_id: i32 },
+    InvalidNumericVarId { provided: usize, len: usize },
+    CycleDetected { numeric_var_id: usize },
 }
 
 impl ComparisonTree {
@@ -711,23 +711,22 @@ impl ComparisonTree {
         })
     }
 
-    pub fn regular_numeric_var_dependencies(&self, task: &dyn AbstractNumericTask) -> Vec<i32> {
+    pub fn regular_numeric_var_dependencies(&self, task: &dyn AbstractNumericTask) -> Vec<usize> {
         let num_numeric_vars = task.numeric_variables().len();
         let mut seen: Vec<bool> = vec![false; num_numeric_vars];
-        let mut out: Vec<i32> = Vec::new();
+        let mut out: Vec<usize> = Vec::new();
 
         let mut stack: Vec<ComparisonTreeNodeId> = vec![self.left_root, self.right_root];
         while let Some(node_id) = stack.pop() {
             match &self.nodes[node_id] {
                 ComparisonTreeNode::Leaf { numeric_var_id } => {
-                    if let Ok(idx) = usize::try_from(*numeric_var_id) {
-                        if idx < num_numeric_vars
-                            && !seen[idx]
-                            && task.numeric_variables()[idx].get_type() == &NumericType::Regular
-                        {
-                            seen[idx] = true;
-                            out.push(*numeric_var_id);
-                        }
+                    if *numeric_var_id < num_numeric_vars
+                        && !seen[*numeric_var_id]
+                        && task.numeric_variables()[*numeric_var_id].get_type()
+                            == &NumericType::Regular
+                    {
+                        seen[*numeric_var_id] = true;
+                        out.push(*numeric_var_id);
                     }
                 }
                 ComparisonTreeNode::Arith { left, right, .. } => {
@@ -847,39 +846,33 @@ fn arith_op_from_axiom(op: &CalOperator) -> ArithOp {
 
 fn build_numeric_tree_node(
     task: &dyn AbstractNumericTask,
-    numeric_var_id: i32,
+    numeric_var_id: usize,
     affected_to_assignment_axiom: &[Option<usize>],
     nodes: &mut Vec<ComparisonTreeNode>,
     memo: &mut Vec<Option<ComparisonTreeNodeId>>,
     visiting: &mut Vec<bool>,
 ) -> Result<ComparisonTreeNodeId, ComparisonTreeBuildError> {
-    let idx = usize::try_from(numeric_var_id).map_err(|_| {
-        ComparisonTreeBuildError::InvalidNumericVarId {
-            provided: numeric_var_id,
-            len: affected_to_assignment_axiom.len(),
-        }
-    })?;
-    if idx >= affected_to_assignment_axiom.len() {
+    if numeric_var_id >= affected_to_assignment_axiom.len() {
         return Err(ComparisonTreeBuildError::InvalidNumericVarId {
             provided: numeric_var_id,
             len: affected_to_assignment_axiom.len(),
         });
     }
 
-    if let Some(node_id) = memo[idx] {
+    if let Some(node_id) = memo[numeric_var_id] {
         return Ok(node_id);
     }
 
-    if visiting[idx] {
+    if visiting[numeric_var_id] {
         return Err(ComparisonTreeBuildError::CycleDetected { numeric_var_id });
     }
-    visiting[idx] = true;
+    visiting[numeric_var_id] = true;
 
-    let node_id = if let Some(assignment_axiom_id) = affected_to_assignment_axiom[idx] {
+    let node_id = if let Some(assignment_axiom_id) = affected_to_assignment_axiom[numeric_var_id] {
         let ax = &task.assignment_axioms()[assignment_axiom_id];
         let op = arith_op_from_axiom(ax.get_operator());
-        let left_numeric_var_id = ax.get_left_var_id() as i32;
-        let right_numeric_var_id = ax.get_right_var_id() as i32;
+        let left_numeric_var_id = ax.get_left_var_id();
+        let right_numeric_var_id = ax.get_right_var_id();
 
         let left = build_numeric_tree_node(
             task,
@@ -915,7 +908,7 @@ fn build_numeric_tree_node(
         node_id
     };
 
-    visiting[idx] = false;
-    memo[idx] = Some(node_id);
+    visiting[numeric_var_id] = false;
+    memo[numeric_var_id] = Some(node_id);
     Ok(node_id)
 }

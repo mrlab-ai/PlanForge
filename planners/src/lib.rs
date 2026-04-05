@@ -221,7 +221,7 @@ fn state_is_goal(
 ) -> bool {
     for i in 0..task.get_num_goals() {
         let goal_fact = task.get_goal_fact(i);
-        if !goal_fact.is_true(state, state_registry) {
+        if !goal_fact.is_hold(state, state_registry) {
             return false;
         }
     }
@@ -354,7 +354,7 @@ fn blind_remaining_distance(
     let mut open: BinaryHeap<(Reverse<NotNan<f64>>, Reverse<NotNan<f64>>, usize)> =
         BinaryHeap::new();
     let successor_generator = build_successor_generator(task);
-    let mut state_values_buffer: Vec<i32> = Vec::new();
+    let mut state_values_buffer: Vec<usize> = Vec::new();
     let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
     let mut successor_numeric_values: Vec<f64> = Vec::new();
     let mut successor_cost_values: Vec<f64> = Vec::new();
@@ -527,9 +527,7 @@ fn format_state_snapshot(
         .iter()
         .enumerate()
         .map(|(var_id, value)| {
-            let var_name = task
-                .get_variable_name(var_id as i32)
-                .unwrap_or("<unknown-var>");
+            let var_name = task.get_variable_name(var_id).unwrap_or("<unknown-var>");
             format!("{}={}", var_name, value)
         })
         .collect::<Vec<_>>()
@@ -566,7 +564,7 @@ fn exact_remaining_plan(
     let mut parent: HashMap<usize, (usize, usize)> = HashMap::new();
     let mut open: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
     let successor_generator = build_successor_generator(task);
-    let mut state_values_buffer: Vec<i32> = Vec::new();
+    let mut state_values_buffer: Vec<usize> = Vec::new();
     let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
     let mut successor_numeric_values: Vec<f64> = Vec::new();
     let mut successor_cost_values: Vec<f64> = Vec::new();
@@ -698,7 +696,7 @@ fn exact_remaining_distance(
     let mut best_g: HashMap<usize, f64> = HashMap::new();
     let mut open: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
     let successor_generator = build_successor_generator(task);
-    let mut state_values_buffer: Vec<i32> = Vec::new();
+    let mut state_values_buffer: Vec<usize> = Vec::new();
     let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
     let mut successor_numeric_values: Vec<f64> = Vec::new();
     let mut successor_cost_values: Vec<f64> = Vec::new();
@@ -817,7 +815,7 @@ fn run_da_debug(
         witness = Some((0, initial_h, initial_exact));
     }
 
-    let mut state_values_buffer: Vec<i32> = Vec::new();
+    let mut state_values_buffer: Vec<usize> = Vec::new();
     let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
 
     for (step_idx, candidate_ids) in wildcard_plan.wildcard_plan.iter().enumerate() {
@@ -954,7 +952,7 @@ fn run_astar_da_debug(
     let mut first_evaluated_witness: Option<AdmissibilityWitness> = None;
     let mut first_expanded_witness: Option<AdmissibilityWitness> = None;
 
-    let mut state_values_buffer: Vec<i32> = Vec::new();
+    let mut state_values_buffer: Vec<usize> = Vec::new();
     let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
     let mut successor_numeric_values: Vec<f64> = Vec::new();
     let mut successor_cost_values: Vec<f64> = Vec::new();

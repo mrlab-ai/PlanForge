@@ -51,7 +51,14 @@ fn parse_variable(input: &str) -> IResult<&str, ExplicitVariable> {
     }
     let (input, _) = tag("end_variable")(input)?;
     let (input, _) = line_ending(input)?;
-    let var = ExplicitVariable::new(domain_size, variable_name.to_string(), fact_names, ws, 0);
+    let axiom_layer = if ws >= 0 { Some(ws as usize) } else { None };
+    let var = ExplicitVariable::new(
+        domain_size,
+        variable_name.to_string(),
+        fact_names,
+        axiom_layer,
+        0,
+    );
     Ok((input, var))
 }
 
@@ -196,14 +203,18 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         }
         let (loop_input, effect_var_id) = usize(loop_input)?;
         let (loop_input, _) = tag(" ")(loop_input)?;
-        let (loop_input, precondition_value) = i32(loop_input)?; // NOTE: -1 if there is no precondition
+        let (loop_input, precondition_value) = i32(loop_input)?; // NOTE: -1 if there is no precondition.
         let (loop_input, _) = tag(" ")(loop_input)?;
         let (loop_input, effect_value) = usize(loop_input)?;
 
         let effect = Effect::new(
             effect_conditions,
             effect_var_id,
-            precondition_value,
+            if precondition_value >= 0 {
+                Some(precondition_value as usize)
+            } else {
+                None
+            },
             effect_value,
         );
         effects.push(effect);
@@ -258,7 +269,16 @@ fn parse_axiom(input: &str) -> IResult<&str, Axiom> {
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_rule")(input)?;
     let (input, _) = line_ending(input)?;
-    let axiom = Axiom::new(conditions, var_id, precondition_value, effect_value);
+    let axiom = Axiom::new(
+        conditions,
+        var_id,
+        if precondition_value >= 0 {
+            Some(precondition_value as usize)
+        } else {
+            None
+        },
+        effect_value,
+    );
 
     Ok((input, axiom))
 }

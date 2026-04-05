@@ -26,7 +26,7 @@ const COMPARISON_UNKNOWN_VAL: usize = 2;
 pub struct DomainAbstractionHeuristic {
     name: String,
     abstraction: DomainAbstraction,
-    prop_scratch: RefCell<Vec<i32>>,
+    prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
 }
 
@@ -71,7 +71,7 @@ impl DomainAbstractionHeuristic {
         task: &'t dyn AbstractNumericTask,
         state: &ConcreteState,
         registry: &'s StateRegistry<'t>,
-    ) -> Result<i32, EvaluationError> {
+    ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
         let num_numeric = self.abstraction.factory.numeric_domain_sizes().len();
 
@@ -107,7 +107,7 @@ impl DomainAbstractionHeuristic {
             ));
         }
 
-        let mut index: i64 = 0;
+        let mut index: usize = 0;
 
         for num_var_id in 0..num_numeric {
             let val = numeric[num_var_id];
@@ -127,18 +127,16 @@ impl DomainAbstractionHeuristic {
                 ))
             })?;
             let abs_var = num_props + num_var_id;
-            index += i64::from(multipliers[abs_var]) * i64::from(part);
+            index += multipliers[abs_var] * part;
         }
 
-        let mut prop_index: i64 = 0;
+        let mut prop_index: usize = 0;
         for var in 0..num_props {
             let abs_val = abstract_propositional_value(var, prop[var], mapping)?;
-            prop_index += i64::from(multipliers[var]) * i64::from(abs_val);
+            prop_index += multipliers[var] * abs_val;
         }
 
-        i32::try_from(index + prop_index).map_err(|_| {
-            EvaluationError::InvalidState("abstract hash does not fit i32".to_string())
-        })
+        Ok(index + prop_index)
     }
 }
 
@@ -202,9 +200,9 @@ fn plant_watering_real_distance_check(
 
 fn abstract_propositional_value(
     var: usize,
-    concrete_val: i32,
-    mapping: &[Vec<i32>],
-) -> Result<i32, EvaluationError> {
+    concrete_val: usize,
+    mapping: &[Vec<usize>],
+) -> Result<usize, EvaluationError> {
     let cidx = usize::try_from(concrete_val).map_err(|_| {
         EvaluationError::InvalidState(format!(
             "invalid propositional value {concrete_val} for var {var}"
@@ -394,9 +392,7 @@ impl Heuristic for DomainAbstractionHeuristic {
                 );
 
                 for tree in self.abstraction.factory.comparison_trees() {
-                    let Ok(var_id) = usize::try_from(tree.affected_var_id) else {
-                        continue;
-                    };
+                    let var_id = tree.affected_var_id;
                     if var_id >= prop.len() {
                         continue;
                     }
@@ -439,11 +435,12 @@ impl Heuristic for DomainAbstractionHeuristic {
 
 fn abs_prop_str_value(
     var: usize,
-    abstract_prop_sizes: &[i32],
-    multipliers: &[i32],
-    hash: i32,
-) -> i32 {
+    abstract_prop_sizes: &[usize],
+    multipliers: &[usize],
+    hash: usize,
+) -> usize {
     let dom = abstract_prop_sizes[var];
-    let mult = multipliers[var] as i64;
-    (((hash as i64) / mult) % (dom as i64)) as i32
+    let mult = multipliers[var];
+
+    (hash / mult) % dom
 }

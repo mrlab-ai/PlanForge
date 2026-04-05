@@ -15,7 +15,7 @@ use crate::numeric::{
 };
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, Fact, Operator, metric_operator_cost_from_initial_values,
+    AbstractNumericTask, ExplicitFact, Operator, metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistry};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -126,7 +126,7 @@ pub struct AStarSearch<'a> {
     counters_at_last_jump: SearchCounters,
     last_reported_f_layer: Option<String>,
     best_reported_heuristic_value: Option<OrderedFloat<f64>>,
-    state_values_buffer: Vec<i32>,
+    state_values_buffer: Vec<usize>,
     applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
     successor_numeric_values_buffer: Vec<f64>,
     successor_cost_values_buffer: Vec<f64>,
@@ -334,8 +334,8 @@ impl<'a> AStarSearch<'a> {
     }
 
     /// Checks if a state satisfies a specific fact
-    fn state_satisfies_fact(&self, state: &ConcreteState, fact: &Fact) -> bool {
-        fact.is_true(state, &self.state_registry)
+    fn state_satisfies_fact(&self, state: &ConcreteState, fact: &ExplicitFact) -> bool {
+        fact.is_hold(state, &self.state_registry)
     }
 
     /// Traces back the path from goal state to initial state
