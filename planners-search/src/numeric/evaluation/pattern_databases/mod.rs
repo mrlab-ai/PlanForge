@@ -1,5 +1,6 @@
 pub mod causal_graph;
 pub mod numeric_size_estimator;
+pub(crate) mod numeric_support;
 pub mod pattern_database;
 pub mod pattern_generator_greedy;
 pub mod pdb_heuristic;

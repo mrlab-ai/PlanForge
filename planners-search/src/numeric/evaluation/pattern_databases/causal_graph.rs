@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use planners_sas::numeric::axioms::PropositionalAxiom;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
+
+use super::numeric_support::NumericSupportContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CausalGraphVariable {
@@ -19,11 +22,14 @@ pub struct MixedCausalGraph {
 impl MixedCausalGraph {
     pub fn new(task: &dyn AbstractNumericTask) -> Self {
         let mut graph = Self::default();
+        let numeric_support = NumericSupportContext::new(task);
+        let comparison_axiom_by_affected_var = build_comparison_axiom_lookup(task);
+        let propositional_axioms_by_affected_var = build_propositional_axiom_lookup(task);
 
         for var_id in 0..task.variables().len() {
             graph.ensure_node(CausalGraphVariable::Regular(var_id));
         }
-        for numeric_var_id in 0..task.numeric_variables().len() {
+        for numeric_var_id in 0..numeric_support.helper_space_len(task) {
             graph.ensure_node(CausalGraphVariable::Numeric(numeric_var_id));
         }
 
@@ -31,17 +37,33 @@ impl MixedCausalGraph {
             let precondition_sources: Vec<CausalGraphVariable> = operator
                 .preconditions()
                 .iter()
-                .map(|fact| CausalGraphVariable::Regular(fact.var() as usize))
+                .flat_map(|fact| {
+                    fact_support_sources(
+                        task,
+                        fact.var() as usize,
+                        &comparison_axiom_by_affected_var,
+                        &propositional_axioms_by_affected_var,
+                        &numeric_support,
+                    )
+                })
                 .collect();
 
             for effect in operator.effects() {
                 let target = CausalGraphVariable::Regular(effect.var_id() as usize);
-                for source in precondition_sources.iter().copied().chain(
-                    effect
-                        .conditions()
+                for source in
+                    precondition_sources
                         .iter()
-                        .map(|fact| CausalGraphVariable::Regular(fact.var() as usize)),
-                ) {
+                        .copied()
+                        .chain(effect.conditions().iter().flat_map(|fact| {
+                            fact_support_sources(
+                                task,
+                                fact.var() as usize,
+                                &comparison_axiom_by_affected_var,
+                                &propositional_axioms_by_affected_var,
+                                &numeric_support,
+                            )
+                        }))
+                {
                     graph.add_edge(source, target);
                 }
             }
@@ -51,15 +73,21 @@ impl MixedCausalGraph {
                 for source in precondition_sources
                     .iter()
                     .copied()
+                    .chain(effect.conditions().iter().flat_map(|fact| {
+                        fact_support_sources(
+                            task,
+                            fact.var() as usize,
+                            &comparison_axiom_by_affected_var,
+                            &propositional_axioms_by_affected_var,
+                            &numeric_support,
+                        )
+                    }))
                     .chain(
-                        effect
-                            .conditions()
-                            .iter()
-                            .map(|fact| CausalGraphVariable::Regular(fact.var() as usize)),
+                        numeric_support
+                            .numeric_var_support_ids(task, effect.var_id() as usize)
+                            .into_iter()
+                            .map(CausalGraphVariable::Numeric),
                     )
-                    .chain(std::iter::once(CausalGraphVariable::Numeric(
-                        effect.var_id() as usize,
-                    )))
                 {
                     graph.add_edge(source, target);
                 }
@@ -68,38 +96,49 @@ impl MixedCausalGraph {
 
         for axiom in task.axioms() {
             let target = CausalGraphVariable::Regular(axiom.var_id() as usize);
-            for source in axiom
-                .conditions()
-                .iter()
-                .map(|fact| CausalGraphVariable::Regular(fact.var() as usize))
-            {
+            for source in axiom.conditions().iter().flat_map(|fact| {
+                fact_support_sources(
+                    task,
+                    fact.var() as usize,
+                    &comparison_axiom_by_affected_var,
+                    &propositional_axioms_by_affected_var,
+                    &numeric_support,
+                )
+            }) {
                 graph.add_edge(source, target);
             }
         }
 
-        for axiom in task.comparison_axioms() {
+        for (comparison_axiom_id, axiom) in task.comparison_axioms().iter().enumerate() {
             let Ok(target_var_id) = usize::try_from(axiom.get_affected_var_id()) else {
                 continue;
             };
             let target = CausalGraphVariable::Regular(target_var_id);
-            for source_var_id in [axiom.get_left_var_id(), axiom.get_right_var_id()] {
-                let Ok(source_var_id) = usize::try_from(source_var_id) else {
-                    continue;
-                };
+            for source_var_id in numeric_support.comparison_support_ids(task, comparison_axiom_id) {
                 graph.add_edge(CausalGraphVariable::Numeric(source_var_id), target);
             }
         }
 
-        for axiom in task.assignment_axioms() {
-            let target = CausalGraphVariable::Numeric(axiom.get_affected_var_id() as usize);
-            graph.add_edge(
-                CausalGraphVariable::Numeric(axiom.get_left_var_id() as usize),
-                target,
-            );
-            graph.add_edge(
-                CausalGraphVariable::Numeric(axiom.get_right_var_id() as usize),
-                target,
-            );
+        for auxiliary_numeric_var in numeric_support.auxiliary_numeric_vars() {
+            let Some(axiom_id) = numeric_support
+                .assignment_axiom_id_for(auxiliary_numeric_var.source_numeric_var_id)
+            else {
+                continue;
+            };
+            let Some(axiom) = task.assignment_axioms().get(axiom_id) else {
+                continue;
+            };
+            let target = CausalGraphVariable::Numeric(auxiliary_numeric_var.helper_id);
+            for source_var_id in numeric_support
+                .numeric_var_support_ids(task, axiom.get_left_var_id() as usize)
+                .into_iter()
+                .chain(
+                    numeric_support
+                        .numeric_var_support_ids(task, axiom.get_right_var_id() as usize),
+                )
+            {
+                graph.add_edge(CausalGraphVariable::Numeric(source_var_id), target);
+            }
         }
 
         graph.compute_goal_distances(task);
@@ -213,9 +252,103 @@ impl MixedCausalGraph {
     }
 }
 
+fn build_comparison_axiom_lookup(task: &dyn AbstractNumericTask) -> BTreeMap<usize, usize> {
+    task.comparison_axioms()
+        .iter()
+        .enumerate()
+        .filter_map(|(comparison_axiom_id, comparison_axiom)| {
+            usize::try_from(comparison_axiom.get_affected_var_id())
+                .ok()
+                .map(|affected_var_id| (affected_var_id, comparison_axiom_id))
+        })
+        .collect()
+}
+
+fn build_propositional_axiom_lookup(
+    task: &dyn AbstractNumericTask,
+) -> BTreeMap<usize, Vec<PropositionalAxiom>> {
+    let mut axioms_by_var: BTreeMap<usize, Vec<PropositionalAxiom>> = BTreeMap::new();
+    for axiom in task.axioms() {
+        axioms_by_var
+            .entry(axiom.var_id() as usize)
+            .or_default()
+            .push(axiom.clone());
+    }
+    axioms_by_var
+}
+
+fn fact_support_sources(
+    task: &dyn AbstractNumericTask,
+    var_id: usize,
+    comparison_axiom_by_affected_var: &BTreeMap<usize, usize>,
+    propositional_axioms_by_affected_var: &BTreeMap<usize, Vec<PropositionalAxiom>>,
+    numeric_support: &NumericSupportContext,
+) -> Vec<CausalGraphVariable> {
+    let mut sources = BTreeSet::new();
+    collect_fact_support_sources(
+        task,
+        var_id,
+        comparison_axiom_by_affected_var,
+        propositional_axioms_by_affected_var,
+        numeric_support,
+        &mut BTreeSet::new(),
+        &mut sources,
+    );
+    sources.into_iter().collect()
+}
+
+fn collect_fact_support_sources(
+    task: &dyn AbstractNumericTask,
+    var_id: usize,
+    comparison_axiom_by_affected_var: &BTreeMap<usize, usize>,
+    propositional_axioms_by_affected_var: &BTreeMap<usize, Vec<PropositionalAxiom>>,
+    numeric_support: &NumericSupportContext,
+    visiting_props: &mut BTreeSet<usize>,
+    sources: &mut BTreeSet<CausalGraphVariable>,
+) {
+    if let Some(&comparison_axiom_id) = comparison_axiom_by_affected_var.get(&var_id) {
+        for numeric_var_id in numeric_support.comparison_support_ids(task, comparison_axiom_id) {
+            sources.insert(CausalGraphVariable::Numeric(numeric_var_id));
+        }
+        return;
+    }
+
+    if task.get_variable_axiom_layer(var_id as i32).unwrap_or(-1) == -1 {
+        sources.insert(CausalGraphVariable::Regular(var_id));
+        return;
+    }
+
+    if !visiting_props.insert(var_id) {
+        return;
+    }
+
+    if let Some(axioms) = propositional_axioms_by_affected_var.get(&var_id) {
+        for axiom in axioms {
+            for condition in axiom.conditions() {
+                let Ok(condition_var_id) = usize::try_from(condition.var()) else {
+                    continue;
+                };
+                collect_fact_support_sources(
+                    task,
+                    condition_var_id,
+                    comparison_axiom_by_affected_var,
+                    propositional_axioms_by_affected_var,
+                    numeric_support,
+                    visiting_props,
+                    sources,
+                );
+            }
+        }
+    }
+
+    visiting_props.remove(&var_id);
+}
+
 #[cfg(test)]
 mod tests {
-    use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
+    use planners_sas::numeric::axioms::{
+        AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
+    };
     use planners_sas::numeric::numeric_task::{
         AssignmentEffect, AssignmentOperation, ExplicitVariable, Fact, Metric, NumericRootTask,
         NumericType, NumericVariable, Operator,
@@ -307,6 +440,76 @@ mod tests {
         assert_eq!(
             graph.goal_distance(CausalGraphVariable::Regular(0)),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn causal_graph_bypasses_comparison_propositions_for_operator_preconditions() {
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            vec![
+                simple_var("goal", -1),
+                ExplicitVariable::new(
+                    3,
+                    "cmp".to_string(),
+                    vec!["t".to_string(), "f".to_string(), "u".to_string()],
+                    0,
+                    2,
+                ),
+            ],
+            vec![
+                NumericVariable::new("c5".to_string(), NumericType::Constant, -1),
+                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+                NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+                NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
+            ],
+            vec![Fact::new(0, 0)],
+            vec![],
+            vec![0, 2],
+            vec![5.0, 0.0, 0.0, 0.0],
+            vec![Operator::new(
+                "achieve-goal".to_string(),
+                vec![Fact::new(1, 0)],
+                vec![planners_sas::numeric::numeric_task::Effect::new(
+                    vec![],
+                    0,
+                    1,
+                    0,
+                )],
+                vec![],
+                1,
+            )],
+            vec![],
+            vec![ComparisonAxiom::new(
+                1,
+                3,
+                0,
+                ComparisonOperator::GreaterThanOrEqual,
+            )],
+            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+            (0, 0),
+        );
+
+        let graph = MixedCausalGraph::new(&task);
+        let helper_var_id = task.numeric_variables().len();
+        let predecessors = graph
+            .predecessors_of(CausalGraphVariable::Regular(0))
+            .collect::<Vec<_>>();
+
+        assert!(predecessors.contains(&CausalGraphVariable::Numeric(helper_var_id)));
+        assert!(!predecessors.contains(&CausalGraphVariable::Regular(1)));
+        assert!(
+            graph
+                .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
+                .collect::<Vec<_>>()
+                .contains(&CausalGraphVariable::Numeric(1))
+        );
+        assert!(
+            graph
+                .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
+                .collect::<Vec<_>>()
+                .contains(&CausalGraphVariable::Numeric(2))
         );
     }
 }

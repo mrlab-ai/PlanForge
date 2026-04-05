@@ -16,6 +16,7 @@ perf.*
 flamegraph.svg
 output.sas.reference
 output
+output.sas
 
 numeric-fd
 experiments/
