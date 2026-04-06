@@ -7,29 +7,32 @@ use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use planners_sas::numeric::state_registry::StateRegistry;
 
 use super::pattern_database::PatternDatabase;
-use super::pattern_generator_greedy::{
-    DEFAULT_MAX_PDB_STATES, GreedyPatternGeneratorConfig, generate_greedy_pattern,
-};
+use super::pattern_generator_greedy::{GreedyPatternGeneratorConfig, generate_greedy_pattern};
 use super::projected_task::ProjectedTask;
 use super::utils;
 
 pub struct GreedyNumericPdbHeuristic<'task> {
     name: String,
-    pdb: PatternDatabase<'task>,
+    task: &'task dyn AbstractNumericTask,
+    pdb: PatternDatabase<ProjectedTask<'task>>,
     prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
 }
 
 impl<'task> GreedyNumericPdbHeuristic<'task> {
-    pub fn new(task: &'task dyn AbstractNumericTask) -> Result<Self, String> {
-        let pattern = generate_greedy_pattern(task, GreedyPatternGeneratorConfig::default());
+    pub fn new(
+        task: &'task dyn AbstractNumericTask,
+        config: GreedyPatternGeneratorConfig,
+    ) -> Result<Self, String> {
+        let pattern = generate_greedy_pattern(task, config);
         let projected_task = ProjectedTask::new(task, &pattern).map_err(|err| err.to_string())?;
         utils::print_projection_summary(task, &pattern, &projected_task);
-        let pdb = PatternDatabase::new(projected_task, DEFAULT_MAX_PDB_STATES)?;
+        let pdb = PatternDatabase::new(projected_task, config.max_pdb_states)?;
 
         Ok(Self {
             name: "greedy_numeric_pdb".to_string(),
             pdb,
+            task,
             prop_scratch: RefCell::new(Vec::new()),
             numeric_scratch: RefCell::new(Vec::new()),
         })
@@ -49,6 +52,13 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
             )
         })?;
         Ok((task, registry))
+    }
+
+    fn is_goal_state(&self, propositional_values: &[usize]) -> bool {
+        (0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0)).all(|goal_index| {
+            let goal = self.task.get_goal_fact(goal_index);
+            propositional_values.get(goal.var).copied() == Some(goal.value)
+        })
     }
 }
 
@@ -73,10 +83,15 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
 
         let (projected_prop, projected_num) = self
             .pdb
-            .project_state_values(&propositional_values, &numeric_values)
+            .abstract_state_values(&propositional_values, &numeric_values)
             .map_err(EvaluationError::ComputationFailed)?;
 
-        Ok(self.pdb.lookup_or_fallback(&projected_prop, &projected_num))
+        if self.is_goal_state(&propositional_values) {
+            return Ok(0.0);
+        }
+
+        let heuristic_value = self.pdb.lookup_or_fallback(&projected_prop, &projected_num);
+        Ok(heuristic_value.max(self.pdb.min_operator_cost()))
     }
 
     fn heuristic_name(&self) -> String {

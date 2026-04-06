@@ -28,7 +28,7 @@ pub(crate) fn print_projection_summary(
     );
 }
 
-pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
+pub(crate) fn dump_distance_table<T: AbstractNumericTask>(pdb: &PatternDatabase<T>) {
     let goal_states: Vec<usize> = pdb
         .states
         .iter()
@@ -49,13 +49,15 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
         goal_states.len(),
         goal_states
     );
+    println!("  truncated:          {}", pdb.truncated);
+    println!("  frontier states:    {:?}", pdb.frontier_states);
     println!("  dead ends:          {}", dead_end_count);
     println!(
         "  min operator cost:  {}",
         fmt_distance(pdb.min_operator_cost)
     );
 
-    let pattern_regular_projected_ids = pdb.task.pattern_regular_projected_ids();
+    let pattern_regular_projected_ids = pdb.task.abstract_propositional_var_ids();
     let prop_headers: Vec<String> = pattern_regular_projected_ids
         .iter()
         .map(|&var_id| {
@@ -63,7 +65,7 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
             format!("p{var_id}({name})")
         })
         .collect();
-    let pattern_numeric_projected_ids = pdb.task.pattern_numeric_projected_ids();
+    let pattern_numeric_projected_ids = pdb.task.abstract_numeric_var_ids();
     let num_headers: Vec<String> = pattern_numeric_projected_ids
         .iter()
         .map(|&var_id| format!("n{var_id}({})", pdb.task.numeric_variables()[var_id].name()))

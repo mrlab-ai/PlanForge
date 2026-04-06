@@ -127,8 +127,8 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                             dyn planners_search::numeric::evaluation::Heuristic + '_,
                         >)
                 }
-                crate::recursive_config::HeuristicSpec::GreedyNumericPdb => Some(Box::new(
-                    GreedyNumericPdbHeuristic::new(task_ref).map_err(|e| {
+                crate::recursive_config::HeuristicSpec::GreedyNumericPdb(config) => Some(Box::new(
+                    GreedyNumericPdbHeuristic::new(task_ref, *config).map_err(|e| {
                         std::io::Error::other(format!(
                             "failed to build greedy numeric pdb heuristic: {e}"
                         ))
