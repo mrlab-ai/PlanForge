@@ -13,6 +13,7 @@ use super::utils;
 
 pub struct GreedyNumericPdbHeuristic<'task> {
     name: String,
+    task: &'task dyn AbstractNumericTask,
     pdb: PatternDatabase<ProjectedTask<'task>>,
     prop_scratch: RefCell<Vec<i32>>,
     numeric_scratch: RefCell<Vec<f64>>,
@@ -31,6 +32,7 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
         Ok(Self {
             name: "greedy_numeric_pdb".to_string(),
             pdb,
+            task,
             prop_scratch: RefCell::new(Vec::new()),
             numeric_scratch: RefCell::new(Vec::new()),
         })
@@ -50,6 +52,13 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
             )
         })?;
         Ok((task, registry))
+    }
+
+    fn is_goal_state(&self, propositional_values: &[i32]) -> bool {
+        (0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0)).all(|goal_index| {
+            let goal = self.task.get_goal_fact(goal_index as i32);
+            propositional_values.get(goal.var() as usize).copied() == Some(goal.value())
+        })
     }
 }
 
@@ -77,7 +86,12 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
             .abstract_state_values(&propositional_values, &numeric_values)
             .map_err(EvaluationError::ComputationFailed)?;
 
-        Ok(self.pdb.lookup_or_fallback(&projected_prop, &projected_num))
+        if self.is_goal_state(&propositional_values) {
+            return Ok(0.0);
+        }
+
+        let heuristic_value = self.pdb.lookup_or_fallback(&projected_prop, &projected_num);
+        Ok(heuristic_value.max(self.pdb.min_operator_cost()))
     }
 
     fn heuristic_name(&self) -> String {
