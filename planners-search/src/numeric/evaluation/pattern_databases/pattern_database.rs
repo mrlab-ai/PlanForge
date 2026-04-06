@@ -62,9 +62,9 @@ pub struct PatternDatabase<T: NumericAbstractTask> {
 impl<T: NumericAbstractTask> PatternDatabase<T> {
     pub fn new(task: T, max_states: usize) -> Result<Self, String> {
         let min_operator_cost = task
-            .get_operators()
+            .abstract_operator_costs()
             .iter()
-            .map(|operator| operator.cost() as f64)
+            .copied()
             .fold(f64::INFINITY, f64::min);
         let min_operator_cost = if min_operator_cost.is_finite() {
             min_operator_cost.max(0.0)
@@ -184,7 +184,13 @@ impl<T: NumericAbstractTask> PatternDatabase<T> {
             successor_generator
                 .get_applicable_operators(&state.propositional, &mut applicable_operators);
 
-            for (operator, _) in applicable_operators.iter().copied() {
+            for (operator, operator_id) in applicable_operators.iter().copied() {
+                let operator_cost = self
+                    .task
+                    .abstract_operator_costs()
+                    .get(operator_id)
+                    .copied()
+                    .unwrap_or_else(|| operator.cost() as f64);
                 let successor =
                     apply_operator(&self.task, &packer, &axiom_evaluator, &state, operator)?;
                 if successor == state {
@@ -200,8 +206,8 @@ impl<T: NumericAbstractTask> PatternDatabase<T> {
                             self.truncated = true;
                             frontier_seed_costs
                                 .entry(state_id)
-                                .and_modify(|cost| *cost = cost.min(operator.cost() as f64))
-                                .or_insert(operator.cost() as f64);
+                                .and_modify(|cost| *cost = cost.min(operator_cost))
+                                .or_insert(operator_cost);
                             continue;
                         }
                         let new_id = self.states.len();
@@ -212,7 +218,7 @@ impl<T: NumericAbstractTask> PatternDatabase<T> {
                         new_id
                     };
 
-                predecessors[next_id].push((state_id, operator.cost() as f64));
+                predecessors[next_id].push((state_id, operator_cost));
             }
         }
 
@@ -592,6 +598,44 @@ mod tests {
         )
     }
 
+    fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
+        NumericRootTask::new(
+            1,
+            Metric::new(true, 0),
+            vec![simple_var("p", -1)],
+            vec![
+                NumericVariable::new("total-cost".to_string(), NumericType::Cost, -1),
+                NumericVariable::new("zero".to_string(), NumericType::Constant, -1),
+            ],
+            vec![Fact::new(0, 1)],
+            vec![],
+            vec![0],
+            vec![0.0, 0.0],
+            vec![Operator::new(
+                "finish".to_string(),
+                vec![Fact::new(0, 0)],
+                vec![planners_sas::numeric::numeric_task::Effect::new(
+                    vec![],
+                    0,
+                    0,
+                    1,
+                )],
+                vec![AssignmentEffect::new(
+                    0,
+                    AssignmentOperation::Plus,
+                    1,
+                    false,
+                    vec![],
+                )],
+                1,
+            )],
+            vec![],
+            vec![],
+            vec![],
+            (0, 0),
+        )
+    }
+
     #[test]
     fn lookup_returns_distance_for_reached_state() {
         let task = propositional_task();
@@ -720,6 +764,25 @@ mod tests {
 
         assert_eq!(pdb.states.len(), 2);
         assert_eq!(pdb.lookup(&[0], &[]), Some(1.0));
+        assert_eq!(pdb.lookup(&[1], &[]), Some(0.0));
+    }
+
+    #[test]
+    fn pdb_uses_metric_delta_costs_even_when_metric_var_is_hidden() {
+        let task = zero_metric_cost_hidden_numeric_task();
+        let projected_task = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![0],
+                numeric: vec![],
+            },
+        )
+        .unwrap();
+
+        let pdb = PatternDatabase::new(projected_task, 64).unwrap();
+
+        assert_eq!(pdb.min_operator_cost(), 0.0);
+        assert_eq!(pdb.lookup(&[0], &[]), Some(0.0));
         assert_eq!(pdb.lookup(&[1], &[]), Some(0.0));
     }
 }

@@ -19,6 +19,8 @@ pub trait NumericAbstractTask: AbstractNumericTask {
 
 	fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<i32>, Vec<f64>), String>;
 
+	fn abstract_operator_costs(&self) -> &[f64];
+
 	fn abstract_propositional_var_ids(&self) -> &[usize];
 
 	fn abstract_numeric_var_ids(&self) -> &[usize];

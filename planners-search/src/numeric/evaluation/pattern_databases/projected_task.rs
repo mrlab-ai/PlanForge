@@ -8,7 +8,7 @@ use planners_sas::numeric::axioms::{
 };
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitVariable, Fact, Metric, NumericRootTask,
-    NumericType, NumericVariable, Operator,
+    NumericType, NumericVariable, Operator, metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
@@ -228,6 +228,7 @@ pub struct ProjectedTask<'task> {
     axioms: Vec<PropositionalAxiom>,
     metric: Metric,
     operators: Vec<Operator>,
+    operator_costs: Vec<f64>,
     operator_effect_facts: Vec<Vec<Fact>>,
     goals: Vec<Fact>,
     axiom_effect_facts: Vec<Fact>,
@@ -530,7 +531,9 @@ impl<'task> ProjectedTask<'task> {
             .collect();
 
         let mut operators: Vec<Operator> = Vec::new();
+        let mut operator_costs: Vec<f64> = Vec::new();
         for operator in base.get_operators().iter() {
+            let operator_cost = metric_operator_cost_from_initial_values(base, operator);
             if let Some(projected_operator) = project_operator(
                 base,
                 operator,
@@ -547,6 +550,7 @@ impl<'task> ProjectedTask<'task> {
                 &mut projected_numeric_values,
             )? {
                 operators.push(projected_operator);
+                operator_costs.push(operator_cost);
             }
         }
 
@@ -640,6 +644,7 @@ impl<'task> ProjectedTask<'task> {
             axioms,
             metric: Metric::new(base.metric().is_min(), metric_var_id),
             operators,
+            operator_costs,
             operator_effect_facts,
             goals,
             axiom_effect_facts,
@@ -1103,6 +1108,10 @@ impl NumericAbstractTask for ProjectedTask<'_> {
 
     fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<i32>, Vec<f64>), String> {
         ProjectedTask::evaluated_initial_state_values(self).map_err(|err| err.to_string())
+    }
+
+    fn abstract_operator_costs(&self) -> &[f64] {
+        &self.operator_costs
     }
 
     fn abstract_propositional_var_ids(&self) -> &[usize] {
