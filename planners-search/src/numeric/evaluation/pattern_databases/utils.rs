@@ -1,6 +1,5 @@
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 
-use super::NumericAbstractTask;
 use super::pattern_database::PatternDatabase;
 use super::projected_task::{Pattern, ProjectedTask};
 
@@ -29,7 +28,7 @@ pub(crate) fn print_projection_summary(
     );
 }
 
-pub(crate) fn dump_distance_table<T: NumericAbstractTask>(pdb: &PatternDatabase<T>) {
+pub(crate) fn dump_distance_table<T: AbstractNumericTask>(pdb: &PatternDatabase<T>) {
     let goal_states: Vec<usize> = pdb
         .states
         .iter()

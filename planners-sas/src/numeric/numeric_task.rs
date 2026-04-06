@@ -1,4 +1,4 @@
-use crate::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
+use crate::numeric::axioms::{AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, PropositionalAxiom};
 use crate::numeric::numeric_parser::parse_numeric_sas_output;
 use crate::numeric::state_registry::{ConcreteState, StateRegistry};
 use crate::numeric::utils::int_packer::IntDoublePacker;
@@ -65,6 +65,52 @@ pub trait AbstractNumericTask {
     ) -> Vec<i32>;
 
     fn get_num_cmp_axioms(&self) -> i32;
+
+    fn abstract_state_values(
+        &self,
+        propositional_values: &[i32],
+        numeric_values: &[f64],
+    ) -> Result<(Vec<i32>, Vec<f64>), String> {
+        if propositional_values.len() != self.variables().len() {
+            return Err(format!(
+                "expected {} propositional values, got {}",
+                self.variables().len(),
+                propositional_values.len()
+            ));
+        }
+        if numeric_values.len() != self.numeric_variables().len() {
+            return Err(format!(
+                "expected {} numeric values, got {}",
+                self.numeric_variables().len(),
+                numeric_values.len()
+            ));
+        }
+        Ok((propositional_values.to_vec(), numeric_values.to_vec()))
+    }
+
+    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<i32>, Vec<f64>), String>;
+
+    fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
+        self.get_operators()
+            .get(operator_id)
+            .map(|operator| metric_operator_cost_from_initial_values(self, operator))
+            .unwrap_or(0.0)
+    }
+
+    fn min_abstract_operator_cost(&self) -> f64 {
+        let min_operator_cost = (0..self.get_operators().len())
+            .map(|operator_id| self.abstract_operator_cost(operator_id))
+            .fold(f64::INFINITY, f64::min);
+        if min_operator_cost.is_finite() {
+            min_operator_cost.max(0.0)
+        } else {
+            0.0
+        }
+    }
+
+    fn abstract_propositional_var_ids(&self) -> &[usize];
+
+    fn abstract_numeric_var_ids(&self) -> &[usize];
 }
 
 #[derive(Debug, Clone)]
@@ -263,7 +309,10 @@ impl AssignmentOperation {
     }
 }
 
-pub fn evaluate_metric_from_values(task: &dyn AbstractNumericTask, numeric_values: &[f64]) -> f64 {
+pub fn evaluate_metric_from_values<T: AbstractNumericTask + ?Sized>(
+    task: &T,
+    numeric_values: &[f64],
+) -> f64 {
     let metric_var_id = task.metric().var_id();
     if metric_var_id < 0 {
         return 0.0;
@@ -275,8 +324,8 @@ pub fn evaluate_metric_from_values(task: &dyn AbstractNumericTask, numeric_value
         .unwrap_or(0.0)
 }
 
-pub fn propagate_assignment_axiom_values(
-    task: &dyn AbstractNumericTask,
+pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
+    task: &T,
     numeric_values: &mut Vec<f64>,
 ) {
     let mut changed = true;
@@ -299,8 +348,8 @@ pub fn propagate_assignment_axiom_values(
     }
 }
 
-pub fn metric_operator_cost_from_initial_values(
-    task: &dyn AbstractNumericTask,
+pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>(
+    task: &T,
     operator: &Operator,
 ) -> f64 {
     if !task.metric().use_metric() {
@@ -452,6 +501,8 @@ pub struct NumericRootTask {
     state: Rc<RefCell<Vec<i32>>>,
     numeric_state: Rc<RefCell<Vec<f64>>>,
     operators: Vec<Operator>,
+    abstract_propositional_var_ids: Vec<usize>,
+    abstract_numeric_var_ids: Vec<usize>,
     axioms: Vec<PropositionalAxiom>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
@@ -474,6 +525,8 @@ impl NumericRootTask {
         assignment_axioms: Vec<AssignmentAxiom>,
         global_constraint: (u32, u32),
     ) -> Self {
+        let abstract_propositional_var_ids = (0..state.len()).collect();
+        let abstract_numeric_var_ids = (0..numeric_state.len()).collect();
         NumericRootTask {
             version,
             metric,
@@ -484,6 +537,8 @@ impl NumericRootTask {
             state: Rc::new(RefCell::new(state)),
             numeric_state: Rc::new(RefCell::new(numeric_state)),
             operators,
+            abstract_propositional_var_ids,
+            abstract_numeric_var_ids,
             axioms,
             comparison_axioms,
             assignment_axioms,
@@ -706,4 +761,51 @@ impl AbstractNumericTask for NumericRootTask {
     fn get_num_cmp_axioms(&self) -> i32 {
         self.comparison_axioms.len() as i32
     }
+
+    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<i32>, Vec<f64>), String> {
+        let mut propositional = self.get_initial_propositional_state_values().to_vec();
+        let mut numeric = self.get_initial_numeric_state_values().to_vec();
+        evaluate_state_with_axiom_closure(self, &mut propositional, &mut numeric)?;
+        Ok((propositional, numeric))
+    }
+
+    fn abstract_propositional_var_ids(&self) -> &[usize] {
+        &self.abstract_propositional_var_ids
+    }
+
+    fn abstract_numeric_var_ids(&self) -> &[usize] {
+        &self.abstract_numeric_var_ids
+    }
+}
+
+fn evaluate_state_with_axiom_closure(
+    task: &dyn AbstractNumericTask,
+    propositional: &mut Vec<i32>,
+    numeric: &mut Vec<f64>,
+) -> Result<(), String> {
+    let ranges: Vec<u64> = task
+        .variables()
+        .iter()
+        .map(|variable| variable.domain_size() as u64)
+        .collect();
+    let packer = IntDoublePacker::new(&ranges);
+    let axiom_evaluator = AxiomEvaluator::new(task, &packer);
+    let mut buffer = vec![0u64; packer.num_bins() as usize];
+
+    for (var_id, value) in propositional.iter().enumerate() {
+        packer.set(&mut buffer, var_id as i32, *value as u64);
+    }
+
+    axiom_evaluator
+        .evaluate_arithmetic_axioms(numeric)
+        .map_err(|err| format!("failed to evaluate arithmetic axioms: {err:?}"))?;
+    axiom_evaluator
+        .evaluate(&mut buffer, numeric)
+        .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
+
+    for (var_id, slot) in propositional.iter_mut().enumerate() {
+        *slot = packer.get(&buffer, var_id as i32) as i32;
+    }
+
+    Ok(())
 }

@@ -11,8 +11,6 @@ use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
 use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node};
 
-use super::NumericAbstractTask;
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct AbstractStateKey {
     propositional: Vec<i32>,
@@ -48,7 +46,7 @@ impl Hash for PdbState {
     }
 }
 
-pub struct PatternDatabase<T: NumericAbstractTask> {
+pub struct PatternDatabase<T: AbstractNumericTask> {
     pub(super) task: T,
     pub(super) state_to_id: HashMap<AbstractStateKey, usize>,
     pub(super) states: Vec<PdbState>,
@@ -59,18 +57,9 @@ pub struct PatternDatabase<T: NumericAbstractTask> {
     pub(super) frontier_states: Vec<usize>,
 }
 
-impl<T: NumericAbstractTask> PatternDatabase<T> {
+impl<T: AbstractNumericTask> PatternDatabase<T> {
     pub fn new(task: T, max_states: usize) -> Result<Self, String> {
-        let min_operator_cost = task
-            .abstract_operator_costs()
-            .iter()
-            .copied()
-            .fold(f64::INFINITY, f64::min);
-        let min_operator_cost = if min_operator_cost.is_finite() {
-            min_operator_cost.max(0.0)
-        } else {
-            0.0
-        };
+        let min_operator_cost = task.min_abstract_operator_cost();
 
         let mut pdb = Self {
             task,
@@ -185,12 +174,7 @@ impl<T: NumericAbstractTask> PatternDatabase<T> {
                 .get_applicable_operators(&state.propositional, &mut applicable_operators);
 
             for (operator, operator_id) in applicable_operators.iter().copied() {
-                let operator_cost = self
-                    .task
-                    .abstract_operator_costs()
-                    .get(operator_id)
-                    .copied()
-                    .unwrap_or_else(|| operator.cost() as f64);
+                let operator_cost = self.task.abstract_operator_cost(operator_id);
                 let successor =
                     apply_operator(&self.task, &packer, &axiom_evaluator, &state, operator)?;
                 if successor == state {
@@ -269,7 +253,7 @@ impl<T: NumericAbstractTask> PatternDatabase<T> {
     }
 }
 
-fn make_abstract_state_key<T: NumericAbstractTask>(task: &T, state: &PdbState) -> AbstractStateKey {
+fn make_abstract_state_key<T: AbstractNumericTask>(task: &T, state: &PdbState) -> AbstractStateKey {
     AbstractStateKey {
         propositional: task
             .abstract_propositional_var_ids()
@@ -285,7 +269,7 @@ fn make_abstract_state_key<T: NumericAbstractTask>(task: &T, state: &PdbState) -
 }
 
 fn make_abstract_state_key_from_values(
-    task: &impl NumericAbstractTask,
+    task: &impl AbstractNumericTask,
     propositional: &[i32],
     numeric: &[f64],
 ) -> Option<AbstractStateKey> {
@@ -406,10 +390,9 @@ mod tests {
     };
 
     use super::*;
-    use crate::numeric::evaluation::pattern_databases::NumericAbstractTask;
     use crate::numeric::evaluation::pattern_databases::projected_task::{Pattern, ProjectedTask};
 
-    fn build_pdb_from_abstract_task<T: NumericAbstractTask>(
+    fn build_pdb_from_abstract_task<T: AbstractNumericTask>(
         task: T,
         max_states: usize,
     ) -> PatternDatabase<T> {
