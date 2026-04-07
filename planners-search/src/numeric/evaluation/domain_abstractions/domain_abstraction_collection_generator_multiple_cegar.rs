@@ -363,14 +363,14 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
 
 fn collect_goal_related_propositional_vars(task: &dyn AbstractNumericTask) -> HashSet<usize> {
     let mut goal_related: HashSet<usize> = (0..task.get_num_goals())
-        .filter_map(|goal_id| usize::try_from(task.get_goal_fact(goal_id).var).ok())
+        .map(|goal_id| task.get_goal_fact(goal_id).var)
         .collect();
 
     loop {
         let mut changed = false;
 
         for axiom in task.axioms() {
-            let affected_var_id = axiom.var_id() as usize;
+            let affected_var_id = axiom.var_id();
             if goal_related.contains(&affected_var_id) {
                 for condition in axiom.conditions() {
                     changed |= goal_related.insert(condition.var);
@@ -391,7 +391,7 @@ fn select_single_init_split_var(
     candidate_var_ids: &HashSet<usize>,
 ) -> Option<usize> {
     (0..task.get_num_goals())
-        .filter_map(|goal_id| usize::try_from(task.get_goal_fact(goal_id).var).ok())
+        .map(|goal_id| task.get_goal_fact(goal_id).var)
         .find(|var_id| candidate_var_ids.contains(var_id))
         .or_else(|| candidate_var_ids.iter().min().copied())
 }

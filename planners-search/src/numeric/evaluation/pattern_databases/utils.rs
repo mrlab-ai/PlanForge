@@ -28,6 +28,7 @@ pub(crate) fn print_projection_summary(
     );
 }
 
+#[allow(unused)]
 pub(crate) fn dump_distance_table<T: AbstractNumericTask>(pdb: &PatternDatabase<T>) {
     let goal_states: Vec<usize> = pdb
         .states

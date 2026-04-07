@@ -112,18 +112,15 @@ fn cutpoint_partitions_for_task(
         }
 
         for dep in tree.regular_numeric_var_dependencies(task) {
-            let dep_idx = usize::try_from(dep).map_err(|_| {
-                anyhow!("regular_numeric_var_dependencies returned non-usize index: {dep}")
-            })?;
             ensure!(
-                dep_idx < cutpoints_by_var.len(),
-                "comparison tree depends on numeric var {dep_idx}, but only {} numeric vars exist",
+                dep < cutpoints_by_var.len(),
+                "comparison tree depends on numeric var {dep}, but only {} numeric vars exist",
                 cutpoints_by_var.len()
             );
             for &v in &constant_values {
                 let v = NotNan::new(v).map_err(|_| anyhow!("NaN cutpoint encountered"))?;
                 if v.is_finite() {
-                    cutpoints_by_var[dep_idx].insert(v);
+                    cutpoints_by_var[dep].insert(v);
                 }
             }
         }
@@ -264,7 +261,7 @@ fn enumerate_states_branches_on_undecidable_comparison() {
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
-    let mut generator = factory.make_operator_generator(&task, true).unwrap();
+    let generator = factory.make_operator_generator(&task, true).unwrap();
     let hash_multipliers = generator.hash_multipliers().to_vec();
     let init_hash = factory
         .compute_initial_state_hash_determined(
@@ -544,7 +541,7 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
         .build_abstract_distance_table(&task, true, false)
         .unwrap();
 
-    let mut generator = factory.make_operator_generator(&task, true).unwrap();
+    let generator = factory.make_operator_generator(&task, true).unwrap();
     let hash_multipliers = generator.hash_multipliers().to_vec();
     let domain_sizes = generator.domain_sizes().to_vec();
     let numeric_domain_sizes = generator.numeric_domain_sizes().to_vec();
@@ -673,7 +670,7 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
     let table = factory
         .build_abstract_distance_table(&task, true, false)
         .unwrap();
-    assert_eq!(table.distances[unsorted_goal_hash as usize], 0.0);
+    assert_eq!(table.distances[unsorted_goal_hash], 0.0);
 }
 
 #[test]

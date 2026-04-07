@@ -258,6 +258,7 @@ fn seeded_shuffle_indices_is_not_identity() {
 }
 
 #[test]
+#[allow(clippy::field_reassign_with_default)]
 fn fix_flaws_respects_max_abstraction_size_limit() {
     let variables = vec![ExplicitVariable::new(
         2,

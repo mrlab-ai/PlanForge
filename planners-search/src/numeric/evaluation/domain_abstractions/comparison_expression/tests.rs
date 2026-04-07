@@ -27,7 +27,7 @@ fn example_tree() {
 
     let inputs = [3.0, 4.0, 2.0, 1.5, 2.0];
     // Left: (3+4)-2 = 5, Right: 1.5+2 = 3.5, 5 < 3.5 => false
-    assert_eq!(expr.evaluate(&inputs), false);
+    assert!(!expr.evaluate(&inputs));
 }
 
 #[test]

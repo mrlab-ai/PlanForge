@@ -49,9 +49,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
 
         let mut generator = GroundedSuccessorGenerator::new(task);
 
-        let node = generator.construct(&mut 0, &mut queue).unwrap();
-
-        node
+        generator.construct(&mut 0, &mut queue).unwrap()
     }
 
     pub fn construct(
@@ -64,15 +62,15 @@ impl<'a> GroundedSuccessorGenerator<'a> {
         }
         loop {
             // Test if no further switch is necessary (or possible).
-            if *branch_var_id as usize >= self.task.variables().len() {
+            if *branch_var_id >= self.task.variables().len() {
                 let ops: Vec<ApplicableOperator<'a>> = queue.iter().copied().collect();
                 return Ok(Box::new(LeafNode::new(Some(ops))));
             }
 
-            let branch_var = &self.task.variables()[*branch_var_id as usize];
+            let branch_var = &self.task.variables()[*branch_var_id];
             let num_children = branch_var.domain_size();
 
-            let mut operators_for_value = vec![VecDeque::new(); num_children as usize];
+            let mut operators_for_value = vec![VecDeque::new(); num_children];
             let mut default_operators = VecDeque::new();
             let mut applicable_operators = Vec::new();
 
@@ -83,24 +81,24 @@ impl<'a> GroundedSuccessorGenerator<'a> {
                 let (op, op_id) = queue.pop_front().ok_or(ConstructError {
                     message: "Queue is empty".to_string(),
                 })?;
-                let condition_index = self.next_condition_by_operator[op_id as usize];
+                let condition_index = self.next_condition_by_operator[op_id];
 
-                if condition_index >= self.conditions[op_id as usize].len() {
+                if condition_index >= self.conditions[op_id].len() {
                     var_interesting = true;
                     applicable_operators.push((op, op_id));
                 } else {
                     all_ops_immediate = false;
-                    let fact = &self.conditions[op_id as usize][condition_index];
+                    let fact = &self.conditions[op_id][condition_index];
                     if fact.var == *branch_var_id {
                         var_interesting = true;
                         let mut new_index = condition_index;
-                        while new_index < self.conditions[op_id as usize].len()
-                            && self.conditions[op_id as usize][new_index].var == *branch_var_id
+                        while new_index < self.conditions[op_id].len()
+                            && self.conditions[op_id][new_index].var == *branch_var_id
                         {
                             new_index += 1;
                         }
-                        self.next_condition_by_operator[op_id as usize] = new_index;
-                        operators_for_value[fact.value as usize].push_back((op, op_id));
+                        self.next_condition_by_operator[op_id] = new_index;
+                        operators_for_value[fact.value].push_back((op, op_id));
                     } else {
                         default_operators.push_back((op, op_id));
                     }
@@ -169,8 +167,8 @@ impl<'a> Node<'a> for BranchNode<'a> {
         applicable_operators: &mut Vec<ApplicableOperator<'a>>,
     ) {
         applicable_operators.extend(self.immediate_operators.iter().copied());
-        let value = state[self.var_id as usize];
-        self.value_children[value as usize].get_applicable_operators(state, applicable_operators);
+        let value = state[self.var_id];
+        self.value_children[value].get_applicable_operators(state, applicable_operators);
 
         // Also process the default child, which contains operators that don't depend on this variable
         if let Some(ref default_child) = self.default_child {

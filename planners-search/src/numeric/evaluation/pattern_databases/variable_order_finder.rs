@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
@@ -8,17 +11,13 @@ use super::causal_graph::{CausalGraphVariable, MixedCausalGraph};
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum GreedyVariableOrderType {
+    #[default]
     CgGoalLevel,
     Random,
     Level,
     ReverseLevel,
-}
-
-impl Default for GreedyVariableOrderType {
-    fn default() -> Self {
-        Self::CgGoalLevel
-    }
 }
 
 impl fmt::Display for GreedyVariableOrderType {
@@ -36,11 +35,11 @@ impl fmt::Display for GreedyVariableOrderType {
 pub fn order_variable_ids(
     variable_ids: &mut [usize],
     order_type: GreedyVariableOrderType,
-    random_seed: i32,
+    random_seed: u64,
 ) {
     match order_type {
         GreedyVariableOrderType::Random => {
-            let mut rng = SmallRng::seed_from_u64(random_seed as i64 as u64);
+            let mut rng = SmallRng::seed_from_u64(random_seed);
             variable_ids.shuffle(&mut rng);
         }
         GreedyVariableOrderType::ReverseLevel => {
@@ -56,11 +55,11 @@ pub fn order_causal_graph_variables(
     variable_ids: &mut [CausalGraphVariable],
     graph: &MixedCausalGraph,
     order_type: GreedyVariableOrderType,
-    random_seed: i32,
+    random_seed: u64,
 ) {
     match order_type {
         GreedyVariableOrderType::Random => {
-            let mut rng = SmallRng::seed_from_u64(random_seed as i64 as u64);
+            let mut rng = SmallRng::seed_from_u64(random_seed);
             variable_ids.shuffle(&mut rng);
         }
         GreedyVariableOrderType::CgGoalLevel => {
@@ -85,26 +84,5 @@ pub fn order_causal_graph_variables(
                 )
             });
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reverse_level_reverses_order() {
-        let mut ids = vec![3, 1, 2];
-        order_variable_ids(&mut ids, GreedyVariableOrderType::ReverseLevel, 0);
-        assert_eq!(ids, vec![3, 2, 1]);
-    }
-
-    #[test]
-    fn random_order_is_deterministic_for_seed() {
-        let mut lhs = vec![0, 1, 2, 3, 4];
-        let mut rhs = vec![0, 1, 2, 3, 4];
-        order_variable_ids(&mut lhs, GreedyVariableOrderType::Random, 7);
-        order_variable_ids(&mut rhs, GreedyVariableOrderType::Random, 7);
-        assert_eq!(lhs, rhs);
     }
 }

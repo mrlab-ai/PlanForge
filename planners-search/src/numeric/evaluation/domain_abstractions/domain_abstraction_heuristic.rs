@@ -9,16 +9,11 @@ use crate::numeric::evaluation::heuristic::Heuristic;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType, Operator};
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 
-use super::comparison_expression::Interval;
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::numeric_context::{
     fill_derived_numeric_intervals_from_comparison_trees, seed_numeric_intervals_from_initial_state,
 };
 use super::utils;
-
-const COMPARISON_TRUE_VAL: usize = 0;
-const COMPARISON_FALSE_VAL: usize = 1;
-const COMPARISON_UNKNOWN_VAL: usize = 2;
 
 /// Heuristic that evaluates a concrete state by mapping it to an abstract state
 /// and looking up its precomputed goal distance.
@@ -66,11 +61,10 @@ impl DomainAbstractionHeuristic {
         Ok((task, registry))
     }
 
-    fn compute_abstract_hash<'s, 't>(
+    fn compute_abstract_hash<'t>(
         &self,
-        task: &'t dyn AbstractNumericTask,
         state: &ConcreteState,
-        registry: &'s StateRegistry<'t>,
+        registry: &StateRegistry<'t>,
     ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
         let num_numeric = self.abstraction.factory.numeric_domain_sizes().len();
@@ -203,18 +197,13 @@ fn abstract_propositional_value(
     concrete_val: usize,
     mapping: &[Vec<usize>],
 ) -> Result<usize, EvaluationError> {
-    let cidx = usize::try_from(concrete_val).map_err(|_| {
-        EvaluationError::InvalidState(format!(
-            "invalid propositional value {concrete_val} for var {var}"
-        ))
-    })?;
     mapping
         .get(var)
-        .and_then(|m| m.get(cidx))
+        .and_then(|m| m.get(concrete_val))
         .copied()
         .ok_or_else(|| {
             EvaluationError::InvalidState(format!(
-                "missing domain mapping for var {var} value index {cidx}"
+                "missing domain mapping for var {var} value index {concrete_val}"
             ))
         })
 }
@@ -224,22 +213,19 @@ impl Heuristic for DomainAbstractionHeuristic {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
-        //if eval_state.is_goal() {
-        //    return Ok(0.0);
-        //}
+        // if eval_state.is_goal() {
+        //     return Ok(0.0);
+        // }
 
         let (task, registry) = Self::require_task_and_registry(eval_state)?;
         let state = eval_state.state();
 
-        let hash = self.compute_abstract_hash(task, state, registry)?;
-        let idx = usize::try_from(hash).map_err(|_| {
-            EvaluationError::InvalidState(format!("abstract hash negative: {hash}"))
-        })?;
+        let hash = self.compute_abstract_hash(state, registry)?;
         let dist = self
             .abstraction
             .distance_table
             .distances
-            .get(idx)
+            .get(hash)
             .copied()
             .ok_or_else(|| {
                 EvaluationError::InvalidState(format!(
@@ -248,7 +234,7 @@ impl Heuristic for DomainAbstractionHeuristic {
                 ))
             })?;
 
-        // Debugging
+        // Debugging.
         if std::env::var("DA_TRACE_STATE_EVAL").unwrap_or_else(|_| "0".to_string()) == "1" {
             let num_props = self.abstraction.factory.domain_sizes().len();
             let domain_mapping = self.abstraction.factory.domain_mapping();
@@ -312,9 +298,7 @@ impl Heuristic for DomainAbstractionHeuristic {
 
                 let is_inf = partitions
                     .partition_interval(num_id, part)
-                    .map_or(false, |iv| {
-                        iv.lower == f64::NEG_INFINITY && iv.upper == f64::INFINITY
-                    });
+                    .is_some_and(|iv| iv.lower == f64::NEG_INFINITY && iv.upper == f64::INFINITY);
 
                 if is_inf {
                     continue;
@@ -353,17 +337,15 @@ impl Heuristic for DomainAbstractionHeuristic {
 
             if std::env::var("DA_TRACE_REAL_DISTANCE_CHECK").unwrap_or_else(|_| "0".to_string())
                 == "1"
-            {
-                if let Some((real_distance, admissible, details)) =
+                && let Some((real_distance, admissible, details)) =
                     plant_watering_real_distance_check(task, &num, dist)
-                {
-                    println!(
-                        "  real-check:     admissible={} h*={} {}",
-                        admissible, real_distance, details
-                    );
-                    if !admissible {
-                        eprintln!("[DA_INADMISSIBLE] {}", details);
-                    }
+            {
+                println!(
+                    "  real-check:     admissible={} h*={} {}",
+                    admissible, real_distance, details
+                );
+                if !admissible {
+                    eprintln!("[DA_INADMISSIBLE] {}", details);
                 }
             }
 
@@ -382,7 +364,7 @@ impl Heuristic for DomainAbstractionHeuristic {
                     let Some(part) = utils::partition_for_value(parts, val) else {
                         continue;
                     };
-                    if let Some(iv) = partitions.partition_interval(num_var_id, part as usize) {
+                    if let Some(iv) = partitions.partition_interval(num_var_id, part) {
                         abstract_intervals[num_var_id] = iv;
                     }
                 }

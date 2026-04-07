@@ -1,7 +1,7 @@
-//! Modern evaluation system for planning
+//! Modern evaluation system for Planning.
 //!
 //! This module provides a clean, idiomatic Rust implementation for state evaluation
-//! that combines the functionality of the C++ EvaluationContext and EvaluationResult
+//! that combines the functionality of the C++ `EvaluationContext` and `EvaluationResult`
 //! into a unified design.
 
 pub mod domain_abstractions;
@@ -20,8 +20,8 @@ use planners_sas::numeric::state_registry::ConcreteState;
 use planners_sas::numeric::state_registry::StateID;
 use std::collections::HashMap;
 
-/// Light-weight reference to a state used inside EvaluationResult.
-/// Can either own a ConcreteState or store a compact StateID to avoid cloning.
+/// Light-weight reference to a state used inside `EvaluationResult`.
+/// Can either own a `ConcreteState` or store a compact `StateID` to avoid cloning.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvalStateRef {
     Owned(ConcreteState),
@@ -37,28 +37,28 @@ impl EvalStateRef {
     }
 }
 
-/// Result of evaluating a state
+/// Result of evaluating a state.
 ///
-/// This combines the C++ EvaluationResult and relevant parts of EvaluationContext
+/// This combines the C++ `EvaluationResult` and relevant parts of `EvaluationContext`
 /// into a single, immutable structure that contains all evaluation information.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EvaluationResult {
     /// Reference to the state that was evaluated. May be an owned state or a compact id.
     pub state: EvalStateRef,
-    /// G-value (cost to reach this state)
+    /// `g`-value (cost to reach this state).
     pub g_value: f64,
-    /// Whether this state was reached by a preferred operator
+    /// Whether this state was reached by a preferred operator.
     pub is_preferred: bool,
-    /// Computed heuristic values (evaluator name -> value)
+    /// Computed heuristic values (evaluator name -> value).
     pub heuristic_values: HashMap<String, f64>,
-    /// Whether this evaluation represents a dead end
+    /// Whether this evaluation represents a dead end.
     pub is_dead_end: bool,
-    /// Whether the dead end detection is reliable
+    /// Whether the dead end detection is reliable.
     pub is_reliable_dead_end: bool,
 }
 
 impl EvaluationResult {
-    /// Creates a new evaluation result for the given state
+    /// Create a new evaluation result for the given state.
     pub fn new(state: ConcreteState, g_value: f64, is_preferred: bool) -> Self {
         Self {
             state: EvalStateRef::Owned(state),
@@ -82,8 +82,8 @@ impl EvaluationResult {
         }
     }
 
-    /// Gets a heuristic value by evaluator name
-    /// Returns infinity if the heuristic is not available
+    /// Get a heuristic value by evaluator name.
+    /// Return infinity if the heuristic is not available.
     pub fn get_heuristic_value(&self, evaluator_name: &str) -> f64 {
         self.heuristic_values
             .get(evaluator_name)
@@ -91,17 +91,17 @@ impl EvaluationResult {
             .unwrap_or(f64::INFINITY)
     }
 
-    /// Gets a heuristic value by evaluator name, returning None if not computed
+    /// Get a heuristic value by evaluator name, returning `None` if not computed.
     pub fn get_heuristic_value_optional(&self, evaluator_name: &str) -> Option<f64> {
         self.heuristic_values.get(evaluator_name).copied()
     }
 
-    /// Checks if a specific heuristic value is infinite
+    /// Check if a specific heuristic value is infinite.
     pub fn is_heuristic_infinite(&self, evaluator_name: &str) -> bool {
         self.get_heuristic_value(evaluator_name).is_infinite()
     }
 
-    /// Sets a heuristic value
+    /// Set a heuristic value.
     pub fn set_heuristic_value(&mut self, evaluator_name: String, value: f64) {
         self.heuristic_values.insert(evaluator_name, value);
         // Update dead end status if this heuristic indicates a dead end
@@ -110,29 +110,29 @@ impl EvaluationResult {
         }
     }
 
-    /// Marks this evaluation as a reliable dead end
+    /// Mark this evaluation as a reliable dead end.
     pub fn set_reliable_dead_end(&mut self) {
         self.is_dead_end = true;
         self.is_reliable_dead_end = true;
     }
 
-    /// Gets the f-value for a given heuristic (g + h)
+    /// Get the `f`-value for a given heuristic (`g` + `h`).
     pub fn get_f_value(&self, heuristic_name: &str) -> f64 {
         self.g_value + self.get_heuristic_value(heuristic_name)
     }
 
-    /// Gets all computed heuristic names
+    /// Get all computed heuristic names.
     pub fn get_heuristic_names(&self) -> impl Iterator<Item = &String> {
         self.heuristic_values.keys()
     }
 
-    /// Checks if any heuristics have been computed
+    /// Check if any heuristics have been computed.
     pub fn has_heuristics(&self) -> bool {
         !self.heuristic_values.is_empty()
     }
 
-    /// Merges another evaluation result into this one
-    /// This is useful for combining results from multiple evaluators
+    /// Merge another evaluation result into this one.
+    /// This is useful for combining results from multiple evaluators.
     pub fn merge(&mut self, other: &EvaluationResult) {
         for (name, value) in &other.heuristic_values {
             self.set_heuristic_value(name.clone(), *value);

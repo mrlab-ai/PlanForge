@@ -1,14 +1,14 @@
 use super::*;
 
 fn create_test_node(id: i32, g_value: f64) -> SearchNode {
-    // Use simple pool offset for test states
+    // Use simple pool offset for test states.
     let state = ConcreteState::new(id as usize);
     let evaluation = EvaluationResult::new_with_id(state.get_id(), g_value, false);
     SearchNode::root(state, evaluation)
 }
 
 fn create_test_operator() -> Operator {
-    // Create a test operator using the public constructor
+    // Create a test operator using the public constructor.
     Operator::new("test_op".to_string(), vec![], vec![], vec![], 3)
 }
 

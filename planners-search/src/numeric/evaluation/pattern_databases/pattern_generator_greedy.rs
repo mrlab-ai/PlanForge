@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -10,19 +13,17 @@ use super::causal_graph::{CausalGraphVariable, MixedCausalGraph};
 use super::numeric_size_estimator::NumericSizeEstimator;
 use super::numeric_support::NumericSupportContext;
 use super::projected_task::Pattern;
-use super::variable_order_finder::{
-    GreedyVariableOrderType, order_causal_graph_variables, order_variable_ids,
-};
+use super::variable_order_finder::{GreedyVariableOrderType, order_causal_graph_variables};
 
 pub const DEFAULT_MAX_PDB_STATES: usize = 100_000;
 pub const DEFAULT_NUMERIC_FIRST: bool = true;
-pub const DEFAULT_RANDOM_SEED: i32 = 0;
+pub const DEFAULT_RANDOM_SEED: u64 = 0;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct GreedyPatternGeneratorConfig {
     pub max_pdb_states: usize,
     pub numeric_first: bool,
-    pub random_seed: i32,
+    pub random_seed: u64,
     pub variable_order_type: GreedyVariableOrderType,
 }
 
@@ -148,6 +149,7 @@ pub fn generate_greedy_pattern(
     }
 
     if pattern.regular.is_empty() {
+        #[allow(clippy::never_loop)]
         for &var_id in &true_goal_regular_ids {
             let domain_size = task.get_variable_domain_size(var_id).unwrap_or(1).max(1);
             if size.saturating_mul(domain_size) > config.max_pdb_states {
@@ -285,11 +287,6 @@ fn describe_numeric_vars(
             )
         })
         .collect()
-}
-
-fn ordered_ids(mut ids: Vec<usize>, config: GreedyPatternGeneratorConfig) -> Vec<usize> {
-    order_variable_ids(&mut ids, config.variable_order_type, config.random_seed);
-    ids
 }
 
 fn ordered_regular_ids(
@@ -452,6 +449,7 @@ fn expand_pattern_with_predecessors(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_ordered_predecessors(
     task: &dyn AbstractNumericTask,
     ordered_candidates: &[CausalGraphVariable],
@@ -483,8 +481,7 @@ fn add_ordered_predecessors(
                     );
                     continue;
                 }
-                let domain_size =
-                    task.get_variable_domain_size(var_id).unwrap_or(1).max(1) as usize;
+                let domain_size = task.get_variable_domain_size(var_id).unwrap_or(1).max(1);
                 if size.saturating_mul(domain_size) > config.max_pdb_states {
                     println!(
                         "  reject predecessor regular {} domain={} current_size={} limit={}",
@@ -589,6 +586,7 @@ fn add_regular_variables(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_numeric_variables(
     task: &dyn AbstractNumericTask,
     numeric_var_ids: &[usize],
@@ -690,10 +688,7 @@ fn collect_goal_variables(
     }
 
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-        let Some(affected_var_id) = usize::try_from(comparison_axiom.get_affected_var_id()).ok()
-        else {
-            continue;
-        };
+        let affected_var_id = comparison_axiom.get_affected_var_id();
         if !goal_related_propositional_vars.contains(&affected_var_id) {
             continue;
         }
@@ -706,7 +701,7 @@ fn collect_goal_variables(
             comparison_axiom.get_right_var_id()
         );
 
-        if let Ok(tree) = ComparisonTree::from_task(task, comparison_axiom_id) {
+        if ComparisonTree::from_task(task, comparison_axiom_id).is_ok() {
             let dependencies = numeric_support.comparison_support_ids(task, comparison_axiom_id);
             println!(
                 "    comparison dependencies: {:?}",
@@ -769,15 +764,13 @@ fn is_pattern_numeric_candidate(
 }
 
 fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) -> BTreeSet<usize> {
-    let mut goal_related: BTreeSet<usize> = (0..task.get_num_goals())
-        .filter_map(|goal_id| usize::try_from(task.get_goal_fact(goal_id).var).ok())
-        .collect();
+    let mut goal_related: BTreeSet<usize> = (0..task.get_num_goals()).collect();
 
     loop {
         let mut changed = false;
 
         for axiom in task.axioms() {
-            let affected_var_id = axiom.var_id() as usize;
+            let affected_var_id = axiom.var_id();
             if goal_related.contains(&affected_var_id) {
                 for condition in axiom.conditions() {
                     changed |= goal_related.insert(condition.var);
@@ -791,310 +784,4 @@ fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) ->
     }
 
     goal_related
-}
-
-fn collect_goal_related_propositional_vars(task: &dyn AbstractNumericTask) -> BTreeSet<usize> {
-    collect_goal_related_propositional_closure(task)
-        .into_iter()
-        .filter(|&var_id| {
-            task.get_variable_axiom_layer(var_id)
-                .unwrap_or(None)
-                .is_none()
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator};
-    use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
-    use planners_sas::numeric::numeric_task::{
-        AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric,
-        NumericRootTask, NumericType, NumericVariable, Operator,
-    };
-
-    use super::*;
-    use crate::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
-
-    fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
-        ExplicitVariable::new(
-            2,
-            name.to_string(),
-            vec![format!("{name}=0"), format!("{name}=1")],
-            axiom_layer,
-            1,
-        )
-    }
-
-    fn sample_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, None),
-            vec![
-                simple_var("p", None),
-                ExplicitVariable::new(
-                    3,
-                    "cmp".to_string(),
-                    vec!["t".to_string(), "f".to_string(), "u".to_string()],
-                    Some(0),
-                    2,
-                ),
-            ],
-            vec![
-                NumericVariable::new("c".to_string(), NumericType::Constant, None),
-                NumericVariable::new("x".to_string(), NumericType::Regular, None),
-            ],
-            vec![ExplicitFact::new(1, 0)],
-            vec![],
-            vec![0, 2],
-            vec![1.0, 0.0],
-            vec![Operator::new(
-                "inc".to_string(),
-                vec![],
-                vec![],
-                vec![AssignmentEffect::new(
-                    1,
-                    AssignmentOperation::Plus,
-                    0,
-                    false,
-                    vec![],
-                )],
-                1,
-            )],
-            vec![PropositionalAxiom::new(
-                vec![ExplicitFact::new(1, 0)],
-                0,
-                1,
-                0,
-            )],
-            vec![ComparisonAxiom::new(
-                1,
-                1,
-                0,
-                ComparisonOperator::GreaterThanOrEqual,
-            )],
-            vec![],
-            ExplicitFact::new(0, 0),
-        )
-    }
-
-    fn operator_predecessor_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, None),
-            vec![
-                simple_var("pre", None),
-                simple_var("goal", None),
-                simple_var("other", None),
-            ],
-            vec![],
-            vec![ExplicitFact::new(1, 1)],
-            vec![],
-            vec![0, 0, 0],
-            vec![],
-            vec![Operator::new(
-                "achieve-goal".to_string(),
-                vec![ExplicitFact::new(0, 1)],
-                vec![planners_sas::numeric::numeric_task::Effect::new(
-                    vec![],
-                    1,
-                    Some(0),
-                    1,
-                )],
-                vec![],
-                1,
-            )],
-            vec![],
-            vec![],
-            vec![],
-            ExplicitFact::new(0, 0),
-        )
-    }
-
-    fn operator_comparison_predecessor_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, None),
-            vec![
-                simple_var("goal", None),
-                ExplicitVariable::new(
-                    3,
-                    "cmp".to_string(),
-                    vec!["t".to_string(), "f".to_string(), "u".to_string()],
-                    Some(0),
-                    2,
-                ),
-            ],
-            vec![
-                NumericVariable::new("c5".to_string(), NumericType::Constant, None),
-                NumericVariable::new("x".to_string(), NumericType::Regular, None),
-                NumericVariable::new("y".to_string(), NumericType::Regular, None),
-                NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
-            ],
-            vec![ExplicitFact::new(0, 0)],
-            vec![],
-            vec![0, 2],
-            vec![5.0, 0.0, 0.0, 0.0],
-            vec![Operator::new(
-                "achieve-goal".to_string(),
-                vec![ExplicitFact::new(1, 0)],
-                vec![planners_sas::numeric::numeric_task::Effect::new(
-                    vec![],
-                    0,
-                    Some(1),
-                    0,
-                )],
-                vec![],
-                1,
-            )],
-            vec![],
-            vec![ComparisonAxiom::new(
-                1,
-                3,
-                0,
-                ComparisonOperator::GreaterThanOrEqual,
-            )],
-            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-            ExplicitFact::new(0, 0),
-        )
-    }
-
-    #[test]
-    fn greedy_pattern_prefers_goal_variables() {
-        let task = sample_task();
-        let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
-
-        assert!(pattern.numeric.contains(&1));
-    }
-
-    #[test]
-    fn greedy_pattern_config_defaults_match_expected_port_defaults() {
-        let config = GreedyPatternGeneratorConfig::default();
-
-        assert_eq!(config.max_pdb_states, 100_000);
-        assert!(config.numeric_first);
-        assert_eq!(config.random_seed, 0);
-        assert_eq!(
-            config.variable_order_type,
-            GreedyVariableOrderType::CgGoalLevel
-        );
-    }
-
-    #[test]
-    fn greedy_pattern_includes_true_goal_support_var() {
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, None),
-            vec![
-                simple_var("support", None),
-                ExplicitVariable::new(
-                    2,
-                    "goal".to_string(),
-                    vec!["off".to_string(), "on".to_string()],
-                    Some(1),
-                    0,
-                ),
-            ],
-            vec![],
-            vec![ExplicitFact::new(1, 1)],
-            vec![],
-            vec![0, 0],
-            vec![],
-            vec![],
-            vec![PropositionalAxiom::new(
-                vec![ExplicitFact::new(0, 1)],
-                1,
-                0,
-                1,
-            )],
-            vec![],
-            vec![],
-            ExplicitFact::new(0, 0),
-        );
-
-        let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
-
-        assert!(pattern.regular.contains(&0));
-    }
-
-    #[test]
-    fn greedy_pattern_expands_via_causal_predecessors_not_all_variables() {
-        let task = operator_predecessor_task();
-        let pattern = generate_greedy_pattern(
-            &task,
-            GreedyPatternGeneratorConfig {
-                max_pdb_states: 32,
-                ..GreedyPatternGeneratorConfig::default()
-            },
-        );
-
-        assert!(pattern.regular.contains(&1));
-        assert!(pattern.regular.contains(&0));
-        assert!(!pattern.regular.contains(&2));
-    }
-
-    #[test]
-    fn greedy_pattern_respects_estimated_numeric_domain_size_budget() {
-        let task = sample_task();
-        let pattern = generate_greedy_pattern(
-            &task,
-            GreedyPatternGeneratorConfig {
-                max_pdb_states: 2,
-                ..GreedyPatternGeneratorConfig::default()
-            },
-        );
-
-        assert!(!pattern.numeric.contains(&1));
-    }
-
-    #[test]
-    fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() {
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, None),
-            vec![ExplicitVariable::new(
-                2,
-                "goal".to_string(),
-                vec!["off".to_string(), "on".to_string()],
-                Some(0),
-                0,
-            )],
-            vec![
-                NumericVariable::new("c5".to_string(), NumericType::Constant, None),
-                NumericVariable::new("x".to_string(), NumericType::Regular, None),
-                NumericVariable::new("y".to_string(), NumericType::Regular, None),
-                NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
-            ],
-            vec![ExplicitFact::new(0, 0)],
-            vec![],
-            vec![0],
-            vec![5.0, 0.0, 0.0, 0.0],
-            vec![],
-            vec![],
-            vec![ComparisonAxiom::new(
-                0,
-                3,
-                0,
-                ComparisonOperator::GreaterThanOrEqual,
-            )],
-            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-            ExplicitFact::new(0, 0),
-        );
-
-        let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
-
-        assert!(pattern.numeric.contains(&1));
-        assert!(pattern.numeric.contains(&2));
-    }
-
-    #[test]
-    fn greedy_pattern_collects_operator_comparison_support_via_helper_vars() {
-        let task = operator_comparison_predecessor_task();
-        let helper_var_id = task.numeric_variables().len();
-
-        let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
-
-        assert!(pattern.regular.contains(&0));
-        assert!(pattern.numeric.contains(&helper_var_id));
-    }
 }

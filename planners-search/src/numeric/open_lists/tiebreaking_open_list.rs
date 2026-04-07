@@ -29,24 +29,24 @@ impl Error for TieBreakingOpenListError {}
 /// A tie-breaking open list that sorts lexicographically by evaluation values
 /// and breaks exact ties using FIFO order.
 ///
-/// The evaluator order passed to [`TieBreakingOpenList::new`] defines the
+/// The evaluator order passed to `TieBreakingOpenList::new` defines the
 /// comparison order. For example, using `[f, h]` means nodes are ordered by
 /// increasing `f = g + h`, and for equal `f` values the node with lower `h`
 /// is preferred. If all evaluator values are equal, insertion order is kept.
 #[derive(Debug)]
 pub struct TieBreakingOpenList {
-    /// Maps evaluation keys to FIFO queues of nodes
+    /// Map evaluation keys to FIFO queues of nodes.
     buckets: BTreeMap<EvaluationKey, VecDeque<SearchNode>>,
-    /// Total number of nodes stored across all buckets
+    /// Total number of nodes stored across all buckets.
     size: usize,
-    /// The names of evaluators used to compute keys
+    /// The names of evaluators used to compute keys.
     evaluator_names: Vec<String>,
-    /// Whether the list is sorted in ascending order (true) or descending (false)
+    /// Whether the list is sorted in ascending order (true) or descending (false).
     ascending: bool,
 }
 
 impl TieBreakingOpenList {
-    /// Creates a new tie-breaking open list with the given evaluator names.
+    /// Create a new tie-breaking open list with the given evaluator names.
     pub fn new(
         evaluator_names: Vec<String>,
         ascending: bool,
@@ -63,7 +63,7 @@ impl TieBreakingOpenList {
         })
     }
 
-    /// Computes the lexicographic evaluation key for a given node.
+    /// Compute the lexicographic evaluation key for a given node.
     fn compute_key(&self, node: &SearchNode) -> EvaluationKey {
         let mut key = Vec::with_capacity(self.evaluator_names.len());
 
@@ -87,10 +87,7 @@ impl TieBreakingOpenList {
 impl OpenList for TieBreakingOpenList {
     fn insert(&mut self, node: SearchNode) {
         let key = self.compute_key(&node);
-        self.buckets
-            .entry(key)
-            .or_insert_with(VecDeque::new)
-            .push_back(node);
+        self.buckets.entry(key).or_default().push_back(node);
         self.size += 1;
     }
 

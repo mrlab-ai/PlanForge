@@ -55,7 +55,7 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
     }
 
     fn is_goal_state(&self, propositional_values: &[usize]) -> bool {
-        (0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0)).all(|goal_index| {
+        (0..self.task.get_num_goals()).all(|goal_index| {
             let goal = self.task.get_goal_fact(goal_index);
             propositional_values.get(goal.var).copied() == Some(goal.value)
         })

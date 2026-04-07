@@ -120,7 +120,7 @@ impl Interval {
         }
 
         // TODO: Does not work at the moment because it is used in can_split(). Fix that in future releases cause assertions are our friend
-        //debug_assert!(!self.is_empty());
+        // debug_assert!(!self.is_empty());
 
         self
     }
@@ -218,7 +218,7 @@ impl ArithOp {
                         let closed = lhs_closed && rhs_closed;
                         match lo {
                             None => lo = Some((value, closed)),
-                            Some((cur, cur_closed)) if value < cur => lo = Some((value, closed)),
+                            Some((cur, _cur_closed)) if value < cur => lo = Some((value, closed)),
                             Some((cur, cur_closed)) if value == cur => {
                                 lo = Some((cur, cur_closed || closed));
                             }
@@ -226,7 +226,7 @@ impl ArithOp {
                         }
                         match hi {
                             None => hi = Some((value, closed)),
-                            Some((cur, cur_closed)) if value > cur => hi = Some((value, closed)),
+                            Some((cur, _cur_closed)) if value > cur => hi = Some((value, closed)),
                             Some((cur, cur_closed)) if value == cur => {
                                 hi = Some((cur, cur_closed || closed));
                             }
@@ -360,8 +360,8 @@ impl CompOp {
                     None
                 }
             }
-            CompOp::Gt => CompOp::Lt.apply_interval(rhs, lhs).map(|b| b),
-            CompOp::Ge => CompOp::Le.apply_interval(rhs, lhs).map(|b| b),
+            CompOp::Gt => CompOp::Lt.apply_interval(rhs, lhs),
+            CompOp::Ge => CompOp::Le.apply_interval(rhs, lhs),
             CompOp::Eq => {
                 if lhs.is_singleton() && rhs.is_singleton() && lmin == rmin {
                     Some(true)
@@ -384,7 +384,7 @@ impl CompOp {
     }
 }
 
-// NodeId is an index into Expr::nodes
+// `NodeId` is an index into `Expr::nodes`.
 pub type NodeId = usize;
 
 #[derive(Clone, Debug)]
@@ -407,6 +407,7 @@ pub enum Node {
     },
 }
 
+#[derive(Default)]
 pub struct Expr {
     nodes: Vec<Node>,
     root: NodeId,
@@ -418,14 +419,7 @@ pub struct Expr {
 
 impl Expr {
     pub fn new() -> Self {
-        Self {
-            nodes: Vec::new(),
-            root: 0,
-            arith_cache: Vec::new(),
-            arith_interval_cache: Vec::new(),
-            cmp_cache: Vec::new(),
-            cmp_interval_cache: Vec::new(),
-        }
+        Self::default()
     }
 
     fn alloc_arith_cache_slot(&mut self) -> usize {
@@ -666,7 +660,7 @@ impl ComparisonTree {
         let num_numeric_vars = task.numeric_variables().len();
         let mut affected_to_assignment_axiom: Vec<Option<usize>> = vec![None; num_numeric_vars];
         for (axiom_id, ax) in task.assignment_axioms().iter().enumerate() {
-            let affected = ax.get_affected_var_id() as usize;
+            let affected = ax.get_affected_var_id();
             if affected < num_numeric_vars {
                 affected_to_assignment_axiom[affected] = Some(axiom_id);
             }
@@ -761,11 +755,7 @@ impl ComparisonTree {
 
     fn eval_node_interval(&self, node_id: ComparisonTreeNodeId, inputs: &[Interval]) -> Interval {
         match &self.nodes[node_id] {
-            ComparisonTreeNode::Leaf { numeric_var_id } => {
-                let idx = usize::try_from(*numeric_var_id)
-                    .unwrap_or_else(|_| panic!("negative numeric_var_id {numeric_var_id}"));
-                inputs[idx]
-            }
+            ComparisonTreeNode::Leaf { numeric_var_id } => inputs[*numeric_var_id],
             ComparisonTreeNode::Arith {
                 op, left, right, ..
             } => {
@@ -782,11 +772,7 @@ impl ComparisonTree {
         intervals: &mut [Interval],
     ) -> Interval {
         match &self.nodes[node_id] {
-            ComparisonTreeNode::Leaf { numeric_var_id } => {
-                let idx = usize::try_from(*numeric_var_id)
-                    .unwrap_or_else(|_| panic!("negative numeric_var_id {numeric_var_id}"));
-                intervals[idx]
-            }
+            ComparisonTreeNode::Leaf { numeric_var_id } => intervals[*numeric_var_id],
             ComparisonTreeNode::Arith {
                 op,
                 left,
@@ -797,10 +783,7 @@ impl ComparisonTree {
                 let lhs = self.eval_node_interval_and_fill(*left, intervals);
                 let rhs = self.eval_node_interval_and_fill(*right, intervals);
                 let result = op.apply_interval(lhs, rhs);
-                let idx = usize::try_from(*result_numeric_var_id).unwrap_or_else(|_| {
-                    panic!("negative result_numeric_var_id {result_numeric_var_id}")
-                });
-                intervals[idx] = result;
+                intervals[*result_numeric_var_id] = result;
                 result
             }
         }
@@ -808,11 +791,7 @@ impl ComparisonTree {
 
     fn eval_node_point(&self, node_id: ComparisonTreeNodeId, inputs: &[f64]) -> f64 {
         match &self.nodes[node_id] {
-            ComparisonTreeNode::Leaf { numeric_var_id } => {
-                let idx = usize::try_from(*numeric_var_id)
-                    .unwrap_or_else(|_| panic!("negative numeric_var_id {numeric_var_id}"));
-                inputs[idx]
-            }
+            ComparisonTreeNode::Leaf { numeric_var_id } => inputs[*numeric_var_id],
             ComparisonTreeNode::Arith {
                 op, left, right, ..
             } => {

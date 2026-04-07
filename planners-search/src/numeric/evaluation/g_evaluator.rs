@@ -1,22 +1,22 @@
-//! G-evaluator implementation
+//! `g`-evaluator implementation.
 //!
-//! This module provides an evaluator that returns the g-value (cost to reach a state).
+//! This module provides an evaluator that returns the `g`-value (cost to reach a state).
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState, Evaluator};
 
 #[cfg(test)]
 mod tests;
 
-/// Evaluator that returns the g-value (path cost) of a state
+/// Evaluator that returns the `g`-value (path cost) of a state.
 ///
-/// This corresponds to the C++ GEvaluator and is useful for
-/// implementing uniform-cost search and as a component in f-value calculations.
+/// This corresponds to the C++ `GEvaluator` and is useful for
+/// implementing uniform-cost search and as a component in `f`-value calculations.
 pub struct GEvaluator {
     name: String,
 }
 
 impl GEvaluator {
-    /// Creates a new G-evaluator with the given name
+    /// Create a new `g`-evaluator with the given name.
     pub fn new(name: Option<String>) -> Self {
         Self {
             name: name.unwrap_or_else(|| "g".to_string()),
@@ -46,9 +46,9 @@ impl Evaluator for GEvaluator {
     }
 }
 
-/// Sum evaluator that combines two evaluators by adding their values
+/// Sum evaluator that combines two evaluators by adding their values.
 ///
-/// This is commonly used to create f = g + h evaluators.
+/// This is commonly used to create `f` = `g` + `h` evaluators.
 pub struct SumEvaluator {
     name: String,
     first_evaluator_name: String,
@@ -56,7 +56,7 @@ pub struct SumEvaluator {
 }
 
 impl SumEvaluator {
-    /// Creates a new sum evaluator
+    /// Create a new sum evaluator.
     pub fn new(name: String, first_evaluator_name: String, second_evaluator_name: String) -> Self {
         Self {
             name,
@@ -65,7 +65,7 @@ impl SumEvaluator {
         }
     }
 
-    /// Convenience constructor for f = g + h
+    /// Convenience constructor for `f` = `g` + `h`.
     pub fn f_evaluator(heuristic_name: String) -> Self {
         Self::new(
             format!("f_{}", heuristic_name),
@@ -91,7 +91,7 @@ impl Evaluator for SumEvaluator {
             .result()
             .get_heuristic_value(&self.second_evaluator_name);
 
-        // If either value is infinite, the sum is infinite
+        // If either value is infinite, the sum is infinite.
         let sum = if first_value.is_infinite() || second_value.is_infinite() {
             f64::INFINITY
         } else {
@@ -105,8 +105,8 @@ impl Evaluator for SumEvaluator {
     }
 
     fn dead_ends_are_reliable(&self) -> bool {
-        // Sum is only as reliable as its least reliable component
-        // For simplicity, we assume it's not reliable unless proven otherwise
+        // Sum is only as reliable as its least reliable component.
+        // For simplicity, we assume it's not reliable unless proven otherwise.
         false
     }
 
@@ -118,7 +118,7 @@ impl Evaluator for SumEvaluator {
     }
 }
 
-/// Weighted evaluator that multiplies an evaluator's value by a constant
+/// Weighted evaluator that multiplies an evaluator's value by a constant.
 pub struct WeightedEvaluator {
     name: String,
     base_evaluator_name: String,
@@ -126,7 +126,7 @@ pub struct WeightedEvaluator {
 }
 
 impl WeightedEvaluator {
-    /// Creates a new weighted evaluator
+    /// Create a new weighted evaluator.
     pub fn new(name: String, base_evaluator_name: String, weight: f64) -> Self {
         Self {
             name,
@@ -171,7 +171,7 @@ impl Evaluator for WeightedEvaluator {
     }
 }
 
-/// Maximum evaluator that returns the maximum of two evaluators
+/// Maximum evaluator that returns the maximum of two evaluators.
 pub struct MaxEvaluator {
     name: String,
     first_evaluator_name: String,
@@ -179,7 +179,7 @@ pub struct MaxEvaluator {
 }
 
 impl MaxEvaluator {
-    /// Creates a new max evaluator
+    /// Create a new `MaxEvaluator`.
     pub fn new(name: String, first_evaluator_name: String, second_evaluator_name: String) -> Self {
         Self {
             name,

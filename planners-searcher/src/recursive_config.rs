@@ -84,7 +84,7 @@ pub fn parse_search_spec(raw: &str) -> Result<SearchSpec, String> {
 
 type Res<'a, T> = IResult<&'a str, T, VerboseError<&'a str>>;
 
-fn ws<'a, F: 'a, O>(inner: F) -> impl FnMut(&'a str) -> Res<'a, O>
+fn ws<'a, F, O>(inner: F) -> impl FnMut(&'a str) -> Res<'a, O>
 where
     F: FnMut(&'a str) -> Res<'a, O>,
 {
@@ -131,6 +131,12 @@ fn parse_i32(value: &str) -> Result<i32, String> {
     value
         .parse::<i32>()
         .map_err(|_| format!("expected integer, got `{value}`"))
+}
+
+fn parse_u64(value: &str) -> Result<u64, String> {
+    value
+        .parse::<u64>()
+        .map_err(|_| format!("expected non-negative integer, got `{value}`"))
 }
 
 fn parse_greedy_variable_order_type(value: &str) -> Result<GreedyVariableOrderType, String> {
@@ -274,7 +280,7 @@ fn build_greedy_numeric_pdb_config(
         match key.as_str() {
             "max_pdb_states" => config.max_pdb_states = parse_usize(&value)?,
             "numeric_first" => config.numeric_first = parse_bool(&value)?,
-            "random_seed" => config.random_seed = parse_i32(&value)?,
+            "random_seed" => config.random_seed = parse_u64(&value)?,
             "variable_order_type" => {
                 config.variable_order_type = parse_greedy_variable_order_type(&value)?
             }

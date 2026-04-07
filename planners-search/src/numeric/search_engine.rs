@@ -217,10 +217,10 @@ impl<'a> AStarSearch<'a> {
     }
 
     fn resource_limit_status(&self, start_time: &Instant) -> Option<SearchStatus> {
-        if let Some(time_limit) = self.time_limit {
-            if start_time.elapsed() > time_limit {
-                return Some(SearchStatus::Timeout);
-            }
+        if let Some(time_limit) = self.time_limit
+            && start_time.elapsed() > time_limit
+        {
+            return Some(SearchStatus::Timeout);
         }
 
         if let Some(max_memory_bytes) = self.max_memory_bytes {
@@ -415,10 +415,10 @@ impl<'a> AStarSearch<'a> {
         }
 
         // Check if this node is stale (better path found since it was added to open list)
-        if let Some(current_info) = self.search_nodes.get(&state_id) {
-            if current_info.g_value < node.g_value() {
-                return SearchStatus::InProgress;
-            }
+        if let Some(current_info) = self.search_nodes.get(&state_id)
+            && current_info.g_value < node.g_value()
+        {
+            return SearchStatus::InProgress;
         }
 
         self.maybe_print_f_layer(&node, start_time);
@@ -463,11 +463,12 @@ impl<'a> AStarSearch<'a> {
                 .unwrap_or(operator.cost() as f64);
             let new_g_value = current_g + op_cost;
 
-            // Check if we've seen this state before
-            if let Some(existing_info) = self.search_nodes.get(&succ_state_id) {
-                if existing_info.g_value <= new_g_value {
-                    continue; // We already have a better or equal path
-                }
+            // Check if we've seen this state before.
+            if let Some(existing_info) = self.search_nodes.get(&succ_state_id)
+                && existing_info.g_value <= new_g_value
+            {
+                // We already have a better or equal path.
+                continue;
             }
 
             if was_closed {
@@ -629,14 +630,13 @@ fn format_progress_value(value: f64) -> String {
 fn current_memory_kb() -> u64 {
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         for line in status.lines() {
-            if let Some(value) = line.strip_prefix("VmRSS:") {
-                if let Some(kb) = value
+            if let Some(value) = line.strip_prefix("VmRSS:")
+                && let Some(kb) = value
                     .split_whitespace()
                     .next()
                     .and_then(|part| part.parse::<u64>().ok())
-                {
-                    return kb;
-                }
+            {
+                return kb;
             }
         }
     }

@@ -171,16 +171,14 @@ pub(crate) fn fmt_f64_compact(v: f64) -> String {
     }
     let mut s = format!("{v}");
     let is_scientific = s.contains('e') || s.contains('E');
-    if !is_scientific {
-        if let Some(dot) = s.find('.') {
-            let (head, tail) = s.split_at(dot + 1);
-            let trimmed_tail = tail.trim_end_matches('0');
-            s = if trimmed_tail.is_empty() {
-                head.trim_end_matches('.').to_string()
-            } else {
-                format!("{head}{trimmed_tail}")
-            };
-        }
+    if !is_scientific && let Some(dot) = s.find('.') {
+        let (head, tail) = s.split_at(dot + 1);
+        let trimmed_tail = tail.trim_end_matches('0');
+        s = if trimmed_tail.is_empty() {
+            head.trim_end_matches('.').to_string()
+        } else {
+            format!("{head}{trimmed_tail}")
+        };
     }
     if s == "-0" { "0".to_string() } else { s }
 }
@@ -208,7 +206,7 @@ pub(crate) fn set_initial_prop_values(
     }
 }
 
-pub(crate) fn fact_is_true(fact: &ExplicitFact, packer: &IntDoublePacker, buffer: &[u64]) -> bool {
+pub(crate) fn fact_is_hold(fact: &ExplicitFact, packer: &IntDoublePacker, buffer: &[u64]) -> bool {
     let current = packer.get(buffer, fact.var) as usize;
     current == fact.value
 }
@@ -217,12 +215,12 @@ pub(crate) fn apply_operator_to_state(
     op: &planners_sas::numeric::numeric_task::Operator,
     packer: &IntDoublePacker,
     buffer: &mut [u64],
-    numeric_state: &mut Vec<f64>,
+    numeric_state: &mut [f64],
 ) {
     for eff in op.effects().iter() {
         let mut ok = true;
         for cond in eff.conditions().iter() {
-            if !fact_is_true(cond, packer, buffer) {
+            if !fact_is_hold(cond, packer, buffer) {
                 ok = false;
                 break;
             }
@@ -236,7 +234,7 @@ pub(crate) fn apply_operator_to_state(
         if eff.is_conditional() {
             let mut ok = true;
             for cond in eff.conditions().iter() {
-                if !fact_is_true(cond, packer, buffer) {
+                if !fact_is_hold(cond, packer, buffer) {
                     ok = false;
                     break;
                 }
@@ -246,8 +244,8 @@ pub(crate) fn apply_operator_to_state(
             }
         }
 
-        let assignment_var_id = eff.var_id() as usize;
-        let affected_var_id = eff.affected_var_id() as usize;
+        let assignment_var_id = eff.var_id();
+        let affected_var_id = eff.affected_var_id();
         if assignment_var_id >= numeric_state.len() || affected_var_id >= numeric_state.len() {
             continue;
         }
@@ -298,7 +296,7 @@ pub(crate) fn debug_print_wildcard_plan(
         let choice_count = choices.len();
         let rep = choices
             .first()
-            .and_then(|&id| ops.get(id).map(|op| format!("{}", op.name())))
+            .and_then(|&id| ops.get(id).map(|op| op.name().to_string()))
             .unwrap_or_else(|| "<none>".to_string());
         representative.push(rep);
 
@@ -406,7 +404,7 @@ fn debug_print_concrete_trace(
             } else {
                 op.preconditions()
                     .iter()
-                    .all(|pre| fact_is_true(pre, &state_packer, &buffer))
+                    .all(|pre| fact_is_hold(pre, &state_packer, &buffer))
             };
             if !applicable {
                 continue;
@@ -486,14 +484,14 @@ fn trace_variable_scope(
                 prop_vars.insert(pre.var);
             }
             for eff in op.effects().iter() {
-                prop_vars.insert(eff.var_id() as usize);
+                prop_vars.insert(eff.var_id());
                 for c in eff.conditions().iter() {
                     prop_vars.insert(c.var);
                 }
             }
             for neff in op.assignment_effects().iter() {
-                num_vars.insert(neff.var_id() as usize);
-                num_vars.insert(neff.affected_var_id() as usize);
+                num_vars.insert(neff.var_id());
+                num_vars.insert(neff.affected_var_id());
                 for c in neff.conditions().iter() {
                     prop_vars.insert(c.var);
                 }
@@ -563,15 +561,14 @@ fn fmt_concrete_nums(
             out.push(' ');
         }
         let mut part_s = String::new();
-        if let Some(parts) = partitions.partitions(num_id) {
-            if let Some(pid) = partition_for_value(parts, v) {
-                let pid_u = usize::try_from(pid).unwrap_or(0);
-                let iv_s = partitions
-                    .partition_interval(num_id, pid_u)
-                    .map(fmt_interval)
-                    .unwrap_or_else(|| "<missing-interval>".to_string());
-                part_s = format!(" p{pid_u}:{iv_s}");
-            }
+        if let Some(parts) = partitions.partitions(num_id)
+            && let Some(pid) = partition_for_value(parts, v)
+        {
+            let iv_s = partitions
+                .partition_interval(num_id, pid)
+                .map(fmt_interval)
+                .unwrap_or_else(|| "<missing-interval>".to_string());
+            part_s = format!(" p{pid}:{iv_s}");
         }
         let _ = write!(&mut out, "n{num_id}={}{}", fmt_f64_compact(v), part_s);
         shown += 1;
@@ -651,8 +648,7 @@ fn fmt_nontrivial_nums(
         if shown > 0 {
             out.push(' ');
         }
-        let part_i32 = values[num_id];
-        let part = usize::try_from(part_i32).unwrap_or(0);
+        let part = values[num_id];
         let iv_s = partitions
             .partition_interval(num_id, part)
             .map(fmt_interval)
@@ -689,17 +685,15 @@ fn fmt_delta_numeric_partitions(
         if shown > 0 {
             out.push(' ');
         }
-        let a_u = usize::try_from(a).unwrap_or(0);
-        let b_u = usize::try_from(b).unwrap_or(0);
         let a_s = partitions
-            .partition_interval(num_id, a_u)
+            .partition_interval(num_id, a)
             .map(fmt_interval)
             .unwrap_or_else(|| "<missing-interval>".to_string());
         let b_s = partitions
-            .partition_interval(num_id, b_u)
+            .partition_interval(num_id, b)
             .map(fmt_interval)
             .unwrap_or_else(|| "<missing-interval>".to_string());
-        let _ = write!(&mut out, "n{num_id}:p{a_u}:{a_s}->p{b_u}:{b_s}");
+        let _ = write!(&mut out, "n{num_id}:p{a}:{a_s}->p{b}:{b_s}");
         shown += 1;
     }
     out
@@ -740,7 +734,7 @@ pub(crate) fn dump_distances(
 
     let mut is_axiom_var: Vec<bool> = vec![false; num_prop_vars];
     for ax in task.axioms().iter() {
-        let v = ax.var_id() as usize;
+        let v = ax.var_id();
         if v < is_axiom_var.len() {
             is_axiom_var[v] = true;
         }
@@ -922,7 +916,7 @@ pub(crate) fn dump_distances(
             &table.hash_multipliers,
         );
 
-        if !dist.is_finite() && !(is_init || is_goal) {
+        if !(dist.is_finite() || is_init || is_goal) {
             continue;
         }
 
@@ -946,7 +940,7 @@ pub(crate) fn dump_distances(
             let abs_var_id = num_prop_vars + num_var_id;
             let mult = table.hash_multipliers[abs_var_id] as i64;
             let dom = table.numeric_domain_sizes[num_var_id] as i64;
-            let part = (((state_hash as i64) / mult) % dom) as i64;
+            let part = ((state_hash as i64) / mult) % dom;
             let part_usize = usize::try_from(part).unwrap_or(0);
             let val = num_partition_texts
                 .get(i)
@@ -959,7 +953,7 @@ pub(crate) fn dump_distances(
         for (i, &var_id) in non_axiom_vars.iter().enumerate() {
             let mult = table.hash_multipliers[var_id] as i64;
             let dom = factory.domain_sizes()[var_id] as i64;
-            let value = (((state_hash as i64) / mult) % dom) as i64;
+            let value = ((state_hash as i64) / mult) % dom;
             line.push_str(&format!(
                 "{val:>width$} | ",
                 val = value,

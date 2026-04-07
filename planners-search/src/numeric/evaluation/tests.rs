@@ -14,13 +14,13 @@ fn test_evaluation_result_basic() {
     assert!(!result.is_dead_end);
     assert!(!result.has_heuristics());
 
-    // Test heuristic value setting
+    // Test heuristic value setting.
     result.set_heuristic_value("h1".to_string(), 10.0);
     assert_eq!(result.get_heuristic_value("h1"), 10.0);
     assert_eq!(result.get_f_value("h1"), 15.0);
     assert!(result.has_heuristics());
 
-    // Test infinite heuristic (dead end)
+    // Test infinite heuristic (dead end).
     result.set_heuristic_value("h2".to_string(), f64::INFINITY);
     assert!(result.is_heuristic_infinite("h2"));
     assert!(result.is_dead_end);
