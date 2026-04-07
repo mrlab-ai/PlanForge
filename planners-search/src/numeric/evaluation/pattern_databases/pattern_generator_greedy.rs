@@ -1071,7 +1071,9 @@ mod tests {
         );
 
         let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
+        let helper_var_id = task.numeric_variables().len();
 
+        assert!(pattern.numeric.contains(&helper_var_id));
         assert!(pattern.numeric.contains(&1));
         assert!(pattern.numeric.contains(&2));
     }
@@ -1085,5 +1087,101 @@ mod tests {
 
         assert!(pattern.regular.contains(&0));
         assert!(pattern.numeric.contains(&helper_var_id));
+    }
+
+    #[test]
+    fn greedy_pattern_keeps_helper_overlap_for_unique_dependency() {
+        let variables = vec![ExplicitVariable::new(
+            2,
+            "goal".to_string(),
+            vec!["off".to_string(), "on".to_string()],
+            0,
+            0,
+        )];
+        let numeric_variables = vec![
+            NumericVariable::new("c5".to_string(), NumericType::Constant, -1),
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
+        ];
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![Fact::new(0, 0)],
+            vec![],
+            vec![0],
+            vec![5.0, 1.0, 2.0, 3.0],
+            vec![],
+            vec![],
+            vec![ComparisonAxiom::new(
+                0,
+                3,
+                0,
+                ComparisonOperator::GreaterThanOrEqual,
+            )],
+            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+            (0, 0),
+        );
+
+        let helper_var_id = task.numeric_variables().len();
+        let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
+
+        assert!(pattern.numeric.contains(&helper_var_id));
+        assert!(pattern.numeric.contains(&1));
+        assert!(pattern.numeric.contains(&2));
+    }
+
+    #[test]
+    fn greedy_pattern_expands_root_helper_to_regular_leaves_not_intermediate_helpers() {
+        let variables = vec![ExplicitVariable::new(
+            2,
+            "goal".to_string(),
+            vec!["off".to_string(), "on".to_string()],
+            0,
+            0,
+        )];
+        let numeric_variables = vec![
+            NumericVariable::new("c5".to_string(), NumericType::Constant, -1),
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("z".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("a".to_string(), NumericType::Derived, 0),
+            NumericVariable::new("b".to_string(), NumericType::Derived, 0),
+        ];
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![Fact::new(0, 0)],
+            vec![],
+            vec![0],
+            vec![5.0, 1.0, 2.0, 3.0, 3.0, 4.0],
+            vec![],
+            vec![],
+            vec![ComparisonAxiom::new(
+                0,
+                5,
+                0,
+                ComparisonOperator::GreaterThanOrEqual,
+            )],
+            vec![
+                AssignmentAxiom::new(4, CalOperator::Sum, 1, 2),
+                AssignmentAxiom::new(5, CalOperator::Sum, 4, 3),
+            ],
+            (0, 0),
+        );
+
+        let helper_a_id = task.numeric_variables().len();
+        let helper_b_id = task.numeric_variables().len() + 1;
+        let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
+
+        assert!(pattern.numeric.contains(&helper_b_id));
+        assert!(pattern.numeric.contains(&1));
+        assert!(pattern.numeric.contains(&2));
+        assert!(pattern.numeric.contains(&3));
+        assert!(!pattern.numeric.contains(&helper_a_id));
     }
 }

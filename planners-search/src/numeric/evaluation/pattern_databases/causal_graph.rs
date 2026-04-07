@@ -130,11 +130,11 @@ impl MixedCausalGraph {
             };
             let target = CausalGraphVariable::Numeric(auxiliary_numeric_var.helper_id);
             for source_var_id in numeric_support
-                .numeric_var_support_ids(task, axiom.get_left_var_id() as usize)
+                .numeric_var_leaf_support_ids(task, axiom.get_left_var_id() as usize)
                 .into_iter()
                 .chain(
                     numeric_support
-                        .numeric_var_support_ids(task, axiom.get_right_var_id() as usize),
+                        .numeric_var_leaf_support_ids(task, axiom.get_right_var_id() as usize),
                 )
             {
                 graph.add_edge(CausalGraphVariable::Numeric(source_var_id), target);
@@ -511,5 +511,71 @@ mod tests {
                 .collect::<Vec<_>>()
                 .contains(&CausalGraphVariable::Numeric(2))
         );
+    }
+
+    #[test]
+    fn causal_graph_flattens_helper_predecessors_to_regular_leaves() {
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            vec![
+                simple_var("goal", -1),
+                ExplicitVariable::new(
+                    3,
+                    "cmp".to_string(),
+                    vec!["t".to_string(), "f".to_string(), "u".to_string()],
+                    0,
+                    2,
+                ),
+            ],
+            vec![
+                NumericVariable::new("c5".to_string(), NumericType::Constant, -1),
+                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+                NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+                NumericVariable::new("z".to_string(), NumericType::Regular, -1),
+                NumericVariable::new("a".to_string(), NumericType::Derived, 0),
+                NumericVariable::new("b".to_string(), NumericType::Derived, 0),
+            ],
+            vec![Fact::new(0, 0)],
+            vec![],
+            vec![0, 2],
+            vec![5.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            vec![Operator::new(
+                "achieve-goal".to_string(),
+                vec![Fact::new(1, 0)],
+                vec![planners_sas::numeric::numeric_task::Effect::new(
+                    vec![],
+                    0,
+                    1,
+                    0,
+                )],
+                vec![],
+                1,
+            )],
+            vec![],
+            vec![ComparisonAxiom::new(
+                1,
+                5,
+                0,
+                ComparisonOperator::GreaterThanOrEqual,
+            )],
+            vec![
+                AssignmentAxiom::new(4, CalOperator::Sum, 1, 2),
+                AssignmentAxiom::new(5, CalOperator::Sum, 4, 3),
+            ],
+            (0, 0),
+        );
+
+        let graph = MixedCausalGraph::new(&task);
+        let root_helper_id = task.numeric_variables().len() + 1;
+        let intermediate_helper_id = task.numeric_variables().len();
+        let predecessors = graph
+            .predecessors_of(CausalGraphVariable::Numeric(root_helper_id))
+            .collect::<Vec<_>>();
+
+        assert!(predecessors.contains(&CausalGraphVariable::Numeric(1)));
+        assert!(predecessors.contains(&CausalGraphVariable::Numeric(2)));
+        assert!(predecessors.contains(&CausalGraphVariable::Numeric(3)));
+        assert!(!predecessors.contains(&CausalGraphVariable::Numeric(intermediate_helper_id)));
     }
 }

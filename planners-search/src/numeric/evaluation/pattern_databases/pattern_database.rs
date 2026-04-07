@@ -48,7 +48,7 @@ impl<'task> PatternDatabase<'task> {
         };
         pdb.build(max_states)?;
         // NOTE: un-comment to print summary of the built PDB
-        //utils::dump_distance_table(&pdb);
+        utils::dump_distance_table(&pdb);
         Ok(pdb)
     }
 

@@ -113,6 +113,21 @@ impl NumericSupportContext {
         support_ids.into_iter().collect()
     }
 
+    pub(crate) fn numeric_var_leaf_support_ids(
+        &self,
+        task: &dyn AbstractNumericTask,
+        numeric_var_id: usize,
+    ) -> Vec<usize> {
+        let mut support_ids = BTreeSet::new();
+        self.collect_numeric_leaf_support_ids(
+            task,
+            numeric_var_id,
+            &mut BTreeSet::new(),
+            &mut support_ids,
+        );
+        support_ids.into_iter().collect()
+    }
+
     fn collect_numeric_support_ids(
         &self,
         task: &dyn AbstractNumericTask,
@@ -153,6 +168,56 @@ impl NumericSupportContext {
                                 continue;
                             };
                             self.collect_numeric_support_ids(
+                                task,
+                                dependency_var_id,
+                                visiting,
+                                support_ids,
+                            );
+                        }
+                    }
+                }
+
+                visiting.remove(&numeric_var_id);
+            }
+            NumericType::Constant | NumericType::Cost => {}
+        }
+    }
+
+    fn collect_numeric_leaf_support_ids(
+        &self,
+        task: &dyn AbstractNumericTask,
+        numeric_var_id: usize,
+        visiting: &mut BTreeSet<usize>,
+        support_ids: &mut BTreeSet<usize>,
+    ) {
+        let Some(numeric_var) = task.numeric_variables().get(numeric_var_id) else {
+            return;
+        };
+
+        match numeric_var.get_type() {
+            NumericType::Regular => {
+                support_ids.insert(numeric_var_id);
+            }
+            NumericType::Derived => {
+                if !visiting.insert(numeric_var_id) {
+                    return;
+                }
+
+                if let Some(axiom_id) = self
+                    .assignment_lookup
+                    .get(numeric_var_id)
+                    .copied()
+                    .flatten()
+                {
+                    if let Some(assignment_axiom) = task.assignment_axioms().get(axiom_id) {
+                        for dependency_var_id in [
+                            assignment_axiom.get_left_var_id(),
+                            assignment_axiom.get_right_var_id(),
+                        ] {
+                            let Ok(dependency_var_id) = usize::try_from(dependency_var_id) else {
+                                continue;
+                            };
+                            self.collect_numeric_leaf_support_ids(
                                 task,
                                 dependency_var_id,
                                 visiting,

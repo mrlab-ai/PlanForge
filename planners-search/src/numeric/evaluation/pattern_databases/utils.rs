@@ -121,6 +121,10 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
     println!("{separator}");
 
     for (state_id, state) in pdb.states.iter().enumerate() {
+        if state_id > 200 {
+            println!("... (truncated)");
+            break;
+        }
         let is_init = state_id == 0;
         let is_goal = pdb.is_goal_state(pdb.state_propositional_values(state));
         let is_dead_end = !pdb.distances[state_id].is_finite();

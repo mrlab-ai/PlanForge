@@ -301,6 +301,11 @@ impl<'task> ProjectedTask<'task> {
             &base_initial_numeric_values,
         )?;
         let helper_space_len = num_numeric_vars + auxiliary_numeric_vars.len();
+        let derived_vars_with_helpers: BTreeSet<usize> = auxiliary_numeric_vars
+            .iter()
+            .map(|auxiliary_numeric_var| auxiliary_numeric_var.source_numeric_var_id)
+            .collect();
+        let mut selected_helper_backed_vars: BTreeSet<usize> = BTreeSet::new();
 
         let mut projected_var_to_original: Vec<usize> = Vec::new();
         let mut projected_num_var_to_original: Vec<Option<usize>> = Vec::new();
@@ -354,6 +359,7 @@ impl<'task> ProjectedTask<'task> {
             } else if let Some(auxiliary_numeric_var) =
                 auxiliary_numeric_vars.get(numeric_var_id - num_numeric_vars)
             {
+                selected_helper_backed_vars.insert(auxiliary_numeric_var.source_numeric_var_id);
                 push_projected_auxiliary_numeric_var(
                     auxiliary_numeric_var,
                     &mut projected_num_var_to_original,
@@ -396,6 +402,11 @@ impl<'task> ProjectedTask<'task> {
             for (axiom_id, axiom) in base.assignment_axioms().iter().enumerate() {
                 let affected = axiom.get_affected_var_id() as usize;
                 if affected >= num_numeric_vars || original_num_var_to_projected[affected].is_some()
+                {
+                    continue;
+                }
+                if derived_vars_with_helpers.contains(&affected)
+                    && selected_helper_backed_vars.contains(&affected)
                 {
                     continue;
                 }
@@ -1777,6 +1788,13 @@ fn project_operator(
             let Some(projected_target) = projected_target else {
                 continue;
             };
+            if !is_auxiliary_num_var
+                .get(projected_target)
+                .copied()
+                .unwrap_or(false)
+            {
+                continue;
+            }
 
             let delta = additive_effects[auxiliary_numeric_var.helper_id];
             if delta != 0.0 {
@@ -2311,5 +2329,158 @@ mod tests {
         assert_eq!(projected.get_variable_axiom_layer(1).unwrap(), 0);
         assert_eq!(projected.get_variable_axiom_layer(0).unwrap(), 1);
         projected.evaluated_initial_state_values().unwrap();
+    }
+
+    #[test]
+    fn projected_task_keeps_regular_dependency_when_helper_selected() {
+        let variables = vec![simple_var("goal", -1)];
+        let numeric_variables = vec![
+            NumericVariable::new("const5".to_string(), NumericType::Constant, -1),
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
+        ];
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![],
+            vec![],
+            vec![0],
+            vec![5.0, 2.0, 3.0, 5.0],
+            vec![],
+            vec![],
+            vec![],
+            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+            (0, 0),
+        );
+
+        let helper_var_id = task.numeric_variables().len();
+        let projected = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![],
+                numeric: vec![helper_var_id, 1],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(projected.pattern_numeric_projected_ids().len(), 2);
+        assert_eq!(projected.numeric_variables().len(), 4);
+        assert_eq!(projected.numeric_variables()[0].name(), "sum");
+        assert_eq!(projected.numeric_variables()[1].name(), "x");
+    }
+
+    #[test]
+    fn projected_task_retains_helper_backed_derived_var_when_only_leaves_selected() {
+        let variables = vec![
+            ExplicitVariable::new(
+                3,
+                "cmp".to_string(),
+                vec![
+                    "cmp-true".to_string(),
+                    "cmp-false".to_string(),
+                    "cmp-unk".to_string(),
+                ],
+                0,
+                2,
+            ),
+            simple_var("goal", 1),
+        ];
+        let numeric_variables = vec![
+            NumericVariable::new("const3".to_string(), NumericType::Constant, -1),
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
+        ];
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![Fact::new(1, 0)],
+            vec![],
+            vec![2, 0],
+            vec![3.0, 1.0, 2.0, 3.0],
+            vec![],
+            vec![PropositionalAxiom::new(vec![Fact::new(0, 0)], 1, 0, 1)],
+            vec![ComparisonAxiom::new(
+                3,
+                0,
+                1,
+                ComparisonOperator::GreaterThanOrEqual,
+            )],
+            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+            (0, 0),
+        );
+
+        let projected = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![],
+                numeric: vec![1, 2],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(projected.pattern_numeric_projected_ids().len(), 2);
+        assert_eq!(projected.numeric_variables().len(), 4);
+
+        let mut numeric_names: Vec<_> = projected
+            .numeric_variables()
+            .iter()
+            .map(|var| var.name().to_string())
+            .collect();
+        numeric_names.sort();
+        assert_eq!(numeric_names, vec!["const3", "sum", "x", "y"]);
+    }
+
+    #[test]
+    fn projected_task_keeps_shared_regular_dependency_when_other_helper_uses_it() {
+        let variables = vec![simple_var("goal", -1)];
+        let numeric_variables = vec![
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("z".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("a".to_string(), NumericType::Derived, 0),
+            NumericVariable::new("b".to_string(), NumericType::Derived, 0),
+        ];
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![],
+            vec![],
+            vec![0],
+            vec![1.0, 2.0, 3.0, 3.0, 4.0],
+            vec![],
+            vec![],
+            vec![],
+            vec![
+                AssignmentAxiom::new(3, CalOperator::Sum, 0, 1),
+                AssignmentAxiom::new(4, CalOperator::Sum, 2, 0),
+            ],
+            (0, 0),
+        );
+
+        let helper_a_id = task.numeric_variables().len();
+        let projected = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![],
+                numeric: vec![helper_a_id, 0, 2],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(projected.pattern_numeric_projected_ids().len(), 3);
+        let pattern_names: Vec<_> = projected
+            .pattern_numeric_projected_ids()
+            .iter()
+            .map(|&projected_id| projected.numeric_variables()[projected_id].name().to_string())
+            .collect();
+        assert_eq!(pattern_names, vec!["a", "x", "z"]);
     }
 }
