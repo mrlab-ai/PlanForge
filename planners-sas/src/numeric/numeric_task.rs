@@ -107,10 +107,6 @@ pub trait AbstractNumericTask {
             0.0
         }
     }
-
-    fn abstract_propositional_var_ids(&self) -> &[usize];
-
-    fn abstract_numeric_var_ids(&self) -> &[usize];
 }
 
 #[derive(Debug, Clone)]
@@ -769,13 +765,6 @@ impl AbstractNumericTask for NumericRootTask {
         Ok((propositional, numeric))
     }
 
-    fn abstract_propositional_var_ids(&self) -> &[usize] {
-        &self.abstract_propositional_var_ids
-    }
-
-    fn abstract_numeric_var_ids(&self) -> &[usize] {
-        &self.abstract_numeric_var_ids
-    }
 }
 
 fn evaluate_state_with_axiom_closure(
@@ -783,29 +772,83 @@ fn evaluate_state_with_axiom_closure(
     propositional: &mut Vec<i32>,
     numeric: &mut Vec<f64>,
 ) -> Result<(), String> {
+    let packer = abstract_propositional_packer(task);
+    let mut packed = vec![0u64; packer.num_bins() as usize];
+    for (var_id, value) in propositional.iter().enumerate() {
+        packer.set(&mut packed, var_id as i32, *value as u64);
+    }
+    evaluate_state_with_axiom_closure_and_packed_dyn(
+        task,
+        &packer,
+        propositional,
+        numeric,
+        &mut packed,
+    )
+}
+
+fn abstract_propositional_packer<T: AbstractNumericTask + ?Sized>(task: &T) -> IntDoublePacker {
     let ranges: Vec<u64> = task
         .variables()
         .iter()
         .map(|variable| variable.domain_size() as u64)
         .collect();
-    let packer = IntDoublePacker::new(&ranges);
-    let axiom_evaluator = AxiomEvaluator::new(task, &packer);
-    let mut buffer = vec![0u64; packer.num_bins() as usize];
+    IntDoublePacker::new(&ranges)
+}
 
-    for (var_id, value) in propositional.iter().enumerate() {
-        packer.set(&mut buffer, var_id as i32, *value as u64);
-    }
+fn evaluate_state_with_axiom_closure_and_packed_sized<T: AbstractNumericTask>(
+    task: &T,
+    packer: &IntDoublePacker,
+    propositional: &mut Vec<i32>,
+    numeric: &mut Vec<f64>,
+    packed: &mut Vec<u64>,
+) -> Result<(), String> {
+    let axiom_evaluator = AxiomEvaluator::new(task, packer);
+    finish_axiom_closure(packer, propositional, numeric, packed, &axiom_evaluator)
+}
 
+fn evaluate_state_with_axiom_closure_and_packed_dyn(
+    task: &dyn AbstractNumericTask,
+    packer: &IntDoublePacker,
+    propositional: &mut Vec<i32>,
+    numeric: &mut Vec<f64>,
+    packed: &mut Vec<u64>,
+) -> Result<(), String> {
+    let axiom_evaluator = AxiomEvaluator::new(task, packer);
+    finish_axiom_closure(packer, propositional, numeric, packed, &axiom_evaluator)
+}
+
+fn finish_axiom_closure(
+    packer: &IntDoublePacker,
+    propositional: &mut Vec<i32>,
+    numeric: &mut Vec<f64>,
+    packed: &mut Vec<u64>,
+    axiom_evaluator: &AxiomEvaluator<'_>,
+) -> Result<(), String> {
     axiom_evaluator
         .evaluate_arithmetic_axioms(numeric)
         .map_err(|err| format!("failed to evaluate arithmetic axioms: {err:?}"))?;
     axiom_evaluator
-        .evaluate(&mut buffer, numeric)
+        .evaluate(packed, numeric)
         .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
 
     for (var_id, slot) in propositional.iter_mut().enumerate() {
-        *slot = packer.get(&buffer, var_id as i32) as i32;
+        *slot = packer.get(packed, var_id as i32) as i32;
     }
 
     Ok(())
+}
+
+fn facts_hold_values(propositional: &[i32], facts: &[Fact]) -> bool {
+    facts
+        .iter()
+        .all(|fact| propositional.get(fact.var() as usize).copied() == Some(fact.value()))
+}
+
+fn assignment_effect_holds_values(propositional: &[i32], effect: &AssignmentEffect) -> bool {
+    !effect.is_conditional() || facts_hold_values(propositional, effect.conditions())
+}
+
+fn overwrite_vec<T: Copy>(dst: &mut Vec<T>, src: &[T]) {
+    dst.clear();
+    dst.extend_from_slice(src);
 }

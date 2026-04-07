@@ -14,7 +14,7 @@ use super::utils;
 pub struct GreedyNumericPdbHeuristic<'task> {
     name: String,
     task: &'task dyn AbstractNumericTask,
-    pdb: PatternDatabase<ProjectedTask<'task>>,
+    pdb: PatternDatabase<'task>,
     prop_scratch: RefCell<Vec<i32>>,
     numeric_scratch: RefCell<Vec<f64>>,
 }

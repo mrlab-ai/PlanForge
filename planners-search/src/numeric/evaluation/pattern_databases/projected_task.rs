@@ -7,13 +7,17 @@ use planners_sas::numeric::axioms::{
     AssignmentAxiom, AxiomEvaluator, CalOperator, ComparisonAxiom, PropositionalAxiom,
 };
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, Effect, ExplicitVariable, Fact, Metric, NumericRootTask,
-    NumericType, NumericVariable, Operator, metric_operator_cost_from_initial_values,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, Effect, ExplicitVariable, Fact,
+    Metric, NumericRootTask, NumericType, NumericVariable, Operator,
+    metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
 use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
     ArithOp, ComparisonTree, ComparisonTreeNode,
+};
+use crate::numeric::evaluation::pattern_databases::compiled_axiom_evaluator::{
+    CompiledAxiomEvaluator, CompiledAxiomEvaluatorData, CompiledAxiomEvaluatorScratch,
 };
 
 #[derive(Debug, Clone)]
@@ -228,6 +232,11 @@ pub struct ProjectedTask<'task> {
     metric: Metric,
     operators: Vec<Operator>,
     operator_costs: Vec<f64>,
+    propositional_packer: IntDoublePacker,
+    initial_packed_propositional: Vec<u64>,
+    compiled_axiom_evaluator_data: CompiledAxiomEvaluatorData,
+    compiled_axiom_evaluator_scratch: RefCell<CompiledAxiomEvaluatorScratch>,
+    cached_operators: Vec<CachedOperator>,
     operator_effect_facts: Vec<Vec<Fact>>,
     goals: Vec<Fact>,
     axiom_effect_facts: Vec<Fact>,
@@ -244,6 +253,33 @@ pub struct ProjectedTask<'task> {
     auxiliary_exprs: Vec<Option<ArithmeticExpr>>,
     variable_names: Vec<String>,
     fact_names: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedFact {
+    var_id: usize,
+    value: i32,
+}
+
+#[derive(Debug, Clone)]
+struct CachedPropEffect {
+    conditions: Vec<CachedFact>,
+    var_id: usize,
+    value: i32,
+}
+
+#[derive(Debug, Clone)]
+struct CachedAssignmentEffect {
+    conditions: Vec<CachedFact>,
+    source_var_id: usize,
+    target_var_id: usize,
+    operation: AssignmentOperation,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CachedOperator {
+    propositional_effects: Vec<CachedPropEffect>,
+    assignment_effects: Vec<CachedAssignmentEffect>,
 }
 
 impl<'task> ProjectedTask<'task> {
@@ -341,10 +377,7 @@ impl<'task> ProjectedTask<'task> {
         }
 
         for (numeric_var_id, numeric_var) in base.numeric_variables().iter().enumerate() {
-            if matches!(
-                numeric_var.get_type(),
-                NumericType::Constant | NumericType::Cost
-            ) {
+            if matches!(numeric_var.get_type(), NumericType::Constant) {
                 push_projected_base_numeric_var(
                     numeric_var_id,
                     &mut projected_num_var_to_original,
@@ -634,6 +667,32 @@ impl<'task> ProjectedTask<'task> {
                 .unwrap_or(-1)
         };
 
+        let compilation_task = NumericRootTask::new(
+            1,
+            Metric::new(base.metric().is_min(), metric_var_id),
+            variables.clone(),
+            numeric_variables.clone(),
+            goals.clone(),
+            vec![],
+            projected_prop_values.clone(),
+            projected_numeric_values.clone(),
+            operators.clone(),
+            axioms.clone(),
+            comparison_axioms.clone(),
+            assignment_axioms.clone(),
+            (0, 0),
+        );
+        let compiled_axiom_evaluator_data = CompiledAxiomEvaluatorData::new(&compilation_task);
+        let compiled_axiom_evaluator_scratch =
+            RefCell::new(CompiledAxiomEvaluatorScratch::new(&compiled_axiom_evaluator_data));
+
+        let propositional_packer = projected_propositional_packer_from_variables(&variables);
+        let mut initial_packed_propositional = vec![0u64; propositional_packer.num_bins() as usize];
+        for (var_id, value) in projected_prop_values.iter().enumerate() {
+            propositional_packer.set(&mut initial_packed_propositional, var_id as i32, *value as u64);
+        }
+        let cached_operators = build_cached_operators(&operators);
+
         Ok(Self {
             base,
             variables,
@@ -644,6 +703,11 @@ impl<'task> ProjectedTask<'task> {
             metric: Metric::new(base.metric().is_min(), metric_var_id),
             operators,
             operator_costs,
+            propositional_packer,
+            initial_packed_propositional,
+            compiled_axiom_evaluator_data,
+            compiled_axiom_evaluator_scratch,
+            cached_operators,
             operator_effect_facts,
             goals,
             axiom_effect_facts,
@@ -757,6 +821,92 @@ impl<'task> ProjectedTask<'task> {
         Ok((propositional, numeric))
     }
 
+    pub fn pack_propositional_values(&self, propositional_values: &[i32]) -> Result<Vec<u64>, String> {
+        if propositional_values.len() != self.variables.len() {
+            return Err(format!(
+                "expected {} propositional values, got {}",
+                self.variables.len(),
+                propositional_values.len()
+            ));
+        }
+        let mut packed = vec![0u64; self.propositional_packer.num_bins() as usize];
+        for (var_id, value) in propositional_values.iter().enumerate() {
+            self.propositional_packer
+                .set(&mut packed, var_id as i32, *value as u64);
+        }
+        Ok(packed)
+    }
+
+    pub fn propositional_packer(&self) -> &IntDoublePacker {
+        &self.propositional_packer
+    }
+
+    pub fn evaluated_initial_state(
+        &self,
+    ) -> Result<(Vec<i32>, Vec<f64>, Vec<u64>), ProjectedTaskBuildError> {
+        let mut propositional = self.state.borrow().clone();
+        let mut numeric = self.numeric_state.borrow().clone();
+        let mut packed = self.initial_packed_propositional.clone();
+        self.evaluate_axiom_closure_with_buffer(&mut propositional, &mut numeric, &mut packed)?;
+        Ok((propositional, numeric, packed))
+    }
+
+    pub fn apply_operator_to_state_in_place(
+        &self,
+        propositional_values: &[i32],
+        numeric_values: &[f64],
+        packed_propositional: &[u64],
+        operator_id: usize,
+        successor_propositional: &mut Vec<i32>,
+        successor_numeric: &mut Vec<f64>,
+        successor_packed: &mut Vec<u64>,
+    ) -> Result<(), String> {
+        let cached_operator = self
+            .cached_operators
+            .get(operator_id)
+            .ok_or_else(|| format!("operator index out of bounds: {operator_id}"))?;
+
+        overwrite_vec(successor_propositional, propositional_values);
+        overwrite_vec(successor_numeric, numeric_values);
+        overwrite_vec(successor_packed, packed_propositional);
+
+        for effect in &cached_operator.propositional_effects {
+            if cached_facts_hold(propositional_values, &effect.conditions) {
+                if let Some(slot) = successor_propositional.get_mut(effect.var_id) {
+                    *slot = effect.value;
+                }
+                self.propositional_packer
+                    .set(successor_packed, effect.var_id as i32, effect.value as u64);
+            }
+        }
+
+        for effect in &cached_operator.assignment_effects {
+            if !cached_assignment_effect_holds(propositional_values, effect) {
+                continue;
+            }
+            let source = successor_numeric
+                .get(effect.source_var_id)
+                .copied()
+                .ok_or_else(|| format!("assignment source out of bounds: {}", effect.source_var_id))?;
+            let target = successor_numeric
+                .get(effect.target_var_id)
+                .copied()
+                .ok_or_else(|| format!("assignment target out of bounds: {}", effect.target_var_id))?;
+            let result = AssignmentOperation::apply(target, &effect.operation, source);
+            if let Some(slot) = successor_numeric.get_mut(effect.target_var_id) {
+                *slot = result;
+            }
+        }
+
+        self.evaluate_axiom_closure_with_buffer(
+            successor_propositional,
+            successor_numeric,
+            successor_packed,
+        )
+        .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
     pub fn is_goal_state_values(&self, propositional_values: &[i32]) -> bool {
         self.goals.iter().all(|goal| {
             propositional_values.get(goal.var() as usize).copied() == Some(goal.value())
@@ -764,20 +914,16 @@ impl<'task> ProjectedTask<'task> {
     }
 
     pub fn min_operator_cost(&self) -> f64 {
-        self.operators
+        let min_operator_cost = self
+            .operator_costs
             .iter()
-            .map(|operator| operator.cost() as f64)
-            .fold(f64::INFINITY, f64::min)
-            .max(0.0)
-            .is_finite()
-            .then(|| {
-                self.operators
-                    .iter()
-                    .map(|operator| operator.cost() as f64)
-                    .fold(f64::INFINITY, f64::min)
-                    .max(0.0)
-            })
-            .unwrap_or(0.0)
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        if min_operator_cost.is_finite() {
+            min_operator_cost.max(0.0)
+        } else {
+            0.0
+        }
     }
 
     pub fn pattern_numeric_projected_ids(&self) -> &[usize] {
@@ -793,13 +939,28 @@ impl<'task> ProjectedTask<'task> {
         propositional: &mut Vec<i32>,
         numeric: &mut Vec<f64>,
     ) -> Result<(), ProjectedTaskBuildError> {
-        let packer = projected_propositional_packer(self);
-        let axiom_evaluator = AxiomEvaluator::new(self, &packer);
-        let mut buffer = vec![0u64; packer.num_bins() as usize];
+        let mut buffer = self.initial_packed_propositional.clone();
 
         for (var_id, value) in propositional.iter().enumerate() {
-            packer.set(&mut buffer, var_id as i32, *value as u64);
+            self.propositional_packer
+                .set(&mut buffer, var_id as i32, *value as u64);
         }
+
+        self.evaluate_axiom_closure_with_buffer(propositional, numeric, &mut buffer)
+    }
+
+    fn evaluate_axiom_closure_with_buffer(
+        &self,
+        propositional: &mut Vec<i32>,
+        numeric: &mut Vec<f64>,
+        buffer: &mut Vec<u64>,
+    ) -> Result<(), ProjectedTaskBuildError> {
+        let axiom_evaluator = CompiledAxiomEvaluator::new(
+            self,
+            &self.propositional_packer,
+            &self.compiled_axiom_evaluator_data,
+        );
+        let mut scratch = self.compiled_axiom_evaluator_scratch.borrow_mut();
 
         axiom_evaluator
             .evaluate_arithmetic_axioms(numeric)
@@ -809,7 +970,7 @@ impl<'task> ProjectedTask<'task> {
                 },
             )?;
         axiom_evaluator
-            .evaluate(&mut buffer, numeric)
+            .evaluate(buffer, numeric, &mut scratch)
             .map_err(
                 |err| ProjectedTaskBuildError::InitialStateEvaluationFailed {
                     reason: format!("propositional axioms: {err:?}"),
@@ -817,7 +978,7 @@ impl<'task> ProjectedTask<'task> {
             )?;
 
         for (var_id, slot) in propositional.iter_mut().enumerate() {
-            *slot = packer.get(&buffer, var_id as i32) as i32;
+            *slot = self.propositional_packer.get(buffer, var_id as i32) as i32;
         }
 
         Ok(())
@@ -825,8 +986,13 @@ impl<'task> ProjectedTask<'task> {
 }
 
 fn projected_propositional_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {
-    let ranges: Vec<u64> = task
-        .variables()
+    projected_propositional_packer_from_variables(task.variables())
+}
+
+fn projected_propositional_packer_from_variables(
+    variables: &[ExplicitVariable],
+) -> IntDoublePacker {
+    let ranges: Vec<u64> = variables
         .iter()
         .map(|variable| variable.domain_size() as u64)
         .collect();
@@ -1110,14 +1276,58 @@ impl AbstractNumericTask for ProjectedTask<'_> {
     fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
         self.operator_costs.get(operator_id).copied().unwrap_or(0.0)
     }
+}
 
-    fn abstract_propositional_var_ids(&self) -> &[usize] {
-        self.pattern_regular_projected_ids()
-    }
+fn cache_facts(facts: &[Fact]) -> Vec<CachedFact> {
+    facts
+        .iter()
+        .map(|fact| CachedFact {
+            var_id: fact.var() as usize,
+            value: fact.value(),
+        })
+        .collect()
+}
 
-    fn abstract_numeric_var_ids(&self) -> &[usize] {
-        self.pattern_numeric_projected_ids()
-    }
+fn cached_facts_hold(propositional: &[i32], facts: &[CachedFact]) -> bool {
+    facts
+        .iter()
+        .all(|fact| propositional.get(fact.var_id).copied() == Some(fact.value))
+}
+
+fn cached_assignment_effect_holds(propositional: &[i32], effect: &CachedAssignmentEffect) -> bool {
+    effect.conditions.is_empty() || cached_facts_hold(propositional, &effect.conditions)
+}
+
+fn build_cached_operators(operators: &[Operator]) -> Vec<CachedOperator> {
+    operators
+        .iter()
+        .map(|operator| CachedOperator {
+            propositional_effects: operator
+                .effects()
+                .iter()
+                .map(|effect| CachedPropEffect {
+                    conditions: cache_facts(effect.conditions()),
+                    var_id: effect.var_id() as usize,
+                    value: effect.value() as i32,
+                })
+                .collect(),
+            assignment_effects: operator
+                .assignment_effects()
+                .iter()
+                .map(|effect| CachedAssignmentEffect {
+                    conditions: cache_facts(effect.conditions()),
+                    source_var_id: effect.var_id() as usize,
+                    target_var_id: effect.affected_var_id() as usize,
+                    operation: effect.operation().clone(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn overwrite_vec<T: Copy>(dst: &mut Vec<T>, src: &[T]) {
+    dst.clear();
+    dst.extend_from_slice(src);
 }
 
 fn push_unique_mapping(

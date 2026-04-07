@@ -1,54 +1,30 @@
+#[cfg(test)]
+mod tests;
+
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
-use std::hash::{Hash, Hasher};
+use std::collections::{BinaryHeap, VecDeque};
 
 use ordered_float::NotNan;
 use planners_sas::numeric::axioms::AxiomEvaluator;
-use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, Fact, Operator,
-};
-use planners_sas::numeric::utils::int_packer::IntDoublePacker;
+use planners_sas::numeric::numeric_task::AbstractNumericTask;
+use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
+use rustc_hash::FxBuildHasher;
+
+type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 
 use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) struct AbstractStateKey {
-    propositional: Vec<i32>,
-    numeric: Vec<u64>,
-}
+use super::projected_task::ProjectedTask;
+use super::utils;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct PdbState {
-    pub(super) propositional: Vec<i32>,
-    pub(super) numeric: Vec<f64>,
+    propositional: Vec<i32>,
+    numeric: Vec<f64>,
 }
 
-impl PartialEq for PdbState {
-    fn eq(&self, other: &Self) -> bool {
-        self.propositional == other.propositional
-            && self.numeric.len() == other.numeric.len()
-            && self
-                .numeric
-                .iter()
-                .zip(other.numeric.iter())
-                .all(|(lhs, rhs)| lhs.to_bits() == rhs.to_bits())
-    }
-}
-
-impl Eq for PdbState {}
-
-impl Hash for PdbState {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.propositional.hash(state);
-        for value in &self.numeric {
-            value.to_bits().hash(state);
-        }
-    }
-}
-
-pub struct PatternDatabase<T: AbstractNumericTask> {
-    pub(super) task: T,
-    pub(super) state_to_id: HashMap<AbstractStateKey, usize>,
+pub struct PatternDatabase<'task> {
+    pub(super) task: ProjectedTask<'task>,
     pub(super) states: Vec<PdbState>,
     pub(super) distances: Vec<f64>,
     pub(super) min_operator_cost: f64,
@@ -57,14 +33,13 @@ pub struct PatternDatabase<T: AbstractNumericTask> {
     pub(super) frontier_states: Vec<usize>,
 }
 
-impl<T: AbstractNumericTask> PatternDatabase<T> {
-    pub fn new(task: T, max_states: usize) -> Result<Self, String> {
-        let min_operator_cost = task.min_abstract_operator_cost();
+impl<'task> PatternDatabase<'task> {
+    pub fn new(task: ProjectedTask<'task>, max_states: usize) -> Result<Self, String> {
+        let min_operator_cost = task.min_operator_cost();
 
         let mut pdb = Self {
             task,
-            state_to_id: HashMap::new(),
-            states: Vec::new(),
+            states: Vec::with_capacity(max_states),
             distances: Vec::new(),
             min_operator_cost,
             reached_goal_states: 0,
@@ -72,16 +47,14 @@ impl<T: AbstractNumericTask> PatternDatabase<T> {
             frontier_states: Vec::new(),
         };
         pdb.build(max_states)?;
-        //super::utils::dump_distance_table(&pdb);
+        // NOTE: un-comment to print summary of the built PDB
+        //utils::dump_distance_table(&pdb);
         Ok(pdb)
     }
 
     pub fn lookup(&self, propositional: &[i32], numeric: &[f64]) -> Option<f64> {
-        let key = make_abstract_state_key_from_values(&self.task, propositional, numeric)?;
-        self.state_to_id
-            .get(&key)
-            .and_then(|&state_id| self.distances.get(state_id))
-            .copied()
+        let state_id = self.lookup_state_id(propositional, numeric)?;
+        self.distances.get(state_id).copied()
     }
 
     pub fn lookup_or_fallback(&self, propositional: &[i32], numeric: &[f64]) -> f64 {
@@ -116,44 +89,84 @@ impl<T: AbstractNumericTask> PatternDatabase<T> {
         propositional: &[i32],
         numeric: &[f64],
     ) -> Result<(Vec<i32>, Vec<f64>), String> {
-        let (abstract_prop, abstract_num) = self.task.abstract_state_values(propositional, numeric)?;
-        Ok((
-            self.task
-                .abstract_propositional_var_ids()
-                .iter()
-                .map(|&var_id| abstract_prop[var_id])
-                .collect(),
-            self.task
-                .abstract_numeric_var_ids()
-                .iter()
-                .map(|&var_id| abstract_num[var_id])
-                .collect(),
-        ))
+        self.task.project_state_values(propositional, numeric)
+    }
+
+    fn lookup_state_id(&self, propositional: &[i32], numeric: &[f64]) -> Option<usize> {
+        let full_state_lookup = propositional.len() == self.task.variables().len()
+            && numeric.len() == self.task.numeric_variables().len();
+        let pattern_regular_ids = self.task.pattern_regular_projected_ids();
+        let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
+
+        self.states.iter().enumerate().find_map(|(state_id, state)| {
+            let same_propositional = if full_state_lookup {
+                state.propositional == propositional
+            } else {
+                pattern_regular_ids
+                    .iter()
+                    .enumerate()
+                    .all(|(pattern_index, &var_id)| {
+                        state.propositional.get(var_id).copied()
+                            == propositional.get(pattern_index).copied()
+                    })
+            };
+            let same_numeric = same_propositional
+                && if full_state_lookup {
+                    state.numeric.len() == numeric.len()
+                        && state
+                            .numeric
+                            .iter()
+                            .zip(numeric.iter())
+                            .all(|(lhs, rhs)| lhs.to_bits() == rhs.to_bits())
+                } else {
+                    pattern_numeric_ids
+                        .iter()
+                        .enumerate()
+                        .all(|(pattern_index, &var_id)| {
+                            state.numeric.get(var_id).map(|value| value.to_bits())
+                                == numeric.get(pattern_index).map(|value| value.to_bits())
+                        })
+                };
+            same_numeric.then_some(state_id)
+        })
+    }
+
+    pub(super) fn state_propositional_values<'state>(&self, state: &'state PdbState) -> &'state [i32] {
+        &state.propositional
+    }
+
+    pub(super) fn state_numeric_values<'state>(&self, state: &'state PdbState) -> &'state [f64] {
+        &state.numeric
     }
 
     fn build(&mut self, max_states: usize) -> Result<(), String> {
-        let mut predecessors: Vec<Vec<(usize, f64)>> = Vec::new();
-        let mut frontier_seed_costs: HashMap<usize, f64> = HashMap::new();
-        let packer = propositional_packer(&self.task);
-        let axiom_evaluator = AxiomEvaluator::new(&self.task, &packer);
+        let mut predecessors: Vec<Vec<(usize, f64)>> = Vec::with_capacity(max_states);
+        let mut frontier_seed_costs: HashMap<usize, f64> =
+            HashMap::with_capacity_and_hasher(max_states, FxBuildHasher);
         let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&self.task);
+        let state_packer = planners_sas::numeric::utils::int_packer::IntDoublePacker::from_abstract_task(&self.task);
+        let axiom_evaluator = AxiomEvaluator::new(&self.task, &state_packer);
+        let mut state_registry = StateRegistry::new(&self.task, &state_packer, &axiom_evaluator);
         let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
-        let (initial_propositional, initial_numeric) = self
-            .task
-            .evaluated_initial_abstract_state_values()
-            ?;
-        let initial_state = PdbState {
-            propositional: initial_propositional,
-            numeric: initial_numeric,
-        };
-        self.state_to_id
-            .insert(make_abstract_state_key(&self.task, &initial_state), 0);
-        self.states.push(initial_state);
+        let initial_registry_state = state_registry.get_initial_state();
+        let mut current_propositional: Vec<i32> = Vec::new();
+        let mut successor_numeric: Vec<f64> = Vec::new();
+        let mut successor_cost_values: Vec<f64> = Vec::new();
+        let mut representative_states: Vec<ConcreteState> = vec![initial_registry_state];
         predecessors.push(Vec::new());
 
         let mut queue = VecDeque::from([0usize]);
         while let Some(state_id) = queue.pop_front() {
-            if self.states.len() >= max_states {
+            if representative_states.len() % 500 == 0 {
+                println!(
+                    "Expanding state {}/{} ({} reached goal states, {} truncated frontier states)",
+                    state_id + 1,
+                    representative_states.len(),
+                    self.reached_goal_states,
+                    self.frontier_states.len()
+                );
+            }
+            if representative_states.len() >= max_states {
                 self.truncated = true;
                 frontier_seed_costs
                     .entry(state_id)
@@ -167,44 +180,57 @@ impl<T: AbstractNumericTask> PatternDatabase<T> {
                 }
                 break;
             }
-            let state = self.states[state_id].clone();
-
             applicable_operators.clear();
+            let current_registry_state = representative_states[state_id].clone();
+            current_registry_state.fill_state(&state_registry, &mut current_propositional);
             successor_generator
-                .get_applicable_operators(&state.propositional, &mut applicable_operators);
+                .get_applicable_operators(&current_propositional, &mut applicable_operators);
 
             for (operator, operator_id) in applicable_operators.iter().copied() {
                 let operator_cost = self.task.abstract_operator_cost(operator_id);
-                let successor =
-                    apply_operator(&self.task, &packer, &axiom_evaluator, &state, operator)?;
-                if successor == state {
+                let successor_state = state_registry
+                    .get_successor_state_with_buffers(
+                        &current_registry_state,
+                        operator,
+                        &mut successor_numeric,
+                        &mut successor_cost_values,
+                    )
+                    .map_err(|err| err.message)?;
+                if successor_state.get_id() == current_registry_state.get_id() {
                     continue;
                 }
 
-                let successor_key = make_abstract_state_key(&self.task, &successor);
-                let next_id =
-                    if let Some(existing_id) = self.state_to_id.get(&successor_key).copied() {
-                        existing_id
-                    } else {
-                        if self.states.len() >= max_states {
-                            self.truncated = true;
-                            frontier_seed_costs
-                                .entry(state_id)
-                                .and_modify(|cost| *cost = cost.min(operator_cost))
-                                .or_insert(operator_cost);
-                            continue;
-                        }
-                        let new_id = self.states.len();
-                        self.state_to_id.insert(successor_key, new_id);
-                        self.states.push(successor);
-                        predecessors.push(Vec::new());
-                        queue.push_back(new_id);
-                        new_id
-                    };
+                let next_id = successor_state.get_id();
+                if next_id == representative_states.len() {
+                    if representative_states.len() >= max_states {
+                        self.truncated = true;
+                        frontier_seed_costs
+                            .entry(state_id)
+                            .and_modify(|cost| *cost = cost.min(operator_cost))
+                            .or_insert(operator_cost);
+                        continue;
+                    }
+
+                    representative_states.push(successor_state);
+                    predecessors.push(Vec::new());
+                    queue.push_back(next_id);
+                }
 
                 predecessors[next_id].push((state_id, operator_cost));
             }
         }
+
+        self.states = representative_states
+            .iter()
+            .map(|state| {
+                Ok(PdbState {
+                    propositional: state.get_state(&state_registry),
+                    numeric: state_registry
+                        .get_numeric_vars(state)
+                        .map_err(|err| format!("{err:?}"))?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
 
         self.distances = vec![f64::INFINITY; self.states.len()];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
@@ -253,519 +279,4 @@ impl<T: AbstractNumericTask> PatternDatabase<T> {
     }
 }
 
-fn make_abstract_state_key<T: AbstractNumericTask>(task: &T, state: &PdbState) -> AbstractStateKey {
-    AbstractStateKey {
-        propositional: task
-            .abstract_propositional_var_ids()
-            .iter()
-            .map(|&var_id| state.propositional[var_id])
-            .collect(),
-        numeric: task
-            .abstract_numeric_var_ids()
-            .iter()
-            .map(|&var_id| state.numeric[var_id].to_bits())
-            .collect(),
-    }
-}
 
-fn make_abstract_state_key_from_values(
-    task: &impl AbstractNumericTask,
-    propositional: &[i32],
-    numeric: &[f64],
-) -> Option<AbstractStateKey> {
-    let propositional_values = if propositional.len() == task.variables().len() {
-        task.abstract_propositional_var_ids()
-            .iter()
-            .map(|&var_id| propositional.get(var_id).copied())
-            .collect::<Option<Vec<_>>>()?
-    } else {
-        propositional.to_vec()
-    };
-
-    let numeric_values = if numeric.len() == task.numeric_variables().len() {
-        task.abstract_numeric_var_ids()
-            .iter()
-            .map(|&var_id| numeric.get(var_id).copied().map(f64::to_bits))
-            .collect::<Option<Vec<_>>>()?
-    } else {
-        numeric.iter().map(|value| value.to_bits()).collect()
-    };
-
-    Some(AbstractStateKey {
-        propositional: propositional_values,
-        numeric: numeric_values,
-    })
-}
-
-fn facts_hold(propositional: &[i32], facts: &[Fact]) -> bool {
-    facts
-        .iter()
-        .all(|fact| propositional.get(fact.var() as usize).copied() == Some(fact.value()))
-}
-
-fn assignment_effect_holds(propositional: &[i32], effect: &AssignmentEffect) -> bool {
-    !effect.is_conditional() || facts_hold(propositional, effect.conditions())
-}
-
-fn apply_operator(
-    task: &dyn AbstractNumericTask,
-    packer: &IntDoublePacker,
-    axiom_evaluator: &AxiomEvaluator<'_>,
-    state: &PdbState,
-    operator: &Operator,
-) -> Result<PdbState, String> {
-    let mut propositional = state.propositional.clone();
-    let mut numeric = state.numeric.clone();
-
-    for effect in operator.effects() {
-        if facts_hold(&state.propositional, effect.conditions()) {
-            if let Some(slot) = propositional.get_mut(effect.var_id() as usize) {
-                *slot = effect.value() as i32;
-            }
-        }
-    }
-
-    for effect in operator.assignment_effects() {
-        if !assignment_effect_holds(&state.propositional, effect) {
-            continue;
-        }
-        let source = numeric
-            .get(effect.var_id() as usize)
-            .copied()
-            .ok_or_else(|| format!("assignment source out of bounds: {}", effect.var_id()))?;
-        let target = numeric
-            .get(effect.affected_var_id() as usize)
-            .copied()
-            .ok_or_else(|| {
-                format!(
-                    "assignment target out of bounds: {}",
-                    effect.affected_var_id()
-                )
-            })?;
-        let result = AssignmentOperation::apply(target, effect.operation(), source);
-        if let Some(slot) = numeric.get_mut(effect.affected_var_id() as usize) {
-            *slot = result;
-        }
-    }
-
-    let mut buffer = vec![0u64; packer.num_bins() as usize];
-    for (var_id, value) in propositional.iter().enumerate() {
-        packer.set(&mut buffer, var_id as i32, *value as u64);
-    }
-
-    axiom_evaluator
-        .evaluate_arithmetic_axioms(&mut numeric)
-        .map_err(|err| format!("failed to evaluate arithmetic axioms: {err:?}"))?;
-    axiom_evaluator
-        .evaluate(&mut buffer, &mut numeric)
-        .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
-
-    for (var_id, slot) in propositional.iter_mut().enumerate() {
-        *slot = packer.get(&buffer, var_id as i32) as i32;
-    }
-
-    Ok(PdbState {
-        propositional,
-        numeric,
-    })
-}
-
-fn propositional_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {
-    let ranges: Vec<u64> = task
-        .variables()
-        .iter()
-        .map(|variable| variable.domain_size() as u64)
-        .collect();
-    IntDoublePacker::new(&ranges)
-}
-
-#[cfg(test)]
-mod tests {
-    use planners_sas::numeric::axioms::{
-        AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
-    };
-    use planners_sas::numeric::numeric_task::{
-        AssignmentEffect, AssignmentOperation, ExplicitVariable, Metric, NumericRootTask,
-        NumericType, NumericVariable,
-    };
-
-    use super::*;
-    use crate::numeric::evaluation::pattern_databases::projected_task::{Pattern, ProjectedTask};
-
-    fn build_pdb_from_abstract_task<T: AbstractNumericTask>(
-        task: T,
-        max_states: usize,
-    ) -> PatternDatabase<T> {
-        PatternDatabase::new(task, max_states).unwrap()
-    }
-
-    fn simple_var(name: &str, axiom_layer: i32) -> ExplicitVariable {
-        ExplicitVariable::new(
-            2,
-            name.to_string(),
-            vec![format!("{name}=0"), format!("{name}=1")],
-            axiom_layer,
-            1,
-        )
-    }
-
-    fn propositional_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![simple_var("p", -1)],
-            vec![NumericVariable::new(
-                "x".to_string(),
-                NumericType::Regular,
-                -1,
-            )],
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0],
-            vec![0.0],
-            vec![Operator::new(
-                "set-goal".to_string(),
-                vec![Fact::new(0, 0)],
-                vec![planners_sas::numeric::numeric_task::Effect::new(
-                    vec![],
-                    0,
-                    0,
-                    1,
-                )],
-                vec![],
-                3,
-            )],
-            vec![],
-            vec![],
-            vec![AssignmentAxiom::new(0, CalOperator::Sum, 0, 0)],
-            (0, 0),
-        )
-    }
-
-    fn comparison_guarded_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![simple_var("cmp", 0), simple_var("goal", -1)],
-            vec![
-                NumericVariable::new("threshold".to_string(), NumericType::Constant, -1),
-                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            ],
-            vec![Fact::new(1, 1)],
-            vec![],
-            vec![2, 0],
-            vec![0.0, 0.0],
-            vec![Operator::new(
-                "advance".to_string(),
-                vec![Fact::new(0, 0)],
-                vec![planners_sas::numeric::numeric_task::Effect::new(
-                    vec![],
-                    1,
-                    0,
-                    1,
-                )],
-                vec![],
-                1,
-            )],
-            vec![],
-            vec![ComparisonAxiom::new(
-                0,
-                1,
-                0,
-                ComparisonOperator::GreaterThanOrEqual,
-            )],
-            vec![],
-            (0, 0),
-        )
-    }
-
-    fn truncated_chain_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![ExplicitVariable::new(
-                3,
-                "p".to_string(),
-                vec!["p=0".to_string(), "p=1".to_string(), "p=2".to_string()],
-                -1,
-                2,
-            )],
-            vec![],
-            vec![Fact::new(0, 2)],
-            vec![],
-            vec![0],
-            vec![],
-            vec![
-                Operator::new(
-                    "step-1".to_string(),
-                    vec![Fact::new(0, 0)],
-                    vec![planners_sas::numeric::numeric_task::Effect::new(
-                        vec![],
-                        0,
-                        0,
-                        1,
-                    )],
-                    vec![],
-                    5,
-                ),
-                Operator::new(
-                    "step-2".to_string(),
-                    vec![Fact::new(0, 1)],
-                    vec![planners_sas::numeric::numeric_task::Effect::new(
-                        vec![],
-                        0,
-                        1,
-                        2,
-                    )],
-                    vec![],
-                    5,
-                ),
-            ],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        )
-    }
-
-    fn cost_only_hidden_numeric_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, 0),
-            vec![simple_var("p", -1)],
-            vec![
-                NumericVariable::new("total-cost".to_string(), NumericType::Cost, -1),
-                NumericVariable::new("c1".to_string(), NumericType::Constant, -1),
-            ],
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0],
-            vec![0.0, 1.0],
-            vec![
-                Operator::new(
-                    "wait".to_string(),
-                    vec![Fact::new(0, 0)],
-                    vec![],
-                    vec![AssignmentEffect::new(
-                        0,
-                        AssignmentOperation::Plus,
-                        1,
-                        false,
-                        vec![],
-                    )],
-                    1,
-                ),
-                Operator::new(
-                    "finish".to_string(),
-                    vec![Fact::new(0, 0)],
-                    vec![planners_sas::numeric::numeric_task::Effect::new(
-                        vec![],
-                        0,
-                        0,
-                        1,
-                    )],
-                    vec![AssignmentEffect::new(
-                        0,
-                        AssignmentOperation::Plus,
-                        1,
-                        false,
-                        vec![],
-                    )],
-                    1,
-                ),
-            ],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        )
-    }
-
-    fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, 0),
-            vec![simple_var("p", -1)],
-            vec![
-                NumericVariable::new("total-cost".to_string(), NumericType::Cost, -1),
-                NumericVariable::new("zero".to_string(), NumericType::Constant, -1),
-            ],
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0],
-            vec![0.0, 0.0],
-            vec![Operator::new(
-                "finish".to_string(),
-                vec![Fact::new(0, 0)],
-                vec![planners_sas::numeric::numeric_task::Effect::new(
-                    vec![],
-                    0,
-                    0,
-                    1,
-                )],
-                vec![AssignmentEffect::new(
-                    0,
-                    AssignmentOperation::Plus,
-                    1,
-                    false,
-                    vec![],
-                )],
-                1,
-            )],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        )
-    }
-
-    #[test]
-    fn lookup_returns_distance_for_reached_state() {
-        let task = propositional_task();
-        let projected_task = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![0],
-                numeric: vec![0],
-            },
-        )
-        .unwrap();
-        let pdb = PatternDatabase::new(projected_task, 32).unwrap();
-
-        assert_eq!(pdb.lookup(&[0], &[0.0]), Some(3.0));
-        assert_eq!(pdb.lookup(&[1], &[0.0]), Some(0.0));
-    }
-
-    #[test]
-    fn pattern_database_accepts_numeric_abstract_task_boundary() {
-        let task = propositional_task();
-        let projected_task = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![0],
-                numeric: vec![0],
-            },
-        )
-        .unwrap();
-
-        let pdb = build_pdb_from_abstract_task(projected_task, 32);
-
-        assert_eq!(pdb.lookup(&[0], &[0.0]), Some(3.0));
-    }
-
-    #[test]
-    fn lookup_miss_returns_zero_for_goal_state() {
-        let task = propositional_task();
-        let projected_task = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![0],
-                numeric: vec![0],
-            },
-        )
-        .unwrap();
-        let pdb = PatternDatabase::new(projected_task, 1).unwrap();
-
-        assert_eq!(pdb.lookup(&[1], &[0.0]), None);
-        assert_eq!(pdb.lookup_or_fallback(&[1], &[0.0]), 0.0);
-    }
-
-    #[test]
-    fn lookup_miss_returns_min_operator_cost_for_non_goal_state() {
-        let task = propositional_task();
-        let projected_task = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![0],
-                numeric: vec![0],
-            },
-        )
-        .unwrap();
-        let pdb = PatternDatabase::new(projected_task, 1).unwrap();
-
-        assert_eq!(pdb.lookup(&[0], &[42.0]), None);
-        assert_eq!(pdb.lookup_or_fallback(&[0], &[42.0]), 3.0);
-    }
-
-    #[test]
-    fn pdb_build_expands_from_axiom_closed_initial_state() {
-        let task = comparison_guarded_task();
-        let projected_task = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![1],
-                numeric: vec![1],
-            },
-        )
-        .unwrap();
-
-        let (initial_prop, initial_num) = projected_task.evaluated_initial_state_values().unwrap();
-        assert_eq!(initial_prop, vec![0, 0]);
-
-        let pdb = PatternDatabase::new(projected_task, 16).unwrap();
-
-        assert!(pdb.states.len() > 1);
-        assert_eq!(pdb.lookup(&initial_prop, &initial_num), Some(1.0));
-        assert!(pdb.distances.iter().any(|&distance| distance == 0.0));
-    }
-
-    #[test]
-    fn truncated_pdb_propagates_frontier_seed_costs() {
-        let task = truncated_chain_task();
-        let projected_task = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![0],
-                numeric: vec![],
-            },
-        )
-        .unwrap();
-
-        let pdb = PatternDatabase::new(projected_task, 2).unwrap();
-
-        assert!(pdb.truncated);
-        assert_eq!(pdb.reached_goal_states, 0);
-        assert_eq!(pdb.frontier_states, vec![1]);
-        assert_eq!(pdb.lookup(&[1], &[]), Some(5.0));
-        assert_eq!(pdb.lookup(&[0], &[]), Some(10.0));
-        assert_eq!(pdb.lookup_or_fallback(&[0], &[]), 10.0);
-    }
-
-    #[test]
-    fn pdb_collapses_hidden_cost_dimensions_outside_pattern() {
-        let task = cost_only_hidden_numeric_task();
-        let projected_task = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![0],
-                numeric: vec![],
-            },
-        )
-        .unwrap();
-
-        let pdb = PatternDatabase::new(projected_task, 64).unwrap();
-
-        assert_eq!(pdb.states.len(), 2);
-        assert_eq!(pdb.lookup(&[0], &[]), Some(1.0));
-        assert_eq!(pdb.lookup(&[1], &[]), Some(0.0));
-    }
-
-    #[test]
-    fn pdb_uses_metric_delta_costs_even_when_metric_var_is_hidden() {
-        let task = zero_metric_cost_hidden_numeric_task();
-        let projected_task = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![0],
-                numeric: vec![],
-            },
-        )
-        .unwrap();
-
-        let pdb = PatternDatabase::new(projected_task, 64).unwrap();
-
-        assert_eq!(pdb.min_operator_cost(), 0.0);
-        assert_eq!(pdb.lookup(&[0], &[]), Some(0.0));
-        assert_eq!(pdb.lookup(&[1], &[]), Some(0.0));
-    }
-}

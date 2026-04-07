@@ -1,4 +1,5 @@
 pub mod causal_graph;
+pub(crate) mod compiled_axiom_evaluator;
 pub mod numeric_size_estimator;
 pub(crate) mod numeric_support;
 pub mod pattern_database;
