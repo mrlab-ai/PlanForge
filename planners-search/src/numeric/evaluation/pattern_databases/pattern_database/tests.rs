@@ -147,6 +147,57 @@ mod tests {
         )
     }
 
+    fn truncation_gap_task() -> NumericRootTask {
+        NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            vec![ExplicitVariable::new(
+                4,
+                "p".to_string(),
+                vec![
+                    "p=0".to_string(),
+                    "p=1".to_string(),
+                    "p=2".to_string(),
+                    "p=3".to_string(),
+                ],
+                -1,
+                3,
+            )],
+            vec![],
+            vec![Fact::new(0, 3)],
+            vec![],
+            vec![0],
+            vec![],
+            vec![
+                Operator::new(
+                    "to-1".to_string(),
+                    vec![Fact::new(0, 0)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(vec![], 0, 0, 1)],
+                    vec![],
+                    1,
+                ),
+                Operator::new(
+                    "to-2".to_string(),
+                    vec![Fact::new(0, 0)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(vec![], 0, 0, 2)],
+                    vec![],
+                    1,
+                ),
+                Operator::new(
+                    "to-3".to_string(),
+                    vec![Fact::new(0, 0)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(vec![], 0, 0, 3)],
+                    vec![],
+                    1,
+                ),
+            ],
+            vec![],
+            vec![],
+            vec![],
+            (0, 0),
+        )
+    }
+
     fn cost_only_hidden_numeric_task() -> NumericRootTask {
         NumericRootTask::new(
             1,
@@ -348,6 +399,25 @@ mod tests {
         assert_eq!(pdb.lookup(&[1], &[]), Some(5.0));
         assert_eq!(pdb.lookup(&[0], &[]), Some(10.0));
         assert_eq!(pdb.lookup_or_fallback(&[0], &[]), 10.0);
+    }
+
+    #[test]
+    fn truncated_pdb_handles_multiple_new_successors_after_hitting_limit() {
+        let task = truncation_gap_task();
+        let projected_task = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![0],
+                numeric: vec![],
+            },
+        )
+        .unwrap();
+
+        let pdb = PatternDatabase::new(projected_task, 2).unwrap();
+
+        assert!(pdb.truncated);
+        assert_eq!(pdb.frontier_states, vec![0, 1]);
+        assert_eq!(pdb.lookup(&[0], &[]), Some(1.0));
     }
 
     #[test]

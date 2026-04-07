@@ -201,7 +201,7 @@ impl<'task> PatternDatabase<'task> {
                 }
 
                 let next_id = successor_state.get_id();
-                if next_id == representative_states.len() {
+                if next_id >= representative_states.len() {
                     if representative_states.len() >= max_states {
                         self.truncated = true;
                         frontier_seed_costs
@@ -209,6 +209,13 @@ impl<'task> PatternDatabase<'task> {
                             .and_modify(|cost| *cost = cost.min(operator_cost))
                             .or_insert(operator_cost);
                         continue;
+                    }
+
+                    if next_id != representative_states.len() {
+                        return Err(format!(
+                            "state registry produced non-contiguous abstract state id {next_id} while {} states are represented",
+                            representative_states.len()
+                        ));
                     }
 
                     representative_states.push(successor_state);
