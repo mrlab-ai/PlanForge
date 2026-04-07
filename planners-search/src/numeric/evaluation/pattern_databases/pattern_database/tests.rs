@@ -172,21 +172,36 @@ mod tests {
                 Operator::new(
                     "to-1".to_string(),
                     vec![Fact::new(0, 0)],
-                    vec![planners_sas::numeric::numeric_task::Effect::new(vec![], 0, 0, 1)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(
+                        vec![],
+                        0,
+                        0,
+                        1,
+                    )],
                     vec![],
                     1,
                 ),
                 Operator::new(
                     "to-2".to_string(),
                     vec![Fact::new(0, 0)],
-                    vec![planners_sas::numeric::numeric_task::Effect::new(vec![], 0, 0, 2)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(
+                        vec![],
+                        0,
+                        0,
+                        2,
+                    )],
                     vec![],
                     1,
                 ),
                 Operator::new(
                     "to-3".to_string(),
                     vec![Fact::new(0, 0)],
-                    vec![planners_sas::numeric::numeric_task::Effect::new(vec![], 0, 0, 3)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(
+                        vec![],
+                        0,
+                        0,
+                        3,
+                    )],
                     vec![],
                     1,
                 ),
@@ -375,6 +390,7 @@ mod tests {
         let pdb = PatternDatabase::new(projected_task, 16).unwrap();
 
         assert!(pdb.states.len() > 1);
+        assert_eq!(pdb.lookup(&[0], &[0.0]), Some(1.0));
         assert_eq!(pdb.lookup(&initial_prop, &initial_num), Some(1.0));
         assert!(pdb.distances.iter().any(|&distance| distance == 0.0));
     }

@@ -17,6 +17,49 @@ use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorG
 use super::projected_task::ProjectedTask;
 use super::utils;
 
+#[inline]
+fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
+    const FNV_PRIME: u64 = 0x00000100000001B3;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+#[inline]
+fn hash_state_components(propositional: &[i32], numeric: &[f64]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    let mut hash = FNV_OFFSET;
+    for value in propositional {
+        hash = hash_bytes(hash, &value.to_le_bytes());
+    }
+    hash = hash_bytes(hash, &(propositional.len() as u64).to_le_bytes());
+    for value in numeric {
+        hash = hash_bytes(hash, &value.to_bits().to_le_bytes());
+    }
+    hash_bytes(hash, &(numeric.len() as u64).to_le_bytes())
+}
+
+#[inline]
+fn hash_pattern_components(
+    propositional: &[i32],
+    numeric: &[f64],
+    pattern_regular_ids: &[usize],
+    pattern_numeric_ids: &[usize],
+) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    let mut hash = FNV_OFFSET;
+    for &var_id in pattern_regular_ids {
+        hash = hash_bytes(hash, &propositional[var_id].to_le_bytes());
+    }
+    hash = hash_bytes(hash, &(pattern_regular_ids.len() as u64).to_le_bytes());
+    for &var_id in pattern_numeric_ids {
+        hash = hash_bytes(hash, &numeric[var_id].to_bits().to_le_bytes());
+    }
+    hash_bytes(hash, &(pattern_numeric_ids.len() as u64).to_le_bytes())
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct PdbState {
     propositional: Vec<i32>,
@@ -26,6 +69,8 @@ pub(super) struct PdbState {
 pub struct PatternDatabase<'task> {
     pub(super) task: ProjectedTask<'task>,
     pub(super) states: Vec<PdbState>,
+    state_index: HashMap<u64, Vec<usize>>,
+    pattern_index: HashMap<u64, Vec<usize>>,
     pub(super) distances: Vec<f64>,
     pub(super) min_operator_cost: f64,
     pub(super) reached_goal_states: usize,
@@ -40,6 +85,8 @@ impl<'task> PatternDatabase<'task> {
         let mut pdb = Self {
             task,
             states: Vec::with_capacity(max_states),
+            state_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
+            pattern_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
             distances: Vec::new(),
             min_operator_cost,
             reached_goal_states: 0,
@@ -98,7 +145,15 @@ impl<'task> PatternDatabase<'task> {
         let pattern_regular_ids = self.task.pattern_regular_projected_ids();
         let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
 
-        self.states.iter().enumerate().find_map(|(state_id, state)| {
+        let lookup_key = hash_state_components(propositional, numeric);
+        let candidates = if full_state_lookup {
+            self.state_index.get(&lookup_key)
+        } else {
+            self.pattern_index.get(&lookup_key)
+        }?;
+
+        candidates.iter().copied().find(|&state_id| {
+            let state = &self.states[state_id];
             let same_propositional = if full_state_lookup {
                 state.propositional == propositional
             } else {
@@ -127,11 +182,14 @@ impl<'task> PatternDatabase<'task> {
                                 == numeric.get(pattern_index).map(|value| value.to_bits())
                         })
                 };
-            same_numeric.then_some(state_id)
+            same_numeric
         })
     }
 
-    pub(super) fn state_propositional_values<'state>(&self, state: &'state PdbState) -> &'state [i32] {
+    pub(super) fn state_propositional_values<'state>(
+        &self,
+        state: &'state PdbState,
+    ) -> &'state [i32] {
         &state.propositional
     }
 
@@ -139,12 +197,42 @@ impl<'task> PatternDatabase<'task> {
         &state.numeric
     }
 
+    fn rebuild_lookup_indexes(&mut self) {
+        self.state_index.clear();
+        self.pattern_index.clear();
+
+        let pattern_regular_ids = self.task.pattern_regular_projected_ids();
+        let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
+
+        for (state_id, state) in self.states.iter().enumerate() {
+            let full_key = hash_state_components(&state.propositional, &state.numeric);
+            self.state_index
+                .entry(full_key)
+                .or_insert_with(|| Vec::with_capacity(1))
+                .push(state_id);
+
+            let pattern_key = hash_pattern_components(
+                &state.propositional,
+                &state.numeric,
+                pattern_regular_ids,
+                pattern_numeric_ids,
+            );
+            self.pattern_index
+                .entry(pattern_key)
+                .or_insert_with(|| Vec::with_capacity(1))
+                .push(state_id);
+        }
+    }
+
     fn build(&mut self, max_states: usize) -> Result<(), String> {
         let mut predecessors: Vec<Vec<(usize, f64)>> = Vec::with_capacity(max_states);
         let mut frontier_seed_costs: HashMap<usize, f64> =
             HashMap::with_capacity_and_hasher(max_states, FxBuildHasher);
         let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&self.task);
-        let state_packer = planners_sas::numeric::utils::int_packer::IntDoublePacker::from_abstract_task(&self.task);
+        let state_packer =
+            planners_sas::numeric::utils::int_packer::IntDoublePacker::from_abstract_task(
+                &self.task,
+            );
         let axiom_evaluator = AxiomEvaluator::new(&self.task, &state_packer);
         let mut state_registry = StateRegistry::new(&self.task, &state_packer, &axiom_evaluator);
         let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
@@ -238,6 +326,11 @@ impl<'task> PatternDatabase<'task> {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
+        drop(state_registry);
+        drop(axiom_evaluator);
+        drop(state_packer);
+        drop(successor_generator);
+        self.rebuild_lookup_indexes();
 
         self.distances = vec![f64::INFINITY; self.states.len()];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
@@ -285,5 +378,3 @@ impl<'task> PatternDatabase<'task> {
         Ok(())
     }
 }
-
-
