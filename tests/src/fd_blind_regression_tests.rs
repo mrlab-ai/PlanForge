@@ -12,6 +12,7 @@ use planners_sas::numeric::numeric_task::NumericRootTask;
 use planners_sas::numeric::numeric_task::NumericType;
 use planners_sas::numeric::state_registry::StateRegistry;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
+use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use planners_search::numeric::search_engine::SearchStatus;
@@ -339,4 +340,246 @@ fn plant_watering_lmcutnumeric_initial_state_is_finite_and_bounded_by_optimum() 
         total_cost <= expected_optimal_cost + 1e-6,
         "Plant Watering initial lmcutnumeric value should be <= {expected_optimal_cost}, got {total_cost}"
     );
+}
+
+#[test]
+#[ignore = "local ipc2023 drone fixture repro"]
+fn drone_pfile1_lmcutnumeric_initial_state_local_repro() {
+    let domain = Path::new("/home/markus/data/ipc2023/drone/domain.pddl");
+    let problem = Path::new("/home/markus/data/ipc2023/drone/pfile1.pddl");
+
+    if !domain.is_file() || !problem.is_file() {
+        eprintln!("Skipping local drone repro; fixture files are unavailable");
+        return;
+    }
+
+    let temp_dir = unique_temp_dir("drone_pfile1_lmcut_initial_local")
+        .unwrap_or_else(|e| panic!("failed to create temp dir: {e}"));
+    let output_sas = temp_dir.join("output.sas");
+    let preprocessed = temp_dir.join("output");
+
+    translate_to_sas_to_path_fast(
+        domain
+            .to_str()
+            .unwrap_or_else(|| panic!("non-utf8 domain path: {domain:?}")),
+        problem
+            .to_str()
+            .unwrap_or_else(|| panic!("non-utf8 problem path: {problem:?}")),
+        &output_sas,
+    )
+    .unwrap_or_else(|e| panic!("translate failed for drone pfile1: {e}"));
+
+    run_preprocess_to_output(
+        &[
+            "preprocess".to_string(),
+            output_sas.to_string_lossy().to_string(),
+        ],
+        &preprocessed,
+    );
+
+    let task = NumericRootTask::from_file(&preprocessed);
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let initial_state = state_registry.get_initial_state();
+
+    let mut propositional_values = Vec::new();
+    initial_state.fill_state(&state_registry, &mut propositional_values);
+    let mut numeric_values = Vec::new();
+    state_registry
+        .fill_numeric_vars(&initial_state, &mut numeric_values)
+        .unwrap_or_else(|err| panic!("failed to prepare drone numeric values: {err:?}"));
+
+    let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+    let result = landmarks.compute_landmarks(
+        &propositional_values,
+        initial_state.buffer(&state_registry).len(),
+        &numeric_values,
+    );
+
+    match result {
+        Ok((dead_end, total_cost, landmarks_vec)) => {
+            panic!(
+                "Drone initial LM-cut unexpectedly succeeded: dead_end={dead_end}, total_cost={total_cost}, landmarks={landmarks_vec:?}"
+            );
+        }
+        Err(error) => {
+            panic!("Drone initial LM-cut failed with: {error}");
+        }
+    }
+}
+
+#[test]
+fn plant_watering_lmcutnumeric_full_search_solves_without_dead_ends() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/numeric-pddl-files/plant-watering");
+    let domain = root.join("domain.pddl");
+    let problem = root.join("prob_4_1_1.pddl");
+    let expected_optimal_cost = 13.0;
+
+    let temp_dir = unique_temp_dir("plant_watering_lmcut_full_search")
+        .unwrap_or_else(|e| panic!("failed to create temp dir: {e}"));
+    let output_sas = temp_dir.join("output.sas");
+    let preprocessed = temp_dir.join("output");
+
+    translate_to_sas_to_path_fast(
+        domain
+            .to_str()
+            .unwrap_or_else(|| panic!("non-utf8 domain path: {domain:?}")),
+        problem
+            .to_str()
+            .unwrap_or_else(|| panic!("non-utf8 problem path: {problem:?}")),
+        &output_sas,
+    )
+    .unwrap_or_else(|e| panic!("translate failed for Plant Watering: {e}"));
+
+    run_preprocess_to_output(
+        &[
+            "preprocess".to_string(),
+            output_sas.to_string_lossy().to_string(),
+        ],
+        &preprocessed,
+    );
+
+    let result = {
+        let task = NumericRootTask::from_file(&preprocessed);
+        let state_packer = IntDoublePacker::from_task(&task);
+        let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+        let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+        let task_ref: &dyn AbstractNumericTask = &task;
+        let heuristic = LandmarkCutNumericHeuristic::from_config(task_ref, LmCutNumericConfig::default())
+            .expect("default lmcutnumeric config should be supported");
+        let mut search = AStarSearch::new(
+            task_ref,
+            state_registry,
+            Some(Box::new(heuristic)),
+            None,
+            None,
+        );
+        search.search()
+    };
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let plan = match (&result.status, &result.plan) {
+        (SearchStatus::Solved(_), Some(plan)) => plan,
+        _ => panic!(
+            "Plant Watering full lmcutnumeric search should solve the task, got status {:?}",
+            result.status
+        ),
+    };
+
+    let solution_cost = result
+        .solution_cost
+        .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum());
+
+    assert_eq!(
+        result.dead_ends, 0,
+        "Plant Watering lmcutnumeric full search should not mark any state as dead end"
+    );
+    assert!(
+        !plan.is_empty(),
+        "Plant Watering lmcutnumeric full search should return a non-empty plan"
+    );
+    assert!(
+        (solution_cost - expected_optimal_cost).abs() <= 1e-6,
+        "Plant Watering lmcutnumeric should keep optimal cost {expected_optimal_cost}, got {solution_cost}"
+    );
+}
+
+#[test]
+#[ignore = "parity probe for remaining zero-cost plateau behavior on blind-only reachable states"]
+fn plant_watering_lmcutnumeric_remains_finite_along_blind_solution() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/numeric-pddl-files/plant-watering");
+    let domain = root.join("domain.pddl");
+    let problem = root.join("prob_4_1_1.pddl");
+
+    let temp_dir = unique_temp_dir("plant_watering_lmcut_blind_prefix")
+        .unwrap_or_else(|e| panic!("failed to create temp dir: {e}"));
+    let output_sas = temp_dir.join("output.sas");
+    let preprocessed = temp_dir.join("output");
+
+    translate_to_sas_to_path_fast(
+        domain
+            .to_str()
+            .unwrap_or_else(|| panic!("non-utf8 domain path: {domain:?}")),
+        problem
+            .to_str()
+            .unwrap_or_else(|| panic!("non-utf8 problem path: {problem:?}")),
+        &output_sas,
+    )
+    .unwrap_or_else(|e| panic!("translate failed for Plant Watering: {e}"));
+
+    run_preprocess_to_output(
+        &[
+            "preprocess".to_string(),
+            output_sas.to_string_lossy().to_string(),
+        ],
+        &preprocessed,
+    );
+
+    let blind_plan = {
+        let task = NumericRootTask::from_file(&preprocessed);
+        let state_packer = IntDoublePacker::from_task(&task);
+        let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+        let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+        let task_ref: &dyn AbstractNumericTask = &task;
+        let mut search = AStarSearch::new(task_ref, state_registry, None, None, None);
+        let result = search.search();
+        match result {
+            planners_search::numeric::search_engine::SearchResult {
+                status: SearchStatus::Solved(_),
+                plan: Some(plan),
+                ..
+            } => plan,
+            other => panic!(
+                "blind Plant Watering search should solve the task before LM-cut replay, got {:?}",
+                other.status
+            ),
+        }
+    };
+
+    let task = NumericRootTask::from_file(&preprocessed);
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state = state_registry.get_initial_state();
+    let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+    let mut propositional_values = Vec::new();
+    let mut numeric_values = Vec::new();
+
+    for (step, operator) in std::iter::once(None)
+        .chain(blind_plan.iter().map(Some))
+        .enumerate()
+    {
+        state_registry
+            .fill_state_and_numeric_vars(&state, &mut propositional_values, &mut numeric_values)
+            .unwrap_or_else(|e| panic!("failed to unpack Plant Watering state at step {step}: {e:?}"));
+
+        let (dead_end, total_cost, _cuts) = landmarks
+            .compute_landmarks(
+                &propositional_values,
+                state.buffer(&state_registry).len(),
+                &numeric_values,
+            )
+            .unwrap_or_else(|e| panic!("LM-cut evaluation failed at step {step}: {e}"));
+
+        assert!(
+            !dead_end,
+            "Plant Watering blind-solution state at step {step} should be reachable for LM-cut; last operator: {:?}",
+            operator.map(|op| op.name())
+        );
+        assert!(
+            total_cost.is_finite(),
+            "Plant Watering blind-solution state at step {step} should have finite LM-cut value; last operator: {:?}",
+            operator.map(|op| op.name())
+        );
+
+        if let Some(operator) = operator {
+            state = state_registry
+                .get_successor_state(&state, operator)
+                .unwrap_or_else(|e| panic!("failed to apply blind-plan operator at step {step}: {e:?}"));
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }
