@@ -7,7 +7,7 @@ use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use planners_sas::numeric::state_registry::StateRegistry;
 
 use super::pattern_database::PatternDatabase;
-use super::pattern_generator_greedy::{generate_greedy_pattern, GreedyPatternGeneratorConfig};
+use super::pattern_generator_greedy::{GreedyPatternGeneratorConfig, generate_greedy_pattern};
 use super::projected_task::ProjectedTask;
 use super::utils;
 

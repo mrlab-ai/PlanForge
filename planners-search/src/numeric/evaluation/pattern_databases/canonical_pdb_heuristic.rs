@@ -11,7 +11,7 @@ use crate::numeric::evaluation::heuristic::Heuristic;
 use super::max_additive_subsets::{compute_additive_vars, compute_max_additive_subsets};
 use super::pattern_collection::PatternCollection;
 use super::pattern_generator_systematic::{
-    generate_systematic_patterns, SystematicPatternGeneratorConfig,
+    SystematicPatternGeneratorConfig, generate_systematic_patterns,
 };
 use super::pdb_collection::PdbCollection;
 
@@ -19,6 +19,7 @@ use super::pdb_collection::PdbCollection;
 pub struct CanonicalNumericPdbConfig {
     pub max_pdb_states: usize,
     pub max_pattern_size: usize,
+    pub only_interesting_patterns: bool,
     pub random_seed: i32,
     pub variable_order_type: super::variable_order_finder::GreedyVariableOrderType,
 }
@@ -29,6 +30,7 @@ impl Default for CanonicalNumericPdbConfig {
         Self {
             max_pdb_states: config.max_pdb_states,
             max_pattern_size: config.max_pattern_size,
+            only_interesting_patterns: config.only_interesting_patterns,
             random_seed: config.random_seed,
             variable_order_type: config.variable_order_type,
         }
@@ -39,8 +41,12 @@ impl fmt::Display for CanonicalNumericPdbConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "max_pdb_states={}, max_pattern_size={}, random_seed={}, variable_order_type={}",
-            self.max_pdb_states, self.max_pattern_size, self.random_seed, self.variable_order_type,
+            "max_pdb_states={}, max_pattern_size={}, only_interesting_patterns={}, random_seed={}, variable_order_type={}",
+            self.max_pdb_states,
+            self.max_pattern_size,
+            self.only_interesting_patterns,
+            self.random_seed,
+            self.variable_order_type,
         )
     }
 }
@@ -50,6 +56,7 @@ impl From<CanonicalNumericPdbConfig> for SystematicPatternGeneratorConfig {
         Self {
             max_pdb_states: config.max_pdb_states,
             max_pattern_size: config.max_pattern_size,
+            only_interesting_patterns: config.only_interesting_patterns,
             random_seed: config.random_seed,
             variable_order_type: config.variable_order_type,
         }

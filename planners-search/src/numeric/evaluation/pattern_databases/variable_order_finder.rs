@@ -1,6 +1,6 @@
+use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
-use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 

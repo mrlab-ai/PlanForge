@@ -319,11 +319,16 @@ fn build_compiled_axiom_evaluator_data(
 
     let mut last_layer = -1;
     for i in 0..numeric_task.get_num_variables() {
-        last_layer = max(last_layer, numeric_task.get_variable_axiom_layer(i).unwrap());
+        last_layer = max(
+            last_layer,
+            numeric_task.get_variable_axiom_layer(i).unwrap(),
+        );
     }
     nbf_info_by_layer.resize((last_layer + 1).max(0) as usize, vec![]);
 
-    let initial_propositional_values = numeric_task.get_initial_propositional_state_values().to_vec();
+    let initial_propositional_values = numeric_task
+        .get_initial_propositional_state_values()
+        .to_vec();
     for var_id in 0..numeric_task.get_num_variables() {
         let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
         if axiom_layer != -1 && axiom_layer != last_layer {

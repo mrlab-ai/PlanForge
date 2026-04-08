@@ -23,7 +23,7 @@ use std::time::Duration;
 
 pub mod recursive_config;
 
-pub use recursive_config::{parse_search_spec, HeuristicSpec, SearchSpec};
+pub use recursive_config::{HeuristicSpec, SearchSpec, parse_search_spec};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about = "Numeric planner")]

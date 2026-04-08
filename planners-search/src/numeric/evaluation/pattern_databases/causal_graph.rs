@@ -13,6 +13,7 @@ pub enum CausalGraphVariable {
 
 #[derive(Debug, Default, Clone)]
 pub struct MixedCausalGraph {
+    eff_predecessors: BTreeMap<CausalGraphVariable, BTreeSet<CausalGraphVariable>>,
     predecessors: BTreeMap<CausalGraphVariable, BTreeSet<CausalGraphVariable>>,
     successors: BTreeMap<CausalGraphVariable, BTreeSet<CausalGraphVariable>>,
     goal_distances: BTreeMap<CausalGraphVariable, usize>,
@@ -64,7 +65,7 @@ impl MixedCausalGraph {
                             )
                         }))
                 {
-                    graph.add_edge(source, target);
+                    graph.add_pre_eff_arc(source, target);
                 }
             }
 
@@ -89,7 +90,26 @@ impl MixedCausalGraph {
                             .map(CausalGraphVariable::Numeric),
                     )
                 {
-                    graph.add_edge(source, target);
+                    graph.add_pre_eff_arc(source, target);
+                }
+            }
+
+            let effect_targets: Vec<_> =
+                operator
+                    .effects()
+                    .iter()
+                    .map(|effect| CausalGraphVariable::Regular(effect.var_id() as usize))
+                    .chain(operator.assignment_effects().iter().map(|effect| {
+                        CausalGraphVariable::Numeric(effect.affected_var_id() as usize)
+                    }))
+                    .collect();
+
+            for effect_index in 0..effect_targets.len() {
+                for other_index in (effect_index + 1)..effect_targets.len() {
+                    graph.add_eff_eff_edge(
+                        effect_targets[effect_index],
+                        effect_targets[other_index],
+                    );
                 }
             }
         }
@@ -105,7 +125,7 @@ impl MixedCausalGraph {
                     &numeric_support,
                 )
             }) {
-                graph.add_edge(source, target);
+                graph.add_pre_eff_arc(source, target);
             }
         }
 
@@ -115,7 +135,7 @@ impl MixedCausalGraph {
             };
             let target = CausalGraphVariable::Regular(target_var_id);
             for source_var_id in numeric_support.comparison_support_ids(task, comparison_axiom_id) {
-                graph.add_edge(CausalGraphVariable::Numeric(source_var_id), target);
+                graph.add_pre_eff_arc(CausalGraphVariable::Numeric(source_var_id), target);
             }
         }
 
@@ -137,7 +157,7 @@ impl MixedCausalGraph {
                         .numeric_var_leaf_support_ids(task, axiom.get_right_var_id() as usize),
                 )
             {
-                graph.add_edge(CausalGraphVariable::Numeric(source_var_id), target);
+                graph.add_pre_eff_arc(CausalGraphVariable::Numeric(source_var_id), target);
             }
         }
 
@@ -151,6 +171,26 @@ impl MixedCausalGraph {
         variable: CausalGraphVariable,
     ) -> impl Iterator<Item = CausalGraphVariable> + '_ {
         self.predecessors
+            .get(&variable)
+            .into_iter()
+            .flat_map(|predecessors| predecessors.iter().copied())
+    }
+
+    pub fn successors_of(
+        &self,
+        variable: CausalGraphVariable,
+    ) -> impl Iterator<Item = CausalGraphVariable> + '_ {
+        self.successors
+            .get(&variable)
+            .into_iter()
+            .flat_map(|successors| successors.iter().copied())
+    }
+
+    pub fn eff_pre_neighbors_of(
+        &self,
+        variable: CausalGraphVariable,
+    ) -> impl Iterator<Item = CausalGraphVariable> + '_ {
+        self.eff_predecessors
             .get(&variable)
             .into_iter()
             .flat_map(|predecessors| predecessors.iter().copied())
@@ -172,18 +212,35 @@ impl MixedCausalGraph {
     }
 
     fn ensure_node(&mut self, variable: CausalGraphVariable) {
+        self.eff_predecessors.entry(variable).or_default();
         self.predecessors.entry(variable).or_default();
         self.successors.entry(variable).or_default();
     }
 
-    fn add_edge(&mut self, source: CausalGraphVariable, target: CausalGraphVariable) {
+    fn add_pre_eff_arc(&mut self, source: CausalGraphVariable, target: CausalGraphVariable) {
         self.ensure_node(source);
         self.ensure_node(target);
         if source == target {
             return;
         }
+        self.eff_predecessors
+            .entry(target)
+            .or_default()
+            .insert(source);
         self.successors.entry(source).or_default().insert(target);
         self.predecessors.entry(target).or_default().insert(source);
+    }
+
+    fn add_eff_eff_edge(&mut self, lhs: CausalGraphVariable, rhs: CausalGraphVariable) {
+        self.ensure_node(lhs);
+        self.ensure_node(rhs);
+        if lhs == rhs {
+            return;
+        }
+        self.successors.entry(lhs).or_default().insert(rhs);
+        self.successors.entry(rhs).or_default().insert(lhs);
+        self.predecessors.entry(lhs).or_default().insert(rhs);
+        self.predecessors.entry(rhs).or_default().insert(lhs);
     }
 
     fn compute_goal_distances(&mut self, task: &dyn AbstractNumericTask) {
@@ -421,14 +478,18 @@ mod tests {
 
         let graph = MixedCausalGraph::new(&task);
 
-        assert!(graph
-            .predecessors_of(CausalGraphVariable::Regular(1))
-            .collect::<Vec<_>>()
-            .contains(&CausalGraphVariable::Regular(0)));
-        assert!(graph
-            .predecessors_of(CausalGraphVariable::Regular(2))
-            .collect::<Vec<_>>()
-            .contains(&CausalGraphVariable::Numeric(1)));
+        assert!(
+            graph
+                .predecessors_of(CausalGraphVariable::Regular(1))
+                .collect::<Vec<_>>()
+                .contains(&CausalGraphVariable::Regular(0))
+        );
+        assert!(
+            graph
+                .predecessors_of(CausalGraphVariable::Regular(2))
+                .collect::<Vec<_>>()
+                .contains(&CausalGraphVariable::Numeric(1))
+        );
         assert_eq!(
             graph.goal_distance(CausalGraphVariable::Regular(1)),
             Some(0)
@@ -495,14 +556,18 @@ mod tests {
 
         assert!(predecessors.contains(&CausalGraphVariable::Numeric(helper_var_id)));
         assert!(!predecessors.contains(&CausalGraphVariable::Regular(1)));
-        assert!(graph
-            .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
-            .collect::<Vec<_>>()
-            .contains(&CausalGraphVariable::Numeric(1)));
-        assert!(graph
-            .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
-            .collect::<Vec<_>>()
-            .contains(&CausalGraphVariable::Numeric(2)));
+        assert!(
+            graph
+                .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
+                .collect::<Vec<_>>()
+                .contains(&CausalGraphVariable::Numeric(1))
+        );
+        assert!(
+            graph
+                .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
+                .collect::<Vec<_>>()
+                .contains(&CausalGraphVariable::Numeric(2))
+        );
     }
 
     #[test]

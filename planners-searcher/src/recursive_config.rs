@@ -2,14 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::{tag_no_case, take_while1},
     character::complete::{char, multispace0, one_of},
     combinator::{all_consuming, cut, map, map_res, opt},
-    error::{convert_error, VerboseError},
+    error::{VerboseError, convert_error},
     multi::separated_list0,
     sequence::{delimited, terminated, tuple},
-    IResult,
 };
 
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
@@ -309,6 +309,7 @@ fn build_canonical_numeric_pdb_config(
         match key.as_str() {
             "max_pdb_states" => config.max_pdb_states = parse_usize(&value)?,
             "max_pattern_size" => config.max_pattern_size = parse_usize(&value)?,
+            "only_interesting_patterns" => config.only_interesting_patterns = parse_bool(&value)?,
             "random_seed" => config.random_seed = parse_i32(&value)?,
             "variable_order_type" => {
                 config.variable_order_type = parse_greedy_variable_order_type(&value)?

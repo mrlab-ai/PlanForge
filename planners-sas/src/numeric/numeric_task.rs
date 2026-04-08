@@ -1,4 +1,6 @@
-use crate::numeric::axioms::{AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, PropositionalAxiom};
+use crate::numeric::axioms::{
+    AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, PropositionalAxiom,
+};
 use crate::numeric::numeric_parser::parse_numeric_sas_output;
 use crate::numeric::state_registry::{ConcreteState, StateRegistry};
 use crate::numeric::utils::int_packer::IntDoublePacker;
@@ -66,7 +68,7 @@ pub trait AbstractNumericTask {
 
     fn get_num_cmp_axioms(&self) -> i32;
 
-    //TODO: Helpers to get PDB development fast but we dont want the next 4 methods. 
+    //TODO: Helpers to get PDB development fast but we dont want the next 4 methods.
     fn abstract_state_values(
         &self,
         propositional_values: &[i32],
@@ -765,7 +767,6 @@ impl AbstractNumericTask for NumericRootTask {
         evaluate_state_with_axiom_closure(self, &mut propositional, &mut numeric)?;
         Ok((propositional, numeric))
     }
-
 }
 
 fn evaluate_state_with_axiom_closure(

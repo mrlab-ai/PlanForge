@@ -7,9 +7,9 @@ use planners_sas::numeric::axioms::{
     AssignmentAxiom, AxiomEvaluator, CalOperator, ComparisonAxiom, PropositionalAxiom,
 };
 use planners_sas::numeric::numeric_task::{
-    metric_operator_cost_from_initial_values, AbstractNumericTask, AssignmentEffect,
-    AssignmentOperation, Effect, ExplicitVariable, Fact, Metric, NumericRootTask, NumericType,
-    NumericVariable, Operator,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, Effect, ExplicitVariable, Fact,
+    Metric, NumericRootTask, NumericType, NumericVariable, Operator,
+    metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 

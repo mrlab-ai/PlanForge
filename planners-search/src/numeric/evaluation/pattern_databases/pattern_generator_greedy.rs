@@ -11,7 +11,7 @@ use super::numeric_size_estimator::NumericSizeEstimator;
 use super::numeric_support::NumericSupportContext;
 use super::projected_task::Pattern;
 use super::variable_order_finder::{
-    order_causal_graph_variables, order_variable_ids, GreedyVariableOrderType,
+    GreedyVariableOrderType, order_causal_graph_variables, order_variable_ids,
 };
 
 pub const DEFAULT_MAX_PDB_STATES: usize = 100_000;

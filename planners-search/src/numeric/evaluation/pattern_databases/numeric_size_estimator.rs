@@ -13,7 +13,7 @@ use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
 };
 
 use super::projected_task::{
-    build_assignment_axiom_lookup, build_auxiliary_numeric_vars, AuxiliaryNumericVar,
+    AuxiliaryNumericVar, build_assignment_axiom_lookup, build_auxiliary_numeric_vars,
 };
 
 #[derive(Debug, Clone, Copy)]

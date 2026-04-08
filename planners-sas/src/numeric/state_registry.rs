@@ -370,10 +370,8 @@ impl<'a> StateRegistry<'a> {
         let mut init_buffer = vec![0u64; self.global_state_packer.num_bins() as usize];
 
         // Get copies of initial state values to avoid borrowing conflicts
-        let initial_propositional_values = self
-            .task
-            .get_initial_propositional_state_values()
-            .clone();
+        let initial_propositional_values =
+            self.task.get_initial_propositional_state_values().clone();
         let initial_numeric_values = self.task.get_initial_numeric_state_values().clone();
 
         // Pack propositional variables
@@ -427,10 +425,7 @@ impl<'a> StateRegistry<'a> {
     ) -> Vec<f64> {
         let initial_propositional_len = initial_numeric_values.len(); // This should be the correct length calculation
 
-        let mut numeric_var_index = self
-            .task
-            .get_initial_propositional_state_values()
-            .len();
+        let mut numeric_var_index = self.task.get_initial_propositional_state_values().len();
         let mut constant_index = 0;
         let mut cost_variables = Vec::new();
 
@@ -487,10 +482,7 @@ impl<'a> StateRegistry<'a> {
     /// Logs initial state information in debug builds
     #[cfg(debug_assertions)]
     fn log_initial_state_info(&self, cost_variables: &[f64]) {
-        let initial_propositional_len = self
-            .task
-            .get_initial_propositional_state_values()
-            .len();
+        let initial_propositional_len = self.task.get_initial_propositional_state_values().len();
         let regular_count = self
             .numeric_indices
             .iter()
@@ -590,10 +582,7 @@ impl<'a> StateRegistry<'a> {
         buffer: &mut [u64],
         numeric_values: &[f64],
     ) -> Result<Vec<f64>, StateInsertError> {
-        let mut regular_index = self
-            .task
-            .get_initial_propositional_state_values()
-            .len() as i32;
+        let mut regular_index = self.task.get_initial_propositional_state_values().len() as i32;
         let mut cost_variables = Vec::new();
 
         for (i, &value) in numeric_values.iter().enumerate() {
@@ -909,9 +898,11 @@ impl<'a> StateRegistry<'a> {
             return Ok(1.0);
         }
 
-        let old_metric = self.metric_value_for_state(state).map_err(|e| StateInsertError {
-            message: format!("Failed to read metric value for state: {e:?}"),
-        })?;
+        let old_metric = self
+            .metric_value_for_state(state)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to read metric value for state: {e:?}"),
+            })?;
 
         let previous_buffer = state.buffer(self);
         let mut next_buffer = previous_buffer.to_vec();
@@ -937,9 +928,11 @@ impl<'a> StateRegistry<'a> {
             previous_buffer,
         )?;
 
-        let new_metric = self.evaluate_metric(&successor_numeric_values).map_err(|e| StateInsertError {
-            message: format!("Failed to evaluate metric after applying operator: {e:?}"),
-        })?;
+        let new_metric = self
+            .evaluate_metric(&successor_numeric_values)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to evaluate metric after applying operator: {e:?}"),
+            })?;
 
         Ok(new_metric - old_metric)
     }
