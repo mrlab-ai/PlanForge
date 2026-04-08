@@ -4,6 +4,10 @@ use crate::numeric::axioms::{
 use crate::numeric::numeric_parser::parse_numeric_sas_output;
 use crate::numeric::state_registry::{ConcreteState, StateRegistry};
 use crate::numeric::utils::int_packer::IntDoublePacker;
+use crate::numeric::utils::linear_effects::{
+    LinearNumericEffect, LinearizationError, build_assignment_axiom_lookup,
+    linearize_numeric_var, linearize_operator_assignment_effects,
+};
 use std::{
     cell::{Ref, RefCell, RefMut},
     fmt,
@@ -109,6 +113,25 @@ pub trait AbstractNumericTask {
         } else {
             0.0
         }
+    }
+
+    fn assignment_axiom_lookup(&self) -> Vec<Option<usize>> {
+        build_assignment_axiom_lookup(self)
+    }
+
+    fn linearize_numeric_var(
+        &self,
+        numeric_var_id: usize,
+    ) -> Result<crate::numeric::utils::linear_effects::LinearExpression, LinearizationError>
+    {
+        linearize_numeric_var(self, numeric_var_id)
+    }
+
+    fn linearized_assignment_effects(
+        &self,
+        operator_id: usize,
+    ) -> Result<Vec<LinearNumericEffect>, LinearizationError> {
+        linearize_operator_assignment_effects(self, operator_id)
     }
 }
 
