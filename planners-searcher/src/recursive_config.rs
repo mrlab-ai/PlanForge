@@ -16,6 +16,7 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
     FlawTreatment, InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
 };
+use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use planners_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planners_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
@@ -30,6 +31,8 @@ pub enum HeuristicSpec {
     CanonicalNumericPdb(CanonicalNumericPdbConfig),
     #[serde(rename = "greedy_numeric_pdb")]
     GreedyNumericPdb(GreedyPatternGeneratorConfig),
+    #[serde(rename = "lmcutnumeric")]
+    Lmcutnumeric(LmCutNumericConfig),
     #[serde(rename = "multi_domain_abstractions")]
     MultiDomainAbstractions(DomainAbstractionCollectionGeneratorMultipleCegarConfig),
 }
@@ -61,6 +64,13 @@ impl fmt::Display for HeuristicSpec {
                     write!(f, "greedy_numeric_pdb()")
                 } else {
                     write!(f, "greedy_numeric_pdb({config})")
+                }
+            }
+            HeuristicSpec::Lmcutnumeric(config) => {
+                if *config == LmCutNumericConfig::default() {
+                    write!(f, "lmcutnumeric()")
+                } else {
+                    write!(f, "lmcutnumeric({config})")
                 }
             }
             HeuristicSpec::MultiDomainAbstractions(config) => {
@@ -161,6 +171,33 @@ fn parse_f64_or_infinity(value: &str) -> Result<f64, String> {
             .parse::<f64>()
             .map_err(|_| format!("expected float or infinity, got `{value}`"))
     }
+}
+
+fn build_lmcutnumeric_config(args: Vec<(String, String)>) -> Result<LmCutNumericConfig, String> {
+    let mut config = LmCutNumericConfig::default();
+    let mut seen = std::collections::BTreeSet::new();
+
+    for (key, value) in args {
+        if !seen.insert(key.clone()) {
+            return Err(format!("duplicate option `{key}`"));
+        }
+
+        match key.as_str() {
+            "ceiling_less_than_one" => config.ceiling_less_than_one = parse_bool(&value)?,
+            "ignore_numeric" => config.ignore_numeric = parse_bool(&value)?,
+            "random_pcf" => config.random_pcf = parse_bool(&value)?,
+            "irmax" => config.irmax = parse_bool(&value)?,
+            "disable_ma" => config.disable_ma = parse_bool(&value)?,
+            "use_second_order_simple" => config.use_second_order_simple = parse_bool(&value)?,
+            "use_constant_assignment" => config.use_constant_assignment = parse_bool(&value)?,
+            "bound_iterations" => config.bound_iterations = parse_usize(&value)?,
+            "precision" => config.precision = parse_f64_or_infinity(&value)?,
+            "epsilon" => config.epsilon = parse_f64_or_infinity(&value)?,
+            _ => return Err(format!("unknown option `{key}`")),
+        }
+    }
+
+    Ok(config)
 }
 
 fn parse_variable_subset(value: &str) -> Result<VariableSubset, String> {
@@ -365,6 +402,20 @@ fn canonical_numeric_pdb_parens(input: &str) -> Res<'_, CanonicalNumericPdbConfi
     )(input)
 }
 
+fn lmcutnumeric_parens(input: &str) -> Res<'_, LmCutNumericConfig> {
+    map_res(
+        delimited(
+            ws(char('(')),
+            terminated(
+                separated_list0(ws(char(',')), key_value_argument),
+                opt(ws(char(','))),
+            ),
+            ws(char(')')),
+        ),
+        build_lmcutnumeric_config,
+    )(input)
+}
+
 fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
     let blind = map(
         tuple((ws(tag_no_case("blind")), opt(ws(empty_parens)))),
@@ -398,6 +449,17 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
         |(_, config)| HeuristicSpec::GreedyNumericPdb(config.unwrap_or_default()),
     );
 
+    let lmcutnumeric = map(
+        tuple((
+            ws(tag_no_case("lmcutnumeric")),
+            opt(ws(alt((
+                map(empty_parens, |_| LmCutNumericConfig::default()),
+                lmcutnumeric_parens,
+            )))),
+        )),
+        |(_, config)| HeuristicSpec::Lmcutnumeric(config.unwrap_or_default()),
+    );
+
     let multi_domain_abstractions = map(
         tuple((
             ws(tag_no_case("multi_domain_abstractions")),
@@ -408,6 +470,7 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
 
     ws(alt((
         multi_domain_abstractions,
+        lmcutnumeric,
         canonical_numeric_pdb,
         greedy_numeric_pdb,
         domain_abstraction,

@@ -320,9 +320,11 @@ pub struct ProjectedTask<'task> {
     original_num_var_to_projected: Vec<Option<usize>>,
     pattern_regular_projected_ids: Vec<usize>,
     pattern_numeric_projected_ids: Vec<usize>,
+    auxiliary_numeric_vars: Vec<AuxiliaryNumericVar>,
     is_auxiliary_num_var: Vec<bool>,
     is_auxiliary_constant: Vec<bool>,
     auxiliary_exprs: Vec<Option<ArithmeticExpr>>,
+    projected_initial_numeric_values: Vec<Option<f64>>,
     variable_names: Vec<String>,
     fact_names: Vec<Vec<String>>,
 }
@@ -465,6 +467,32 @@ impl<'task> ProjectedTask<'task> {
                     &mut auxiliary_exprs,
                     &mut projected_aux_initial_values,
                 );
+            }
+        }
+
+        for &numeric_var_id in &selected_helper_backed_vars {
+            let deps = helper_backed_regular_numeric_dependencies(
+                base,
+                numeric_var_id,
+                &affected_to_assignment_axiom,
+                &original_num_var_to_projected,
+                &is_auxiliary_num_var,
+            )?;
+            let has_partial_dependency_overlap = deps
+                .iter()
+                .any(|&dep| original_num_var_to_projected[dep].is_some());
+            if has_partial_dependency_overlap {
+                for dep in deps {
+                    push_projected_base_numeric_var(
+                        dep,
+                        &mut projected_num_var_to_original,
+                        &mut original_num_var_to_projected,
+                        &mut is_auxiliary_num_var,
+                        &mut is_auxiliary_constant,
+                        &mut auxiliary_exprs,
+                        &mut projected_aux_initial_values,
+                    );
+                }
             }
         }
 
@@ -808,9 +836,11 @@ impl<'task> ProjectedTask<'task> {
             original_num_var_to_projected,
             pattern_regular_projected_ids,
             pattern_numeric_projected_ids,
+            auxiliary_numeric_vars,
             is_auxiliary_num_var,
             is_auxiliary_constant,
             auxiliary_exprs,
+            projected_initial_numeric_values: projected_aux_initial_values,
             variable_names,
             fact_names,
         })
@@ -839,6 +869,119 @@ impl<'task> ProjectedTask<'task> {
         propositional_values: &[i32],
         numeric_values: &[f64],
     ) -> Result<(Vec<i32>, Vec<f64>), String> {
+        let mut projected_prop_values = Vec::with_capacity(self.projected_var_to_original.len());
+        let mut projected_numeric_values =
+            Vec::with_capacity(self.projected_num_var_to_original.len());
+        let mut helper_values = Vec::new();
+        self.project_state_values_into(
+            propositional_values,
+            numeric_values,
+            &mut projected_prop_values,
+            &mut projected_numeric_values,
+            &mut helper_values,
+        )?;
+        Ok((projected_prop_values, projected_numeric_values))
+    }
+
+    pub fn expand_numeric_state_values_into(
+        &self,
+        numeric_values: &[f64],
+        expanded_numeric_values: &mut Vec<f64>,
+    ) -> Result<(), String> {
+        if numeric_values.len() < self.base.numeric_variables().len() {
+            return Err(format!(
+                "numeric state too short: {} < {}",
+                numeric_values.len(),
+                self.base.numeric_variables().len()
+            ));
+        }
+
+        overwrite_vec(expanded_numeric_values, numeric_values);
+        expanded_numeric_values.resize(
+            self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len(),
+            0.0,
+        );
+        for auxiliary_numeric_var in &self.auxiliary_numeric_vars {
+            expanded_numeric_values[auxiliary_numeric_var.helper_id] =
+                auxiliary_numeric_var.expr.evaluate(expanded_numeric_values);
+        }
+
+        Ok(())
+    }
+
+    pub fn project_state_values_from_expanded_numeric_into(
+        &self,
+        propositional_values: &[i32],
+        expanded_numeric_values: &[f64],
+        projected_prop_values: &mut Vec<i32>,
+        projected_numeric_values: &mut Vec<f64>,
+    ) -> Result<(), String> {
+        if propositional_values.len() < self.base.variables().len() {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base.variables().len()
+            ));
+        }
+        if expanded_numeric_values.len()
+            < self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+        {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+            ));
+        }
+
+        projected_prop_values.clear();
+        projected_prop_values.extend(
+            self.projected_var_to_original
+                .iter()
+                .map(|&original_var_id| propositional_values[original_var_id]),
+        );
+
+        projected_numeric_values.clear();
+        projected_numeric_values.reserve(self.projected_num_var_to_original.len());
+        for projected_index in 0..self.projected_num_var_to_original.len() {
+            if self.is_auxiliary_constant[projected_index] {
+                projected_numeric_values.push(
+                    self.projected_initial_numeric_values[projected_index].ok_or_else(|| {
+                        format!(
+                            "missing constant projected numeric value at index {projected_index}"
+                        )
+                    })?,
+                );
+                continue;
+            }
+
+            if self.is_auxiliary_num_var[projected_index] {
+                let expr = self.auxiliary_exprs[projected_index]
+                    .as_ref()
+                    .ok_or_else(|| {
+                        "missing auxiliary expression for projected numeric variable".to_string()
+                    })?;
+                projected_numeric_values.push(expr.evaluate(expanded_numeric_values));
+                continue;
+            }
+
+            let original_numeric_var = self.projected_num_var_to_original[projected_index]
+                .ok_or_else(|| {
+                    "missing original numeric variable for projected numeric variable".to_string()
+                })?;
+            projected_numeric_values.push(expanded_numeric_values[original_numeric_var]);
+        }
+
+        Ok(())
+    }
+
+    pub fn project_state_values_into(
+        &self,
+        propositional_values: &[i32],
+        numeric_values: &[f64],
+        projected_prop_values: &mut Vec<i32>,
+        projected_numeric_values: &mut Vec<f64>,
+        helper_values: &mut Vec<f64>,
+    ) -> Result<(), String> {
         if propositional_values.len() < self.base.variables().len() {
             return Err(format!(
                 "propositional state too short: {} < {}",
@@ -854,51 +997,13 @@ impl<'task> ProjectedTask<'task> {
             ));
         }
 
-        let projected_prop_values = self
-            .projected_var_to_original
-            .iter()
-            .map(|&original_var_id| propositional_values[original_var_id])
-            .collect();
-
-        let assignment_lookup = build_assignment_axiom_lookup(self.base);
-        let auxiliary_numeric_vars =
-            build_auxiliary_numeric_vars(self.base, &assignment_lookup, numeric_values)
-                .map_err(|err| err.to_string())?;
-        let mut helper_values = numeric_values.to_vec();
-        helper_values.resize(
-            self.base.numeric_variables().len() + auxiliary_numeric_vars.len(),
-            0.0,
-        );
-        for auxiliary_numeric_var in &auxiliary_numeric_vars {
-            helper_values[auxiliary_numeric_var.helper_id] = auxiliary_numeric_var.initial_value;
-        }
-
-        let mut projected_numeric_values =
-            Vec::with_capacity(self.projected_num_var_to_original.len());
-        for projected_index in 0..self.projected_num_var_to_original.len() {
-            if self.is_auxiliary_constant[projected_index] {
-                projected_numeric_values.push(self.numeric_state.borrow()[projected_index]);
-                continue;
-            }
-
-            if self.is_auxiliary_num_var[projected_index] {
-                let expr = self.auxiliary_exprs[projected_index]
-                    .as_ref()
-                    .ok_or_else(|| {
-                        "missing auxiliary expression for projected numeric variable".to_string()
-                    })?;
-                projected_numeric_values.push(expr.evaluate(&helper_values));
-                continue;
-            }
-
-            let original_numeric_var = self.projected_num_var_to_original[projected_index]
-                .ok_or_else(|| {
-                    "missing original numeric variable for projected numeric variable".to_string()
-                })?;
-            projected_numeric_values.push(numeric_values[original_numeric_var]);
-        }
-
-        Ok((projected_prop_values, projected_numeric_values))
+        self.expand_numeric_state_values_into(numeric_values, helper_values)?;
+        self.project_state_values_from_expanded_numeric_into(
+            propositional_values,
+            helper_values,
+            projected_prop_values,
+            projected_numeric_values,
+        )
     }
 
     pub fn evaluated_initial_state_values(
@@ -1031,6 +1136,19 @@ impl<'task> ProjectedTask<'task> {
 
     pub fn pattern_regular_projected_ids(&self) -> &[usize] {
         &self.pattern_regular_projected_ids
+    }
+
+    pub fn requires_derived_numeric_values(&self) -> bool {
+        self.projected_num_var_to_original.iter().enumerate().any(
+            |(projected_index, original_numeric_var)| {
+                !self.is_auxiliary_constant[projected_index]
+                    && !self.is_auxiliary_num_var[projected_index]
+                    && original_numeric_var.is_some_and(|original_numeric_var| {
+                        self.base.numeric_variables()[original_numeric_var].get_type()
+                            == &NumericType::Derived
+                    })
+            },
+        )
     }
 
     fn evaluate_axiom_closure(
@@ -1594,6 +1712,53 @@ fn regular_numeric_dependencies(
         &mut out,
     )?;
     Ok(out)
+}
+
+fn helper_backed_regular_numeric_dependencies(
+    task: &dyn AbstractNumericTask,
+    numeric_var_id: usize,
+    assignment_lookup: &[Option<usize>],
+    original_num_var_to_projected: &[Option<usize>],
+    is_auxiliary_num_var: &[bool],
+) -> Result<BTreeSet<usize>, ProjectedTaskBuildError> {
+    let mut out = BTreeSet::new();
+    let mut seen = HashSet::new();
+
+    match task.numeric_variables()[numeric_var_id].get_type() {
+        NumericType::Derived => {
+            let Some(axiom_id) = assignment_lookup[numeric_var_id] else {
+                return Err(ProjectedTaskBuildError::MissingAssignmentAxiom { numeric_var_id });
+            };
+            let axiom = &task.assignment_axioms()[axiom_id];
+            ensure_supported_assignment_operator(axiom_id, numeric_var_id, axiom.get_operator())?;
+            regular_numeric_dependencies_recursive(
+                task,
+                axiom.get_left_var_id() as usize,
+                assignment_lookup,
+                original_num_var_to_projected,
+                is_auxiliary_num_var,
+                &mut seen,
+                &mut out,
+            )?;
+            regular_numeric_dependencies_recursive(
+                task,
+                axiom.get_right_var_id() as usize,
+                assignment_lookup,
+                original_num_var_to_projected,
+                is_auxiliary_num_var,
+                &mut seen,
+                &mut out,
+            )?;
+            Ok(out)
+        }
+        _ => regular_numeric_dependencies(
+            task,
+            numeric_var_id,
+            assignment_lookup,
+            original_num_var_to_projected,
+            is_auxiliary_num_var,
+        ),
+    }
 }
 
 fn regular_numeric_dependencies_recursive(
@@ -2458,6 +2623,68 @@ mod tests {
         assert_eq!(projected.numeric_variables().len(), 4);
         assert_eq!(projected.numeric_variables()[0].name(), "sum");
         assert_eq!(projected.numeric_variables()[1].name(), "x");
+    }
+
+    #[test]
+    fn projected_task_projection_from_expanded_numeric_matches_direct_projection() {
+        let variables = vec![simple_var("goal", -1)];
+        let numeric_variables = vec![
+            NumericVariable::new("const5".to_string(), NumericType::Constant, -1),
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
+        ];
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![],
+            vec![],
+            vec![0],
+            vec![5.0, 2.0, 3.0, 5.0],
+            vec![],
+            vec![],
+            vec![],
+            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+            (0, 0),
+        );
+
+        let helper_var_id = task.numeric_variables().len();
+        let projected = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![],
+                numeric: vec![helper_var_id, 1],
+            },
+        )
+        .unwrap();
+
+        let propositional_values = vec![0];
+        let numeric_values = vec![5.0, 7.0, 11.0, 18.0];
+
+        let (expected_prop, expected_num) = projected
+            .project_state_values(&propositional_values, &numeric_values)
+            .unwrap();
+
+        let mut expanded_numeric_values = Vec::new();
+        projected
+            .expand_numeric_state_values_into(&numeric_values, &mut expanded_numeric_values)
+            .unwrap();
+
+        let mut actual_prop = Vec::new();
+        let mut actual_num = Vec::new();
+        projected
+            .project_state_values_from_expanded_numeric_into(
+                &propositional_values,
+                &expanded_numeric_values,
+                &mut actual_prop,
+                &mut actual_num,
+            )
+            .unwrap();
+
+        assert_eq!(actual_prop, expected_prop);
+        assert_eq!(actual_num, expected_num);
     }
 
     #[test]

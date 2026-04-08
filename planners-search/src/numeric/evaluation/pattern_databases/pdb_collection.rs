@@ -52,6 +52,29 @@ impl<'task> PdbCollection<'task> {
         self.pdbs.get(index)
     }
 
+    pub fn expand_numeric_state_values_into(
+        &self,
+        numeric_values: &[f64],
+        expanded_numeric_values: &mut Vec<f64>,
+    ) -> Result<(), String> {
+        match self.pdbs.first() {
+            Some(pdb) => {
+                pdb.expand_numeric_state_values_into(numeric_values, expanded_numeric_values)
+            }
+            None => {
+                expanded_numeric_values.clear();
+                expanded_numeric_values.extend_from_slice(numeric_values);
+                Ok(())
+            }
+        }
+    }
+
+    pub fn requires_derived_numeric_values(&self) -> bool {
+        self.pdbs
+            .iter()
+            .any(|pdb| pdb.requires_derived_numeric_values())
+    }
+
     pub fn singleton_additive_subsets(&self) -> Vec<Vec<usize>> {
         (0..self.pdbs.len()).map(|index| vec![index]).collect()
     }

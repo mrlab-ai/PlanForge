@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
@@ -76,11 +77,16 @@ pub struct PatternDatabase<'task> {
     pub(super) reached_goal_states: usize,
     pub(super) truncated: bool,
     pub(super) frontier_states: Vec<usize>,
+    projection_prop_scratch: RefCell<Vec<i32>>,
+    projection_numeric_scratch: RefCell<Vec<f64>>,
+    projection_helper_scratch: RefCell<Vec<f64>>,
 }
 
 impl<'task> PatternDatabase<'task> {
     pub fn new(task: ProjectedTask<'task>, max_states: usize) -> Result<Self, String> {
         let min_operator_cost = task.min_operator_cost();
+        let projection_prop_capacity = task.variables().len();
+        let projection_numeric_capacity = task.numeric_variables().len();
 
         let mut pdb = Self {
             task,
@@ -92,6 +98,11 @@ impl<'task> PatternDatabase<'task> {
             reached_goal_states: 0,
             truncated: false,
             frontier_states: Vec::new(),
+            projection_prop_scratch: RefCell::new(Vec::with_capacity(projection_prop_capacity)),
+            projection_numeric_scratch: RefCell::new(Vec::with_capacity(
+                projection_numeric_capacity,
+            )),
+            projection_helper_scratch: RefCell::new(Vec::new()),
         };
         pdb.build(max_states)?;
         // NOTE: un-comment to print summary of the built PDB
@@ -131,12 +142,63 @@ impl<'task> PatternDatabase<'task> {
         self.min_operator_cost
     }
 
+    pub fn requires_derived_numeric_values(&self) -> bool {
+        self.task.requires_derived_numeric_values()
+    }
+
     pub fn abstract_state_values(
         &self,
         propositional: &[i32],
         numeric: &[f64],
     ) -> Result<(Vec<i32>, Vec<f64>), String> {
         self.task.project_state_values(propositional, numeric)
+    }
+
+    pub fn lookup_projected_or_fallback_from_state_values(
+        &self,
+        propositional: &[i32],
+        numeric: &[f64],
+    ) -> Result<f64, String> {
+        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
+        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
+        let mut helper_values = self.projection_helper_scratch.borrow_mut();
+
+        self.task.project_state_values_into(
+            propositional,
+            numeric,
+            &mut projected_prop,
+            &mut projected_num,
+            &mut helper_values,
+        )?;
+
+        Ok(self.lookup_or_fallback(&projected_prop, &projected_num))
+    }
+
+    pub fn expand_numeric_state_values_into(
+        &self,
+        numeric: &[f64],
+        expanded_numeric: &mut Vec<f64>,
+    ) -> Result<(), String> {
+        self.task
+            .expand_numeric_state_values_into(numeric, expanded_numeric)
+    }
+
+    pub fn lookup_projected_or_fallback_from_expanded_state_values(
+        &self,
+        propositional: &[i32],
+        expanded_numeric: &[f64],
+    ) -> Result<f64, String> {
+        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
+        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
+
+        self.task.project_state_values_from_expanded_numeric_into(
+            propositional,
+            expanded_numeric,
+            &mut projected_prop,
+            &mut projected_num,
+        )?;
+
+        Ok(self.lookup_or_fallback(&projected_prop, &projected_num))
     }
 
     fn lookup_state_id(&self, propositional: &[i32], numeric: &[f64]) -> Option<usize> {

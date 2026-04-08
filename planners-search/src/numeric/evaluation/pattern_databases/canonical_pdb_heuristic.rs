@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::fmt;
 
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
-use planners_sas::numeric::state_registry::StateRegistry;
+use planners_sas::numeric::state_registry::{StateID, StateRegistry};
 use serde::{Deserialize, Serialize};
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -105,19 +105,34 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
     pub fn evaluate_projected_state_values(
         &self,
         propositional_values: &[i32],
-        numeric_values: &[f64],
+        expanded_numeric_values: &[f64],
+        pdb_value_cache: &mut Vec<Option<f64>>,
     ) -> Result<f64, String> {
+        pdb_value_cache.clear();
+        pdb_value_cache.resize(self.pdb_collection.len(), None);
+
         let mut best_value = 0.0_f64;
 
         for subset in &self.max_additive_subsets {
             let mut subset_value = 0.0;
             for &pdb_id in subset {
-                let Some(pdb) = self.pdb_collection.pdb(pdb_id) else {
-                    return Err(format!("invalid canonical subset pdb index {pdb_id}"));
+                let value = if let Some(value) = pdb_value_cache.get(pdb_id).and_then(|v| *v) {
+                    value
+                } else {
+                    let Some(pdb) = self.pdb_collection.pdb(pdb_id) else {
+                        return Err(format!("invalid canonical subset pdb index {pdb_id}"));
+                    };
+                    let value = pdb.lookup_projected_or_fallback_from_expanded_state_values(
+                        propositional_values,
+                        expanded_numeric_values,
+                    )?;
+                    let Some(slot) = pdb_value_cache.get_mut(pdb_id) else {
+                        return Err(format!("invalid canonical subset pdb cache index {pdb_id}"));
+                    };
+                    *slot = Some(value);
+                    value
                 };
-                let (projected_prop, projected_num) =
-                    pdb.abstract_state_values(propositional_values, numeric_values)?;
-                subset_value += pdb.lookup_or_fallback(&projected_prop, &projected_num);
+                subset_value += value;
             }
             best_value = best_value.max(subset_value);
         }
@@ -132,6 +147,9 @@ pub struct CanonicalNumericPdbHeuristic<'task> {
     collection_information: CanonicalPdbCollectionInformation<'task>,
     prop_scratch: RefCell<Vec<i32>>,
     numeric_scratch: RefCell<Vec<f64>>,
+    expanded_numeric_scratch: RefCell<Vec<f64>>,
+    pdb_value_cache: RefCell<Vec<Option<f64>>>,
+    state_value_cache: RefCell<Vec<Option<f64>>>,
 }
 
 impl<'task> CanonicalNumericPdbHeuristic<'task> {
@@ -157,7 +175,25 @@ impl<'task> CanonicalNumericPdbHeuristic<'task> {
             collection_information,
             prop_scratch: RefCell::new(Vec::new()),
             numeric_scratch: RefCell::new(Vec::new()),
+            expanded_numeric_scratch: RefCell::new(Vec::new()),
+            pdb_value_cache: RefCell::new(Vec::new()),
+            state_value_cache: RefCell::new(Vec::new()),
         }
+    }
+
+    fn cached_state_value(&self, state_id: StateID) -> Option<f64> {
+        self.state_value_cache
+            .borrow()
+            .get(state_id)
+            .and_then(|value| *value)
+    }
+
+    fn cache_state_value(&self, state_id: StateID, value: f64) {
+        let mut cache = self.state_value_cache.borrow_mut();
+        if cache.len() <= state_id {
+            cache.resize(state_id + 1, None);
+        }
+        cache[state_id] = Some(value);
     }
 
     fn require_task_and_registry<'s, 't>(
@@ -190,27 +226,55 @@ impl Heuristic for CanonicalNumericPdbHeuristic<'_> {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
+        let state_id = eval_state.state().get_id();
+        if let Some(value) = self.cached_state_value(state_id) {
+            return Ok(value);
+        }
+
         let (_task, registry) = Self::require_task_and_registry(eval_state)?;
+        let requires_derived_numeric_values = self
+            .collection_information
+            .pdb_collection()
+            .requires_derived_numeric_values();
 
         let mut propositional_values = self.prop_scratch.borrow_mut();
-        eval_state
-            .state()
-            .fill_state(registry, &mut propositional_values);
-
         let mut numeric_values = self.numeric_scratch.borrow_mut();
         registry
-            .fill_numeric_vars(eval_state.state(), &mut numeric_values)
+            .fill_state_and_numeric_vars_with_options(
+                eval_state.state(),
+                &mut propositional_values,
+                &mut numeric_values,
+                requires_derived_numeric_values,
+            )
             .map_err(|err| {
-                EvaluationError::ComputationFailed(format!("failed to read numeric state: {err:?}"))
+                EvaluationError::ComputationFailed(format!(
+                    "failed to read state values for canonical numeric PDB: {err:?}"
+                ))
             })?;
 
         if self.is_goal_state(&propositional_values) {
+            self.cache_state_value(state_id, 0.0);
             return Ok(0.0);
         }
 
+        let mut expanded_numeric_values = self.expanded_numeric_scratch.borrow_mut();
         self.collection_information
-            .evaluate_projected_state_values(&propositional_values, &numeric_values)
-            .map_err(EvaluationError::ComputationFailed)
+            .pdb_collection()
+            .expand_numeric_state_values_into(&numeric_values, &mut expanded_numeric_values)
+            .map_err(EvaluationError::ComputationFailed)?;
+
+        let mut pdb_value_cache = self.pdb_value_cache.borrow_mut();
+        let heuristic_value = self
+            .collection_information
+            .evaluate_projected_state_values(
+                &propositional_values,
+                &expanded_numeric_values,
+                &mut pdb_value_cache,
+            )
+            .map_err(EvaluationError::ComputationFailed)?;
+
+        self.cache_state_value(state_id, heuristic_value);
+        Ok(heuristic_value)
     }
 
     fn heuristic_name(&self) -> String {
@@ -287,9 +351,10 @@ mod tests {
             pdb_collection,
             vec![vec![0, 1], vec![0], vec![1]],
         );
+        let mut pdb_value_cache = Vec::new();
 
         let value = collection_information
-            .evaluate_projected_state_values(&[0, 0], &[0.0])
+            .evaluate_projected_state_values(&[0, 0], &[0.0], &mut pdb_value_cache)
             .unwrap();
 
         assert_eq!(value, 5.0);

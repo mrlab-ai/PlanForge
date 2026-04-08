@@ -3,6 +3,7 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
     InitSplitQuantity, VariableSubset,
 };
+use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use planners_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planners_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
@@ -105,6 +106,41 @@ fn parses_astar_canonical_numeric_pdb_with_named_options() {
 }
 
 #[test]
+fn parses_astar_lmcutnumeric_with_or_without_unit_parens() {
+    assert_eq!(
+        parse_search_spec("astar(lmcutnumeric)").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::Lmcutnumeric(LmCutNumericConfig::default()))
+    );
+    assert_eq!(
+        parse_search_spec("astar(lmcutnumeric())").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::Lmcutnumeric(LmCutNumericConfig::default()))
+    );
+}
+
+#[test]
+fn parses_astar_lmcutnumeric_with_named_options() {
+    let spec = parse_search_spec(
+        "astar(lmcutnumeric(ceiling_less_than_one=true, ignore_numeric=true, random_pcf=true, irmax=true, disable_ma=true, use_second_order_simple=true, use_constant_assignment=true, bound_iterations=7, precision=0.5, epsilon=0.25))",
+    )
+    .unwrap();
+
+    let SearchSpec::Astar(HeuristicSpec::Lmcutnumeric(config)) = spec else {
+        panic!("expected lmcutnumeric config");
+    };
+
+    assert!(config.ceiling_less_than_one);
+    assert!(config.ignore_numeric);
+    assert!(config.random_pcf);
+    assert!(config.irmax);
+    assert!(config.disable_ma);
+    assert!(config.use_second_order_simple);
+    assert!(config.use_constant_assignment);
+    assert_eq!(config.bound_iterations, 7);
+    assert_eq!(config.precision, 0.5);
+    assert_eq!(config.epsilon, 0.25);
+}
+
+#[test]
 fn parses_astar_multi_domain_abstractions_with_or_without_parens() {
     assert_eq!(
         parse_search_spec("astar(multi_domain_abstractions)").unwrap(),
@@ -189,6 +225,16 @@ fn display_round_trips_canonical_numeric_pdb() {
 }
 
 #[test]
+fn display_round_trips_lmcutnumeric() {
+    let parsed = parse_search_spec(
+        "astar(lmcutnumeric(ceiling_less_than_one=true, disable_ma=true, bound_iterations=4, precision=0.5, epsilon=0.25))",
+    )
+    .unwrap();
+    let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
+    assert_eq!(parsed, reparsed);
+}
+
+#[test]
 fn rejects_removed_exec_entire_plan_randomize_option() {
     assert!(
         parse_search_spec("astar(multi_domain_abstractions(exec_entire_plan=randomize))",).is_err()
@@ -219,6 +265,11 @@ fn trims_trailing_punctuation() {
         SearchSpec::Astar(HeuristicSpec::CanonicalNumericPdb(
             CanonicalNumericPdbConfig::default()
         ))
+    );
+
+    assert_eq!(
+        parse_search_spec("astar(lmcutnumeric());").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::Lmcutnumeric(LmCutNumericConfig::default()))
     );
 
     assert!(matches!(

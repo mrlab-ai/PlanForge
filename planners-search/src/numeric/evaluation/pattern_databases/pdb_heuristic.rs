@@ -4,7 +4,7 @@ use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
 
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
-use planners_sas::numeric::state_registry::StateRegistry;
+use planners_sas::numeric::state_registry::{StateID, StateRegistry};
 
 use super::pattern_database::PatternDatabase;
 use super::pattern_generator_greedy::{GreedyPatternGeneratorConfig, generate_greedy_pattern};
@@ -17,6 +17,8 @@ pub struct GreedyNumericPdbHeuristic<'task> {
     pdb: PatternDatabase<'task>,
     prop_scratch: RefCell<Vec<i32>>,
     numeric_scratch: RefCell<Vec<f64>>,
+    expanded_numeric_scratch: RefCell<Vec<f64>>,
+    state_value_cache: RefCell<Vec<Option<f64>>>,
 }
 
 impl<'task> GreedyNumericPdbHeuristic<'task> {
@@ -35,7 +37,24 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
             task,
             prop_scratch: RefCell::new(Vec::new()),
             numeric_scratch: RefCell::new(Vec::new()),
+            expanded_numeric_scratch: RefCell::new(Vec::new()),
+            state_value_cache: RefCell::new(Vec::new()),
         })
+    }
+
+    fn cached_state_value(&self, state_id: StateID) -> Option<f64> {
+        self.state_value_cache
+            .borrow()
+            .get(state_id)
+            .and_then(|value| *value)
+    }
+
+    fn cache_state_value(&self, state_id: StateID, value: f64) {
+        let mut cache = self.state_value_cache.borrow_mut();
+        if cache.len() <= state_id {
+            cache.resize(state_id + 1, None);
+        }
+        cache[state_id] = Some(value);
     }
 
     fn require_task_and_registry<'s, 't>(
@@ -67,31 +86,49 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
+        let state_id = eval_state.state().get_id();
+        if let Some(value) = self.cached_state_value(state_id) {
+            return Ok(value);
+        }
+
         let (_task, registry) = Self::require_task_and_registry(eval_state)?;
+        let requires_derived_numeric_values = self.pdb.requires_derived_numeric_values();
 
         let mut propositional_values = self.prop_scratch.borrow_mut();
-        eval_state
-            .state()
-            .fill_state(registry, &mut propositional_values);
-
         let mut numeric_values = self.numeric_scratch.borrow_mut();
         registry
-            .fill_numeric_vars(eval_state.state(), &mut numeric_values)
+            .fill_state_and_numeric_vars_with_options(
+                eval_state.state(),
+                &mut propositional_values,
+                &mut numeric_values,
+                requires_derived_numeric_values,
+            )
             .map_err(|err| {
-                EvaluationError::ComputationFailed(format!("failed to read numeric state: {err:?}"))
+                EvaluationError::ComputationFailed(format!(
+                    "failed to read state values for greedy numeric PDB: {err:?}"
+                ))
             })?;
 
-        let (projected_prop, projected_num) = self
-            .pdb
-            .abstract_state_values(&propositional_values, &numeric_values)
-            .map_err(EvaluationError::ComputationFailed)?;
-
         if self.is_goal_state(&propositional_values) {
+            self.cache_state_value(state_id, 0.0);
             return Ok(0.0);
         }
 
-        let heuristic_value = self.pdb.lookup_or_fallback(&projected_prop, &projected_num);
-        Ok(heuristic_value.max(self.pdb.min_operator_cost()))
+        let mut expanded_numeric_values = self.expanded_numeric_scratch.borrow_mut();
+        self.pdb
+            .expand_numeric_state_values_into(&numeric_values, &mut expanded_numeric_values)
+            .map_err(EvaluationError::ComputationFailed)?;
+
+        let heuristic_value = self
+            .pdb
+            .lookup_projected_or_fallback_from_expanded_state_values(
+                &propositional_values,
+                &expanded_numeric_values,
+            )
+            .map_err(EvaluationError::ComputationFailed)?;
+        let heuristic_value = heuristic_value.max(self.pdb.min_operator_cost());
+        self.cache_state_value(state_id, heuristic_value);
+        Ok(heuristic_value)
     }
 
     fn heuristic_name(&self) -> String {

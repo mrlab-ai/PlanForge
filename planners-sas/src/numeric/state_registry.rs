@@ -758,6 +758,66 @@ impl<'a> StateRegistry<'a> {
         Ok(result)
     }
 
+    pub fn fill_state_and_numeric_vars(
+        &self,
+        state: &ConcreteState,
+        propositional_output: &mut Vec<i32>,
+        numeric_output: &mut Vec<f64>,
+    ) -> Result<(), InvalidIndex> {
+        self.fill_state_and_numeric_vars_with_options(
+            state,
+            propositional_output,
+            numeric_output,
+            true,
+        )
+    }
+
+    pub fn fill_state_and_numeric_vars_with_options(
+        &self,
+        state: &ConcreteState,
+        propositional_output: &mut Vec<i32>,
+        numeric_output: &mut Vec<f64>,
+        evaluate_arithmetic_axioms: bool,
+    ) -> Result<(), InvalidIndex> {
+        propositional_output.clear();
+        propositional_output.reserve(self.task.variables().len());
+
+        numeric_output.clear();
+        numeric_output.resize(self.task.numeric_variables().len(), 0.0);
+
+        let buffer = state.buffer(self);
+        let state_packer = self.global_state_packer;
+        propositional_output.extend(
+            (0..self.task.variables().len()).map(|i| state_packer.get(buffer, i as i32) as i32),
+        );
+
+        let cost_info_borrow = self.cost_info.borrow();
+        let cost_variables = cost_info_borrow.get(state, self);
+
+        for (i, numeric_var) in self.task.numeric_variables().iter().enumerate() {
+            numeric_output[i] = match numeric_var.get_type() {
+                NumericType::Cost => {
+                    let cost_index = self.numeric_indices[i];
+                    if cost_index >= 0 && (cost_index as usize) < cost_variables.len() {
+                        cost_variables[cost_index as usize]
+                    } else {
+                        0.0
+                    }
+                }
+                NumericType::Constant => self.numeric_constants[self.numeric_indices[i] as usize],
+                NumericType::Regular => state_packer.get_double(buffer, self.numeric_indices[i]),
+                NumericType::Derived => 0.0,
+            };
+        }
+
+        if evaluate_arithmetic_axioms && self.axiom_evaluator.has_numeric_axioms() {
+            self.axiom_evaluator
+                .evaluate_arithmetic_axioms(numeric_output)?;
+        }
+
+        Ok(())
+    }
+
     pub fn fill_numeric_vars(
         &self,
         state: &ConcreteState,
