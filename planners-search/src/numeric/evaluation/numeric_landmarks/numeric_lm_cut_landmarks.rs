@@ -3,11 +3,11 @@ use super::numeric_bound::NumericBound;
 use ordered_float::NotNan;
 use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, Effect, Fact, Operator,
-    metric_operator_cost_from_initial_values,
+    metric_operator_cost_from_initial_values, AbstractNumericTask, AssignmentEffect,
+    AssignmentOperation, Effect, Fact, Operator,
 };
-use planners_sas::numeric::utils::linear_effects::LinearNumericEffect;
 use planners_sas::numeric::utils::linear_effects::LinearExpression;
+use planners_sas::numeric::utils::linear_effects::LinearNumericEffect;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
@@ -19,6 +19,21 @@ struct NumericCondition {
     name: String,
 }
 
+impl NumericCondition {
+    fn from_expression(
+        expression: LinearExpression,
+        is_strictly_greater: bool,
+        name: String,
+    ) -> Self {
+        Self {
+            coefficients: expression.coefficients,
+            constant: expression.constant,
+            is_strictly_greater,
+            name,
+        }
+    }
+}
+
 fn invert_comparison_operator(operator: &ComparisonOperator) -> ComparisonOperator {
     match operator {
         ComparisonOperator::LessThan => ComparisonOperator::GreaterThanOrEqual,
@@ -27,6 +42,27 @@ fn invert_comparison_operator(operator: &ComparisonOperator) -> ComparisonOperat
         ComparisonOperator::GreaterThanOrEqual => ComparisonOperator::LessThan,
         ComparisonOperator::GreaterThan => ComparisonOperator::LessThanOrEqual,
         ComparisonOperator::UnEqual => ComparisonOperator::Equal,
+    }
+}
+
+fn comparison_operator_for_fact_value(
+    comparison_axiom: &ComparisonAxiom,
+    fact_value: i32,
+) -> Option<ComparisonOperator> {
+    assert!(
+        fact_value == 0 || fact_value == 1,
+        "comparison fact value must be boolean-like, got {fact_value}"
+    );
+
+    let operator = if fact_value == 0 {
+        comparison_axiom.get_operator().clone()
+    } else {
+        invert_comparison_operator(comparison_axiom.get_operator())
+    };
+
+    match operator {
+        ComparisonOperator::UnEqual => None,
+        supported => Some(supported),
     }
 }
 
@@ -505,13 +541,14 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .ok_or_else(|| format!("LM-cut original operator id {original_id} is invalid"))?
                     .clone();
                 for mapped_operator_id in mapped {
-                    let operator = self.relaxed_operators.get(mapped_operator_id).ok_or_else(
-                        || {
-                            format!(
+                    let operator =
+                        self.relaxed_operators
+                            .get(mapped_operator_id)
+                            .ok_or_else(|| {
+                                format!(
                                 "LM-cut mapped relaxed operator id {mapped_operator_id} is invalid"
                             )
-                        },
-                    )?;
+                            })?;
                     if operator.unsatisfied_preconditions == 0 {
                         let supporter_id = operator.h_max_supporter.ok_or_else(|| {
                             format!(
@@ -842,14 +879,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     return Ok((m_1, 1.0));
                 }
 
-                let u_target =
-                    (self.numeric_initial_state[condition_id] * c_u * operator.cost_2
-                        / operator.cost_1)
-                        .sqrt()
-                        - c;
-                if u_target - s_u < self.config.precision
-                    || c + u_target < self.config.precision
-                {
+                let u_target = (self.numeric_initial_state[condition_id] * c_u * operator.cost_2
+                    / operator.cost_1)
+                    .sqrt()
+                    - c;
+                if u_target - s_u < self.config.precision || c + u_target < self.config.precision {
                     return Ok((-1.0, -1.0));
                 }
 
@@ -933,12 +967,14 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 operator_id,
             )?;
             if self.multiplier_allows_traversal(operator_id, ms) {
-                let target_cost = self.propositions[supporter_id].h_max_cost + self.edge_cost(operator_id, ms)?;
+                let target_cost =
+                    self.propositions[supporter_id].h_max_cost + self.edge_cost(operator_id, ms)?;
                 self.enqueue_if_necessary(effect_id, target_cost)?;
             }
             return Ok(());
         }
-        let target_cost = self.propositions[supporter_id].h_max_cost + self.relaxed_operators[operator_id].cost_2;
+        let target_cost =
+            self.propositions[supporter_id].h_max_cost + self.relaxed_operators[operator_id].cost_2;
         self.enqueue_if_necessary(effect_id, target_cost)?;
         Ok(())
     }
@@ -981,14 +1017,19 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let linearized_assignment_effects = self
             .task
             .linearized_assignment_effects(operator_id)
-            .map_err(|error| format!("LM-cut failed to linearize numeric effects for operator {operator_id}: {error}"))?;
+            .map_err(|error| {
+                format!(
+                    "LM-cut failed to linearize numeric effects for operator {operator_id}: {error}"
+                )
+            })?;
         let precondition_ids = self.build_precondition_ids(operator.preconditions());
         let unconditional_assignment_effect_ids = operator
             .assignment_effects()
             .iter()
             .enumerate()
             .filter_map(|(assignment_effect_id, assignment_effect)| {
-                if assignment_effect.is_conditional() || !assignment_effect.conditions().is_empty() {
+                if assignment_effect.is_conditional() || !assignment_effect.conditions().is_empty()
+                {
                     None
                 } else {
                     Some(assignment_effect_id)
@@ -1064,7 +1105,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
         relaxed_operator.assert_well_formed();
         self.relaxed_operators.push(relaxed_operator);
 
-        for (assignment_effect_id, assignment_effect) in operator.assignment_effects().iter().enumerate() {
+        for (assignment_effect_id, assignment_effect) in
+            operator.assignment_effects().iter().enumerate()
+        {
             if !assignment_effect.is_conditional() && assignment_effect.conditions().is_empty() {
                 continue;
             }
@@ -1163,9 +1206,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .ok_or_else(|| format!("LM-cut numeric condition {condition_id} is invalid"))?;
         let mut expression = LinearExpression::zero(self.task.numeric_variables().len());
         for &assignment_effect_id in assignment_effect_ids {
-            let linear_effect = linearized_assignment_effects.get(assignment_effect_id).ok_or_else(|| {
-                format!("LM-cut assignment effect id {assignment_effect_id} is invalid")
-            })?;
+            let linear_effect = linearized_assignment_effects
+                .get(assignment_effect_id)
+                .ok_or_else(|| {
+                    format!("LM-cut assignment effect id {assignment_effect_id} is invalid")
+                })?;
             let target_coefficient = condition
                 .coefficients
                 .get(linear_effect.affected_var_id)
@@ -1184,10 +1229,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
         relaxed_operator_id: usize,
         coefficients: &[f64],
     ) -> Result<LinearExpression, String> {
-        let relaxed_operator = self
-            .relaxed_operators
-            .get(relaxed_operator_id)
-            .ok_or_else(|| format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid"))?;
+        let relaxed_operator =
+            self.relaxed_operators
+                .get(relaxed_operator_id)
+                .ok_or_else(|| {
+                    format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid")
+                })?;
         let mut expression = LinearExpression::zero(self.task.numeric_variables().len());
         for linear_effect in &relaxed_operator.linear_assignment_effects {
             let weight = coefficients
@@ -1242,7 +1289,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         op2_relaxed_id,
                         &base_expression.coefficients,
                     )?;
-                    if !self_loop.is_constant() || self_loop.constant.abs() >= self.config.precision {
+                    if !self_loop.is_constant() || self_loop.constant.abs() >= self.config.precision
+                    {
                         continue;
                     }
 
@@ -1250,11 +1298,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     for op1_id in 0..operator_count {
                         for &op1_relaxed_id in &relaxed_by_original[op1_id] {
                             let op1 = &self.relaxed_operators[op1_relaxed_id];
-                            if op1
-                                .linear_assignment_effects
-                                .iter()
-                                .any(|effect| effect.is_conditional || !effect.conditions.is_empty())
-                            {
+                            if op1.linear_assignment_effects.iter().any(|effect| {
+                                effect.is_conditional || !effect.conditions.is_empty()
+                            }) {
                                 continue;
                             }
 
@@ -1269,15 +1315,18 @@ impl<'task> LandmarkCutLandmarks<'task> {
                                 continue;
                             }
 
-                            let parallel_expression =
-                                self.operator_condition_delta_expression(op1_relaxed_id, condition_id)?;
+                            let parallel_expression = self.operator_condition_delta_expression(
+                                op1_relaxed_id,
+                                condition_id,
+                            )?;
                             if !parallel_expression.is_constant()
                                 || parallel_expression.constant.abs() >= self.config.precision
                             {
                                 continue;
                             }
 
-                            condition_supporters.push((op1_relaxed_id, support_expression.constant));
+                            condition_supporters
+                                .push((op1_relaxed_id, support_expression.constant));
                         }
                     }
 
@@ -1362,10 +1411,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
         relaxed_operator_id: usize,
         condition_id: usize,
     ) -> Result<LinearExpression, String> {
-        let relaxed_operator = self
-            .relaxed_operators
-            .get(relaxed_operator_id)
-            .ok_or_else(|| format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid"))?;
+        let relaxed_operator =
+            self.relaxed_operators
+                .get(relaxed_operator_id)
+                .ok_or_else(|| {
+                    format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid")
+                })?;
         let condition = self
             .conditions
             .get(condition_id)
@@ -1393,19 +1444,23 @@ impl<'task> LandmarkCutLandmarks<'task> {
         relaxed_operator_id: usize,
         condition_id: usize,
     ) -> Result<f64, String> {
-        let relaxed_operator = self
-            .relaxed_operators
-            .get(relaxed_operator_id)
-            .ok_or_else(|| format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid"))?;
+        let relaxed_operator =
+            self.relaxed_operators
+                .get(relaxed_operator_id)
+                .ok_or_else(|| {
+                    format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid")
+                })?;
         let condition = self
             .conditions
             .get(condition_id)
             .ok_or_else(|| format!("LM-cut numeric condition {condition_id} is invalid"))?;
 
-        let expression = self.operator_condition_delta_expression(relaxed_operator_id, condition_id)?;
+        let expression =
+            self.operator_condition_delta_expression(relaxed_operator_id, condition_id)?;
         let mut net = 0.0;
         for linear_effect in &relaxed_operator.linear_assignment_effects {
-            if !self.numeric_effect_conditions_hold(propositional_values, &linear_effect.conditions) {
+            if !self.numeric_effect_conditions_hold(propositional_values, &linear_effect.conditions)
+            {
                 continue;
             }
             let affected = linear_effect.affected_var_id;
@@ -1429,7 +1484,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
         Ok(net)
     }
 
-    fn numeric_effect_conditions_hold(&self, propositional_values: &[i32], conditions: &[Fact]) -> bool {
+    fn numeric_effect_conditions_hold(
+        &self,
+        propositional_values: &[i32],
+        conditions: &[Fact],
+    ) -> bool {
         conditions.iter().all(|condition| {
             propositional_values.get(condition.var() as usize).copied() == Some(condition.value())
         })
@@ -1480,11 +1539,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
             self.comparison_axiom_by_var
                 .insert(affected_var_id, comparison_axiom_id);
             for fact_value in [0_i32, 1_i32] {
-                let conditions = self.build_numeric_conditions_for_fact_value(
+                let Some(conditions) = self.build_numeric_conditions_for_fact_value(
                     comparison_axiom,
                     affected_var_id,
                     fact_value,
-                );
+                ) else {
+                    continue;
+                };
                 let mut condition_ids = Vec::new();
                 for condition in conditions {
                     let condition_id = self.conditions.len();
@@ -1510,12 +1571,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
         comparison_axiom: &ComparisonAxiom,
         affected_var_id: usize,
         fact_value: i32,
-    ) -> Vec<NumericCondition> {
-        let operator = if fact_value == 0 {
-            comparison_axiom.get_operator().clone()
-        } else {
-            invert_comparison_operator(comparison_axiom.get_operator())
-        };
+    ) -> Option<Vec<NumericCondition>> {
+        let operator = comparison_operator_for_fact_value(comparison_axiom, fact_value)?;
         let lhs = usize::try_from(comparison_axiom.get_left_var_id())
             .expect("comparison lhs numeric var must be non-negative");
         let rhs = usize::try_from(comparison_axiom.get_right_var_id())
@@ -1525,28 +1582,27 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
         match operator {
             ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
-                vec![self.build_numeric_condition(
+                Some(vec![self.build_numeric_condition(
                     lhs,
                     rhs,
                     matches!(operator, ComparisonOperator::GreaterThan),
                     fact_name,
-                )]
+                )])
             }
-            ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => {
-                vec![self.build_numeric_condition(
+            ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => Some(vec![self
+                .build_numeric_condition(
                     rhs,
                     lhs,
                     matches!(operator, ComparisonOperator::LessThan),
                     fact_name,
-                )]
-            }
-            ComparisonOperator::Equal => vec![
+                )]),
+            ComparisonOperator::Equal => Some(vec![
                 self.build_numeric_condition(lhs, rhs, false, fact_name.clone()),
                 self.build_numeric_condition(rhs, lhs, false, fact_name),
-            ],
-            ComparisonOperator::UnEqual => {
-                panic!("LM-cut numeric conditions do not yet support disequality facts")
-            }
+            ]),
+            ComparisonOperator::UnEqual => unreachable!(
+                "unsupported disequality facts must be filtered before building conditions"
+            ),
         }
     }
 
@@ -1557,19 +1613,28 @@ impl<'task> LandmarkCutLandmarks<'task> {
         is_strictly_greater: bool,
         name: String,
     ) -> NumericCondition {
-        let mut coefficients = vec![0.0; self.task.numeric_variables().len()];
-        assert!(
-            positive_var_id < coefficients.len() && negative_var_id < coefficients.len(),
-            "comparison axiom references invalid numeric variable"
-        );
-        coefficients[positive_var_id] += 1.0;
-        coefficients[negative_var_id] -= 1.0;
-        NumericCondition {
-            coefficients,
-            constant: 0.0,
+        let positive_expression = self
+            .task
+            .linearize_numeric_var(positive_var_id)
+            .unwrap_or_else(|error| {
+                panic!(
+                "LM-cut failed to linearize comparison lhs numeric var {positive_var_id}: {error}"
+            )
+            });
+        let negative_expression = self
+            .task
+            .linearize_numeric_var(negative_var_id)
+            .unwrap_or_else(|error| {
+                panic!(
+                "LM-cut failed to linearize comparison rhs numeric var {negative_var_id}: {error}"
+            )
+            });
+        let expression = positive_expression.subtract(&negative_expression);
+        NumericCondition::from_expression(
+            expression,
             is_strictly_greater,
-            name: format!("numeric ({name})"),
-        }
+            format!("numeric ({name})"),
+        )
     }
 
     fn numeric_condition_proposition_id(&self, condition_id: usize) -> Result<usize, String> {
@@ -1614,7 +1679,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
 
         if self.is_numeric_axiom_var(fact.var() as usize) {
-            return Vec::new();
+            let fact_name = self.task.get_fact_name(fact);
+            panic!(
+                "LM-cut numeric conditions do not support disequality comparison fact `{fact_name}`"
+            );
         }
 
         vec![self.get_proposition_id(fact)]
@@ -1691,12 +1759,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 numeric_values,
                 self.artificial_goal_id,
             )?;
-            self.second_exploration(
-                propositional_values,
-                numeric_values,
-                &mut cut,
-                &mut m_list,
-            )?;
+            self.second_exploration(propositional_values, numeric_values, &mut cut, &mut m_list)?;
             assert!(!cut.is_empty(), "LM-cut must find a non-empty cut");
 
             let mut cut_cost = f64::INFINITY;
@@ -1959,6 +2022,76 @@ mod tests {
     }
 
     #[test]
+    fn numeric_equality_goal_condition_is_seeded_from_numeric_state() {
+        use planners_sas::numeric::numeric_task::{Fact, NumericType, NumericVariable};
+
+        let variables = vec![simple_var("cmp", &["eq", "neq"], 0)];
+        let numeric_variables = vec![
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+        ];
+        let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::Equal)];
+        let task = NumericRootTask::new(
+            3,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![Fact::new(0, 0)],
+            vec![],
+            vec![0],
+            vec![2.0, 2.0],
+            vec![],
+            vec![],
+            comparison_axioms,
+            vec![],
+            (0, 0),
+        );
+        let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+
+        let (dead_end, total_cost, cuts) = landmarks
+            .compute_landmarks(&[0], 1, &[2.0, 2.0])
+            .expect("satisfied equality goal condition should produce zero LM-cut cost");
+
+        assert!(!dead_end);
+        assert_eq!(total_cost, 0.0);
+        assert!(cuts.is_empty());
+        assert_eq!(
+            landmarks.propositions[landmarks.artificial_goal_id].status,
+            PropositionStatus::Reached
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "do not support disequality comparison fact")]
+    fn rejects_disequality_goal_fact_for_equality_axiom() {
+        use planners_sas::numeric::numeric_task::{Fact, NumericType, NumericVariable};
+
+        let variables = vec![simple_var("cmp", &["eq", "neq"], 0)];
+        let numeric_variables = vec![
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+        ];
+        let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::Equal)];
+        let task = NumericRootTask::new(
+            3,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![Fact::new(0, 1)],
+            vec![],
+            vec![1],
+            vec![2.0, 3.0],
+            vec![],
+            vec![],
+            comparison_axioms,
+            vec![],
+            (0, 0),
+        );
+
+        let _ = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+    }
+
+    #[test]
     fn compute_landmarks_returns_propositional_cut_cost() {
         let task = proposition_task();
         let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
@@ -2082,6 +2215,63 @@ mod tests {
         assert_eq!(total_cost, 2.0 / 3.0);
         assert_eq!(cuts.len(), 1);
         assert_eq!(cuts[0], vec![(2.0 / 3.0, 0)]);
+    }
+
+    #[test]
+    fn compute_landmarks_uses_linearized_derived_numeric_conditions() {
+        let variables = vec![simple_var("cmp", &["false", "true"], 0)];
+        let numeric_variables = vec![
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("sum".to_string(), NumericType::Derived, -1),
+            NumericVariable::new("target".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("inc".to_string(), NumericType::Constant, -1),
+        ];
+        let operators = vec![Operator::new(
+            "increase-x".to_string(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                4,
+                false,
+                vec![],
+            )],
+            1,
+        )];
+        let assignment_axioms = vec![planners_sas::numeric::axioms::AssignmentAxiom::new(
+            2,
+            planners_sas::numeric::axioms::CalOperator::Sum,
+            0,
+            1,
+        )];
+        let comparison_axioms = vec![ComparisonAxiom::new(0, 3, 2, ComparisonOperator::LessThan)];
+        let task = NumericRootTask::new(
+            3,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![Fact::new(0, 0)],
+            vec![],
+            vec![1],
+            vec![0.0, 1.0, 1.0, 3.0, 1.0],
+            operators,
+            vec![],
+            comparison_axioms,
+            assignment_axioms,
+            (0, 0),
+        );
+        let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+
+        let (dead_end, total_cost, cuts) = landmarks
+            .compute_landmarks(&[1], 1, &[0.0, 1.0, 1.0, 3.0, 1.0])
+            .expect("derived numeric conditions should be linearized to base variables");
+
+        assert!(!dead_end);
+        assert_eq!(total_cost, 2.0);
+        assert_eq!(cuts.len(), 1);
+        assert_eq!(cuts[0], vec![(2.0, 0)]);
     }
 
     #[test]
