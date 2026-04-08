@@ -12,6 +12,8 @@ use planners_sas::numeric::numeric_task::NumericRootTask;
 use planners_sas::numeric::numeric_task::NumericType;
 use planners_sas::numeric::state_registry::StateRegistry;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
+use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
+use planners_search::numeric::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use planners_search::numeric::search_engine::SearchStatus;
 use planners_search::numeric::search_engine::{AStarSearch, SearchEngine};
 use planners_search::numeric::successor_generator::GroundedSuccessorGenerator;
@@ -265,5 +267,76 @@ fn fd_blind_plan_cost_matches_misc_benchmarks() {
         mismatches.is_empty(),
         "plan cost mismatches:\n{}",
         mismatches.join("\n")
+    );
+}
+
+#[test]
+fn plant_watering_lmcutnumeric_initial_state_is_finite_and_bounded_by_optimum() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/numeric-pddl-files/plant-watering");
+    let domain = root.join("domain.pddl");
+    let problem = root.join("prob_4_1_1.pddl");
+    let expected_optimal_cost = 13.0;
+
+    let temp_dir = unique_temp_dir("plant_watering_lmcut_initial")
+        .unwrap_or_else(|e| panic!("failed to create temp dir: {e}"));
+    let output_sas = temp_dir.join("output.sas");
+    let preprocessed = temp_dir.join("output");
+
+    translate_to_sas_to_path_fast(
+        domain
+            .to_str()
+            .unwrap_or_else(|| panic!("non-utf8 domain path: {domain:?}")),
+        problem
+            .to_str()
+            .unwrap_or_else(|| panic!("non-utf8 problem path: {problem:?}")),
+        &output_sas,
+    )
+    .unwrap_or_else(|e| panic!("translate failed for Plant Watering: {e}"));
+
+    run_preprocess_to_output(
+        &[
+            "preprocess".to_string(),
+            output_sas.to_string_lossy().to_string(),
+        ],
+        &preprocessed,
+    );
+
+    let (dead_end, total_cost) = {
+        let task = NumericRootTask::from_file(&preprocessed);
+        let state_packer = IntDoublePacker::from_task(&task);
+        let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+        let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+        let initial_state = state_registry.get_initial_state();
+
+        let mut propositional_values = Vec::new();
+        let mut numeric_values = Vec::new();
+        state_registry
+            .fill_state_and_numeric_vars(&initial_state, &mut propositional_values, &mut numeric_values)
+            .expect("initial Plant Watering state should unpack successfully");
+
+        let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+        let (dead_end, total_cost, _cuts) = landmarks
+            .compute_landmarks(
+                &propositional_values,
+                initial_state.buffer(&state_registry).len(),
+                &numeric_values,
+            )
+            .expect("Plant Watering initial LM-cut computation should finish");
+        (dead_end, total_cost)
+    };
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    assert!(
+        !dead_end,
+        "Plant Watering initial state should not be a dead end for lmcutnumeric"
+    );
+    assert!(
+        total_cost.is_finite(),
+        "Plant Watering initial lmcutnumeric value should be finite, got {total_cost}"
+    );
+    assert!(
+        total_cost <= expected_optimal_cost + 1e-6,
+        "Plant Watering initial lmcutnumeric value should be <= {expected_optimal_cost}, got {total_cost}"
     );
 }
