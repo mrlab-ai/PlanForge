@@ -85,12 +85,6 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
         task: &'task dyn AbstractNumericTask,
         config: LmCutNumericConfig,
     ) -> Result<Self, String> {
-        if config.use_second_order_simple {
-            return Err(
-                "lmcutnumeric use_second_order_simple is not supported yet in the Rust port because the current task model does not expose the linear-effect metadata required by numeric-fd SOSE construction"
-                    .to_string(),
-            );
-        }
         if config.precision < 0.0 {
             return Err("lmcutnumeric precision must be non-negative".to_string());
         }
@@ -227,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn from_config_rejects_unsupported_second_order_simple_flag() {
+    fn from_config_accepts_second_order_simple_flag() {
         let task = NumericRootTask::new(
             3,
             Metric::new(true, -1),
@@ -246,12 +240,9 @@ mod tests {
         let mut config = LmCutNumericConfig::default();
         config.use_second_order_simple = true;
 
-        let error = match LandmarkCutNumericHeuristic::from_config(&task, config) {
-            Ok(_) => panic!("SOSE should fail fast until the Rust task model supports it"),
-            Err(error) => error,
-        };
+        let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
+            .expect("supported SOSE flag should construct the heuristic");
 
-        assert!(error.contains("use_second_order_simple"));
-        assert!(error.contains("linear-effect metadata"));
+        assert!(heuristic.config().use_second_order_simple);
     }
 }
