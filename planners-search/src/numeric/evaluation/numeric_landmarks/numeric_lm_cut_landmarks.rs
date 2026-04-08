@@ -1032,7 +1032,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .propositions
             .get_mut(proposition_id)
             .ok_or_else(|| format!("LM-cut proposition id {proposition_id} is invalid"))?;
-        if proposition.status == PropositionStatus::Unreached || proposition.h_max_cost > cost {
+        if proposition.status == PropositionStatus::Unreached
+            || proposition.h_max_cost > cost + self.config.precision
+        {
             proposition.status = PropositionStatus::Reached;
             proposition.h_max_cost = cost;
             self.priority_queue.push((
@@ -2108,9 +2110,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .collect(),
             );
 
-            self.first_exploration(propositional_values, numeric_values)?;
+            self.first_exploration_incremental(propositional_values, numeric_values, &cut)?;
             cut.clear();
             m_list.clear();
+            self.reset_goal_zone_statuses();
+            self.propositions[self.artificial_goal_id].status = PropositionStatus::Reached;
+            self.propositions[self.artificial_precondition_id].status = PropositionStatus::Reached;
         }
 
         return Ok((false, total_cost, landmarks));
@@ -2214,6 +2219,23 @@ mod tests {
             .expect("conditional relaxed operator should exist");
         assert!(conditional.precondition_ids.contains(&2));
         assert_eq!(conditional.effect_ids, vec![5]);
+    }
+
+    #[test]
+    fn enqueue_ignores_subprecision_cost_improvements() {
+        let task = proposition_task();
+        let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+        landmarks.setup_exploration_queue();
+
+        let proposition_id = landmarks.get_proposition_id(&Fact::new(0, 0));
+        assert!(landmarks.enqueue_if_necessary(proposition_id, 1.0).unwrap());
+        assert!(!landmarks
+            .enqueue_if_necessary(
+                proposition_id,
+                1.0 - (landmarks.config.precision * 0.5),
+            )
+            .unwrap());
+        assert_eq!(landmarks.propositions[proposition_id].h_max_cost, 1.0);
     }
 
     #[test]
