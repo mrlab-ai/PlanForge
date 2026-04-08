@@ -2,20 +2,21 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use nom::{
-    IResult,
     branch::alt,
     bytes::complete::{tag_no_case, take_while1},
     character::complete::{char, multispace0, one_of},
     combinator::{all_consuming, cut, map, map_res, opt},
-    error::{VerboseError, convert_error},
+    error::{convert_error, VerboseError},
     multi::separated_list0,
     sequence::{delimited, terminated, tuple},
+    IResult,
 };
 
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
     FlawTreatment, InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
 };
+use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use planners_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planners_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 
@@ -25,6 +26,8 @@ pub enum HeuristicSpec {
     Blind,
     #[serde(rename = "domain_abstraction")]
     DomainAbstraction,
+    #[serde(rename = "canonical_numeric_pdb")]
+    CanonicalNumericPdb(CanonicalNumericPdbConfig),
     #[serde(rename = "greedy_numeric_pdb")]
     GreedyNumericPdb(GreedyPatternGeneratorConfig),
     #[serde(rename = "multi_domain_abstractions")]
@@ -46,6 +49,13 @@ impl fmt::Display for HeuristicSpec {
         match self {
             HeuristicSpec::Blind => write!(f, "blind()"),
             HeuristicSpec::DomainAbstraction => write!(f, "domain_abstraction()"),
+            HeuristicSpec::CanonicalNumericPdb(config) => {
+                if *config == CanonicalNumericPdbConfig::default() {
+                    write!(f, "canonical_numeric_pdb()")
+                } else {
+                    write!(f, "canonical_numeric_pdb({config})")
+                }
+            }
             HeuristicSpec::GreedyNumericPdb(config) => {
                 if *config == GreedyPatternGeneratorConfig::default() {
                     write!(f, "greedy_numeric_pdb()")
@@ -285,6 +295,31 @@ fn build_greedy_numeric_pdb_config(
     Ok(config)
 }
 
+fn build_canonical_numeric_pdb_config(
+    args: Vec<(String, String)>,
+) -> Result<CanonicalNumericPdbConfig, String> {
+    let mut config = CanonicalNumericPdbConfig::default();
+    let mut seen = std::collections::BTreeSet::new();
+
+    for (key, value) in args {
+        if !seen.insert(key.clone()) {
+            return Err(format!("duplicate option `{key}`"));
+        }
+
+        match key.as_str() {
+            "max_pdb_states" => config.max_pdb_states = parse_usize(&value)?,
+            "max_pattern_size" => config.max_pattern_size = parse_usize(&value)?,
+            "random_seed" => config.random_seed = parse_i32(&value)?,
+            "variable_order_type" => {
+                config.variable_order_type = parse_greedy_variable_order_type(&value)?
+            }
+            _ => return Err(format!("unknown option `{key}`")),
+        }
+    }
+
+    Ok(config)
+}
+
 fn multi_domain_abstractions_parens(
     input: &str,
 ) -> Res<'_, DomainAbstractionCollectionGeneratorMultipleCegarConfig> {
@@ -315,6 +350,20 @@ fn greedy_numeric_pdb_parens(input: &str) -> Res<'_, GreedyPatternGeneratorConfi
     )(input)
 }
 
+fn canonical_numeric_pdb_parens(input: &str) -> Res<'_, CanonicalNumericPdbConfig> {
+    map_res(
+        delimited(
+            ws(char('(')),
+            terminated(
+                separated_list0(ws(char(',')), key_value_argument),
+                opt(ws(char(','))),
+            ),
+            ws(char(')')),
+        ),
+        build_canonical_numeric_pdb_config,
+    )(input)
+}
+
 fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
     let blind = map(
         tuple((ws(tag_no_case("blind")), opt(ws(empty_parens)))),
@@ -324,6 +373,17 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
     let domain_abstraction = map(
         tuple((ws(tag_no_case("domain_abstraction")), opt(ws(empty_parens)))),
         |_| HeuristicSpec::DomainAbstraction,
+    );
+
+    let canonical_numeric_pdb = map(
+        tuple((
+            ws(tag_no_case("canonical_numeric_pdb")),
+            opt(ws(alt((
+                map(empty_parens, |_| CanonicalNumericPdbConfig::default()),
+                canonical_numeric_pdb_parens,
+            )))),
+        )),
+        |(_, config)| HeuristicSpec::CanonicalNumericPdb(config.unwrap_or_default()),
     );
 
     let greedy_numeric_pdb = map(
@@ -347,6 +407,7 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
 
     ws(alt((
         multi_domain_abstractions,
+        canonical_numeric_pdb,
         greedy_numeric_pdb,
         domain_abstraction,
         blind,

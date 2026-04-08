@@ -7,9 +7,9 @@ use planners_sas::numeric::axioms::{
     AssignmentAxiom, AxiomEvaluator, CalOperator, ComparisonAxiom, PropositionalAxiom,
 };
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, Effect, ExplicitVariable, Fact,
-    Metric, NumericRootTask, NumericType, NumericVariable, Operator,
-    metric_operator_cost_from_initial_values,
+    metric_operator_cost_from_initial_values, AbstractNumericTask, AssignmentEffect,
+    AssignmentOperation, Effect, ExplicitVariable, Fact, Metric, NumericRootTask, NumericType,
+    NumericVariable, Operator,
 };
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
@@ -118,10 +118,82 @@ fn apply_cal_operator(op: &CalOperator, lhs: f64, rhs: f64) -> f64 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pattern {
     pub regular: Vec<usize>,
     pub numeric: Vec<usize>,
+}
+
+impl Pattern {
+    pub fn new(regular: Vec<usize>, numeric: Vec<usize>) -> Self {
+        let mut pattern = Self { regular, numeric };
+        pattern.normalize_in_place();
+        pattern
+    }
+
+    pub fn normalized(&self) -> Self {
+        let mut pattern = self.clone();
+        pattern.normalize_in_place();
+        pattern
+    }
+
+    pub fn normalize_in_place(&mut self) {
+        self.regular.sort_unstable();
+        self.regular.dedup();
+        self.numeric.sort_unstable();
+        self.numeric.dedup();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.regular.is_empty() && self.numeric.is_empty()
+    }
+
+    pub fn total_len(&self) -> usize {
+        self.regular.len() + self.numeric.len()
+    }
+
+    pub fn add_regular_var(&mut self, var_id: usize) -> bool {
+        match self.regular.binary_search(&var_id) {
+            Ok(_) => false,
+            Err(index) => {
+                self.regular.insert(index, var_id);
+                true
+            }
+        }
+    }
+
+    pub fn add_numeric_var(&mut self, var_id: usize) -> bool {
+        match self.numeric.binary_search(&var_id) {
+            Ok(_) => false,
+            Err(index) => {
+                self.numeric.insert(index, var_id);
+                true
+            }
+        }
+    }
+
+    pub fn is_subset_of(&self, other: &Self) -> bool {
+        is_sorted_subset(&self.regular, &other.regular)
+            && is_sorted_subset(&self.numeric, &other.numeric)
+    }
+}
+
+fn is_sorted_subset(lhs: &[usize], rhs: &[usize]) -> bool {
+    let mut lhs_index = 0;
+    let mut rhs_index = 0;
+
+    while lhs_index < lhs.len() && rhs_index < rhs.len() {
+        match lhs[lhs_index].cmp(&rhs[rhs_index]) {
+            std::cmp::Ordering::Less => return false,
+            std::cmp::Ordering::Equal => {
+                lhs_index += 1;
+                rhs_index += 1;
+            }
+            std::cmp::Ordering::Greater => rhs_index += 1,
+        }
+    }
+
+    lhs_index == lhs.len()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -492,7 +564,8 @@ impl<'task> ProjectedTask<'task> {
 
         let mut variable_names: Vec<String> = Vec::with_capacity(projected_var_to_original.len());
         let mut fact_names: Vec<Vec<String>> = Vec::with_capacity(projected_var_to_original.len());
-        let mut variable_domain_sizes: Vec<u32> = Vec::with_capacity(projected_var_to_original.len());
+        let mut variable_domain_sizes: Vec<u32> =
+            Vec::with_capacity(projected_var_to_original.len());
         let mut variable_default_values: Vec<u32> =
             Vec::with_capacity(projected_var_to_original.len());
         for &original_var_id in &projected_var_to_original {
@@ -694,13 +767,18 @@ impl<'task> ProjectedTask<'task> {
             (0, 0),
         );
         let compiled_axiom_evaluator_data = CompiledAxiomEvaluatorData::new(&compilation_task);
-        let compiled_axiom_evaluator_scratch =
-            RefCell::new(CompiledAxiomEvaluatorScratch::new(&compiled_axiom_evaluator_data));
+        let compiled_axiom_evaluator_scratch = RefCell::new(CompiledAxiomEvaluatorScratch::new(
+            &compiled_axiom_evaluator_data,
+        ));
 
         let propositional_packer = projected_propositional_packer_from_variables(&variables);
         let mut initial_packed_propositional = vec![0u64; propositional_packer.num_bins() as usize];
         for (var_id, value) in projected_prop_values.iter().enumerate() {
-            propositional_packer.set(&mut initial_packed_propositional, var_id as i32, *value as u64);
+            propositional_packer.set(
+                &mut initial_packed_propositional,
+                var_id as i32,
+                *value as u64,
+            );
         }
         let cached_operators = build_cached_operators(&operators);
 
@@ -832,7 +910,10 @@ impl<'task> ProjectedTask<'task> {
         Ok((propositional, numeric))
     }
 
-    pub fn pack_propositional_values(&self, propositional_values: &[i32]) -> Result<Vec<u64>, String> {
+    pub fn pack_propositional_values(
+        &self,
+        propositional_values: &[i32],
+    ) -> Result<Vec<u64>, String> {
         if propositional_values.len() != self.variables.len() {
             return Err(format!(
                 "expected {} propositional values, got {}",
@@ -886,8 +967,11 @@ impl<'task> ProjectedTask<'task> {
                 if let Some(slot) = successor_propositional.get_mut(effect.var_id) {
                     *slot = effect.value;
                 }
-                self.propositional_packer
-                    .set(successor_packed, effect.var_id as i32, effect.value as u64);
+                self.propositional_packer.set(
+                    successor_packed,
+                    effect.var_id as i32,
+                    effect.value as u64,
+                );
             }
         }
 
@@ -898,11 +982,15 @@ impl<'task> ProjectedTask<'task> {
             let source = successor_numeric
                 .get(effect.source_var_id)
                 .copied()
-                .ok_or_else(|| format!("assignment source out of bounds: {}", effect.source_var_id))?;
+                .ok_or_else(|| {
+                    format!("assignment source out of bounds: {}", effect.source_var_id)
+                })?;
             let target = successor_numeric
                 .get(effect.target_var_id)
                 .copied()
-                .ok_or_else(|| format!("assignment target out of bounds: {}", effect.target_var_id))?;
+                .ok_or_else(|| {
+                    format!("assignment target out of bounds: {}", effect.target_var_id)
+                })?;
             let result = AssignmentOperation::apply(target, &effect.operation, source);
             if let Some(slot) = successor_numeric.get_mut(effect.target_var_id) {
                 *slot = result;
@@ -2479,7 +2567,11 @@ mod tests {
         let pattern_names: Vec<_> = projected
             .pattern_numeric_projected_ids()
             .iter()
-            .map(|&projected_id| projected.numeric_variables()[projected_id].name().to_string())
+            .map(|&projected_id| {
+                projected.numeric_variables()[projected_id]
+                    .name()
+                    .to_string()
+            })
             .collect();
         assert_eq!(pattern_names, vec!["a", "x", "z"]);
     }

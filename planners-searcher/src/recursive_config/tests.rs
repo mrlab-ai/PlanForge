@@ -3,6 +3,7 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
     InitSplitQuantity, VariableSubset,
 };
+use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use planners_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planners_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 
@@ -59,6 +60,42 @@ fn parses_astar_greedy_numeric_pdb_with_named_options() {
 
     assert_eq!(config.max_pdb_states, 321);
     assert!(!config.numeric_first);
+    assert_eq!(config.random_seed, 7);
+    assert_eq!(
+        config.variable_order_type,
+        GreedyVariableOrderType::ReverseLevel
+    );
+}
+
+#[test]
+fn parses_astar_canonical_numeric_pdb_with_or_without_unit_parens() {
+    assert_eq!(
+        parse_search_spec("astar(canonical_numeric_pdb)").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::CanonicalNumericPdb(
+            CanonicalNumericPdbConfig::default()
+        ))
+    );
+    assert_eq!(
+        parse_search_spec("astar(canonical_numeric_pdb())").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::CanonicalNumericPdb(
+            CanonicalNumericPdbConfig::default()
+        ))
+    );
+}
+
+#[test]
+fn parses_astar_canonical_numeric_pdb_with_named_options() {
+    let spec = parse_search_spec(
+        "astar(canonical_numeric_pdb(max_pdb_states=321, max_pattern_size=3, random_seed=7, variable_order_type=reverse_level))",
+    )
+    .unwrap();
+
+    let SearchSpec::Astar(HeuristicSpec::CanonicalNumericPdb(config)) = spec else {
+        panic!("expected canonical_numeric_pdb config");
+    };
+
+    assert_eq!(config.max_pdb_states, 321);
+    assert_eq!(config.max_pattern_size, 3);
     assert_eq!(config.random_seed, 7);
     assert_eq!(
         config.variable_order_type,
@@ -141,6 +178,16 @@ fn display_round_trips_greedy_numeric_pdb() {
 }
 
 #[test]
+fn display_round_trips_canonical_numeric_pdb() {
+    let parsed = parse_search_spec(
+        "astar(canonical_numeric_pdb(max_pdb_states=42, max_pattern_size=3, random_seed=9, variable_order_type=random))",
+    )
+    .unwrap();
+    let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
+    assert_eq!(parsed, reparsed);
+}
+
+#[test]
 fn rejects_removed_exec_entire_plan_randomize_option() {
     assert!(
         parse_search_spec("astar(multi_domain_abstractions(exec_entire_plan=randomize))",).is_err()
@@ -163,6 +210,13 @@ fn trims_trailing_punctuation() {
         parse_search_spec("astar(greedy_numeric_pdb());").unwrap(),
         SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(
             GreedyPatternGeneratorConfig::default()
+        ))
+    );
+
+    assert_eq!(
+        parse_search_spec("astar(canonical_numeric_pdb());").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::CanonicalNumericPdb(
+            CanonicalNumericPdbConfig::default()
         ))
     );
 

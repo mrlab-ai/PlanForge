@@ -421,18 +421,14 @@ mod tests {
 
         let graph = MixedCausalGraph::new(&task);
 
-        assert!(
-            graph
-                .predecessors_of(CausalGraphVariable::Regular(1))
-                .collect::<Vec<_>>()
-                .contains(&CausalGraphVariable::Regular(0))
-        );
-        assert!(
-            graph
-                .predecessors_of(CausalGraphVariable::Regular(2))
-                .collect::<Vec<_>>()
-                .contains(&CausalGraphVariable::Numeric(1))
-        );
+        assert!(graph
+            .predecessors_of(CausalGraphVariable::Regular(1))
+            .collect::<Vec<_>>()
+            .contains(&CausalGraphVariable::Regular(0)));
+        assert!(graph
+            .predecessors_of(CausalGraphVariable::Regular(2))
+            .collect::<Vec<_>>()
+            .contains(&CausalGraphVariable::Numeric(1)));
         assert_eq!(
             graph.goal_distance(CausalGraphVariable::Regular(1)),
             Some(0)
@@ -499,18 +495,14 @@ mod tests {
 
         assert!(predecessors.contains(&CausalGraphVariable::Numeric(helper_var_id)));
         assert!(!predecessors.contains(&CausalGraphVariable::Regular(1)));
-        assert!(
-            graph
-                .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
-                .collect::<Vec<_>>()
-                .contains(&CausalGraphVariable::Numeric(1))
-        );
-        assert!(
-            graph
-                .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
-                .collect::<Vec<_>>()
-                .contains(&CausalGraphVariable::Numeric(2))
-        );
+        assert!(graph
+            .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
+            .collect::<Vec<_>>()
+            .contains(&CausalGraphVariable::Numeric(1)));
+        assert!(graph
+            .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
+            .collect::<Vec<_>>()
+            .contains(&CausalGraphVariable::Numeric(2)));
     }
 
     #[test]

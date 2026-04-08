@@ -84,7 +84,11 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
             let value_width = pdb
                 .states
                 .iter()
-                .map(|state| pdb.state_propositional_values(state)[var_id].to_string().len())
+                .map(|state| {
+                    pdb.state_propositional_values(state)[var_id]
+                        .to_string()
+                        .len()
+                })
                 .max()
                 .unwrap_or(1);
             header.len().max(value_width)

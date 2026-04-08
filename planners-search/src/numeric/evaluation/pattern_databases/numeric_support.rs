@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
 
 use super::projected_task::{
-    AuxiliaryNumericVar, build_assignment_axiom_lookup, build_auxiliary_numeric_vars,
+    build_assignment_axiom_lookup, build_auxiliary_numeric_vars, AuxiliaryNumericVar,
 };
 
 #[derive(Debug, Clone)]

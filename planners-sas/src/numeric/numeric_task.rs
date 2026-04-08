@@ -66,6 +66,7 @@ pub trait AbstractNumericTask {
 
     fn get_num_cmp_axioms(&self) -> i32;
 
+    //TODO: Helpers to get PDB development fast but we dont want the next 4 methods. 
     fn abstract_state_values(
         &self,
         propositional_values: &[i32],
