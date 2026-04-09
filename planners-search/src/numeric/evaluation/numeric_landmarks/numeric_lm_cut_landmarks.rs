@@ -232,6 +232,7 @@ pub struct LandmarkCutLandmarks<'task> {
     operator_condition_to_upper_bound: Vec<Vec<f64>>,
     relaxed_operators: Vec<RelaxedOperator>,
     original_to_relaxed_operators: Vec<Vec<usize>>,
+    goal_precondition_ids: Vec<usize>,
     artificial_precondition_id: usize,
     artificial_goal_id: usize,
     num_propositions: usize,
@@ -246,11 +247,9 @@ pub struct LandmarkCutLandmarks<'task> {
 
 impl<'task> LandmarkCutLandmarks<'task> {
     pub fn new(task: &'task dyn AbstractNumericTask, config: LmCutNumericConfig) -> Self {
-        // PARITY(numeric-fd): the reference implementation accepts all LM-cut knobs here and
-        // wires them through `NumericTaskProxy`; this port still hard-rejects several branches
-        // (`random_pcf`, `irmax`, `disable_ma`).
-        // Even when we keep working on the default path first, these asserts are an explicit
-        // fidelity gap versus `numeric-fd/src/search/numeric_landmarks/numeric_lm_cut_landmarks.cc`.
+        // PARITY(numeric-fd): `random_pcf` is still blocked until the randomized supporter
+        // selection path is ported. The other current feature flags are wired through the same
+        // control-flow sites as the C++ implementation.
         assert!(
             config.precision >= 0.0,
             "LM-cut precision must be non-negative"
@@ -259,14 +258,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         assert!(
             !config.random_pcf,
             "LM-cut random_pcf=true is not implemented yet"
-        );
-        assert!(
-            !config.irmax,
-            "LM-cut irmax=true is not implemented yet"
-        );
-        assert!(
-            !config.disable_ma,
-            "LM-cut disable_ma=true is not implemented yet"
         );
         let use_bounds = config.bound_iterations > 0;
         let numeric_bound = NumericBound::new(task, config.precision, config.epsilon);
@@ -287,6 +278,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             operator_condition_to_upper_bound: Vec::new(),
             relaxed_operators: Vec::new(),
             original_to_relaxed_operators: Vec::new(),
+            goal_precondition_ids: Vec::new(),
             artificial_precondition_id: 0,
             artificial_goal_id: 1,
             num_propositions: 0,
@@ -318,6 +310,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.operator_condition_to_upper_bound.clear();
         self.relaxed_operators.clear();
         self.original_to_relaxed_operators.clear();
+        self.goal_precondition_ids.clear();
         self.propositions.push(RelaxedProposition::new(
             self.artificial_precondition_id,
             "artificial".to_string(),
@@ -332,6 +325,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.num_propositions = 2;
         self.build_propositional_propositions();
         self.build_numeric_condition_propositions();
+        self.prepare_axiom_numeric_conditions();
+        self.prepare_goal_preconditions();
         self.build_relaxed_operators();
         self.build_goal_operator();
         self.build_original_to_relaxed_index();
@@ -371,17 +366,17 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .expect("LM-cut numeric operator construction must succeed");
         }
 
+        for (axiom_offset, axiom) in self.task.axioms().iter().enumerate() {
+            let operator_id = operators.len() + axiom_offset;
+            self.build_relaxed_operator_for_axiom(operator_id, axiom);
+        }
+
         self.build_supported_sose_operators()
             .expect("LM-cut supported SOSE operator construction must succeed");
         self.prune_infinite_effects_for_supported_sose();
 
         self.build_simple_effects()
             .expect("LM-cut simple-effect construction must succeed");
-
-        for (axiom_offset, axiom) in self.task.axioms().iter().enumerate() {
-            let operator_id = operators.len() + axiom_offset;
-            self.build_relaxed_operator_for_axiom(operator_id, axiom);
-        }
 
         self.delete_noops();
     }
@@ -421,20 +416,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn build_goal_operator(&mut self) {
-        let mut goal_preconditions = Vec::new();
-        let mut seen = BTreeSet::new();
-        let mut goal_groups = Vec::new();
-        for goal_index in 0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0) {
-            let goal = self.task.get_goal_fact(goal_index as i32);
-            let current_goal_groups = self.goal_proposition_id_groups(goal);
-            for proposition_id in self.flatten_precondition_groups(&current_goal_groups) {
-                if seen.insert(proposition_id) {
-                    goal_preconditions.push(proposition_id);
-                }
-            }
-            goal_groups.extend(current_goal_groups);
-        }
-        self.append_pairwise_redundant_numeric_conditions(&goal_groups, &mut goal_preconditions);
+        let mut goal_preconditions = self.goal_precondition_ids.clone();
         if goal_preconditions.is_empty() {
             goal_preconditions.push(self.artificial_precondition_id);
         }
@@ -450,6 +432,40 @@ impl<'task> LandmarkCutLandmarks<'task> {
         goal_operator.original_op_id_2 = None;
         goal_operator.assert_well_formed();
         self.relaxed_operators.push(goal_operator);
+    }
+
+    fn prepare_goal_preconditions(&mut self) {
+        let mut goal_preconditions = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut goal_groups = Vec::new();
+        for goal_index in 0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0) {
+            let goal = self.task.get_goal_fact(goal_index as i32);
+            let current_goal_groups = self.goal_proposition_id_groups(goal);
+            for proposition_id in self.flatten_precondition_groups(&current_goal_groups) {
+                if seen.insert(proposition_id) {
+                    goal_preconditions.push(proposition_id);
+                }
+            }
+            goal_groups.extend(current_goal_groups);
+        }
+        self.append_pairwise_redundant_numeric_conditions(&goal_groups, &mut goal_preconditions);
+        let flat_goal_preconditions = goal_preconditions.clone();
+        self.append_flat_pairwise_redundant_numeric_conditions(
+            &flat_goal_preconditions,
+            &mut goal_preconditions,
+        );
+        self.goal_precondition_ids = goal_preconditions;
+    }
+
+    fn prepare_axiom_numeric_conditions(&mut self) {
+        for axiom in self.task.axioms() {
+            let precondition_groups = self.precondition_proposition_id_groups(axiom.conditions());
+            let mut precondition_ids = self.flatten_precondition_groups(&precondition_groups);
+            self.append_pairwise_redundant_numeric_conditions(
+                &precondition_groups,
+                &mut precondition_ids,
+            );
+        }
     }
 
     fn goal_proposition_ids(&self, goal: &Fact) -> Vec<usize> {
@@ -1475,14 +1491,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .collect();
 
             for condition_id in 0..self.conditions.len() {
-                let simple_effect =
+                let (has_simple_effect, simple_effect) =
                     self.simple_effect_constant_for_operator(relaxed_operator_id, condition_id)?;
-                // PARITY(numeric-fd): this table currently only records unconditional constant
-                // deltas from `Plus`/`Minus` effects. The reference `build_simple_effects()` also
-                // treats bounded linear effects, constant assignments, and SOSE bookkeeping as
-                // reasons to expose a numeric condition proposition. This simplification is a
-                // likely source of divergence on domains like the drone repro.
-                let has_simple_effect = simple_effect >= self.config.precision;
                 let has_supported_sose = self
                     .operator_condition_to_composite_expression
                     .get(original_op_id)
@@ -1521,7 +1531,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         &self,
         relaxed_operator_id: usize,
         condition_id: usize,
-    ) -> Result<f64, String> {
+    ) -> Result<(bool, f64), String> {
         let relaxed_operator = self
             .relaxed_operators
             .get(relaxed_operator_id)
@@ -1538,6 +1548,19 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     "LM-cut relaxed operator {relaxed_operator_id} is missing its concrete operator id"
                 )
             })?;
+        self.calculate_simple_effect_constant(
+            original_operator_id,
+            &condition.coefficients,
+            self.use_bounds,
+        )
+    }
+
+    fn calculate_simple_effect_constant(
+        &self,
+        original_operator_id: usize,
+        coefficients: &[f64],
+        use_bounded_linear: bool,
+    ) -> Result<(bool, f64), String> {
         let linear_effects = self
             .task
             .linearized_assignment_effects(original_operator_id)
@@ -1546,11 +1569,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     "LM-cut failed to linearize numeric effects for operator {original_operator_id}: {error}"
                 )
             })?;
+        let regular_numeric_variable_ids = self.task.regular_numeric_variable_ids();
 
+        let mut has_simple_effect = false;
         let mut net = 0.0;
+
         for linear_effect in &linear_effects {
-            let weight = condition
-                .coefficients
+            let weight = coefficients
                 .get(linear_effect.affected_var_id)
                 .copied()
                 .unwrap_or(0.0);
@@ -1558,16 +1583,89 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 continue;
             }
 
-            let contribution = weight * linear_effect.delta.constant;
-            if linear_effect.is_conditional || !linear_effect.conditions.is_empty() {
-                if contribution >= self.config.precision {
+            if self.is_simple_numeric_effect(linear_effect) {
+                let contribution = weight * linear_effect.delta.constant;
+                if linear_effect.is_conditional || !linear_effect.conditions.is_empty() {
+                    if contribution >= self.config.precision {
+                        net += contribution;
+                    }
+                } else {
                     net += contribution;
                 }
-            } else {
+                continue;
+            }
+
+            let conditional = linear_effect.is_conditional || !linear_effect.conditions.is_empty();
+            let mut contribution = weight * linear_effect.delta.constant;
+            let local_var_id = regular_numeric_variable_ids
+                .iter()
+                .position(|&numeric_var_id| numeric_var_id == linear_effect.affected_var_id);
+
+            if use_bounded_linear
+                && weight >= self.config.precision
+                && local_var_id
+                    .map(|var_id| {
+                        self.numeric_bound
+                            .get_effect_has_ub(original_operator_id, var_id)
+                            && (!self.config.use_constant_assignment
+                                || !self
+                                    .numeric_bound
+                                    .get_assignment_has_ub(original_operator_id, var_id))
+                    })
+                    .unwrap_or(false)
+            {
+                contribution = weight
+                    * self.numeric_bound.get_effect_ub(
+                        original_operator_id,
+                        local_var_id.expect("checked above"),
+                    );
+            } else if use_bounded_linear
+                && weight <= -self.config.precision
+                && local_var_id
+                    .map(|var_id| {
+                        self.numeric_bound
+                            .get_effect_has_lb(original_operator_id, var_id)
+                            && (!self.config.use_constant_assignment
+                                || !self
+                                    .numeric_bound
+                                    .get_assignment_has_lb(original_operator_id, var_id))
+                    })
+                    .unwrap_or(false)
+            {
+                contribution = weight
+                    * self.numeric_bound.get_effect_lb(
+                        original_operator_id,
+                        local_var_id.expect("checked above"),
+                    );
+            } else if use_bounded_linear
+                && self.config.use_constant_assignment
+                && local_var_id
+                    .map(|var_id| {
+                        (weight >= self.config.precision
+                            && self
+                                .numeric_bound
+                                .get_assignment_has_ub(original_operator_id, var_id))
+                            || (weight <= -self.config.precision
+                                && self
+                                    .numeric_bound
+                                    .get_assignment_has_lb(original_operator_id, var_id))
+                    })
+                    .unwrap_or(false)
+            {
+                contribution = 0.0;
+                has_simple_effect = true;
+            }
+
+            if !conditional || contribution >= self.config.precision {
                 net += contribution;
             }
         }
-        Ok(net)
+
+        if !has_simple_effect {
+            has_simple_effect = net >= self.config.precision;
+        }
+
+        Ok((has_simple_effect, net))
     }
 
     fn build_infinite_operators_for_operator(
@@ -2020,36 +2118,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
         original_operator_id: usize,
         coefficients: &[f64],
     ) -> Result<(bool, f64), String> {
-        let linear_effects = self
-            .task
-            .linearized_assignment_effects(original_operator_id)
-            .map_err(|error| {
-                format!(
-                    "LM-cut failed to linearize numeric effects for operator {original_operator_id}: {error}"
-                )
-            })?;
-
-        let mut net = 0.0;
-        for linear_effect in &linear_effects {
-            let weight = coefficients
-                .get(linear_effect.affected_var_id)
-                .copied()
-                .unwrap_or(0.0);
-            if weight.abs() < self.config.precision {
-                continue;
-            }
-
-            let contribution = weight * linear_effect.delta.constant;
-            if linear_effect.is_conditional || !linear_effect.conditions.is_empty() {
-                if contribution >= self.config.precision {
-                    net += contribution;
-                }
-            } else {
-                net += contribution;
-            }
-        }
-
-        Ok((net >= self.config.precision, net))
+        self.calculate_simple_effect_constant(
+            original_operator_id,
+            coefficients,
+            self.use_bounds,
+        )
     }
 
     fn original_operator_has_effect(
@@ -2500,6 +2573,22 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
     }
 
+    fn append_flat_pairwise_redundant_numeric_conditions(
+        &mut self,
+        source_ids: &[usize],
+        target_ids: &mut Vec<usize>,
+    ) {
+        for left_index in 0..source_ids.len() {
+            for right_index in (left_index + 1)..source_ids.len() {
+                self.append_combined_numeric_condition(
+                    source_ids[left_index],
+                    source_ids[right_index],
+                    target_ids,
+                );
+            }
+        }
+    }
+
     fn append_combined_numeric_condition(
         &mut self,
         left_proposition_id: usize,
@@ -2587,23 +2676,90 @@ impl<'task> LandmarkCutLandmarks<'task> {
             self.linear_effect_to_conditions_minus[operator_id] =
                 vec![Vec::new(); linearized_assignment_effects.len()];
 
-            for (assignment_effect_id, linear_effect) in
-                linearized_assignment_effects.iter().enumerate()
-            {
-                if self.is_simple_numeric_effect(linear_effect) {
+            let base_precondition_groups =
+                self.precondition_proposition_id_groups(operator.preconditions());
+            let mut expanded_base_precondition_ids =
+                self.flatten_precondition_groups(&base_precondition_groups);
+            self.append_pairwise_redundant_numeric_conditions(
+                &base_precondition_groups,
+                &mut expanded_base_precondition_ids,
+            );
+
+            if !base_precondition_groups.is_empty() {
+                let mut global_base_precondition_ids =
+                    self.flatten_precondition_groups(&base_precondition_groups);
+                self.append_pairwise_redundant_numeric_conditions(
+                    &base_precondition_groups,
+                    &mut global_base_precondition_ids,
+                );
+            }
+
+            for effect in operator.effects() {
+                if effect.conditions().is_empty() {
                     continue;
                 }
 
-                let mut extended_precondition_ids = self.build_precondition_ids(operator.preconditions());
+                let effect_condition_groups =
+                    self.precondition_proposition_id_groups(effect.conditions());
+                if effect_condition_groups.is_empty() {
+                    continue;
+                }
+
+                let mut expanded_effect_condition_ids =
+                    self.flatten_precondition_groups(&effect_condition_groups);
+                self.append_pairwise_redundant_numeric_conditions(
+                    &effect_condition_groups,
+                    &mut expanded_effect_condition_ids,
+                );
+                self.append_cross_redundant_numeric_conditions(
+                    &effect_condition_groups,
+                    &expanded_base_precondition_ids,
+                    &mut expanded_effect_condition_ids,
+                );
+            }
+
+            for (assignment_effect_id, linear_effect) in
+                linearized_assignment_effects.iter().enumerate()
+            {
+                let assignment_effect = &operator.assignment_effects()[assignment_effect_id];
+                let assignment_condition_groups =
+                    self.precondition_proposition_id_groups(assignment_effect.conditions());
+                if !assignment_condition_groups.is_empty() {
+                    let mut expanded_effect_condition_ids =
+                        self.flatten_precondition_groups(&assignment_condition_groups);
+                    self.append_pairwise_redundant_numeric_conditions(
+                        &assignment_condition_groups,
+                        &mut expanded_effect_condition_ids,
+                    );
+                    self.append_cross_redundant_numeric_conditions(
+                        &assignment_condition_groups,
+                        &expanded_base_precondition_ids,
+                        &mut expanded_effect_condition_ids,
+                    );
+                }
+
+                if self.is_simple_numeric_effect(linear_effect) {
+                    continue;
+                }
+                let mut extended_precondition_ids = expanded_base_precondition_ids.clone();
                 let mut seen_preconditions: BTreeSet<usize> =
                     extended_precondition_ids.iter().copied().collect();
-                for condition in operator.assignment_effects()[assignment_effect_id].conditions() {
-                    for proposition_id in self.precondition_proposition_ids(condition) {
+                for group in &assignment_condition_groups {
+                    for &proposition_id in group {
                         if seen_preconditions.insert(proposition_id) {
                             extended_precondition_ids.push(proposition_id);
                         }
                     }
                 }
+                self.append_pairwise_redundant_numeric_conditions(
+                    &assignment_condition_groups,
+                    &mut extended_precondition_ids,
+                );
+                self.append_cross_redundant_numeric_conditions(
+                    &assignment_condition_groups,
+                    &expanded_base_precondition_ids,
+                    &mut extended_precondition_ids,
+                );
 
                 let plus_proposition_id = self.add_numeric_condition_proposition(
                     NumericCondition::from_expression(

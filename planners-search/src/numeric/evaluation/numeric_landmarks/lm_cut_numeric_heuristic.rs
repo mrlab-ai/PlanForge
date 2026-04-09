@@ -100,12 +100,6 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
         if config.random_pcf {
             return Err("lmcutnumeric random_pcf=true is not implemented yet".to_string());
         }
-        if config.irmax {
-            return Err("lmcutnumeric irmax=true is not implemented yet".to_string());
-        }
-        if config.disable_ma {
-            return Err("lmcutnumeric disable_ma=true is not implemented yet".to_string());
-        }
         Ok(Self {
             name: "lmcutnumeric".to_string(),
             task,
@@ -260,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn from_config_rejects_unimplemented_irmax() {
+    fn from_config_accepts_irmax() {
         let task = NumericRootTask::new(
             3,
             Metric::new(true, -1),
@@ -279,12 +273,10 @@ mod tests {
         let mut config = LmCutNumericConfig::default();
         config.irmax = true;
 
-        let error = match LandmarkCutNumericHeuristic::from_config(&task, config) {
-            Err(error) => error,
-            Ok(_) => panic!("irmax should be rejected until it is implemented"),
-        };
+        let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
+            .expect("irmax flag should construct the heuristic");
 
-        assert!(error.contains("irmax=true"));
+        assert!(heuristic.config().irmax);
     }
 
     #[test]
@@ -316,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn from_config_rejects_unimplemented_disable_ma() {
+    fn from_config_accepts_disable_ma() {
         let task = NumericRootTask::new(
             3,
             Metric::new(true, -1),
@@ -335,12 +327,10 @@ mod tests {
         let mut config = LmCutNumericConfig::default();
         config.disable_ma = true;
 
-        let error = match LandmarkCutNumericHeuristic::from_config(&task, config) {
-            Err(error) => error,
-            Ok(_) => panic!("disable_ma should be rejected until it is implemented"),
-        };
+        let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
+            .expect("disable_ma flag should construct the heuristic");
 
-        assert!(error.contains("disable_ma=true"));
+        assert!(heuristic.config().disable_ma);
     }
 
     #[test]
