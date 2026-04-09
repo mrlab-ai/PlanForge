@@ -46,6 +46,12 @@ impl NumericCondition {
             name: format!("{} + {}", self.name, other.name),
         }
     }
+
+    fn is_empty(&self, _precision: f64) -> bool {
+        self.coefficients
+            .iter()
+            .all(|&coefficient| coefficient == 0.0)
+    }
 }
 
 fn invert_comparison_operator(operator: &ComparisonOperator) -> ComparisonOperator {
@@ -222,6 +228,8 @@ pub struct LandmarkCutLandmarks<'task> {
     linear_effect_to_conditions_minus: Vec<Vec<Vec<usize>>>,
     operator_to_simple_effects: Vec<Vec<Option<f64>>>,
     operator_condition_to_composite_expression: Vec<Vec<Option<LinearExpression>>>,
+    operator_condition_to_has_upper_bound: Vec<Vec<bool>>,
+    operator_condition_to_upper_bound: Vec<Vec<f64>>,
     relaxed_operators: Vec<RelaxedOperator>,
     original_to_relaxed_operators: Vec<Vec<usize>>,
     artificial_precondition_id: usize,
@@ -238,6 +246,11 @@ pub struct LandmarkCutLandmarks<'task> {
 
 impl<'task> LandmarkCutLandmarks<'task> {
     pub fn new(task: &'task dyn AbstractNumericTask, config: LmCutNumericConfig) -> Self {
+        // PARITY(numeric-fd): the reference implementation accepts all LM-cut knobs here and
+        // wires them through `NumericTaskProxy`; this port still hard-rejects several branches
+        // (`random_pcf`, `irmax`, `disable_ma`).
+        // Even when we keep working on the default path first, these asserts are an explicit
+        // fidelity gap versus `numeric-fd/src/search/numeric_landmarks/numeric_lm_cut_landmarks.cc`.
         assert!(
             config.precision >= 0.0,
             "LM-cut precision must be non-negative"
@@ -255,17 +268,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
             !config.disable_ma,
             "LM-cut disable_ma=true is not implemented yet"
         );
-        assert!(
-            !config.use_constant_assignment,
-            "LM-cut use_constant_assignment=true is not implemented yet"
-        );
-        assert!(
-            config.bound_iterations == 0,
-            "LM-cut bound_iterations>0 is not implemented yet"
-        );
-
         let use_bounds = config.bound_iterations > 0;
-        let numeric_bound = NumericBound::new(task, config.precision);
+        let numeric_bound = NumericBound::new(task, config.precision, config.epsilon);
         let mut result = Self {
             task,
             config,
@@ -279,6 +283,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
             linear_effect_to_conditions_minus: Vec::new(),
             operator_to_simple_effects: Vec::new(),
             operator_condition_to_composite_expression: Vec::new(),
+            operator_condition_to_has_upper_bound: Vec::new(),
+            operator_condition_to_upper_bound: Vec::new(),
             relaxed_operators: Vec::new(),
             original_to_relaxed_operators: Vec::new(),
             artificial_precondition_id: 0,
@@ -308,6 +314,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.linear_effect_to_conditions_minus.clear();
         self.operator_to_simple_effects.clear();
         self.operator_condition_to_composite_expression.clear();
+        self.operator_condition_to_has_upper_bound.clear();
+        self.operator_condition_to_upper_bound.clear();
         self.relaxed_operators.clear();
         self.original_to_relaxed_operators.clear();
         self.propositions.push(RelaxedProposition::new(
@@ -415,14 +423,18 @@ impl<'task> LandmarkCutLandmarks<'task> {
     fn build_goal_operator(&mut self) {
         let mut goal_preconditions = Vec::new();
         let mut seen = BTreeSet::new();
+        let mut goal_groups = Vec::new();
         for goal_index in 0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0) {
             let goal = self.task.get_goal_fact(goal_index as i32);
-            for proposition_id in self.goal_proposition_ids(goal) {
+            let current_goal_groups = self.goal_proposition_id_groups(goal);
+            for proposition_id in self.flatten_precondition_groups(&current_goal_groups) {
                 if seen.insert(proposition_id) {
                     goal_preconditions.push(proposition_id);
                 }
             }
+            goal_groups.extend(current_goal_groups);
         }
+        self.append_pairwise_redundant_numeric_conditions(&goal_groups, &mut goal_preconditions);
         if goal_preconditions.is_empty() {
             goal_preconditions.push(self.artificial_precondition_id);
         }
@@ -441,6 +453,33 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn goal_proposition_ids(&self, goal: &Fact) -> Vec<usize> {
+        self.flatten_precondition_groups(&self.goal_proposition_id_groups(goal))
+    }
+
+    fn goal_proposition_id_groups(&self, goal: &Fact) -> Vec<Vec<usize>> {
+        let mut groups = Vec::new();
+        let direct = self.precondition_proposition_ids(goal);
+        if !direct.is_empty() {
+            groups.push(direct);
+        }
+
+        for axiom in self.task.axioms() {
+            if axiom.var_id() != goal.var() || axiom.effect_value() as i32 != goal.value() {
+                continue;
+            }
+
+            for condition in axiom.conditions() {
+                let group = self.precondition_proposition_ids(condition);
+                if !group.is_empty() {
+                    groups.push(group);
+                }
+            }
+        }
+
+        groups
+    }
+
+    fn goal_proposition_ids_legacy(&self, goal: &Fact) -> Vec<usize> {
         let mut goal_preconditions = Vec::new();
         let mut seen = BTreeSet::new();
 
@@ -992,7 +1031,18 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 let original_op_id_2 = operator.original_op_id_2.ok_or_else(|| {
                     format!("LM-cut SOSE operator {operator_id} is missing its target operator id")
                 })?;
-                let c_u = *operator
+                let composite_coefficients = self
+                    .operator_condition_to_composite_expression
+                    .get(original_op_id_2)
+                    .and_then(|conditions| conditions.get(condition_id))
+                    .and_then(|expression| expression.as_ref())
+                    .map(|expression| expression.coefficients.as_slice())
+                    .ok_or_else(|| {
+                        format!(
+                            "LM-cut SOSE target operator {original_op_id_2} is missing composite coefficients for condition {condition_id}"
+                        )
+                    })?;
+                let mut c_u = *operator
                     .sose_constants
                     .get(condition_id)
                     .ok_or_else(|| {
@@ -1000,6 +1050,18 @@ impl<'task> LandmarkCutLandmarks<'task> {
                             "LM-cut SOSE operator {operator_id} is missing condition constant {condition_id}"
                         )
                     })?;
+                if self.config.use_constant_assignment {
+                    c_u += self.original_operator_constant_assignment_effect(
+                        operator.original_op_id_1.ok_or_else(|| {
+                            format!(
+                                "LM-cut SOSE operator {operator_id} is missing its supporter operator id"
+                            )
+                        })?,
+                        composite_coefficients,
+                        numeric_values,
+                        self.use_bounds,
+                    )?;
+                }
                 if c_u < self.config.precision {
                     return Ok((-1.0, -1.0));
                 }
@@ -1036,10 +1098,22 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     return Ok((m_1, 1.0));
                 }
 
-                let u_target = (self.numeric_initial_state[condition_id] * c_u * operator.cost_2
+                let mut u_target = (self.numeric_initial_state[condition_id] * c_u * operator.cost_2
                     / operator.cost_1)
                     .sqrt()
                     - c;
+                if self.use_bounds
+                    && self
+                        .operator_condition_to_has_upper_bound
+                        .get(original_op_id_2)
+                        .and_then(|row| row.get(condition_id))
+                        .copied()
+                        .unwrap_or(false)
+                {
+                    u_target = u_target.min(
+                        self.operator_condition_to_upper_bound[original_op_id_2][condition_id],
+                    );
+                }
                 if u_target - s_u < self.config.precision || c + u_target < self.config.precision {
                     return Ok((-1.0, -1.0));
                 }
@@ -1072,6 +1146,25 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 })
             {
                 net += composite_expression.evaluate(numeric_values);
+            }
+            if self.config.use_constant_assignment {
+                let original_operator_id = operator.original_op_id_2.ok_or_else(|| {
+                    format!(
+                        "LM-cut relaxed operator {operator_id} is missing its concrete operator id"
+                    )
+                })?;
+                let has_supported_sose = self
+                    .operator_condition_to_composite_expression
+                    .get(original_operator_id)
+                    .and_then(|conditions| conditions.get(condition_id))
+                    .and_then(|expression| expression.as_ref())
+                    .is_some();
+                net += self.original_operator_constant_assignment_effect(
+                    original_operator_id,
+                    &self.conditions[condition_id].coefficients,
+                    numeric_values,
+                    self.use_bounds && !has_supported_sose,
+                )?;
             }
             if net < self.config.precision {
                 return Ok((-1.0, -1.0));
@@ -1173,7 +1266,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .get_mut(proposition_id)
             .ok_or_else(|| format!("LM-cut proposition id {proposition_id} is invalid"))?;
         if proposition.status == PropositionStatus::Unreached
-            || proposition.h_max_cost > cost
+            || proposition.h_max_cost > cost + self.config.precision
         {
             proposition.status = PropositionStatus::Reached;
             proposition.h_max_cost = cost;
@@ -1197,7 +1290,39 @@ impl<'task> LandmarkCutLandmarks<'task> {
             operator_id < self.task.get_operators().len(),
             "base operator cost is only defined for concrete operators"
         );
-        metric_operator_cost_from_initial_values(self.task, operator).max(0.0)
+        let mut operator_cost = metric_operator_cost_from_initial_values(self.task, operator);
+
+        if self.task.is_linear_cost_operator(operator_id) && self.use_bounds {
+            let coefficients = self.task.operator_cost_coefficients(operator_id);
+            operator_cost = self.task.operator_cost_constant(operator_id);
+
+            for (numeric_var_id, &weight) in coefficients.iter().enumerate() {
+                if weight >= self.config.precision
+                    && self
+                        .numeric_bound
+                        .get_variable_before_action_has_lb(numeric_var_id, operator_id)
+                {
+                    operator_cost += weight
+                        * self
+                            .numeric_bound
+                            .get_variable_before_action_lb(numeric_var_id, operator_id);
+                } else if weight <= -self.config.precision
+                    && self
+                        .numeric_bound
+                        .get_variable_before_action_has_ub(numeric_var_id, operator_id)
+                {
+                    operator_cost += weight
+                        * self
+                            .numeric_bound
+                            .get_variable_before_action_ub(numeric_var_id, operator_id);
+                } else if weight.abs() >= self.config.precision {
+                    operator_cost = 0.0;
+                    break;
+                }
+            }
+        }
+
+        operator_cost.max(0.0)
     }
 
     fn build_relaxed_operator_for_operator(
@@ -1214,7 +1339,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     "LM-cut failed to linearize numeric effects for operator {operator_id}: {error}"
                 )
             })?;
-        let precondition_ids = self.build_precondition_ids(operator.preconditions());
+        let precondition_groups = self.precondition_proposition_id_groups(operator.preconditions());
+        let mut precondition_ids = self.flatten_precondition_groups(&precondition_groups);
+        self.append_pairwise_redundant_numeric_conditions(&precondition_groups, &mut precondition_ids);
         let unconditional_assignment_effect_ids = operator
             .assignment_effects()
             .iter()
@@ -1245,13 +1372,23 @@ impl<'task> LandmarkCutLandmarks<'task> {
             }
             let mut extended_preconditions = precondition_ids.clone();
             let mut seen: BTreeSet<usize> = extended_preconditions.iter().copied().collect();
-            for condition in effect.conditions() {
-                for proposition_id in self.precondition_proposition_ids(condition) {
+            let effect_condition_groups = self.precondition_proposition_id_groups(effect.conditions());
+            for group in &effect_condition_groups {
+                for &proposition_id in group {
                     if seen.insert(proposition_id) {
                         extended_preconditions.push(proposition_id);
                     }
                 }
             }
+            self.append_pairwise_redundant_numeric_conditions(
+                &effect_condition_groups,
+                &mut extended_preconditions,
+            );
+            self.append_cross_redundant_numeric_conditions(
+                &effect_condition_groups,
+                &precondition_ids,
+                &mut extended_preconditions,
+            );
             let conditional_name = format!(
                 "{} {}",
                 operator.name(),
@@ -1340,6 +1477,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
             for condition_id in 0..self.conditions.len() {
                 let simple_effect =
                     self.simple_effect_constant_for_operator(relaxed_operator_id, condition_id)?;
+                // PARITY(numeric-fd): this table currently only records unconditional constant
+                // deltas from `Plus`/`Minus` effects. The reference `build_simple_effects()` also
+                // treats bounded linear effects, constant assignments, and SOSE bookkeeping as
+                // reasons to expose a numeric condition proposition. This simplification is a
+                // likely source of divergence on domains like the drone repro.
                 let has_simple_effect = simple_effect >= self.config.precision;
                 let has_supported_sose = self
                     .operator_condition_to_composite_expression
@@ -1347,8 +1489,14 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .and_then(|conditions| conditions.get(condition_id))
                     .and_then(|expression| expression.as_ref())
                     .is_some();
+                let has_constant_assignment_effect = self.config.use_constant_assignment
+                    && self.original_operator_has_constant_assignment_effect(
+                        original_op_id,
+                        &self.conditions[condition_id].coefficients,
+                        self.use_bounds && !has_supported_sose,
+                    )?;
 
-                if !has_simple_effect && !has_supported_sose {
+                if !has_simple_effect && !has_supported_sose && !has_constant_assignment_effect {
                     continue;
                 }
 
@@ -1448,13 +1596,24 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
             let mut precondition_ids = base_precondition_ids.to_vec();
             let mut seen: BTreeSet<usize> = precondition_ids.iter().copied().collect();
-            for condition in assignment_effect.conditions() {
-                for proposition_id in self.precondition_proposition_ids(condition) {
+            let assignment_condition_groups =
+                self.precondition_proposition_id_groups(assignment_effect.conditions());
+            for group in &assignment_condition_groups {
+                for &proposition_id in group {
                     if seen.insert(proposition_id) {
                         precondition_ids.push(proposition_id);
                     }
                 }
             }
+            self.append_pairwise_redundant_numeric_conditions(
+                &assignment_condition_groups,
+                &mut precondition_ids,
+            );
+            self.append_cross_redundant_numeric_conditions(
+                &assignment_condition_groups,
+                base_precondition_ids,
+                &mut precondition_ids,
+            );
             if precondition_ids.is_empty() {
                 precondition_ids.push(self.artificial_precondition_id);
             }
@@ -1613,6 +1772,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let operator_count = self.task.get_operators().len();
         self.operator_condition_to_composite_expression =
             vec![vec![None; self.conditions.len()]; operator_count];
+        self.operator_condition_to_has_upper_bound =
+            vec![vec![false; self.conditions.len()]; operator_count];
+        self.operator_condition_to_upper_bound =
+            vec![vec![f64::MAX; self.conditions.len()]; operator_count];
         if !self.config.use_second_order_simple {
             return Ok(());
         }
@@ -1632,10 +1795,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
             let Some(op2_relaxed_id) = base_relaxed_by_original[op2_id] else {
                 continue;
             };
-            let op2 = &self.relaxed_operators[op2_relaxed_id];
-            if op2.linear_assignment_effects.is_empty() {
-                continue;
-            }
 
             let mut supporter_to_effects: BTreeMap<usize, Vec<(usize, f64)>> = BTreeMap::new();
             for condition_id in 0..self.conditions.len() {
@@ -1643,6 +1802,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .conditions
                     .get(condition_id)
                     .ok_or_else(|| format!("LM-cut numeric condition {condition_id} is invalid"))?;
+                // PARITY(numeric-fd): this SOSE detection is narrower than
+                // `get_sose_supporters()`/`build_linear_operators()` in the C++ code. The
+                // original path also tracks `has_sose`, bounded upper bounds for the composite
+                // expression, and constant-assignment interactions. Rust currently stores only a
+                // composite expression, so later multiplier computations cannot reproduce the full
+                // reference logic.
                 if !self.original_operator_has_linear_effect(op2_id, &condition.coefficients, false)?
                     || self.original_operator_has_linear_effect(op2_id, &condition.coefficients, true)?
                 {
@@ -1650,7 +1815,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 }
 
                 let base_expression =
-                    self.operator_condition_delta_expression(op2_relaxed_id, condition_id)?;
+                    self.original_operator_condition_delta_expression(op2_id, condition_id)?;
                 let composite_expression = LinearExpression {
                     coefficients: base_expression.coefficients.clone(),
                     constant: 0.0,
@@ -1680,7 +1845,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
                             op1_id,
                             &composite_expression.coefficients,
                         )?;
-                    if !has_simple_effect {
+                    let has_constant_assignment_effect = self.config.use_constant_assignment
+                        && self.original_operator_has_constant_assignment_effect(
+                            op1_id,
+                            &composite_expression.coefficients,
+                            self.use_bounds,
+                        )?;
+                    if !has_simple_effect && !has_constant_assignment_effect {
                         continue;
                     }
 
@@ -1698,6 +1869,50 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
                 self.operator_condition_to_composite_expression[op2_id][condition_id] =
                     Some(composite_expression);
+                if self.use_bounds {
+                    let regular_numeric_variable_ids = self.task.regular_numeric_variable_ids();
+                    let projected_coefficients = regular_numeric_variable_ids
+                        .iter()
+                        .map(|&numeric_var_id| {
+                            base_expression
+                                .coefficients
+                                .get(numeric_var_id)
+                                .copied()
+                                .unwrap_or(0.0)
+                        })
+                        .collect::<Vec<_>>();
+                    let mut has_bound = true;
+                    let mut upper_bound = 0.0;
+                    for (regular_var_id, &weight) in projected_coefficients.iter().enumerate() {
+                        if weight >= self.config.precision
+                            && self
+                                .numeric_bound
+                                .get_variable_before_action_has_ub(regular_var_id, op2_id)
+                        {
+                            upper_bound += weight
+                                * self
+                                    .numeric_bound
+                                    .get_variable_before_action_ub(regular_var_id, op2_id);
+                        } else if weight <= -self.config.precision
+                            && self
+                                .numeric_bound
+                                .get_variable_before_action_has_lb(regular_var_id, op2_id)
+                        {
+                            upper_bound += weight
+                                * self
+                                    .numeric_bound
+                                    .get_variable_before_action_lb(regular_var_id, op2_id);
+                        } else if weight.abs() >= self.config.precision {
+                            has_bound = false;
+                            break;
+                        }
+                    }
+
+                    if has_bound {
+                        self.operator_condition_to_has_upper_bound[op2_id][condition_id] = true;
+                        self.operator_condition_to_upper_bound[op2_id][condition_id] = upper_bound;
+                    }
+                }
 
                 for (op1_relaxed_id, sose_constant) in condition_supporters {
                     supporter_to_effects
@@ -1728,12 +1943,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         })?;
 
                     let mut precondition_ids = op1.precondition_ids.clone();
-                    let mut seen: BTreeSet<usize> = precondition_ids.iter().copied().collect();
-                    for proposition_id in op2.precondition_ids {
-                        if seen.insert(proposition_id) {
-                            precondition_ids.push(proposition_id);
-                        }
-                    }
+                    precondition_ids.extend(op2.precondition_ids);
                     if precondition_ids.is_empty() {
                         precondition_ids.push(self.artificial_precondition_id);
                     }
@@ -1851,9 +2061,237 @@ impl<'task> LandmarkCutLandmarks<'task> {
             return Ok(true);
         }
 
+        if self.config.use_constant_assignment
+            && self.original_operator_has_constant_assignment_effect(
+                original_operator_id,
+                coefficients,
+                false,
+            )?
+        {
+            return Ok(true);
+        }
+
         let (has_simple_effect, _) =
             self.original_operator_simple_effect_constant(original_operator_id, coefficients)?;
         Ok(has_simple_effect)
+    }
+
+    fn original_operator_has_constant_assignment_effect(
+        &self,
+        original_operator_id: usize,
+        coefficients: &[f64],
+        use_bounded_linear: bool,
+    ) -> Result<bool, String> {
+        let linear_effects = self
+            .task
+            .linearized_assignment_effects(original_operator_id)
+            .map_err(|error| {
+                format!(
+                    "LM-cut failed to linearize numeric effects for operator {original_operator_id}: {error}"
+                )
+            })?;
+        let regular_numeric_variable_ids = self.task.regular_numeric_variable_ids();
+
+        for linear_effect in &linear_effects {
+            let Some(local_var_id) = regular_numeric_variable_ids
+                .iter()
+                .position(|&numeric_var_id| numeric_var_id == linear_effect.affected_var_id)
+            else {
+                continue;
+            };
+            let weight = coefficients
+                .get(linear_effect.affected_var_id)
+                .copied()
+                .unwrap_or(0.0);
+            if weight.abs() < self.config.precision {
+                continue;
+            }
+            if self.use_bounds
+                && ((weight >= self.config.precision
+                    && self
+                        .numeric_bound
+                        .has_no_increasing_assignment_effect(original_operator_id, local_var_id))
+                    || (weight <= -self.config.precision
+                        && self
+                            .numeric_bound
+                            .has_no_decreasing_assignment_effect(original_operator_id, local_var_id)))
+            {
+                continue;
+            }
+
+            let assignment_expression = LinearExpression::variable(
+                self.task.numeric_variables().len(),
+                linear_effect.affected_var_id,
+            )
+            .add(&linear_effect.delta);
+            if assignment_expression
+                .coefficients
+                .iter()
+                .all(|coefficient| coefficient.abs() < self.config.precision)
+            {
+                return Ok(true);
+            }
+        }
+
+        if use_bounded_linear {
+            for (local_var_id, &actual_var_id) in regular_numeric_variable_ids.iter().enumerate() {
+                let weight = coefficients.get(actual_var_id).copied().unwrap_or(0.0);
+                if (weight >= self.config.precision
+                    && self
+                        .numeric_bound
+                        .get_assignment_has_ub(original_operator_id, local_var_id)
+                    && (!self.use_bounds
+                        || !self
+                            .numeric_bound
+                            .has_no_increasing_assignment_effect(original_operator_id, local_var_id)))
+                    || (weight <= -self.config.precision
+                        && self
+                            .numeric_bound
+                            .get_assignment_has_lb(original_operator_id, local_var_id)
+                        && (!self.use_bounds
+                            || !self
+                                .numeric_bound
+                                .has_no_decreasing_assignment_effect(original_operator_id, local_var_id)))
+                {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn original_operator_constant_assignment_effect(
+        &self,
+        original_operator_id: usize,
+        coefficients: &[f64],
+        numeric_values: &[f64],
+        use_bounded_linear: bool,
+    ) -> Result<f64, String> {
+        let linear_effects = self
+            .task
+            .linearized_assignment_effects(original_operator_id)
+            .map_err(|error| {
+                format!(
+                    "LM-cut failed to linearize numeric effects for operator {original_operator_id}: {error}"
+                )
+            })?;
+        let regular_numeric_variable_ids = self.task.regular_numeric_variable_ids();
+        let mut net = 0.0;
+
+        for linear_effect in &linear_effects {
+            let Some(local_var_id) = regular_numeric_variable_ids
+                .iter()
+                .position(|&numeric_var_id| numeric_var_id == linear_effect.affected_var_id)
+            else {
+                continue;
+            };
+            let weight = coefficients
+                .get(linear_effect.affected_var_id)
+                .copied()
+                .unwrap_or(0.0);
+            if weight.abs() < self.config.precision {
+                continue;
+            }
+            if self.use_bounds
+                && ((weight >= self.config.precision
+                    && self
+                        .numeric_bound
+                        .has_no_increasing_assignment_effect(original_operator_id, local_var_id))
+                    || (weight <= -self.config.precision
+                        && self
+                            .numeric_bound
+                            .has_no_decreasing_assignment_effect(original_operator_id, local_var_id)))
+            {
+                continue;
+            }
+
+            let assignment_expression = LinearExpression::variable(
+                self.task.numeric_variables().len(),
+                linear_effect.affected_var_id,
+            )
+            .add(&linear_effect.delta);
+            if !assignment_expression
+                .coefficients
+                .iter()
+                .all(|coefficient| coefficient.abs() < self.config.precision)
+            {
+                continue;
+            }
+
+            let constant_target = assignment_expression.constant;
+            let state_value = numeric_values
+                .get(linear_effect.affected_var_id)
+                .copied()
+                .unwrap_or(0.0);
+            if (weight >= self.config.precision && constant_target > state_value)
+                || (weight <= -self.config.precision && constant_target < state_value)
+            {
+                net += weight * (constant_target - state_value);
+            }
+        }
+
+        if use_bounded_linear {
+            for (local_var_id, &actual_var_id) in regular_numeric_variable_ids.iter().enumerate() {
+                let weight = coefficients.get(actual_var_id).copied().unwrap_or(0.0);
+                if self.use_bounds
+                    && ((weight >= self.config.precision
+                        && self
+                            .numeric_bound
+                            .has_no_increasing_assignment_effect(original_operator_id, local_var_id))
+                        || (weight <= -self.config.precision
+                            && self
+                                .numeric_bound
+                                .has_no_decreasing_assignment_effect(original_operator_id, local_var_id)))
+                {
+                    continue;
+                }
+
+                if weight >= self.config.precision
+                    && self
+                        .numeric_bound
+                        .get_assignment_has_ub(original_operator_id, local_var_id)
+                {
+                    let mut contribution = (self
+                        .numeric_bound
+                        .get_assignment_ub(original_operator_id, local_var_id)
+                        - numeric_values.get(actual_var_id).copied().unwrap_or(0.0))
+                        .max(0.0);
+                    if self
+                        .numeric_bound
+                        .get_effect_has_ub(original_operator_id, local_var_id)
+                    {
+                        contribution = contribution.min(
+                            self.numeric_bound
+                                .get_effect_ub(original_operator_id, local_var_id),
+                        );
+                    }
+                    net += weight * contribution;
+                } else if weight <= -self.config.precision
+                    && self
+                        .numeric_bound
+                        .get_assignment_has_lb(original_operator_id, local_var_id)
+                {
+                    let mut contribution = (self
+                        .numeric_bound
+                        .get_assignment_lb(original_operator_id, local_var_id)
+                        - numeric_values.get(actual_var_id).copied().unwrap_or(0.0))
+                        .min(0.0);
+                    if self
+                        .numeric_bound
+                        .get_effect_has_lb(original_operator_id, local_var_id)
+                    {
+                        contribution = contribution.max(
+                            self.numeric_bound
+                                .get_effect_lb(original_operator_id, local_var_id),
+                        );
+                    }
+                    net += weight * contribution;
+                }
+            }
+        }
+
+        Ok(net)
     }
 
     fn operator_condition_delta_expression(
@@ -1874,6 +2312,39 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
         let mut expression = LinearExpression::zero(self.task.numeric_variables().len());
         for linear_effect in &relaxed_operator.linear_assignment_effects {
+            let target_coefficient = condition
+                .coefficients
+                .get(linear_effect.affected_var_id)
+                .copied()
+                .unwrap_or(0.0);
+            if target_coefficient.abs() < self.config.precision {
+                continue;
+            }
+            expression = expression.add(&linear_effect.delta.scale(target_coefficient));
+        }
+        Ok(expression)
+    }
+
+    fn original_operator_condition_delta_expression(
+        &self,
+        original_operator_id: usize,
+        condition_id: usize,
+    ) -> Result<LinearExpression, String> {
+        let condition = self
+            .conditions
+            .get(condition_id)
+            .ok_or_else(|| format!("LM-cut numeric condition {condition_id} is invalid"))?;
+        let linear_effects = self
+            .task
+            .linearized_assignment_effects(original_operator_id)
+            .map_err(|error| {
+                format!(
+                    "LM-cut failed to linearize numeric effects for operator {original_operator_id}: {error}"
+                )
+            })?;
+
+        let mut expression = LinearExpression::zero(self.task.numeric_variables().len());
+        for linear_effect in &linear_effects {
             let target_coefficient = condition
                 .coefficients
                 .get(linear_effect.affected_var_id)
@@ -1945,7 +2416,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn build_relaxed_operator_for_axiom(&mut self, operator_id: usize, axiom: &PropositionalAxiom) {
-        let precondition_ids = self.build_precondition_ids(axiom.conditions());
+        let precondition_groups = self.precondition_proposition_id_groups(axiom.conditions());
+        let mut precondition_ids = self.flatten_precondition_groups(&precondition_groups);
+        self.append_pairwise_redundant_numeric_conditions(&precondition_groups, &mut precondition_ids);
         let effect_fact = Fact::new(axiom.var_id(), axiom.effect_value() as i32);
         let mut relaxed_operator = RelaxedOperator::new(
             if precondition_ids.is_empty() {
@@ -1964,16 +2437,102 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn build_precondition_ids(&self, preconditions: &[Fact]) -> Vec<usize> {
+        self.flatten_precondition_groups(&self.precondition_proposition_id_groups(preconditions))
+    }
+
+    fn precondition_proposition_id_groups(&self, preconditions: &[Fact]) -> Vec<Vec<usize>> {
+        preconditions
+            .iter()
+            .map(|precondition| self.precondition_proposition_ids(precondition))
+            .filter(|group| !group.is_empty())
+            .collect()
+    }
+
+    fn flatten_precondition_groups(&self, groups: &[Vec<usize>]) -> Vec<usize> {
         let mut result = Vec::new();
         let mut seen = BTreeSet::new();
-        for precondition in preconditions {
-            for proposition_id in self.precondition_proposition_ids(precondition) {
+        for group in groups {
+            for &proposition_id in group {
                 if seen.insert(proposition_id) {
                     result.push(proposition_id);
                 }
             }
         }
         result
+    }
+
+    fn append_pairwise_redundant_numeric_conditions(
+        &mut self,
+        groups: &[Vec<usize>],
+        target_ids: &mut Vec<usize>,
+    ) {
+        for left_index in 0..groups.len() {
+            for right_index in (left_index + 1)..groups.len() {
+                for &left_proposition_id in &groups[left_index] {
+                    for &right_proposition_id in &groups[right_index] {
+                        self.append_combined_numeric_condition(
+                            left_proposition_id,
+                            right_proposition_id,
+                            target_ids,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn append_cross_redundant_numeric_conditions(
+        &mut self,
+        source_groups: &[Vec<usize>],
+        other_ids: &[usize],
+        target_ids: &mut Vec<usize>,
+    ) {
+        for group in source_groups {
+            for &source_proposition_id in group {
+                for &other_proposition_id in other_ids {
+                    self.append_combined_numeric_condition(
+                        source_proposition_id,
+                        other_proposition_id,
+                        target_ids,
+                    );
+                }
+            }
+        }
+    }
+
+    fn append_combined_numeric_condition(
+        &mut self,
+        left_proposition_id: usize,
+        right_proposition_id: usize,
+        target_ids: &mut Vec<usize>,
+    ) {
+        let Some(left_condition) = self
+            .propositions
+            .get(left_proposition_id)
+            .and_then(|proposition| proposition.id_numeric_condition)
+            .and_then(|condition_id| self.conditions.get(condition_id))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(right_condition) = self
+            .propositions
+            .get(right_proposition_id)
+            .and_then(|proposition| proposition.id_numeric_condition)
+            .and_then(|condition_id| self.conditions.get(condition_id))
+            .cloned()
+        else {
+            return;
+        };
+
+        let combined = left_condition.add(&right_condition);
+        if combined.is_empty(self.config.precision) {
+            return;
+        }
+        let proposition_id = self.add_numeric_condition_proposition(combined);
+        if !target_ids.contains(&proposition_id) {
+            target_ids.push(proposition_id);
+        }
     }
 
     fn build_numeric_condition_propositions(&mut self) {
@@ -2063,6 +2622,18 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 self.linear_effect_to_conditions_plus[operator_id][assignment_effect_id]
                     .push(plus_condition_id);
 
+                for redundant_condition in
+                    self.make_redundant_conditions(plus_condition_id, &extended_precondition_ids)
+                {
+                    let redundant_proposition_id =
+                        self.add_numeric_condition_proposition(redundant_condition);
+                    let redundant_condition_id = self.propositions[redundant_proposition_id]
+                        .id_numeric_condition
+                        .expect("new redundant +inf condition proposition must reference its condition");
+                    self.linear_effect_to_conditions_plus[operator_id][assignment_effect_id]
+                        .push(redundant_condition_id);
+                }
+
                 let minus_proposition_id = self.add_numeric_condition_proposition(
                     NumericCondition::from_expression(
                         linear_effect.delta.scale(-1.0),
@@ -2079,6 +2650,18 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .expect("new -inf condition proposition must reference its condition");
                 self.linear_effect_to_conditions_minus[operator_id][assignment_effect_id]
                     .push(minus_condition_id);
+
+                for redundant_condition in
+                    self.make_redundant_conditions(minus_condition_id, &extended_precondition_ids)
+                {
+                    let redundant_proposition_id =
+                        self.add_numeric_condition_proposition(redundant_condition);
+                    let redundant_condition_id = self.propositions[redundant_proposition_id]
+                        .id_numeric_condition
+                        .expect("new redundant -inf condition proposition must reference its condition");
+                    self.linear_effect_to_conditions_minus[operator_id][assignment_effect_id]
+                        .push(redundant_condition_id);
+                }
             }
         }
     }
@@ -2095,6 +2678,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
         base_condition_id: usize,
         precondition_ids: &[usize],
     ) -> Vec<NumericCondition> {
+        // PARITY(numeric-fd): the original `add_linear_conditions()` optionally adds redundant
+        // guard conditions derived from numeric preconditions/effect conditions when
+        // `numeric_task.redundant_constraints` is enabled. This helper exists, but the Rust port
+        // never calls it, so the current guard compilation is strictly weaker than the reference.
         let Some(base_condition) = self.conditions.get(base_condition_id) else {
             return Vec::new();
         };
@@ -2106,7 +2693,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .get(proposition_id)
                     .and_then(|proposition| proposition.id_numeric_condition)
                     .and_then(|condition_id| self.conditions.get(condition_id))
+                    .filter(|condition| !condition.is_empty(self.config.precision))
                     .map(|condition| base_condition.add(condition))
+                    .filter(|condition| !condition.is_empty(self.config.precision))
             })
             .collect()
     }
@@ -2114,12 +2703,17 @@ impl<'task> LandmarkCutLandmarks<'task> {
     fn add_numeric_condition_proposition(&mut self, condition: NumericCondition) -> usize {
         let condition_id = self.conditions.len();
         let proposition_id = self.propositions.len();
+        let epsilon = if condition.is_strictly_greater {
+            self.config.epsilon
+        } else {
+            0.0
+        };
         let mut proposition = RelaxedProposition::new(proposition_id, condition.name.clone());
         proposition.is_numeric_condition = true;
         proposition.id_numeric_condition = Some(condition_id);
         self.propositions.push(proposition);
         self.conditions.push(condition);
-        self.epsilons.push(self.config.epsilon);
+        self.epsilons.push(epsilon);
         self.num_propositions += 1;
         proposition_id
     }
@@ -2525,6 +3119,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
     use planners_sas::numeric::numeric_task::{
         AssignmentEffect, AssignmentOperation, ExplicitVariable, Fact, Metric, NumericRootTask,
@@ -2699,6 +3294,137 @@ mod tests {
         assert!(dead_end);
         assert!(total_cost.is_infinite());
         assert!(cuts.is_empty());
+    }
+
+    #[test]
+    fn base_operator_cost_uses_metric_delta_from_initial_state() {
+        let variables = vec![simple_var("v0", &["zero", "one"], -1)];
+        let numeric_variables = vec![
+            NumericVariable::new("total-cost".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("inc".to_string(), NumericType::Constant, -1),
+        ];
+        let operators = vec![Operator::new(
+            "increase-cost".to_string(),
+            vec![],
+            vec![Effect::new(vec![], 0, 0, 1)],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                1,
+                false,
+                vec![],
+            )],
+            0,
+        )];
+        let task = NumericRootTask::new(
+            3,
+            Metric::new(true, 0),
+            variables,
+            numeric_variables,
+            vec![Fact::new(0, 1)],
+            vec![],
+            vec![0],
+            vec![0.0, 2.5],
+            operators,
+            vec![],
+            vec![],
+            vec![],
+            (0, 0),
+        );
+        let landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+
+        let base_cost = landmarks.calculate_base_operator_cost(0, &task.get_operators()[0]);
+
+        assert_eq!(base_cost, 2.5);
+    }
+
+    #[test]
+    fn linear_effect_guards_include_redundant_numeric_preconditions() {
+        let variables = vec![simple_var("cmp", &["false", "true"], 0)];
+        let numeric_variables = vec![
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("z".to_string(), NumericType::Regular, -1),
+        ];
+        let operators = vec![Operator::new(
+            "increase-y-by-z-when-x-lt-y".to_string(),
+            vec![Fact::new(0, 0)],
+            vec![],
+            vec![AssignmentEffect::new(
+                1,
+                AssignmentOperation::Plus,
+                2,
+                false,
+                vec![],
+            )],
+            1,
+        )];
+        let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
+        let task = NumericRootTask::new(
+            3,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![Fact::new(0, 0)],
+            vec![],
+            vec![1],
+            vec![1.0, 2.0, 1.0],
+            operators,
+            vec![],
+            comparison_axioms,
+            vec![],
+            (0, 0),
+        );
+
+        let landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+
+        assert!(landmarks.linear_effect_to_conditions_plus[0][0].len() > 1);
+        assert!(landmarks.linear_effect_to_conditions_minus[0][0].len() > 1);
+    }
+
+    #[test]
+    fn skips_empty_redundant_numeric_conditions() {
+        let variables = vec![simple_var("cmp", &["eq", "neq"], 0)];
+        let numeric_variables = vec![
+            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
+            NumericVariable::new("z".to_string(), NumericType::Regular, -1),
+        ];
+        let operators = vec![Operator::new(
+            "increase-z-when-x-eq-y".to_string(),
+            vec![Fact::new(0, 0)],
+            vec![],
+            vec![AssignmentEffect::new(
+                2,
+                AssignmentOperation::Plus,
+                2,
+                false,
+                vec![],
+            )],
+            1,
+        )];
+        let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::Equal)];
+        let task = NumericRootTask::new(
+            3,
+            Metric::new(true, -1),
+            variables,
+            numeric_variables,
+            vec![Fact::new(0, 0)],
+            vec![],
+            vec![0],
+            vec![1.0, 1.0, 0.0],
+            operators,
+            vec![],
+            comparison_axioms,
+            vec![],
+            (0, 0),
+        );
+
+        let landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+        assert!(landmarks
+            .propositions
+            .iter()
+            .all(|proposition| proposition.name != "numeric () + numeric ()"));
     }
 
     #[test]
@@ -3378,5 +4104,71 @@ mod tests {
         assert_eq!(total_cost, 1.0);
         assert_eq!(cuts.len(), 1);
         assert_eq!(cuts[0], vec![(3.0, 0), (1.0, 2)]);
+    }
+
+    #[test]
+    #[ignore = "local fd output repro"]
+    fn fd_output_lmcutnumeric_initial_state_local_repro() {
+        use planners_sas::numeric::axioms::AxiomEvaluator;
+        use planners_sas::numeric::state_registry::StateRegistry;
+        use planners_sas::numeric::utils::int_packer::IntDoublePacker;
+
+        let output = Path::new(env!("CARGO_MANIFEST_DIR")).join("../output");
+        if !output.is_file() {
+            eprintln!("Skipping local fd output repro; {:?} is unavailable", output);
+            return;
+        }
+
+        let task = NumericRootTask::from_file(&output);
+        let state_packer = IntDoublePacker::from_task(&task);
+        let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+        let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+        let initial_state = state_registry.get_initial_state();
+
+        let mut propositional_values = Vec::new();
+        initial_state.fill_state(&state_registry, &mut propositional_values);
+        let mut numeric_values = Vec::new();
+        state_registry
+            .fill_numeric_vars(&initial_state, &mut numeric_values)
+            .unwrap();
+
+        let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+        eprintln!(
+            "counts: propositions={} conditions={} relaxed_operators={}",
+            landmarks.propositions.len(),
+            landmarks.conditions.len(),
+            landmarks.relaxed_operators.len()
+        );
+
+        landmarks
+            .first_exploration(&propositional_values, &numeric_values)
+            .unwrap();
+
+        eprintln!(
+            "goal_status={:?} goal_h={} goal_preconditions={:?}",
+            landmarks.propositions[landmarks.artificial_goal_id].status,
+            landmarks.propositions[landmarks.artificial_goal_id].h_max_cost,
+            landmarks
+                .relaxed_operators
+                .last()
+                .unwrap()
+                .precondition_ids
+                .iter()
+                .map(|&id| format!(
+                    "{}:{}:{:?}:h={}",
+                    id,
+                    landmarks.propositions[id].name,
+                    landmarks.propositions[id].status,
+                    landmarks.propositions[id].h_max_cost
+                ))
+                .collect::<Vec<_>>()
+        );
+
+        let result = landmarks.compute_landmarks(
+            &propositional_values,
+            initial_state.buffer(&state_registry).len(),
+            &numeric_values,
+        );
+        eprintln!("compute_landmarks={result:?}");
     }
 }

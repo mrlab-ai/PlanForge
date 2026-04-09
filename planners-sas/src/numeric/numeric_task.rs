@@ -132,6 +132,46 @@ pub trait AbstractNumericTask {
     ) -> Result<Vec<LinearNumericEffect>, LinearizationError> {
         linearize_operator_assignment_effects(self, operator_id)
     }
+
+    fn regular_numeric_variable_ids(&self) -> Vec<usize> {
+        self.numeric_variables()
+            .iter()
+            .enumerate()
+            .filter_map(|(numeric_var_id, numeric_var)| {
+                (numeric_var.get_type() == &NumericType::Regular).then_some(numeric_var_id)
+            })
+            .collect()
+    }
+
+    fn is_linear_cost_operator(&self, operator_id: usize) -> bool {
+        linear_metric_operator_cost_expression(self, operator_id).is_some()
+    }
+
+    fn operator_cost_coefficients(&self, operator_id: usize) -> Vec<f64> {
+        let regular_numeric_variable_ids = self.regular_numeric_variable_ids();
+        linear_metric_operator_cost_expression(self, operator_id)
+            .map(|expression| {
+                regular_numeric_variable_ids
+                    .iter()
+                    .map(|&numeric_var_id| expression.coefficients[numeric_var_id])
+                    .collect()
+            })
+            .unwrap_or_else(|| {
+                todo!(
+                    "requested linear action-cost coefficients for non-linear-cost operator {operator_id}"
+                )
+            })
+    }
+
+    fn operator_cost_constant(&self, operator_id: usize) -> f64 {
+        linear_metric_operator_cost_expression(self, operator_id)
+            .map(|expression| expression.constant)
+            .unwrap_or_else(|| {
+                todo!(
+                    "requested linear action-cost constant for non-linear-cost operator {operator_id}"
+                )
+            })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -405,6 +445,67 @@ pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>
         old_metric - new_metric
     };
     delta.max(0.0)
+}
+
+fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
+    task: &T,
+    operator_id: usize,
+) -> Option<crate::numeric::utils::linear_effects::LinearExpression> {
+    if !task.metric().use_metric() {
+        return None;
+    }
+
+    let metric_var_id = usize::try_from(task.metric().var_id()).ok()?;
+    let metric_variable = task.numeric_variables().get(metric_var_id)?;
+    if metric_variable.get_type() != &NumericType::Cost {
+        return None;
+    }
+
+    let operator = task.get_operators().get(operator_id).unwrap_or_else(|| {
+        panic!(
+            "operator id {operator_id} is out of bounds for linear metric-cost extraction"
+        )
+    });
+    let metric_direction = if task.metric().is_min() { 1.0 } else { -1.0 };
+    let mut linear_cost_expression = None;
+
+    for assignment_effect in operator.assignment_effects() {
+        if usize::try_from(assignment_effect.affected_var_id()).ok() != Some(metric_var_id) {
+            continue;
+        }
+        if assignment_effect.is_conditional() || !assignment_effect.conditions().is_empty() {
+            continue;
+        }
+
+        let source_expression = task
+            .linearize_numeric_var(assignment_effect.var_id() as usize)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to linearize metric-cost source variable {} for operator {operator_id}: {error}",
+                    assignment_effect.var_id()
+                )
+            });
+        let candidate = match assignment_effect.operation() {
+            AssignmentOperation::Plus => source_expression.scale(metric_direction),
+            AssignmentOperation::Minus => source_expression.scale(-metric_direction),
+            AssignmentOperation::Assign
+            | AssignmentOperation::Times
+            | AssignmentOperation::Divide => continue,
+        };
+
+        if candidate.coefficients.iter().all(|&coefficient| coefficient == 0.0) {
+            continue;
+        }
+
+        if linear_cost_expression.is_some() {
+            todo!(
+                "multiple unconditional linear metric-cost effects for operator {operator_id} are not implemented yet"
+            );
+        }
+        linear_cost_expression = Some(candidate);
+    }
+
+    linear_cost_expression
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -10,6 +10,12 @@ use crate::numeric::evaluation::heuristic::Heuristic;
 
 use super::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 
+// PARITY(numeric-fd): these defaults currently mirror the plugin parser defaults in
+// `numeric-fd/src/search/numeric_landmarks/lm_cut_numeric_heuristic.cc`, not the direct
+// constructor defaults used by the IPC'23 planner (`ceiling_less_than_one=true`,
+// `use_second_order_simple=true`, `bound_iterations=10`). Keep this mismatch visible while
+// debugging the drone repro because "default params" depends on which numeric-fd entry point we
+// want to be faithful to.
 pub const DEFAULT_CEILING_LESS_THAN_ONE: bool = false;
 pub const DEFAULT_IGNORE_NUMERIC: bool = false;
 pub const DEFAULT_RANDOM_PCF: bool = false;
@@ -100,17 +106,6 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
         if config.disable_ma {
             return Err("lmcutnumeric disable_ma=true is not implemented yet".to_string());
         }
-        if config.use_constant_assignment {
-            return Err(
-                "lmcutnumeric use_constant_assignment=true is not implemented yet".to_string(),
-            );
-        }
-        if config.bound_iterations > 0 {
-            return Err(
-                "lmcutnumeric bound_iterations>0 is not implemented yet".to_string(),
-            );
-        }
-
         Ok(Self {
             name: "lmcutnumeric".to_string(),
             task,
@@ -349,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn from_config_rejects_unimplemented_constant_assignment() {
+    fn from_config_accepts_constant_assignment() {
         let task = NumericRootTask::new(
             3,
             Metric::new(true, -1),
@@ -368,16 +363,14 @@ mod tests {
         let mut config = LmCutNumericConfig::default();
         config.use_constant_assignment = true;
 
-        let error = match LandmarkCutNumericHeuristic::from_config(&task, config) {
-            Err(error) => error,
-            Ok(_) => panic!("constant assignment should be rejected until it is implemented"),
-        };
+        let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
+            .expect("constant assignment flag should construct the heuristic");
 
-        assert!(error.contains("use_constant_assignment=true"));
+        assert!(heuristic.config().use_constant_assignment);
     }
 
     #[test]
-    fn from_config_rejects_unimplemented_bounds() {
+    fn from_config_accepts_bound_iterations() {
         let task = NumericRootTask::new(
             3,
             Metric::new(true, -1),
@@ -396,11 +389,9 @@ mod tests {
         let mut config = LmCutNumericConfig::default();
         config.bound_iterations = 1;
 
-        let error = match LandmarkCutNumericHeuristic::from_config(&task, config) {
-            Err(error) => error,
-            Ok(_) => panic!("bound iterations should be rejected until bounds are implemented"),
-        };
+        let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
+            .expect("bound iterations should construct the heuristic once bounds are implemented");
 
-        assert!(error.contains("bound_iterations>0"));
+        assert_eq!(heuristic.config().bound_iterations, 1);
     }
 }

@@ -391,6 +391,23 @@ fn drone_pfile1_lmcutnumeric_initial_state_local_repro() {
         .unwrap_or_else(|err| panic!("failed to prepare drone numeric values: {err:?}"));
 
     let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+    let relaxed_operator_count = landmarks.relaxed_operators().len();
+    let proposition_count = landmarks.propositions().len();
+    let numeric_condition_count = landmarks
+        .propositions()
+        .iter()
+        .filter(|proposition| proposition.is_numeric_condition)
+        .count();
+    let infinite_operator_count = landmarks
+        .relaxed_operators()
+        .iter()
+        .filter(|operator| operator.infinite)
+        .count();
+    let sose_operator_count = landmarks
+        .relaxed_operators()
+        .iter()
+        .filter(|operator| operator.original_op_id_1.is_some())
+        .count();
     let result = landmarks.compute_landmarks(
         &propositional_values,
         initial_state.buffer(&state_registry).len(),
@@ -404,7 +421,9 @@ fn drone_pfile1_lmcutnumeric_initial_state_local_repro() {
             );
         }
         Err(error) => {
-            panic!("Drone initial LM-cut failed with: {error}");
+            panic!(
+                "Drone initial LM-cut failed with: {error} | counts: propositions={proposition_count} numeric_conditions={numeric_condition_count} relaxed_operators={relaxed_operator_count} infinite={infinite_operator_count} sose={sose_operator_count}"
+            );
         }
     }
 }
