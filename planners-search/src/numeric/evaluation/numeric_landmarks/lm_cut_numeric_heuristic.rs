@@ -10,20 +10,18 @@ use crate::numeric::evaluation::heuristic::Heuristic;
 
 use super::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 
-// PARITY(numeric-fd): these defaults currently mirror the plugin parser defaults in
-// `numeric-fd/src/search/numeric_landmarks/lm_cut_numeric_heuristic.cc`, not the direct
-// constructor defaults used by the IPC'23 planner (`ceiling_less_than_one=true`,
-// `use_second_order_simple=true`, `bound_iterations=10`). Keep this mismatch visible while
-// debugging the drone repro because "default params" depends on which numeric-fd entry point we
-// want to be faithful to.
-pub const DEFAULT_CEILING_LESS_THAN_ONE: bool = false;
+// PARITY(numeric-fd): `LmCutNumericConfig::default()` should match the direct
+// `LandmarkCutNumericHeuristic(const shared_ptr<AbstractTask> &task)` constructor defaults used
+// by the IPC'23 planner, since the Rust callers currently instantiate LM-cut through plain
+// `LmCutNumericConfig::default()` rather than through an option-parser layer.
+pub const DEFAULT_CEILING_LESS_THAN_ONE: bool = true;
 pub const DEFAULT_IGNORE_NUMERIC: bool = false;
 pub const DEFAULT_RANDOM_PCF: bool = false;
 pub const DEFAULT_IRMAX: bool = false;
 pub const DEFAULT_DISABLE_MA: bool = false;
-pub const DEFAULT_USE_SECOND_ORDER_SIMPLE: bool = false;
+pub const DEFAULT_USE_SECOND_ORDER_SIMPLE: bool = true;
 pub const DEFAULT_USE_CONSTANT_ASSIGNMENT: bool = false;
-pub const DEFAULT_BOUND_ITERATIONS: usize = 0;
+pub const DEFAULT_BOUND_ITERATIONS: usize = 10;
 pub const DEFAULT_PRECISION: f64 = 0.000001;
 pub const DEFAULT_EPSILON: f64 = 0.0;
 
@@ -214,16 +212,16 @@ mod tests {
     }
 
     #[test]
-    fn lmcutnumeric_config_defaults_match_fd_plugin_defaults() {
+    fn lmcutnumeric_config_defaults_match_fd_ipc_constructor_defaults() {
         let config = LmCutNumericConfig::default();
-        assert!(!config.ceiling_less_than_one);
+        assert!(config.ceiling_less_than_one);
         assert!(!config.ignore_numeric);
         assert!(!config.random_pcf);
         assert!(!config.irmax);
         assert!(!config.disable_ma);
-        assert!(!config.use_second_order_simple);
+        assert!(config.use_second_order_simple);
         assert!(!config.use_constant_assignment);
-        assert_eq!(config.bound_iterations, 0);
+        assert_eq!(config.bound_iterations, 10);
         assert_eq!(config.precision, 0.000001);
         assert_eq!(config.epsilon, 0.0);
     }
