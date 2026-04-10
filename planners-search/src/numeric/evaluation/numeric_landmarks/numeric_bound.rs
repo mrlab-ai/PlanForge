@@ -1,4 +1,4 @@
-use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
+use super::numeric_helper::NumericTaskHelper;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, AssignmentOperation};
 use planners_sas::numeric::utils::linear_effects::LinearExpression;
 
@@ -21,6 +21,7 @@ pub struct NumericBound {
     initialized: bool,
     precision: f64,
     epsilon: f64,
+    numeric_helper: NumericTaskHelper,
     numeric_variable_ids: Vec<usize>,
     num_numeric_variables: usize,
     num_actions: usize,
@@ -58,6 +59,7 @@ impl NumericBound {
             "numeric bound precision must be non-negative"
         );
         assert!(epsilon >= 0.0, "numeric bound epsilon must be non-negative");
+        self.numeric_helper = NumericTaskHelper::new(task, precision, epsilon, false);
         self.numeric_variable_ids = task.regular_numeric_variable_ids();
         self.num_numeric_variables = self.numeric_variable_ids.len();
         self.num_actions = task.get_operators().len();
@@ -509,7 +511,10 @@ impl NumericBound {
                         && self.variable_before_action_has_ub[lhs][op_id]
                     {
                         new_effect_has_ub = true;
-                        new_effect_ub = ub + increment_coefficient * self.variable_before_action_ub[lhs][op_id];
+                        // PARITY(numeric-fd): the reference implementation uses the boolean
+                        // `get_variable_before_action_has_ub(lhs, op_id)` value in this branch
+                        // rather than the numeric upper bound itself.
+                        new_effect_ub = ub + increment_coefficient * f64::from(self.variable_before_action_has_ub[lhs][op_id]);
                     } else if increment_coefficient <= -self.precision
                         && self.variable_before_action_has_lb[lhs][op_id]
                     {
@@ -542,7 +547,10 @@ impl NumericBound {
                         && self.variable_before_action_has_lb[lhs][op_id]
                     {
                         new_effect_has_lb = true;
-                        new_effect_lb = lb + increment_coefficient * self.variable_before_action_lb[lhs][op_id];
+                        // PARITY(numeric-fd): same reference quirk as the upper-bound branch:
+                        // C++ multiplies by the boolean `get_variable_before_action_has_lb(...)`
+                        // instead of the numeric lower bound value.
+                        new_effect_lb = lb + increment_coefficient * f64::from(self.variable_before_action_has_lb[lhs][op_id]);
                     } else if increment_coefficient <= -self.precision
                         && self.variable_before_action_has_ub[lhs][op_id]
                     {
@@ -762,86 +770,23 @@ impl NumericBound {
                 continue;
             }
 
-            for comparison_axiom in task.comparison_axioms() {
-                if usize::try_from(comparison_axiom.get_affected_var_id()).ok()
-                    != Some(precondition.var() as usize)
-                {
-                    continue;
-                }
-                conditions.extend(self.build_conditions_for_fact_value(task, comparison_axiom, 0));
+            if let Some(helper_conditions) = self
+                .numeric_helper
+                .comparison_fact_conditions(precondition.var() as usize, 0)
+            {
+                conditions.extend(helper_conditions.iter().map(|condition| BoundCondition {
+                    coefficients: self.project_coefficients(&condition.coefficients),
+                    constant: condition.constant,
+                    epsilon: if condition.is_strictly_greater {
+                        self.epsilon
+                    } else {
+                        0.0
+                    },
+                }));
             }
         }
 
         conditions
-    }
-
-    fn build_conditions_for_fact_value(
-        &self,
-        task: &dyn AbstractNumericTask,
-        comparison_axiom: &ComparisonAxiom,
-        fact_value: i32,
-    ) -> Vec<BoundCondition> {
-        let operator = comparison_operator_for_fact_value(comparison_axiom, fact_value)
-            .unwrap_or_else(|| panic!("unsupported comparison fact value {fact_value}"));
-        let lhs = usize::try_from(comparison_axiom.get_left_var_id())
-            .expect("comparison lhs numeric var must be non-negative");
-        let rhs = usize::try_from(comparison_axiom.get_right_var_id())
-            .expect("comparison rhs numeric var must be non-negative");
-
-        match operator {
-            ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
-                vec![self.build_condition(
-                    task,
-                    lhs,
-                    rhs,
-                    matches!(operator, ComparisonOperator::GreaterThan),
-                )]
-            }
-            ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => vec![
-                self.build_condition(
-                    task,
-                    rhs,
-                    lhs,
-                    matches!(operator, ComparisonOperator::LessThan),
-                ),
-            ],
-            ComparisonOperator::Equal => vec![
-                self.build_condition(task, lhs, rhs, false),
-                self.build_condition(task, rhs, lhs, false),
-            ],
-            ComparisonOperator::UnEqual => {
-                panic!("numeric bound does not support disequality comparison conditions")
-            }
-        }
-    }
-
-    fn build_condition(
-        &self,
-        task: &dyn AbstractNumericTask,
-        positive_var_id: usize,
-        negative_var_id: usize,
-        is_strictly_greater: bool,
-    ) -> BoundCondition {
-        let positive_expression = task
-            .linearize_numeric_var(positive_var_id)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "failed to linearize numeric bound lhs variable {positive_var_id}: {error}"
-                )
-            });
-        let negative_expression = task
-            .linearize_numeric_var(negative_var_id)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "failed to linearize numeric bound rhs variable {negative_var_id}: {error}"
-                )
-            });
-        let expression = positive_expression.subtract(&negative_expression);
-        BoundCondition {
-            coefficients: self.project_coefficients(&expression.coefficients),
-            constant: expression.constant,
-            epsilon: if is_strictly_greater { self.epsilon } else { 0.0 },
-        }
     }
 
     fn local_numeric_var_id(&self, actual_numeric_var_id: usize) -> Option<usize> {
@@ -855,37 +800,5 @@ impl NumericBound {
             .iter()
             .map(|&numeric_var_id| coefficients.get(numeric_var_id).copied().unwrap_or(0.0))
             .collect()
-    }
-}
-
-fn invert_comparison_operator(operator: &ComparisonOperator) -> ComparisonOperator {
-    match operator {
-        ComparisonOperator::LessThan => ComparisonOperator::GreaterThanOrEqual,
-        ComparisonOperator::LessThanOrEqual => ComparisonOperator::GreaterThan,
-        ComparisonOperator::Equal => ComparisonOperator::UnEqual,
-        ComparisonOperator::GreaterThanOrEqual => ComparisonOperator::LessThan,
-        ComparisonOperator::GreaterThan => ComparisonOperator::LessThanOrEqual,
-        ComparisonOperator::UnEqual => ComparisonOperator::Equal,
-    }
-}
-
-fn comparison_operator_for_fact_value(
-    comparison_axiom: &ComparisonAxiom,
-    fact_value: i32,
-) -> Option<ComparisonOperator> {
-    assert!(
-        fact_value == 0 || fact_value == 1,
-        "comparison fact value must be boolean-like, got {fact_value}"
-    );
-
-    let operator = if fact_value == 0 {
-        comparison_axiom.get_operator().clone()
-    } else {
-        invert_comparison_operator(comparison_axiom.get_operator())
-    };
-
-    match operator {
-        ComparisonOperator::UnEqual => None,
-        supported => Some(supported),
     }
 }
