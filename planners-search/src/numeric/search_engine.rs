@@ -18,6 +18,7 @@ use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, Fact, Operator, metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistry};
+use std::env;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -439,6 +440,8 @@ impl<'a> AStarSearch<'a> {
 
         self.populate_applicable_operators(&node.state);
         let mut applicable_operators = std::mem::take(&mut self.applicable_operators_buffer);
+        let trace_initial_successors =
+            self.nodes_expanded == 1 && env::var_os("TRACE_INITIAL_SUCCESSORS").is_some();
 
         for (operator, operator_id) in applicable_operators.iter().copied() {
             let succ_state = match self.state_registry.get_successor_state_with_buffers(
@@ -492,6 +495,19 @@ impl<'a> AStarSearch<'a> {
             // Evaluate and add to open list
             if let Ok(evaluation) = self.evaluate_state(&succ_state, new_g_value) {
                 self.nodes_evaluated += 1;
+                if trace_initial_successors {
+                    let h_value = evaluation.get_heuristic_value(&self.heuristic.name());
+                    let f_value = evaluation.get_heuristic_value(&self.f_evaluator.name());
+                    println!(
+                        "TRACE initial-successor op={} g={} h={} f={} dead_end={} state_id={}",
+                        operator.name(),
+                        format_progress_value(new_g_value),
+                        format_progress_value(h_value),
+                        format_progress_value(f_value),
+                        evaluation.is_dead_end,
+                        succ_state_id
+                    );
+                }
                 if evaluation.is_dead_end {
                     self.dead_ends += 1;
                     if !self.open_list.accepts_dead_ends() {

@@ -15,6 +15,8 @@ use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
+use planners_search::numeric::evaluation::evaluator::EvaluationState;
+use planners_search::numeric::evaluation::evaluator::Evaluator;
 use planners_search::numeric::search_engine::SearchStatus;
 use planners_search::numeric::search_engine::{AStarSearch, SearchEngine};
 use planners_search::numeric::successor_generator::GroundedSuccessorGenerator;
@@ -636,4 +638,63 @@ fn plant_watering_lmcutnumeric_remains_finite_along_blind_solution() {
     }
 
     let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+#[ignore = "debug hydropower initial lmcut successor values"]
+fn hydropower_output_lmcutnumeric_initial_successor_trace() {
+    let task_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("test_outputs/hydropower.output");
+    let task = NumericRootTask::from_file(&task_path);
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let initial_state = state_registry.get_initial_state();
+    let propositional_state = initial_state.get_state(&state_registry);
+    let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&task);
+    let mut applicable_operators = Vec::new();
+    successor_generator.get_applicable_operators(&propositional_state, &mut applicable_operators);
+
+    let task_ref: &dyn AbstractNumericTask = &task;
+    let mut heuristic = LandmarkCutNumericHeuristic::from_config(task_ref, LmCutNumericConfig::default())
+        .expect("default lmcutnumeric config should be supported");
+
+    let mut initial_eval =
+        EvaluationState::new_with_registry(&initial_state, 0.0, false, task_ref, &state_registry);
+    initial_eval.set_is_goal(false);
+    heuristic
+        .evaluate_state(&mut initial_eval)
+        .expect("initial LM-cut evaluation should succeed");
+    let initial_result = initial_eval.into_result();
+    println!(
+        "TRACE initial-state h={} applicable_ops={}",
+        initial_result.get_heuristic_value(&heuristic.name()),
+        applicable_operators.len()
+    );
+
+    for (operator, operator_id) in applicable_operators {
+        let succ_state = state_registry
+            .get_successor_state(&initial_state, operator)
+            .unwrap_or_else(|e| panic!("successor generation failed for {}: {e:?}", operator.name()));
+        let g_value = state_registry
+            .metric_delta_applying_operator(&initial_state, operator)
+            .unwrap_or_else(|_| task.get_operators()[operator_id].cost() as f64);
+        let mut successor_eval =
+            EvaluationState::new_with_registry(&succ_state, g_value, false, task_ref, &state_registry);
+        successor_eval.set_is_goal(false);
+        heuristic
+            .evaluate_state(&mut successor_eval)
+            .unwrap_or_else(|e| panic!("LM-cut evaluation failed for {}: {e}", operator.name()));
+        let result = successor_eval.into_result();
+        println!(
+            "TRACE initial-successor op={} g={} h={} f={} dead_end={} state_id={}",
+            operator.name(),
+            g_value,
+            result.get_heuristic_value(&heuristic.name()),
+            g_value + result.get_heuristic_value(&heuristic.name()),
+            result.is_dead_end,
+            succ_state.get_id()
+        );
+    }
 }
