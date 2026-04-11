@@ -14,18 +14,23 @@ use planners_sas::numeric::utils::linear_effects::LinearNumericEffect;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct QueueEntry {
     cost: NotNan<f64>,
     proposition_id: usize,
 }
 
+impl PartialEq for QueueEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.cost == other.cost
+    }
+}
+
+impl Eq for QueueEntry {}
+
 impl Ord for QueueEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        other
-            .cost
-            .cmp(&self.cost)
-            .then_with(|| other.proposition_id.cmp(&self.proposition_id))
+        other.cost.cmp(&self.cost)
     }
 }
 
@@ -238,6 +243,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn initialize(&mut self) {
         assert!(!self.initialized, "LM-cut landmarks initialized twice");
+        let debug_summary = std::env::var_os("LMCUT_DEBUG_SUMMARY").is_some();
         self.propositions.clear();
         self.proposition_index.clear();
         self.conditions.clear();
@@ -266,14 +272,60 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
         self.num_propositions = 2;
         self.build_propositional_propositions();
+        if debug_summary {
+            eprintln!(
+                "LMCUT_DEBUG_STAGE after_props prop={} numeric_conditions={}",
+                self.num_propositions,
+                self.conditions.len()
+            );
+        }
         self.build_numeric_conditions();
+        if debug_summary {
+            eprintln!(
+                "LMCUT_DEBUG_STAGE after_numeric_conditions prop={} numeric_conditions={}",
+                self.num_propositions,
+                self.conditions.len()
+            );
+        }
         self.build_comparison_fact_condition_ids();
         self.add_linear_conditions();
+        if debug_summary {
+            eprintln!(
+                "LMCUT_DEBUG_STAGE after_linear_conditions prop={} numeric_conditions={}",
+                self.num_propositions,
+                self.conditions.len()
+            );
+        }
         self.prepare_goal_preconditions();
         self.build_relaxed_operators();
         self.build_goal_operator();
         self.build_original_to_relaxed_index();
         self.build_cross_references();
+        if self.use_bounds {
+            let initial_numeric_values = self.task.get_initial_numeric_state_values();
+            self.numeric_bound
+                .calculate_bounds(&initial_numeric_values, self.config.bound_iterations);
+        }
+        if debug_summary {
+            let infinite_operators = self
+                .relaxed_operators
+                .iter()
+                .filter(|operator| operator.infinite)
+                .count();
+            let second_order_simple_operators = self
+                .relaxed_operators
+                .iter()
+                .filter(|operator| operator.original_op_id_1.is_some())
+                .count();
+            eprintln!(
+                "LMCUT_DEBUG_SUMMARY infinite={} sose={} ops={} prop={} numeric_conditions={}",
+                infinite_operators,
+                second_order_simple_operators,
+                self.task.get_operators().len() + self.task.axioms().len(),
+                self.num_propositions,
+                self.conditions.len()
+            );
+        }
         self.initialized = true;
     }
 
@@ -710,11 +762,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         if old_supporter_cost > proposition_cost {
                             let new_supporter = self.get_max_supporter(operator_id)?;
                             if let Some((new_supporter_id, new_cost)) = new_supporter {
-                                if new_cost != old_supporter_cost {
-                                    Some((new_supporter_id, new_cost, operator.effect_ids.clone()))
-                                } else {
-                                    None
-                                }
+                                Some((
+                                    new_supporter_id,
+                                    new_cost,
+                                    new_cost != old_supporter_cost,
+                                    operator.effect_ids.clone(),
+                                ))
                             } else {
                                 None
                             }
@@ -726,21 +779,23 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     }
                 };
 
-                if let Some((new_supporter_id, new_cost, effect_ids)) = update {
+                if let Some((new_supporter_id, new_cost, needs_effect_update, effect_ids)) = update {
                     let operator = self
                         .relaxed_operators
                         .get_mut(operator_id)
                         .expect("operator id already validated");
                     operator.h_max_supporter = Some(new_supporter_id);
                     operator.h_max_supporter_cost = new_cost;
-                    for effect_id in effect_ids {
-                        self.update_queue(
-                            propositional_values,
-                            numeric_values,
-                            operator_id,
-                            new_supporter_id,
-                            effect_id,
-                        )?;
+                    if needs_effect_update {
+                        for effect_id in effect_ids {
+                            self.update_queue(
+                                propositional_values,
+                                numeric_values,
+                                operator_id,
+                                new_supporter_id,
+                                effect_id,
+                            )?;
+                        }
                     }
                 }
             }
@@ -2751,6 +2806,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
             for linear_effect in &helper_linear_effects {
                 let assignment_effect_id = linear_effect.source_assignment_effect_id;
                 let helper_effect_preconditions = linear_effect.preconditions.clone();
+                let mut extended_numeric_group_ids = helper_effect_preconditions.numeric_group_ids.clone();
+                for &group_id in &helper_num_list {
+                    if !extended_numeric_group_ids.contains(&group_id) {
+                        extended_numeric_group_ids.push(group_id);
+                    }
+                }
                 let assignment_condition_groups = self.precondition_proposition_id_groups(
                     &helper_effect_preconditions.propositional_facts,
                 );
@@ -2811,14 +2872,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .push(plus_condition_id);
 
                 let plus_redundant_conditions = self
-                    .get_proposition_numeric_conditions(&extended_precondition_ids)
-                    .and_then(|other_conditions| {
-                        self.conditions
-                            .get(plus_condition_id)
-                            .map(|base_condition| {
-                                self.numeric_helper
-                                    .combine_condition_with_conditions(base_condition, &other_conditions)
-                            })
+                    .conditions
+                    .get(plus_condition_id)
+                    .map(|base_condition| {
+                        let other_conditions = self
+                            .representative_numeric_conditions_for_group_ids(&extended_numeric_group_ids);
+                        self.numeric_helper
+                            .combine_condition_with_conditions(base_condition, &other_conditions)
                     })
                     .unwrap_or_default();
                 for redundant_condition in plus_redundant_conditions {
@@ -2849,14 +2909,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .push(minus_condition_id);
 
                 let minus_redundant_conditions = self
-                    .get_proposition_numeric_conditions(&extended_precondition_ids)
-                    .and_then(|other_conditions| {
-                        self.conditions
-                            .get(minus_condition_id)
-                            .map(|base_condition| {
-                                self.numeric_helper
-                                    .combine_condition_with_conditions(base_condition, &other_conditions)
-                            })
+                    .conditions
+                    .get(minus_condition_id)
+                    .map(|base_condition| {
+                        let other_conditions = self
+                            .representative_numeric_conditions_for_group_ids(&extended_numeric_group_ids);
+                        self.numeric_helper
+                            .combine_condition_with_conditions(base_condition, &other_conditions)
                     })
                     .unwrap_or_default();
                 for redundant_condition in minus_redundant_conditions {
@@ -2887,6 +2946,21 @@ impl<'task> LandmarkCutLandmarks<'task> {
             })
             .collect::<Vec<_>>();
         Some(conditions)
+    }
+
+    fn representative_numeric_conditions_for_group_ids(
+        &self,
+        group_ids: &[usize],
+    ) -> Vec<NumericCondition> {
+        group_ids
+            .iter()
+            .filter_map(|&group_id| {
+                self.numeric_helper
+                    .condition_group_representative_condition_id(group_id)
+                    .and_then(|condition_id| self.numeric_helper.get_condition(condition_id))
+                    .cloned()
+            })
+            .collect()
     }
 
     fn add_numeric_condition_proposition(&mut self, condition: NumericCondition) -> usize {
@@ -3019,10 +3093,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
             self.task.numeric_variables().len(),
             "LM-cut scaffold received the wrong number of numeric values"
         );
-        if self.use_bounds {
-            self.numeric_bound
-                .calculate_bounds(numeric_values, self.config.bound_iterations);
-        }
 
         for operator in &mut self.relaxed_operators {
             operator.cost_1 = operator.base_cost_1;
@@ -3038,8 +3108,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let mut landmarks = Vec::new();
         let mut cut = Vec::new();
         let mut m_list = Vec::new();
+        let debug_iterations = std::env::var_os("LMCUT_DEBUG_ITERATIONS").is_some();
+        let debug_focus = std::env::var_os("LMCUT_DEBUG_FOCUS").is_some();
+        let mut iteration = 0usize;
 
         while self.propositions[self.artificial_goal_id].h_max_cost >= self.config.precision {
+            iteration += 1;
             self.mark_goal_plateau(
                 propositional_values,
                 numeric_values,
@@ -3071,6 +3145,54 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     *entry = entry.min(current_cut_cost);
                 }
                 cut_cost = cut_cost.min(current_cut_cost);
+            }
+
+            if debug_iterations && (iteration <= 20 || iteration % 1000 == 0) {
+                let cut_details = if iteration <= 3 || cut_cost.abs() < self.config.precision {
+                    cut
+                        .iter()
+                        .zip(m_list.iter())
+                        .map(|(&operator_id, &(m1, m2))| {
+                            let operator = &self.relaxed_operators[operator_id];
+                            let effects = operator
+                                .effect_ids
+                                .iter()
+                                .filter_map(|&effect_id| {
+                                    self.propositions.get(effect_id).map(|effect| {
+                                        format!("{}:{:?}", effect.name, effect.status)
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            format!(
+                                "id={} name={} orig=({:?},{:?}) cost=({},{}) m=({},{}) supporter={:?} effects=[{}]",
+                                operator_id,
+                                operator.name,
+                                operator.original_op_id_1,
+                                operator.original_op_id_2,
+                                operator.cost_1,
+                                operator.cost_2,
+                                m1,
+                                m2,
+                                operator.h_max_supporter,
+                                effects
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                } else {
+                    String::new()
+                };
+                eprintln!(
+                    "LMCUT_DEBUG_ITER iteration={} goal_h={} cut_size={} cut_cost={}",
+                    iteration,
+                    self.propositions[self.artificial_goal_id].h_max_cost,
+                    cut.len(),
+                    cut_cost
+                );
+                if !cut_details.is_empty() {
+                    eprintln!("LMCUT_DEBUG_ZERO_CUT {}", cut_details);
+                }
             }
 
             if !cut_cost.is_finite() {
@@ -3181,6 +3303,105 @@ impl<'task> LandmarkCutLandmarks<'task> {
             );
 
             self.first_exploration_incremental(propositional_values, numeric_values, &cut)?;
+            if debug_focus && iteration <= 3 {
+                for operator in self.relaxed_operators.iter().filter(|operator| {
+                    matches!(
+                        operator.name.as_str(),
+                        "increase_y "
+                            | "decrease_y "
+                            | "increase_z "
+                            | "visit x0y0z0"
+                            | "visit x0y0z1"
+                    )
+                }) {
+                    let supporter = operator
+                        .h_max_supporter
+                        .and_then(|supporter_id| {
+                            self.propositions.get(supporter_id).map(|supporter| {
+                                format!(
+                                    "{}:{}:{:?}:h={}",
+                                    supporter_id,
+                                    supporter.name,
+                                    supporter.status,
+                                    supporter.h_max_cost,
+                                )
+                            })
+                        })
+                        .unwrap_or_else(|| "none".to_string());
+                    let preconditions = operator
+                        .precondition_ids
+                        .iter()
+                        .filter_map(|&precondition_id| {
+                            self.propositions.get(precondition_id).map(|precondition| {
+                                format!(
+                                    "{}:{}:{:?}:h={}",
+                                    precondition_id,
+                                    precondition.name,
+                                    precondition.status,
+                                    precondition.h_max_cost,
+                                )
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" | ");
+                    let effects = operator
+                        .effect_ids
+                        .iter()
+                        .filter_map(|&effect_id| {
+                            self.propositions.get(effect_id).map(|effect| {
+                                format!(
+                                    "{}:{}:{:?}:h={}",
+                                    effect_id,
+                                    effect.name,
+                                    effect.status,
+                                    effect.h_max_cost,
+                                )
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" | ");
+                    eprintln!(
+                        "LMCUT_DEBUG_FOCUS iteration={} name={} cost=({}, {}) supporter={} preconditions=[{}] effects=[{}]",
+                        iteration,
+                        operator.name,
+                        operator.cost_1,
+                        operator.cost_2,
+                        supporter,
+                        preconditions,
+                        effects,
+                    );
+                }
+                for &proposition_id in &[61usize, 69usize, 80usize, 81usize, 104usize] {
+                    if let Some(proposition) = self.propositions.get(proposition_id) {
+                        let achievers = proposition
+                            .effect_of
+                            .iter()
+                            .filter_map(|&achiever_id| {
+                                self.relaxed_operators.get(achiever_id).map(|achiever| {
+                                    format!(
+                                        "{}:{}:cost=({}, {}):supporter={:?}",
+                                        achiever_id,
+                                        achiever.name,
+                                        achiever.cost_1,
+                                        achiever.cost_2,
+                                        achiever.h_max_supporter,
+                                    )
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" | ");
+                        eprintln!(
+                            "LMCUT_DEBUG_PROP iteration={} id={} name={} status={:?} h={} achievers=[{}]",
+                            iteration,
+                            proposition_id,
+                            proposition.name,
+                            proposition.status,
+                            proposition.h_max_cost,
+                            achievers,
+                        );
+                    }
+                }
+            }
             cut.clear();
             m_list.clear();
             self.reset_goal_zone_statuses();

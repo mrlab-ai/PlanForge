@@ -408,24 +408,59 @@ fn drone_pfile1_lmcutnumeric_initial_state_local_repro() {
         .iter()
         .filter(|operator| operator.original_op_id_1.is_some())
         .count();
-    let result = landmarks.compute_landmarks(
-        &propositional_values,
-        initial_state.buffer(&state_registry).len(),
-        &numeric_values,
-    );
-
-    match result {
-        Ok((dead_end, total_cost, landmarks_vec)) => {
-            panic!(
-                "Drone initial LM-cut unexpectedly succeeded: dead_end={dead_end}, total_cost={total_cost}, landmarks={landmarks_vec:?}"
-            );
-        }
-        Err(error) => {
+    let (dead_end, total_cost, landmarks_vec) = landmarks
+        .compute_landmarks(
+            &propositional_values,
+            initial_state.buffer(&state_registry).len(),
+            &numeric_values,
+        )
+        .unwrap_or_else(|error| {
             panic!(
                 "Drone initial LM-cut failed with: {error} | counts: propositions={proposition_count} numeric_conditions={numeric_condition_count} relaxed_operators={relaxed_operator_count} infinite={infinite_operator_count} sose={sose_operator_count}"
-            );
-        }
-    }
+            )
+        });
+
+    assert!(
+        !dead_end,
+        "Drone initial LM-cut should not be a dead end; landmarks={landmarks_vec:?}"
+    );
+    assert!(
+        (total_cost - 3.0).abs() <= 1e-6,
+        "Drone initial LM-cut should equal 3 after the zero-cost-cut fix, got {total_cost}; landmarks={landmarks_vec:?}"
+    );
+}
+
+#[test]
+fn drone_output_lmcutnumeric_initial_state_matches_fd_regression() {
+    let preprocessed = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..").join("test_outputs").join("drone.output");
+
+    let task = NumericRootTask::from_file(&preprocessed);
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let initial_state = state_registry.get_initial_state();
+
+    let mut propositional_values = Vec::new();
+    let mut numeric_values = Vec::new();
+    state_registry
+        .fill_state_and_numeric_vars(&initial_state, &mut propositional_values, &mut numeric_values)
+        .expect("drone.output initial state should unpack successfully");
+
+    let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
+    let (dead_end, total_cost, _cuts) = landmarks
+        .compute_landmarks(
+            &propositional_values,
+            initial_state.buffer(&state_registry).len(),
+            &numeric_values,
+        )
+        .expect("drone.output initial LM-cut should succeed");
+
+    assert!(!dead_end, "drone.output initial state should not be a dead end");
+    assert!(
+        (total_cost - 3.0).abs() <= 1e-6,
+        "drone.output initial LM-cut should equal 3, got {total_cost}"
+    );
 }
 
 #[test]

@@ -457,10 +457,14 @@ impl<'a> AStarSearch<'a> {
             let was_closed = self.closed_set.contains(&succ_state_id);
 
             let op_cost = self
-                .operator_costs
-                .get(operator_id)
-                .copied()
-                .unwrap_or(operator.cost() as f64);
+                .state_registry
+                .metric_delta_applying_operator(&node.state, operator)
+                .unwrap_or_else(|_| {
+                    self.operator_costs
+                        .get(operator_id)
+                        .copied()
+                        .unwrap_or(operator.cost() as f64)
+                });
             let new_g_value = current_g + op_cost;
 
             // Check if we've seen this state before
