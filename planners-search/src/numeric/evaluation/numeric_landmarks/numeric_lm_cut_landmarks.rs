@@ -193,6 +193,9 @@ pub struct LandmarkCutLandmarks<'task> {
     original_operator_multiplier_epoch: u32,
     touched_original_operator_ids: Vec<usize>,
     landmark_original_operator_ids: Vec<usize>,
+    composite_expression_values: Vec<Vec<f64>>,
+    composite_expression_value_marks: Vec<Vec<u32>>,
+    composite_expression_value_epoch: u32,
     cut_scratch: Vec<usize>,
     multiplier_scratch: Vec<(f64, f64)>,
     second_exploration_queue_scratch: Vec<usize>,
@@ -258,6 +261,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
             original_operator_multiplier_epoch: 1,
             touched_original_operator_ids: Vec::new(),
             landmark_original_operator_ids: Vec::new(),
+            composite_expression_values: Vec::new(),
+            composite_expression_value_marks: Vec::new(),
+            composite_expression_value_epoch: 1,
             cut_scratch: Vec::new(),
             multiplier_scratch: Vec::new(),
             second_exploration_queue_scratch: Vec::new(),
@@ -284,6 +290,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.operator_condition_to_composite_expression.clear();
         self.operator_condition_to_has_upper_bound.clear();
         self.operator_condition_to_upper_bound.clear();
+        self.composite_expression_values.clear();
+        self.composite_expression_value_marks.clear();
         self.relaxed_operators.clear();
         self.original_to_relaxed_operators.clear();
         self.goal_precondition_ids.clear();
@@ -329,6 +337,16 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.build_goal_operator();
         self.build_original_to_relaxed_index();
         self.build_cross_references();
+        self.composite_expression_values = self
+            .operator_condition_to_composite_expression
+            .iter()
+            .map(|row| vec![0.0; row.len()])
+            .collect();
+        self.composite_expression_value_marks = self
+            .operator_condition_to_composite_expression
+            .iter()
+            .map(|row| vec![0; row.len()])
+            .collect();
         self.original_operator_min_cut_costs
             .resize(self.original_to_relaxed_operators.len(), 0.0);
         self.original_operator_min_cut_cost_marks
@@ -409,6 +427,40 @@ impl<'task> LandmarkCutLandmarks<'task> {
         );
         self.touched_original_operator_ids.clear();
         self.landmark_original_operator_ids.clear();
+    }
+
+    fn start_state_numeric_tracking(&mut self) {
+        if self.composite_expression_value_epoch == u32::MAX {
+            for row in &mut self.composite_expression_value_marks {
+                row.fill(0);
+            }
+            self.composite_expression_value_epoch = 1;
+        } else {
+            self.composite_expression_value_epoch += 1;
+        }
+    }
+
+    #[inline(always)]
+    fn cached_composite_expression_value(
+        &mut self,
+        operator_id: usize,
+        condition_id: usize,
+        numeric_values: &[f64],
+    ) -> f64 {
+        let Some(expression) = self.operator_condition_to_composite_expression[operator_id][condition_id]
+            .as_ref()
+        else {
+            return 0.0;
+        };
+        if self.composite_expression_value_marks[operator_id][condition_id]
+            != self.composite_expression_value_epoch
+        {
+            self.composite_expression_value_marks[operator_id][condition_id] =
+                self.composite_expression_value_epoch;
+            self.composite_expression_values[operator_id][condition_id] =
+                expression.evaluate(numeric_values);
+        }
+        self.composite_expression_values[operator_id][condition_id]
     }
 
     fn update_original_operator_min_cut_cost(&mut self, original_id: usize, cut_cost: f64) {
@@ -982,30 +1034,33 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let achiever_count = self.propositions[proposition_id].effect_of.len();
         for achiever_index in 0..achiever_count {
             let achiever_id = self.propositions[proposition_id].effect_of[achiever_index];
-            let recurse_to = {
+            let (is_zero_cost_applicable, achiever_supporter) = {
                 let achiever = self
                     .relaxed_operators
                     .get(achiever_id)
                     .ok_or_else(|| format!("LM-cut achiever id {achiever_id} is invalid"))?;
-                if achiever.cost_1 < self.config.precision
-                    && achiever.cost_2 < self.config.precision
-                    && achiever.unsatisfied_preconditions == 0
-                {
-                    let ms = self.calculate_numeric_times(
-                        propositional_values,
-                        numeric_values,
-                        proposition_id,
-                        achiever_id,
-                        !self.config.disable_ma,
-                    )?;
-                    if self.multiplier_allows_traversal(achiever_id, ms) {
-                        achiever.h_max_supporter
-                    } else {
-                        None
-                    }
+                (
+                    achiever.cost_1 < self.config.precision
+                        && achiever.cost_2 < self.config.precision
+                        && achiever.unsatisfied_preconditions == 0,
+                    achiever.h_max_supporter,
+                )
+            };
+            let recurse_to = if is_zero_cost_applicable {
+                let ms = self.calculate_numeric_times(
+                    propositional_values,
+                    numeric_values,
+                    proposition_id,
+                    achiever_id,
+                    !self.config.disable_ma,
+                )?;
+                if self.multiplier_allows_traversal(achiever_id, ms) {
+                    achiever_supporter
                 } else {
                     None
                 }
+            } else {
+                None
             };
             if let Some(supporter_id) = recurse_to {
                 self.mark_goal_plateau(propositional_values, numeric_values, supporter_id)?;
@@ -1148,30 +1203,41 @@ impl<'task> LandmarkCutLandmarks<'task> {
         result
     }
 
+    #[inline(always)]
     fn calculate_numeric_times(
-        &self,
+        &mut self,
         propositional_values: &[i32],
         numeric_values: &[f64],
         effect_id: usize,
         operator_id: usize,
         use_ma: bool,
     ) -> Result<(f64, f64), String> {
-        let effect = self
-            .propositions
-            .get(effect_id)
-            .ok_or_else(|| format!("LM-cut effect proposition id {effect_id} is invalid"))?;
-        let operator = self
-            .relaxed_operators
-            .get(operator_id)
-            .ok_or_else(|| format!("LM-cut operator id {operator_id} is invalid"))?;
-        if use_ma && effect.is_numeric_condition && !operator.infinite {
-            let condition_id = effect.id_numeric_condition.ok_or_else(|| {
-                format!("LM-cut numeric proposition {effect_id} is missing its condition id")
-            })?;
-            if operator.original_op_id_1.is_some() {
-                let original_op_id_2 = operator.original_op_id_2.ok_or_else(|| {
-                    format!("LM-cut SOSE operator {operator_id} is missing its target operator id")
-                })?;
+        debug_assert!(effect_id < self.propositions.len());
+        debug_assert!(operator_id < self.relaxed_operators.len());
+        let effect = &self.propositions[effect_id];
+        let (
+            operator_infinite,
+            operator_original_op_id_1,
+            operator_original_op_id_2,
+            operator_cost_1,
+            operator_cost_2,
+        ) = {
+            let operator = &self.relaxed_operators[operator_id];
+            (
+                operator.infinite,
+                operator.original_op_id_1,
+                operator.original_op_id_2,
+                operator.cost_1,
+                operator.cost_2,
+            )
+        };
+        if use_ma && effect.is_numeric_condition && !operator_infinite {
+            let condition_id = effect
+                .id_numeric_condition
+                .expect("LM-cut numeric proposition must store its condition id");
+            if operator_original_op_id_1.is_some() {
+                let original_op_id_2 = operator_original_op_id_2
+                    .expect("LM-cut SOSE operator must store its target operator id");
                 let composite_coefficients = self
                     .operator_condition_to_composite_expression
                     .get(original_op_id_2)
@@ -1183,21 +1249,14 @@ impl<'task> LandmarkCutLandmarks<'task> {
                             "LM-cut SOSE target operator {original_op_id_2} is missing composite coefficients for condition {condition_id}"
                         )
                     })?;
-                let mut c_u = *operator
+                let mut c_u = *self.relaxed_operators[operator_id]
                     .sose_constants
                     .get(condition_id)
-                    .ok_or_else(|| {
-                        format!(
-                            "LM-cut SOSE operator {operator_id} is missing condition constant {condition_id}"
-                        )
-                    })?;
+                    .expect("LM-cut SOSE operator must store condition constants");
                 if self.config.use_constant_assignment {
                     c_u += self.calculate_constant_assignment_effect(
-                        operator.original_op_id_1.ok_or_else(|| {
-                            format!(
-                                "LM-cut SOSE operator {operator_id} is missing its supporter operator id"
-                            )
-                        })?,
+                        operator_original_op_id_1
+                            .expect("LM-cut SOSE operator must store its supporter operator id"),
                         composite_coefficients,
                         numeric_values,
                         self.use_bounds,
@@ -1206,7 +1265,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 if c_u < self.config.precision {
                     return Ok((-1.0, -1.0));
                 }
-                if operator.cost_1 < self.config.precision {
+                if operator_cost_1 < self.config.precision {
                     return Ok((1.0, 1.0));
                 }
 
@@ -1217,15 +1276,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .copied()
                     .flatten()
                     .unwrap_or(0.0);
-                let s_u = self
-                    .operator_condition_to_composite_expression
-                    .get(original_op_id_2)
-                    .and_then(|conditions| conditions.get(condition_id))
-                    .and_then(|expression| expression.as_ref())
-                    .map(|expression| expression.evaluate(numeric_values))
-                    .unwrap_or(0.0);
+                let s_u = self.cached_composite_expression_value(
+                    original_op_id_2,
+                    condition_id,
+                    numeric_values,
+                );
 
-                if operator.cost_2 < self.config.precision {
+                if operator_cost_2 < self.config.precision {
                     if (c + s_u).abs() < self.config.precision {
                         return Ok((1.0, 1.0));
                     }
@@ -1239,8 +1296,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     return Ok((m_1, 1.0));
                 }
 
-                let mut u_target = (self.numeric_initial_state[condition_id] * c_u * operator.cost_2
-                    / operator.cost_1)
+                let mut u_target = (self.numeric_initial_state[condition_id] * c_u * operator_cost_2
+                    / operator_cost_1)
                     .sqrt()
                     - c;
                 if self.use_bounds
@@ -1267,8 +1324,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 }
                 return Ok((m_1, m_2));
             }
-            let mut net = operator
-                .original_op_id_2
+            let mut net = operator_original_op_id_2
                 .filter(|&original_id| original_id < self.operator_to_simple_effects.len())
                 .and_then(|original_id| {
                     self.operator_to_simple_effects[original_id]
@@ -1277,23 +1333,15 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         .flatten()
                 })
                 .unwrap_or(0.0);
-            if let Some(composite_expression) = operator
-                .original_op_id_2
+            if let Some(original_id) = operator_original_op_id_2
                 .filter(|&original_id| original_id < self.operator_condition_to_composite_expression.len())
-                .and_then(|original_id| {
-                    self.operator_condition_to_composite_expression[original_id]
-                        .get(condition_id)
-                        .and_then(|expression| expression.as_ref())
-                })
             {
-                net += composite_expression.evaluate(numeric_values);
+                net +=
+                    self.cached_composite_expression_value(original_id, condition_id, numeric_values);
             }
             if self.config.use_constant_assignment {
-                let original_operator_id = operator.original_op_id_2.ok_or_else(|| {
-                    format!(
-                        "LM-cut relaxed operator {operator_id} is missing its concrete operator id"
-                    )
-                })?;
+                let original_operator_id = operator_original_op_id_2
+                    .expect("LM-cut relaxed operator must store its concrete operator id");
                 let has_supported_sose = self
                     .operator_condition_to_has_sose
                     .get(original_operator_id)
@@ -1322,6 +1370,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         Ok((0.0, 1.0))
     }
 
+    #[inline(always)]
     fn multiplier_allows_traversal(&self, operator_id: usize, ms: (f64, f64)) -> bool {
         let operator = &self.relaxed_operators[operator_id];
         (operator.original_op_id_1.is_some() && ms.0 >= self.config.precision)
@@ -1350,6 +1399,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
     }
 
+    #[inline(always)]
     fn update_queue(
         &mut self,
         propositional_values: &[i32],
@@ -1358,14 +1408,14 @@ impl<'task> LandmarkCutLandmarks<'task> {
         supporter_id: usize,
         effect_id: usize,
     ) -> Result<(), String> {
-        let effect = self
-            .propositions
-            .get(effect_id)
-            .ok_or_else(|| format!("LM-cut effect proposition id {effect_id} is invalid"))?;
+        debug_assert!(effect_id < self.propositions.len());
+        debug_assert!(operator_id < self.relaxed_operators.len());
+        debug_assert!(supporter_id < self.propositions.len());
+        let effect = &self.propositions[effect_id];
         if effect.is_numeric_condition {
-            let condition_id = effect.id_numeric_condition.ok_or_else(|| {
-                format!("LM-cut numeric proposition {effect_id} is missing its condition id")
-            })?;
+            let condition_id = effect
+                .id_numeric_condition
+                .expect("LM-cut numeric proposition must store its condition id");
             if self.numeric_initial_state[condition_id] < self.config.precision {
                 return Ok(());
             }
@@ -1376,10 +1426,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 operator_id,
                 !self.config.irmax,
             )?;
-            let operator = self
-                .relaxed_operators
-                .get(operator_id)
-                .ok_or_else(|| format!("LM-cut operator id {operator_id} is invalid"))?;
+            let operator = &self.relaxed_operators[operator_id];
             if operator.original_op_id_1.is_some() {
                 if ms.0 >= self.config.precision {
                     let target_cost = self.propositions[supporter_id].h_max_cost
@@ -1400,12 +1447,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
         Ok(())
     }
 
+    #[inline(always)]
     fn enqueue_if_necessary(&mut self, proposition_id: usize, cost: f64) -> Result<bool, String> {
         assert!(cost >= 0.0, "LM-cut enqueue cost must be non-negative");
-        let proposition = self
-            .propositions
-            .get_mut(proposition_id)
-            .ok_or_else(|| format!("LM-cut proposition id {proposition_id} is invalid"))?;
+        debug_assert!(proposition_id < self.propositions.len());
+        let proposition = &mut self.propositions[proposition_id];
         // PARITY(numeric-fd): C++ uses the strict comparison `h_max_cost > cost` here.
         // A `+ precision` tolerance suppresses small but real h_max decreases during
         // `first_exploration_incremental()`, which can keep `goal_h_max` artificially high
@@ -3237,6 +3283,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let mut m_list = std::mem::take(&mut self.multiplier_scratch);
         m_list.clear();
         let result = (|| {
+            self.start_state_numeric_tracking();
             self.first_exploration(propositional_values, numeric_values)?;
             if self.propositions[self.artificial_goal_id].status == PropositionStatus::Unreached {
                 return Ok((true, f64::INFINITY, collect_landmarks.then(Vec::new)));
