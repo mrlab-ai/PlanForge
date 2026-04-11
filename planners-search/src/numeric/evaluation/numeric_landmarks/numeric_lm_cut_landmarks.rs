@@ -3079,6 +3079,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         propositional_values: &[i32],
         state_buffer_len: usize,
         numeric_values: &[f64],
+        debug_state: bool,
     ) -> Result<(bool, f64, Vec<Landmark>), String> {
         assert!(
             self.initialized,
@@ -3261,6 +3262,33 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     self.propositions[self.artificial_goal_id].h_max_cost,
                     cut_details,
                 ));
+            }
+
+            if debug_state {
+                let cut_details = cut
+                    .iter()
+                    .zip(m_list.iter())
+                    .map(|(&operator_id, &(m1, m2))| {
+                        let operator = &self.relaxed_operators[operator_id];
+                        format!(
+                            "name={} orig=({:?},{:?}) m=({},{}) cost=({},{})",
+                            operator.name,
+                            operator.original_op_id_1,
+                            operator.original_op_id_2,
+                            m1,
+                            m2,
+                            operator.cost_1,
+                            operator.cost_2,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                eprintln!(
+                    "LMCUT_DEBUG_STATE iteration={} cut_cost={} cut=[{}]",
+                    iteration,
+                    cut_cost,
+                    cut_details,
+                );
             }
 
             total_cost += cut_cost;

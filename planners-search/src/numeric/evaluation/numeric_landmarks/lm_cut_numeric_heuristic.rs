@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::env;
 use std::fmt;
 
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
@@ -10,11 +11,10 @@ use crate::numeric::evaluation::heuristic::Heuristic;
 
 use super::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 
-// PARITY(numeric-fd): `LmCutNumericConfig::default()` should match the direct
-// `LandmarkCutNumericHeuristic(const shared_ptr<AbstractTask> &task)` constructor defaults used
-// by the IPC'23 planner, since the Rust callers currently instantiate LM-cut through plain
-// `LmCutNumericConfig::default()` rather than through an option-parser layer.
-pub const DEFAULT_CEILING_LESS_THAN_ONE: bool = true;
+// PARITY(numeric-fd): `lmcutnumeric()` in search strings goes through the option
+// parser, so `LmCutNumericConfig::default()` must match the parser defaults rather
+// than the direct C++ constructor defaults.
+pub const DEFAULT_CEILING_LESS_THAN_ONE: bool = false;
 pub const DEFAULT_IGNORE_NUMERIC: bool = false;
 pub const DEFAULT_RANDOM_PCF: bool = false;
 pub const DEFAULT_IRMAX: bool = false;
@@ -169,11 +169,53 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
             return Ok(0.0);
         }
 
-        let (dead_end, total_cost, _landmarks) = self
+        let debug_state_id = env::var("LMCUT_DEBUG_STATE_ID")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok());
+        let debug_state = debug_state_id == Some(state_id);
+
+        let (dead_end, total_cost, landmarks) = self
             .landmark_generator
             .borrow_mut()
-            .compute_landmarks(&propositional_values, state_buffer_len, &numeric_values)
+            .compute_landmarks(
+                &propositional_values,
+                state_buffer_len,
+                &numeric_values,
+                debug_state,
+            )
             .map_err(EvaluationError::ComputationFailed)?;
+
+        if debug_state {
+            let generator = self.landmark_generator.borrow();
+            for (iteration, landmark) in landmarks.iter().enumerate() {
+                let details = landmark
+                    .iter()
+                    .map(|(multiplier, operator_id)| {
+                        let operator_name = generator
+                            .relaxed_operators()
+                            .iter()
+                            .find(|operator| {
+                                operator.original_op_id_1 == Some(*operator_id)
+                                    || operator.original_op_id_2 == Some(*operator_id)
+                            })
+                            .map(|operator| operator.name.as_str())
+                            .unwrap_or("<unknown>");
+                        format!("op={} mult={}", operator_name, multiplier)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                eprintln!(
+                    "LMCUT_DEBUG_STATE state_id={} iteration={} landmark=[{}]",
+                    state_id,
+                    iteration + 1,
+                    details,
+                );
+            }
+            eprintln!(
+                "LMCUT_DEBUG_STATE state_id={} total_cost={}",
+                state_id, total_cost
+            );
+        }
 
         if dead_end {
             return Ok(f64::INFINITY);
@@ -212,9 +254,9 @@ mod tests {
     }
 
     #[test]
-    fn lmcutnumeric_config_defaults_match_fd_ipc_constructor_defaults() {
+    fn lmcutnumeric_config_defaults_match_fd_parser_defaults() {
         let config = LmCutNumericConfig::default();
-        assert!(config.ceiling_less_than_one);
+        assert!(!config.ceiling_less_than_one);
         assert!(!config.ignore_numeric);
         assert!(!config.random_pcf);
         assert!(!config.irmax);

@@ -1,5 +1,6 @@
 use super::open_list::{OpenList, SearchNode};
 use ordered_float::OrderedFloat;
+use std::env;
 use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
@@ -87,6 +88,18 @@ impl TieBreakingOpenList {
 impl OpenList for TieBreakingOpenList {
     fn insert(&mut self, node: SearchNode) {
         let key = self.compute_key(&node);
+        if env::var_os("TRACE_OPEN_LIST_KEYS").is_some() {
+            let key_str = key
+                .iter()
+                .map(|value| format!("{:.17}", value.into_inner()))
+                .collect::<Vec<_>>()
+                .join(",");
+            println!(
+                "TRACE open-list-insert sid={} key=[{}]",
+                node.state.get_id(),
+                key_str
+            );
+        }
         self.buckets
             .entry(key)
             .or_insert_with(VecDeque::new)

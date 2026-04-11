@@ -53,6 +53,7 @@ pub struct SumEvaluator {
     name: String,
     first_evaluator_name: String,
     second_evaluator_name: String,
+    truncate_result: bool, // Because NFD has a bug, I required that for debugging lmcut. Set always to false and remove in later versions. 
 }
 
 impl SumEvaluator {
@@ -62,16 +63,18 @@ impl SumEvaluator {
             name,
             first_evaluator_name,
             second_evaluator_name,
+            truncate_result: false,
         }
     }
 
     /// Convenience constructor for f = g + h
     pub fn f_evaluator(heuristic_name: String) -> Self {
-        Self::new(
-            format!("f_{}", heuristic_name),
-            "g".to_string(),
-            heuristic_name,
-        )
+        Self {
+            name: format!("f_{}", heuristic_name),
+            first_evaluator_name: "g".to_string(),
+            second_evaluator_name: heuristic_name,
+            truncate_result: true, // TODO: Set to false once LMC is faithful and remove the option. 
+        }
     }
 }
 
@@ -92,11 +95,15 @@ impl Evaluator for SumEvaluator {
             .get_heuristic_value(&self.second_evaluator_name);
 
         // If either value is infinite, the sum is infinite
-        let sum = if first_value.is_infinite() || second_value.is_infinite() {
+        let mut sum = if first_value.is_infinite() || second_value.is_infinite() {
             f64::INFINITY
         } else {
             first_value + second_value
         };
+
+        if self.truncate_result && sum.is_finite() {
+            sum = sum.trunc();
+        }
 
         eval_state
             .result_mut()
