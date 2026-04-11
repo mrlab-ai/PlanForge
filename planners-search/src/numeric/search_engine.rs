@@ -260,6 +260,12 @@ impl<'a> AStarSearch<'a> {
         if self.last_reported_f_layer == Some(f_layer) {
             return;
         }
+        match self.last_reported_f_layer {
+            Some(last_layer) if f_layer <= last_layer => {
+                return;
+            }
+            _ => {}
+        }
 
         self.last_reported_f_layer = Some(f_layer);
 
