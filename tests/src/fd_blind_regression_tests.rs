@@ -323,6 +323,7 @@ fn plant_watering_lmcutnumeric_initial_state_is_finite_and_bounded_by_optimum() 
                 &propositional_values,
                 initial_state.buffer(&state_registry).len(),
                 &numeric_values,
+                false,
             )
             .expect("Plant Watering initial LM-cut computation should finish");
         (dead_end, total_cost)
@@ -415,6 +416,7 @@ fn drone_pfile1_lmcutnumeric_initial_state_local_repro() {
             &propositional_values,
             initial_state.buffer(&state_registry).len(),
             &numeric_values,
+            false,
         )
         .unwrap_or_else(|error| {
             panic!(
@@ -455,6 +457,7 @@ fn drone_output_lmcutnumeric_initial_state_matches_fd_regression() {
             &propositional_values,
             initial_state.buffer(&state_registry).len(),
             &numeric_values,
+            false,
         )
         .expect("drone.output initial LM-cut should succeed");
 
@@ -616,6 +619,7 @@ fn plant_watering_lmcutnumeric_remains_finite_along_blind_solution() {
                 &propositional_values,
                 state.buffer(&state_registry).len(),
                 &numeric_values,
+                false,
             )
             .unwrap_or_else(|e| panic!("LM-cut evaluation failed at step {step}: {e}"));
 

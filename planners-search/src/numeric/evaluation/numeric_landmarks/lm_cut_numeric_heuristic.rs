@@ -19,9 +19,9 @@ pub const DEFAULT_IGNORE_NUMERIC: bool = false;
 pub const DEFAULT_RANDOM_PCF: bool = false;
 pub const DEFAULT_IRMAX: bool = false;
 pub const DEFAULT_DISABLE_MA: bool = false;
-pub const DEFAULT_USE_SECOND_ORDER_SIMPLE: bool = true;
+pub const DEFAULT_USE_SECOND_ORDER_SIMPLE: bool = false;
 pub const DEFAULT_USE_CONSTANT_ASSIGNMENT: bool = false;
-pub const DEFAULT_BOUND_ITERATIONS: usize = 10;
+pub const DEFAULT_BOUND_ITERATIONS: usize = 0;
 pub const DEFAULT_PRECISION: f64 = 0.000001;
 pub const DEFAULT_EPSILON: f64 = 0.0;
 
@@ -174,20 +174,36 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
             .and_then(|value| value.parse::<usize>().ok());
         let debug_state = debug_state_id == Some(state_id);
 
-        let (dead_end, total_cost, landmarks) = self
-            .landmark_generator
-            .borrow_mut()
-            .compute_landmarks(
-                &propositional_values,
-                state_buffer_len,
-                &numeric_values,
-                debug_state,
-            )
-            .map_err(EvaluationError::ComputationFailed)?;
+        let generator_result = if debug_state {
+            let (dead_end, total_cost, landmarks) = self
+                .landmark_generator
+                .borrow_mut()
+                .compute_landmarks(
+                    &propositional_values,
+                    state_buffer_len,
+                    &numeric_values,
+                    true,
+                )
+                .map_err(EvaluationError::ComputationFailed)?;
+            (dead_end, total_cost, Some(landmarks))
+        } else {
+            let (dead_end, total_cost) = self
+                .landmark_generator
+                .borrow_mut()
+                .compute_landmark_cost(
+                    &propositional_values,
+                    state_buffer_len,
+                    &numeric_values,
+                    false,
+                )
+                .map_err(EvaluationError::ComputationFailed)?;
+            (dead_end, total_cost, None)
+        };
+        let (dead_end, total_cost, landmarks) = generator_result;
 
         if debug_state {
             let generator = self.landmark_generator.borrow();
-            for (iteration, landmark) in landmarks.iter().enumerate() {
+            for (iteration, landmark) in landmarks.unwrap_or_default().iter().enumerate() {
                 let details = landmark
                     .iter()
                     .map(|(multiplier, operator_id)| {
@@ -261,9 +277,9 @@ mod tests {
         assert!(!config.random_pcf);
         assert!(!config.irmax);
         assert!(!config.disable_ma);
-        assert!(config.use_second_order_simple);
+        assert!(!config.use_second_order_simple);
         assert!(!config.use_constant_assignment);
-        assert_eq!(config.bound_iterations, 10);
+        assert_eq!(config.bound_iterations, 0);
         assert_eq!(config.precision, 0.000001);
         assert_eq!(config.epsilon, 0.0);
     }
