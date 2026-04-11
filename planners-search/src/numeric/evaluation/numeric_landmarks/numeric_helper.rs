@@ -345,19 +345,19 @@ impl NumericTaskHelper {
 		Ok(effects)
 	}
 
-	pub(crate) fn condition_achievers(&self, condition_id: usize) -> Option<&[usize]> {
+	pub(crate) fn get_achievers(&self, condition_id: usize) -> Option<&[usize]> {
 		self.condition_achievers.get(condition_id).map(Vec::as_slice)
 	}
 
-	pub(crate) fn condition_small_m(&self, condition_id: usize) -> Option<f64> {
+	pub(crate) fn get_small_m(&self, condition_id: usize) -> Option<f64> {
 		self.condition_small_m.get(condition_id).copied()
 	}
 
-	pub(crate) fn condition_epsilon(&self, condition_id: usize) -> Option<f64> {
+	pub(crate) fn get_epsilon(&self, condition_id: usize) -> Option<f64> {
 		self.condition_epsilons.get(condition_id).copied()
 	}
 
-	pub(crate) fn condition_dominates(&self, left_id: usize, right_id: usize) -> Option<bool> {
+	pub(crate) fn get_dominance(&self, left_id: usize, right_id: usize) -> Option<bool> {
 		self.dominance_conditions
 			.get(left_id)
 			.and_then(|row| row.get(right_id))
@@ -371,7 +371,7 @@ impl NumericTaskHelper {
 			.and_then(|value| usize::try_from(value).ok())
 	}
 
-	pub(crate) fn proposition_id(&self, var_id: usize, value: usize) -> Option<usize> {
+	pub(crate) fn get_proposition(&self, var_id: usize, value: usize) -> Option<usize> {
 		self.proposition_ids_by_var_value
 			.get(var_id)
 			.and_then(|values| values.get(value))
@@ -386,17 +386,17 @@ impl NumericTaskHelper {
 		self.proposition_var_ids.get(proposition_id).copied()
 	}
 
-	pub(crate) fn proposition_add_actions(&self, proposition_id: usize) -> Option<&[usize]> {
+	pub(crate) fn get_add_actions(&self, proposition_id: usize) -> Option<&[usize]> {
 		self.proposition_add_action_ids
 			.get(proposition_id)
 			.map(Vec::as_slice)
 	}
 
-	pub(crate) fn proposition_name(&self, proposition_id: usize) -> Option<&str> {
+	pub(crate) fn get_proposition_name(&self, proposition_id: usize) -> Option<&str> {
 		self.proposition_names.get(proposition_id).map(String::as_str)
 	}
 
-	pub(crate) fn mutex_actions(&self, action_id: usize) -> Option<&[usize]> {
+	pub(crate) fn get_mutex_actions(&self, action_id: usize) -> Option<&[usize]> {
 		self.mutex_action_ids.get(action_id).map(Vec::as_slice)
 	}
 
@@ -499,6 +499,32 @@ impl NumericTaskHelper {
 
 	pub(crate) fn get_numeric_conditions_id(&self, pre_id: usize) -> Option<&[usize]> {
 		self.condition_group_condition_ids(pre_id)
+	}
+
+	pub(crate) fn get_condition_ids_from_group_ids(&self, group_ids: &[usize]) -> Vec<usize> {
+		let mut condition_ids = Vec::new();
+		let mut seen = BTreeSet::new();
+		for &group_id in group_ids {
+			let Some(ids) = self.get_numeric_conditions_id(group_id) else {
+				continue;
+			};
+			for &condition_id in ids {
+				if seen.insert(condition_id) {
+					condition_ids.push(condition_id);
+				}
+			}
+		}
+		condition_ids
+	}
+
+	pub(crate) fn get_comparison_fact_condition_ids(
+		&self,
+		variable_id: usize,
+		fact_value: i32,
+	) -> Vec<usize> {
+		self.comparison_fact_condition_group_ids(variable_id, fact_value)
+			.map(|group_ids| self.get_condition_ids_from_group_ids(group_ids))
+			.unwrap_or_default()
 	}
 
 	pub(crate) fn materialized_conditions_for_group_id(
@@ -829,7 +855,7 @@ impl NumericTaskHelper {
 	) {
 		self.action_models.clear();
 		for (operator_id, operator) in task.get_operators().iter().enumerate() {
-			let action_model = self.build_action_from_operator(
+			let action_model = self.build_action(
 				task,
 				operator,
 				operator_id,
@@ -839,7 +865,7 @@ impl NumericTaskHelper {
 			self.action_models.push(action_model);
 		}
 		for axiom in task.axioms() {
-			let action_model = self.build_action_from_axiom(axiom, precision);
+			let action_model = self.build_axiom_action(axiom, precision);
 			self.action_models.push(action_model);
 		}
 		self.build_possible_add_lists();
@@ -876,7 +902,7 @@ impl NumericTaskHelper {
 				.iter()
 				.chain(action_model.conditional_fact_effects.iter().map(|effect| &effect.add_fact))
 			{
-				let Some(proposition_id) = self.proposition_id(
+				let Some(proposition_id) = self.get_proposition(
 					fact.var() as usize,
 					usize::try_from(fact.value()).unwrap_or(0),
 				) else {
@@ -923,7 +949,7 @@ impl NumericTaskHelper {
 		}
 	}
 
-	fn build_action_from_operator(
+	fn build_action(
 		&mut self,
 		task: &dyn AbstractNumericTask,
 		operator: &Operator,
@@ -1020,7 +1046,7 @@ impl NumericTaskHelper {
 		action_model
 	}
 
-	fn build_action_from_axiom(
+	fn build_axiom_action(
 		&mut self,
 		axiom: &PropositionalAxiom,
 		precision: f64,
