@@ -193,6 +193,9 @@ pub struct LandmarkCutLandmarks<'task> {
     original_operator_multiplier_epoch: u32,
     touched_original_operator_ids: Vec<usize>,
     landmark_original_operator_ids: Vec<usize>,
+    cut_scratch: Vec<usize>,
+    multiplier_scratch: Vec<(f64, f64)>,
+    second_exploration_queue_scratch: Vec<usize>,
     numeric_bound: NumericBound,
     use_bounds: bool,
     initialized: bool,
@@ -255,6 +258,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
             original_operator_multiplier_epoch: 1,
             touched_original_operator_ids: Vec::new(),
             landmark_original_operator_ids: Vec::new(),
+            cut_scratch: Vec::new(),
+            multiplier_scratch: Vec::new(),
+            second_exploration_queue_scratch: Vec::new(),
             numeric_bound,
             use_bounds,
             initialized: false,
@@ -1024,60 +1030,93 @@ impl<'task> LandmarkCutLandmarks<'task> {
             "LM-cut second exploration requires empty multiplier list"
         );
         self.start_cut_marking();
+        let mut queue = std::mem::take(&mut self.second_exploration_queue_scratch);
+        queue.clear();
+        let result = (|| {
+            self.propositions[self.artificial_precondition_id].status =
+                PropositionStatus::BeforeGoalZone;
+            queue.push(self.artificial_precondition_id);
 
-        let mut queue = Vec::new();
-        self.propositions[self.artificial_precondition_id].status =
-            PropositionStatus::BeforeGoalZone;
-        queue.push(self.artificial_precondition_id);
-
-        for (variable_id, &value) in propositional_values.iter().enumerate() {
-            if self.is_numeric_axiom_var(variable_id) && !self.config.ignore_numeric {
-                continue;
+            for (variable_id, &value) in propositional_values.iter().enumerate() {
+                if self.is_numeric_axiom_var(variable_id) && !self.config.ignore_numeric {
+                    continue;
+                }
+                let fact = Fact::new(variable_id as u32, value);
+                let proposition_id = self.get_proposition_id(&fact);
+                if self.propositions[proposition_id].status != PropositionStatus::BeforeGoalZone {
+                    self.propositions[proposition_id].status = PropositionStatus::BeforeGoalZone;
+                    queue.push(proposition_id);
+                }
             }
-            let fact = Fact::new(variable_id as u32, value);
-            let proposition_id = self.get_proposition_id(&fact);
-            if self.propositions[proposition_id].status != PropositionStatus::BeforeGoalZone {
-                self.propositions[proposition_id].status = PropositionStatus::BeforeGoalZone;
-                queue.push(proposition_id);
-            }
-        }
 
-        if !self.config.ignore_numeric {
-            for condition_id in 0..self.conditions.len() {
-                if self.numeric_initial_state[condition_id] < self.config.precision {
-                    let proposition_id = self.get_numeric_proposition_id(condition_id)?;
-                    if self.propositions[proposition_id].status != PropositionStatus::BeforeGoalZone
-                    {
-                        self.propositions[proposition_id].status =
-                            PropositionStatus::BeforeGoalZone;
-                        queue.push(proposition_id);
+            if !self.config.ignore_numeric {
+                for condition_id in 0..self.conditions.len() {
+                    if self.numeric_initial_state[condition_id] < self.config.precision {
+                        let proposition_id = self.get_numeric_proposition_id(condition_id)?;
+                        if self.propositions[proposition_id].status
+                            != PropositionStatus::BeforeGoalZone
+                        {
+                            self.propositions[proposition_id].status =
+                                PropositionStatus::BeforeGoalZone;
+                            queue.push(proposition_id);
+                        }
                     }
                 }
             }
-        }
 
-        while let Some(proposition_id) = queue.pop() {
-            let triggered_operator_count = self.propositions[proposition_id].precondition_of.len();
-            for triggered_index in 0..triggered_operator_count {
-                let operator_id = self.propositions[proposition_id].precondition_of[triggered_index];
-                let should_process = {
-                    let operator = self
-                        .relaxed_operators
-                        .get(operator_id)
-                        .ok_or_else(|| format!("LM-cut operator id {operator_id} is invalid"))?;
-                    operator.h_max_supporter == Some(proposition_id) && !self.is_cut_marked(operator_id)
-                };
-                if !should_process {
-                    continue;
-                }
+            while let Some(proposition_id) = queue.pop() {
+                let triggered_operator_count = self.propositions[proposition_id].precondition_of.len();
+                for triggered_index in 0..triggered_operator_count {
+                    let operator_id =
+                        self.propositions[proposition_id].precondition_of[triggered_index];
+                    let should_process = {
+                        let operator = self
+                            .relaxed_operators
+                            .get(operator_id)
+                            .ok_or_else(|| format!("LM-cut operator id {operator_id} is invalid"))?;
+                        operator.h_max_supporter == Some(proposition_id)
+                            && !self.is_cut_marked(operator_id)
+                    };
+                    if !should_process {
+                        continue;
+                    }
 
-                let effect_count = self.relaxed_operators[operator_id].effect_ids.len();
-                let mut min_cut_cost = f64::INFINITY;
+                    let effect_count = self.relaxed_operators[operator_id].effect_ids.len();
+                    let mut min_cut_cost = f64::INFINITY;
 
-                for effect_index in 0..effect_count {
-                    let effect_id = self.relaxed_operators[operator_id].effect_ids[effect_index];
-                    let effect_status = self.propositions[effect_id].status;
-                    if effect_status == PropositionStatus::GoalZone {
+                    for effect_index in 0..effect_count {
+                        let effect_id = self.relaxed_operators[operator_id].effect_ids[effect_index];
+                        let effect_status = self.propositions[effect_id].status;
+                        if effect_status == PropositionStatus::GoalZone {
+                            let ms = self.calculate_numeric_times(
+                                propositional_values,
+                                numeric_values,
+                                effect_id,
+                                operator_id,
+                                !self.config.disable_ma,
+                            )?;
+                            let operator = &self.relaxed_operators[operator_id];
+                            if (operator.original_op_id_1.is_some() && ms.0 >= self.config.precision)
+                                || (operator.original_op_id_1.is_none()
+                                    && ms.1 >= self.config.precision)
+                            {
+                                let edge_cost = self.edge_cost(operator_id, ms)?;
+                                cut.push(operator_id);
+                                m_list.push(ms);
+                                self.mark_cut(operator_id);
+                                min_cut_cost = min_cut_cost.min(edge_cost);
+                            }
+                        }
+                    }
+
+                    for effect_index in 0..effect_count {
+                        let effect_id = self.relaxed_operators[operator_id].effect_ids[effect_index];
+                        let effect_status = self.propositions[effect_id].status;
+                        if effect_status == PropositionStatus::BeforeGoalZone
+                            || effect_status == PropositionStatus::GoalZone
+                        {
+                            continue;
+                        }
                         let ms = self.calculate_numeric_times(
                             propositional_values,
                             numeric_values,
@@ -1091,46 +1130,22 @@ impl<'task> LandmarkCutLandmarks<'task> {
                                 && ms.1 >= self.config.precision)
                         {
                             let edge_cost = self.edge_cost(operator_id, ms)?;
-                            cut.push(operator_id);
-                            m_list.push(ms);
-                            self.mark_cut(operator_id);
-                            min_cut_cost = min_cut_cost.min(edge_cost);
-                        }
-                    }
-                }
-
-                for effect_index in 0..effect_count {
-                    let effect_id = self.relaxed_operators[operator_id].effect_ids[effect_index];
-                    let effect_status = self.propositions[effect_id].status;
-                    if effect_status == PropositionStatus::BeforeGoalZone
-                        || effect_status == PropositionStatus::GoalZone
-                    {
-                        continue;
-                    }
-                    let ms = self.calculate_numeric_times(
-                        propositional_values,
-                        numeric_values,
-                        effect_id,
-                        operator_id,
-                        !self.config.disable_ma,
-                    )?;
-                    let operator = &self.relaxed_operators[operator_id];
-                    if (operator.original_op_id_1.is_some() && ms.0 >= self.config.precision)
-                        || (operator.original_op_id_1.is_none()
-                            && ms.1 >= self.config.precision)
-                    {
-                        let edge_cost = self.edge_cost(operator_id, ms)?;
-                        if edge_cost < min_cut_cost {
-                            assert_eq!(effect_status, PropositionStatus::Reached);
-                            self.propositions[effect_id].status = PropositionStatus::BeforeGoalZone;
-                            queue.push(effect_id);
+                            if edge_cost < min_cut_cost {
+                                assert_eq!(effect_status, PropositionStatus::Reached);
+                                self.propositions[effect_id].status =
+                                    PropositionStatus::BeforeGoalZone;
+                                queue.push(effect_id);
+                            }
                         }
                     }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
+        })();
+        queue.clear();
+        self.second_exploration_queue_scratch = queue;
+        result
     }
 
     fn calculate_numeric_times(
@@ -3217,52 +3232,60 @@ impl<'task> LandmarkCutLandmarks<'task> {
             operator.cost_2 = operator.base_cost_2;
         }
 
-        self.first_exploration(propositional_values, numeric_values)?;
-        if self.propositions[self.artificial_goal_id].status == PropositionStatus::Unreached {
-            return Ok((true, f64::INFINITY, collect_landmarks.then(Vec::new)));
-        }
+        let mut cut = std::mem::take(&mut self.cut_scratch);
+        cut.clear();
+        let mut m_list = std::mem::take(&mut self.multiplier_scratch);
+        m_list.clear();
+        let result = (|| {
+            self.first_exploration(propositional_values, numeric_values)?;
+            if self.propositions[self.artificial_goal_id].status == PropositionStatus::Unreached {
+                return Ok((true, f64::INFINITY, collect_landmarks.then(Vec::new)));
+            }
 
-        let mut total_cost = 0.0;
-        let mut landmarks = collect_landmarks.then(Vec::new);
-        let mut cut = Vec::new();
-        let mut m_list = Vec::new();
-        let debug_iterations = std::env::var_os("LMCUT_DEBUG_ITERATIONS").is_some();
-        let debug_focus = std::env::var_os("LMCUT_DEBUG_FOCUS").is_some();
-        let mut iteration = 0usize;
+            let mut total_cost = 0.0;
+            let mut landmarks = collect_landmarks.then(Vec::new);
+            let debug_iterations = std::env::var_os("LMCUT_DEBUG_ITERATIONS").is_some();
+            let debug_focus = std::env::var_os("LMCUT_DEBUG_FOCUS").is_some();
+            let mut iteration = 0usize;
 
-        while self.propositions[self.artificial_goal_id].h_max_cost >= self.config.precision {
-            iteration += 1;
-            self.start_cut_iteration_tracking();
-            self.mark_goal_plateau(
-                propositional_values,
-                numeric_values,
-                self.artificial_goal_id,
-            )?;
-            self.second_exploration(propositional_values, numeric_values, &mut cut, &mut m_list)?;
-            assert!(!cut.is_empty(), "LM-cut must find a non-empty cut");
+            while self.propositions[self.artificial_goal_id].h_max_cost >= self.config.precision {
+                iteration += 1;
+                self.start_cut_iteration_tracking();
+                self.mark_goal_plateau(
+                    propositional_values,
+                    numeric_values,
+                    self.artificial_goal_id,
+                )?;
+                self.second_exploration(
+                    propositional_values,
+                    numeric_values,
+                    &mut cut,
+                    &mut m_list,
+                )?;
+                assert!(!cut.is_empty(), "LM-cut must find a non-empty cut");
 
-            let mut cut_cost = f64::INFINITY;
+                let mut cut_cost = f64::INFINITY;
 
-            for (cut_index, &operator_id) in cut.iter().enumerate() {
-                let multiplier = m_list[cut_index];
-                let current_cut_cost = self.edge_cost(operator_id, multiplier)?;
-                let (original_op_id_1, original_op_id_2) = {
-                    let operator = &self.relaxed_operators[operator_id];
-                    (operator.original_op_id_1, operator.original_op_id_2)
-                };
-                if multiplier.0 >= self.config.precision {
-                    if let Some(original_id) = original_op_id_1 {
+                for (cut_index, &operator_id) in cut.iter().enumerate() {
+                    let multiplier = m_list[cut_index];
+                    let current_cut_cost = self.edge_cost(operator_id, multiplier)?;
+                    let (original_op_id_1, original_op_id_2) = {
+                        let operator = &self.relaxed_operators[operator_id];
+                        (operator.original_op_id_1, operator.original_op_id_2)
+                    };
+                    if multiplier.0 >= self.config.precision {
+                        if let Some(original_id) = original_op_id_1 {
+                            self.update_original_operator_min_cut_cost(original_id, current_cut_cost);
+                        }
+                    }
+                    if let Some(original_id) = original_op_id_2 {
                         self.update_original_operator_min_cut_cost(original_id, current_cut_cost);
                     }
+                    cut_cost = cut_cost.min(current_cut_cost);
                 }
-                if let Some(original_id) = original_op_id_2 {
-                    self.update_original_operator_min_cut_cost(original_id, current_cut_cost);
-                }
-                cut_cost = cut_cost.min(current_cut_cost);
-            }
-            self.touched_original_operator_ids.sort_unstable();
+                self.touched_original_operator_ids.sort_unstable();
 
-            if debug_iterations && (iteration <= 20 || iteration % 1000 == 0) {
+                if debug_iterations && (iteration <= 20 || iteration % 1000 == 0) {
                 let cut_details = if iteration <= 3 || cut_cost.abs() < self.config.precision {
                     cut
                         .iter()
@@ -3310,7 +3333,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 }
             }
 
-            if !cut_cost.is_finite() {
+                if !cut_cost.is_finite() {
                 let cut_details = cut
                     .iter()
                     .zip(m_list.iter())
@@ -3370,15 +3393,15 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     })
                     .collect::<Vec<_>>()
                     .join(" | ");
-                return Err(format!(
-                    "LM-cut produced an invalid cut: cut_cost={cut_cost}, cut_size={}, goal_h_max={}, cut=[{}].",
-                    cut.len(),
-                    self.propositions[self.artificial_goal_id].h_max_cost,
-                    cut_details,
-                ));
-            }
+                    return Err(format!(
+                        "LM-cut produced an invalid cut: cut_cost={cut_cost}, cut_size={}, goal_h_max={}, cut=[{}].",
+                        cut.len(),
+                        self.propositions[self.artificial_goal_id].h_max_cost,
+                        cut_details,
+                    ));
+                }
 
-            if debug_state {
+                if debug_state {
                 let cut_details = cut
                     .iter()
                     .zip(m_list.iter())
@@ -3405,12 +3428,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 );
             }
 
-            total_cost += cut_cost;
+                total_cost += cut_cost;
 
             // PARITY(numeric-fd): the reference implementation has no bailout for repeated
             // zero-cost cuts here. Returning an error from this loop turns a parity bug into a
             // synthetic dead end, so the faithful port must continue the LM-cut iterations.
-            for touched_index in 0..self.touched_original_operator_ids.len() {
+                for touched_index in 0..self.touched_original_operator_ids.len() {
                 let original_id = self.touched_original_operator_ids[touched_index];
                 let min_cost = self.original_operator_min_cut_costs[original_id];
                 if min_cost < self.config.precision {
@@ -3450,7 +3473,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 }
             }
 
-            if let Some(landmarks) = landmarks.as_mut() {
+                if let Some(landmarks) = landmarks.as_mut() {
                 self.landmark_original_operator_ids.sort_unstable();
                 landmarks.push(
                     self.landmark_original_operator_ids
@@ -3462,8 +3485,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 );
             }
 
-            self.first_exploration_incremental(propositional_values, numeric_values, &cut)?;
-            if debug_focus && iteration <= 3 {
+                self.first_exploration_incremental(propositional_values, numeric_values, &cut)?;
+                if debug_focus && iteration <= 3 {
                 for operator in self.relaxed_operators.iter().filter(|operator| {
                     matches!(
                         operator.name.as_str(),
@@ -3562,14 +3585,20 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     }
                 }
             }
-            cut.clear();
-            m_list.clear();
-            self.reset_goal_zone_statuses();
-            self.propositions[self.artificial_goal_id].status = PropositionStatus::Reached;
-            self.propositions[self.artificial_precondition_id].status = PropositionStatus::Reached;
-        }
+                cut.clear();
+                m_list.clear();
+                self.reset_goal_zone_statuses();
+                self.propositions[self.artificial_goal_id].status = PropositionStatus::Reached;
+                self.propositions[self.artificial_precondition_id].status = PropositionStatus::Reached;
+            }
 
-        Ok((false, total_cost, landmarks))
+            Ok((false, total_cost, landmarks))
+        })();
+        cut.clear();
+        m_list.clear();
+        self.cut_scratch = cut;
+        self.multiplier_scratch = m_list;
+        result
     }
 
     pub fn compute_landmark_cost(
