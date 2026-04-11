@@ -1,7 +1,8 @@
 use super::open_list::{OpenList, SearchNode};
 use ordered_float::OrderedFloat;
 use std::env;
-use std::collections::{BTreeMap, VecDeque};
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 use std::error::Error;
 use std::fmt;
 
@@ -9,6 +10,45 @@ use std::fmt;
 mod tests;
 
 type EvaluationKey = Vec<OrderedFloat<f64>>;
+
+#[derive(Debug)]
+struct HeapEntry {
+    key: EvaluationKey,
+    insertion_order: usize,
+    ascending: bool,
+    node: SearchNode,
+}
+
+impl PartialEq for HeapEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key && self.insertion_order == other.insertion_order
+    }
+}
+
+impl Eq for HeapEntry {}
+
+impl PartialOrd for HeapEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for HeapEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        debug_assert_eq!(self.ascending, other.ascending);
+        let key_order = if self.ascending {
+            other.key.cmp(&self.key)
+        } else {
+            self.key.cmp(&other.key)
+        };
+
+        if key_order == Ordering::Equal {
+            other.insertion_order.cmp(&self.insertion_order)
+        } else {
+            key_order
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TieBreakingOpenListError {
@@ -36,14 +76,16 @@ impl Error for TieBreakingOpenListError {}
 /// is preferred. If all evaluator values are equal, insertion order is kept.
 #[derive(Debug)]
 pub struct TieBreakingOpenList {
-    /// Maps evaluation keys to FIFO queues of nodes
-    buckets: BTreeMap<EvaluationKey, VecDeque<SearchNode>>,
+    /// Heap of nodes ordered by evaluation key and FIFO insertion order.
+    heap: BinaryHeap<HeapEntry>,
     /// Total number of nodes stored across all buckets
     size: usize,
     /// The names of evaluators used to compute keys
     evaluator_names: Vec<String>,
     /// Whether the list is sorted in ascending order (true) or descending (false)
     ascending: bool,
+    /// Monotonic insertion counter for FIFO tie-breaking.
+    next_insertion_order: usize,
 }
 
 impl TieBreakingOpenList {
@@ -57,10 +99,11 @@ impl TieBreakingOpenList {
         }
 
         Ok(Self {
-            buckets: BTreeMap::new(),
+            heap: BinaryHeap::new(),
             size: 0,
             evaluator_names,
             ascending,
+            next_insertion_order: 0,
         })
     }
 
@@ -74,14 +117,6 @@ impl TieBreakingOpenList {
         }
 
         key
-    }
-
-    fn best_bucket(&self) -> Option<(&EvaluationKey, &VecDeque<SearchNode>)> {
-        if self.ascending {
-            self.buckets.first_key_value()
-        } else {
-            self.buckets.last_key_value()
-        }
     }
 }
 
@@ -100,38 +135,24 @@ impl OpenList for TieBreakingOpenList {
                 key_str
             );
         }
-        self.buckets
-            .entry(key)
-            .or_insert_with(VecDeque::new)
-            .push_back(node);
+        self.heap.push(HeapEntry {
+            key,
+            insertion_order: self.next_insertion_order,
+            ascending: self.ascending,
+            node,
+        });
+        self.next_insertion_order += 1;
         self.size += 1;
     }
 
     fn pop(&mut self) -> Option<SearchNode> {
-        let mut best_bucket = if self.ascending {
-            self.buckets.first_entry()?
-        } else {
-            self.buckets.last_entry()?
-        };
-
-        let (node, bucket_is_empty) = {
-            let bucket = best_bucket.get_mut();
-            let node = bucket
-                .pop_front()
-                .expect("best bucket in tie-breaking open list must not be empty");
-            (node, bucket.is_empty())
-        };
+        let entry = self.heap.pop()?;
         self.size -= 1;
-
-        if bucket_is_empty {
-            best_bucket.remove_entry();
-        }
-
-        Some(node)
+        Some(entry.node)
     }
 
     fn peek(&self) -> Option<&SearchNode> {
-        self.best_bucket()?.1.front()
+        self.heap.peek().map(|entry| &entry.node)
     }
 
     fn is_empty(&self) -> bool {
@@ -143,7 +164,7 @@ impl OpenList for TieBreakingOpenList {
     }
 
     fn clear(&mut self) {
-        self.buckets.clear();
+        self.heap.clear();
         self.size = 0;
     }
 

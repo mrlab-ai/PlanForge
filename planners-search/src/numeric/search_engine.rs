@@ -474,25 +474,26 @@ impl<'a> AStarSearch<'a> {
         let trace_evaluated_successors = env::var_os("TRACE_EVALUATED_SUCCESSORS").is_some();
 
         for (operator, operator_id) in applicable_operators.iter().copied() {
-            let succ_state = match self.state_registry.get_successor_state_with_buffers(
+            let (succ_state, op_cost) = match self
+                .state_registry
+                .get_successor_state_with_buffers_and_cost(
                 &node.state,
                 operator,
                 &mut self.successor_numeric_values_buffer,
                 &mut self.successor_cost_values_buffer,
             ) {
-                Ok(succ_state) => succ_state,
+                Ok(result) => result,
                 Err(_) => continue,
             };
             let succ_state_id = succ_state.get_id();
-            let op_cost = self
-                .state_registry
-                .metric_delta_applying_operator(&node.state, operator)
-                .unwrap_or_else(|_| {
-                    self.operator_costs
-                        .get(operator_id)
-                        .copied()
-                        .unwrap_or(operator.cost() as f64)
-                });
+            let op_cost = if self.task.metric().use_metric() {
+                op_cost
+            } else {
+                self.operator_costs
+                    .get(operator_id)
+                    .copied()
+                    .unwrap_or(operator.cost() as f64)
+            };
             let new_g_value = current_g + op_cost;
 
             // Count every successfully constructed successor state.

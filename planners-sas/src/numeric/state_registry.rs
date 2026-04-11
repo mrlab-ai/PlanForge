@@ -552,19 +552,19 @@ impl<'a> StateRegistry<'a> {
         } else {
             // Existing state - use metric optimization to determine which cost info to keep
             let cost_info_borrow = self.cost_info.borrow();
-            let old_cost_info = cost_info_borrow.get(&new_state, self);
-            let selected_result = self.select_cost_information(
+            let keep_old_cost_information = self.should_keep_old_cost_information(
                 &new_state,
                 &numeric_values_copy,
-                old_cost_info,
+                cost_info_borrow.get(&new_state, self),
                 &_cost_variables,
             );
             drop(cost_info_borrow); // Drop the borrow before calling set
 
-            match selected_result {
-                Ok(selected_cost_info) => {
-                    self.set_cost_information(&new_state, selected_cost_info);
+            match keep_old_cost_information {
+                Ok(false) => {
+                    self.set_cost_information(&new_state, _cost_variables);
                 }
+                Ok(true) => {}
                 Err(e) => {
                     return Err(StateInsertError {
                         message: format!("Failed to select cost information: {:?}", e),
@@ -656,6 +656,22 @@ impl<'a> StateRegistry<'a> {
         successor_values: &mut Vec<f64>,
         cost_values: &mut Vec<f64>,
     ) -> Result<ConcreteState, StateInsertError> {
+        self.get_successor_state_with_buffers_and_cost(
+            current_state,
+            operator,
+            successor_values,
+            cost_values,
+        )
+        .map(|(successor, _)| successor)
+    }
+
+    pub fn get_successor_state_with_buffers_and_cost(
+        &mut self,
+        current_state: &ConcreteState,
+        operator: &Operator,
+        successor_values: &mut Vec<f64>,
+        cost_values: &mut Vec<f64>,
+    ) -> Result<(ConcreteState, f64), StateInsertError> {
         self.fill_numeric_vars(current_state, successor_values)
             .map_err(|e| StateInsertError {
                 message: format!("Failed to get numeric variables: {:?}", e),
@@ -690,6 +706,8 @@ impl<'a> StateRegistry<'a> {
             previous_buffer,
         )?;
 
+        let op_cost = self.metric_delta_from_successor_numeric_values(current_state, successor_values)?;
+
         let (id, is_new_state) = self.insert_id_or_pop_state();
         let successor = ConcreteState::new(id);
 
@@ -699,19 +717,19 @@ impl<'a> StateRegistry<'a> {
             }
         } else {
             let cost_info_borrow = self.cost_info.borrow();
-            let old_cost_info = cost_info_borrow.get(&successor, self);
-            let selected_result = self.select_cost_information(
+            let keep_old_cost_information = self.should_keep_old_cost_information(
                 &successor,
                 successor_values,
-                old_cost_info,
-                cost_values,
+                cost_info_borrow.get(&successor, self),
+                cost_values.as_slice(),
             );
             drop(cost_info_borrow);
 
-            match selected_result {
-                Ok(selected_cost_info) => {
-                    self.set_cost_information(&successor, selected_cost_info);
+            match keep_old_cost_information {
+                Ok(false) => {
+                    self.set_cost_information(&successor, cost_values.clone());
                 }
+                Ok(true) => {}
                 Err(e) => {
                     return Err(StateInsertError {
                         message: format!("Failed to select cost information: {:?}", e),
@@ -720,7 +738,7 @@ impl<'a> StateRegistry<'a> {
             }
         }
 
-        Ok(successor)
+        Ok((successor, op_cost))
     }
 
     fn apply_propositional_effects(
@@ -997,6 +1015,30 @@ impl<'a> StateRegistry<'a> {
         Ok(new_metric - old_metric)
     }
 
+    fn metric_delta_from_successor_numeric_values(
+        &self,
+        state: &ConcreteState,
+        successor_numeric_values: &[f64],
+    ) -> Result<f64, StateInsertError> {
+        if !self.task.metric().use_metric() {
+            return Ok(1.0);
+        }
+
+        let old_metric = self
+            .metric_value_for_state(state)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to read metric value for state: {e:?}"),
+            })?;
+
+        let new_metric = self
+            .evaluate_metric(successor_numeric_values)
+            .map_err(|e| StateInsertError {
+                message: format!("Failed to evaluate metric after applying operator: {e:?}"),
+            })?;
+
+        Ok(new_metric - old_metric)
+    }
+
     fn metric_value_for_state(&self, state: &ConcreteState) -> Result<f64, InvalidIndex> {
         let metric_fluent_id = self.task.metric().var_id();
         if metric_fluent_id < 0 {
@@ -1063,16 +1105,15 @@ impl<'a> StateRegistry<'a> {
     ///
     /// This implements the C++ logic for metric optimization when duplicate states are found.
     /// Returns the cost information that should be kept based on metric optimization.
-    fn select_cost_information(
+    fn should_keep_old_cost_information(
         &self,
         existing_state: &ConcreteState,
         successor_numeric_vals: &[f64],
         old_cost_info: &[f64],
         new_cost_info: &[f64],
-    ) -> Result<Vec<f64>, InvalidIndex> {
+    ) -> Result<bool, InvalidIndex> {
         if !self.task.metric().use_metric() {
-            // No metric optimization, keep new values
-            return Ok(new_cost_info.to_vec());
+            return Ok(false);
         }
 
         let old_metric_val = self.metric_value_for_state(existing_state)?;
@@ -1081,14 +1122,13 @@ impl<'a> StateRegistry<'a> {
         let metric_minimizes = self.task.metric().is_min();
 
         if metric_minimizes && old_metric_val < new_metric_val {
-            // Metric minimizes and old value is better, keep old cost info
-            Ok(old_cost_info.to_vec())
+            Ok(true)
         } else if !metric_minimizes && old_metric_val > new_metric_val {
-            // Metric maximizes and old value is better, keep old cost info
-            Ok(old_cost_info.to_vec())
+            Ok(true)
         } else {
-            // New value is better or equal, keep new cost info
-            Ok(new_cost_info.to_vec())
+            let _ = old_cost_info;
+            let _ = new_cost_info;
+            Ok(false)
         }
     }
 
