@@ -3809,7 +3809,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             }
 
                 if let Some(landmarks) = landmarks.as_mut() {
-                self.landmark_original_operator_ids.sort_unstable(); //TODO: Figure out if that is necessary
+                //self.landmark_original_operator_ids.sort_unstable(); //TODO: Figure out if that is necessary
                 landmarks.push(
                     self.landmark_original_operator_ids
                         .iter()
