@@ -53,7 +53,6 @@ pub struct RelaxedProposition {
     pub effect_of: Vec<usize>,
     pub id: usize,
     pub status: PropositionStatus,
-    pub explored: bool,
     pub is_numeric_condition: bool,
     pub id_numeric_condition: Option<usize>,
     pub h_max_cost: f64,
@@ -67,7 +66,6 @@ impl RelaxedProposition {
             effect_of: Vec::new(),
             id,
             status: PropositionStatus::Unreached,
-            explored: false,
             is_numeric_condition: false,
             id_numeric_condition: None,
             h_max_cost: f64::INFINITY,
@@ -162,13 +160,13 @@ pub struct LandmarkCutLandmarks<'task> {
     config: LmCutNumericConfig,
     propositions: Vec<RelaxedProposition>,
     proposition_statuses: Vec<PropositionStatus>,
-    proposition_explored: Vec<bool>,
     proposition_h_max_costs: Vec<f64>,
     proposition_precondition_of_data: Vec<usize>,
     proposition_precondition_of_ranges: Vec<(usize, usize)>,
     proposition_effect_of_data: Vec<usize>,
     proposition_effect_of_ranges: Vec<(usize, usize)>,
     proposition_index: Vec<Vec<usize>>,
+    numeric_condition_proposition_ids: Vec<usize>,
     conditions: Vec<NumericCondition>,
     epsilons: Vec<f64>,
     numeric_helper: NumericTaskHelper,
@@ -246,13 +244,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
             config,
             propositions: Vec::new(),
             proposition_statuses: Vec::new(),
-            proposition_explored: Vec::new(),
             proposition_h_max_costs: Vec::new(),
             proposition_precondition_of_data: Vec::new(),
             proposition_precondition_of_ranges: Vec::new(),
             proposition_effect_of_data: Vec::new(),
             proposition_effect_of_ranges: Vec::new(),
             proposition_index: Vec::new(),
+            numeric_condition_proposition_ids: Vec::new(),
             conditions: Vec::new(),
             epsilons: Vec::new(),
             numeric_helper,
@@ -311,13 +309,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let debug_summary = std::env::var_os("LMCUT_DEBUG_SUMMARY").is_some();
         self.propositions.clear();
         self.proposition_statuses.clear();
-        self.proposition_explored.clear();
         self.proposition_h_max_costs.clear();
         self.proposition_precondition_of_data.clear();
         self.proposition_precondition_of_ranges.clear();
         self.proposition_effect_of_data.clear();
         self.proposition_effect_of_ranges.clear();
         self.proposition_index.clear();
+        self.numeric_condition_proposition_ids.clear();
         self.conditions.clear();
         self.epsilons.clear();
         self.comparison_fact_to_condition_ids.clear();
@@ -387,7 +385,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.build_packed_runtime_adjacency();
         self.proposition_statuses
             .resize(self.propositions.len(), PropositionStatus::Unreached);
-        self.proposition_explored.resize(self.propositions.len(), false);
         self.proposition_h_max_costs
             .resize(self.propositions.len(), f64::INFINITY);
         self.operator_cost_1s = self
@@ -897,7 +894,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.priority_queue.clear();
         for proposition_id in 0..self.propositions.len() {
             self.proposition_statuses[proposition_id] = PropositionStatus::Unreached;
-            self.proposition_explored[proposition_id] = false;
             self.proposition_h_max_costs[proposition_id] = f64::INFINITY;
         }
 
@@ -976,7 +972,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 continue;
             }
 
-            self.proposition_explored[proposition_id] = true;
             let (triggered_start, triggered_end) =
                 self.proposition_precondition_of_range(proposition_id);
             for triggered_index in triggered_start..triggered_end {
@@ -1094,23 +1089,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
             for triggered_index in triggered_start..triggered_end {
                 let operator_id = self.proposition_precondition_of_data[triggered_index];
                 let update = {
-                    let effect_ids = self
-                        .relaxed_operators
-                        .get(operator_id)
-                        .ok_or_else(|| format!("LM-cut operator id {operator_id} is invalid"))?
-                        .effect_ids
-                        .clone();
                     if self.operator_h_max_supporters[operator_id] == Some(proposition_id) {
                         let old_supporter_cost = self.operator_h_max_supporter_costs[operator_id];
                         if old_supporter_cost > proposition_cost {
                             let new_supporter = self.update_h_max_supporter(operator_id);
                             if let Some((new_supporter_id, new_cost)) = new_supporter {
-                                Some((
-                                    new_supporter_id,
-                                    new_cost,
-                                    new_cost != old_supporter_cost,
-                                    effect_ids,
-                                ))
+                                Some((new_supporter_id, new_cost, new_cost != old_supporter_cost))
                             } else {
                                 None
                             }
@@ -1122,11 +1106,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     }
                 };
 
-                if let Some((new_supporter_id, new_cost, needs_effect_update, effect_ids)) = update {
+                if let Some((new_supporter_id, new_cost, needs_effect_update)) = update {
                     self.operator_h_max_supporters[operator_id] = Some(new_supporter_id);
                     self.operator_h_max_supporter_costs[operator_id] = new_cost;
                     if needs_effect_update {
-                        for effect_id in effect_ids {
+                        let (effect_start, effect_end) = self.operator_effect_id_range(operator_id);
+                        for effect_index in effect_start..effect_end {
+                            let effect_id = self.operator_effect_id_data[effect_index];
                             self.update_queue(
                                 propositional_values,
                                 numeric_values,
@@ -3324,6 +3310,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         proposition.is_numeric_condition = true;
         proposition.id_numeric_condition = Some(condition_id);
         self.propositions.push(proposition);
+        self.numeric_condition_proposition_ids.push(proposition_id);
         self.conditions.push(condition);
         self.epsilons.push(epsilon);
         self.num_propositions += 1;
@@ -3331,10 +3318,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn get_numeric_proposition_id(&self, condition_id: usize) -> Result<usize, String> {
-        self.propositions
-            .iter()
-            .find(|proposition| proposition.id_numeric_condition == Some(condition_id))
-            .map(|proposition| proposition.id)
+        self.numeric_condition_proposition_ids
+            .get(condition_id)
+            .copied()
             .ok_or_else(|| format!("LM-cut numeric condition {condition_id} has no proposition"))
     }
 
@@ -3494,7 +3480,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     }
                     cut_cost = cut_cost.min(current_cut_cost);
                 }
-                self.touched_original_operator_ids.sort_unstable();
 
                 if debug_iterations && (iteration <= 20 || iteration % 1000 == 0) {
                 let cut_details = if iteration <= 3 || cut_cost.abs() < self.config.precision {
