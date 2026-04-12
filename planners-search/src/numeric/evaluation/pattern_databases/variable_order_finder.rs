@@ -4,20 +4,22 @@ use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
+
 use super::causal_graph::{CausalGraphVariable, MixedCausalGraph};
+use super::numeric_support::NumericSupportContext;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GreedyVariableOrderType {
     CgGoalLevel,
-    Random,
-    Level,
-    ReverseLevel,
+    CgGoalRandom,
+    GoalCgLevel,
 }
 
 impl Default for GreedyVariableOrderType {
     fn default() -> Self {
-        Self::CgGoalLevel
+        Self::GoalCgLevel
     }
 }
 
@@ -25,86 +27,275 @@ impl fmt::Display for GreedyVariableOrderType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
             Self::CgGoalLevel => "cg_goal_level",
-            Self::Random => "random",
-            Self::Level => "level",
-            Self::ReverseLevel => "reverse_level",
+            Self::CgGoalRandom => "cg_goal_random",
+            Self::GoalCgLevel => "goal_cg_level",
         };
         write!(f, "{name}")
     }
 }
 
-pub fn order_variable_ids(
-    variable_ids: &mut [usize],
-    order_type: GreedyVariableOrderType,
-    random_seed: i32,
-) {
-    match order_type {
-        GreedyVariableOrderType::Random => {
+pub struct VariableOrderFinder {
+    remaining_vars: Vec<(usize, bool)>,
+    is_goal_variable: Vec<bool>,
+    is_numeric_goal_variable: Vec<bool>,
+    is_causal_predecessor: Vec<bool>,
+    num_propositional_variables: usize,
+    variable_order_type: GreedyVariableOrderType,
+    causal_graph: MixedCausalGraph,
+}
+
+impl VariableOrderFinder {
+    pub(crate) fn new(
+        task: &dyn AbstractNumericTask,
+        numeric_support: &NumericSupportContext,
+        variable_order_type: GreedyVariableOrderType,
+        numeric_variables_first: bool,
+        random_seed: i32,
+    ) -> Self {
+        let causal_graph = MixedCausalGraph::new(task);
+        let mut remaining_vars = Vec::new();
+
+        if numeric_variables_first {
+            add_numeric_vars(task, numeric_support, &mut remaining_vars);
+        }
+        for var_id in 0..task.variables().len() {
+            if task.get_variable_axiom_layer(var_id as i32).unwrap_or(-1) == -1
+                && !task
+                    .comparison_axioms()
+                    .iter()
+                    .any(|axiom| usize::try_from(axiom.get_affected_var_id()).ok() == Some(var_id))
+            {
+                remaining_vars.push((var_id, false));
+            }
+        }
+        if !numeric_variables_first {
+            add_numeric_vars(task, numeric_support, &mut remaining_vars);
+        }
+
+        if variable_order_type == GreedyVariableOrderType::CgGoalRandom {
             let mut rng = SmallRng::seed_from_u64(random_seed as i64 as u64);
-            variable_ids.shuffle(&mut rng);
+            remaining_vars.shuffle(&mut rng);
         }
-        GreedyVariableOrderType::ReverseLevel => {
-            variable_ids.sort_unstable_by(|lhs, rhs| rhs.cmp(lhs));
+
+        let mut is_goal_variable = vec![false; task.variables().len()];
+        for goal_index in 0..usize::try_from(task.get_num_goals().max(0)).unwrap_or(0) {
+            let goal = task.get_goal_fact(goal_index as i32);
+            is_goal_variable[goal.var() as usize] = true;
         }
-        GreedyVariableOrderType::CgGoalLevel | GreedyVariableOrderType::Level => {
-            variable_ids.sort_unstable();
+
+        let helper_space_len = numeric_support.helper_space_len(task);
+        let mut is_numeric_goal_variable = vec![false; helper_space_len];
+        let goal_related_propositional_vars = collect_goal_related_propositional_closure(task);
+        for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
+            let Some(affected_var_id) = usize::try_from(comparison_axiom.get_affected_var_id()).ok() else {
+                continue;
+            };
+            if !goal_related_propositional_vars.contains(&affected_var_id) {
+                continue;
+            }
+            for numeric_var_id in numeric_support.comparison_support_ids(task, comparison_axiom_id) {
+                if numeric_var_id < is_numeric_goal_variable.len() {
+                    is_numeric_goal_variable[numeric_var_id] = true;
+                }
+            }
         }
+
+        Self {
+            remaining_vars,
+            is_goal_variable,
+            is_numeric_goal_variable,
+            is_causal_predecessor: vec![false; task.variables().len() + helper_space_len],
+            num_propositional_variables: task.variables().len(),
+            variable_order_type,
+            causal_graph,
+        }
+    }
+
+    pub fn done(&self) -> bool {
+        self.remaining_vars.is_empty()
+    }
+
+    pub fn next(&mut self) -> Option<(usize, bool)> {
+        assert!(!self.done(), "VariableOrderFinder::next called with no remaining variables");
+
+        match self.variable_order_type {
+            GreedyVariableOrderType::CgGoalLevel | GreedyVariableOrderType::CgGoalRandom => {
+                if let Some(position) = self.find_causal_predecessor() {
+                    return Some(self.select_next(position));
+                }
+                if let Some(position) = self.find_goal_variable() {
+                    return Some(self.select_next(position));
+                }
+            }
+            GreedyVariableOrderType::GoalCgLevel => {
+                if let Some(position) = self.find_goal_variable() {
+                    return Some(self.select_next(position));
+                }
+                if let Some(position) = self.find_causal_predecessor() {
+                    return Some(self.select_next(position));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn select_next(&mut self, position: usize) -> (usize, bool) {
+        let (var_id, is_numeric) = self.remaining_vars.remove(position);
+        if is_numeric {
+            let predecessors: Vec<_> = self
+                .causal_graph
+                .eff_pre_neighbors_of(CausalGraphVariable::Numeric(var_id))
+                .collect();
+            for predecessor in predecessors {
+                self.mark_causal_predecessor(predecessor);
+            }
+        } else {
+            let predecessors: Vec<_> = self
+                .causal_graph
+                .eff_pre_neighbors_of(CausalGraphVariable::Regular(var_id))
+                .collect();
+            for predecessor in predecessors {
+                self.mark_causal_predecessor(predecessor);
+            }
+        }
+        (var_id, is_numeric)
+    }
+
+    fn mark_causal_predecessor(&mut self, variable: CausalGraphVariable) {
+        let index = match variable {
+            CausalGraphVariable::Regular(var_id) => var_id,
+            CausalGraphVariable::Numeric(var_id) => self.num_propositional_variables + var_id,
+        };
+        if index < self.is_causal_predecessor.len() {
+            self.is_causal_predecessor[index] = true;
+        }
+    }
+
+    fn find_causal_predecessor(&self) -> Option<usize> {
+        self.remaining_vars.iter().position(|&(var_id, is_numeric)| {
+            let index = if is_numeric {
+                self.num_propositional_variables + var_id
+            } else {
+                var_id
+            };
+            self.is_causal_predecessor.get(index).copied().unwrap_or(false)
+        })
+    }
+
+    fn find_goal_variable(&self) -> Option<usize> {
+        self.remaining_vars.iter().position(|&(var_id, is_numeric)| {
+            if is_numeric {
+                self.is_numeric_goal_variable.get(var_id).copied().unwrap_or(false)
+            } else {
+                self.is_goal_variable.get(var_id).copied().unwrap_or(false)
+            }
+        })
     }
 }
 
-pub fn order_causal_graph_variables(
-    variable_ids: &mut [CausalGraphVariable],
-    graph: &MixedCausalGraph,
-    order_type: GreedyVariableOrderType,
-    random_seed: i32,
+fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) -> Vec<usize> {
+    let mut goal_related: Vec<usize> = (0..task.get_num_goals())
+        .filter_map(|goal_id| usize::try_from(task.get_goal_fact(goal_id).var()).ok())
+        .collect();
+    goal_related.sort_unstable();
+    goal_related.dedup();
+
+    loop {
+        let mut changed = false;
+        for axiom in task.axioms() {
+            let affected_var_id = axiom.var_id() as usize;
+            if goal_related.binary_search(&affected_var_id).is_ok() {
+                for condition in axiom.conditions() {
+                    if let Ok(condition_var_id) = usize::try_from(condition.var()) {
+                        if goal_related.binary_search(&condition_var_id).is_err() {
+                            goal_related.push(condition_var_id);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+        goal_related.sort_unstable();
+        goal_related.dedup();
+    }
+
+    goal_related
+}
+
+fn add_numeric_vars(
+    task: &dyn AbstractNumericTask,
+    numeric_support: &NumericSupportContext,
+    remaining_vars: &mut Vec<(usize, bool)>,
 ) {
-    match order_type {
-        GreedyVariableOrderType::Random => {
-            let mut rng = SmallRng::seed_from_u64(random_seed as i64 as u64);
-            variable_ids.shuffle(&mut rng);
-        }
-        GreedyVariableOrderType::CgGoalLevel => {
-            variable_ids.sort_unstable_by_key(|&variable| {
-                (
-                    graph.goal_distance(variable).unwrap_or(usize::MAX),
-                    graph.predecessor_count(variable),
-                    variable,
-                )
-            });
-        }
-        GreedyVariableOrderType::Level => {
-            variable_ids.sort_unstable_by_key(|&variable| {
-                (graph.causal_level(variable).unwrap_or(usize::MAX), variable)
-            });
-        }
-        GreedyVariableOrderType::ReverseLevel => {
-            variable_ids.sort_unstable_by_key(|&variable| {
-                (
-                    std::cmp::Reverse(graph.causal_level(variable).unwrap_or(0)),
-                    variable,
-                )
-            });
+    for numeric_var_id in 0..numeric_support.helper_space_len(task) {
+        let is_regular = task
+            .numeric_variables()
+            .get(numeric_var_id)
+            .map(|numeric_var| numeric_var.get_type() == &NumericType::Regular)
+            .unwrap_or_else(|| numeric_support.is_helper_var_id(task, numeric_var_id));
+        if is_regular {
+            remaining_vars.push((numeric_var_id, true));
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+    use planners_sas::numeric::numeric_task::{ExplicitVariable, Fact, Metric, NumericRootTask, NumericType, NumericVariable};
 
-    #[test]
-    fn reverse_level_reverses_order() {
-        let mut ids = vec![3, 1, 2];
-        order_variable_ids(&mut ids, GreedyVariableOrderType::ReverseLevel, 0);
-        assert_eq!(ids, vec![3, 2, 1]);
+    use super::*;
+    use crate::numeric::evaluation::pattern_databases::numeric_support::NumericSupportContext;
+
+    fn simple_var(name: &str, axiom_layer: i32) -> ExplicitVariable {
+        ExplicitVariable::new(
+            2,
+            name.to_string(),
+            vec![format!("{name}=0"), format!("{name}=1")],
+            axiom_layer,
+            1,
+        )
     }
 
     #[test]
-    fn random_order_is_deterministic_for_seed() {
-        let mut lhs = vec![0, 1, 2, 3, 4];
-        let mut rhs = vec![0, 1, 2, 3, 4];
-        order_variable_ids(&mut lhs, GreedyVariableOrderType::Random, 7);
-        order_variable_ids(&mut rhs, GreedyVariableOrderType::Random, 7);
-        assert_eq!(lhs, rhs);
+    fn default_matches_fd_default() {
+        assert_eq!(GreedyVariableOrderType::default(), GreedyVariableOrderType::GoalCgLevel);
+    }
+
+    #[test]
+    fn goal_cg_level_prefers_goal_numeric_variables() {
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            vec![simple_var("cmp", 0)],
+            vec![
+                NumericVariable::new("threshold".to_string(), NumericType::Constant, -1),
+                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
+            ],
+            vec![Fact::new(0, 1)],
+            vec![],
+            vec![0],
+            vec![1.0, 0.0],
+            vec![],
+            vec![],
+            vec![ComparisonAxiom::new(0, 1, 0, ComparisonOperator::GreaterThanOrEqual)],
+            vec![],
+            (0, 0),
+        );
+        let numeric_support = NumericSupportContext::new(&task);
+        let mut order = VariableOrderFinder::new(
+            &task,
+            &numeric_support,
+            GreedyVariableOrderType::GoalCgLevel,
+            true,
+            0,
+        );
+
+        let next = order.next();
+        assert_eq!(next, Some((1, true)));
     }
 }

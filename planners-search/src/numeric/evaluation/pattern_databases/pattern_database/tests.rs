@@ -1,12 +1,14 @@
 #[cfg(test)]
 mod tests {
     use planners_sas::numeric::axioms::{
-        AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
+        AssignmentAxiom, AxiomEvaluator, CalOperator, ComparisonAxiom, ComparisonOperator,
     };
     use planners_sas::numeric::numeric_task::{
         AssignmentEffect, AssignmentOperation, ExplicitVariable, Fact, Metric, NumericRootTask,
         NumericType, NumericVariable, Operator,
     };
+    use planners_sas::numeric::state_registry::StateRegistry;
+    use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
     use crate::numeric::evaluation::pattern_databases::pattern_database::PatternDatabase;
     use crate::numeric::evaluation::pattern_databases::projected_task::{Pattern, ProjectedTask};
@@ -373,6 +375,30 @@ mod tests {
     }
 
     #[test]
+    fn direct_concrete_lookup_matches_projected_lookup_for_propositional_task() {
+        let task = propositional_task();
+        let projected_task = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![0],
+                numeric: vec![0],
+            },
+        )
+        .unwrap();
+        let pdb = PatternDatabase::new(projected_task, 32).unwrap();
+        let state_packer = IntDoublePacker::from_abstract_task(&task);
+        let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+        let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+        let initial_state = state_registry.get_initial_state();
+
+        assert_eq!(
+            pdb.lookup_or_fallback_from_concrete_state(&initial_state, &state_registry)
+                .unwrap(),
+            pdb.lookup_or_fallback(&[0], &[0.0]),
+        );
+    }
+
+    #[test]
     fn pdb_build_expands_from_axiom_closed_initial_state() {
         let task = comparison_guarded_task();
         let projected_task = ProjectedTask::new(
@@ -393,6 +419,31 @@ mod tests {
         assert_eq!(pdb.lookup(&[0], &[0.0]), Some(1.0));
         assert_eq!(pdb.lookup(&initial_prop, &initial_num), Some(1.0));
         assert!(pdb.distances.iter().any(|&distance| distance == 0.0));
+    }
+
+    #[test]
+    fn direct_concrete_lookup_matches_projected_lookup_for_comparison_guarded_task() {
+        let task = comparison_guarded_task();
+        let projected_task = ProjectedTask::new(
+            &task,
+            &Pattern {
+                regular: vec![1],
+                numeric: vec![1],
+            },
+        )
+        .unwrap();
+        let (initial_prop, initial_num) = projected_task.evaluated_initial_state_values().unwrap();
+        let pdb = PatternDatabase::new(projected_task, 16).unwrap();
+        let state_packer = IntDoublePacker::from_abstract_task(&task);
+        let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+        let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+        let initial_state = state_registry.get_initial_state();
+
+        assert_eq!(
+            pdb.lookup_or_fallback_from_concrete_state(&initial_state, &state_registry)
+                .unwrap(),
+            pdb.lookup_or_fallback(&initial_prop, &initial_num),
+        );
     }
 
     #[test]

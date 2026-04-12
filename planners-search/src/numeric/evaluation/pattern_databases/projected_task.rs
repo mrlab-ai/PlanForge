@@ -11,6 +11,7 @@ use planners_sas::numeric::numeric_task::{
     Metric, NumericRootTask, NumericType, NumericVariable, Operator,
     metric_operator_cost_from_initial_values,
 };
+use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
 use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
@@ -321,6 +322,7 @@ pub struct ProjectedTask<'task> {
     pattern_regular_projected_ids: Vec<usize>,
     pattern_numeric_projected_ids: Vec<usize>,
     auxiliary_numeric_vars: Vec<AuxiliaryNumericVar>,
+    helper_id_by_source_numeric_var: Vec<Option<usize>>,
     is_auxiliary_num_var: Vec<bool>,
     is_auxiliary_constant: Vec<bool>,
     auxiliary_exprs: Vec<Option<ArithmeticExpr>>,
@@ -374,6 +376,11 @@ impl<'task> ProjectedTask<'task> {
             &affected_to_assignment_axiom,
             &base_initial_numeric_values,
         )?;
+        let mut helper_id_by_source_numeric_var = vec![None; num_numeric_vars];
+        for auxiliary_numeric_var in &auxiliary_numeric_vars {
+            helper_id_by_source_numeric_var[auxiliary_numeric_var.source_numeric_var_id] =
+                Some(auxiliary_numeric_var.helper_id);
+        }
         let helper_space_len = num_numeric_vars + auxiliary_numeric_vars.len();
         let derived_vars_with_helpers: BTreeSet<usize> = auxiliary_numeric_vars
             .iter()
@@ -837,6 +844,7 @@ impl<'task> ProjectedTask<'task> {
             pattern_regular_projected_ids,
             pattern_numeric_projected_ids,
             auxiliary_numeric_vars,
+            helper_id_by_source_numeric_var,
             is_auxiliary_num_var,
             is_auxiliary_constant,
             auxiliary_exprs,
@@ -955,12 +963,18 @@ impl<'task> ProjectedTask<'task> {
             }
 
             if self.is_auxiliary_num_var[projected_index] {
-                let expr = self.auxiliary_exprs[projected_index]
-                    .as_ref()
+                let original_numeric_var = self.projected_num_var_to_original[projected_index]
                     .ok_or_else(|| {
-                        "missing auxiliary expression for projected numeric variable".to_string()
+                        "missing original numeric variable for projected numeric variable"
+                            .to_string()
                     })?;
-                projected_numeric_values.push(expr.evaluate(expanded_numeric_values));
+                let helper_id = self.helper_id_by_source_numeric_var[original_numeric_var]
+                    .ok_or_else(|| {
+                        format!(
+                            "missing helper id for projected numeric variable {original_numeric_var}"
+                        )
+                    })?;
+                projected_numeric_values.push(expanded_numeric_values[helper_id]);
                 continue;
             }
 
@@ -1138,6 +1152,26 @@ impl<'task> ProjectedTask<'task> {
         &self.pattern_regular_projected_ids
     }
 
+    pub fn state_dependent_numeric_projected_ids(&self) -> Vec<usize> {
+        (0..self.projected_num_var_to_original.len())
+            .filter(|&projected_index| {
+                if self.is_auxiliary_constant[projected_index] {
+                    return false;
+                }
+
+                if self.is_auxiliary_num_var[projected_index] {
+                    return self.auxiliary_exprs[projected_index]
+                        .as_ref()
+                        .is_none_or(|expr| !expr.is_constant());
+                }
+
+                self.projected_num_var_to_original[projected_index]
+                    .and_then(|original_numeric_var| self.base.numeric_variables().get(original_numeric_var))
+                    .is_some_and(|numeric_var| numeric_var.get_type() != &NumericType::Constant)
+            })
+            .collect()
+    }
+
     pub fn requires_derived_numeric_values(&self) -> bool {
         self.projected_num_var_to_original.iter().enumerate().any(
             |(projected_index, original_numeric_var)| {
@@ -1149,6 +1183,173 @@ impl<'task> ProjectedTask<'task> {
                     })
             },
         )
+    }
+
+    pub fn supports_direct_concrete_state_projection(&self) -> bool {
+        !self.requires_derived_numeric_values()
+    }
+
+    pub fn project_concrete_state_values_into(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        projected_prop_values: &mut Vec<i32>,
+        projected_numeric_values: &mut Vec<f64>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<(), String> {
+        if !self.supports_direct_concrete_state_projection() {
+            return Err(
+                "direct projected-task lookup requires derived numeric values".to_string(),
+            );
+        }
+
+        numeric_value_cache.clear();
+        numeric_value_cache.resize(
+            self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len(),
+            None,
+        );
+
+        projected_prop_values.clear();
+        projected_prop_values.reserve(self.projected_var_to_original.len());
+        for &original_var_id in &self.projected_var_to_original {
+            projected_prop_values.push(
+                registry
+                    .get_propositional_var_value(state, original_var_id)
+                    .map_err(|err| format!("{err:?}"))?,
+            );
+        }
+
+        projected_numeric_values.clear();
+        projected_numeric_values.reserve(self.projected_num_var_to_original.len());
+        for projected_index in 0..self.projected_num_var_to_original.len() {
+            projected_numeric_values.push(self.projected_numeric_value_from_concrete_state(
+                projected_index,
+                state,
+                registry,
+                numeric_value_cache,
+            )?);
+        }
+
+        Ok(())
+    }
+
+    fn projected_numeric_value_from_concrete_state(
+        &self,
+        projected_index: usize,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<f64, String> {
+        if self.is_auxiliary_constant[projected_index] {
+            return self.projected_initial_numeric_values[projected_index].ok_or_else(|| {
+                format!("missing constant projected numeric value at index {projected_index}")
+            });
+        }
+
+        let Some(original_numeric_var) = self.projected_num_var_to_original[projected_index] else {
+            return Err("missing original numeric variable for projected numeric variable".to_string());
+        };
+
+        if self.is_auxiliary_num_var[projected_index] {
+            let helper_id = self.helper_id_by_source_numeric_var[original_numeric_var].ok_or_else(|| {
+                format!("missing helper id for auxiliary projected numeric variable {original_numeric_var}")
+            })?;
+            return self.expanded_numeric_value_from_concrete_state(
+                helper_id,
+                state,
+                registry,
+                numeric_value_cache,
+            );
+        }
+
+        self.expanded_numeric_value_from_concrete_state(
+            original_numeric_var,
+            state,
+            registry,
+            numeric_value_cache,
+        )
+    }
+
+    fn expanded_numeric_value_from_concrete_state(
+        &self,
+        expanded_numeric_var_id: usize,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<f64, String> {
+        if let Some(value) = numeric_value_cache
+            .get(expanded_numeric_var_id)
+            .and_then(|value| *value)
+        {
+            return Ok(value);
+        }
+
+        let base_numeric_len = self.base.numeric_variables().len();
+        let value = if expanded_numeric_var_id < base_numeric_len {
+            match self.base.numeric_variables()[expanded_numeric_var_id].get_type() {
+                NumericType::Derived => {
+                    return Err(format!(
+                        "direct concrete-state projection requires derived numeric evaluation for variable {expanded_numeric_var_id}"
+                    ));
+                }
+                NumericType::Regular | NumericType::Constant | NumericType::Cost => registry
+                    .get_numeric_var_value_unevaluated(state, expanded_numeric_var_id)
+                    .map_err(|err| format!("{err:?}"))?,
+            }
+        } else {
+            let Some(auxiliary_numeric_var) = self
+                .auxiliary_numeric_vars
+                .get(expanded_numeric_var_id - base_numeric_len)
+            else {
+                return Err(format!(
+                    "expanded numeric variable index out of bounds: {expanded_numeric_var_id}"
+                ));
+            };
+            self.evaluate_numeric_expr_from_concrete_state(
+                &auxiliary_numeric_var.expr,
+                state,
+                registry,
+                numeric_value_cache,
+            )?
+        };
+
+        if let Some(slot) = numeric_value_cache.get_mut(expanded_numeric_var_id) {
+            *slot = Some(value);
+        }
+        Ok(value)
+    }
+
+    fn evaluate_numeric_expr_from_concrete_state(
+        &self,
+        expr: &ArithmeticExpr,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<f64, String> {
+        match expr {
+            ArithmeticExpr::Var(var_id) => self.expanded_numeric_value_from_concrete_state(
+                *var_id,
+                state,
+                registry,
+                numeric_value_cache,
+            ),
+            ArithmeticExpr::Const(value) => Ok(*value),
+            ArithmeticExpr::Op { lhs, op, rhs } => Ok(apply_cal_operator(
+                op,
+                self.evaluate_numeric_expr_from_concrete_state(
+                    lhs,
+                    state,
+                    registry,
+                    numeric_value_cache,
+                )?,
+                self.evaluate_numeric_expr_from_concrete_state(
+                    rhs,
+                    state,
+                    registry,
+                    numeric_value_cache,
+                )?,
+            )),
+        }
     }
 
     fn evaluate_axiom_closure(

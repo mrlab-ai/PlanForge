@@ -51,7 +51,7 @@ fn parses_astar_greedy_numeric_pdb_with_or_without_unit_parens() {
 #[test]
 fn parses_astar_greedy_numeric_pdb_with_named_options() {
     let spec = parse_search_spec(
-        "astar(greedy_numeric_pdb(max_pdb_states=321, numeric_first=false, random_seed=7, variable_order_type=reverse_level))",
+        "astar(greedy_numeric_pdb(max_pdb_states=321, numeric_first=false, random_seed=7, variable_order_type=cg_goal_random))",
     )
     .unwrap();
 
@@ -64,7 +64,7 @@ fn parses_astar_greedy_numeric_pdb_with_named_options() {
     assert_eq!(config.random_seed, 7);
     assert_eq!(
         config.variable_order_type,
-        GreedyVariableOrderType::ReverseLevel
+        GreedyVariableOrderType::CgGoalRandom
     );
 }
 
@@ -87,7 +87,7 @@ fn parses_astar_canonical_numeric_pdb_with_or_without_unit_parens() {
 #[test]
 fn parses_astar_canonical_numeric_pdb_with_named_options() {
     let spec = parse_search_spec(
-        "astar(canonical_numeric_pdb(max_pdb_states=321, max_pattern_size=3, only_interesting_patterns=false, random_seed=7, variable_order_type=reverse_level))",
+        "astar(canonical_numeric_pdb(max_pdb_states=321, max_pattern_size=3, only_interesting_patterns=false, random_seed=7, variable_order_type=cg_goal_random))",
     )
     .unwrap();
 
@@ -101,7 +101,7 @@ fn parses_astar_canonical_numeric_pdb_with_named_options() {
     assert_eq!(config.random_seed, 7);
     assert_eq!(
         config.variable_order_type,
-        GreedyVariableOrderType::ReverseLevel
+        GreedyVariableOrderType::CgGoalRandom
     );
 }
 
@@ -207,7 +207,7 @@ fn display_round_trips_multi_domain_abstractions() {
 #[test]
 fn display_round_trips_greedy_numeric_pdb() {
     let parsed = parse_search_spec(
-        "astar(greedy_numeric_pdb(max_pdb_states=42, numeric_first=false, random_seed=9, variable_order_type=random))",
+        "astar(greedy_numeric_pdb(max_pdb_states=42, numeric_first=false, random_seed=9, variable_order_type=cg_goal_random))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
@@ -217,7 +217,7 @@ fn display_round_trips_greedy_numeric_pdb() {
 #[test]
 fn display_round_trips_canonical_numeric_pdb() {
     let parsed = parse_search_spec(
-        "astar(canonical_numeric_pdb(max_pdb_states=42, max_pattern_size=3, only_interesting_patterns=false, random_seed=9, variable_order_type=random))",
+        "astar(canonical_numeric_pdb(max_pdb_states=42, max_pattern_size=3, only_interesting_patterns=false, random_seed=9, variable_order_type=cg_goal_random))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();

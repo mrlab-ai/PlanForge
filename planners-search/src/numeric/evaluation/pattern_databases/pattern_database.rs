@@ -61,6 +61,31 @@ fn hash_pattern_components(
     hash_bytes(hash, &(pattern_numeric_ids.len() as u64).to_le_bytes())
 }
 
+#[inline]
+fn build_prop_hash_multipliers(task: &ProjectedTask<'_>) -> Vec<usize> {
+    let mut multipliers = Vec::with_capacity(task.variables().len());
+    let mut product = 1usize;
+    for variable in task.variables() {
+        multipliers.push(product);
+        product = product.saturating_mul(variable.domain_size() as usize);
+    }
+    multipliers
+}
+
+#[inline]
+fn compute_prop_hash(propositional: &[i32], multipliers: &[usize]) -> Option<usize> {
+    if propositional.len() != multipliers.len() {
+        return None;
+    }
+
+    let mut hash = 0usize;
+    for (value, multiplier) in propositional.iter().zip(multipliers.iter()) {
+        let value = usize::try_from(*value).ok()?;
+        hash = hash.saturating_add(value.saturating_mul(*multiplier));
+    }
+    Some(hash)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct PdbState {
     propositional: Vec<i32>,
@@ -72,14 +97,18 @@ pub struct PatternDatabase<'task> {
     pub(super) states: Vec<PdbState>,
     state_index: HashMap<u64, Vec<usize>>,
     pattern_index: HashMap<u64, Vec<usize>>,
+    full_prop_index: HashMap<usize, Vec<usize>>,
     pub(super) distances: Vec<f64>,
     pub(super) min_operator_cost: f64,
     pub(super) reached_goal_states: usize,
     pub(super) truncated: bool,
     pub(super) frontier_states: Vec<usize>,
+    full_prop_hash_multipliers: Vec<usize>,
+    state_dependent_numeric_projected_ids: Vec<usize>,
     projection_prop_scratch: RefCell<Vec<i32>>,
     projection_numeric_scratch: RefCell<Vec<f64>>,
     projection_helper_scratch: RefCell<Vec<f64>>,
+    direct_numeric_cache_scratch: RefCell<Vec<Option<f64>>>,
 }
 
 impl<'task> PatternDatabase<'task> {
@@ -93,17 +122,23 @@ impl<'task> PatternDatabase<'task> {
             states: Vec::with_capacity(max_states),
             state_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
             pattern_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
+            full_prop_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
             distances: Vec::new(),
             min_operator_cost,
             reached_goal_states: 0,
             truncated: false,
             frontier_states: Vec::new(),
+            full_prop_hash_multipliers: Vec::new(),
+            state_dependent_numeric_projected_ids: Vec::new(),
             projection_prop_scratch: RefCell::new(Vec::with_capacity(projection_prop_capacity)),
             projection_numeric_scratch: RefCell::new(Vec::with_capacity(
                 projection_numeric_capacity,
             )),
             projection_helper_scratch: RefCell::new(Vec::new()),
+            direct_numeric_cache_scratch: RefCell::new(Vec::new()),
         };
+        pdb.full_prop_hash_multipliers = build_prop_hash_multipliers(&pdb.task);
+        pdb.state_dependent_numeric_projected_ids = pdb.task.state_dependent_numeric_projected_ids();
         pdb.build(max_states)?;
         // NOTE: un-comment to print summary of the built PDB
         utils::dump_distance_table(&pdb);
@@ -201,18 +236,58 @@ impl<'task> PatternDatabase<'task> {
         Ok(self.lookup_or_fallback(&projected_prop, &projected_num))
     }
 
+    pub fn lookup_or_fallback_from_concrete_state(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+    ) -> Result<f64, String> {
+        if self.task.supports_direct_concrete_state_projection() {
+            let mut projected_prop = self.projection_prop_scratch.borrow_mut();
+            let mut projected_num = self.projection_numeric_scratch.borrow_mut();
+            let mut numeric_cache = self.direct_numeric_cache_scratch.borrow_mut();
+            self.task.project_concrete_state_values_into(
+                state,
+                registry,
+                &mut projected_prop,
+                &mut projected_num,
+                &mut numeric_cache,
+            )?;
+            return Ok(self.lookup_or_fallback(&projected_prop, &projected_num));
+        }
+
+        let mut propositional = Vec::new();
+        let mut numeric = Vec::new();
+        registry
+            .fill_state_and_numeric_vars_with_options(
+                state,
+                &mut propositional,
+                &mut numeric,
+                self.requires_derived_numeric_values(),
+            )
+            .map_err(|err| format!("{err:?}"))?;
+        self.lookup_projected_or_fallback_from_state_values(&propositional, &numeric)
+    }
+
     fn lookup_state_id(&self, propositional: &[i32], numeric: &[f64]) -> Option<usize> {
         let full_state_lookup = propositional.len() == self.task.variables().len()
             && numeric.len() == self.task.numeric_variables().len();
         let pattern_regular_ids = self.task.pattern_regular_projected_ids();
         let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
 
+        if full_state_lookup {
+            let prop_hash = compute_prop_hash(propositional, &self.full_prop_hash_multipliers)?;
+            let candidates = self.full_prop_index.get(&prop_hash)?;
+            return candidates.iter().copied().find(|&state_id| {
+                let state = &self.states[state_id];
+                self.state_dependent_numeric_projected_ids.iter().all(|&numeric_index| {
+                    state.numeric.get(numeric_index).map(|value| value.to_bits())
+                        == numeric.get(numeric_index).map(|value| value.to_bits())
+                })
+            });
+        }
+
         let lookup_key = hash_state_components(propositional, numeric);
-        let candidates = if full_state_lookup {
-            self.state_index.get(&lookup_key)
-        } else {
-            self.pattern_index.get(&lookup_key)
-        }?;
+        let candidates = self.pattern_index.get(&lookup_key)?;
 
         candidates.iter().copied().find(|&state_id| {
             let state = &self.states[state_id];
@@ -262,6 +337,7 @@ impl<'task> PatternDatabase<'task> {
     fn rebuild_lookup_indexes(&mut self) {
         self.state_index.clear();
         self.pattern_index.clear();
+        self.full_prop_index.clear();
 
         let pattern_regular_ids = self.task.pattern_regular_projected_ids();
         let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
@@ -272,6 +348,16 @@ impl<'task> PatternDatabase<'task> {
                 .entry(full_key)
                 .or_insert_with(|| Vec::with_capacity(1))
                 .push(state_id);
+
+            if let Some(prop_hash) = compute_prop_hash(
+                &state.propositional,
+                &self.full_prop_hash_multipliers,
+            ) {
+                self.full_prop_index
+                    .entry(prop_hash)
+                    .or_insert_with(|| Vec::with_capacity(1))
+                    .push(state_id);
+            }
 
             let pattern_key = hash_pattern_components(
                 &state.propositional,

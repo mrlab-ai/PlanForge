@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::fmt;
 
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
-use planners_sas::numeric::state_registry::{StateID, StateRegistry};
+use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistry};
 use serde::{Deserialize, Serialize};
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -139,6 +139,41 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
 
         Ok(best_value)
     }
+
+    pub fn evaluate_concrete_state(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        pdb_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<f64, String> {
+        pdb_value_cache.clear();
+        pdb_value_cache.resize(self.pdb_collection.len(), None);
+
+        let mut best_value = 0.0_f64;
+
+        for subset in &self.max_additive_subsets {
+            let mut subset_value = 0.0;
+            for &pdb_id in subset {
+                let value = if let Some(value) = pdb_value_cache.get(pdb_id).and_then(|v| *v) {
+                    value
+                } else {
+                    let Some(pdb) = self.pdb_collection.pdb(pdb_id) else {
+                        return Err(format!("invalid canonical subset pdb index {pdb_id}"));
+                    };
+                    let value = pdb.lookup_or_fallback_from_concrete_state(state, registry)?;
+                    let Some(slot) = pdb_value_cache.get_mut(pdb_id) else {
+                        return Err(format!("invalid canonical subset pdb cache index {pdb_id}"));
+                    };
+                    *slot = Some(value);
+                    value
+                };
+                subset_value += value;
+            }
+            best_value = best_value.max(subset_value);
+        }
+
+        Ok(best_value)
+    }
 }
 
 pub struct CanonicalNumericPdbHeuristic<'task> {
@@ -232,45 +267,10 @@ impl Heuristic for CanonicalNumericPdbHeuristic<'_> {
         }
 
         let (_task, registry) = Self::require_task_and_registry(eval_state)?;
-        let requires_derived_numeric_values = self
-            .collection_information
-            .pdb_collection()
-            .requires_derived_numeric_values();
-
-        let mut propositional_values = self.prop_scratch.borrow_mut();
-        let mut numeric_values = self.numeric_scratch.borrow_mut();
-        registry
-            .fill_state_and_numeric_vars_with_options(
-                eval_state.state(),
-                &mut propositional_values,
-                &mut numeric_values,
-                requires_derived_numeric_values,
-            )
-            .map_err(|err| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to read state values for canonical numeric PDB: {err:?}"
-                ))
-            })?;
-
-        if self.is_goal_state(&propositional_values) {
-            self.cache_state_value(state_id, 0.0);
-            return Ok(0.0);
-        }
-
-        let mut expanded_numeric_values = self.expanded_numeric_scratch.borrow_mut();
-        self.collection_information
-            .pdb_collection()
-            .expand_numeric_state_values_into(&numeric_values, &mut expanded_numeric_values)
-            .map_err(EvaluationError::ComputationFailed)?;
-
         let mut pdb_value_cache = self.pdb_value_cache.borrow_mut();
         let heuristic_value = self
             .collection_information
-            .evaluate_projected_state_values(
-                &propositional_values,
-                &expanded_numeric_values,
-                &mut pdb_value_cache,
-            )
+            .evaluate_concrete_state(eval_state.state(), registry, &mut pdb_value_cache)
             .map_err(EvaluationError::ComputationFailed)?;
 
         self.cache_state_value(state_id, heuristic_value);

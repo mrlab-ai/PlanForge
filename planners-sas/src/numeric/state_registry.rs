@@ -77,6 +77,22 @@ impl ConcreteState {
             .extend((0..task.variables().len()).map(|i| state_packer.get(buffer, i as i32) as i32));
     }
 
+    pub fn get_propositional_value(
+        &self,
+        state_registry: &StateRegistry,
+        var_id: usize,
+    ) -> Result<i32, InvalidIndex> {
+        if var_id >= state_registry.task.variables().len() {
+            return Err(InvalidIndex {
+                index: var_id as u32,
+                length: state_registry.task.variables().len() as u32,
+            });
+        }
+
+        let buffer = state_registry.get_buffer(self.pool_offset);
+        Ok(state_registry.global_state_packer.get(buffer, var_id as i32) as i32)
+    }
+
     /// Gets the numeric state values for regular variables
     pub fn get_numeric_state(&self, state_registry: &StateRegistry) -> Vec<f64> {
         let buffer = state_registry.get_buffer(self.pool_offset);
@@ -834,6 +850,49 @@ impl<'a> StateRegistry<'a> {
         }
 
         Ok(())
+    }
+
+    pub fn get_propositional_var_value(
+        &self,
+        state: &ConcreteState,
+        var_id: usize,
+    ) -> Result<i32, InvalidIndex> {
+        state.get_propositional_value(self, var_id)
+    }
+
+    pub fn get_numeric_var_value_unevaluated(
+        &self,
+        state: &ConcreteState,
+        numeric_var_id: usize,
+    ) -> Result<f64, InvalidIndex> {
+        let Some(numeric_var) = self.task.numeric_variables().get(numeric_var_id) else {
+            return Err(InvalidIndex {
+                index: numeric_var_id as u32,
+                length: self.task.numeric_variables().len() as u32,
+            });
+        };
+
+        let buffer = state.buffer(self);
+        let cost_info_borrow = self.cost_info.borrow();
+        let cost_variables = cost_info_borrow.get(state, self);
+
+        let value = match numeric_var.get_type() {
+            NumericType::Cost => {
+                let cost_index = self.numeric_indices[numeric_var_id];
+                if cost_index >= 0 && (cost_index as usize) < cost_variables.len() {
+                    cost_variables[cost_index as usize]
+                } else {
+                    0.0
+                }
+            }
+            NumericType::Constant => self.numeric_constants[self.numeric_indices[numeric_var_id] as usize],
+            NumericType::Regular => self
+                .global_state_packer
+                .get_double(buffer, self.numeric_indices[numeric_var_id]),
+            NumericType::Derived => 0.0,
+        };
+
+        Ok(value)
     }
 
     pub fn fill_numeric_vars(

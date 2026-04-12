@@ -156,9 +156,8 @@ fn parse_i32(value: &str) -> Result<i32, String> {
 fn parse_greedy_variable_order_type(value: &str) -> Result<GreedyVariableOrderType, String> {
     match value {
         "cg_goal_level" => Ok(GreedyVariableOrderType::CgGoalLevel),
-        "random" => Ok(GreedyVariableOrderType::Random),
-        "level" => Ok(GreedyVariableOrderType::Level),
-        "reverse_level" => Ok(GreedyVariableOrderType::ReverseLevel),
+        "cg_goal_random" => Ok(GreedyVariableOrderType::CgGoalRandom),
+        "goal_cg_level" => Ok(GreedyVariableOrderType::GoalCgLevel),
         _ => Err(format!("invalid GreedyVariableOrderType `{value}`")),
     }
 }

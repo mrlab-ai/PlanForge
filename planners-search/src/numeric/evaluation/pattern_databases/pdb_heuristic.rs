@@ -92,39 +92,9 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
         }
 
         let (_task, registry) = Self::require_task_and_registry(eval_state)?;
-        let requires_derived_numeric_values = self.pdb.requires_derived_numeric_values();
-
-        let mut propositional_values = self.prop_scratch.borrow_mut();
-        let mut numeric_values = self.numeric_scratch.borrow_mut();
-        registry
-            .fill_state_and_numeric_vars_with_options(
-                eval_state.state(),
-                &mut propositional_values,
-                &mut numeric_values,
-                requires_derived_numeric_values,
-            )
-            .map_err(|err| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to read state values for greedy numeric PDB: {err:?}"
-                ))
-            })?;
-
-        if self.is_goal_state(&propositional_values) {
-            self.cache_state_value(state_id, 0.0);
-            return Ok(0.0);
-        }
-
-        let mut expanded_numeric_values = self.expanded_numeric_scratch.borrow_mut();
-        self.pdb
-            .expand_numeric_state_values_into(&numeric_values, &mut expanded_numeric_values)
-            .map_err(EvaluationError::ComputationFailed)?;
-
         let heuristic_value = self
             .pdb
-            .lookup_projected_or_fallback_from_expanded_state_values(
-                &propositional_values,
-                &expanded_numeric_values,
-            )
+            .lookup_or_fallback_from_concrete_state(eval_state.state(), registry)
             .map_err(EvaluationError::ComputationFailed)?;
         let heuristic_value = heuristic_value.max(self.pdb.min_operator_cost());
         self.cache_state_value(state_id, heuristic_value);
