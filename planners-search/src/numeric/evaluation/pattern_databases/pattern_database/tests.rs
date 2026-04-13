@@ -10,7 +10,9 @@ mod tests {
     use planners_sas::numeric::state_registry::StateRegistry;
     use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
-    use crate::numeric::evaluation::pattern_databases::pattern_database::PatternDatabase;
+    use crate::numeric::evaluation::pattern_databases::pattern_database::{
+        PatternDatabase, PdbHeuristicConfig, PdbInternalHeuristic,
+    };
     use crate::numeric::evaluation::pattern_databases::projected_task::{Pattern, ProjectedTask};
 
     fn build_pdb_from_projected_task(
@@ -18,6 +20,14 @@ mod tests {
         max_states: usize,
     ) -> PatternDatabase<'_> {
         PatternDatabase::new(task, max_states).unwrap()
+    }
+
+    fn build_pdb_with_heuristics(
+        task: ProjectedTask<'_>,
+        max_states: usize,
+        heuristic_config: PdbHeuristicConfig,
+    ) -> PatternDatabase<'_> {
+        PatternDatabase::with_heuristic_config(task, max_states, heuristic_config).unwrap()
     }
 
     fn simple_var(name: &str, axiom_layer: i32) -> ExplicitVariable {
@@ -306,6 +316,85 @@ mod tests {
         )
     }
 
+    fn failed_lookup_chain_task() -> NumericRootTask {
+        NumericRootTask::new(
+            1,
+            Metric::new(true, -1),
+            vec![ExplicitVariable::new(
+                5,
+                "p".to_string(),
+                vec![
+                    "p=0".to_string(),
+                    "p=1".to_string(),
+                    "p=2".to_string(),
+                    "p=3".to_string(),
+                    "p=4".to_string(),
+                ],
+                -1,
+                4,
+            )],
+            vec![],
+            vec![Fact::new(0, 4)],
+            vec![],
+            vec![0],
+            vec![],
+            vec![
+                Operator::new(
+                    "to-1".to_string(),
+                    vec![Fact::new(0, 0)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(
+                        vec![],
+                        0,
+                        0,
+                        1,
+                    )],
+                    vec![],
+                    1,
+                ),
+                Operator::new(
+                    "to-2".to_string(),
+                    vec![Fact::new(0, 1)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(
+                        vec![],
+                        0,
+                        1,
+                        2,
+                    )],
+                    vec![],
+                    1,
+                ),
+                Operator::new(
+                    "to-3".to_string(),
+                    vec![Fact::new(0, 2)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(
+                        vec![],
+                        0,
+                        2,
+                        3,
+                    )],
+                    vec![],
+                    1,
+                ),
+                Operator::new(
+                    "to-4".to_string(),
+                    vec![Fact::new(0, 3)],
+                    vec![planners_sas::numeric::numeric_task::Effect::new(
+                        vec![],
+                        0,
+                        3,
+                        4,
+                    )],
+                    vec![],
+                    1,
+                ),
+            ],
+            vec![],
+            vec![],
+            vec![],
+            (0, 0),
+        )
+    }
+
     #[test]
     fn lookup_returns_distance_for_reached_state() {
         let task = propositional_task();
@@ -351,7 +440,7 @@ mod tests {
             },
         )
         .unwrap();
-        let pdb = PatternDatabase::new(projected_task, 1).unwrap();
+        let pdb = PatternDatabase::new(projected_task, 0).unwrap();
 
         assert_eq!(pdb.lookup(&[1], &[0.0]), None);
         assert_eq!(pdb.lookup_or_fallback(&[1], &[0.0]), 0.0);
@@ -462,7 +551,7 @@ mod tests {
 
         assert!(pdb.truncated);
         assert_eq!(pdb.reached_goal_states, 0);
-        assert_eq!(pdb.frontier_states, vec![1]);
+        assert_eq!(pdb.frontier_states, vec![2]);
         assert_eq!(pdb.lookup(&[1], &[]), Some(5.0));
         assert_eq!(pdb.lookup(&[0], &[]), Some(10.0));
         assert_eq!(pdb.lookup_or_fallback(&[0], &[]), 10.0);
@@ -483,7 +572,7 @@ mod tests {
         let pdb = PatternDatabase::new(projected_task, 2).unwrap();
 
         assert!(pdb.truncated);
-        assert_eq!(pdb.frontier_states, vec![0, 1]);
+        assert_eq!(pdb.frontier_states, vec![1, 2, 3]);
         assert_eq!(pdb.lookup(&[0], &[]), Some(1.0));
     }
 
@@ -523,5 +612,39 @@ mod tests {
         assert_eq!(pdb.min_operator_cost(), 0.0);
         assert_eq!(pdb.lookup(&[0], &[]), Some(0.0));
         assert_eq!(pdb.lookup(&[1], &[]), Some(0.0));
+    }
+
+    #[test]
+    fn failed_lookup_lmcut_is_more_informed_than_blind() {
+        let task = failed_lookup_chain_task();
+        let pattern = Pattern {
+            regular: vec![0],
+            numeric: vec![],
+        };
+        let blind_projected_task = ProjectedTask::new(&task, &pattern).unwrap();
+        let blind_pdb = build_pdb_with_heuristics(
+            blind_projected_task,
+            1,
+            PdbHeuristicConfig {
+                failed_lookup_heuristic: PdbInternalHeuristic::Blind,
+                ..PdbHeuristicConfig::default()
+            },
+        );
+
+        let lmcut_projected_task = ProjectedTask::new(&task, &pattern).unwrap();
+        let lmcut_pdb = build_pdb_with_heuristics(
+            lmcut_projected_task,
+            1,
+            PdbHeuristicConfig {
+                failed_lookup_heuristic: PdbInternalHeuristic::Lmcut,
+                ..PdbHeuristicConfig::default()
+            },
+        );
+
+        let blind_value = blind_pdb.lookup_or_fallback(&[2], &[]);
+        let lmcut_value = lmcut_pdb.lookup_or_fallback(&[2], &[]);
+
+        assert_eq!(blind_value, 1.0);
+        assert!(lmcut_value > blind_value);
     }
 }

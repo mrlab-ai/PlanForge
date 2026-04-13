@@ -2,17 +2,22 @@
 mod tests;
 
 use std::cell::RefCell;
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, VecDeque};
+use std::cmp::{Ordering, Reverse};
+use std::collections::BinaryHeap;
+use std::fmt;
 
 use ordered_float::NotNan;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
+use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use rustc_hash::FxBuildHasher;
+use serde::{Deserialize, Serialize};
 
 type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 
+use crate::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
+use crate::numeric::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node};
 
 use super::projected_task::ProjectedTask;
@@ -92,8 +97,150 @@ pub(super) struct PdbState {
     numeric: Vec<f64>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PdbInternalHeuristic {
+    Blind,
+    Lmcut,
+}
+
+impl Default for PdbInternalHeuristic {
+    fn default() -> Self {
+        Self::Blind
+    }
+}
+
+impl fmt::Display for PdbInternalHeuristic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Blind => write!(f, "blind"),
+            Self::Lmcut => write!(f, "lmcut"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PdbHeuristicConfig {
+    pub exploration_heuristic: PdbInternalHeuristic,
+    pub frontier_heuristic: PdbInternalHeuristic,
+    pub failed_lookup_heuristic: PdbInternalHeuristic,
+}
+
+impl Default for PdbHeuristicConfig {
+    fn default() -> Self {
+        Self {
+            exploration_heuristic: PdbInternalHeuristic::Blind,
+            frontier_heuristic: PdbInternalHeuristic::Blind,
+            failed_lookup_heuristic: PdbInternalHeuristic::Blind,
+        }
+    }
+}
+
+impl fmt::Display for PdbHeuristicConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "exploration_heuristic={}, frontier_heuristic={}, failed_lookup_heuristic={}",
+            self.exploration_heuristic,
+            self.frontier_heuristic,
+            self.failed_lookup_heuristic,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InnerHeuristicResult {
+    dead_end: bool,
+    value: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PdbOpenEntry {
+    state_id: usize,
+    f: NotNan<f64>,
+    g: NotNan<f64>,
+}
+
+impl Eq for PdbOpenEntry {}
+
+impl Ord for PdbOpenEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .f
+            .cmp(&self.f)
+            .then_with(|| other.g.cmp(&self.g))
+            .then_with(|| other.state_id.cmp(&self.state_id))
+    }
+}
+
+impl PartialOrd for PdbOpenEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+struct LmcutInnerHeuristic<'task> {
+    landmark_generator: LandmarkCutLandmarks<'task>,
+    propositional_scratch: Vec<i32>,
+    numeric_scratch: Vec<f64>,
+    default_state_buffer_len: usize,
+}
+
+impl<'task> LmcutInnerHeuristic<'task> {
+    fn new(task: &'task dyn AbstractNumericTask) -> Self {
+        Self {
+            landmark_generator: LandmarkCutLandmarks::new(task, LmCutNumericConfig::default()),
+            propositional_scratch: Vec::new(),
+            numeric_scratch: Vec::new(),
+            default_state_buffer_len: IntDoublePacker::from_abstract_task(task).num_bins() as usize,
+        }
+    }
+
+    fn evaluate_from_concrete_state(
+        &mut self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+    ) -> Result<InnerHeuristicResult, String> {
+        state.fill_state(registry, &mut self.propositional_scratch);
+        registry
+            .fill_numeric_vars(state, &mut self.numeric_scratch)
+            .map_err(|err| format!("failed to read projected numeric state: {err:?}"))?;
+        let propositional = self.propositional_scratch.clone();
+        let numeric = self.numeric_scratch.clone();
+        self.evaluate_from_values(
+            &propositional,
+            &numeric,
+            state.buffer(registry).len(),
+        )
+    }
+
+    fn evaluate_from_values(
+        &mut self,
+        propositional: &[i32],
+        numeric: &[f64],
+        state_buffer_len: usize,
+    ) -> Result<InnerHeuristicResult, String> {
+        let (dead_end, value) = self.landmark_generator.compute_landmark_cost(
+            propositional,
+            state_buffer_len,
+            numeric,
+            false,
+        )?;
+        Ok(InnerHeuristicResult { dead_end, value })
+    }
+
+    fn evaluate_projected_values(
+        &mut self,
+        propositional: &[i32],
+        numeric: &[f64],
+    ) -> Result<InnerHeuristicResult, String> {
+        self.evaluate_from_values(propositional, numeric, self.default_state_buffer_len)
+    }
+}
+
 pub struct PatternDatabase<'task> {
     pub(super) task: ProjectedTask<'task>,
+    heuristic_config: PdbHeuristicConfig,
     pub(super) states: Vec<PdbState>,
     state_index: HashMap<u64, Vec<usize>>,
     pattern_index: HashMap<u64, Vec<usize>>,
@@ -102,6 +249,7 @@ pub struct PatternDatabase<'task> {
     pub(super) min_operator_cost: f64,
     pub(super) reached_goal_states: usize,
     pub(super) truncated: bool,
+    exhausted_abstract_state_space: bool,
     pub(super) frontier_states: Vec<usize>,
     full_prop_hash_multipliers: Vec<usize>,
     state_dependent_numeric_projected_ids: Vec<usize>,
@@ -113,12 +261,21 @@ pub struct PatternDatabase<'task> {
 
 impl<'task> PatternDatabase<'task> {
     pub fn new(task: ProjectedTask<'task>, max_states: usize) -> Result<Self, String> {
+        Self::with_heuristic_config(task, max_states, PdbHeuristicConfig::default())
+    }
+
+    pub fn with_heuristic_config(
+        task: ProjectedTask<'task>,
+        max_states: usize,
+        heuristic_config: PdbHeuristicConfig,
+    ) -> Result<Self, String> {
         let min_operator_cost = task.min_operator_cost();
         let projection_prop_capacity = task.variables().len();
         let projection_numeric_capacity = task.numeric_variables().len();
 
         let mut pdb = Self {
             task,
+            heuristic_config,
             states: Vec::with_capacity(max_states),
             state_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
             pattern_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
@@ -127,6 +284,7 @@ impl<'task> PatternDatabase<'task> {
             min_operator_cost,
             reached_goal_states: 0,
             truncated: false,
+            exhausted_abstract_state_space: false,
             frontier_states: Vec::new(),
             full_prop_hash_multipliers: Vec::new(),
             state_dependent_numeric_projected_ids: Vec::new(),
@@ -154,13 +312,31 @@ impl<'task> PatternDatabase<'task> {
         match self.lookup(propositional, numeric) {
             Some(distance) if distance.is_finite() => distance,
             Some(_) if self.is_goal_state(propositional) => 0.0,
-            Some(_) if self.truncated => self.min_operator_cost(),
+            Some(_) if self.exhausted_abstract_state_space => f64::INFINITY,
+            Some(_) if self.truncated => self.evaluate_failed_lookup(propositional, numeric),
             Some(distance) => distance,
-            None => {
-                if self.is_goal_state(propositional) {
-                    0.0
-                } else {
-                    self.min_operator_cost()
+            None => self.evaluate_failed_lookup(propositional, numeric),
+        }
+    }
+
+    fn evaluate_failed_lookup(&self, propositional: &[i32], numeric: &[f64]) -> f64 {
+        if self.exhausted_abstract_state_space {
+            return f64::INFINITY;
+        }
+        if self.is_goal_state(propositional) {
+            return 0.0;
+        }
+
+        match self.heuristic_config.failed_lookup_heuristic {
+            PdbInternalHeuristic::Blind => self.min_operator_cost(),
+            PdbInternalHeuristic::Lmcut => {
+                let mut evaluator = LmcutInnerHeuristic::new(&self.task);
+                match evaluator
+                    .evaluate_projected_values(propositional, numeric)
+                {
+                    Ok(result) if result.dead_end => f64::INFINITY,
+                    Ok(result) => result.value.max(self.min_operator_cost()),
+                    Err(_) => self.min_operator_cost(),
                 }
             }
         }
@@ -279,10 +455,12 @@ impl<'task> PatternDatabase<'task> {
             let candidates = self.full_prop_index.get(&prop_hash)?;
             return candidates.iter().copied().find(|&state_id| {
                 let state = &self.states[state_id];
-                self.state_dependent_numeric_projected_ids.iter().all(|&numeric_index| {
-                    state.numeric.get(numeric_index).map(|value| value.to_bits())
-                        == numeric.get(numeric_index).map(|value| value.to_bits())
-                })
+                state.numeric.len() == numeric.len()
+                    && state
+                        .numeric
+                        .iter()
+                        .zip(numeric.iter())
+                        .all(|(lhs, rhs)| lhs.to_bits() == rhs.to_bits())
             });
         }
 
@@ -373,155 +551,278 @@ impl<'task> PatternDatabase<'task> {
     }
 
     fn build(&mut self, max_states: usize) -> Result<(), String> {
-        let mut predecessors: Vec<Vec<(usize, f64)>> = Vec::with_capacity(max_states);
-        let mut frontier_seed_costs: HashMap<usize, f64> =
-            HashMap::with_capacity_and_hasher(max_states, FxBuildHasher);
-        let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&self.task);
-        let state_packer =
-            planners_sas::numeric::utils::int_packer::IntDoublePacker::from_abstract_task(
-                &self.task,
+        let (
+            built_states,
+            distances,
+            reached_goal_states,
+            frontier_states,
+            truncated,
+            exhausted_abstract_state_space,
+        ) = {
+            let mut predecessors: Vec<Vec<(usize, f64)>> = Vec::with_capacity(max_states);
+            let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&self.task);
+            let state_packer = IntDoublePacker::from_abstract_task(&self.task);
+            let axiom_evaluator = AxiomEvaluator::new(&self.task, &state_packer);
+            let mut state_registry = StateRegistry::new(&self.task, &state_packer, &axiom_evaluator);
+            let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
+            let initial_registry_state = state_registry.get_initial_state();
+            let mut current_propositional: Vec<i32> = Vec::new();
+            let mut successor_numeric: Vec<f64> = Vec::new();
+            let mut successor_cost_values: Vec<f64> = Vec::new();
+            let mut representative_states: Vec<ConcreteState> = vec![initial_registry_state];
+            let mut closed = vec![false];
+            let mut seen_or_closed = vec![true];
+            let mut open: BinaryHeap<PdbOpenEntry> = BinaryHeap::new();
+            open.push(PdbOpenEntry {
+                state_id: 0,
+                f: NotNan::new(0.0).unwrap(),
+                g: NotNan::new(0.0).unwrap(),
+            });
+            let mut seen_count = 0usize;
+            let mut goal_states: Vec<usize> = Vec::new();
+            let mut truncated = false;
+            let uses_lmcut = matches!(
+                self.heuristic_config.exploration_heuristic,
+                PdbInternalHeuristic::Lmcut
+            ) || matches!(
+                self.heuristic_config.frontier_heuristic,
+                PdbInternalHeuristic::Lmcut
+            ) || matches!(
+                self.heuristic_config.failed_lookup_heuristic,
+                PdbInternalHeuristic::Lmcut
             );
-        let axiom_evaluator = AxiomEvaluator::new(&self.task, &state_packer);
-        let mut state_registry = StateRegistry::new(&self.task, &state_packer, &axiom_evaluator);
-        let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
-        let initial_registry_state = state_registry.get_initial_state();
-        let mut current_propositional: Vec<i32> = Vec::new();
-        let mut successor_numeric: Vec<f64> = Vec::new();
-        let mut successor_cost_values: Vec<f64> = Vec::new();
-        let mut representative_states: Vec<ConcreteState> = vec![initial_registry_state];
-        predecessors.push(Vec::new());
-
-        let mut queue = VecDeque::from([0usize]);
-        while let Some(state_id) = queue.pop_front() {
-            if representative_states.len() % 500 == 0 {
-                println!(
-                    "Expanding state {}/{} ({} reached goal states, {} truncated frontier states)",
-                    state_id + 1,
-                    representative_states.len(),
-                    self.reached_goal_states,
-                    self.frontier_states.len()
-                );
-            }
-            if representative_states.len() >= max_states {
-                self.truncated = true;
-                frontier_seed_costs
-                    .entry(state_id)
-                    .and_modify(|cost| *cost = cost.min(self.min_operator_cost))
-                    .or_insert(self.min_operator_cost);
-                for queued_state_id in queue.iter().copied() {
-                    frontier_seed_costs
-                        .entry(queued_state_id)
-                        .and_modify(|cost| *cost = cost.min(self.min_operator_cost))
-                        .or_insert(self.min_operator_cost);
+            let mut construction_lmcut = if uses_lmcut {
+                Some(LmcutInnerHeuristic::new(&self.task))
+            } else {
+                None
+            };
+            let mut heuristic_cache: Vec<Option<InnerHeuristicResult>> = Vec::new();
+            let mut compute_inner_h = |
+                heuristic: PdbInternalHeuristic,
+                state_id: usize,
+                state: &ConcreteState,
+                registry: &StateRegistry<'_>,
+            | -> Result<InnerHeuristicResult, String> {
+                match heuristic {
+                    PdbInternalHeuristic::Blind => Ok(InnerHeuristicResult {
+                        dead_end: false,
+                        value: 0.0,
+                    }),
+                    PdbInternalHeuristic::Lmcut => {
+                        if heuristic_cache.len() <= state_id {
+                            heuristic_cache.resize(state_id + 1, None);
+                        }
+                        if let Some(result) = heuristic_cache[state_id] {
+                            return Ok(result);
+                        }
+                        let result = construction_lmcut
+                            .as_mut()
+                            .expect("LM-cut inner heuristic must be initialized when configured")
+                            .evaluate_from_concrete_state(state, registry)?;
+                        heuristic_cache[state_id] = Some(result);
+                        println!(
+                            "Computed LM-cut heuristic for state {}: value={}, dead_end={}",
+                            state_id, result.value, result.dead_end
+                        );
+                        Ok(result)
+                    }
                 }
-                break;
-            }
-            applicable_operators.clear();
-            let current_registry_state = representative_states[state_id].clone();
-            current_registry_state.fill_state(&state_registry, &mut current_propositional);
-            successor_generator
-                .get_applicable_operators(&current_propositional, &mut applicable_operators);
+            };
+            predecessors.push(Vec::new());
 
-            for (operator, operator_id) in applicable_operators.iter().copied() {
-                let operator_cost = self.task.abstract_operator_cost(operator_id);
-                let successor_state = state_registry
-                    .get_successor_state_with_buffers(
-                        &current_registry_state,
-                        operator,
-                        &mut successor_numeric,
-                        &mut successor_cost_values,
-                    )
-                    .map_err(|err| err.message)?;
-                if successor_state.get_id() == current_registry_state.get_id() {
+            loop {
+                if seen_count >= max_states {
+                    truncated = true;
+                    break;
+                }
+                let Some(entry) = open.pop() else {
+                    break;
+                };
+                let state_id = entry.state_id;
+                if representative_states.len() % 500 == 0 {
+                    println!(
+                        "Expanding state {}/{} ({} reached goal states, {} truncated frontier states)",
+                        state_id + 1,
+                        representative_states.len(),
+                        goal_states.len(),
+                        0
+                    );
+                }
+                if state_id < closed.len() && closed[state_id] {
                     continue;
                 }
+                if state_id >= closed.len() {
+                    closed.resize(state_id + 1, false);
+                }
+                closed[state_id] = true;
 
-                let next_id = successor_state.get_id();
-                if next_id >= representative_states.len() {
-                    if representative_states.len() >= max_states {
-                        self.truncated = true;
-                        frontier_seed_costs
-                            .entry(state_id)
-                            .and_modify(|cost| *cost = cost.min(operator_cost))
-                            .or_insert(operator_cost);
+                applicable_operators.clear();
+                let current_registry_state = representative_states[state_id].clone();
+                current_registry_state.fill_state(&state_registry, &mut current_propositional);
+                if self.is_goal_state(&current_propositional) {
+                    goal_states.push(state_id);
+                }
+                successor_generator
+                    .get_applicable_operators(&current_propositional, &mut applicable_operators);
+
+                for (operator, operator_id) in applicable_operators.iter().copied() {
+                    let operator_cost = self.task.abstract_operator_cost(operator_id);
+                    let successor_state = state_registry
+                        .get_successor_state_with_buffers(
+                            &current_registry_state,
+                            operator,
+                            &mut successor_numeric,
+                            &mut successor_cost_values,
+                        )
+                        .map_err(|err| err.message)?;
+                    if successor_state.get_id() == current_registry_state.get_id() {
                         continue;
                     }
 
-                    if next_id != representative_states.len() {
-                        return Err(format!(
-                            "state registry produced non-contiguous abstract state id {next_id} while {} states are represented",
-                            representative_states.len()
-                        ));
+                    let next_id = successor_state.get_id();
+                    if next_id >= representative_states.len() {
+                        if next_id != representative_states.len() {
+                            return Err(format!(
+                                "state registry produced non-contiguous abstract state id {next_id} while {} states are represented",
+                                representative_states.len()
+                            ));
+                        }
+
+                        representative_states.push(successor_state);
+                        predecessors.push(Vec::new());
+                        if next_id >= closed.len() {
+                            closed.resize(next_id + 1, false);
+                        }
+                        if next_id >= seen_or_closed.len() {
+                            seen_or_closed.resize(next_id + 1, false);
+                        }
                     }
 
-                    representative_states.push(successor_state);
-                    predecessors.push(Vec::new());
-                    queue.push_back(next_id);
+                    predecessors[next_id].push((state_id, operator_cost));
+
+                    if !seen_or_closed[next_id] {
+                        seen_or_closed[next_id] = true;
+                        seen_count += 1;
+                        let successor_ref = &representative_states[next_id];
+                        let inner_h = compute_inner_h(
+                            self.heuristic_config.exploration_heuristic,
+                            next_id,
+                            successor_ref,
+                            &state_registry,
+                        )?;
+                        if !inner_h.dead_end {
+                            let g = entry.g.into_inner() + operator_cost;
+                            let h = if matches!(
+                                self.heuristic_config.exploration_heuristic,
+                                PdbInternalHeuristic::Blind
+                            ) {
+                                0.0
+                            } else {
+                                inner_h.value
+                            };
+                            open.push(PdbOpenEntry {
+                                state_id: next_id,
+                                f: NotNan::new(g + h).map_err(|err| err.to_string())?,
+                                g: NotNan::new(g).map_err(|err| err.to_string())?,
+                            });
+                        }
+                    }
                 }
-
-                predecessors[next_id].push((state_id, operator_cost));
             }
-        }
 
-        self.states = representative_states
-            .iter()
-            .map(|state| {
-                Ok(PdbState {
-                    propositional: state.get_state(&state_registry),
-                    numeric: state_registry
-                        .get_numeric_vars(state)
-                        .map_err(|err| format!("{err:?}"))?,
+            let exhausted_abstract_state_space = open.is_empty();
+
+            let built_states = representative_states
+                .iter()
+                .map(|state| {
+                    Ok(PdbState {
+                        propositional: state.get_state(&state_registry),
+                        numeric: state_registry
+                            .get_numeric_vars(state)
+                            .map_err(|err| format!("{err:?}"))?,
+                    })
                 })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        drop(state_registry);
-        drop(axiom_evaluator);
-        drop(state_packer);
-        drop(successor_generator);
+                .collect::<Result<Vec<_>, String>>()?;
+
+            let mut distances = vec![f64::INFINITY; built_states.len()];
+            let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+
+            let mut reached_goal_states = 0usize;
+            for goal_state_id in goal_states {
+                reached_goal_states += 1;
+                distances[goal_state_id] = 0.0;
+                heap.push((Reverse(NotNan::new(0.0).unwrap()), goal_state_id));
+            }
+
+            let mut frontier_states: Vec<usize> = Vec::new();
+            if truncated {
+                let mut seen_frontier = vec![false; built_states.len()];
+                while let Some(entry) = open.pop() {
+                    let state_id = entry.state_id;
+                    if state_id < closed.len() && closed[state_id] {
+                        continue;
+                    }
+                    if state_id >= seen_frontier.len() || seen_frontier[state_id] {
+                        continue;
+                    }
+                    seen_frontier[state_id] = true;
+                    frontier_states.push(state_id);
+                    let state = &representative_states[state_id];
+                    let seed_cost = if self.is_goal_state(&built_states[state_id].propositional) {
+                        0.0
+                    } else {
+                        let inner_h = compute_inner_h(
+                            self.heuristic_config.frontier_heuristic,
+                            state_id,
+                            state,
+                            &state_registry,
+                        )?;
+                        if inner_h.dead_end {
+                            continue;
+                        }
+                        inner_h.value.max(self.min_operator_cost())
+                    };
+                    if seed_cost + 1e-12 < distances[state_id] {
+                        distances[state_id] = seed_cost;
+                        heap.push((Reverse(NotNan::new(seed_cost).unwrap()), state_id));
+                    }
+                }
+                frontier_states.sort_unstable();
+                frontier_states.dedup();
+            }
+
+            while let Some((Reverse(distance), state_id)) = heap.pop() {
+                let distance = distance.into_inner();
+                if distance > distances[state_id] + 1e-12 {
+                    continue;
+                }
+
+                for &(parent_id, operator_cost) in &predecessors[state_id] {
+                    let alternative = distance + operator_cost;
+                    if alternative + 1e-12 < distances[parent_id] {
+                        distances[parent_id] = alternative;
+                        heap.push((Reverse(NotNan::new(alternative).unwrap()), parent_id));
+                    }
+                }
+            }
+
+            (
+                built_states,
+                distances,
+                reached_goal_states,
+                frontier_states,
+                truncated,
+                exhausted_abstract_state_space,
+            )
+        };
+
+        self.truncated = truncated;
+        self.exhausted_abstract_state_space = exhausted_abstract_state_space;
+        self.states = built_states;
+        self.distances = distances;
+        self.reached_goal_states = reached_goal_states;
+        self.frontier_states = frontier_states;
         self.rebuild_lookup_indexes();
-
-        self.distances = vec![f64::INFINITY; self.states.len()];
-        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-
-        self.reached_goal_states = 0;
-        for (state_id, state) in self.states.iter().enumerate() {
-            if self.is_goal_state(&state.propositional) {
-                self.reached_goal_states += 1;
-                self.distances[state_id] = 0.0;
-                heap.push((Reverse(NotNan::new(0.0).unwrap()), state_id));
-            }
-        }
-
-        if self.truncated {
-            let mut frontier_states: Vec<usize> = frontier_seed_costs.keys().copied().collect();
-            frontier_states.sort_unstable();
-            frontier_states.dedup();
-            self.frontier_states = frontier_states;
-
-            for (&state_id, &seed_cost) in &frontier_seed_costs {
-                if seed_cost + 1e-12 < self.distances[state_id] {
-                    self.distances[state_id] = seed_cost;
-                    heap.push((Reverse(NotNan::new(seed_cost).unwrap()), state_id));
-                }
-            }
-        } else {
-            self.frontier_states.clear();
-        }
-
-        while let Some((Reverse(distance), state_id)) = heap.pop() {
-            let distance = distance.into_inner();
-            if distance > self.distances[state_id] + 1e-12 {
-                continue;
-            }
-
-            for &(parent_id, operator_cost) in &predecessors[state_id] {
-                let alternative = distance + operator_cost;
-                if alternative + 1e-12 < self.distances[parent_id] {
-                    self.distances[parent_id] = alternative;
-                    heap.push((Reverse(NotNan::new(alternative).unwrap()), parent_id));
-                }
-            }
-        }
 
         Ok(())
     }

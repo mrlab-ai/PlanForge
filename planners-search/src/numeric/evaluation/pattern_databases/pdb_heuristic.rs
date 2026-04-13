@@ -29,7 +29,11 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
         let pattern = generate_greedy_pattern(task, config);
         let projected_task = ProjectedTask::new(task, &pattern).map_err(|err| err.to_string())?;
         utils::print_projection_summary(task, &pattern, &projected_task);
-        let pdb = PatternDatabase::new(projected_task, config.max_pdb_states)?;
+        let pdb = PatternDatabase::with_heuristic_config(
+            projected_task,
+            config.max_pdb_states,
+            config.pdb_heuristic_config(),
+        )?;
 
         Ok(Self {
             name: "greedy_numeric_pdb".to_string(),

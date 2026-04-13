@@ -1,5 +1,5 @@
 use super::pattern_collection::PatternCollection;
-use super::pattern_database::PatternDatabase;
+use super::pattern_database::{PatternDatabase, PdbHeuristicConfig};
 use super::projected_task::{Pattern, ProjectedTask};
 use super::utils;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
@@ -15,6 +15,15 @@ impl<'task> PdbCollection<'task> {
         patterns: PatternCollection,
         max_pdb_states: usize,
     ) -> Result<Self, String> {
+        Self::with_heuristic_config(task, patterns, max_pdb_states, PdbHeuristicConfig::default())
+    }
+
+    pub fn with_heuristic_config(
+        task: &'task dyn AbstractNumericTask,
+        patterns: PatternCollection,
+        max_pdb_states: usize,
+        heuristic_config: PdbHeuristicConfig,
+    ) -> Result<Self, String> {
         let patterns = PatternCollection::new(patterns.into_vec());
         let mut pdbs = Vec::with_capacity(patterns.len());
 
@@ -22,7 +31,11 @@ impl<'task> PdbCollection<'task> {
             let projected_task =
                 ProjectedTask::new(task, pattern).map_err(|err| err.to_string())?;
             utils::print_projection_summary(task, pattern, &projected_task);
-            pdbs.push(PatternDatabase::new(projected_task, max_pdb_states)?);
+            pdbs.push(PatternDatabase::with_heuristic_config(
+                projected_task,
+                max_pdb_states,
+                heuristic_config,
+            )?);
         }
 
         Ok(Self { patterns, pdbs })

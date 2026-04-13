@@ -5,6 +5,7 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
 };
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
+use planners_search::numeric::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
 use planners_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planners_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 
@@ -51,7 +52,7 @@ fn parses_astar_greedy_numeric_pdb_with_or_without_unit_parens() {
 #[test]
 fn parses_astar_greedy_numeric_pdb_with_named_options() {
     let spec = parse_search_spec(
-        "astar(greedy_numeric_pdb(max_pdb_states=321, numeric_first=false, random_seed=7, variable_order_type=cg_goal_random))",
+        "astar(greedy_numeric_pdb(max_pdb_states=321, numeric_first=false, random_seed=7, variable_order_type=cg_goal_random, exploration_heuristic=lmcut, frontier_heuristic=blind, failed_lookup_heuristic=lmcut))",
     )
     .unwrap();
 
@@ -66,6 +67,9 @@ fn parses_astar_greedy_numeric_pdb_with_named_options() {
         config.variable_order_type,
         GreedyVariableOrderType::CgGoalRandom
     );
+    assert_eq!(config.exploration_heuristic, PdbInternalHeuristic::Lmcut);
+    assert_eq!(config.frontier_heuristic, PdbInternalHeuristic::Blind);
+    assert_eq!(config.failed_lookup_heuristic, PdbInternalHeuristic::Lmcut);
 }
 
 #[test]
@@ -87,7 +91,7 @@ fn parses_astar_canonical_numeric_pdb_with_or_without_unit_parens() {
 #[test]
 fn parses_astar_canonical_numeric_pdb_with_named_options() {
     let spec = parse_search_spec(
-        "astar(canonical_numeric_pdb(max_pdb_states=321, max_pattern_size=3, only_interesting_patterns=false, random_seed=7, variable_order_type=cg_goal_random))",
+        "astar(canonical_numeric_pdb(max_pdb_states=321, max_pattern_size=3, only_interesting_patterns=false, random_seed=7, variable_order_type=cg_goal_random, exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut))",
     )
     .unwrap();
 
@@ -103,6 +107,9 @@ fn parses_astar_canonical_numeric_pdb_with_named_options() {
         config.variable_order_type,
         GreedyVariableOrderType::CgGoalRandom
     );
+    assert_eq!(config.exploration_heuristic, PdbInternalHeuristic::Blind);
+    assert_eq!(config.frontier_heuristic, PdbInternalHeuristic::Lmcut);
+    assert_eq!(config.failed_lookup_heuristic, PdbInternalHeuristic::Lmcut);
 }
 
 #[test]
@@ -207,7 +214,7 @@ fn display_round_trips_multi_domain_abstractions() {
 #[test]
 fn display_round_trips_greedy_numeric_pdb() {
     let parsed = parse_search_spec(
-        "astar(greedy_numeric_pdb(max_pdb_states=42, numeric_first=false, random_seed=9, variable_order_type=cg_goal_random))",
+        "astar(greedy_numeric_pdb(max_pdb_states=42, numeric_first=false, random_seed=9, variable_order_type=cg_goal_random, exploration_heuristic=lmcut, frontier_heuristic=blind, failed_lookup_heuristic=lmcut))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
@@ -217,7 +224,7 @@ fn display_round_trips_greedy_numeric_pdb() {
 #[test]
 fn display_round_trips_canonical_numeric_pdb() {
     let parsed = parse_search_spec(
-        "astar(canonical_numeric_pdb(max_pdb_states=42, max_pattern_size=3, only_interesting_patterns=false, random_seed=9, variable_order_type=cg_goal_random))",
+        "astar(canonical_numeric_pdb(max_pdb_states=42, max_pattern_size=3, only_interesting_patterns=false, random_seed=9, variable_order_type=cg_goal_random, exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();

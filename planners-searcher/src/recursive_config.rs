@@ -18,6 +18,7 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
 };
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
+use planners_search::numeric::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
 use planners_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planners_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 
@@ -159,6 +160,14 @@ fn parse_greedy_variable_order_type(value: &str) -> Result<GreedyVariableOrderTy
         "cg_goal_random" => Ok(GreedyVariableOrderType::CgGoalRandom),
         "goal_cg_level" => Ok(GreedyVariableOrderType::GoalCgLevel),
         _ => Err(format!("invalid GreedyVariableOrderType `{value}`")),
+    }
+}
+
+fn parse_pdb_internal_heuristic(value: &str) -> Result<PdbInternalHeuristic, String> {
+    match value {
+        "blind" => Ok(PdbInternalHeuristic::Blind),
+        "lmcut" => Ok(PdbInternalHeuristic::Lmcut),
+        _ => Err(format!("invalid PdbInternalHeuristic `{value}`")),
     }
 }
 
@@ -324,6 +333,15 @@ fn build_greedy_numeric_pdb_config(
             "variable_order_type" => {
                 config.variable_order_type = parse_greedy_variable_order_type(&value)?
             }
+            "exploration_heuristic" => {
+                config.exploration_heuristic = parse_pdb_internal_heuristic(&value)?
+            }
+            "frontier_heuristic" => {
+                config.frontier_heuristic = parse_pdb_internal_heuristic(&value)?
+            }
+            "failed_lookup_heuristic" => {
+                config.failed_lookup_heuristic = parse_pdb_internal_heuristic(&value)?
+            }
             _ => return Err(format!("unknown option `{key}`")),
         }
     }
@@ -349,6 +367,15 @@ fn build_canonical_numeric_pdb_config(
             "random_seed" => config.random_seed = parse_i32(&value)?,
             "variable_order_type" => {
                 config.variable_order_type = parse_greedy_variable_order_type(&value)?
+            }
+            "exploration_heuristic" => {
+                config.exploration_heuristic = parse_pdb_internal_heuristic(&value)?
+            }
+            "frontier_heuristic" => {
+                config.frontier_heuristic = parse_pdb_internal_heuristic(&value)?
+            }
+            "failed_lookup_heuristic" => {
+                config.failed_lookup_heuristic = parse_pdb_internal_heuristic(&value)?
             }
             _ => return Err(format!("unknown option `{key}`")),
         }
