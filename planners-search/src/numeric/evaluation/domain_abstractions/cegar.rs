@@ -6,13 +6,14 @@ use std::fmt::{self, Write as _};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
+use rand::Rng;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 
 use libc::exit;
 use planners_sas::numeric::axioms::AxiomEvaluator;
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, Fact};
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, Fact, NumericType};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
 use super::abstract_operator_generator::DomainMapping;
@@ -131,6 +132,8 @@ pub struct CegarConfig {
     pub init_split_method: InitSplitMethod,
     pub exec_entire_plan: ExecEntirePlanMode,
     pub init_split_var_ids: Option<HashSet<usize>>,
+    pub blacklisted_prop_var_ids: HashSet<usize>,
+    pub blacklisted_numeric_var_ids: HashSet<usize>,
 }
 
 impl Default for CegarConfig {
@@ -147,6 +150,8 @@ impl Default for CegarConfig {
             init_split_method: InitSplitMethod::InitValue,
             exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
             init_split_var_ids: None,
+            blacklisted_prop_var_ids: HashSet::new(),
+            blacklisted_numeric_var_ids: HashSet::new(),
         }
     }
 }
@@ -388,6 +393,9 @@ impl Cegar {
         domain_sizes: &mut Vec<i32>,
         partitions: &mut NumericPartitions,
         numeric_domain_sizes: &mut Vec<usize>,
+        rng: &mut SmallRng,
+        blacklisted_prop_var_ids: &mut HashSet<usize>,
+        blacklisted_numeric_var_ids: &mut HashSet<usize>,
     ) -> Result<bool> {
         let comparison_var_ids: HashSet<usize> = task
             .comparison_axioms()
@@ -402,17 +410,21 @@ impl Cegar {
                 flaws,
                 &self.config,
                 &comparison_var_ids,
+                rng,
+                blacklisted_prop_var_ids,
+                blacklisted_numeric_var_ids,
                 domain_mapping,
                 domain_sizes,
                 partitions,
                 numeric_domain_sizes,
-                abstraction_size,
             ),
             FlawTreatment::OneSplitPerAtom => fix_flaws_per_atom(
                 task,
                 flaws,
                 &self.config,
                 &comparison_var_ids,
+                blacklisted_prop_var_ids,
+                blacklisted_numeric_var_ids,
                 domain_mapping,
                 domain_sizes,
                 partitions,
@@ -424,6 +436,8 @@ impl Cegar {
                 flaws,
                 &self.config,
                 &comparison_var_ids,
+                blacklisted_prop_var_ids,
+                blacklisted_numeric_var_ids,
                 domain_mapping,
                 domain_sizes,
                 partitions,
@@ -435,6 +449,8 @@ impl Cegar {
                 flaws,
                 &self.config,
                 &comparison_var_ids,
+                blacklisted_prop_var_ids,
+                blacklisted_numeric_var_ids,
                 domain_mapping,
                 domain_sizes,
                 partitions,
@@ -474,11 +490,6 @@ fn current_time_seed() -> u64 {
 
 fn shuffle_indices_with_rng<R: rand::Rng + ?Sized>(indices: &mut [usize], rng: &mut R) {
     indices.shuffle(rng);
-}
-
-fn shuffle_indices(indices: &mut [usize]) {
-    let mut rng = SmallRng::seed_from_u64(current_time_seed());
-    shuffle_indices_with_rng(indices, &mut rng);
 }
 
 fn abstraction_size_u128(domain_sizes: &[i32], numeric_domain_sizes: &[usize]) -> Option<u128> {
@@ -528,6 +539,58 @@ fn can_refine_numeric_variable(
         .checked_mul((old_partition_count as u128) + 1)
         .map(|candidate| candidate <= max_abstraction_size as u128)
         .unwrap_or(false)
+}
+
+fn can_refine_propositional_variable_with_blacklist(
+    domain_sizes: &[i32],
+    numeric_domain_sizes: &[usize],
+    var_id: usize,
+    new_domain_size: i32,
+    max_abstraction_size: usize,
+    comparison_var_ids: &HashSet<usize>,
+    blacklisted_prop_var_ids: &mut HashSet<usize>,
+) -> bool {
+    if blacklisted_prop_var_ids.contains(&var_id) {
+        return false;
+    }
+    if comparison_var_ids.contains(&var_id) && domain_sizes.get(var_id).copied().unwrap_or(0) >= 2 {
+        return true;
+    }
+    if can_refine_propositional_variable(
+        domain_sizes,
+        numeric_domain_sizes,
+        var_id,
+        new_domain_size,
+        max_abstraction_size,
+    ) {
+        true
+    } else {
+        blacklisted_prop_var_ids.insert(var_id);
+        false
+    }
+}
+
+fn can_refine_numeric_variable_with_blacklist(
+    domain_sizes: &[i32],
+    numeric_domain_sizes: &[usize],
+    numeric_var_id: usize,
+    max_abstraction_size: usize,
+    blacklisted_numeric_var_ids: &mut HashSet<usize>,
+) -> bool {
+    if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
+        return false;
+    }
+    if can_refine_numeric_variable(
+        domain_sizes,
+        numeric_domain_sizes,
+        numeric_var_id,
+        max_abstraction_size,
+    ) {
+        true
+    } else {
+        blacklisted_numeric_var_ids.insert(numeric_var_id);
+        false
+    }
 }
 
 fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
@@ -586,23 +649,20 @@ fn fix_single_random_flaw(
     flaws: &[Flaw],
     config: &CegarConfig,
     comparison_var_ids: &HashSet<usize>,
+    rng: &mut SmallRng,
+    blacklisted_prop_var_ids: &mut HashSet<usize>,
+    blacklisted_numeric_var_ids: &mut HashSet<usize>,
     domain_mapping: &mut DomainMapping,
     domain_sizes: &mut Vec<i32>,
     partitions: &mut NumericPartitions,
     numeric_domain_sizes: &mut Vec<usize>,
-    abstraction_size: usize,
 ) -> Result<bool> {
     if flaws.is_empty() {
         return Ok(false);
     }
 
     let mut indices: Vec<usize> = (0..flaws.len()).collect();
-    shuffle_indices(&mut indices);
-
-    let mut changed = false;
-    let mut applied: usize = 0;
-    let mut refined_prop_vars: HashSet<usize> = HashSet::new();
-    let mut refined_numeric_vars: HashSet<usize> = HashSet::new();
+    shuffle_indices_with_rng(&mut indices, rng);
 
     for idx in indices {
         if try_refine_from_flaw(
@@ -610,6 +670,8 @@ fn fix_single_random_flaw(
             &flaws[idx],
             config,
             comparison_var_ids,
+            blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids,
             domain_mapping,
             domain_sizes,
             partitions,
@@ -628,6 +690,8 @@ fn fix_flaws_per_atom(
     flaws: &[Flaw],
     config: &CegarConfig,
     comparison_var_ids: &HashSet<usize>,
+    blacklisted_prop_var_ids: &mut HashSet<usize>,
+    blacklisted_numeric_var_ids: &mut HashSet<usize>,
     domain_mapping: &mut DomainMapping,
     domain_sizes: &mut Vec<i32>,
     partitions: &mut NumericPartitions,
@@ -650,6 +714,8 @@ fn fix_flaws_per_atom(
             flaw,
             config,
             comparison_var_ids,
+            blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids,
             domain_mapping,
             domain_sizes,
             partitions,
@@ -666,6 +732,8 @@ fn fix_flaws_per_variable(
     flaws: &[Flaw],
     config: &CegarConfig,
     comparison_var_ids: &HashSet<usize>,
+    blacklisted_prop_var_ids: &mut HashSet<usize>,
+    blacklisted_numeric_var_ids: &mut HashSet<usize>,
     domain_mapping: &mut DomainMapping,
     domain_sizes: &mut Vec<i32>,
     partitions: &mut NumericPartitions,
@@ -691,6 +759,8 @@ fn fix_flaws_per_variable(
             flaw,
             config,
             comparison_var_ids,
+            blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids,
             domain_mapping,
             domain_sizes,
             partitions,
@@ -707,6 +777,8 @@ fn fix_single_flaw_max_refined(
     flaws: &[Flaw],
     config: &CegarConfig,
     comparison_var_ids: &HashSet<usize>,
+    blacklisted_prop_var_ids: &mut HashSet<usize>,
+    blacklisted_numeric_var_ids: &mut HashSet<usize>,
     domain_mapping: &mut DomainMapping,
     domain_sizes: &mut Vec<i32>,
     partitions: &mut NumericPartitions,
@@ -780,6 +852,8 @@ fn fix_single_flaw_max_refined(
             &chosen,
             config,
             comparison_var_ids,
+            blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids,
             domain_mapping,
             domain_sizes,
             partitions,
@@ -799,6 +873,8 @@ fn try_refine_from_flaw(
     flaw: &Flaw,
     config: &CegarConfig,
     comparison_var_ids: &HashSet<usize>,
+    blacklisted_prop_var_ids: &mut HashSet<usize>,
+    blacklisted_numeric_var_ids: &mut HashSet<usize>,
     domain_mapping: &mut DomainMapping,
     domain_sizes: &mut [i32],
     partitions: &mut NumericPartitions,
@@ -808,11 +884,12 @@ fn try_refine_from_flaw(
     match flaw {
         Flaw::Numeric(nf) => {
             let var_id = nf.numeric_var_id;
-            if !can_refine_numeric_variable(
+            if !can_refine_numeric_variable_with_blacklist(
                 domain_sizes,
                 numeric_domain_sizes,
                 var_id,
                 config.max_abstraction_size,
+                blacklisted_numeric_var_ids,
             ) {
                 return Ok(false);
             }
@@ -892,12 +969,14 @@ fn try_refine_from_flaw(
             let mut changed = false;
 
             if comparison_var_ids.contains(&var_id) {
-                if !can_refine_propositional_variable(
+                if !can_refine_propositional_variable_with_blacklist(
                     domain_sizes,
                     numeric_domain_sizes,
                     var_id,
                     2,
                     config.max_abstraction_size,
+                    comparison_var_ids,
+                    blacklisted_prop_var_ids,
                 ) {
                     return Ok(false);
                 }
@@ -956,12 +1035,14 @@ fn try_refine_from_flaw(
                 if domain_mapping[var_id].get(value).copied().unwrap_or(0) != 0 {
                     return Ok(false);
                 }
-                if !can_refine_propositional_variable(
+                if !can_refine_propositional_variable_with_blacklist(
                     domain_sizes,
                     numeric_domain_sizes,
                     var_id,
                     abs_size + 1,
                     config.max_abstraction_size,
+                    comparison_var_ids,
+                    blacklisted_prop_var_ids,
                 ) {
                     return Ok(false);
                 }
@@ -990,11 +1071,12 @@ fn try_refine_from_flaw(
                 for dep in iter {
                     let num_id = dep.numeric_var_id;
 
-                    if !can_refine_numeric_variable(
+                    if !can_refine_numeric_variable_with_blacklist(
                         domain_sizes,
                         numeric_domain_sizes,
                         num_id,
                         config.max_abstraction_size,
+                        blacklisted_numeric_var_ids,
                     ) {
                         continue;
                     }
@@ -1029,13 +1111,11 @@ fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<(usize, i32)> {
     goals
 }
 
-fn choose_random_domain_value(domain_size: usize) -> usize {
+fn choose_random_domain_value(domain_size: usize, rng: &mut SmallRng) -> usize {
     if domain_size <= 1 {
         0
     } else {
-        let mut order: Vec<usize> = (0..domain_size).collect();
-        shuffle_indices(&mut order);
-        order[0]
+        rng.gen_range(0..domain_size)
     }
 }
 
@@ -1044,6 +1124,7 @@ fn compute_initial_split_mapping(
     config: &CegarConfig,
     var_id: usize,
     goal_value: Option<i32>,
+    rng: &mut SmallRng,
 ) -> Option<(i32, Vec<i32>)> {
     let var_i32 = i32::try_from(var_id).ok()?;
     let concrete_domain_size =
@@ -1061,6 +1142,12 @@ fn compute_initial_split_mapping(
     )
     .ok()?;
     let goal_value_usize = goal_value.and_then(|value| usize::try_from(value).ok());
+    let comparison_var_ids: HashSet<usize> = task
+        .comparison_axioms()
+        .iter()
+        .filter_map(|axiom| usize::try_from(axiom.get_affected_var_id()).ok())
+        .collect();
+    let is_comparison_var = comparison_var_ids.contains(&var_id);
 
     match config.init_split_method {
         InitSplitMethod::GoalValue => {
@@ -1071,28 +1158,29 @@ fn compute_initial_split_mapping(
         }
         InitSplitMethod::GoalValueOrRandomIfNonGoal => {
             let chosen = goal_value_usize
-                .unwrap_or_else(|| choose_random_domain_value(concrete_domain_size));
+                .unwrap_or_else(|| choose_random_domain_value(concrete_domain_size, rng));
             let mut mapping = vec![0; concrete_domain_size];
             mapping[chosen] = 1;
             Some((2, mapping))
         }
         InitSplitMethod::InitValue => {
             let mut mapping = vec![0; concrete_domain_size];
-            if initial_value < mapping.len() {
-                mapping[initial_value] = 1;
+            let chosen = if is_comparison_var { 0 } else { initial_value };
+            if chosen < mapping.len() {
+                mapping[chosen] = 1;
             }
             Some((2, mapping))
         }
         InitSplitMethod::RandomValue => {
-            let chosen = choose_random_domain_value(concrete_domain_size);
+            let chosen = choose_random_domain_value(concrete_domain_size, rng);
             let mut mapping = vec![0; concrete_domain_size];
             mapping[chosen] = 1;
             Some((2, mapping))
         }
         InitSplitMethod::RandomPartition => {
             let mut order: Vec<usize> = (0..concrete_domain_size).collect();
-            shuffle_indices(&mut order);
-            let max_partition = choose_random_domain_value(concrete_domain_size).max(1);
+            shuffle_indices_with_rng(&mut order, rng);
+            let max_partition = choose_random_domain_value(concrete_domain_size, rng).max(1);
             let mut mapping = vec![0; concrete_domain_size];
             for (index, concrete_value) in order.into_iter().enumerate() {
                 mapping[concrete_value] = (index % (max_partition + 1)) as i32;
@@ -1102,7 +1190,7 @@ fn compute_initial_split_mapping(
         }
         InitSplitMethod::RandomBinaryPartitionSeparatingInitGoal => {
             let mut mapping: Vec<i32> = (0..concrete_domain_size)
-                .map(|_| choose_random_domain_value(2) as i32)
+                .map(|_| choose_random_domain_value(2, rng) as i32)
                 .collect();
             if let Some(goal) = goal_value_usize {
                 if initial_value != goal && initial_value < mapping.len() && goal < mapping.len() {
@@ -1126,11 +1214,16 @@ fn compute_initial_split_mapping(
 fn apply_initial_goal_splits(
     task: &dyn AbstractNumericTask,
     config: &CegarConfig,
+    rng: &mut SmallRng,
+    blacklisted_prop_var_ids: &HashSet<usize>,
+    blacklisted_numeric_var_ids: &HashSet<usize>,
     domain_mapping: &mut DomainMapping,
     domain_sizes: &mut [i32],
-    numeric_domain_sizes: &[usize],
+    partitions: &mut NumericPartitions,
+    numeric_domain_sizes: &mut [usize],
 ) {
     let goal_values: HashMap<usize, i32> = goal_variable_values(task).into_iter().collect();
+    let num_prop_vars = task.variables().len();
     let mut candidate_var_ids: Vec<usize> = config
         .init_split_var_ids
         .as_ref()
@@ -1139,9 +1232,50 @@ fn apply_initial_goal_splits(
     candidate_var_ids.sort_unstable();
     candidate_var_ids.dedup();
 
-    for var_id in candidate_var_ids {
+    for encoded_var_id in candidate_var_ids {
+        if encoded_var_id >= num_prop_vars {
+            let numeric_var_id = encoded_var_id - num_prop_vars;
+            if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
+                continue;
+            }
+            let Some(numeric_var) = task.numeric_variables().get(numeric_var_id) else {
+                continue;
+            };
+            if numeric_var.get_type() != &NumericType::Regular {
+                continue;
+            }
+            if !matches!(
+                config.init_split_method,
+                InitSplitMethod::Identity | InitSplitMethod::GoalValueOrRandomIfNonGoal
+            ) {
+                continue;
+            }
+            let Some(&init_value) = task.get_initial_numeric_state_values().get(numeric_var_id) else {
+                continue;
+            };
+            let include_in_lower = rng.gen_range(0..2) == 0;
+            if partitions.split_at(numeric_var_id, init_value, include_in_lower) {
+                if let Some(parts) = partitions.partitions(numeric_var_id) {
+                    if let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id) {
+                        *slot = parts.len();
+                    }
+                }
+            }
+            continue;
+        }
+
+        let var_id = encoded_var_id;
+        if blacklisted_prop_var_ids.contains(&var_id) {
+            continue;
+        }
         let Some((new_domain_size, mapping)) =
-            compute_initial_split_mapping(task, config, var_id, goal_values.get(&var_id).copied())
+            compute_initial_split_mapping(
+                task,
+                config,
+                var_id,
+                goal_values.get(&var_id).copied(),
+                rng,
+            )
         else {
             continue;
         };
@@ -1175,25 +1309,30 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 
     let start = Instant::now();
     let cegar = Cegar::new(config.clone())?;
+    let mut rng = SmallRng::seed_from_u64(config.random_seed.unwrap_or_else(current_time_seed));
 
     let (mut domain_mapping, mut domain_sizes) =
         trivial_domain_mapping_and_sizes(task).context("failed to build trivial domain mapping")?;
 
     let mut partitions = NumericPartitions::trivial(task);
     let mut numeric_domain_sizes: Vec<usize> = vec![1; task.numeric_variables().len()];
+    let mut blacklisted_prop_var_ids = config.blacklisted_prop_var_ids.clone();
+    let mut blacklisted_numeric_var_ids = config.blacklisted_numeric_var_ids.clone();
 
     apply_initial_goal_splits(
         task,
         &config,
+        &mut rng,
+        &blacklisted_prop_var_ids,
+        &blacklisted_numeric_var_ids,
         &mut domain_mapping,
         &mut domain_sizes,
-        &numeric_domain_sizes,
+        &mut partitions,
+        &mut numeric_domain_sizes,
     );
 
     let mut iteration: usize = 1;
     let mut last_step: Option<CegarStep> = None;
-    let mut plan_rng = (!config.use_wildcard_plans)
-        .then(|| SmallRng::seed_from_u64(config.random_seed.unwrap_or_else(current_time_seed)));
 
     while iteration <= config.max_iterations {
         if let Some(max_time) = config.max_time {
@@ -1228,7 +1367,11 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
                 config.combine_labels,
                 config.debug,
                 config.use_wildcard_plans,
-                plan_rng.as_mut(),
+                if config.use_wildcard_plans {
+                    None
+                } else {
+                    Some(&mut rng)
+                },
             )
             .with_context(|| format!("failed to compute abstract plan (iteration {iteration})"))?;
         if config.debug {
@@ -1282,6 +1425,9 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
                 &mut domain_sizes,
                 &mut partitions,
                 &mut numeric_domain_sizes,
+                &mut rng,
+                &mut blacklisted_prop_var_ids,
+                &mut blacklisted_numeric_var_ids,
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
         if config.debug {

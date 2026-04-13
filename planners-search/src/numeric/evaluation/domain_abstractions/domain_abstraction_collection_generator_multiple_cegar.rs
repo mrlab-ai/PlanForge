@@ -1,5 +1,8 @@
+#[cfg(test)]
+mod tests;
+
 use std::cell::{Ref, RefMut};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -7,10 +10,10 @@ use anyhow::{Context, Result, bail};
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, ExplicitVariable, Fact, Metric, NumericVariable, Operator,
+    AbstractNumericTask, ExplicitVariable, Fact, Metric, NumericType, NumericVariable, Operator,
 };
 use rand::seq::SliceRandom;
-use rand::{SeedableRng, rngs::SmallRng};
+use rand::{Rng, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 
 use super::cegar::CegarConfig;
@@ -213,6 +216,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         max_abstraction_size: usize,
         remaining_time: f64,
         init_split_var_ids: Option<HashSet<usize>>,
+        blacklisted_prop_var_ids: HashSet<usize>,
+        blacklisted_numeric_var_ids: HashSet<usize>,
     ) -> CegarConfig {
         CegarConfig {
             max_abstraction_size,
@@ -237,6 +242,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             },
             exec_entire_plan: self.config.exec_entire_plan,
             init_split_var_ids,
+            blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids,
         }
     }
 
@@ -251,6 +258,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             .map(|goal_id| task.get_goal_fact(goal_id).clone())
             .collect();
         goals.shuffle(&mut rng);
+        let blacklist_candidates = collect_blacklist_candidate_var_ids(task, self.config.blacklist_option);
 
         let start = Instant::now();
         let mut remaining_collection_size = self.config.max_collection_size;
@@ -297,11 +305,20 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 .as_ref()
                 .map(|single_goal_task| single_goal_task as &dyn AbstractNumericTask)
                 .unwrap_or(task);
-            let init_split_var_ids = self.initial_split_var_ids(abstraction_task);
+            let blacklisted_var_ids = if blacklisting {
+                sample_blacklisted_variables(&blacklist_candidates, &mut rng)
+            } else {
+                HashSet::new()
+            };
+            let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
+                split_blacklisted_variables(task, blacklisted_var_ids);
+            let init_split_var_ids = self.initial_split_var_ids(abstraction_task, iteration);
             let cegar_config = self.build_cegar_config(
                 remaining_abstraction_size,
                 remaining_generation_time,
                 init_split_var_ids,
+                blacklisted_prop_var_ids,
+                blacklisted_numeric_var_ids,
             );
             let generator = DomainAbstractionGenerator::new(cegar_config)
                 .context("failed to construct single-abstraction CEGAR generator")?;
@@ -350,22 +367,17 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         Ok(generated_abstractions)
     }
 
-    fn initial_split_var_ids(&self, task: &dyn AbstractNumericTask) -> Option<HashSet<usize>> {
-        let candidate_var_ids: HashSet<usize> = match self.config.init_split_candidates {
-            VariableSubset::Goals => collect_goal_related_propositional_vars(task),
-            VariableSubset::NonGoals => {
-                let goal_related = collect_goal_related_propositional_vars(task);
-                (0..task.variables().len())
-                    .filter(|var_id| !goal_related.contains(var_id))
-                    .collect()
-            }
-            VariableSubset::All => (0..task.variables().len()).collect(),
-        };
+    fn initial_split_var_ids(
+        &self,
+        task: &dyn AbstractNumericTask,
+        iteration: usize,
+    ) -> Option<HashSet<usize>> {
+        let candidate_var_ids = collect_init_split_candidate_var_ids(task, self.config.init_split_candidates);
 
-        let selected_var_ids = match self.config.init_split_quantity {
+        let selected_var_ids: HashSet<usize> = match self.config.init_split_quantity {
             InitSplitQuantity::None => HashSet::new(),
-            InitSplitQuantity::All => candidate_var_ids,
-            InitSplitQuantity::Single => select_single_init_split_var(task, &candidate_var_ids)
+            InitSplitQuantity::All => candidate_var_ids.iter().copied().collect(),
+            InitSplitQuantity::Single => select_single_init_split_var(&candidate_var_ids, iteration)
                 .into_iter()
                 .collect(),
         };
@@ -374,41 +386,154 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 }
 
+fn collect_logic_axiom_effect_vars(task: &dyn AbstractNumericTask) -> HashSet<usize> {
+    task.axioms()
+        .iter()
+        .filter_map(|axiom| usize::try_from(axiom.var_id()).ok())
+        .collect()
+}
+
+fn collect_comparison_axiom_var_ids(task: &dyn AbstractNumericTask) -> HashSet<usize> {
+    task.comparison_axioms()
+        .iter()
+        .filter_map(|axiom| usize::try_from(axiom.get_affected_var_id()).ok())
+        .collect()
+}
+
 fn collect_goal_related_propositional_vars(task: &dyn AbstractNumericTask) -> HashSet<usize> {
-    let mut goal_related: HashSet<usize> = (0..task.get_num_goals())
-        .filter_map(|goal_id| usize::try_from(task.get_goal_fact(goal_id).var()).ok())
-        .collect();
-
-    loop {
-        let mut changed = false;
-
-        for axiom in task.axioms() {
-            let affected_var_id = axiom.var_id() as usize;
-            if goal_related.contains(&affected_var_id) {
-                for condition in axiom.conditions() {
-                    if let Ok(condition_var_id) = usize::try_from(condition.var()) {
-                        changed |= goal_related.insert(condition_var_id);
-                    }
-                }
-            }
+    let mut goal_axiom_map: HashMap<usize, Vec<usize>> = HashMap::new();
+    for axiom in task.axioms() {
+        if axiom.conditions().is_empty() {
+            continue;
         }
+        let Ok(affected_var_id) = usize::try_from(axiom.var_id()) else {
+            continue;
+        };
+        let condition_var_ids = axiom
+            .conditions()
+            .iter()
+            .filter_map(|condition| usize::try_from(condition.var()).ok())
+            .collect::<Vec<_>>();
+        goal_axiom_map.insert(affected_var_id, condition_var_ids);
+    }
 
-        if !changed {
-            break;
+    let logic_axiom_effect_vars = collect_logic_axiom_effect_vars(task);
+    let mut goal_related: HashSet<usize> = HashSet::new();
+    for goal_id in 0..task.get_num_goals() {
+        let Ok(goal_var_id) = usize::try_from(task.get_goal_fact(goal_id).var()) else {
+            continue;
+        };
+        if let Some(preconditions) = goal_axiom_map.get(&goal_var_id) {
+            goal_related.extend(preconditions.iter().copied());
+        } else if !logic_axiom_effect_vars.contains(&goal_var_id) {
+            goal_related.insert(goal_var_id);
         }
     }
 
     goal_related
 }
 
-fn select_single_init_split_var(
+fn collect_init_split_candidate_var_ids(
     task: &dyn AbstractNumericTask,
-    candidate_var_ids: &HashSet<usize>,
-) -> Option<usize> {
-    (0..task.get_num_goals())
-        .filter_map(|goal_id| usize::try_from(task.get_goal_fact(goal_id).var()).ok())
-        .find(|var_id| candidate_var_ids.contains(var_id))
-        .or_else(|| candidate_var_ids.iter().min().copied())
+    subset: VariableSubset,
+) -> Vec<usize> {
+    let goal_related = collect_goal_related_propositional_vars(task);
+    let logic_axiom_effect_vars = collect_logic_axiom_effect_vars(task);
+    let comparison_axiom_vars = collect_comparison_axiom_var_ids(task);
+
+    let mut candidates: Vec<usize> = match subset {
+        VariableSubset::Goals => goal_related.iter().copied().collect(),
+        VariableSubset::NonGoals => (0..task.variables().len())
+            .filter(|var_id| {
+                !goal_related.contains(var_id)
+                    && !logic_axiom_effect_vars.contains(var_id)
+                    && !comparison_axiom_vars.contains(var_id)
+            })
+            .collect(),
+        VariableSubset::All => (0..task.variables().len())
+            .filter(|var_id| {
+                !logic_axiom_effect_vars.contains(var_id)
+                    && (!comparison_axiom_vars.contains(var_id) || goal_related.contains(var_id))
+            })
+            .collect(),
+    };
+    if matches!(subset, VariableSubset::NonGoals | VariableSubset::All) {
+        let encoded_numeric_offset = task.variables().len();
+        candidates.extend(
+            task.numeric_variables()
+                .iter()
+                .enumerate()
+                .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
+                .map(|(numeric_var_id, _)| encoded_numeric_offset + numeric_var_id),
+        );
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+    candidates
+}
+
+fn collect_blacklist_candidate_var_ids(
+    task: &dyn AbstractNumericTask,
+    subset: VariableSubset,
+) -> Vec<usize> {
+    let mut candidates = collect_init_split_candidate_var_ids(task, subset);
+    if matches!(subset, VariableSubset::NonGoals | VariableSubset::All) {
+        let encoded_numeric_offset = task.variables().len();
+        candidates.extend(
+            task.numeric_variables()
+                .iter()
+                .enumerate()
+                .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
+                .map(|(numeric_var_id, _)| encoded_numeric_offset + numeric_var_id),
+        );
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+    candidates
+}
+
+fn split_blacklisted_variables(
+    task: &dyn AbstractNumericTask,
+    encoded_var_ids: HashSet<usize>,
+) -> (HashSet<usize>, HashSet<usize>) {
+    let num_prop_vars = task.variables().len();
+    let mut blacklisted_prop_var_ids = HashSet::new();
+    let mut blacklisted_numeric_var_ids = HashSet::new();
+
+    for encoded_var_id in encoded_var_ids {
+        if encoded_var_id < num_prop_vars {
+            blacklisted_prop_var_ids.insert(encoded_var_id);
+        } else {
+            let numeric_var_id = encoded_var_id - num_prop_vars;
+            if numeric_var_id < task.numeric_variables().len() {
+                blacklisted_numeric_var_ids.insert(numeric_var_id);
+            }
+        }
+    }
+
+    (blacklisted_prop_var_ids, blacklisted_numeric_var_ids)
+}
+
+fn sample_blacklisted_variables<R: rand::Rng + ?Sized>(
+    candidates: &[usize],
+    rng: &mut R,
+) -> HashSet<usize> {
+    if candidates.is_empty() {
+        return HashSet::new();
+    }
+
+    let blacklist_size = rng.gen_range(1..=candidates.len());
+    let mut shuffled = candidates.to_vec();
+    shuffled.shuffle(rng);
+    shuffled.into_iter().take(blacklist_size).collect()
+}
+
+fn select_single_init_split_var(candidate_var_ids: &[usize], iteration: usize) -> Option<usize> {
+    if candidate_var_ids.is_empty() {
+        return None;
+    }
+    let index = iteration % candidate_var_ids.len();
+    candidate_var_ids.get(index).copied()
 }
 
 struct SingleGoalTask<'task> {
