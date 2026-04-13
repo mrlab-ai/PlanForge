@@ -620,10 +620,6 @@ impl<'task> PatternDatabase<'task> {
                             .expect("LM-cut inner heuristic must be initialized when configured")
                             .evaluate_from_concrete_state(state, registry)?;
                         heuristic_cache[state_id] = Some(result);
-                        println!(
-                            "Computed LM-cut heuristic for state {}: value={}, dead_end={}",
-                            state_id, result.value, result.dead_end
-                        );
                         Ok(result)
                     }
                 }

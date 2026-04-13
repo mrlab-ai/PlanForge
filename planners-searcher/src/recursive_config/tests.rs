@@ -34,6 +34,45 @@ fn parses_astar_domain_abstraction_with_or_without_unit_parens() {
 }
 
 #[test]
+fn parses_astar_canonical_domain_abstractions_with_or_without_parens() {
+    assert_eq!(
+        parse_search_spec("astar(canonical_domain_abstractions)").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(
+            DomainAbstractionCollectionGeneratorMultipleCegarConfig::default()
+        ))
+    );
+    assert_eq!(
+        parse_search_spec("astar(canonical_domain_abstractions())").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(
+            DomainAbstractionCollectionGeneratorMultipleCegarConfig::default()
+        ))
+    );
+}
+
+#[test]
+fn parses_astar_canonical_domain_abstractions_with_named_options() {
+    let spec = parse_search_spec(
+        "astar(canonical_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, exec_entire_plan=execute_entire_plan, use_wildcard_plans=false, random_seed=7))",
+    )
+    .unwrap();
+
+    let SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(config)) = spec else {
+        panic!("expected canonical_domain_abstractions config");
+    };
+
+    assert_eq!(config.max_collection_size, 123);
+    assert_eq!(config.total_max_time, 4.5);
+    assert_eq!(config.blacklist_option, VariableSubset::NonGoals);
+    assert_eq!(config.init_split_quantity, InitSplitQuantity::All);
+    assert_eq!(
+        config.exec_entire_plan,
+        ExecEntirePlanMode::ExecuteEntirePlan
+    );
+    assert!(!config.use_wildcard_plans);
+    assert_eq!(config.random_seed, 7);
+}
+
+#[test]
 fn parses_astar_greedy_numeric_pdb_with_or_without_unit_parens() {
     assert_eq!(
         parse_search_spec("astar(greedy_numeric_pdb)").unwrap(),
@@ -212,6 +251,16 @@ fn display_round_trips_multi_domain_abstractions() {
 }
 
 #[test]
+fn display_round_trips_canonical_domain_abstractions() {
+    let parsed = parse_search_spec(
+        "astar(canonical_domain_abstractions(max_abstraction_size=42, abstraction_generation_max_time=infinity))",
+    )
+    .unwrap();
+    let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
+    assert_eq!(parsed, reparsed);
+}
+
+#[test]
 fn display_round_trips_greedy_numeric_pdb() {
     let parsed = parse_search_spec(
         "astar(greedy_numeric_pdb(max_pdb_states=42, numeric_first=false, random_seed=9, variable_order_type=cg_goal_random, exploration_heuristic=lmcut, frontier_heuristic=blind, failed_lookup_heuristic=lmcut))",
@@ -282,6 +331,11 @@ fn trims_trailing_punctuation() {
     assert!(matches!(
         parse_search_spec("astar(multi_domain_abstractions());").unwrap(),
         SearchSpec::Astar(HeuristicSpec::MultiDomainAbstractions(_))
+    ));
+
+    assert!(matches!(
+        parse_search_spec("astar(canonical_domain_abstractions());").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(_))
     ));
 
     assert_eq!(

@@ -11,6 +11,7 @@ pub struct DomainAbstraction {
     pub factory: DomainAbstractionFactory,
     pub distance_table: AbstractDistanceTable,
     pub hash_multipliers: Vec<i32>,
+    pub combine_labels: bool,
 }
 
 /// Numeric-fd style generator that constructs a domain abstraction via CEGAR.
@@ -50,6 +51,7 @@ impl DomainAbstractionGenerator {
             factory,
             distance_table,
             hash_multipliers,
+            combine_labels: self.config.combine_labels,
         })
     }
 }

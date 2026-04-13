@@ -26,6 +26,8 @@ use planners_search::numeric::evaluation::pattern_databases::variable_order_find
 #[serde(rename_all = "lowercase")]
 pub enum HeuristicSpec {
     Blind,
+    #[serde(rename = "canonical_domain_abstractions")]
+    CanonicalDomainAbstractions(DomainAbstractionCollectionGeneratorMultipleCegarConfig),
     #[serde(rename = "domain_abstraction")]
     DomainAbstraction,
     #[serde(rename = "canonical_numeric_pdb")]
@@ -52,6 +54,13 @@ impl fmt::Display for HeuristicSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HeuristicSpec::Blind => write!(f, "blind()"),
+            HeuristicSpec::CanonicalDomainAbstractions(config) => {
+                if *config == DomainAbstractionCollectionGeneratorMultipleCegarConfig::default() {
+                    write!(f, "canonical_domain_abstractions()")
+                } else {
+                    write!(f, "canonical_domain_abstractions({config})")
+                }
+            }
             HeuristicSpec::DomainAbstraction => write!(f, "domain_abstraction()"),
             HeuristicSpec::CanonicalNumericPdb(config) => {
                 if *config == CanonicalNumericPdbConfig::default() {
@@ -453,6 +462,20 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
         |_| HeuristicSpec::DomainAbstraction,
     );
 
+    let canonical_domain_abstractions = map(
+        tuple((
+            ws(tag_no_case("canonical_domain_abstractions")),
+            opt(ws(alt((
+                map(
+                    empty_parens,
+                    |_| DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
+                ),
+                multi_domain_abstractions_parens,
+            )))),
+        )),
+        |(_, config)| HeuristicSpec::CanonicalDomainAbstractions(config.unwrap_or_default()),
+    );
+
     let canonical_numeric_pdb = map(
         tuple((
             ws(tag_no_case("canonical_numeric_pdb")),
@@ -495,6 +518,7 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
     );
 
     ws(alt((
+        canonical_domain_abstractions,
         multi_domain_abstractions,
         lmcutnumeric,
         canonical_numeric_pdb,

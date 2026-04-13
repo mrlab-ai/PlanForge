@@ -142,64 +142,6 @@ impl DomainAbstractionHeuristic {
     }
 }
 
-fn plant_watering_real_distance_check(
-    task: &dyn AbstractNumericTask,
-    numeric_values: &[f64],
-    heuristic_value: f64,
-) -> Option<(f64, bool, String)> {
-    const X_AGENT_IDX: usize = 15;
-    const Y_AGENT_IDX: usize = 16;
-    const CARRYING_IDX: usize = 29;
-    const POURED_IDX: usize = 30;
-    const TAP_X: f64 = 3.0;
-    const TAP_Y: f64 = 3.0;
-    const PLANT_X: f64 = 5.0;
-    const PLANT_Y: f64 = 5.0;
-    const GOAL_POURED: f64 = 10.0;
-    const EPS: f64 = 1e-9;
-
-    let vars = task.numeric_variables();
-    if vars.len() <= POURED_IDX {
-        return None;
-    }
-    if vars[X_AGENT_IDX].name() != "PNE x(agent1)"
-        || vars[Y_AGENT_IDX].name() != "PNE y(agent1)"
-        || vars[CARRYING_IDX].name() != "PNE carrying()"
-        || vars[POURED_IDX].name() != "PNE poured(plant1)"
-    {
-        return None;
-    }
-    if numeric_values.len() <= POURED_IDX {
-        return None;
-    }
-
-    let x = numeric_values[X_AGENT_IDX];
-    let y = numeric_values[Y_AGENT_IDX];
-    let carrying = numeric_values[CARRYING_IDX];
-    let poured = numeric_values[POURED_IDX];
-
-    if !x.is_finite() || !y.is_finite() || !carrying.is_finite() || !poured.is_finite() {
-        return None;
-    }
-
-    let remaining = (GOAL_POURED - poured).max(0.0);
-    let dist_to_tap = (x - TAP_X).abs().max((y - TAP_Y).abs());
-    let dist_tap_to_plant = (TAP_X - PLANT_X).abs().max((TAP_Y - PLANT_Y).abs());
-    let dist_to_plant = (x - PLANT_X).abs().max((y - PLANT_Y).abs());
-
-    let real_distance = if carrying + EPS >= remaining {
-        dist_to_plant + remaining
-    } else {
-        dist_to_tap + (remaining - carrying) + dist_tap_to_plant + remaining
-    };
-    let admissible = heuristic_value <= real_distance + EPS;
-    let details = format!(
-        "x={} y={} carrying={} poured={} remaining={} h={} h*={}",
-        x, y, carrying, poured, remaining, heuristic_value, real_distance
-    );
-    Some((real_distance, admissible, details))
-}
-
 fn abstract_propositional_value(
     var: usize,
     concrete_val: i32,
@@ -226,6 +168,7 @@ impl Heuristic for DomainAbstractionHeuristic {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
+        // NOTE: I have no idea why I commented that out... Is there a reason?
         //if eval_state.is_goal() {
         //    return Ok(0.0);
         //}
@@ -352,22 +295,6 @@ impl Heuristic for DomainAbstractionHeuristic {
                 &abs_num_str,
                 dist,
             );
-
-            if std::env::var("DA_TRACE_REAL_DISTANCE_CHECK").unwrap_or_else(|_| "0".to_string())
-                == "1"
-            {
-                if let Some((real_distance, admissible, details)) =
-                    plant_watering_real_distance_check(task, &num, dist)
-                {
-                    println!(
-                        "  real-check:     admissible={} h*={} {}",
-                        admissible, real_distance, details
-                    );
-                    if !admissible {
-                        eprintln!("[DA_INADMISSIBLE] {}", details);
-                    }
-                }
-            }
 
             if std::env::var("DA_TRACE_COMPARISON_MISMATCH").unwrap_or_else(|_| "0".to_string())
                 == "1"
