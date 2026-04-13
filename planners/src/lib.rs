@@ -10,6 +10,7 @@ use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask, 
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use planners_search::numeric::evaluation::g_evaluator::{GEvaluator, SumEvaluator};
+use planners_search::numeric::evaluation::domain_abstractions::canonical_domain_abstraction_heuristic::CanonicalDomainAbstractionHeuristic;
 use planners_search::numeric::evaluation::domain_abstractions::cegar::{Cegar, CegarConfig};
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegar;
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::{
@@ -126,6 +127,24 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
             let task_ref: &dyn AbstractNumericTask = &task;
             let heuristic_override = match heuristic {
                 planners_searcher::HeuristicSpec::Blind => None,
+                planners_searcher::HeuristicSpec::CanonicalDomainAbstractions(config) => {
+                    let generator =
+                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
+                    println!("Building canonical domain abstractions (CEGAR)...");
+                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
+                        std::io::Error::other(format!(
+                            "failed to build canonical domain abstractions: {e:#}"
+                        ))
+                    })?;
+                    Some(Box::new(
+                        CanonicalDomainAbstractionHeuristic::new(None, task_ref, abstractions)
+                            .map_err(|e| {
+                                std::io::Error::other(format!(
+                                    "failed to construct canonical domain abstraction heuristic: {e}"
+                                ))
+                            })?,
+                    ) as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>)
+                }
                 planners_searcher::HeuristicSpec::DomainAbstraction => {
                     println!("Building domain abstraction (CEGAR)...");
                     let mut config = CegarConfig::default();
@@ -810,6 +829,7 @@ fn run_da_debug(
         factory,
         distance_table,
         hash_multipliers,
+        combine_labels: config.combine_labels,
     };
     let heuristic = DomainAbstractionHeuristic::new(Some("da_debug".to_string()), abstraction);
 
