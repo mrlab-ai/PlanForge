@@ -85,6 +85,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub init_split_quantity: InitSplitQuantity,
     pub random_seed: i32,
     pub use_wildcard_plans: bool,
+    pub combine_labels: bool,
     pub deviation_flaws: bool,
     pub flaw_treatment: FlawTreatment,
     pub init_split_method: InitSplitMethod,
@@ -107,6 +108,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             init_split_quantity: InitSplitQuantity::Single,
             random_seed: -1,
             use_wildcard_plans: true,
+            combine_labels: false,
             deviation_flaws: true,
             flaw_treatment: FlawTreatment::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
@@ -141,6 +143,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "init_split_quantity={}, ",
                 "random_seed={}, ",
                 "use_wildcard_plans={}, ",
+                "combine_labels={}, ",
                 "deviation_flaws={}, ",
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
@@ -159,6 +162,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.init_split_quantity,
             self.random_seed,
             self.use_wildcard_plans,
+            self.combine_labels,
             self.deviation_flaws,
             self.flaw_treatment,
             self.init_split_method,
@@ -219,8 +223,13 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 None
             },
             use_wildcard_plans: self.config.use_wildcard_plans,
-            combine_labels: false,
+            combine_labels: self.config.combine_labels,
             debug: false,
+            random_seed: if self.config.random_seed >= 0 {
+                Some(self.config.random_seed as u64)
+            } else {
+                None
+            },
             flaw_treatment: self.config.flaw_treatment,
             init_split_method: match self.config.init_split_quantity {
                 InitSplitQuantity::None => InitSplitMethod::Identity,
@@ -273,6 +282,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let remaining_abstraction_size =
                 remaining_collection_size.min(self.config.max_abstraction_size);
 
+            println!(
+                "Iteration {}: elapsed={:.2}s, remaining_collection_size={}, remaining_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
+                iteration, elapsed, remaining_collection_size, remaining_abstraction_size, remaining_generation_time, blacklisting
+            );
             if remaining_abstraction_size == 0 || remaining_generation_time <= 0.0 {
                 break;
             }

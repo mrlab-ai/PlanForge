@@ -126,10 +126,20 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                             })?,
                     ) as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>)
                 }
-                crate::recursive_config::HeuristicSpec::DomainAbstraction => {
+                crate::recursive_config::HeuristicSpec::DomainAbstraction(domain_config) => {
                     println!("Building domain abstraction (CEGAR)...");
                     let mut config = CegarConfig::default();
-                    config.debug = true;
+                    config.max_abstraction_size = domain_config.max_abstraction_size;
+                    config.use_wildcard_plans = domain_config.use_wildcard_plans;
+                    config.combine_labels = domain_config.combine_labels;
+                    config.random_seed = if domain_config.random_seed >= 0 {
+                        Some(domain_config.random_seed as u64)
+                    } else {
+                        None
+                    };
+                    config.flaw_treatment = domain_config.flaw_treatment;
+                    config.init_split_method = domain_config.init_split_method;
+                    config.exec_entire_plan = domain_config.exec_entire_plan;
 
                     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
                         std::io::Error::new(

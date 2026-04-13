@@ -137,6 +137,67 @@ fn get_flaws_reports_precondition_violation() {
 }
 
 #[test]
+fn build_abstraction_produces_singleton_plan_without_wildcards() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        -1,
+        0,
+    )];
+    let numeric_variables: Vec<NumericVariable> = vec![];
+    let goals = vec![Fact::new(0, 1)];
+    let op0 = Operator::new(
+        "set0".into(),
+        vec![Fact::new(0, 0)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            0,
+            1,
+        )],
+        vec![],
+        1,
+    );
+    let op1 = Operator::new(
+        "set1".into(),
+        vec![Fact::new(0, 0)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            0,
+            1,
+        )],
+        vec![],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        goals,
+        vec![],
+        vec![0],
+        vec![],
+        vec![op0, op1],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let mut config = CegarConfig::default();
+    config.use_wildcard_plans = false;
+    config.max_iterations = 2;
+
+    let outcome = run_cegar(&task, config).unwrap();
+    let plan = outcome.last_step.wildcard_plan.expect("plan exists");
+    assert_eq!(plan.wildcard_plan.len(), 1);
+    assert_eq!(plan.wildcard_plan[0], vec![0]);
+}
+
+#[test]
 fn get_flaws_reports_numeric_deviation_flaw() {
     use crate::numeric::evaluation::domain_abstractions::comparison_expression::Interval;
     use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
@@ -242,6 +303,7 @@ fn cegar_default_config_matches_current_port_defaults() {
     assert_eq!(config.max_abstraction_size, i64::MAX as usize);
     assert_eq!(config.max_iterations, 10_000);
     assert!(config.use_wildcard_plans);
+    assert_eq!(config.random_seed, None);
     assert_eq!(config.flaw_treatment, FlawTreatment::RandomSingleAtom);
     assert_eq!(config.init_split_method, InitSplitMethod::InitValue);
     assert_eq!(config.exec_entire_plan, ExecEntirePlanMode::StopAtFirstFlaw);

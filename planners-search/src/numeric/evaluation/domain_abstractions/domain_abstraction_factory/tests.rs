@@ -2,6 +2,8 @@ use super::*;
 
 use std::collections::BTreeSet;
 
+use rand::{SeedableRng, rngs::SmallRng};
+
 use planners_sas::numeric::axioms::PropositionalAxiom;
 use planners_sas::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
@@ -480,6 +482,127 @@ fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
         .expect("plan exists");
     assert_eq!(result.wildcard_plan.len(), 1);
     assert_eq!(result.wildcard_plan[0], vec![0]);
+}
+
+#[test]
+fn singleton_plan_is_produced_when_wildcards_are_disabled() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        0,
+        0,
+    )];
+    let numeric_variables: Vec<NumericVariable> = vec![];
+    let goals = vec![Fact::new(0, 1)];
+    let op0 = Operator::new(
+        "set0".into(),
+        vec![Fact::new(0, 0)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            0,
+            1,
+        )],
+        vec![],
+        1,
+    );
+    let op1 = Operator::new(
+        "set1".into(),
+        vec![Fact::new(0, 0)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            0,
+            1,
+        )],
+        vec![],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        goals,
+        vec![],
+        vec![0],
+        vec![],
+        vec![op0, op1],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let result = factory
+        .compute_plan(&task, true, false, false)
+        .unwrap()
+        .expect("plan exists");
+    assert_eq!(result.wildcard_plan.len(), 1);
+    assert_eq!(result.wildcard_plan[0], vec![0]);
+}
+
+#[test]
+fn singleton_plan_selection_uses_seeded_rng() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        0,
+        0,
+    )];
+    let numeric_variables: Vec<NumericVariable> = vec![];
+    let goals = vec![Fact::new(0, 1)];
+    let op0 = Operator::new(
+        "set0".into(),
+        vec![Fact::new(0, 0)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            0,
+            1,
+        )],
+        vec![],
+        1,
+    );
+    let op1 = Operator::new(
+        "set1".into(),
+        vec![Fact::new(0, 0)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            0,
+            1,
+        )],
+        vec![],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, -1),
+        variables,
+        numeric_variables,
+        goals,
+        vec![],
+        vec![0],
+        vec![],
+        vec![op0, op1],
+        vec![],
+        vec![],
+        vec![],
+        (0, 0),
+    );
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let mut rng = SmallRng::seed_from_u64(7);
+    let result = factory
+        .compute_plan_with_rng(&task, true, false, false, Some(&mut rng))
+        .unwrap()
+        .expect("plan exists");
+    assert_eq!(result.wildcard_plan.len(), 1);
+    assert!(matches!(result.wildcard_plan[0].as_slice(), [0] | [1]));
 }
 
 #[test]

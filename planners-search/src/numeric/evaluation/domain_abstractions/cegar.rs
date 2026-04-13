@@ -123,9 +123,10 @@ pub struct CegarConfig {
     pub max_abstraction_size: usize,
     pub max_iterations: usize,
     pub max_time: Option<Duration>,
-    pub use_wildcard_plans: bool, // TODO: Right now must be true, add config to factory
+    pub use_wildcard_plans: bool,
     pub combine_labels: bool,
     pub debug: bool,
+    pub random_seed: Option<u64>,
     pub flaw_treatment: FlawTreatment,
     pub init_split_method: InitSplitMethod,
     pub exec_entire_plan: ExecEntirePlanMode,
@@ -141,6 +142,7 @@ impl Default for CegarConfig {
             use_wildcard_plans: true,
             combine_labels: false,
             debug: false,
+            random_seed: None,
             flaw_treatment: FlawTreatment::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
@@ -1190,6 +1192,8 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 
     let mut iteration: usize = 1;
     let mut last_step: Option<CegarStep> = None;
+    let mut plan_rng = (!config.use_wildcard_plans)
+        .then(|| SmallRng::seed_from_u64(config.random_seed.unwrap_or_else(current_time_seed)));
 
     while iteration <= config.max_iterations {
         if let Some(max_time) = config.max_time {
@@ -1218,20 +1222,15 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
             format!("failed to construct DomainAbstractionFactory (iteration {iteration})")
         })?;
 
-        let wildcard_plan = if config.use_wildcard_plans {
-            factory
-                .compute_wildcard_plan(task, config.combine_labels, config.debug)
-                .with_context(|| {
-                    format!("failed to compute wildcard plan (iteration {iteration})")
-                })?
-        } else {
-            let _table = factory
-                .build_abstract_distance_table(task, config.combine_labels, false)
-                .with_context(|| {
-                    format!("failed to build abstract distance table (iteration {iteration})")
-                })?;
-            None
-        };
+        let wildcard_plan = factory
+            .compute_plan_with_rng(
+                task,
+                config.combine_labels,
+                config.debug,
+                config.use_wildcard_plans,
+                plan_rng.as_mut(),
+            )
+            .with_context(|| format!("failed to compute abstract plan (iteration {iteration})"))?;
         if config.debug {
             match wildcard_plan.as_ref() {
                 Some(plan) => super::utils::debug_print_wildcard_plan(
@@ -1251,7 +1250,6 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
         };
         last_step = Some(step);
 
-        // Refinement requires a wildcard plan (current Rust port mirrors the numeric-fd flow).
         let Some(plan) = last_step.as_ref().and_then(|s| s.wildcard_plan.as_ref()) else {
             break;
         };

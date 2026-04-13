@@ -22,6 +22,55 @@ use planners_search::numeric::evaluation::pattern_databases::pattern_database::P
 use planners_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planners_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DomainAbstractionConfig {
+    pub max_abstraction_size: usize,
+    pub use_wildcard_plans: bool,
+    pub combine_labels: bool,
+    pub random_seed: i32,
+    pub flaw_treatment: FlawTreatment,
+    pub init_split_method: InitSplitMethod,
+    pub exec_entire_plan: ExecEntirePlanMode,
+}
+
+impl Default for DomainAbstractionConfig {
+    fn default() -> Self {
+        Self {
+            max_abstraction_size: i64::MAX as usize,
+            use_wildcard_plans: true,
+            combine_labels: false,
+            random_seed: -1,
+            flaw_treatment: FlawTreatment::RandomSingleAtom,
+            init_split_method: InitSplitMethod::InitValue,
+            exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
+        }
+    }
+}
+
+impl fmt::Display for DomainAbstractionConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            concat!(
+                "max_abstraction_size={}, ",
+                "use_wildcard_plans={}, ",
+                "combine_labels={}, ",
+                "random_seed={}, ",
+                "flaw_treatment={}, ",
+                "init_split_method={}, ",
+                "exec_entire_plan={}"
+            ),
+            self.max_abstraction_size,
+            self.use_wildcard_plans,
+            self.combine_labels,
+            self.random_seed,
+            self.flaw_treatment,
+            self.init_split_method,
+            self.exec_entire_plan,
+        )
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum HeuristicSpec {
@@ -29,7 +78,7 @@ pub enum HeuristicSpec {
     #[serde(rename = "canonical_domain_abstractions")]
     CanonicalDomainAbstractions(DomainAbstractionCollectionGeneratorMultipleCegarConfig),
     #[serde(rename = "domain_abstraction")]
-    DomainAbstraction,
+    DomainAbstraction(DomainAbstractionConfig),
     #[serde(rename = "canonical_numeric_pdb")]
     CanonicalNumericPdb(CanonicalNumericPdbConfig),
     #[serde(rename = "greedy_numeric_pdb")]
@@ -61,7 +110,13 @@ impl fmt::Display for HeuristicSpec {
                     write!(f, "canonical_domain_abstractions({config})")
                 }
             }
-            HeuristicSpec::DomainAbstraction => write!(f, "domain_abstraction()"),
+            HeuristicSpec::DomainAbstraction(config) => {
+                if *config == DomainAbstractionConfig::default() {
+                    write!(f, "domain_abstraction()")
+                } else {
+                    write!(f, "domain_abstraction({config})")
+                }
+            }
             HeuristicSpec::CanonicalNumericPdb(config) => {
                 if *config == CanonicalNumericPdbConfig::default() {
                     write!(f, "canonical_numeric_pdb()")
@@ -276,6 +331,32 @@ fn parse_exec_entire_plan_mode(value: &str) -> Result<ExecEntirePlanMode, String
     }
 }
 
+fn build_domain_abstraction_config(
+    args: Vec<(String, String)>,
+) -> Result<DomainAbstractionConfig, String> {
+    let mut config = DomainAbstractionConfig::default();
+    let mut seen = std::collections::BTreeSet::new();
+
+    for (key, value) in args {
+        if !seen.insert(key.clone()) {
+            return Err(format!("duplicate option `{key}`"));
+        }
+
+        match key.as_str() {
+            "max_abstraction_size" => config.max_abstraction_size = parse_usize(&value)?,
+            "use_wildcard_plans" => config.use_wildcard_plans = parse_bool(&value)?,
+            "combine_labels" => config.combine_labels = parse_bool(&value)?,
+            "random_seed" => config.random_seed = parse_i32(&value)?,
+            "flaw_treatment" => config.flaw_treatment = parse_flaw_treatment(&value)?,
+            "init_split_method" => config.init_split_method = parse_init_split_method(&value)?,
+            "exec_entire_plan" => config.exec_entire_plan = parse_exec_entire_plan_mode(&value)?,
+            _ => return Err(format!("unknown option `{key}`")),
+        }
+    }
+
+    Ok(config)
+}
+
 fn build_multi_domain_abstractions_config(
     args: Vec<(String, String)>,
 ) -> Result<DomainAbstractionCollectionGeneratorMultipleCegarConfig, String> {
@@ -310,6 +391,7 @@ fn build_multi_domain_abstractions_config(
             }
             "random_seed" => config.random_seed = parse_i32(&value)?,
             "use_wildcard_plans" => config.use_wildcard_plans = parse_bool(&value)?,
+            "combine_labels" => config.combine_labels = parse_bool(&value)?,
             "deviation_flaws" => config.deviation_flaws = parse_bool(&value)?,
             "flaw_treatment" => config.flaw_treatment = parse_flaw_treatment(&value)?,
             "init_split_method" => config.init_split_method = parse_init_split_method(&value)?,
@@ -409,6 +491,20 @@ fn multi_domain_abstractions_parens(
     )(input)
 }
 
+fn domain_abstraction_parens(input: &str) -> Res<'_, DomainAbstractionConfig> {
+    map_res(
+        delimited(
+            ws(char('(')),
+            terminated(
+                separated_list0(ws(char(',')), key_value_argument),
+                opt(ws(char(','))),
+            ),
+            ws(char(')')),
+        ),
+        build_domain_abstraction_config,
+    )(input)
+}
+
 fn greedy_numeric_pdb_parens(input: &str) -> Res<'_, GreedyPatternGeneratorConfig> {
     map_res(
         delimited(
@@ -458,8 +554,14 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
     );
 
     let domain_abstraction = map(
-        tuple((ws(tag_no_case("domain_abstraction")), opt(ws(empty_parens)))),
-        |_| HeuristicSpec::DomainAbstraction,
+        tuple((
+            ws(tag_no_case("domain_abstraction")),
+            opt(ws(alt((
+                map(empty_parens, |_| DomainAbstractionConfig::default()),
+                domain_abstraction_parens,
+            )))),
+        )),
+        |(_, config)| HeuristicSpec::DomainAbstraction(config.unwrap_or_default()),
     );
 
     let canonical_domain_abstractions = map(
