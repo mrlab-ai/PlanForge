@@ -181,6 +181,40 @@ impl NumericTaskHelper {
 		default_epsilon: f64,
 		separate_constant_assignment: bool,
 	) -> Self {
+		Self::new_with_options(
+			task,
+			precision,
+			default_epsilon,
+			separate_constant_assignment,
+			true,
+			true,
+		)
+	}
+
+	pub(crate) fn new_lmcut(
+		task: &dyn AbstractNumericTask,
+		precision: f64,
+		default_epsilon: f64,
+		separate_constant_assignment: bool,
+	) -> Self {
+		Self::new_with_options(
+			task,
+			precision,
+			default_epsilon,
+			separate_constant_assignment,
+			false,
+			true,
+		)
+	}
+
+	fn new_with_options(
+		task: &dyn AbstractNumericTask,
+		precision: f64,
+		default_epsilon: f64,
+		separate_constant_assignment: bool,
+		build_mutex_and_dominance: bool,
+		build_bound_metadata: bool,
+	) -> Self {
 		let mut helper = Self {
 			fact_to_axiom_marker: vec![
 				-1;
@@ -199,11 +233,17 @@ impl NumericTaskHelper {
 		helper.build_numeric_goals(task, precision);
 		helper.build_actions(task, precision, separate_constant_assignment);
 		helper.build_propositions(task);
-		helper.build_mutex_actions(task);
-		helper.calculates_bounds_numeric_variables(task, precision, 9_999_999.0);
-		helper.calculate_small_m(precision, 9_999_999.0);
+		if build_mutex_and_dominance {
+			helper.build_mutex_actions(task);
+		}
+		if build_bound_metadata {
+			helper.calculates_bounds_numeric_variables(task, precision, 9_999_999.0);
+			helper.calculate_small_m(precision, 9_999_999.0);
+		}
 		helper.calculate_epsilons(task.get_operators().len(), precision, default_epsilon);
-		helper.calculate_dominance(precision);
+		if build_mutex_and_dominance {
+			helper.calculate_dominance(precision);
+		}
 		helper
 	}
 
