@@ -1,90 +1,153 @@
 #[cfg(test)]
 mod tests;
 
+use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
-use std::hash::{Hash, Hasher};
+use std::collections::{BinaryHeap, VecDeque};
 
 use ordered_float::NotNan;
 use planners_sas::numeric::axioms::AxiomEvaluator;
-use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, Operator,
-};
-use planners_sas::numeric::utils::int_packer::IntDoublePacker;
+use planners_sas::numeric::numeric_task::AbstractNumericTask;
+use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
+use rustc_hash::FxBuildHasher;
+
+type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 
 use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) struct AbstractStateKey {
-    propositional: Vec<usize>,
-    numeric: Vec<u64>,
+use super::projected_task::ProjectedTask;
+use super::utils;
+
+#[inline]
+fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
+    const FNV_PRIME: u64 = 0x00000100000001B3;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }
 
-#[derive(Debug, Clone)]
+#[inline]
+fn hash_state_components(propositional: &[usize], numeric: &[f64]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    let mut hash = FNV_OFFSET;
+    for value in propositional {
+        hash = hash_bytes(hash, &value.to_le_bytes());
+    }
+    hash = hash_bytes(hash, &(propositional.len() as u64).to_le_bytes());
+    for value in numeric {
+        hash = hash_bytes(hash, &value.to_bits().to_le_bytes());
+    }
+    hash_bytes(hash, &(numeric.len() as u64).to_le_bytes())
+}
+
+#[inline]
+fn hash_pattern_components(
+    propositional: &[usize],
+    numeric: &[f64],
+    pattern_regular_ids: &[usize],
+    pattern_numeric_ids: &[usize],
+) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    let mut hash = FNV_OFFSET;
+    for &var_id in pattern_regular_ids {
+        hash = hash_bytes(hash, &propositional[var_id].to_le_bytes());
+    }
+    hash = hash_bytes(hash, &(pattern_regular_ids.len() as u64).to_le_bytes());
+    for &var_id in pattern_numeric_ids {
+        hash = hash_bytes(hash, &numeric[var_id].to_bits().to_le_bytes());
+    }
+    hash_bytes(hash, &(pattern_numeric_ids.len() as u64).to_le_bytes())
+}
+
+#[inline]
+fn build_prop_hash_multipliers(task: &ProjectedTask<'_>) -> Vec<usize> {
+    let mut multipliers = Vec::with_capacity(task.variables().len());
+    let mut product = 1usize;
+    for variable in task.variables() {
+        multipliers.push(product);
+        product = product.saturating_mul(variable.domain_size());
+    }
+    multipliers
+}
+
+#[inline]
+fn compute_prop_hash(propositional: &[usize], multipliers: &[usize]) -> Option<usize> {
+    if propositional.len() != multipliers.len() {
+        return None;
+    }
+
+    let mut hash = 0usize;
+    for (value, multiplier) in propositional.iter().zip(multipliers.iter()) {
+        hash = hash.saturating_add(value.saturating_mul(*multiplier));
+    }
+    Some(hash)
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct PdbState {
-    pub(super) propositional: Vec<usize>,
-    pub(super) numeric: Vec<f64>,
+    propositional: Vec<usize>,
+    numeric: Vec<f64>,
 }
 
-impl PartialEq for PdbState {
-    fn eq(&self, other: &Self) -> bool {
-        self.propositional == other.propositional
-            && self.numeric.len() == other.numeric.len()
-            && self
-                .numeric
-                .iter()
-                .zip(other.numeric.iter())
-                .all(|(lhs, rhs)| lhs.to_bits() == rhs.to_bits())
-    }
-}
-
-impl Eq for PdbState {}
-
-impl Hash for PdbState {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.propositional.hash(state);
-        for value in &self.numeric {
-            value.to_bits().hash(state);
-        }
-    }
-}
-
-pub struct PatternDatabase<T: AbstractNumericTask> {
-    pub(super) task: T,
-    pub(super) state_to_id: HashMap<AbstractStateKey, usize>,
+pub struct PatternDatabase<'task> {
+    pub(super) task: ProjectedTask<'task>,
     pub(super) states: Vec<PdbState>,
+    state_index: HashMap<u64, Vec<usize>>,
+    pattern_index: HashMap<u64, Vec<usize>>,
+    full_prop_index: HashMap<usize, Vec<usize>>,
     pub(super) distances: Vec<f64>,
     pub(super) min_operator_cost: f64,
     pub(super) reached_goal_states: usize,
     pub(super) truncated: bool,
     pub(super) frontier_states: Vec<usize>,
+    full_prop_hash_multipliers: Vec<usize>,
+    state_dependent_numeric_projected_ids: Vec<usize>,
+    projection_prop_scratch: RefCell<Vec<usize>>,
+    projection_numeric_scratch: RefCell<Vec<f64>>,
+    projection_helper_scratch: RefCell<Vec<f64>>,
+    direct_numeric_cache_scratch: RefCell<Vec<Option<f64>>>,
 }
 
-impl<T: AbstractNumericTask> PatternDatabase<T> {
-    pub fn new(task: T, max_states: usize) -> Result<Self, String> {
-        let min_operator_cost = task.min_abstract_operator_cost();
+impl<'task> PatternDatabase<'task> {
+    pub fn new(task: ProjectedTask<'task>, max_states: usize) -> Result<Self, String> {
+        let min_operator_cost = task.min_operator_cost();
+        let projection_prop_capacity = task.variables().len();
+        let projection_numeric_capacity = task.numeric_variables().len();
 
         let mut pdb = Self {
             task,
-            state_to_id: HashMap::new(),
-            states: Vec::new(),
+            states: Vec::with_capacity(max_states),
+            state_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
+            pattern_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
+            full_prop_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
             distances: Vec::new(),
             min_operator_cost,
             reached_goal_states: 0,
             truncated: false,
             frontier_states: Vec::new(),
+            full_prop_hash_multipliers: Vec::new(),
+            state_dependent_numeric_projected_ids: Vec::new(),
+            projection_prop_scratch: RefCell::new(Vec::with_capacity(projection_prop_capacity)),
+            projection_numeric_scratch: RefCell::new(Vec::with_capacity(
+                projection_numeric_capacity,
+            )),
+            projection_helper_scratch: RefCell::new(Vec::new()),
+            direct_numeric_cache_scratch: RefCell::new(Vec::new()),
         };
+        pdb.full_prop_hash_multipliers = build_prop_hash_multipliers(&pdb.task);
+        pdb.state_dependent_numeric_projected_ids =
+            pdb.task.state_dependent_numeric_projected_ids();
         pdb.build(max_states)?;
-        //super::utils::dump_distance_table(&pdb);
+        // NOTE: Uncomment to print summary of the built PDB.
+        utils::dump_distance_table(&pdb);
         Ok(pdb)
     }
 
     pub fn lookup(&self, propositional: &[usize], numeric: &[f64]) -> Option<f64> {
-        let key = make_abstract_state_key_from_values(&self.task, propositional, numeric)?;
-        self.state_to_id
-            .get(&key)
-            .and_then(|&state_id| self.distances.get(state_id))
-            .copied()
+        let state_id = self.lookup_state_id(propositional, numeric)?;
+        self.distances.get(state_id).copied()
     }
 
     pub fn lookup_or_fallback(&self, propositional: &[usize], numeric: &[f64]) -> f64 {
@@ -114,48 +177,236 @@ impl<T: AbstractNumericTask> PatternDatabase<T> {
         self.min_operator_cost
     }
 
+    pub fn requires_derived_numeric_values(&self) -> bool {
+        self.task.requires_derived_numeric_values()
+    }
+
     pub fn abstract_state_values(
         &self,
         propositional: &[usize],
         numeric: &[f64],
     ) -> Result<(Vec<usize>, Vec<f64>), String> {
-        let (abstract_prop, abstract_num) =
-            self.task.abstract_state_values(propositional, numeric)?;
-        Ok((
-            self.task
-                .abstract_propositional_var_ids()
-                .iter()
-                .map(|&var_id| abstract_prop[var_id])
-                .collect(),
-            self.task
-                .abstract_numeric_var_ids()
-                .iter()
-                .map(|&var_id| abstract_num[var_id])
-                .collect(),
-        ))
+        self.task.project_state_values(propositional, numeric)
+    }
+
+    pub fn lookup_projected_or_fallback_from_state_values(
+        &self,
+        propositional: &[usize],
+        numeric: &[f64],
+    ) -> Result<f64, String> {
+        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
+        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
+        let mut helper_values = self.projection_helper_scratch.borrow_mut();
+
+        self.task.project_state_values_into(
+            propositional,
+            numeric,
+            &mut projected_prop,
+            &mut projected_num,
+            &mut helper_values,
+        )?;
+
+        Ok(self.lookup_or_fallback(&projected_prop, &projected_num))
+    }
+
+    pub fn expand_numeric_state_values_into(
+        &self,
+        numeric: &[f64],
+        expanded_numeric: &mut Vec<f64>,
+    ) -> Result<(), String> {
+        self.task
+            .expand_numeric_state_values_into(numeric, expanded_numeric)
+    }
+
+    pub fn lookup_projected_or_fallback_from_expanded_state_values(
+        &self,
+        propositional: &[usize],
+        expanded_numeric: &[f64],
+    ) -> Result<f64, String> {
+        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
+        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
+
+        self.task.project_state_values_from_expanded_numeric_into(
+            propositional,
+            expanded_numeric,
+            &mut projected_prop,
+            &mut projected_num,
+        )?;
+
+        Ok(self.lookup_or_fallback(&projected_prop, &projected_num))
+    }
+
+    pub fn lookup_or_fallback_from_concrete_state(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+    ) -> Result<f64, String> {
+        if self.task.supports_direct_concrete_state_projection() {
+            let mut projected_prop = self.projection_prop_scratch.borrow_mut();
+            let mut projected_num = self.projection_numeric_scratch.borrow_mut();
+            let mut numeric_cache = self.direct_numeric_cache_scratch.borrow_mut();
+            self.task.project_concrete_state_values_into(
+                state,
+                registry,
+                &mut projected_prop,
+                &mut projected_num,
+                &mut numeric_cache,
+            )?;
+            return Ok(self.lookup_or_fallback(&projected_prop, &projected_num));
+        }
+
+        let mut propositional = Vec::new();
+        let mut numeric = Vec::new();
+        registry
+            .fill_state_and_numeric_vars_with_options(
+                state,
+                &mut propositional,
+                &mut numeric,
+                self.requires_derived_numeric_values(),
+            )
+            .map_err(|err| format!("{err:?}"))?;
+        self.lookup_projected_or_fallback_from_state_values(&propositional, &numeric)
+    }
+
+    fn lookup_state_id(&self, propositional: &[usize], numeric: &[f64]) -> Option<usize> {
+        let full_state_lookup = propositional.len() == self.task.variables().len()
+            && numeric.len() == self.task.numeric_variables().len();
+        let pattern_regular_ids = self.task.pattern_regular_projected_ids();
+        let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
+
+        if full_state_lookup {
+            let prop_hash = compute_prop_hash(propositional, &self.full_prop_hash_multipliers)?;
+            let candidates = self.full_prop_index.get(&prop_hash)?;
+            return candidates.iter().copied().find(|&state_id| {
+                let state = &self.states[state_id];
+                self.state_dependent_numeric_projected_ids
+                    .iter()
+                    .all(|&numeric_index| {
+                        state
+                            .numeric
+                            .get(numeric_index)
+                            .map(|value| value.to_bits())
+                            == numeric.get(numeric_index).map(|value| value.to_bits())
+                    })
+            });
+        }
+
+        let lookup_key = hash_state_components(propositional, numeric);
+        let candidates = self.pattern_index.get(&lookup_key)?;
+
+        candidates.iter().copied().find(|&state_id| {
+            let state = &self.states[state_id];
+            let same_propositional = if full_state_lookup {
+                state.propositional == propositional
+            } else {
+                pattern_regular_ids
+                    .iter()
+                    .enumerate()
+                    .all(|(pattern_index, &var_id)| {
+                        state.propositional.get(var_id).copied()
+                            == propositional.get(pattern_index).copied()
+                    })
+            };
+
+            same_propositional
+                && if full_state_lookup {
+                    state.numeric.len() == numeric.len()
+                        && state
+                            .numeric
+                            .iter()
+                            .zip(numeric.iter())
+                            .all(|(lhs, rhs)| lhs.to_bits() == rhs.to_bits())
+                } else {
+                    pattern_numeric_ids
+                        .iter()
+                        .enumerate()
+                        .all(|(pattern_index, &var_id)| {
+                            state.numeric.get(var_id).map(|value| value.to_bits())
+                                == numeric.get(pattern_index).map(|value| value.to_bits())
+                        })
+                }
+        })
+    }
+
+    pub(super) fn state_propositional_values<'state>(
+        &self,
+        state: &'state PdbState,
+    ) -> &'state [usize] {
+        &state.propositional
+    }
+
+    pub(super) fn state_numeric_values<'state>(&self, state: &'state PdbState) -> &'state [f64] {
+        &state.numeric
+    }
+
+    fn rebuild_lookup_indexes(&mut self) {
+        self.state_index.clear();
+        self.pattern_index.clear();
+        self.full_prop_index.clear();
+
+        let pattern_regular_ids = self.task.pattern_regular_projected_ids();
+        let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
+
+        for (state_id, state) in self.states.iter().enumerate() {
+            let full_key = hash_state_components(&state.propositional, &state.numeric);
+            self.state_index
+                .entry(full_key)
+                .or_insert_with(|| Vec::with_capacity(1))
+                .push(state_id);
+
+            if let Some(prop_hash) =
+                compute_prop_hash(&state.propositional, &self.full_prop_hash_multipliers)
+            {
+                self.full_prop_index
+                    .entry(prop_hash)
+                    .or_insert_with(|| Vec::with_capacity(1))
+                    .push(state_id);
+            }
+
+            let pattern_key = hash_pattern_components(
+                &state.propositional,
+                &state.numeric,
+                pattern_regular_ids,
+                pattern_numeric_ids,
+            );
+            self.pattern_index
+                .entry(pattern_key)
+                .or_insert_with(|| Vec::with_capacity(1))
+                .push(state_id);
+        }
     }
 
     fn build(&mut self, max_states: usize) -> Result<(), String> {
-        let mut predecessors: Vec<Vec<(usize, f64)>> = Vec::new();
-        let mut frontier_seed_costs: HashMap<usize, f64> = HashMap::new();
-        let packer = propositional_packer(&self.task);
-        let axiom_evaluator = AxiomEvaluator::new(&self.task, &packer);
+        let mut predecessors: Vec<Vec<(usize, f64)>> = Vec::with_capacity(max_states);
+        let mut frontier_seed_costs: HashMap<usize, f64> =
+            HashMap::with_capacity_and_hasher(max_states, FxBuildHasher);
         let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&self.task);
+        let state_packer =
+            planners_sas::numeric::utils::int_packer::IntDoublePacker::from_abstract_task(
+                &self.task,
+            );
+        let axiom_evaluator = AxiomEvaluator::new(&self.task, &state_packer);
+        let mut state_registry = StateRegistry::new(&self.task, &state_packer, &axiom_evaluator);
         let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
-        let (initial_propositional, initial_numeric) =
-            self.task.evaluated_initial_abstract_state_values()?;
-        let initial_state = PdbState {
-            propositional: initial_propositional,
-            numeric: initial_numeric,
-        };
-        self.state_to_id
-            .insert(make_abstract_state_key(&self.task, &initial_state), 0);
-        self.states.push(initial_state);
+        let initial_registry_state = state_registry.get_initial_state();
+        let mut current_propositional: Vec<usize> = Vec::new();
+        let mut successor_numeric: Vec<f64> = Vec::new();
+        let mut successor_cost_values: Vec<f64> = Vec::new();
+        let mut representative_states: Vec<ConcreteState> = vec![initial_registry_state];
         predecessors.push(Vec::new());
 
         let mut queue = VecDeque::from([0usize]);
         while let Some(state_id) = queue.pop_front() {
-            if self.states.len() >= max_states {
+            if representative_states.len().is_multiple_of(500) {
+                println!(
+                    "Expanding state {}/{} ({} reached goal states, {} truncated frontier states)",
+                    state_id + 1,
+                    representative_states.len(),
+                    self.reached_goal_states,
+                    self.frontier_states.len()
+                );
+            }
+            if representative_states.len() >= max_states {
                 self.truncated = true;
                 frontier_seed_costs
                     .entry(state_id)
@@ -169,43 +420,69 @@ impl<T: AbstractNumericTask> PatternDatabase<T> {
                 }
                 break;
             }
-            let state = self.states[state_id].clone();
-
             applicable_operators.clear();
+            let current_registry_state = representative_states[state_id].clone();
+            current_registry_state.fill_state(&state_registry, &mut current_propositional);
             successor_generator
-                .get_applicable_operators(&state.propositional, &mut applicable_operators);
+                .get_applicable_operators(&current_propositional, &mut applicable_operators);
 
             for (operator, operator_id) in applicable_operators.iter().copied() {
                 let operator_cost = self.task.abstract_operator_cost(operator_id);
-                let successor = apply_operator(&packer, &axiom_evaluator, &state, operator)?;
-                if successor == state {
+                let successor_state = state_registry
+                    .get_successor_state_with_buffers(
+                        &current_registry_state,
+                        operator,
+                        &mut successor_numeric,
+                        &mut successor_cost_values,
+                    )
+                    .map_err(|err| err.message)?;
+                if successor_state.get_id() == current_registry_state.get_id() {
                     continue;
                 }
 
-                let successor_key = make_abstract_state_key(&self.task, &successor);
-                let next_id =
-                    if let Some(existing_id) = self.state_to_id.get(&successor_key).copied() {
-                        existing_id
-                    } else {
-                        if self.states.len() >= max_states {
-                            self.truncated = true;
-                            frontier_seed_costs
-                                .entry(state_id)
-                                .and_modify(|cost| *cost = cost.min(operator_cost))
-                                .or_insert(operator_cost);
-                            continue;
-                        }
-                        let new_id = self.states.len();
-                        self.state_to_id.insert(successor_key, new_id);
-                        self.states.push(successor);
-                        predecessors.push(Vec::new());
-                        queue.push_back(new_id);
-                        new_id
-                    };
+                let next_id = successor_state.get_id();
+                if next_id >= representative_states.len() {
+                    if representative_states.len() >= max_states {
+                        self.truncated = true;
+                        frontier_seed_costs
+                            .entry(state_id)
+                            .and_modify(|cost| *cost = cost.min(operator_cost))
+                            .or_insert(operator_cost);
+                        continue;
+                    }
+
+                    if next_id != representative_states.len() {
+                        return Err(format!(
+                            "state registry produced non-contiguous abstract state id {next_id} while {} states are represented",
+                            representative_states.len()
+                        ));
+                    }
+
+                    representative_states.push(successor_state);
+                    predecessors.push(Vec::new());
+                    queue.push_back(next_id);
+                }
 
                 predecessors[next_id].push((state_id, operator_cost));
             }
         }
+
+        self.states = representative_states
+            .iter()
+            .map(|state| {
+                Ok(PdbState {
+                    propositional: state.get_state(&state_registry),
+                    numeric: state_registry
+                        .get_numeric_vars(state)
+                        .map_err(|err| format!("{err:?}"))?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        drop(state_registry);
+        drop(axiom_evaluator);
+        drop(state_packer);
+        drop(successor_generator);
+        self.rebuild_lookup_indexes();
 
         self.distances = vec![f64::INFINITY; self.states.len()];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
@@ -252,129 +529,4 @@ impl<T: AbstractNumericTask> PatternDatabase<T> {
 
         Ok(())
     }
-}
-
-fn make_abstract_state_key<T: AbstractNumericTask>(task: &T, state: &PdbState) -> AbstractStateKey {
-    AbstractStateKey {
-        propositional: task
-            .abstract_propositional_var_ids()
-            .iter()
-            .map(|&var_id| state.propositional[var_id])
-            .collect(),
-        numeric: task
-            .abstract_numeric_var_ids()
-            .iter()
-            .map(|&var_id| state.numeric[var_id].to_bits())
-            .collect(),
-    }
-}
-
-fn make_abstract_state_key_from_values(
-    task: &impl AbstractNumericTask,
-    propositional: &[usize],
-    numeric: &[f64],
-) -> Option<AbstractStateKey> {
-    let propositional_values = if propositional.len() == task.variables().len() {
-        task.abstract_propositional_var_ids()
-            .iter()
-            .map(|&var_id| propositional.get(var_id).copied())
-            .collect::<Option<Vec<_>>>()?
-    } else {
-        propositional.to_vec()
-    };
-
-    let numeric_values = if numeric.len() == task.numeric_variables().len() {
-        task.abstract_numeric_var_ids()
-            .iter()
-            .map(|&var_id| numeric.get(var_id).copied().map(f64::to_bits))
-            .collect::<Option<Vec<_>>>()?
-    } else {
-        numeric.iter().map(|value| value.to_bits()).collect()
-    };
-
-    Some(AbstractStateKey {
-        propositional: propositional_values,
-        numeric: numeric_values,
-    })
-}
-
-fn facts_hold(propositional: &[usize], facts: &[ExplicitFact]) -> bool {
-    facts
-        .iter()
-        .all(|fact| propositional.get(fact.var).copied() == Some(fact.value))
-}
-
-fn assignment_effect_holds(propositional: &[usize], effect: &AssignmentEffect) -> bool {
-    !effect.is_conditional() || facts_hold(propositional, effect.conditions())
-}
-
-fn apply_operator(
-    packer: &IntDoublePacker,
-    axiom_evaluator: &AxiomEvaluator<'_>,
-    state: &PdbState,
-    operator: &Operator,
-) -> Result<PdbState, String> {
-    let mut propositional = state.propositional.clone();
-    let mut numeric = state.numeric.clone();
-
-    for effect in operator.effects() {
-        if facts_hold(&state.propositional, effect.conditions())
-            && let Some(slot) = propositional.get_mut(effect.var_id())
-        {
-            *slot = effect.value();
-        }
-    }
-
-    for effect in operator.assignment_effects() {
-        if !assignment_effect_holds(&state.propositional, effect) {
-            continue;
-        }
-        let source = numeric
-            .get(effect.var_id())
-            .copied()
-            .ok_or_else(|| format!("assignment source out of bounds: {}", effect.var_id()))?;
-        let target = numeric
-            .get(effect.affected_var_id())
-            .copied()
-            .ok_or_else(|| {
-                format!(
-                    "assignment target out of bounds: {}",
-                    effect.affected_var_id()
-                )
-            })?;
-        let result = AssignmentOperation::apply(target, effect.operation(), source);
-        if let Some(slot) = numeric.get_mut(effect.affected_var_id()) {
-            *slot = result;
-        }
-    }
-
-    let mut buffer = vec![0u64; packer.num_bins()];
-    for (var_id, value) in propositional.iter().enumerate() {
-        packer.set(&mut buffer, var_id, *value as u64);
-    }
-
-    axiom_evaluator
-        .evaluate_arithmetic_axioms(&mut numeric)
-        .map_err(|err| format!("failed to evaluate arithmetic axioms: {err:?}"))?;
-    axiom_evaluator
-        .evaluate(&mut buffer, &mut numeric)
-        .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
-
-    for (var_id, slot) in propositional.iter_mut().enumerate() {
-        *slot = packer.get(&buffer, var_id) as usize;
-    }
-
-    Ok(PdbState {
-        propositional,
-        numeric,
-    })
-}
-
-fn propositional_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {
-    let ranges: Vec<u64> = task
-        .variables()
-        .iter()
-        .map(|variable| variable.domain_size() as u64)
-        .collect();
-    IntDoublePacker::new(&ranges)
 }

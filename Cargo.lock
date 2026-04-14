@@ -281,6 +281,7 @@ dependencies = [
  "planners-preprocess",
  "planners-sas",
  "rand",
+ "rustc-hash",
  "serde",
  "serde_json",
 ]
@@ -373,6 +374,12 @@ checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
 ]
+
+[[package]]
+name = "rustc-hash"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
 
 [[package]]
 name = "ryu"

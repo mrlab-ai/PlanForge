@@ -78,6 +78,10 @@ impl IntDoublePacker {
     }
 
     pub fn from_task(task: &NumericRootTask) -> Self {
+        Self::from_abstract_task(task)
+    }
+
+    pub fn from_abstract_task(task: &dyn AbstractNumericTask) -> Self {
         let mut domain_sizes = vec![];
         for var in task.variables().iter() {
             domain_sizes.push(var.domain_size() as u64);

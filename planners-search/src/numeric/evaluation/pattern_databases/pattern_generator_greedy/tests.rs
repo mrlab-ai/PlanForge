@@ -150,6 +150,64 @@ fn operator_comparison_predecessor_task() -> NumericRootTask {
         ExplicitFact::new(0, 0),
     )
 }
+fn numeric_goal_task() -> NumericRootTask {
+    NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![simple_var("cmp", Some(0))],
+        vec![
+            NumericVariable::new("threshold".to_string(), NumericType::Constant, None),
+            NumericVariable::new("x".to_string(), NumericType::Regular, None),
+        ],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![1.0, 0.0],
+        vec![],
+        vec![],
+        vec![ComparisonAxiom::new(
+            0,
+            1,
+            0,
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![],
+        ExplicitFact::new(0, 0),
+    )
+}
+
+#[test]
+fn greedy_pattern_config_defaults_match_fd_defaults() {
+    let config = GreedyPatternGeneratorConfig::default();
+    assert_eq!(config.max_pdb_states, 100_000);
+    assert!(config.numeric_first);
+    assert_eq!(config.random_seed, 0);
+    assert_eq!(
+        config.variable_order_type,
+        GreedyVariableOrderType::GoalCgLevel
+    );
+}
+
+#[test]
+fn greedy_pattern_uses_fd_goal_ordering() {
+    let task = numeric_goal_task();
+    let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
+    assert_eq!(pattern.numeric.first().copied(), Some(1));
+}
+
+#[test]
+fn greedy_pattern_respects_budget_like_fd() {
+    let task = numeric_goal_task();
+    let pattern = generate_greedy_pattern(
+        &task,
+        GreedyPatternGeneratorConfig {
+            max_pdb_states: 0,
+            ..GreedyPatternGeneratorConfig::default()
+        },
+    );
+    assert!(pattern.regular.is_empty());
+    assert!(pattern.numeric.is_empty());
+}
 
 #[test]
 fn greedy_pattern_prefers_goal_variables() {
@@ -168,45 +226,8 @@ fn greedy_pattern_config_defaults_match_expected_port_defaults() {
     assert_eq!(config.random_seed, 0);
     assert_eq!(
         config.variable_order_type,
-        GreedyVariableOrderType::CgGoalLevel
+        GreedyVariableOrderType::GoalCgLevel
     );
-}
-
-#[test]
-fn greedy_pattern_includes_true_goal_support_var() {
-    let task = NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![
-            simple_var("support", None),
-            ExplicitVariable::new(
-                2,
-                "goal".to_string(),
-                vec!["off".to_string(), "on".to_string()],
-                Some(1),
-                0,
-            ),
-        ],
-        vec![],
-        vec![ExplicitFact::new(1, 1)],
-        vec![],
-        vec![0, 0],
-        vec![],
-        vec![],
-        vec![PropositionalAxiom::new(
-            vec![ExplicitFact::new(0, 1)],
-            1,
-            0,
-            1,
-        )],
-        vec![],
-        vec![],
-        ExplicitFact::new(0, 0),
-    );
-
-    let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
-
-    assert!(pattern.regular.contains(&0));
 }
 
 #[test]

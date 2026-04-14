@@ -25,6 +25,11 @@ pub trait Heuristic: Evaluator {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError>;
 
+    /// Return true if dead ends detected by this heuristic are reliable.
+    fn dead_ends_are_reliable(&self) -> bool {
+        false
+    }
+
     /// Get the name of this heuristic (it allows custom names).
     fn heuristic_name(&self) -> String {
         // Default implementation uses the type name.
@@ -110,11 +115,11 @@ impl<H: Heuristic> Evaluator for H {
 
         // Check for dead ends.
         if h_value.is_infinite() && h_value.is_sign_positive() {
-            if self.dead_ends_are_reliable() {
+            if Heuristic::dead_ends_are_reliable(self) {
                 eval_state.result_mut().set_reliable_dead_end();
             }
             return Err(EvaluationError::DeadEnd {
-                reliable: self.dead_ends_are_reliable(),
+                reliable: Heuristic::dead_ends_are_reliable(self),
             });
         }
 
@@ -122,8 +127,7 @@ impl<H: Heuristic> Evaluator for H {
     }
 
     fn dead_ends_are_reliable(&self) -> bool {
-        // Most heuristics don't have reliable dead end detection.
-        false
+        Heuristic::dead_ends_are_reliable(self)
     }
 }
 

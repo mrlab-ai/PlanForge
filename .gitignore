@@ -18,7 +18,7 @@ output.sas.reference
 output
 output.sas
 
-numeric-fd
+# numeric-fd
 experiments/
 
 .devenv*

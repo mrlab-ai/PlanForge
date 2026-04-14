@@ -4,19 +4,22 @@ use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
 
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
-use planners_sas::numeric::state_registry::StateRegistry;
+use planners_sas::numeric::state_registry::{StateID, StateRegistry};
 
 use super::pattern_database::PatternDatabase;
 use super::pattern_generator_greedy::{GreedyPatternGeneratorConfig, generate_greedy_pattern};
 use super::projected_task::ProjectedTask;
 use super::utils;
 
+#[allow(unused)]
 pub struct GreedyNumericPdbHeuristic<'task> {
     name: String,
     task: &'task dyn AbstractNumericTask,
-    pdb: PatternDatabase<ProjectedTask<'task>>,
+    pdb: PatternDatabase<'task>,
     prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
+    expanded_numeric_scratch: RefCell<Vec<f64>>,
+    state_value_cache: RefCell<Vec<Option<f64>>>,
 }
 
 impl<'task> GreedyNumericPdbHeuristic<'task> {
@@ -35,7 +38,24 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
             task,
             prop_scratch: RefCell::new(Vec::new()),
             numeric_scratch: RefCell::new(Vec::new()),
+            expanded_numeric_scratch: RefCell::new(Vec::new()),
+            state_value_cache: RefCell::new(Vec::new()),
         })
+    }
+
+    fn cached_state_value(&self, state_id: StateID) -> Option<f64> {
+        self.state_value_cache
+            .borrow()
+            .get(state_id)
+            .and_then(|value| *value)
+    }
+
+    fn cache_state_value(&self, state_id: StateID, value: f64) {
+        let mut cache = self.state_value_cache.borrow_mut();
+        if cache.len() <= state_id {
+            cache.resize(state_id + 1, None);
+        }
+        cache[state_id] = Some(value);
     }
 
     fn require_task_and_registry<'s, 't>(
@@ -54,6 +74,7 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
         Ok((task, registry))
     }
 
+    #[allow(unused)]
     fn is_goal_state(&self, propositional_values: &[usize]) -> bool {
         (0..self.task.get_num_goals()).all(|goal_index| {
             let goal = self.task.get_goal_fact(goal_index);
@@ -67,31 +88,19 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
-        let (_task, registry) = Self::require_task_and_registry(eval_state)?;
-
-        let mut propositional_values = self.prop_scratch.borrow_mut();
-        eval_state
-            .state()
-            .fill_state(registry, &mut propositional_values);
-
-        let mut numeric_values = self.numeric_scratch.borrow_mut();
-        registry
-            .fill_numeric_vars(eval_state.state(), &mut numeric_values)
-            .map_err(|err| {
-                EvaluationError::ComputationFailed(format!("failed to read numeric state: {err:?}"))
-            })?;
-
-        let (projected_prop, projected_num) = self
-            .pdb
-            .abstract_state_values(&propositional_values, &numeric_values)
-            .map_err(EvaluationError::ComputationFailed)?;
-
-        if self.is_goal_state(&propositional_values) {
-            return Ok(0.0);
+        let state_id = eval_state.state().get_id();
+        if let Some(value) = self.cached_state_value(state_id) {
+            return Ok(value);
         }
 
-        let heuristic_value = self.pdb.lookup_or_fallback(&projected_prop, &projected_num);
-        Ok(heuristic_value.max(self.pdb.min_operator_cost()))
+        let (_task, registry) = Self::require_task_and_registry(eval_state)?;
+        let heuristic_value = self
+            .pdb
+            .lookup_or_fallback_from_concrete_state(eval_state.state(), registry)
+            .map_err(EvaluationError::ComputationFailed)?;
+        let heuristic_value = heuristic_value.max(self.pdb.min_operator_cost());
+        self.cache_state_value(state_id, heuristic_value);
+        Ok(heuristic_value)
     }
 
     fn heuristic_name(&self) -> String {

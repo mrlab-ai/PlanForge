@@ -169,3 +169,69 @@ fn causal_graph_bypasses_comparison_propositions_for_operator_preconditions() {
             .contains(&CausalGraphVariable::Numeric(2))
     );
 }
+
+#[test]
+fn causal_graph_flattens_helper_predecessors_to_regular_leaves() {
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![
+            simple_var("goal", None),
+            ExplicitVariable::new(
+                3,
+                "cmp".to_string(),
+                vec!["t".to_string(), "f".to_string(), "u".to_string()],
+                Some(0),
+                2,
+            ),
+        ],
+        vec![
+            NumericVariable::new("c5".to_string(), NumericType::Constant, None),
+            NumericVariable::new("x".to_string(), NumericType::Regular, None),
+            NumericVariable::new("y".to_string(), NumericType::Regular, None),
+            NumericVariable::new("z".to_string(), NumericType::Regular, None),
+            NumericVariable::new("a".to_string(), NumericType::Derived, Some(0)),
+            NumericVariable::new("b".to_string(), NumericType::Derived, Some(0)),
+        ],
+        vec![ExplicitFact::new(0, 0)],
+        vec![],
+        vec![0, 2],
+        vec![5.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        vec![Operator::new(
+            "achieve-goal".to_string(),
+            vec![ExplicitFact::new(1, 0)],
+            vec![planners_sas::numeric::numeric_task::Effect::new(
+                vec![],
+                0,
+                Some(1),
+                0,
+            )],
+            vec![],
+            1,
+        )],
+        vec![],
+        vec![ComparisonAxiom::new(
+            1,
+            5,
+            0,
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![
+            AssignmentAxiom::new(4, CalOperator::Sum, 1, 2),
+            AssignmentAxiom::new(5, CalOperator::Sum, 4, 3),
+        ],
+        ExplicitFact::new(0, 0),
+    );
+
+    let graph = MixedCausalGraph::new(&task);
+    let root_helper_id = task.numeric_variables().len() + 1;
+    let intermediate_helper_id = task.numeric_variables().len();
+    let predecessors = graph
+        .predecessors_of(CausalGraphVariable::Numeric(root_helper_id))
+        .collect::<Vec<_>>();
+
+    assert!(predecessors.contains(&CausalGraphVariable::Numeric(1)));
+    assert!(predecessors.contains(&CausalGraphVariable::Numeric(2)));
+    assert!(predecessors.contains(&CausalGraphVariable::Numeric(3)));
+    assert!(!predecessors.contains(&CausalGraphVariable::Numeric(intermediate_helper_id)));
+}

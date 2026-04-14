@@ -29,12 +29,15 @@ pub(crate) fn print_projection_summary(
 }
 
 #[allow(unused)]
-pub(crate) fn dump_distance_table<T: AbstractNumericTask>(pdb: &PatternDatabase<T>) {
+pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
     let goal_states: Vec<usize> = pdb
         .states
         .iter()
         .enumerate()
-        .filter_map(|(state_id, state)| pdb.is_goal_state(&state.propositional).then_some(state_id))
+        .filter_map(|(state_id, state)| {
+            pdb.is_goal_state(pdb.state_propositional_values(state))
+                .then_some(state_id)
+        })
         .collect();
     let dead_end_count = pdb
         .distances
@@ -58,7 +61,7 @@ pub(crate) fn dump_distance_table<T: AbstractNumericTask>(pdb: &PatternDatabase<
         fmt_distance(pdb.min_operator_cost)
     );
 
-    let pattern_regular_projected_ids = pdb.task.abstract_propositional_var_ids();
+    let pattern_regular_projected_ids = pdb.task.pattern_regular_projected_ids();
     let prop_headers: Vec<String> = pattern_regular_projected_ids
         .iter()
         .map(|&var_id| {
@@ -66,7 +69,7 @@ pub(crate) fn dump_distance_table<T: AbstractNumericTask>(pdb: &PatternDatabase<
             format!("p{var_id}({name})")
         })
         .collect();
-    let pattern_numeric_projected_ids = pdb.task.abstract_numeric_var_ids();
+    let pattern_numeric_projected_ids = pdb.task.pattern_numeric_projected_ids();
     let num_headers: Vec<String> = pattern_numeric_projected_ids
         .iter()
         .map(|&var_id| format!("n{var_id}({})", pdb.task.numeric_variables()[var_id].name()))
@@ -79,7 +82,11 @@ pub(crate) fn dump_distance_table<T: AbstractNumericTask>(pdb: &PatternDatabase<
             let value_width = pdb
                 .states
                 .iter()
-                .map(|state| state.propositional[var_id].to_string().len())
+                .map(|state| {
+                    pdb.state_propositional_values(state)[var_id]
+                        .to_string()
+                        .len()
+                })
                 .max()
                 .unwrap_or(1);
             header.len().max(value_width)
@@ -92,7 +99,7 @@ pub(crate) fn dump_distance_table<T: AbstractNumericTask>(pdb: &PatternDatabase<
             let value_width = pdb
                 .states
                 .iter()
-                .map(|state| fmt_numeric(state.numeric[var_id]).len())
+                .map(|state| fmt_numeric(pdb.state_numeric_values(state)[var_id]).len())
                 .max()
                 .unwrap_or(3);
             header.len().max(value_width)
@@ -116,8 +123,12 @@ pub(crate) fn dump_distance_table<T: AbstractNumericTask>(pdb: &PatternDatabase<
     println!("{separator}");
 
     for (state_id, state) in pdb.states.iter().enumerate() {
+        if state_id > 200 {
+            println!("... (truncated)");
+            break;
+        }
         let is_init = state_id == 0;
-        let is_goal = pdb.is_goal_state(&state.propositional);
+        let is_goal = pdb.is_goal_state(pdb.state_propositional_values(state));
         let is_dead_end = !pdb.distances[state_id].is_finite();
 
         let mut flags = String::new();
@@ -141,7 +152,7 @@ pub(crate) fn dump_distance_table<T: AbstractNumericTask>(pdb: &PatternDatabase<
         {
             line.push_str(&format!(
                 "{:>width$} | ",
-                state.propositional[projected_var_id],
+                pdb.state_propositional_values(state)[projected_var_id],
                 width = *width
             ));
         }
@@ -150,7 +161,7 @@ pub(crate) fn dump_distance_table<T: AbstractNumericTask>(pdb: &PatternDatabase<
         {
             line.push_str(&format!(
                 "{:>width$} | ",
-                fmt_numeric(state.numeric[projected_numeric_id]),
+                fmt_numeric(pdb.state_numeric_values(state)[projected_numeric_id]),
                 width = *width
             ));
         }

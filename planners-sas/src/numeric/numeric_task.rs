@@ -4,6 +4,10 @@ use crate::numeric::axioms::{
 use crate::numeric::numeric_parser::parse_numeric_sas_output;
 use crate::numeric::state_registry::{ConcreteState, StateRegistry};
 use crate::numeric::utils::int_packer::IntDoublePacker;
+use crate::numeric::utils::linear_effects::{
+    LinearNumericEffect, LinearizationError, build_assignment_axiom_lookup, linearize_numeric_var,
+    linearize_operator_assignment_effects,
+};
 use std::{
     cell::{Ref, RefCell, RefMut},
     fmt,
@@ -77,6 +81,7 @@ pub trait AbstractNumericTask {
 
     fn get_num_cmp_axioms(&self) -> usize;
 
+    //TODO: Helpers to get PDB development fast but we don't want the next 4 methods.
     fn abstract_state_values(
         &self,
         propositional_values: &[usize],
@@ -119,9 +124,63 @@ pub trait AbstractNumericTask {
         }
     }
 
-    fn abstract_propositional_var_ids(&self) -> &[usize];
+    fn assignment_axiom_lookup(&self) -> Vec<Option<usize>> {
+        build_assignment_axiom_lookup(self)
+    }
 
-    fn abstract_numeric_var_ids(&self) -> &[usize];
+    fn linearize_numeric_var(
+        &self,
+        numeric_var_id: usize,
+    ) -> Result<crate::numeric::utils::linear_effects::LinearExpression, LinearizationError> {
+        linearize_numeric_var(self, numeric_var_id)
+    }
+
+    fn linearized_assignment_effects(
+        &self,
+        operator_id: usize,
+    ) -> Result<Vec<LinearNumericEffect>, LinearizationError> {
+        linearize_operator_assignment_effects(self, operator_id)
+    }
+
+    fn regular_numeric_variable_ids(&self) -> Vec<usize> {
+        self.numeric_variables()
+            .iter()
+            .enumerate()
+            .filter_map(|(numeric_var_id, numeric_var)| {
+                (numeric_var.get_type() == &NumericType::Regular).then_some(numeric_var_id)
+            })
+            .collect()
+    }
+
+    fn is_linear_cost_operator(&self, operator_id: usize) -> bool {
+        linear_metric_operator_cost_expression(self, operator_id).is_some()
+    }
+
+    fn operator_cost_coefficients(&self, operator_id: usize) -> Vec<f64> {
+        let regular_numeric_variable_ids = self.regular_numeric_variable_ids();
+        linear_metric_operator_cost_expression(self, operator_id)
+            .map(|expression| {
+                regular_numeric_variable_ids
+                    .iter()
+                    .map(|&numeric_var_id| expression.coefficients[numeric_var_id])
+                    .collect()
+            })
+            .unwrap_or_else(|| {
+                todo!(
+                    "requested linear action-cost coefficients for non-linear-cost operator {operator_id}"
+                )
+            })
+    }
+
+    fn operator_cost_constant(&self, operator_id: usize) -> f64 {
+        linear_metric_operator_cost_expression(self, operator_id)
+            .map(|expression| expression.constant)
+            .unwrap_or_else(|| {
+                todo!(
+                    "requested linear action-cost constant for non-linear-cost operator {operator_id}"
+                )
+            })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -383,6 +442,69 @@ pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>
         old_metric - new_metric
     };
     delta.max(0.0)
+}
+
+fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
+    task: &T,
+    operator_id: usize,
+) -> Option<crate::numeric::utils::linear_effects::LinearExpression> {
+    if !task.metric().use_metric() {
+        return None;
+    }
+
+    let metric_var_id = task.metric().var_id().unwrap();
+    let metric_variable = task.numeric_variables().get(metric_var_id)?;
+    if metric_variable.get_type() != &NumericType::Cost {
+        return None;
+    }
+
+    let operator = task.get_operators().get(operator_id).unwrap_or_else(|| {
+        panic!("operator id {operator_id} is out of bounds for linear metric-cost extraction")
+    });
+    let metric_direction = if task.metric().is_min() { 1.0 } else { -1.0 };
+    let mut linear_cost_expression = None;
+
+    for assignment_effect in operator.assignment_effects() {
+        if assignment_effect.affected_var_id() != metric_var_id {
+            continue;
+        }
+        if assignment_effect.is_conditional() || !assignment_effect.conditions().is_empty() {
+            continue;
+        }
+
+        let source_expression = task
+            .linearize_numeric_var(assignment_effect.var_id)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to linearize metric-cost source variable {} for operator {operator_id}: {error}",
+                    assignment_effect.var_id()
+                )
+            });
+        let candidate = match assignment_effect.operation() {
+            AssignmentOperation::Plus => source_expression.scale(metric_direction),
+            AssignmentOperation::Minus => source_expression.scale(-metric_direction),
+            AssignmentOperation::Assign
+            | AssignmentOperation::Times
+            | AssignmentOperation::Divide => continue,
+        };
+
+        if candidate
+            .coefficients
+            .iter()
+            .all(|&coefficient| coefficient == 0.0)
+        {
+            continue;
+        }
+
+        if linear_cost_expression.is_some() {
+            todo!(
+                "multiple unconditional linear metric-cost effects for operator {operator_id} are not implemented yet"
+            );
+        }
+        linear_cost_expression = Some(candidate);
+    }
+
+    linear_cost_expression
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -780,14 +902,6 @@ impl AbstractNumericTask for NumericRootTask {
         evaluate_state_with_axiom_closure(self, &mut propositional, &mut numeric)?;
         Ok((propositional, numeric))
     }
-
-    fn abstract_propositional_var_ids(&self) -> &[usize] {
-        &self.abstract_propositional_var_ids
-    }
-
-    fn abstract_numeric_var_ids(&self) -> &[usize] {
-        &self.abstract_numeric_var_ids
-    }
 }
 
 fn evaluate_state_with_axiom_closure(
@@ -795,29 +909,87 @@ fn evaluate_state_with_axiom_closure(
     propositional: &mut [usize],
     numeric: &mut [f64],
 ) -> Result<(), String> {
+    let packer = abstract_propositional_packer(task);
+    let mut packed = vec![0u64; packer.num_bins() as usize];
+    for (var_id, value) in propositional.iter().enumerate() {
+        packer.set(&mut packed, var_id, *value as u64);
+    }
+    evaluate_state_with_axiom_closure_and_packed_dyn(
+        task,
+        &packer,
+        propositional,
+        numeric,
+        &mut packed,
+    )
+}
+
+fn abstract_propositional_packer<T: AbstractNumericTask + ?Sized>(task: &T) -> IntDoublePacker {
     let ranges: Vec<u64> = task
         .variables()
         .iter()
         .map(|variable| variable.domain_size() as u64)
         .collect();
-    let packer = IntDoublePacker::new(&ranges);
-    let axiom_evaluator = AxiomEvaluator::new(task, &packer);
-    let mut buffer = vec![0u64; packer.num_bins()];
+    IntDoublePacker::new(&ranges)
+}
 
-    for (var_id, value) in propositional.iter().enumerate() {
-        packer.set(&mut buffer, var_id, *value as u64);
-    }
+#[allow(unused)]
+fn evaluate_state_with_axiom_closure_and_packed_sized<T: AbstractNumericTask>(
+    task: &T,
+    packer: &IntDoublePacker,
+    propositional: &mut [usize],
+    numeric: &mut [f64],
+    packed: &mut [u64],
+) -> Result<(), String> {
+    let axiom_evaluator = AxiomEvaluator::new(task, packer);
+    finish_axiom_closure(packer, propositional, numeric, packed, &axiom_evaluator)
+}
 
+fn evaluate_state_with_axiom_closure_and_packed_dyn(
+    task: &dyn AbstractNumericTask,
+    packer: &IntDoublePacker,
+    propositional: &mut [usize],
+    numeric: &mut [f64],
+    packed: &mut [u64],
+) -> Result<(), String> {
+    let axiom_evaluator = AxiomEvaluator::new(task, packer);
+    finish_axiom_closure(packer, propositional, numeric, packed, &axiom_evaluator)
+}
+
+fn finish_axiom_closure(
+    packer: &IntDoublePacker,
+    propositional: &mut [usize],
+    numeric: &mut [f64],
+    packed: &mut [u64],
+    axiom_evaluator: &AxiomEvaluator<'_>,
+) -> Result<(), String> {
     axiom_evaluator
         .evaluate_arithmetic_axioms(numeric)
         .map_err(|err| format!("failed to evaluate arithmetic axioms: {err:?}"))?;
     axiom_evaluator
-        .evaluate(&mut buffer, numeric)
+        .evaluate(packed, numeric)
         .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
 
     for (var_id, slot) in propositional.iter_mut().enumerate() {
-        *slot = packer.get(&buffer, var_id) as usize;
+        *slot = packer.get(packed, var_id) as usize;
     }
 
     Ok(())
+}
+
+#[allow(unused)]
+fn facts_hold_values(propositional: &[usize], facts: &[ExplicitFact]) -> bool {
+    facts
+        .iter()
+        .all(|fact| propositional.get(fact.var).copied() == Some(fact.value))
+}
+
+#[allow(unused)]
+fn assignment_effect_holds_values(propositional: &[usize], effect: &AssignmentEffect) -> bool {
+    !effect.is_conditional() || facts_hold_values(propositional, effect.conditions())
+}
+
+#[allow(unused)]
+fn overwrite_vec<T: Copy>(dst: &mut Vec<T>, src: &[T]) {
+    dst.clear();
+    dst.extend_from_slice(src);
 }

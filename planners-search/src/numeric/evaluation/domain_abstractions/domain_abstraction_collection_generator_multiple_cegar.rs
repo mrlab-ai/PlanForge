@@ -589,14 +589,6 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
     fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
         self.base.abstract_operator_cost(operator_id)
     }
-
-    fn abstract_propositional_var_ids(&self) -> &[usize] {
-        self.base.abstract_propositional_var_ids()
-    }
-
-    fn abstract_numeric_var_ids(&self) -> &[usize] {
-        self.base.abstract_numeric_var_ids()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

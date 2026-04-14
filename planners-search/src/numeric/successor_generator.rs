@@ -28,8 +28,9 @@ impl<'a> GroundedSuccessorGenerator<'a> {
             for precondition in operator.preconditions().iter() {
                 condition.push(precondition);
             }
-            // Sort by (var, value) to group by variable and keep order stable
-            condition.sort_by_key(|f| (f.var, f.value));
+            // PARITY(numeric-fd): the reference successor generator sorts only by variable id
+            // before recursively partitioning operators.
+            condition.sort_unstable_by_key(|f| f.var);
             conditions.push(condition);
             next_condition_by_operator.push(0);
         }

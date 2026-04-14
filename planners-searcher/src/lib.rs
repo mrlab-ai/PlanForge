@@ -9,6 +9,8 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planners_search::numeric::evaluation::domain_abstractions::max_domain_abstraction_heuristic::MaxDomainAbstractionHeuristic;
+use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
+use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbHeuristic;
 use planners_search::numeric::evaluation::pattern_databases::pdb_heuristic::GreedyNumericPdbHeuristic;
 use planners_search::numeric::search_engine::{
     AStarSearch, SearchEngine, SearchResult, SearchStatus,
@@ -124,10 +126,30 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                             dyn planners_search::numeric::evaluation::Heuristic + '_,
                         >)
                 }
+                crate::recursive_config::HeuristicSpec::CanonicalNumericPdb(config) => Some(
+                    Box::new(
+                        CanonicalNumericPdbHeuristic::from_config(task_ref, *config).map_err(
+                            |e| {
+                                std::io::Error::other(format!(
+                                    "failed to build canonical numeric pdb heuristic: {e}"
+                                ))
+                            },
+                        )?,
+                    )
+                        as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>,
+                ),
                 crate::recursive_config::HeuristicSpec::GreedyNumericPdb(config) => Some(Box::new(
                     GreedyNumericPdbHeuristic::new(task_ref, *config).map_err(|e| {
                         std::io::Error::other(format!(
                             "failed to build greedy numeric pdb heuristic: {e}"
+                        ))
+                    })?,
+                )
+                    as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>),
+                crate::recursive_config::HeuristicSpec::Lmcutnumeric(config) => Some(Box::new(
+                    LandmarkCutNumericHeuristic::from_config(task_ref, *config).map_err(|e| {
+                        std::io::Error::other(format!(
+                            "failed to build lmcutnumeric heuristic: {e}"
                         ))
                     })?,
                 )

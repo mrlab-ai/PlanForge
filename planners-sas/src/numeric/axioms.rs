@@ -2,6 +2,7 @@
 mod tests;
 
 use std::cell::RefCell;
+use std::cmp::max;
 
 use crate::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 use crate::numeric::utils::errors::{AxiomEvalError, InvalidIndex, WrongAxiomLayer};
@@ -203,7 +204,7 @@ impl ComparisonAxiom {
         &self.operator
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct AxiomRule {
     condition_count: usize,
     effect_var: usize,
@@ -246,6 +247,117 @@ struct LiteralRef {
     value: usize,
 }
 
+#[derive(Debug, Clone)]
+#[allow(unused)]
+struct AxiomEvaluatorData {
+    axiom_literals: Vec<Vec<AxiomLiteral>>,
+    rules: Vec<AxiomRule>,
+    comparison_axiom_layer: Option<usize>,
+    first_propositional_axiom_layer: Option<usize>,
+    last_propositional_axiom_layer: Option<usize>,
+    last_arithmetic_axiom_layer: Option<usize>,
+    nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
+    initial_propositional_values: Vec<usize>,
+    has_numeric_axioms: bool,
+    has_propositional_axioms: bool,
+}
+
+#[allow(clippy::needless_range_loop)]
+fn build_compiled_axiom_evaluator_data(
+    numeric_task: &dyn AbstractNumericTask,
+) -> AxiomEvaluatorData {
+    let mut axiom_literals = vec![];
+    let mut nbf_info_by_layer = vec![];
+    let mut rules = vec![];
+    let mut comparison_axiom_layer = None;
+    let mut first_propositional_axiom_layer = None;
+    let mut last_propositional_axiom_layer = None;
+    let mut last_arithmetic_axiom_layer = None;
+
+    for numeric_var in numeric_task.numeric_variables().iter() {
+        last_arithmetic_axiom_layer = max(last_arithmetic_axiom_layer, numeric_var.axiom_layer());
+    }
+
+    for i in 0..numeric_task.get_num_variables() {
+        let axiom_layer = numeric_task.get_variable_axiom_layer(i).unwrap();
+        if axiom_layer.is_none() {
+            continue;
+        }
+        last_propositional_axiom_layer = max(last_propositional_axiom_layer, axiom_layer);
+        if first_propositional_axiom_layer.is_none()
+            || axiom_layer < first_propositional_axiom_layer
+        {
+            first_propositional_axiom_layer = axiom_layer;
+        }
+    }
+
+    if first_propositional_axiom_layer.is_some() && numeric_task.get_num_cmp_axioms() > 0 {
+        comparison_axiom_layer = first_propositional_axiom_layer;
+        first_propositional_axiom_layer = first_propositional_axiom_layer.map(|x| x + 1);
+        debug_assert_eq!(
+            comparison_axiom_layer.unwrap(),
+            last_arithmetic_axiom_layer.map(|x| x + 1).unwrap_or(0)
+        );
+    }
+
+    for var in numeric_task.variables().iter() {
+        axiom_literals.push(vec![AxiomLiteral::default(); var.domain_size()]);
+    }
+
+    for axiom in numeric_task.axioms().iter() {
+        let cond_count = axiom.conditions.len();
+        let eff_var = axiom.var_id;
+        let eff_val = axiom.effect_value;
+        rules.push(AxiomRule::new(cond_count, eff_var, eff_val));
+    }
+
+    for i in 0..numeric_task.axioms().len() {
+        let axiom: &PropositionalAxiom = &numeric_task.axioms()[i];
+        for condition in axiom.conditions().iter() {
+            axiom_literals[condition.var][condition.value]
+                .condition_of
+                .push(i);
+        }
+    }
+
+    let mut last_layer = None;
+    for i in 0..numeric_task.get_num_variables() {
+        last_layer = max(
+            last_layer,
+            numeric_task.get_variable_axiom_layer(i).unwrap(),
+        );
+    }
+    nbf_info_by_layer.resize(last_layer.map(|x| x + 1).unwrap_or(0), vec![]);
+
+    let initial_propositional_values = numeric_task
+        .get_initial_propositional_state_values()
+        .to_vec();
+    for var_id in 0..numeric_task.get_num_variables() {
+        let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
+        if let Some(idx) = axiom_layer
+            && axiom_layer != last_layer
+        {
+            let nbf_value = initial_propositional_values[var_id];
+            let nbf_info = NegationByFailureInfo::new(var_id, nbf_value);
+            nbf_info_by_layer[idx].push(nbf_info);
+        }
+    }
+
+    AxiomEvaluatorData {
+        axiom_literals,
+        rules,
+        comparison_axiom_layer,
+        first_propositional_axiom_layer,
+        last_propositional_axiom_layer,
+        last_arithmetic_axiom_layer,
+        nbf_info_by_layer,
+        initial_propositional_values,
+        has_numeric_axioms: !numeric_task.assignment_axioms().is_empty()
+            || !numeric_task.comparison_axioms().is_empty(),
+        has_propositional_axioms: !numeric_task.axioms().is_empty(),
+    }
+}
+
 #[allow(unused)]
 pub struct AxiomEvaluator<'a> {
     numeric_task: &'a dyn AbstractNumericTask,
@@ -266,101 +378,19 @@ impl<'a> AxiomEvaluator<'a> {
         numeric_task: &'a dyn AbstractNumericTask,
         state_packer: &'a IntDoublePacker,
     ) -> Self {
-        let mut axiom_literals = vec![];
-        let mut nbf_info_by_layer = vec![];
-
-        let mut rules = vec![];
-        let mut comparison_axiom_layer = None;
-        let mut first_propositional_axiom_layer = None;
-        let mut last_propositional_axiom_layer = None;
-        let mut last_arithmetic_axiom_layer = None;
-
-        for numeric_var in numeric_task.numeric_variables().iter() {
-            last_arithmetic_axiom_layer =
-                Option::max(last_arithmetic_axiom_layer, numeric_var.axiom_layer());
-        }
-
-        for i in 0..numeric_task.get_num_variables() {
-            let axiom_layer = numeric_task.get_variable_axiom_layer(i).unwrap();
-            if let Some(actual_layer) = axiom_layer {
-                last_propositional_axiom_layer =
-                    Option::max(last_propositional_axiom_layer, axiom_layer);
-                if first_propositional_axiom_layer.is_none()
-                    || actual_layer < first_propositional_axiom_layer.unwrap()
-                {
-                    first_propositional_axiom_layer = Some(actual_layer);
-                }
-            }
-        }
-
-        if first_propositional_axiom_layer.is_some() && numeric_task.get_num_cmp_axioms() > 0 {
-            comparison_axiom_layer = first_propositional_axiom_layer;
-            first_propositional_axiom_layer =
-                Some(first_propositional_axiom_layer.map_or(0, |x| x + 1));
-            debug_assert_eq!(
-                comparison_axiom_layer,
-                Some(last_arithmetic_axiom_layer.map_or(0, |x| x + 1))
-            );
-        }
-
-        for var in numeric_task.variables().iter() {
-            let literal = vec![AxiomLiteral::default(); var.domain_size()];
-            axiom_literals.push(literal);
-        }
-
-        for axiom in numeric_task.axioms().iter() {
-            let cond_count = axiom.conditions.len();
-            let eff_var = axiom.var_id;
-            let eff_val = axiom.effect_value;
-            rules.push(AxiomRule::new(cond_count, eff_var, eff_val));
-        }
-
-        for i in 0..numeric_task.axioms().len() {
-            let axiom: &PropositionalAxiom = &numeric_task.axioms()[i];
-            let conditions = axiom.conditions();
-            for condition in conditions.iter() {
-                axiom_literals[condition.var][condition.value]
-                    .condition_of
-                    .push(i);
-            }
-        }
-
-        let mut last_layer = None;
-        for i in 0..numeric_task.get_num_variables() {
-            last_layer = Option::max(
-                last_layer,
-                numeric_task.get_variable_axiom_layer(i).unwrap(),
-            );
-        }
-        if let Some(last) = last_layer {
-            nbf_info_by_layer.resize(last + 1, vec![]);
-        }
-
-        for var_id in 0..numeric_task.get_num_variables() {
-            let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
-            if let Some(layer) = axiom_layer
-                && axiom_layer != last_layer
-            {
-                let nbf_value = numeric_task.get_initial_propositional_state_values()[var_id];
-                let nbf_info = NegationByFailureInfo::new(var_id, nbf_value);
-                nbf_info_by_layer[layer].push(nbf_info);
-            }
-        }
-
-        // TODO: evaluate arithmetic axioms here instead of state_registry.
-
-        let rule_count = rules.len();
+        let compiled = build_compiled_axiom_evaluator_data(numeric_task);
+        let rule_count = compiled.rules.len();
 
         AxiomEvaluator {
             numeric_task,
             state_packer,
-            axiom_literals,
-            rules,
-            comparison_axiom_layer,
-            first_propositional_axiom_layer,
-            last_propositional_axiom_layer,
-            last_arithmetic_axiom_layer,
-            nbf_info_by_layer,
+            axiom_literals: compiled.axiom_literals,
+            rules: compiled.rules,
+            comparison_axiom_layer: compiled.comparison_axiom_layer,
+            first_propositional_axiom_layer: compiled.first_propositional_axiom_layer,
+            last_propositional_axiom_layer: compiled.last_propositional_axiom_layer,
+            last_arithmetic_axiom_layer: compiled.last_arithmetic_axiom_layer,
+            nbf_info_by_layer: compiled.nbf_info_by_layer,
             queue: RefCell::new(Vec::new()),
             unsatisfied_conditions: RefCell::new(vec![0; rule_count]),
         }

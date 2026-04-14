@@ -9,7 +9,7 @@ mod tests;
 use crate::numeric::{
     evaluation::g_evaluator::{GEvaluator, SumEvaluator},
     evaluation::heuristic::BlindHeuristic,
-    evaluation::{EvaluationResult, EvaluationState, Evaluator, Heuristic},
+    evaluation::{EvaluationError, EvaluationResult, EvaluationState, Evaluator, Heuristic},
     open_lists::{OpenList, SearchNode, TieBreakingOpenList},
     successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node},
 };
@@ -19,6 +19,7 @@ use planners_sas::numeric::numeric_task::{
 };
 use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistry};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::env;
 use std::time::{Duration, Instant};
 
 pub fn compute_effective_operator_costs<'a>(
@@ -32,25 +33,25 @@ pub fn compute_effective_operator_costs<'a>(
         .collect()
 }
 
-/// Search status indicating the outcome of the search
+/// Search status indicating the outcome of the search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchStatus {
     InProgress,
-    Solved(StateID), // Include the goal state ID
+    Solved(StateID), // Include the goal state ID.
     Failed,
     Timeout,
     MemoryLimitReached,
 }
 
-/// A plan is a sequence of operators
+/// A plan is a sequence of operators.
 pub type Plan = Vec<Operator>;
 
-/// Search result containing the outcome and optional plan
+/// Search result containing the outcome and optional plan.
 #[derive(Debug, Clone)]
 pub struct SearchResult {
     pub status: SearchStatus,
     pub plan: Option<Plan>,
-    /// Solution cost as used by the search engine (g-value of the goal state).
+    /// Solution cost as used by the search engine (`g`-value of the goal state).
     ///
     /// When a metric is defined, this corresponds to the accumulated metric
     /// deltas.
@@ -83,12 +84,13 @@ struct ProgressSnapshot {
     improved: bool,
 }
 
-/// Simple search node information for tracking parent relationships
+/// Simple search node information for tracking parent relationships.
 #[derive(Debug, Clone)]
 struct SearchNodeInfo {
     parent_state: Option<StateID>,
     parent_operator_id: Option<usize>,
     g_value: f64,
+    is_dead_end: bool,
 }
 
 pub trait SearchEngine {
@@ -102,29 +104,29 @@ pub struct AStarSearch<'a> {
     successor_generator: Box<dyn Node<'a> + 'a>,
     operator_costs: Vec<f64>,
 
-    // Search components
+    // Search components.
     open_list: TieBreakingOpenList,
     closed_set: HashSet<StateID>,
     search_nodes: HashMap<StateID, SearchNodeInfo>,
 
-    // Evaluators
+    // Evaluators.
     heuristic: Box<dyn Heuristic + 'a>,
     g_evaluator: GEvaluator,
     f_evaluator: SumEvaluator,
 
-    // Configuration
+    // Configuration.
     time_limit: Option<Duration>,
     max_memory_bytes: Option<u64>,
     initial_state: Option<ConcreteState>,
 
-    // Statistics
+    // Statistics.
     nodes_evaluated: usize,
     nodes_expanded: usize,
     nodes_reopened: usize,
     nodes_generated: usize,
     dead_ends: usize,
     counters_at_last_jump: SearchCounters,
-    last_reported_f_layer: Option<String>,
+    last_reported_f_layer: Option<i64>,
     best_reported_heuristic_value: Option<OrderedFloat<f64>>,
     state_values_buffer: Vec<usize>,
     applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
@@ -133,7 +135,7 @@ pub struct AStarSearch<'a> {
 }
 
 impl<'a> AStarSearch<'a> {
-    /// Creates a successor generator for the given task
+    /// Create a successor generator for the given task.
     fn create_successor_generator(task: &'a dyn AbstractNumericTask) -> Box<dyn Node<'a> + 'a> {
         let mut queue = VecDeque::new();
         for (op_id, operator) in task.get_operators().iter().enumerate() {
@@ -144,7 +146,7 @@ impl<'a> AStarSearch<'a> {
         generator.construct(&mut 0, &mut queue).unwrap()
     }
 
-    /// Creates a new A* search instance
+    /// Create a new A* search instance.
     pub fn new(
         task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
@@ -155,13 +157,13 @@ impl<'a> AStarSearch<'a> {
         let successor_generator = Self::create_successor_generator(task);
 
         // Build initial state early so numeric constants are initialized in the registry.
-        // (Required to derive a correct min_action_cost under metric.)
+        // Required to derive a correct min_action_cost under metric.
         let mut state_registry = state_registry;
         let initial_state = state_registry.get_initial_state();
         let operator_costs =
             compute_effective_operator_costs(task, &state_registry, &initial_state);
 
-        // Determine min_action_cost.
+        // Determine `min_action_cost`.
         let min_action_cost = operator_costs
             .iter()
             .copied()
@@ -173,16 +175,16 @@ impl<'a> AStarSearch<'a> {
             1.0
         };
 
-        // Use BlindHeuristic as default, configured with min_action_cost
+        // Use `BlindHeuristic` as default, configured with `min_action_cost`.
         let heuristic = heuristic.unwrap_or_else(|| {
             Box::new(BlindHeuristic::with_min_action_cost(min_action_cost, None))
         });
 
-        // Create evaluators for A*
+        // Create evaluators for A*.
         let g_evaluator = GEvaluator::new(None);
         let f_evaluator = SumEvaluator::f_evaluator(heuristic.name());
 
-        // Create open list with f-value primary, h-value secondary (tie-breaking)
+        // Create open list with `f`-value primary, `h`-value secondary (tie-breaking).
         let evaluator_names = vec![f_evaluator.name(), heuristic.name()];
         let open_list = TieBreakingOpenList::new(evaluator_names, true)
             .expect("A* tie-breaking open list must have at least one evaluator");
@@ -254,14 +256,20 @@ impl<'a> AStarSearch<'a> {
     }
 
     fn maybe_print_f_value(&mut self, f_value: f64, start_time: &Instant) {
-        let display_value = format_progress_value(f_value);
-        if self.last_reported_f_layer.as_ref() == Some(&display_value) {
+        let f_layer = f_value as i64;
+        if self.last_reported_f_layer == Some(f_layer) {
             return;
         }
+        match self.last_reported_f_layer {
+            Some(last_layer) if f_layer <= last_layer => {
+                return;
+            }
+            _ => {}
+        }
 
-        self.last_reported_f_layer = Some(display_value.clone());
+        self.last_reported_f_layer = Some(f_layer);
 
-        // Snapshot counters at the start of each new f-layer.
+        // Snapshot counters at the start of each new `f`-layer.
         // This mirrors Fast Downward's “until last jump” statistics.
         self.counters_at_last_jump = SearchCounters {
             expanded: self.nodes_expanded,
@@ -272,7 +280,7 @@ impl<'a> AStarSearch<'a> {
 
         println!(
             "f = {} [{} evaluated, {} expanded, t={:.6}s, {} KB]",
-            display_value,
+            f_layer,
             self.nodes_evaluated,
             self.nodes_expanded,
             start_time.elapsed().as_secs_f64(),
@@ -322,7 +330,7 @@ impl<'a> AStarSearch<'a> {
         );
     }
 
-    /// Checks if the given state satisfies all goal conditions
+    /// Check if the given state satisfies all goal conditions.
     fn is_goal_state(&self, state: &ConcreteState) -> bool {
         for i in 0..self.task.get_num_goals() {
             let goal_fact = self.task.get_goal_fact(i);
@@ -333,12 +341,12 @@ impl<'a> AStarSearch<'a> {
         true
     }
 
-    /// Checks if a state satisfies a specific fact
+    /// Check if a state satisfies a specific fact.
     fn state_satisfies_fact(&self, state: &ConcreteState, fact: &ExplicitFact) -> bool {
         fact.is_hold(state, &self.state_registry)
     }
 
-    /// Traces back the path from goal state to initial state
+    /// Trace back the path from goal state to initial state.
     fn extract_plan(&self, goal_state: StateID) -> Plan {
         let mut plan = Vec::new();
         let mut current_state = goal_state;
@@ -358,7 +366,7 @@ impl<'a> AStarSearch<'a> {
         plan
     }
 
-    /// Evaluates a state and creates evaluation result
+    /// Evaluate a state and creates evaluation result.
     fn evaluate_state(
         &self,
         state: &ConcreteState,
@@ -374,14 +382,24 @@ impl<'a> AStarSearch<'a> {
         let is_goal = self.is_goal_state(state);
         eval_state.set_is_goal(is_goal);
 
-        // Evaluate g-value
+        // Evaluate `g`-value.
         self.g_evaluator.evaluate_state(&mut eval_state)?;
 
-        // Evaluate heuristic (can use goal flag)
-        self.heuristic.evaluate_state(&mut eval_state)?;
-
-        // Evaluate f-value
-        self.f_evaluator.evaluate_state(&mut eval_state)?;
+        // Evaluate heuristic (can use goal flag).
+        match self.heuristic.evaluate_state(&mut eval_state) {
+            Ok(_) => {
+                // Evaluate `f`-value
+                self.f_evaluator.evaluate_state(&mut eval_state)?;
+            }
+            Err(EvaluationError::DeadEnd { .. }) => {
+                // Fast Downward still materializes dead-end evaluations so the
+                // caller can count and prune them consistently.
+                eval_state
+                    .result_mut()
+                    .set_heuristic_value(self.f_evaluator.name(), f64::INFINITY);
+            }
+            Err(err) => return Err(Box::new(err)),
+        }
 
         Ok(eval_state.into_result())
     }
@@ -395,7 +413,7 @@ impl<'a> AStarSearch<'a> {
         );
     }
 
-    /// Performs one step of A* search
+    /// Perform one step of A* search.
     fn step(&mut self, start_time: &Instant) -> SearchStatus {
         if self.open_list.is_empty() {
             return SearchStatus::Failed;
@@ -409,12 +427,12 @@ impl<'a> AStarSearch<'a> {
 
         let state_id = node.state.get_id();
 
-        // Check if already closed
+        // Check if already closed.
         if self.closed_set.contains(&state_id) {
             return SearchStatus::InProgress;
         }
 
-        // Check if this node is stale (better path found since it was added to open list)
+        // Check if this node is stale (better path found since it was added to open list).
         if let Some(current_info) = self.search_nodes.get(&state_id)
             && current_info.g_value < node.g_value()
         {
@@ -423,6 +441,17 @@ impl<'a> AStarSearch<'a> {
 
         self.maybe_print_f_layer(&node, start_time);
 
+        if env::var_os("TRACE_EXPANDED_STATES").is_some() {
+            println!(
+                "TRACE expanded sid={} g={:.17} h={:.17} f={:.17}",
+                state_id,
+                node.g_value(),
+                node.h_value(&self.heuristic.name()),
+                node.evaluation
+                    .get_heuristic_value(&self.f_evaluator.name())
+            );
+        }
+
         self.closed_set.insert(state_id);
         self.nodes_expanded += 1;
 
@@ -430,45 +459,68 @@ impl<'a> AStarSearch<'a> {
             return SearchStatus::Solved(state_id);
         }
 
-        // Get the current best g-value for this state
+        // Get the current best `g`-value for this state.
         let current_g = if let Some(info) = self.search_nodes.get(&state_id) {
             info.g_value
         } else {
-            0.0 // Initial state
+            0.0 // Initial state.
         };
 
         self.populate_applicable_operators(&node.state);
         let mut applicable_operators = std::mem::take(&mut self.applicable_operators_buffer);
+        let trace_initial_successors =
+            self.nodes_expanded == 1 && env::var_os("TRACE_INITIAL_SUCCESSORS").is_some();
+        let trace_improved_duplicates = env::var_os("TRACE_IMPROVED_DUPLICATES").is_some();
+        let trace_generated_states = env::var_os("TRACE_GENERATED_STATES").is_some();
+        let trace_evaluated_successors = env::var_os("TRACE_EVALUATED_SUCCESSORS").is_some();
 
         for (operator, operator_id) in applicable_operators.iter().copied() {
-            let succ_state = match self.state_registry.get_successor_state_with_buffers(
-                &node.state,
-                operator,
-                &mut self.successor_numeric_values_buffer,
-                &mut self.successor_cost_values_buffer,
-            ) {
-                Ok(succ_state) => succ_state,
+            let (succ_state, op_cost) = match self
+                .state_registry
+                .get_successor_state_with_buffers_and_cost(
+                    &node.state,
+                    operator,
+                    &mut self.successor_numeric_values_buffer,
+                    &mut self.successor_cost_values_buffer,
+                ) {
+                Ok(result) => result,
                 Err(_) => continue,
             };
             let succ_state_id = succ_state.get_id();
+            let op_cost = if self.task.metric().use_metric() {
+                op_cost
+            } else {
+                self.operator_costs
+                    .get(operator_id)
+                    .copied()
+                    .unwrap_or(operator.cost() as f64)
+            };
+            let new_g_value = current_g + op_cost;
 
             // Count every successfully constructed successor state.
             self.nodes_generated += 1;
+            if trace_generated_states {
+                println!(
+                    "TRACE generated parent_sid={} succ_sid={} op={} g={}",
+                    state_id,
+                    succ_state_id,
+                    operator.name(),
+                    format_progress_value(new_g_value)
+                );
+            }
             let was_closed = self.closed_set.contains(&succ_state_id);
 
-            let op_cost = self
-                .operator_costs
-                .get(operator_id)
-                .copied()
-                .unwrap_or(operator.cost() as f64);
-            let new_g_value = current_g + op_cost;
-
             // Check if we've seen this state before.
-            if let Some(existing_info) = self.search_nodes.get(&succ_state_id)
-                && existing_info.g_value <= new_g_value
-            {
-                // We already have a better or equal path.
-                continue;
+            let mut improved_duplicate = false;
+            if let Some(existing_info) = self.search_nodes.get(&succ_state_id) {
+                if existing_info.is_dead_end {
+                    continue;
+                }
+                if existing_info.g_value <= new_g_value {
+                    // We already have a better or equal path.
+                    continue;
+                }
+                improved_duplicate = true;
             }
 
             if was_closed {
@@ -476,19 +528,65 @@ impl<'a> AStarSearch<'a> {
                 self.nodes_reopened += 1;
             }
 
-            // Create new search node info
-            let node_info = SearchNodeInfo {
-                parent_state: Some(state_id),
-                parent_operator_id: Some(operator_id),
-                g_value: new_g_value,
-            };
-
-            // Record/update best g-value and parent pointers.
-            self.search_nodes.insert(succ_state_id, node_info);
-
-            // Evaluate and add to open list
+            // Evaluate and add to open list.
             if let Ok(evaluation) = self.evaluate_state(&succ_state, new_g_value) {
-                self.nodes_evaluated += 1;
+                if !improved_duplicate {
+                    self.nodes_evaluated += 1;
+                }
+
+                if trace_evaluated_successors {
+                    println!(
+                        "TRACE evaluated-successor parent_sid={} succ_sid={} op={} g={:.17} h={:.17} f={:.17} dead_end={}",
+                        state_id,
+                        succ_state_id,
+                        operator.name(),
+                        new_g_value,
+                        evaluation.get_heuristic_value(&self.heuristic.name()),
+                        evaluation.get_heuristic_value(&self.f_evaluator.name()),
+                        evaluation.is_dead_end,
+                    );
+                }
+
+                if improved_duplicate && trace_improved_duplicates {
+                    println!(
+                        "TRACE improved-duplicate sid={} op={} old_g={} new_g={} h={} dead_end={}",
+                        succ_state_id,
+                        operator.name(),
+                        self.search_nodes
+                            .get(&succ_state_id)
+                            .map(|info| format_progress_value(info.g_value))
+                            .unwrap_or_else(|| "<missing>".to_string()),
+                        format_progress_value(new_g_value),
+                        format_progress_value(
+                            evaluation.get_heuristic_value(&self.heuristic.name())
+                        ),
+                        evaluation.is_dead_end,
+                    );
+                }
+
+                let node_info = SearchNodeInfo {
+                    parent_state: Some(state_id),
+                    parent_operator_id: Some(operator_id),
+                    g_value: new_g_value,
+                    is_dead_end: evaluation.is_dead_end,
+                };
+
+                // Record/update best `g`-value, parent pointers, and dead-end status.
+                self.search_nodes.insert(succ_state_id, node_info);
+
+                if trace_initial_successors {
+                    let h_value = evaluation.get_heuristic_value(&self.heuristic.name());
+                    let f_value = evaluation.get_heuristic_value(&self.f_evaluator.name());
+                    println!(
+                        "TRACE initial-successor op={} g={} h={} f={} dead_end={} state_id={}",
+                        operator.name(),
+                        format_progress_value(new_g_value),
+                        format_progress_value(h_value),
+                        format_progress_value(f_value),
+                        evaluation.is_dead_end,
+                        succ_state_id
+                    );
+                }
                 if evaluation.is_dead_end {
                     self.dead_ends += 1;
                     if !self.open_list.accepts_dead_ends() {
@@ -547,16 +645,17 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             self.print_initial_h_values();
         }
 
-        // Initialize search node info for initial state
+        // Initialize search node info for initial state.
         let initial_info = SearchNodeInfo {
             parent_state: None,
             parent_operator_id: None,
             g_value: 0.0,
+            is_dead_end: false,
         };
         self.search_nodes
             .insert(initial_state.get_id(), initial_info);
 
-        // Main search loop
+        // Main search loop.
         loop {
             match self
                 .resource_limit_status(&start_time)
