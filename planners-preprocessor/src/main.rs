@@ -6,13 +6,13 @@ use planners_translator::translate_to_sas;
 fn main() -> std::io::Result<()> {
     let cli = PlannersPreprocessorCli::parse();
     if cli.inputs.len() == 1 {
-        run_preprocess(&[cli.inputs[0].to_string(), "output".to_string()]);
+        run_preprocess(&[cli.inputs[0].to_string(), "output.sas".to_string()]);
     } else if cli.inputs.len() == 2 {
         let domain = &cli.inputs[0];
         let problem = &cli.inputs[1];
         translate_to_sas(domain, problem).map_err(|err| std::io::Error::other(err.to_string()))?;
 
-        run_preprocess(&["preprocess".to_string(), "output".to_string()]);
+        run_preprocess(&["preprocess".to_string(), "output.sas".to_string()]);
     }
 
     let start_time = std::time::Instant::now();
