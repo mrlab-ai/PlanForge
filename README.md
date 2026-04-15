@@ -78,10 +78,10 @@ src/
 ### Command Line Interface
 ```bash
 # Parse and analyze a SAS+ file
-cargo run path/to/problem.sas
+cargo run --bin planners path/to/problem.sas
 
 # Run with debug information
-RUST_LOG=debug cargo run path/to/problem.sas
+RUST_LOG=debug cargo run --bin planners path/to/problem.sas
 
 # Run tests
 cargo test

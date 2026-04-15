@@ -177,12 +177,47 @@ pub(crate) struct HelperActionModel {
     pub(crate) cost_constant: f64,
 }
 
+#[allow(unused)]
 impl NumericTaskHelper {
     pub(crate) fn new(
         task: &dyn AbstractNumericTask,
         precision: f64,
         default_epsilon: f64,
         separate_constant_assignment: bool,
+    ) -> Self {
+        Self::new_with_options(
+            task,
+            precision,
+            default_epsilon,
+            separate_constant_assignment,
+            true,
+            true,
+        )
+    }
+
+    pub(crate) fn new_lmcut(
+        task: &dyn AbstractNumericTask,
+        precision: f64,
+        default_epsilon: f64,
+        separate_constant_assignment: bool,
+    ) -> Self {
+        Self::new_with_options(
+            task,
+            precision,
+            default_epsilon,
+            separate_constant_assignment,
+            false,
+            true,
+        )
+    }
+
+    fn new_with_options(
+        task: &dyn AbstractNumericTask,
+        precision: f64,
+        default_epsilon: f64,
+        separate_constant_assignment: bool,
+        build_mutex_and_dominance: bool,
+        build_bound_metadata: bool,
     ) -> Self {
         let mut helper = Self {
             fact_to_axiom_marker: vec![None; task.get_num_variables()],
@@ -202,15 +237,20 @@ impl NumericTaskHelper {
         helper.build_numeric_goals(task, precision);
         helper.build_actions(task, precision, separate_constant_assignment);
         helper.build_propositions(task);
-        helper.build_mutex_actions(task);
-        helper.calculates_bounds_numeric_variables(task, precision, 9_999_999.0);
-        helper.calculate_small_m(precision, 9_999_999.0);
+        if build_mutex_and_dominance {
+            helper.build_mutex_actions(task);
+        }
+        if build_bound_metadata {
+            helper.calculates_bounds_numeric_variables(task, precision, 9_999_999.0);
+            helper.calculate_small_m(precision, 9_999_999.0);
+        }
         helper.calculate_epsilons(task.get_operators().len(), precision, default_epsilon);
-        helper.calculate_dominance(precision);
+        if build_mutex_and_dominance {
+            helper.calculate_dominance(precision);
+        }
         helper
     }
 
-    #[allow(unused)]
     pub(crate) fn action_models(&self) -> &[HelperActionModel] {
         self.action_models.as_slice()
     }
@@ -351,14 +391,12 @@ impl NumericTaskHelper {
         Ok(effects)
     }
 
-    #[allow(unused)]
     pub(crate) fn get_achievers(&self, condition_id: usize) -> Option<&[usize]> {
         self.condition_achievers
             .get(condition_id)
             .map(Vec::as_slice)
     }
 
-    #[allow(unused)]
     pub(crate) fn get_small_m(&self, condition_id: usize) -> Option<f64> {
         self.condition_small_m.get(condition_id).copied()
     }
@@ -367,7 +405,6 @@ impl NumericTaskHelper {
         self.condition_epsilons.get(condition_id).copied()
     }
 
-    #[allow(unused)]
     pub(crate) fn get_dominance(&self, left_id: usize, right_id: usize) -> Option<bool> {
         self.dominance_conditions
             .get(left_id)
@@ -389,17 +426,14 @@ impl NumericTaskHelper {
             .copied()
     }
 
-    #[allow(unused)]
     pub(crate) fn proposition_fact(&self, proposition_id: usize) -> Option<&ExplicitFact> {
         self.proposition_facts.get(proposition_id)
     }
 
-    #[allow(unused)]
     pub(crate) fn proposition_var_id(&self, proposition_id: usize) -> Option<usize> {
         self.proposition_var_ids.get(proposition_id).copied()
     }
 
-    #[allow(unused)]
     pub(crate) fn get_add_actions(&self, proposition_id: usize) -> Option<&[usize]> {
         self.proposition_add_action_ids
             .get(proposition_id)
@@ -412,12 +446,10 @@ impl NumericTaskHelper {
             .map(String::as_str)
     }
 
-    #[allow(unused)]
     pub(crate) fn get_mutex_actions(&self, action_id: usize) -> Option<&[usize]> {
         self.mutex_action_ids.get(action_id).map(Vec::as_slice)
     }
 
-    #[allow(unused)]
     pub(crate) fn comparison_axiom_id_for_var(&self, variable_id: usize) -> Option<usize> {
         self.comparison_axiom_by_var.get(&variable_id).copied()
     }
@@ -432,8 +464,8 @@ impl NumericTaskHelper {
 
     pub(crate) fn is_numeric_axiom_var(&self, variable_id: usize) -> bool {
         self.fact_to_axiom_marker(variable_id)
-            .unwrap_or(None)
-            .is_some()
+            .map(|marker| marker.is_some())
+            .unwrap_or(false)
     }
 
     pub(crate) fn comparison_fact_conditions(
@@ -456,7 +488,6 @@ impl NumericTaskHelper {
             .map(Vec::as_slice)
     }
 
-    #[allow(unused)]
     pub(crate) fn goal_helper_propositional_facts(
         &self,
         variable_id: usize,
@@ -466,7 +497,6 @@ impl NumericTaskHelper {
             .map(Vec::as_slice)
     }
 
-    #[allow(unused)]
     pub(crate) fn goal_helper_numeric_conditions(
         &self,
         variable_id: usize,
@@ -502,7 +532,6 @@ impl NumericTaskHelper {
             .collect()
     }
 
-    #[allow(unused)]
     pub(crate) fn goal_materialized_conditions(
         &self,
         goal_id: usize,
@@ -550,7 +579,6 @@ impl NumericTaskHelper {
             .unwrap_or_default()
     }
 
-    #[allow(unused)]
     pub(crate) fn materialized_conditions_for_group_id(
         &self,
         group_id: usize,
@@ -562,7 +590,6 @@ impl NumericTaskHelper {
             .collect()
     }
 
-    #[allow(unused)]
     pub(crate) fn materialized_conditions_for_group_ids(
         &self,
         group_ids: &[usize],
@@ -593,7 +620,6 @@ impl NumericTaskHelper {
         self.normalized_condition(condition_id)
     }
 
-    #[allow(unused)]
     pub(crate) fn comparison_fact_materialized_conditions(
         &self,
         variable_id: usize,
@@ -615,7 +641,6 @@ impl NumericTaskHelper {
             .collect()
     }
 
-    #[allow(unused)]
     pub(crate) fn pairwise_combined_conditions(
         &self,
         conditions: &[LinearNumericCondition],
@@ -634,7 +659,6 @@ impl NumericTaskHelper {
         combined_conditions
     }
 
-    #[allow(unused)]
     pub(crate) fn preconditions_for_assignment_effect(
         &self,
         action_id: usize,
@@ -726,7 +750,7 @@ impl NumericTaskHelper {
         conditions: &[ExplicitFact],
         precision: f64,
     ) -> HelperPreconditionLists {
-        // PARITY(numeric-fd): Mirrors the split storage used by `build_action()` for conditional
+        // PARITY(numeric-fd): mirrors the split storage used by `build_action()` for conditional
         // effects/numeric effects/assignment effects/linear effects: propositional facts from the
         // local condition list, plus numeric local list with pairwise redundancy and raw cross-list
         // redundancy against the already-built base action numeric list.
@@ -945,10 +969,9 @@ impl NumericTaskHelper {
                     .iter()
                     .map(|effect| &effect.add_fact),
             ) {
-                let Some(proposition_id) = self.get_proposition(fact.var, fact.value) else {
-                    continue;
-                };
-                self.proposition_add_action_ids[proposition_id].push(action_id);
+                if let Some(proposition_id) = self.get_proposition(fact.var, fact.value) {
+                    self.proposition_add_action_ids[proposition_id].push(action_id);
+                }
             }
         }
     }
@@ -1414,7 +1437,7 @@ impl NumericTaskHelper {
     }
 
     fn build_numeric_goals(&mut self, task: &dyn AbstractNumericTask, precision: f64) {
-        self.goal_models = vec![HelperPreconditionLists::default(); task.get_num_goals().max(0)];
+        self.goal_models = vec![HelperPreconditionLists::default(); task.get_num_goals()];
         let mut axiom_table: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         let mut fact_table: BTreeMap<usize, Vec<ExplicitFact>> = BTreeMap::new();
 

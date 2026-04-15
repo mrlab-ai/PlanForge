@@ -699,6 +699,7 @@ fn fmt_delta_numeric_partitions(
     out
 }
 
+#[allow(unused)]
 pub(crate) fn debug_print_evaluate_state(
     prop_str: &str,
     num_str_vec: &[String],

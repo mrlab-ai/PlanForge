@@ -6,6 +6,8 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use ordered_float::NotNan;
+use rand::seq::SliceRandom;
+use rand::{SeedableRng, rngs::SmallRng};
 
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 
@@ -23,6 +25,15 @@ use super::utils;
 const COMPARISON_TRUE_VAL: usize = 0;
 const COMPARISON_FALSE_VAL: usize = 1;
 const COMPARISON_UNKNOWN_VAL: usize = 2;
+
+fn current_time_seed() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0x9e37_79b9_7f4a_7c15)
+}
 
 #[derive(Debug, Clone, Default)]
 struct MatchTreeNode {
@@ -360,6 +371,35 @@ impl DomainAbstractionFactory {
         combine_labels: bool,
         dump_distances: bool,
     ) -> Result<Option<WildcardPlanResult>> {
+        self.compute_plan(task, combine_labels, dump_distances, true)
+    }
+
+    pub fn compute_plan(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        dump_distances: bool,
+        use_wildcard_plans: bool,
+    ) -> Result<Option<WildcardPlanResult>> {
+        let mut local_rng =
+            (!use_wildcard_plans).then(|| SmallRng::seed_from_u64(current_time_seed()));
+        self.compute_plan_with_rng(
+            task,
+            combine_labels,
+            dump_distances,
+            use_wildcard_plans,
+            local_rng.as_mut(),
+        )
+    }
+
+    pub(crate) fn compute_plan_with_rng(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        dump_distances: bool,
+        use_wildcard_plans: bool,
+        singleton_step_rng: Option<&mut SmallRng>,
+    ) -> Result<Option<WildcardPlanResult>> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let operators = generator.build_abstract_operators(task)?;
         let table =
@@ -381,6 +421,8 @@ impl DomainAbstractionFactory {
             &table,
             &comparison_var_ids,
             &match_tree,
+            use_wildcard_plans,
+            singleton_step_rng,
         )
     }
 
@@ -754,6 +796,7 @@ impl DomainAbstractionFactory {
         Ok(states)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn compute_wildcard_plan_from_table(
         &self,
         task: &dyn AbstractNumericTask,
@@ -762,6 +805,8 @@ impl DomainAbstractionFactory {
         table: &AbstractDistanceTable,
         comparison_var_ids: &[usize],
         match_tree: &MatchTree,
+        use_wildcard_plans: bool,
+        mut singleton_step_rng: Option<&mut SmallRng>,
     ) -> Result<Option<WildcardPlanResult>> {
         let domain_sizes = generator.domain_sizes();
         let hash_multipliers = generator.hash_multipliers();
@@ -899,9 +944,26 @@ impl DomainAbstractionFactory {
                     step = cand_op.concrete_op_ids.clone();
                     step.sort_unstable();
                     step.dedup();
+                    if !use_wildcard_plans {
+                        let selected_op = match singleton_step_rng.as_deref_mut() {
+                            Some(rng) => step.choose(rng).copied(),
+                            None => step.first().copied(),
+                        }
+                        .with_context(|| {
+                            format!(
+                                "failed to choose a representative concrete operator for abstract state {current_hash}"
+                            )
+                        })?;
+                        step.clear();
+                        step.push(selected_op);
+                    }
                     break;
                 }
             }
+            ensure!(
+                !step.is_empty(),
+                "failed to extract a concrete plan step for abstract state {current_hash}"
+            );
             wildcard_plan.push(step);
 
             seen_states.push(current_hash);

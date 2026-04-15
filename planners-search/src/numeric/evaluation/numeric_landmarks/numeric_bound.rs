@@ -59,7 +59,7 @@ impl NumericBound {
             "numeric bound precision must be non-negative"
         );
         assert!(epsilon >= 0.0, "numeric bound epsilon must be non-negative");
-        self.numeric_helper = NumericTaskHelper::new(task, precision, epsilon, false);
+        self.numeric_helper = NumericTaskHelper::new_lmcut(task, precision, epsilon, false);
         self.numeric_variable_ids = task.regular_numeric_variable_ids();
         self.num_numeric_variables = self.numeric_variable_ids.len();
         self.num_actions = task.get_operators().len();

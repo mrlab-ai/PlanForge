@@ -83,7 +83,8 @@ fn canonical_collection_computes_max_additive_subset() {
     ]);
 
     let collection_information =
-        CanonicalPdbCollectionInformation::new(&task, patterns, 32).unwrap();
+        CanonicalPdbCollectionInformation::new(&task, patterns, 32, PdbHeuristicConfig::default())
+            .unwrap();
 
     assert_eq!(collection_information.max_additive_subsets(), &[vec![0, 1]]);
 }

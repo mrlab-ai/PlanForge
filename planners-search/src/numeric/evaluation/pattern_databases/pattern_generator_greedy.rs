@@ -7,6 +7,7 @@ use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use serde::{Deserialize, Serialize};
 
 use super::numeric_size_estimator::NumericSizeEstimator;
+use super::pattern_database::PdbHeuristicConfig;
 use super::numeric_support::NumericSupportContext;
 use super::projected_task::Pattern;
 use super::variable_order_finder::{GreedyVariableOrderType, VariableOrderFinder};
@@ -21,6 +22,9 @@ pub struct GreedyPatternGeneratorConfig {
     pub numeric_first: bool,
     pub random_seed: u64,
     pub variable_order_type: GreedyVariableOrderType,
+    pub exploration_heuristic: super::pattern_database::PdbInternalHeuristic,
+    pub frontier_heuristic: super::pattern_database::PdbInternalHeuristic,
+    pub failed_lookup_heuristic: super::pattern_database::PdbInternalHeuristic,
 }
 
 impl Default for GreedyPatternGeneratorConfig {
@@ -30,6 +34,9 @@ impl Default for GreedyPatternGeneratorConfig {
             numeric_first: DEFAULT_NUMERIC_FIRST,
             random_seed: DEFAULT_RANDOM_SEED,
             variable_order_type: GreedyVariableOrderType::default(),
+            exploration_heuristic: Default::default(),
+            frontier_heuristic: Default::default(),
+            failed_lookup_heuristic: Default::default(),
         }
     }
 }
@@ -38,9 +45,25 @@ impl fmt::Display for GreedyPatternGeneratorConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "max_pdb_states={}, numeric_first={}, random_seed={}, variable_order_type={}",
-            self.max_pdb_states, self.numeric_first, self.random_seed, self.variable_order_type
+            "max_pdb_states={}, numeric_first={}, random_seed={}, variable_order_type={}, exploration_heuristic={}, frontier_heuristic={}, failed_lookup_heuristic={}",
+            self.max_pdb_states,
+            self.numeric_first,
+            self.random_seed,
+            self.variable_order_type,
+            self.exploration_heuristic,
+            self.frontier_heuristic,
+            self.failed_lookup_heuristic,
         )
+    }
+}
+
+impl GreedyPatternGeneratorConfig {
+    pub fn pdb_heuristic_config(&self) -> PdbHeuristicConfig {
+        PdbHeuristicConfig {
+            exploration_heuristic: self.exploration_heuristic,
+            frontier_heuristic: self.frontier_heuristic,
+            failed_lookup_heuristic: self.failed_lookup_heuristic,
+        }
     }
 }
 

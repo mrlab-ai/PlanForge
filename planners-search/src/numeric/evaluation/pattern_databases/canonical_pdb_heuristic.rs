@@ -13,6 +13,7 @@ use crate::numeric::evaluation::heuristic::Heuristic;
 
 use super::max_additive_subsets::{compute_additive_vars, compute_max_additive_subsets};
 use super::pattern_collection::PatternCollection;
+use super::pattern_database::{PdbHeuristicConfig, PdbInternalHeuristic};
 use super::pattern_generator_systematic::{
     SystematicPatternGeneratorConfig, generate_systematic_patterns,
 };
@@ -25,6 +26,9 @@ pub struct CanonicalNumericPdbConfig {
     pub only_interesting_patterns: bool,
     pub random_seed: i32,
     pub variable_order_type: super::variable_order_finder::GreedyVariableOrderType,
+    pub exploration_heuristic: PdbInternalHeuristic,
+    pub frontier_heuristic: PdbInternalHeuristic,
+    pub failed_lookup_heuristic: PdbInternalHeuristic,
 }
 
 impl Default for CanonicalNumericPdbConfig {
@@ -36,6 +40,9 @@ impl Default for CanonicalNumericPdbConfig {
             only_interesting_patterns: config.only_interesting_patterns,
             random_seed: config.random_seed,
             variable_order_type: config.variable_order_type,
+            exploration_heuristic: Default::default(),
+            frontier_heuristic: Default::default(),
+            failed_lookup_heuristic: Default::default(),
         }
     }
 }
@@ -44,12 +51,15 @@ impl fmt::Display for CanonicalNumericPdbConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "max_pdb_states={}, max_pattern_size={}, only_interesting_patterns={}, random_seed={}, variable_order_type={}",
+            "max_pdb_states={}, max_pattern_size={}, only_interesting_patterns={}, random_seed={}, variable_order_type={}, exploration_heuristic={}, frontier_heuristic={}, failed_lookup_heuristic={}",
             self.max_pdb_states,
             self.max_pattern_size,
             self.only_interesting_patterns,
             self.random_seed,
             self.variable_order_type,
+            self.exploration_heuristic,
+            self.frontier_heuristic,
+            self.failed_lookup_heuristic,
         )
     }
 }
@@ -66,6 +76,16 @@ impl From<CanonicalNumericPdbConfig> for SystematicPatternGeneratorConfig {
     }
 }
 
+impl CanonicalNumericPdbConfig {
+    pub fn pdb_heuristic_config(&self) -> PdbHeuristicConfig {
+        PdbHeuristicConfig {
+            exploration_heuristic: self.exploration_heuristic,
+            frontier_heuristic: self.frontier_heuristic,
+            failed_lookup_heuristic: self.failed_lookup_heuristic,
+        }
+    }
+}
+
 pub struct CanonicalPdbCollectionInformation<'task> {
     pdb_collection: PdbCollection<'task>,
     max_additive_subsets: Vec<Vec<usize>>,
@@ -76,8 +96,10 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
         task: &'task dyn AbstractNumericTask,
         patterns: PatternCollection,
         max_pdb_states: usize,
+        heuristic_config: PdbHeuristicConfig,
     ) -> Result<Self, String> {
-        let pdb_collection = PdbCollection::new(task, patterns, max_pdb_states)?;
+        let pdb_collection =
+            PdbCollection::with_heuristic_config(task, patterns, max_pdb_states, heuristic_config)?;
         let are_additive = compute_additive_vars(task);
         let max_additive_subsets =
             compute_max_additive_subsets(pdb_collection.patterns(), &are_additive);
@@ -200,7 +222,12 @@ impl<'task> CanonicalNumericPdbHeuristic<'task> {
         let patterns = generate_systematic_patterns(task, generator_config);
         Ok(Self::new(
             task,
-            CanonicalPdbCollectionInformation::new(task, patterns, config.max_pdb_states)?,
+            CanonicalPdbCollectionInformation::new(
+                task,
+                patterns,
+                config.max_pdb_states,
+                config.pdb_heuristic_config(),
+            )?,
         ))
     }
 
