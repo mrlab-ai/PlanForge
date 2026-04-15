@@ -38,6 +38,8 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+type OpenListElements = (Reverse<NotNan<f64>>, Reverse<NotNan<f64>>, usize);
+
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about = "Numeric planner")]
 pub struct PlannersCli {
@@ -91,6 +93,7 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     std::process::exit(exit_code)
 }
 
+#[allow(clippy::field_reassign_with_default)]
 pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     register_event_handlers();
 
@@ -161,16 +164,12 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     config.exec_entire_plan = domain_config.exec_entire_plan;
 
                     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("failed to construct DomainAbstractionGenerator: {e:#}"),
-                        )
+                        std::io::Error::other(format!(
+                            "failed to construct DomainAbstractionGenerator: {e:#}"
+                        ))
                     })?;
                     let abstraction = generator.generate(task_ref).map_err(|e| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("failed to build domain abstraction: {e:#}"),
-                        )
+                        std::io::Error::other(format!("failed to build domain abstraction: {e:#}"))
                     })?;
                     Some(Box::new(DomainAbstractionHeuristic::new(None, abstraction))
                         as Box<
@@ -326,8 +325,10 @@ fn build_da_heuristic(
     name: Option<String>,
 ) -> std::io::Result<DomainAbstractionHeuristic> {
     println!("Building domain abstraction (CEGAR)...");
-    let mut config = CegarConfig::default();
-    config.debug = true;
+    let config = CegarConfig {
+        debug: true,
+        ..Default::default()
+    };
 
     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
         std::io::Error::other(format!(
@@ -398,8 +399,7 @@ fn blind_remaining_distance(
 
     let min_action_cost = blind_min_action_cost(operator_costs);
     let mut best_g: HashMap<usize, f64> = HashMap::new();
-    let mut open: BinaryHeap<(Reverse<NotNan<f64>>, Reverse<NotNan<f64>>, usize)> =
-        BinaryHeap::new();
+    let mut open: BinaryHeap<OpenListElements> = BinaryHeap::new();
     let successor_generator = build_successor_generator(task);
     let mut state_values_buffer: Vec<usize> = Vec::new();
     let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
@@ -494,6 +494,7 @@ fn blind_remaining_distance_cached(
     Ok(value)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn record_admissibility_check(
     prefix: &str,
     phase: &'static str,
@@ -813,8 +814,10 @@ fn run_da_debug(
         "Running da_debug(): build terminal domain abstraction, replay wildcard plan, and compare h(s) to exact remaining distance."
     );
 
-    let mut config = CegarConfig::default();
-    config.debug = true;
+    let config = CegarConfig {
+        debug: true,
+        ..Default::default()
+    };
 
     let cegar = Cegar::new(config.clone())
         .map_err(|e| std::io::Error::other(format!("failed to construct CEGAR: {e:#}")))?;
@@ -1087,10 +1090,10 @@ fn run_astar_da_debug(
         if closed_set.contains(&state_id) {
             continue;
         }
-        if let Some(current_info) = search_nodes.get(&state_id) {
-            if current_info.g_value < node.g_value() {
-                continue;
-            }
+        if let Some(current_info) = search_nodes.get(&state_id)
+            && current_info.g_value < node.g_value()
+        {
+            continue;
         }
 
         nodes_expanded += 1;
@@ -1158,10 +1161,10 @@ fn run_astar_da_debug(
             let op_cost = operator_cost(&operator_costs, operator_id, operator);
             let new_g_value = current_g + op_cost;
 
-            if let Some(existing_info) = search_nodes.get(&succ_state_id) {
-                if existing_info.g_value <= new_g_value {
-                    continue;
-                }
+            if let Some(existing_info) = search_nodes.get(&succ_state_id)
+                && existing_info.g_value <= new_g_value
+            {
+                continue;
             }
 
             if was_closed {
