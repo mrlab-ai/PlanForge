@@ -105,7 +105,7 @@ fn test_tiebreaking_peek() {
     open_list.insert(create_test_node(1, 30.0));
     open_list.insert(create_test_node(2, 10.0));
 
-    // Peek should return the best node without removing it
+    // Peek should return the best node without removing it.
     let peeked = open_list.peek().unwrap();
     assert_eq!(peeked.g_value(), 10.0);
     assert_eq!(open_list.len(), 2);
@@ -127,7 +127,7 @@ fn test_tiebreaking_complex_scenario() {
     open_list.insert(create_test_node(4, 15.0));
     open_list.insert(create_test_node(5, 10.0)); // tie with node 2
 
-    // Should pop in g-value order, with FIFO tie-breaking
+    // Should pop in g-value order, with FIFO tie-breaking.
     assert_eq!(open_list.pop().unwrap().state.get_id(), 2); // g=10.0, first
     assert_eq!(open_list.pop().unwrap().state.get_id(), 5); // g=10.0, second
     assert_eq!(open_list.pop().unwrap().state.get_id(), 4); // g=15.0

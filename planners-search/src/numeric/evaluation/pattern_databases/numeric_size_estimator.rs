@@ -1,11 +1,11 @@
+#[cfg(test)]
+mod tests;
+
 use std::collections::{HashMap, HashSet};
 
-use planners_sas::numeric::axioms::{
-    AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
-};
+use planners_sas::numeric::axioms::ComparisonAxiom;
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitVariable, Fact, Metric, NumericRootTask,
-    NumericType, NumericVariable, Operator,
+    AbstractNumericTask, AssignmentOperation, NumericType, Operator,
 };
 
 use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
@@ -66,20 +66,19 @@ impl NumericSizeEstimator {
         let conditions =
             collect_numeric_conditions(task, &base_initial_numeric_values, &auxiliary_numeric_vars);
         let helper_space_len = task.numeric_variables().len() + auxiliary_numeric_vars.len();
-        let mut approximate_domain_sizes = vec![1; helper_space_len];
-
-        for numeric_var_id in 0..helper_space_len {
-            approximate_domain_sizes[numeric_var_id] = estimate_numeric_domain_size(
-                task,
-                numeric_var_id,
-                &base_initial_numeric_values,
-                &auxiliary_numeric_vars,
-                &conditions,
-            );
-        }
 
         Self {
-            approximate_domain_sizes,
+            approximate_domain_sizes: (0..helper_space_len)
+                .map(|numeric_var_id| {
+                    estimate_numeric_domain_size(
+                        task,
+                        numeric_var_id,
+                        &base_initial_numeric_values,
+                        &auxiliary_numeric_vars,
+                        &conditions,
+                    )
+                })
+                .collect(),
         }
     }
 
@@ -105,47 +104,46 @@ fn collect_numeric_conditions(
     let mut numeric_condition_vars = HashSet::new();
 
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-        if let Ok(affected_var_id) = usize::try_from(comparison_axiom.get_affected_var_id()) {
-            comparison_axioms_by_var.insert(affected_var_id, comparison_axiom_id);
-            numeric_condition_vars.insert(affected_var_id);
-        }
+        let affected_var_id = comparison_axiom.get_affected_var_id();
+        comparison_axioms_by_var.insert(affected_var_id, comparison_axiom_id);
+        numeric_condition_vars.insert(affected_var_id);
     }
 
     let mut conditions = Vec::new();
     for operator in task.get_operators() {
         for fact in operator.preconditions() {
-            let fact_var_id = fact.var() as usize;
+            let fact_var_id = fact.var;
             if !numeric_condition_vars.contains(&fact_var_id) {
                 continue;
             }
-            if let Some(&comparison_axiom_id) = comparison_axioms_by_var.get(&fact_var_id) {
-                if let Some(condition) = build_numeric_condition(
+            if let Some(&comparison_axiom_id) = comparison_axioms_by_var.get(&fact_var_id)
+                && let Some(condition) = build_numeric_condition(
                     task,
                     comparison_axiom_id,
                     base_initial_numeric_values,
                     auxiliary_numeric_vars,
-                ) {
-                    conditions.push(condition);
-                }
+                )
+            {
+                conditions.push(condition);
             }
         }
     }
 
-    for goal_id in 0..usize::try_from(task.get_num_goals().max(0)).unwrap_or(0) {
-        let goal = task.get_goal_fact(goal_id as i32);
-        let goal_var_id = goal.var() as usize;
+    for goal_id in 0..task.get_num_goals() {
+        let goal = task.get_goal_fact(goal_id);
+        let goal_var_id = goal.var;
         if !numeric_condition_vars.contains(&goal_var_id) {
             continue;
         }
-        if let Some(&comparison_axiom_id) = comparison_axioms_by_var.get(&goal_var_id) {
-            if let Some(condition) = build_numeric_condition(
+        if let Some(&comparison_axiom_id) = comparison_axioms_by_var.get(&goal_var_id)
+            && let Some(condition) = build_numeric_condition(
                 task,
                 comparison_axiom_id,
                 base_initial_numeric_values,
                 auxiliary_numeric_vars,
-            ) {
-                conditions.push(condition);
-            }
+            )
+        {
+            conditions.push(condition);
         }
     }
 
@@ -197,8 +195,8 @@ fn build_helper_numeric_condition_from_axiom(
     base_initial_numeric_values: &[f64],
     auxiliary_numeric_vars: &[AuxiliaryNumericVar],
 ) -> Option<NumericCondition> {
-    let left_var_id = usize::try_from(comparison_axiom.get_left_var_id()).ok()?;
-    let right_var_id = usize::try_from(comparison_axiom.get_right_var_id()).ok()?;
+    let left_var_id = comparison_axiom.get_left_var_id();
+    let right_var_id = comparison_axiom.get_right_var_id();
 
     helper_condition_from_side_pair(
         task,
@@ -278,7 +276,7 @@ fn linearize_tree_node(
 ) -> Option<LinearizedExpr> {
     match &tree.nodes[node_id] {
         ComparisonTreeNode::Leaf { numeric_var_id } => {
-            let var_id = usize::try_from(*numeric_var_id).ok()?;
+            let var_id = *numeric_var_id;
             match task.numeric_variables().get(var_id)?.get_type() {
                 NumericType::Regular => Some(LinearizedExpr::variable(var_id)),
                 NumericType::Constant | NumericType::Cost => Some(LinearizedExpr::constant(
@@ -420,13 +418,13 @@ fn estimate_numeric_domain_size(
 
         if numeric_var_id < task.numeric_variables().len() {
             for assignment_effect in operator.assignment_effects() {
-                if assignment_effect.affected_var_id() as usize != numeric_var_id {
+                if assignment_effect.affected_var_id() != numeric_var_id {
                     continue;
                 }
                 if assignment_effect.operation() != &AssignmentOperation::Assign {
                     continue;
                 }
-                let source_var_id = assignment_effect.var_id() as usize;
+                let source_var_id = assignment_effect.var_id();
                 if source_var_id >= base_initial_numeric_values.len() {
                     continue;
                 }
@@ -499,13 +497,13 @@ fn approximate_additive_effects(
             return None;
         }
 
-        let source_var_id = effect.var_id() as usize;
+        let source_var_id = effect.var_id();
         if source_var_id >= task.numeric_variables().len() {
             return None;
         }
         let source_type = task.numeric_variables()[source_var_id].get_type();
         let source_value = base_initial_numeric_values[source_var_id];
-        let affected_var_id = effect.affected_var_id() as usize;
+        let affected_var_id = effect.affected_var_id();
         if affected_var_id >= task.numeric_variables().len() {
             return None;
         }
@@ -543,111 +541,4 @@ fn approximate_additive_effects(
     }
 
     Some(additive_effects)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![ExplicitVariable::new(
-                3,
-                "cmp".to_string(),
-                vec!["t".to_string(), "f".to_string(), "u".to_string()],
-                0,
-                2,
-            )],
-            vec![
-                NumericVariable::new("c1".to_string(), NumericType::Constant, -1),
-                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            ],
-            vec![Fact::new(0, 0)],
-            vec![],
-            vec![2],
-            vec![1.0, 0.0],
-            vec![Operator::new(
-                "inc".to_string(),
-                vec![],
-                vec![],
-                vec![planners_sas::numeric::numeric_task::AssignmentEffect::new(
-                    1,
-                    AssignmentOperation::Plus,
-                    0,
-                    false,
-                    vec![],
-                )],
-                1,
-            )],
-            vec![],
-            vec![ComparisonAxiom::new(
-                0,
-                1,
-                0,
-                ComparisonOperator::GreaterThanOrEqual,
-            )],
-            vec![],
-            (0, 0),
-        );
-
-        let estimator = NumericSizeEstimator::new(&task);
-
-        assert_eq!(estimator.estimate_domain_size(1), 3);
-    }
-
-    #[test]
-    fn estimates_helper_numeric_domain_size_from_derived_expression_effects() {
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![ExplicitVariable::new(
-                3,
-                "cmp".to_string(),
-                vec!["t".to_string(), "f".to_string(), "u".to_string()],
-                0,
-                2,
-            )],
-            vec![
-                NumericVariable::new("c1".to_string(), NumericType::Constant, -1),
-                NumericVariable::new("c5".to_string(), NumericType::Constant, -1),
-                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-                NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-                NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
-            ],
-            vec![Fact::new(0, 0)],
-            vec![],
-            vec![2],
-            vec![1.0, 5.0, 0.0, 1.0, 0.0],
-            vec![Operator::new(
-                "inc-x".to_string(),
-                vec![],
-                vec![],
-                vec![planners_sas::numeric::numeric_task::AssignmentEffect::new(
-                    2,
-                    AssignmentOperation::Plus,
-                    0,
-                    false,
-                    vec![],
-                )],
-                1,
-            )],
-            vec![],
-            vec![ComparisonAxiom::new(
-                0,
-                4,
-                1,
-                ComparisonOperator::GreaterThanOrEqual,
-            )],
-            vec![AssignmentAxiom::new(4, CalOperator::Sum, 2, 3)],
-            (0, 0),
-        );
-
-        let estimator = NumericSizeEstimator::new(&task);
-
-        assert_eq!(estimator.helper_space_len(), 6);
-        assert_eq!(estimator.estimate_domain_size(5), 7);
-    }
 }

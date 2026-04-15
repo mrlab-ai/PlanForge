@@ -1,22 +1,21 @@
 use std::cmp::max;
 
-use planners_sas::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use planners_sas::numeric::utils::errors::{AxiomEvalError, InvalidIndex, WrongAxiomLayer};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
 #[derive(Debug, Clone)]
 struct AxiomRule {
-    condition_count: i32,
-    effect_var: i32,
+    condition_count: usize,
+    effect_var: usize,
     effect_value: u64,
 }
 
 impl AxiomRule {
     fn new(cond_count: usize, eff_var: usize, eff_val: usize) -> Self {
         Self {
-            condition_count: cond_count as i32,
-            effect_var: eff_var as i32,
+            condition_count: cond_count,
+            effect_var: eff_var,
             effect_value: eff_val as u64,
         }
     }
@@ -29,12 +28,12 @@ struct AxiomLiteral {
 
 #[derive(Debug, Clone, Copy, Default)]
 struct NegationByFailureInfo {
-    var_id: u32,
+    var_id: usize,
     literal_value: usize,
 }
 
 impl NegationByFailureInfo {
-    fn new(var_id: u32, literal_value: usize) -> Self {
+    fn new(var_id: usize, literal_value: usize) -> Self {
         Self {
             var_id,
             literal_value,
@@ -49,15 +48,16 @@ struct LiteralRef {
 }
 
 #[derive(Debug, Clone)]
+#[allow(unused)]
 pub(crate) struct CompiledAxiomEvaluatorData {
     axiom_literals: Vec<Vec<AxiomLiteral>>,
     rules: Vec<AxiomRule>,
-    comparison_axiom_layer: i32,
-    first_propositional_axiom_layer: i32,
-    last_propositional_axiom_layer: i32,
-    last_arithmetic_axiom_layer: i32,
+    comparison_axiom_layer: Option<usize>,
+    first_propositional_axiom_layer: Option<usize>,
+    last_propositional_axiom_layer: Option<usize>,
+    last_arithmetic_axiom_layer: Option<usize>,
     nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
-    initial_propositional_values: Vec<i32>,
+    initial_propositional_values: Vec<usize>,
     has_numeric_axioms: bool,
     has_propositional_axioms: bool,
 }
@@ -71,7 +71,7 @@ impl CompiledAxiomEvaluatorData {
 #[derive(Debug, Default)]
 pub(crate) struct CompiledAxiomEvaluatorScratch {
     queue: Vec<LiteralRef>,
-    unsatisfied_conditions: Vec<i32>,
+    unsatisfied_conditions: Vec<usize>,
 }
 
 impl CompiledAxiomEvaluatorScratch {
@@ -104,7 +104,7 @@ impl<'a> CompiledAxiomEvaluator<'a> {
 
     pub(crate) fn evaluate_arithmetic_axioms(
         &self,
-        numeric_state: &mut Vec<f64>,
+        numeric_state: &mut [f64],
     ) -> Result<(), InvalidIndex> {
         for axiom in self.numeric_task.assignment_axioms() {
             axiom.update_values(numeric_state)?;
@@ -115,12 +115,12 @@ impl<'a> CompiledAxiomEvaluator<'a> {
     pub(crate) fn evaluate_comparison_axioms(
         &self,
         buffer: &mut [u64],
-        numeric_state: &mut Vec<f64>,
+        numeric_state: &mut [f64],
     ) -> Result<bool, AxiomEvalError> {
         for axiom in self.numeric_task.comparison_axioms() {
             let result = axiom.update_values(numeric_state).map_err(|e| {
                 AxiomEvalError::InvalidIndex(InvalidIndex {
-                    length: numeric_state.len() as u32,
+                    length: numeric_state.len(),
                     index: e.index,
                 })
             })?;
@@ -150,9 +150,9 @@ impl<'a> CompiledAxiomEvaluator<'a> {
 
         for i in 0..self.numeric_task.get_num_variables() {
             let axiom_layer = self.numeric_task.get_variable_axiom_layer(i).unwrap();
-            if axiom_layer == -1 {
+            if axiom_layer.is_none() {
                 scratch.queue.push(LiteralRef {
-                    var_id: i as usize,
+                    var_id: i,
                     value: self.state_packer.get(buffer, i) as usize,
                 });
             } else if axiom_layer <= self.data.last_arithmetic_axiom_layer {
@@ -162,11 +162,11 @@ impl<'a> CompiledAxiomEvaluator<'a> {
                 }));
             } else if axiom_layer == self.data.comparison_axiom_layer {
                 scratch.queue.push(LiteralRef {
-                    var_id: i as usize,
+                    var_id: i,
                     value: self.state_packer.get(buffer, i) as usize,
                 });
             } else if axiom_layer <= self.data.last_propositional_axiom_layer {
-                let default_value = self.data.initial_propositional_values[i as usize];
+                let default_value = self.data.initial_propositional_values[i];
                 self.state_packer.set(buffer, i, default_value as u64);
             } else {
                 return Err(AxiomEvalError::WrongAxiomLayer(WrongAxiomLayer {
@@ -184,7 +184,7 @@ impl<'a> CompiledAxiomEvaluator<'a> {
                 if self.state_packer.get(buffer, var_no) != val {
                     self.state_packer.set(buffer, var_no, val);
                     scratch.queue.push(LiteralRef {
-                        var_id: var_no as usize,
+                        var_id: var_no,
                         value: val as usize,
                     });
                 }
@@ -207,7 +207,7 @@ impl<'a> CompiledAxiomEvaluator<'a> {
                         if self.state_packer.get(buffer, var_no) != val {
                             self.state_packer.set(buffer, var_no, val);
                             scratch.queue.push(LiteralRef {
-                                var_id: var_no as usize,
+                                var_id: var_no,
                                 value: val as usize,
                             });
                         }
@@ -218,11 +218,11 @@ impl<'a> CompiledAxiomEvaluator<'a> {
             if layer_no != self.data.nbf_info_by_layer.len() - 1 {
                 let nbf_info = &self.data.nbf_info_by_layer[layer_no];
                 for info in nbf_info {
-                    let var_no = info.var_id as i32;
-                    let default_value = self.data.initial_propositional_values[var_no as usize];
+                    let var_no = info.var_id;
+                    let default_value = self.data.initial_propositional_values[var_no];
                     if self.state_packer.get(buffer, var_no) == default_value as u64 {
                         scratch.queue.push(LiteralRef {
-                            var_id: var_no as usize,
+                            var_id: var_no,
                             value: info.literal_value,
                         });
                     }
@@ -236,7 +236,7 @@ impl<'a> CompiledAxiomEvaluator<'a> {
     pub(crate) fn evaluate(
         &self,
         buffer: &mut [u64],
-        numeric_state: &mut Vec<f64>,
+        numeric_state: &mut [f64],
         scratch: &mut CompiledAxiomEvaluatorScratch,
     ) -> Result<(), AxiomEvalError> {
         if !self.has_axioms() {
@@ -264,16 +264,17 @@ impl<'a> CompiledAxiomEvaluator<'a> {
     }
 }
 
+#[allow(clippy::needless_range_loop)]
 fn build_compiled_axiom_evaluator_data(
     numeric_task: &dyn AbstractNumericTask,
 ) -> CompiledAxiomEvaluatorData {
     let mut axiom_literals = vec![];
     let mut nbf_info_by_layer = vec![];
     let mut rules = vec![];
-    let mut comparison_axiom_layer = -1;
-    let mut first_propositional_axiom_layer = -1;
-    let mut last_propositional_axiom_layer = -1;
-    let mut last_arithmetic_axiom_layer = -1;
+    let mut comparison_axiom_layer = None;
+    let mut first_propositional_axiom_layer = None;
+    let mut last_propositional_axiom_layer = None;
+    let mut last_arithmetic_axiom_layer = None;
 
     for numeric_var in numeric_task.numeric_variables().iter() {
         last_arithmetic_axiom_layer = max(last_arithmetic_axiom_layer, numeric_var.axiom_layer());
@@ -281,58 +282,67 @@ fn build_compiled_axiom_evaluator_data(
 
     for i in 0..numeric_task.get_num_variables() {
         let axiom_layer = numeric_task.get_variable_axiom_layer(i).unwrap();
-        if axiom_layer == -1 {
+        if axiom_layer.is_none() {
             continue;
         }
         last_propositional_axiom_layer = max(last_propositional_axiom_layer, axiom_layer);
-        if axiom_layer < first_propositional_axiom_layer || first_propositional_axiom_layer == -1 {
+        if first_propositional_axiom_layer.is_none()
+            || axiom_layer < first_propositional_axiom_layer
+        {
             first_propositional_axiom_layer = axiom_layer;
         }
     }
 
-    if first_propositional_axiom_layer >= 0 && numeric_task.get_num_cmp_axioms() > 0 {
+    if let Some(first) = first_propositional_axiom_layer
+        && numeric_task.get_num_cmp_axioms() > 0
+    {
         comparison_axiom_layer = first_propositional_axiom_layer;
-        first_propositional_axiom_layer += 1;
-        debug_assert_eq!(comparison_axiom_layer, last_arithmetic_axiom_layer + 1);
+        first_propositional_axiom_layer = Some(first + 1);
+        debug_assert_eq!(
+            comparison_axiom_layer,
+            Some(last_arithmetic_axiom_layer.map_or(0, |x| x + 1))
+        );
     }
 
     for var in numeric_task.variables().iter() {
-        axiom_literals.push(vec![AxiomLiteral::default(); var.domain_size() as usize]);
+        axiom_literals.push(vec![AxiomLiteral::default(); var.domain_size()]);
     }
 
     for axiom in numeric_task.axioms().iter() {
         let cond_count = axiom.conditions().len();
-        let eff_var = axiom.var_id() as usize;
-        let eff_val = axiom.effect_value() as usize;
+        let eff_var = axiom.var_id();
+        let eff_val = axiom.effect_value();
         rules.push(AxiomRule::new(cond_count, eff_var, eff_val));
     }
 
     for (index, axiom) in numeric_task.axioms().iter().enumerate() {
         for condition in axiom.conditions().iter() {
-            axiom_literals[condition.var() as usize][condition.value() as usize]
+            axiom_literals[condition.var][condition.value]
                 .condition_of
                 .push(index);
         }
     }
 
-    let mut last_layer = -1;
+    let mut last_layer = None;
     for i in 0..numeric_task.get_num_variables() {
         last_layer = max(
             last_layer,
             numeric_task.get_variable_axiom_layer(i).unwrap(),
         );
     }
-    nbf_info_by_layer.resize((last_layer + 1).max(0) as usize, vec![]);
+    nbf_info_by_layer.resize(last_layer.map_or(0, |x| x + 1), vec![]);
 
     let initial_propositional_values = numeric_task
         .get_initial_propositional_state_values()
         .to_vec();
     for var_id in 0..numeric_task.get_num_variables() {
         let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
-        if axiom_layer != -1 && axiom_layer != last_layer {
-            let nbf_value = initial_propositional_values[var_id as usize];
-            let nbf_info = NegationByFailureInfo::new(var_id as u32, nbf_value as usize);
-            nbf_info_by_layer[axiom_layer as usize].push(nbf_info);
+        if let Some(axiom) = axiom_layer
+            && axiom_layer != last_layer
+        {
+            let nbf_value = initial_propositional_values[var_id];
+            let nbf_info = NegationByFailureInfo::new(var_id, nbf_value);
+            nbf_info_by_layer[axiom].push(nbf_info);
         }
     }
 

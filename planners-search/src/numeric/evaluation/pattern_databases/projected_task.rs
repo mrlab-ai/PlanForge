@@ -1,14 +1,17 @@
+#[cfg(test)]
+mod tests;
+
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
 use planners_sas::numeric::axioms::{
-    AssignmentAxiom, AxiomEvaluator, CalOperator, ComparisonAxiom, PropositionalAxiom,
+    AssignmentAxiom, CalOperator, ComparisonAxiom, PropositionalAxiom,
 };
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, Effect, ExplicitVariable, Fact,
-    Metric, NumericRootTask, NumericType, NumericVariable, Operator,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, Effect, ExplicitFact,
+    ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable, Operator,
     metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
@@ -20,6 +23,8 @@ use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
 use crate::numeric::evaluation::pattern_databases::compiled_axiom_evaluator::{
     CompiledAxiomEvaluator, CompiledAxiomEvaluatorData, CompiledAxiomEvaluatorScratch,
 };
+
+pub type EvaluatedState = (Vec<usize>, Vec<f64>, Vec<u64>);
 
 #[derive(Debug, Clone)]
 pub(crate) enum ArithmeticExpr {
@@ -295,6 +300,7 @@ impl fmt::Display for ProjectedTaskBuildError {
 
 impl std::error::Error for ProjectedTaskBuildError {}
 
+#[allow(unused)]
 pub struct ProjectedTask<'task> {
     base: &'task dyn AbstractNumericTask,
     variables: Vec<ExplicitVariable>,
@@ -310,10 +316,10 @@ pub struct ProjectedTask<'task> {
     compiled_axiom_evaluator_data: CompiledAxiomEvaluatorData,
     compiled_axiom_evaluator_scratch: RefCell<CompiledAxiomEvaluatorScratch>,
     cached_operators: Vec<CachedOperator>,
-    operator_effect_facts: Vec<Vec<Fact>>,
-    goals: Vec<Fact>,
-    axiom_effect_facts: Vec<Fact>,
-    state: Rc<RefCell<Vec<i32>>>,
+    operator_effect_facts: Vec<Vec<ExplicitFact>>,
+    goals: Vec<ExplicitFact>,
+    axiom_effect_facts: Vec<ExplicitFact>,
+    state: Rc<RefCell<Vec<usize>>>,
     numeric_state: Rc<RefCell<Vec<f64>>>,
     projected_var_to_original: Vec<usize>,
     projected_num_var_to_original: Vec<Option<usize>>,
@@ -334,14 +340,14 @@ pub struct ProjectedTask<'task> {
 #[derive(Debug, Clone)]
 struct CachedFact {
     var_id: usize,
-    value: i32,
+    value: usize,
 }
 
 #[derive(Debug, Clone)]
 struct CachedPropEffect {
     conditions: Vec<CachedFact>,
     var_id: usize,
-    value: i32,
+    value: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -507,7 +513,7 @@ impl<'task> ProjectedTask<'task> {
         while changed {
             changed = false;
             for (axiom_id, axiom) in base.assignment_axioms().iter().enumerate() {
-                let affected = axiom.get_affected_var_id() as usize;
+                let affected = axiom.get_affected_var_id();
                 if affected >= num_numeric_vars || original_num_var_to_projected[affected].is_some()
                 {
                     continue;
@@ -553,15 +559,14 @@ impl<'task> ProjectedTask<'task> {
             })?;
             ensure_supported_comparison_tree(base, &tree)?;
 
-            let left = usize::try_from(comparison_axiom.get_left_var_id()).unwrap_or(usize::MAX);
-            let right = usize::try_from(comparison_axiom.get_right_var_id()).unwrap_or(usize::MAX);
+            let left = comparison_axiom.get_left_var_id();
+            let right = comparison_axiom.get_right_var_id();
             if left < num_numeric_vars
                 && right < num_numeric_vars
                 && original_num_var_to_projected[left].is_some()
                 && original_num_var_to_projected[right].is_some()
             {
-                let affected_var =
-                    usize::try_from(comparison_axiom.get_affected_var_id()).unwrap_or(usize::MAX);
+                let affected_var = comparison_axiom.get_affected_var_id();
                 if affected_var < num_vars {
                     push_unique_mapping(
                         affected_var,
@@ -576,14 +581,13 @@ impl<'task> ProjectedTask<'task> {
         while changed {
             changed = false;
             for axiom in base.axioms() {
-                let affected = axiom.var_id() as usize;
+                let affected = axiom.var_id();
                 if affected >= num_vars || original_var_to_projected[affected].is_some() {
                     continue;
                 }
                 if axiom.conditions().iter().any(|fact| {
-                    usize::try_from(fact.var())
-                        .ok()
-                        .and_then(|var_id| original_var_to_projected.get(var_id))
+                    original_var_to_projected
+                        .get(fact.var)
                         .and_then(|mapped| *mapped)
                         .is_some()
                 }) {
@@ -599,23 +603,23 @@ impl<'task> ProjectedTask<'task> {
 
         let mut variable_names: Vec<String> = Vec::with_capacity(projected_var_to_original.len());
         let mut fact_names: Vec<Vec<String>> = Vec::with_capacity(projected_var_to_original.len());
-        let mut variable_domain_sizes: Vec<u32> =
+        let mut variable_domain_sizes: Vec<usize> =
             Vec::with_capacity(projected_var_to_original.len());
-        let mut variable_default_values: Vec<u32> =
+        let mut variable_default_values: Vec<usize> =
             Vec::with_capacity(projected_var_to_original.len());
         for &original_var_id in &projected_var_to_original {
             let variable_name = base
-                .get_variable_name(original_var_id as i32)
+                .get_variable_name(original_var_id)
                 .unwrap_or("<projected-var>")
                 .to_string();
             let domain_size = base
-                .get_variable_domain_size(original_var_id as i32)
+                .get_variable_domain_size(original_var_id)
                 .unwrap_or(0)
-                .max(0) as usize;
+                .max(0);
 
             let var_fact_names = (0..domain_size)
                 .map(|value| {
-                    let original_fact = Fact::new(original_var_id as u32, value as i32);
+                    let original_fact = ExplicitFact::new(original_var_id, value);
                     let fact_name = base.get_fact_name(&original_fact);
                     if fact_name.is_empty() {
                         format!("{variable_name}={value}")
@@ -625,18 +629,18 @@ impl<'task> ProjectedTask<'task> {
                 })
                 .collect();
 
-            variable_domain_sizes.push(domain_size as u32);
+            variable_domain_sizes.push(domain_size);
             variable_default_values.push(
-                base.get_variable_default_axiom_value(original_var_id as i32)
+                base.get_variable_default_axiom_value(original_var_id)
                     .unwrap_or(0)
-                    .max(0) as u32,
+                    .max(0),
             );
             variable_names.push(variable_name);
             fact_names.push(var_fact_names);
         }
 
         let initial_prop_values = base.get_initial_propositional_state_values();
-        let projected_prop_values: Vec<i32> = projected_var_to_original
+        let projected_prop_values: Vec<usize> = projected_var_to_original
             .iter()
             .map(|&original| initial_prop_values[original])
             .collect();
@@ -651,7 +655,7 @@ impl<'task> ProjectedTask<'task> {
                 numeric_variables.push(NumericVariable::new(
                     format!("projected-const-{projected_index}"),
                     NumericType::Constant,
-                    -1,
+                    None,
                 ));
                 projected_numeric_values
                     .push(projected_aux_initial_values[projected_index].unwrap_or(0.0));
@@ -664,7 +668,7 @@ impl<'task> ProjectedTask<'task> {
                 numeric_variables.push(NumericVariable::new(
                     base.numeric_variables()[source_original].name().to_string(),
                     NumericType::Regular,
-                    -1,
+                    None,
                 ));
                 projected_numeric_values
                     .push(projected_aux_initial_values[projected_index].unwrap_or(0.0));
@@ -674,9 +678,9 @@ impl<'task> ProjectedTask<'task> {
             }
         }
 
-        let goals: Vec<Fact> = (0..usize::try_from(base.get_num_goals().max(0)).unwrap_or(0))
+        let goals: Vec<ExplicitFact> = (0..base.get_num_goals())
             .filter_map(|goal_index| {
-                let goal = base.get_goal_fact(goal_index as i32);
+                let goal = base.get_goal_fact(goal_index);
                 project_fact(goal, &original_var_to_projected)
             })
             .collect();
@@ -761,29 +765,27 @@ impl<'task> ProjectedTask<'task> {
             )
             .collect();
 
-        let operator_effect_facts: Vec<Vec<Fact>> = operators
+        let operator_effect_facts: Vec<Vec<ExplicitFact>> = operators
             .iter()
             .map(|operator| {
                 operator
                     .effects()
                     .iter()
-                    .map(|effect| Fact::new(effect.var_id(), effect.value() as i32))
+                    .map(|effect| ExplicitFact::new(effect.var_id(), effect.value()))
                     .collect()
             })
             .collect();
-        let axiom_effect_facts: Vec<Fact> = axioms
+        let axiom_effect_facts: Vec<ExplicitFact> = axioms
             .iter()
-            .map(|axiom| Fact::new(axiom.var_id(), axiom.effect_value() as i32))
+            .map(|axiom| ExplicitFact::new(axiom.var_id(), axiom.effect_value()))
             .collect();
 
-        let metric_var_id = if base.metric().var_id() < 0 {
-            -1
+        let metric_var_id = if base.metric().var_id().is_none() {
+            None
         } else {
             original_num_var_to_projected
-                .get(base.metric().var_id() as usize)
+                .get(base.metric().var_id().unwrap())
                 .and_then(|mapped| *mapped)
-                .map(|mapped| mapped as i32)
-                .unwrap_or(-1)
         };
 
         let compilation_task = NumericRootTask::new(
@@ -799,7 +801,7 @@ impl<'task> ProjectedTask<'task> {
             axioms.clone(),
             comparison_axioms.clone(),
             assignment_axioms.clone(),
-            (0, 0),
+            ExplicitFact::new(0, 0),
         );
         let compiled_axiom_evaluator_data = CompiledAxiomEvaluatorData::new(&compilation_task);
         let compiled_axiom_evaluator_scratch = RefCell::new(CompiledAxiomEvaluatorScratch::new(
@@ -807,13 +809,9 @@ impl<'task> ProjectedTask<'task> {
         ));
 
         let propositional_packer = projected_propositional_packer_from_variables(&variables);
-        let mut initial_packed_propositional = vec![0u64; propositional_packer.num_bins() as usize];
+        let mut initial_packed_propositional = vec![0u64; propositional_packer.num_bins()];
         for (var_id, value) in projected_prop_values.iter().enumerate() {
-            propositional_packer.set(
-                &mut initial_packed_propositional,
-                var_id as i32,
-                *value as u64,
-            );
+            propositional_packer.set(&mut initial_packed_propositional, var_id, *value as u64);
         }
         let cached_operators = build_cached_operators(&operators);
 
@@ -824,7 +822,7 @@ impl<'task> ProjectedTask<'task> {
             assignment_axioms,
             comparison_axioms,
             axioms,
-            metric: Metric::new(base.metric().is_min(), metric_var_id),
+            metric: Metric::new(base.metric().is_min(), base.metric().var_id()),
             operators,
             operator_costs,
             propositional_packer,
@@ -868,15 +866,15 @@ impl<'task> ProjectedTask<'task> {
             self.axioms.clone(),
             self.comparison_axioms.clone(),
             self.assignment_axioms.clone(),
-            (0, 0),
+            ExplicitFact { var: 0, value: 0 },
         )
     }
 
     pub fn project_state_values(
         &self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
-    ) -> Result<(Vec<i32>, Vec<f64>), String> {
+    ) -> Result<(Vec<usize>, Vec<f64>), String> {
         let mut projected_prop_values = Vec::with_capacity(self.projected_var_to_original.len());
         let mut projected_numeric_values =
             Vec::with_capacity(self.projected_num_var_to_original.len());
@@ -919,9 +917,9 @@ impl<'task> ProjectedTask<'task> {
 
     pub fn project_state_values_from_expanded_numeric_into(
         &self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         expanded_numeric_values: &[f64],
-        projected_prop_values: &mut Vec<i32>,
+        projected_prop_values: &mut Vec<usize>,
         projected_numeric_values: &mut Vec<f64>,
     ) -> Result<(), String> {
         if propositional_values.len() < self.base.variables().len() {
@@ -990,9 +988,9 @@ impl<'task> ProjectedTask<'task> {
 
     pub fn project_state_values_into(
         &self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
-        projected_prop_values: &mut Vec<i32>,
+        projected_prop_values: &mut Vec<usize>,
         projected_numeric_values: &mut Vec<f64>,
         helper_values: &mut Vec<f64>,
     ) -> Result<(), String> {
@@ -1022,7 +1020,7 @@ impl<'task> ProjectedTask<'task> {
 
     pub fn evaluated_initial_state_values(
         &self,
-    ) -> Result<(Vec<i32>, Vec<f64>), ProjectedTaskBuildError> {
+    ) -> Result<(Vec<usize>, Vec<f64>), ProjectedTaskBuildError> {
         let mut propositional = self.state.borrow().clone();
         let mut numeric = self.numeric_state.borrow().clone();
         self.evaluate_axiom_closure(&mut propositional, &mut numeric)?;
@@ -1031,7 +1029,7 @@ impl<'task> ProjectedTask<'task> {
 
     pub fn pack_propositional_values(
         &self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
     ) -> Result<Vec<u64>, String> {
         if propositional_values.len() != self.variables.len() {
             return Err(format!(
@@ -1040,10 +1038,10 @@ impl<'task> ProjectedTask<'task> {
                 propositional_values.len()
             ));
         }
-        let mut packed = vec![0u64; self.propositional_packer.num_bins() as usize];
+        let mut packed = vec![0u64; self.propositional_packer.num_bins()];
         for (var_id, value) in propositional_values.iter().enumerate() {
             self.propositional_packer
-                .set(&mut packed, var_id as i32, *value as u64);
+                .set(&mut packed, var_id, *value as u64);
         }
         Ok(packed)
     }
@@ -1052,9 +1050,7 @@ impl<'task> ProjectedTask<'task> {
         &self.propositional_packer
     }
 
-    pub fn evaluated_initial_state(
-        &self,
-    ) -> Result<(Vec<i32>, Vec<f64>, Vec<u64>), ProjectedTaskBuildError> {
+    pub fn evaluated_initial_state(&self) -> Result<EvaluatedState, ProjectedTaskBuildError> {
         let mut propositional = self.state.borrow().clone();
         let mut numeric = self.numeric_state.borrow().clone();
         let mut packed = self.initial_packed_propositional.clone();
@@ -1062,13 +1058,14 @@ impl<'task> ProjectedTask<'task> {
         Ok((propositional, numeric, packed))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_operator_to_state_in_place(
         &self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
         packed_propositional: &[u64],
         operator_id: usize,
-        successor_propositional: &mut Vec<i32>,
+        successor_propositional: &mut Vec<usize>,
         successor_numeric: &mut Vec<f64>,
         successor_packed: &mut Vec<u64>,
     ) -> Result<(), String> {
@@ -1086,11 +1083,8 @@ impl<'task> ProjectedTask<'task> {
                 if let Some(slot) = successor_propositional.get_mut(effect.var_id) {
                     *slot = effect.value;
                 }
-                self.propositional_packer.set(
-                    successor_packed,
-                    effect.var_id as i32,
-                    effect.value as u64,
-                );
+                self.propositional_packer
+                    .set(successor_packed, effect.var_id, effect.value as u64);
             }
         }
 
@@ -1125,10 +1119,10 @@ impl<'task> ProjectedTask<'task> {
         Ok(())
     }
 
-    pub fn is_goal_state_values(&self, propositional_values: &[i32]) -> bool {
-        self.goals.iter().all(|goal| {
-            propositional_values.get(goal.var() as usize).copied() == Some(goal.value())
-        })
+    pub fn is_goal_state_values(&self, propositional_values: &[usize]) -> bool {
+        self.goals
+            .iter()
+            .all(|goal| propositional_values.get(goal.var).copied() == Some(goal.value))
     }
 
     pub fn min_operator_cost(&self) -> f64 {
@@ -1166,7 +1160,9 @@ impl<'task> ProjectedTask<'task> {
                 }
 
                 self.projected_num_var_to_original[projected_index]
-                    .and_then(|original_numeric_var| self.base.numeric_variables().get(original_numeric_var))
+                    .and_then(|original_numeric_var| {
+                        self.base.numeric_variables().get(original_numeric_var)
+                    })
                     .is_some_and(|numeric_var| numeric_var.get_type() != &NumericType::Constant)
             })
             .collect()
@@ -1193,14 +1189,12 @@ impl<'task> ProjectedTask<'task> {
         &self,
         state: &ConcreteState,
         registry: &StateRegistry<'_>,
-        projected_prop_values: &mut Vec<i32>,
+        projected_prop_values: &mut Vec<usize>,
         projected_numeric_values: &mut Vec<f64>,
         numeric_value_cache: &mut Vec<Option<f64>>,
     ) -> Result<(), String> {
         if !self.supports_direct_concrete_state_projection() {
-            return Err(
-                "direct projected-task lookup requires derived numeric values".to_string(),
-            );
+            return Err("direct projected-task lookup requires derived numeric values".to_string());
         }
 
         numeric_value_cache.clear();
@@ -1247,7 +1241,9 @@ impl<'task> ProjectedTask<'task> {
         }
 
         let Some(original_numeric_var) = self.projected_num_var_to_original[projected_index] else {
-            return Err("missing original numeric variable for projected numeric variable".to_string());
+            return Err(
+                "missing original numeric variable for projected numeric variable".to_string(),
+            );
         };
 
         if self.is_auxiliary_num_var[projected_index] {
@@ -1354,14 +1350,14 @@ impl<'task> ProjectedTask<'task> {
 
     fn evaluate_axiom_closure(
         &self,
-        propositional: &mut Vec<i32>,
-        numeric: &mut Vec<f64>,
+        propositional: &mut [usize],
+        numeric: &mut [f64],
     ) -> Result<(), ProjectedTaskBuildError> {
         let mut buffer = self.initial_packed_propositional.clone();
 
         for (var_id, value) in propositional.iter().enumerate() {
             self.propositional_packer
-                .set(&mut buffer, var_id as i32, *value as u64);
+                .set(&mut buffer, var_id, *value as u64);
         }
 
         self.evaluate_axiom_closure_with_buffer(propositional, numeric, &mut buffer)
@@ -1369,9 +1365,9 @@ impl<'task> ProjectedTask<'task> {
 
     fn evaluate_axiom_closure_with_buffer(
         &self,
-        propositional: &mut Vec<i32>,
-        numeric: &mut Vec<f64>,
-        buffer: &mut Vec<u64>,
+        propositional: &mut [usize],
+        numeric: &mut [f64],
+        buffer: &mut [u64],
     ) -> Result<(), ProjectedTaskBuildError> {
         let axiom_evaluator = CompiledAxiomEvaluator::new(
             self,
@@ -1396,13 +1392,14 @@ impl<'task> ProjectedTask<'task> {
             )?;
 
         for (var_id, slot) in propositional.iter_mut().enumerate() {
-            *slot = self.propositional_packer.get(buffer, var_id as i32) as i32;
+            *slot = self.propositional_packer.get(buffer, var_id) as usize;
         }
 
         Ok(())
     }
 }
 
+#[allow(unused)]
 fn projected_propositional_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {
     projected_propositional_packer_from_variables(task.variables())
 }
@@ -1442,54 +1439,48 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         &self.metric
     }
 
-    fn get_num_variables(&self) -> i32 {
-        self.variables.len() as i32
+    fn get_num_variables(&self) -> usize {
+        self.variables.len()
     }
 
-    fn get_variable_name(&self, index: i32) -> Result<&str, &str> {
-        let index = usize::try_from(index).map_err(|_| "Index out of bounds")?;
+    fn get_variable_name(&self, index: usize) -> Result<&str, &str> {
         self.variable_names
             .get(index)
             .map(|name| name.as_str())
             .ok_or("Index out of bounds")
     }
 
-    fn get_variable_domain_size(&self, index: i32) -> Result<i32, &str> {
-        let index = usize::try_from(index).map_err(|_| "Index out of bounds")?;
+    fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str> {
         self.variables
             .get(index)
-            .map(|var| var.domain_size() as i32)
+            .map(|var| var.domain_size())
             .ok_or("Index out of bounds")
     }
 
-    fn get_variable_axiom_layer(&self, index: i32) -> Result<i32, &str> {
-        let index = usize::try_from(index).map_err(|_| "Index out of bounds")?;
+    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str> {
         self.variables
             .get(index)
             .map(ExplicitVariable::axiom_layer)
             .ok_or("Index out of bounds")
     }
 
-    fn get_variable_default_axiom_value(&self, index: i32) -> Result<i32, &str> {
+    fn get_variable_default_axiom_value(&self, index: usize) -> Result<usize, &str> {
         let original_index = self
             .projected_var_to_original
-            .get(usize::try_from(index).map_err(|_| "Index out of bounds")?)
+            .get(index)
             .copied()
             .ok_or("Index out of bounds")?;
-        self.base
-            .get_variable_default_axiom_value(original_index as i32)
+        self.base.get_variable_default_axiom_value(original_index)
     }
 
-    fn get_fact_name(&self, fact: &Fact) -> &str {
-        let Some(var_fact_names) = self.fact_names.get(fact.var() as usize) else {
+    fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
+        let Some(var_fact_names) = self.fact_names.get(fact.var) else {
             return "";
         };
-        var_fact_names
-            .get(fact.value() as usize)
-            .map_or("", String::as_str)
+        var_fact_names.get(fact.value).map_or("", String::as_str)
     }
 
-    fn are_facts_mutex(&self, fact1: &Fact, fact2: &Fact) -> bool {
+    fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
         let Some(original_fact1) = restore_fact(fact1, &self.projected_var_to_original) else {
             return false;
         };
@@ -1503,136 +1494,120 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         &self.operators
     }
 
-    fn get_operator_cost(&self, index: i32, is_axiom: bool) -> i32 {
+    fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {
         if is_axiom {
             0
         } else {
-            usize::try_from(index)
-                .ok()
-                .and_then(|index| self.operators.get(index))
-                .map(|operator| operator.cost() as i32)
+            self.operators
+                .get(index)
+                .map(|operator| operator.cost())
                 .unwrap_or(0)
         }
     }
 
-    fn get_operator_name(&self, index: i32, is_axiom: bool) -> &str {
+    fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str {
         if is_axiom {
             "<axiom>"
         } else {
-            usize::try_from(index)
-                .ok()
-                .and_then(|index| self.operators.get(index))
-                .map_or("", Operator::name)
+            self.operators.get(index).map_or("", Operator::name)
         }
     }
 
-    fn get_num_operators(&self) -> i32 {
-        self.operators.len() as i32
+    fn get_num_operators(&self) -> usize {
+        self.operators.len()
     }
 
-    fn get_num_operator_preconditions(&self, index: i32, is_axiom: bool) -> i32 {
+    fn get_num_operator_preconditions(&self, index: usize, is_axiom: bool) -> usize {
         if is_axiom {
-            usize::try_from(index)
-                .ok()
-                .and_then(|index| self.axioms.get(index))
-                .map(|axiom| axiom.conditions().len() as i32)
+            self.axioms
+                .get(index)
+                .map(|axiom| axiom.conditions().len())
                 .unwrap_or(0)
         } else {
-            usize::try_from(index)
-                .ok()
-                .and_then(|index| self.operators.get(index))
-                .map(|operator| operator.preconditions().len() as i32)
+            self.operators
+                .get(index)
+                .map(|operator| operator.preconditions().len())
                 .unwrap_or(0)
         }
     }
 
-    fn get_operator_precondition(&self, index: i32, precond_index: i32, is_axiom: bool) -> &Fact {
-        let precond_index =
-            usize::try_from(precond_index).expect("precondition index must be >= 0");
+    fn get_operator_precondition(
+        &self,
+        index: usize,
+        precond_index: usize,
+        is_axiom: bool,
+    ) -> &ExplicitFact {
         if is_axiom {
-            &self.axioms[usize::try_from(index).expect("axiom index must be >= 0")].conditions()
-                [precond_index]
+            &self.axioms[index].conditions()[precond_index]
         } else {
-            &self.operators[usize::try_from(index).expect("operator index must be >= 0")]
-                .preconditions()[precond_index]
+            &self.operators[index].preconditions()[precond_index]
         }
     }
 
-    fn get_num_operator_effects(&self, index: i32, is_axiom: bool) -> i32 {
+    fn get_num_operator_effects(&self, index: usize, is_axiom: bool) -> usize {
         if is_axiom {
-            usize::try_from(index)
-                .ok()
-                .and_then(|index| self.axioms.get(index))
-                .map(|_| 1)
-                .unwrap_or(0)
+            self.axioms.get(index).map(|_| 1).unwrap_or(0)
         } else {
-            usize::try_from(index)
-                .ok()
-                .and_then(|index| self.operators.get(index))
-                .map(|operator| operator.effects().len() as i32)
+            self.operators
+                .get(index)
+                .map(|operator| operator.effects().len())
                 .unwrap_or(0)
         }
     }
 
     fn get_num_operator_effect_conditions(
         &self,
-        index: i32,
-        eff_index: i32,
+        index: usize,
+        eff_index: usize,
         is_axiom: bool,
-    ) -> i32 {
+    ) -> usize {
         if is_axiom {
             0
         } else {
-            self.operators[usize::try_from(index).expect("operator index must be >= 0")].effects()
-                [usize::try_from(eff_index).expect("effect index must be >= 0")]
-            .conditions()
-            .len() as i32
+            self.operators[index].effects()[eff_index]
+                .conditions()
+                .len()
         }
     }
 
     fn get_operator_effect_condition(
         &self,
-        index: i32,
-        eff_index: i32,
-        cond_index: i32,
+        index: usize,
+        eff_index: usize,
+        cond_index: usize,
         is_axiom: bool,
-    ) -> &Fact {
+    ) -> &ExplicitFact {
         assert!(
             !is_axiom,
             "axioms do not expose conditional effects separately"
         );
-        &self.operators[usize::try_from(index).expect("operator index must be >= 0")].effects()
-            [usize::try_from(eff_index).expect("effect index must be >= 0")]
-        .conditions()[usize::try_from(cond_index).expect("condition index must be >= 0")]
+        &self.operators[index].effects()[eff_index].conditions()[cond_index]
     }
 
-    fn get_operator_effect(&self, index: i32, eff_index: i32, is_axiom: bool) -> &Fact {
+    fn get_operator_effect(&self, index: usize, eff_index: usize, is_axiom: bool) -> &ExplicitFact {
         if is_axiom {
-            let effect_index = usize::try_from(eff_index).expect("effect index must be >= 0");
-            assert_eq!(effect_index, 0, "axioms expose exactly one effect");
-            &self.axiom_effect_facts[usize::try_from(index).expect("axiom index must be >= 0")]
+            assert_eq!(eff_index, 0, "axioms expose exactly one effect");
+            &self.axiom_effect_facts[index]
         } else {
-            &self.operator_effect_facts
-                [usize::try_from(index).expect("operator index must be >= 0")]
-                [usize::try_from(eff_index).expect("effect index must be >= 0")]
+            &self.operator_effect_facts[index][eff_index]
         }
     }
 
-    fn convert_operator_index(&self, _index: i32, _ancestor_task: &dyn AbstractNumericTask) {}
+    fn convert_operator_index(&self, _index: usize, _ancestor_task: &dyn AbstractNumericTask) {}
 
-    fn get_num_axioms(&self) -> i32 {
-        self.axioms.len() as i32
+    fn get_num_axioms(&self) -> usize {
+        self.axioms.len()
     }
 
-    fn get_num_goals(&self) -> i32 {
-        self.goals.len() as i32
+    fn get_num_goals(&self) -> usize {
+        self.goals.len()
     }
 
-    fn get_goal_fact(&self, index: i32) -> &Fact {
-        &self.goals[usize::try_from(index).expect("goal index must be >= 0")]
+    fn get_goal_fact(&self, index: usize) -> &ExplicitFact {
+        &self.goals[index]
     }
 
-    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<i32>> {
+    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>> {
         self.state.borrow()
     }
 
@@ -1640,7 +1615,7 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         self.numeric_state.borrow()
     }
 
-    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<i32>> {
+    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>> {
         self.state.borrow_mut()
     }
 
@@ -1652,17 +1627,17 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         *self.numeric_state.borrow_mut() = values;
     }
 
-    fn set_initial_propositional_state_values(&self, values: Vec<i32>) {
+    fn set_initial_propositional_state_values(&self, values: Vec<usize>) {
         *self.state.borrow_mut() = values;
     }
 
     fn convert_ancestor_state_values(
         &self,
-        ancestor_state_values: &Vec<i32>,
+        ancestor_state_values: &[usize],
         _ancestor_task: &dyn AbstractNumericTask,
-    ) -> Vec<i32> {
+    ) -> Vec<usize> {
         if ancestor_state_values.len() == self.variables.len() {
-            return ancestor_state_values.clone();
+            return ancestor_state_values.to_vec();
         }
         self.projected_var_to_original
             .iter()
@@ -1675,19 +1650,19 @@ impl AbstractNumericTask for ProjectedTask<'_> {
             .collect()
     }
 
-    fn get_num_cmp_axioms(&self) -> i32 {
-        self.comparison_axioms.len() as i32
+    fn get_num_cmp_axioms(&self) -> usize {
+        self.comparison_axioms.len()
     }
 
     fn abstract_state_values(
         &self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
-    ) -> Result<(Vec<i32>, Vec<f64>), String> {
+    ) -> Result<(Vec<usize>, Vec<f64>), String> {
         ProjectedTask::project_state_values(self, propositional_values, numeric_values)
     }
 
-    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<i32>, Vec<f64>), String> {
+    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
         ProjectedTask::evaluated_initial_state_values(self).map_err(|err| err.to_string())
     }
 
@@ -1696,23 +1671,26 @@ impl AbstractNumericTask for ProjectedTask<'_> {
     }
 }
 
-fn cache_facts(facts: &[Fact]) -> Vec<CachedFact> {
+fn cache_facts(facts: &[ExplicitFact]) -> Vec<CachedFact> {
     facts
         .iter()
         .map(|fact| CachedFact {
-            var_id: fact.var() as usize,
-            value: fact.value(),
+            var_id: fact.var,
+            value: fact.value,
         })
         .collect()
 }
 
-fn cached_facts_hold(propositional: &[i32], facts: &[CachedFact]) -> bool {
+fn cached_facts_hold(propositional: &[usize], facts: &[CachedFact]) -> bool {
     facts
         .iter()
         .all(|fact| propositional.get(fact.var_id).copied() == Some(fact.value))
 }
 
-fn cached_assignment_effect_holds(propositional: &[i32], effect: &CachedAssignmentEffect) -> bool {
+fn cached_assignment_effect_holds(
+    propositional: &[usize],
+    effect: &CachedAssignmentEffect,
+) -> bool {
     effect.conditions.is_empty() || cached_facts_hold(propositional, &effect.conditions)
 }
 
@@ -1725,8 +1703,8 @@ fn build_cached_operators(operators: &[Operator]) -> Vec<CachedOperator> {
                 .iter()
                 .map(|effect| CachedPropEffect {
                     conditions: cache_facts(effect.conditions()),
-                    var_id: effect.var_id() as usize,
-                    value: effect.value() as i32,
+                    var_id: effect.var_id(),
+                    value: effect.value(),
                 })
                 .collect(),
             assignment_effects: operator
@@ -1734,8 +1712,8 @@ fn build_cached_operators(operators: &[Operator]) -> Vec<CachedOperator> {
                 .iter()
                 .map(|effect| CachedAssignmentEffect {
                     conditions: cache_facts(effect.conditions()),
-                    source_var_id: effect.var_id() as usize,
-                    target_var_id: effect.affected_var_id() as usize,
+                    source_var_id: effect.var_id(),
+                    target_var_id: effect.affected_var_id(),
                     operation: effect.operation().clone(),
                 })
                 .collect(),
@@ -1837,8 +1815,8 @@ pub(crate) fn build_auxiliary_numeric_vars(
                         });
                     };
                     let axiom = &self.task.assignment_axioms()[axiom_id];
-                    let lhs = self.parse_numeric_expression(axiom.get_left_var_id() as usize)?;
-                    let rhs = self.parse_numeric_expression(axiom.get_right_var_id() as usize)?;
+                    let lhs = self.parse_numeric_expression(axiom.get_left_var_id())?;
+                    let rhs = self.parse_numeric_expression(axiom.get_right_var_id())?;
                     let expr =
                         ArithmeticExpr::op(lhs.clone(), axiom.get_operator().clone(), rhs.clone());
 
@@ -1886,7 +1864,7 @@ pub(crate) fn build_auxiliary_numeric_vars(
 pub(crate) fn build_assignment_axiom_lookup(task: &dyn AbstractNumericTask) -> Vec<Option<usize>> {
     let mut lookup = vec![None; task.numeric_variables().len()];
     for (axiom_id, axiom) in task.assignment_axioms().iter().enumerate() {
-        let affected = axiom.get_affected_var_id() as usize;
+        let affected = axiom.get_affected_var_id();
         if affected < lookup.len() {
             lookup[affected] = Some(axiom_id);
         }
@@ -1934,7 +1912,7 @@ fn helper_backed_regular_numeric_dependencies(
             ensure_supported_assignment_operator(axiom_id, numeric_var_id, axiom.get_operator())?;
             regular_numeric_dependencies_recursive(
                 task,
-                axiom.get_left_var_id() as usize,
+                axiom.get_left_var_id(),
                 assignment_lookup,
                 original_num_var_to_projected,
                 is_auxiliary_num_var,
@@ -1943,7 +1921,7 @@ fn helper_backed_regular_numeric_dependencies(
             )?;
             regular_numeric_dependencies_recursive(
                 task,
-                axiom.get_right_var_id() as usize,
+                axiom.get_right_var_id(),
                 assignment_lookup,
                 original_num_var_to_projected,
                 is_auxiliary_num_var,
@@ -1975,11 +1953,11 @@ fn regular_numeric_dependencies_recursive(
         return Ok(());
     }
 
-    if let Some(projected_id) = original_num_var_to_projected[numeric_var_id] {
-        if is_auxiliary_num_var[projected_id] {
-            out.insert(numeric_var_id);
-            return Ok(());
-        }
+    if let Some(projected_id) = original_num_var_to_projected[numeric_var_id]
+        && is_auxiliary_num_var[projected_id]
+    {
+        out.insert(numeric_var_id);
+        return Ok(());
     }
 
     match task.numeric_variables()[numeric_var_id].get_type() {
@@ -1996,7 +1974,7 @@ fn regular_numeric_dependencies_recursive(
             ensure_supported_assignment_operator(axiom_id, numeric_var_id, axiom.get_operator())?;
             regular_numeric_dependencies_recursive(
                 task,
-                axiom.get_left_var_id() as usize,
+                axiom.get_left_var_id(),
                 assignment_lookup,
                 original_num_var_to_projected,
                 is_auxiliary_num_var,
@@ -2005,7 +1983,7 @@ fn regular_numeric_dependencies_recursive(
             )?;
             regular_numeric_dependencies_recursive(
                 task,
-                axiom.get_right_var_id() as usize,
+                axiom.get_right_var_id(),
                 assignment_lookup,
                 original_num_var_to_projected,
                 is_auxiliary_num_var,
@@ -2037,13 +2015,13 @@ fn ensure_supported_comparison_tree(
     tree: &ComparisonTree,
 ) -> Result<(), ProjectedTaskBuildError> {
     for node in &tree.nodes {
-        if let ComparisonTreeNode::Arith { op, .. } = node {
-            if !matches!(op, ArithOp::Add | ArithOp::Sub | ArithOp::Mul) {
-                return Err(ProjectedTaskBuildError::UnsupportedComparisonTree {
-                    comparison_axiom_id: tree.comparison_axiom_id,
-                    reason: "comparison tree uses division",
-                });
-            }
+        if let ComparisonTreeNode::Arith { op, .. } = node
+            && !matches!(op, ArithOp::Add | ArithOp::Sub | ArithOp::Mul)
+        {
+            return Err(ProjectedTaskBuildError::UnsupportedComparisonTree {
+                comparison_axiom_id: tree.comparison_axiom_id,
+                reason: "comparison tree uses division",
+            });
         }
     }
 
@@ -2068,11 +2046,8 @@ fn is_constant_expression(
     while let Some(node_id) = stack.pop() {
         match &tree.nodes[node_id] {
             ComparisonTreeNode::Leaf { numeric_var_id } => {
-                let Some(var_id) = usize::try_from(*numeric_var_id).ok() else {
-                    return false;
-                };
                 if !matches!(
-                    task.numeric_variables()[var_id].get_type(),
+                    task.numeric_variables()[*numeric_var_id].get_type(),
                     NumericType::Constant | NumericType::Cost
                 ) {
                     return false;
@@ -2087,31 +2062,29 @@ fn is_constant_expression(
     true
 }
 
-fn project_fact(fact: &Fact, var_map: &[Option<usize>]) -> Option<Fact> {
+fn project_fact(fact: &ExplicitFact, var_map: &[Option<usize>]) -> Option<ExplicitFact> {
     var_map
-        .get(fact.var() as usize)
+        .get(fact.var)
         .and_then(|mapped| *mapped)
-        .map(|mapped| Fact::new(mapped as u32, fact.value()))
+        .map(|mapped| ExplicitFact::new(mapped, fact.value))
 }
 
-fn restore_fact(fact: &Fact, projected_to_original: &[usize]) -> Option<Fact> {
+fn restore_fact(fact: &ExplicitFact, projected_to_original: &[usize]) -> Option<ExplicitFact> {
     projected_to_original
-        .get(fact.var() as usize)
-        .map(|&original| Fact::new(original as u32, fact.value()))
+        .get(fact.var)
+        .map(|&original| ExplicitFact::new(original, fact.value))
 }
 
 fn project_effect(effect: &Effect, var_map: &[Option<usize>]) -> Option<Effect> {
-    let mapped_var = var_map
-        .get(effect.var_id() as usize)
-        .and_then(|mapped| *mapped)?;
-    let conditions: Vec<Fact> = effect
+    let mapped_var = var_map.get(effect.var_id()).and_then(|mapped| *mapped)?;
+    let conditions: Vec<ExplicitFact> = effect
         .conditions()
         .iter()
         .filter_map(|fact| project_fact(fact, var_map))
         .collect();
     Some(Effect::new(
         conditions,
-        mapped_var as u32,
+        mapped_var,
         effect.precondition_value(),
         effect.value(),
     ))
@@ -2123,25 +2096,26 @@ fn project_assignment_effect(
     num_var_map: &[Option<usize>],
 ) -> Option<AssignmentEffect> {
     let affected = num_var_map
-        .get(effect.affected_var_id() as usize)
+        .get(effect.affected_var_id())
         .and_then(|mapped| *mapped)?;
     let source = num_var_map
-        .get(effect.var_id() as usize)
+        .get(effect.var_id())
         .and_then(|mapped| *mapped)?;
-    let conditions: Vec<Fact> = effect
+    let conditions: Vec<ExplicitFact> = effect
         .conditions()
         .iter()
         .filter_map(|fact| project_fact(fact, var_map))
         .collect();
     Some(AssignmentEffect::new(
-        affected as u32,
+        affected,
         effect.operation().clone(),
-        source as u32,
+        source,
         effect.is_conditional(),
         conditions,
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn project_operator(
     base: &dyn AbstractNumericTask,
     operator: &Operator,
@@ -2157,7 +2131,7 @@ fn project_operator(
     numeric_variables: &mut Vec<NumericVariable>,
     projected_numeric_values: &mut Vec<f64>,
 ) -> Result<Option<Operator>, ProjectedTaskBuildError> {
-    let preconditions: Vec<Fact> = operator
+    let preconditions: Vec<ExplicitFact> = operator
         .preconditions()
         .iter()
         .filter_map(|fact| project_fact(fact, var_map))
@@ -2188,7 +2162,7 @@ fn project_operator(
                 });
             }
 
-            let source_var_id = effect.var_id() as usize;
+            let source_var_id = effect.var_id();
             let source_type = base.numeric_variables()[source_var_id].get_type();
             let source_value = base_initial_numeric_values[source_var_id];
 
@@ -2203,7 +2177,7 @@ fn project_operator(
                             reason: "lifted numeric effects require constant right-hand sides",
                         });
                     }
-                    additive_effects[effect.affected_var_id() as usize] += source_value;
+                    additive_effects[effect.affected_var_id()] += source_value;
                 }
                 planners_sas::numeric::numeric_task::AssignmentOperation::Minus => {
                     if source_type != &NumericType::Constant {
@@ -2212,7 +2186,7 @@ fn project_operator(
                             reason: "lifted numeric effects require constant right-hand sides",
                         });
                     }
-                    additive_effects[effect.affected_var_id() as usize] -= source_value;
+                    additive_effects[effect.affected_var_id()] -= source_value;
                 }
                 planners_sas::numeric::numeric_task::AssignmentOperation::Times
                 | planners_sas::numeric::numeric_task::AssignmentOperation::Divide => {
@@ -2263,9 +2237,9 @@ fn project_operator(
                     projected_numeric_values,
                 );
                 assignment_effects.push(AssignmentEffect::new(
-                    projected_target as u32,
+                    projected_target,
                     planners_sas::numeric::numeric_task::AssignmentOperation::Plus,
-                    projected_constant as u32,
+                    projected_constant,
                     false,
                     vec![],
                 ));
@@ -2287,6 +2261,7 @@ fn project_operator(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn get_or_add_projected_constant(
     value: f64,
     projected_num_var_to_original: &mut Vec<Option<usize>>,
@@ -2309,7 +2284,7 @@ fn get_or_add_projected_constant(
     numeric_variables.push(NumericVariable::new(
         format!("projected-const-{projected_id}"),
         NumericType::Constant,
-        -1,
+        None,
     ));
     projected_numeric_values.push(value);
     projected_num_var_to_original.push(None);
@@ -2324,17 +2299,15 @@ fn project_propositional_axiom(
     axiom: &PropositionalAxiom,
     var_map: &[Option<usize>],
 ) -> Option<PropositionalAxiom> {
-    let mapped_var = var_map
-        .get(axiom.var_id() as usize)
-        .and_then(|mapped| *mapped)?;
-    let conditions: Vec<Fact> = axiom
+    let mapped_var = var_map.get(axiom.var_id()).and_then(|mapped| *mapped)?;
+    let conditions: Vec<ExplicitFact> = axiom
         .conditions()
         .iter()
         .filter_map(|fact| project_fact(fact, var_map))
         .collect();
     Some(PropositionalAxiom::new(
         conditions,
-        mapped_var as u32,
+        mapped_var,
         axiom.precondition_value(),
         axiom.effect_value(),
     ))
@@ -2346,18 +2319,18 @@ fn project_comparison_axiom(
     num_var_map: &[Option<usize>],
 ) -> Option<ComparisonAxiom> {
     let affected = var_map
-        .get(usize::try_from(axiom.get_affected_var_id()).ok()?)
+        .get(axiom.get_affected_var_id())
         .and_then(|mapped| *mapped)?;
     let left = num_var_map
-        .get(usize::try_from(axiom.get_left_var_id()).ok()?)
+        .get(axiom.get_left_var_id())
         .and_then(|mapped| *mapped)?;
     let right = num_var_map
-        .get(usize::try_from(axiom.get_right_var_id()).ok()?)
+        .get(axiom.get_right_var_id())
         .and_then(|mapped| *mapped)?;
     Some(ComparisonAxiom::new(
-        affected as i32,
-        left as i32,
-        right as i32,
+        affected,
+        left,
+        right,
         axiom.get_operator().clone(),
     ))
 }
@@ -2368,22 +2341,22 @@ fn project_assignment_axiom(
     is_auxiliary_num_var: &[bool],
 ) -> Option<AssignmentAxiom> {
     let affected = num_var_map
-        .get(axiom.get_affected_var_id() as usize)
+        .get(axiom.get_affected_var_id())
         .and_then(|mapped| *mapped)?;
     if is_auxiliary_num_var[affected] {
         return None;
     }
     let left = num_var_map
-        .get(axiom.get_left_var_id() as usize)
+        .get(axiom.get_left_var_id())
         .and_then(|mapped| *mapped)?;
     let right = num_var_map
-        .get(axiom.get_right_var_id() as usize)
+        .get(axiom.get_right_var_id())
         .and_then(|mapped| *mapped)?;
     Some(AssignmentAxiom::new(
-        affected as u32,
+        affected,
         axiom.get_operator().clone(),
-        left as u32,
-        right as u32,
+        left,
+        right,
     ))
 }
 
@@ -2392,53 +2365,52 @@ fn normalize_projected_variable_layers(
     numeric_variables: &[NumericVariable],
     comparison_axioms: &[ComparisonAxiom],
     axioms: &[PropositionalAxiom],
-) -> Vec<i32> {
+) -> Vec<Option<usize>> {
     let last_arithmetic_layer = numeric_variables
         .iter()
         .map(NumericVariable::axiom_layer)
         .max()
-        .unwrap_or(-1);
+        .map_or(-1, |x| x.map_or(-1, |y| y as i32));
     let comparison_layer = if comparison_axioms.is_empty() {
-        -1
+        None
     } else {
-        last_arithmetic_layer + 1
+        Some((last_arithmetic_layer + 1) as usize)
     };
     let base_propositional_layer = if comparison_axioms.is_empty() {
-        last_arithmetic_layer + 1
+        Some((last_arithmetic_layer + 1) as usize)
     } else {
-        comparison_layer + 1
+        Some(comparison_layer.map_or(0, |x| x + 1))
     };
 
     let mut affects_comparison = vec![false; num_variables];
     for axiom in comparison_axioms {
-        if let Ok(var_id) = usize::try_from(axiom.get_affected_var_id()) {
-            if var_id < num_variables {
-                affects_comparison[var_id] = true;
-            }
+        let var_id = axiom.get_affected_var_id();
+        if var_id < num_variables {
+            affects_comparison[var_id] = true;
         }
     }
 
     let mut axioms_by_var: Vec<Vec<&PropositionalAxiom>> = vec![Vec::new(); num_variables];
     for axiom in axioms {
-        let affected_var = axiom.var_id() as usize;
+        let affected_var = axiom.var_id();
         if affected_var < num_variables {
             axioms_by_var[affected_var].push(axiom);
         }
     }
 
-    let mut layers = vec![-1; num_variables];
+    let mut layers = vec![None; num_variables];
     let mut visiting = vec![false; num_variables];
 
     fn compute_layer(
         var_id: usize,
-        layers: &mut [i32],
+        layers: &mut [Option<usize>],
         visiting: &mut [bool],
         affects_comparison: &[bool],
         axioms_by_var: &[Vec<&PropositionalAxiom>],
-        comparison_layer: i32,
-        base_propositional_layer: i32,
-    ) -> i32 {
-        if layers[var_id] != -1 {
+        comparison_layer: Option<usize>,
+        base_propositional_layer: Option<usize>,
+    ) -> Option<usize> {
+        if layers[var_id].is_some() {
             return layers[var_id];
         }
         if affects_comparison[var_id] {
@@ -2446,7 +2418,7 @@ fn normalize_projected_variable_layers(
             return comparison_layer;
         }
         if axioms_by_var[var_id].is_empty() {
-            return -1;
+            return None;
         }
         if visiting[var_id] {
             return base_propositional_layer;
@@ -2456,7 +2428,7 @@ fn normalize_projected_variable_layers(
         let mut layer = base_propositional_layer;
         for axiom in &axioms_by_var[var_id] {
             for condition in axiom.conditions() {
-                let condition_var = condition.var() as usize;
+                let condition_var = condition.var;
                 if condition_var >= layers.len() {
                     continue;
                 }
@@ -2469,8 +2441,8 @@ fn normalize_projected_variable_layers(
                     comparison_layer,
                     base_propositional_layer,
                 );
-                if dependency_layer >= 0 {
-                    layer = layer.max(dependency_layer + 1);
+                if dependency_layer.is_some() {
+                    layer = layer.max(dependency_layer.map(|x| x + 1));
                 }
             }
         }
@@ -2494,513 +2466,4 @@ fn normalize_projected_variable_layers(
     }
 
     layers
-}
-
-#[cfg(test)]
-mod tests {
-    use planners_sas::numeric::axioms::{ComparisonOperator, PropositionalAxiom};
-    use planners_sas::numeric::numeric_task::{AssignmentOperation, NumericRootTask};
-
-    use super::*;
-
-    fn simple_var(name: &str, axiom_layer: i32) -> ExplicitVariable {
-        ExplicitVariable::new(
-            2,
-            name.to_string(),
-            vec![format!("{name}=0"), format!("{name}=1")],
-            axiom_layer,
-            1,
-        )
-    }
-
-    fn sample_task() -> NumericRootTask {
-        let variables = vec![
-            simple_var("p", -1),
-            ExplicitVariable::new(
-                3,
-                "cmp".to_string(),
-                vec![
-                    "cmp-true".to_string(),
-                    "cmp-false".to_string(),
-                    "cmp-unk".to_string(),
-                ],
-                0,
-                2,
-            ),
-            simple_var("goal_marker", 1),
-        ];
-        let numeric_variables = vec![
-            NumericVariable::new("const10".to_string(), NumericType::Constant, -1),
-            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
-        ];
-        let operators = vec![Operator::new(
-            "inc-x".to_string(),
-            vec![Fact::new(0, 0)],
-            vec![],
-            vec![AssignmentEffect::new(
-                1,
-                AssignmentOperation::Plus,
-                0,
-                false,
-                vec![],
-            )],
-            1,
-        )];
-        let axioms = vec![PropositionalAxiom::new(vec![Fact::new(1, 0)], 2, 1, 0)];
-        let comparison_axioms = vec![ComparisonAxiom::new(
-            1,
-            2,
-            0,
-            ComparisonOperator::GreaterThanOrEqual,
-        )];
-        let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 1, 0)];
-
-        NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            variables,
-            numeric_variables,
-            vec![Fact::new(2, 0)],
-            vec![],
-            vec![0, 2, 1],
-            vec![10.0, 0.0, 10.0],
-            operators,
-            axioms,
-            comparison_axioms,
-            assignment_axioms,
-            (0, 0),
-        )
-    }
-
-    #[test]
-    fn projected_task_closes_over_relevant_numeric_and_goal_axiom_vars() {
-        let task = sample_task();
-        let pattern = Pattern {
-            regular: vec![0],
-            numeric: vec![1],
-        };
-
-        let projected = ProjectedTask::new(&task, &pattern).unwrap();
-
-        assert_eq!(projected.get_num_variables(), 3);
-        assert_eq!(projected.numeric_variables().len(), 3);
-        assert_eq!(projected.get_num_operators(), 1);
-        assert_eq!(projected.get_num_cmp_axioms(), 1);
-        assert_eq!(projected.get_num_axioms(), 1);
-        assert_eq!(projected.get_num_goals(), 1);
-
-        let init_num = projected.get_initial_numeric_state_values();
-        assert_eq!(init_num.as_slice(), &[0.0, 10.0, 10.0]);
-    }
-
-    #[test]
-    fn projected_task_accepts_subtraction_based_numeric_conditions() {
-        let variables = vec![simple_var("p", -1), simple_var("cmp", 0)];
-        let numeric_variables = vec![
-            NumericVariable::new("const1".to_string(), NumericType::Constant, -1),
-            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("diff".to_string(), NumericType::Derived, 0),
-        ];
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            variables,
-            numeric_variables,
-            vec![],
-            vec![],
-            vec![0, 1],
-            vec![1.0, 2.0, 1.0],
-            vec![],
-            vec![],
-            vec![ComparisonAxiom::new(
-                1,
-                2,
-                0,
-                ComparisonOperator::GreaterThanOrEqual,
-            )],
-            vec![AssignmentAxiom::new(2, CalOperator::Difference, 1, 0)],
-            (0, 0),
-        );
-
-        let projected = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![0],
-                numeric: vec![1],
-            },
-        )
-        .unwrap();
-
-        assert_eq!(projected.get_num_cmp_axioms(), 1);
-        let init_num = projected.get_initial_numeric_state_values();
-        assert_eq!(init_num.as_slice(), &[2.0, 1.0, 1.0]);
-    }
-
-    #[test]
-    fn projected_task_rejects_raw_derived_numeric_pattern_vars() {
-        let task = sample_task();
-
-        let result = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![0],
-                numeric: vec![2],
-            },
-        );
-
-        assert!(matches!(
-            result,
-            Err(ProjectedTaskBuildError::UnsupportedPatternNumericVarType {
-                numeric_var_id: 2,
-                numeric_type: NumericType::Derived,
-            })
-        ));
-    }
-
-    #[test]
-    fn projected_task_helper_pattern_var_gets_lifted_additive_effect() {
-        let variables = vec![simple_var("goal", -1)];
-        let numeric_variables = vec![
-            NumericVariable::new("const5".to_string(), NumericType::Constant, -1),
-            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
-        ];
-        let operators = vec![Operator::new(
-            "inc-x".to_string(),
-            vec![],
-            vec![],
-            vec![AssignmentEffect::new(
-                1,
-                AssignmentOperation::Plus,
-                0,
-                false,
-                vec![],
-            )],
-            1,
-        )];
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            variables,
-            numeric_variables,
-            vec![],
-            vec![],
-            vec![0],
-            vec![5.0, 2.0, 3.0, 5.0],
-            operators,
-            vec![],
-            vec![],
-            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-            (0, 0),
-        );
-
-        let helper_pattern_numeric_id = task.numeric_variables().len();
-        let projected = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![],
-                numeric: vec![helper_pattern_numeric_id],
-            },
-        )
-        .unwrap();
-
-        assert_eq!(projected.numeric_variables().len(), 2);
-        assert_eq!(
-            projected.numeric_variables()[0].get_type(),
-            &NumericType::Regular
-        );
-
-        let initial_numeric_values = projected.get_initial_numeric_state_values();
-        assert_eq!(initial_numeric_values.as_slice(), &[5.0, 5.0]);
-        drop(initial_numeric_values);
-
-        assert_eq!(projected.get_num_operators(), 1);
-        let op = &projected.get_operators()[0];
-        assert_eq!(op.assignment_effects().len(), 1);
-        assert_eq!(op.assignment_effects()[0].affected_var_id(), 0);
-        assert_eq!(
-            op.assignment_effects()[0].operation(),
-            &AssignmentOperation::Plus
-        );
-        assert_eq!(op.assignment_effects()[0].var_id(), 1);
-    }
-
-    #[test]
-    fn projected_task_relayers_helper_backed_comparison_chain() {
-        let variables = vec![
-            simple_var("goal", 6),
-            ExplicitVariable::new(
-                3,
-                "cmp".to_string(),
-                vec![
-                    "cmp-true".to_string(),
-                    "cmp-false".to_string(),
-                    "cmp-unk".to_string(),
-                ],
-                5,
-                2,
-            ),
-        ];
-        let numeric_variables = vec![
-            NumericVariable::new("zero".to_string(), NumericType::Constant, -1),
-            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("sum".to_string(), NumericType::Derived, 4),
-        ];
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            variables,
-            numeric_variables,
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0, 2],
-            vec![0.0, 1.0, 2.0, 3.0],
-            vec![],
-            vec![PropositionalAxiom::new(vec![Fact::new(1, 0)], 0, 0, 1)],
-            vec![ComparisonAxiom::new(
-                1,
-                3,
-                0,
-                ComparisonOperator::GreaterThanOrEqual,
-            )],
-            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-            (0, 0),
-        );
-
-        let helper_var_id = task.numeric_variables().len();
-        let projected = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![0],
-                numeric: vec![helper_var_id],
-            },
-        )
-        .unwrap();
-
-        assert_eq!(projected.get_variable_axiom_layer(1).unwrap(), 0);
-        assert_eq!(projected.get_variable_axiom_layer(0).unwrap(), 1);
-        projected.evaluated_initial_state_values().unwrap();
-    }
-
-    #[test]
-    fn projected_task_keeps_regular_dependency_when_helper_selected() {
-        let variables = vec![simple_var("goal", -1)];
-        let numeric_variables = vec![
-            NumericVariable::new("const5".to_string(), NumericType::Constant, -1),
-            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
-        ];
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            variables,
-            numeric_variables,
-            vec![],
-            vec![],
-            vec![0],
-            vec![5.0, 2.0, 3.0, 5.0],
-            vec![],
-            vec![],
-            vec![],
-            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-            (0, 0),
-        );
-
-        let helper_var_id = task.numeric_variables().len();
-        let projected = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![],
-                numeric: vec![helper_var_id, 1],
-            },
-        )
-        .unwrap();
-
-        assert_eq!(projected.pattern_numeric_projected_ids().len(), 2);
-        assert_eq!(projected.numeric_variables().len(), 4);
-        assert_eq!(projected.numeric_variables()[0].name(), "sum");
-        assert_eq!(projected.numeric_variables()[1].name(), "x");
-    }
-
-    #[test]
-    fn projected_task_projection_from_expanded_numeric_matches_direct_projection() {
-        let variables = vec![simple_var("goal", -1)];
-        let numeric_variables = vec![
-            NumericVariable::new("const5".to_string(), NumericType::Constant, -1),
-            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
-        ];
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            variables,
-            numeric_variables,
-            vec![],
-            vec![],
-            vec![0],
-            vec![5.0, 2.0, 3.0, 5.0],
-            vec![],
-            vec![],
-            vec![],
-            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-            (0, 0),
-        );
-
-        let helper_var_id = task.numeric_variables().len();
-        let projected = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![],
-                numeric: vec![helper_var_id, 1],
-            },
-        )
-        .unwrap();
-
-        let propositional_values = vec![0];
-        let numeric_values = vec![5.0, 7.0, 11.0, 18.0];
-
-        let (expected_prop, expected_num) = projected
-            .project_state_values(&propositional_values, &numeric_values)
-            .unwrap();
-
-        let mut expanded_numeric_values = Vec::new();
-        projected
-            .expand_numeric_state_values_into(&numeric_values, &mut expanded_numeric_values)
-            .unwrap();
-
-        let mut actual_prop = Vec::new();
-        let mut actual_num = Vec::new();
-        projected
-            .project_state_values_from_expanded_numeric_into(
-                &propositional_values,
-                &expanded_numeric_values,
-                &mut actual_prop,
-                &mut actual_num,
-            )
-            .unwrap();
-
-        assert_eq!(actual_prop, expected_prop);
-        assert_eq!(actual_num, expected_num);
-    }
-
-    #[test]
-    fn projected_task_retains_helper_backed_derived_var_when_only_leaves_selected() {
-        let variables = vec![
-            ExplicitVariable::new(
-                3,
-                "cmp".to_string(),
-                vec![
-                    "cmp-true".to_string(),
-                    "cmp-false".to_string(),
-                    "cmp-unk".to_string(),
-                ],
-                0,
-                2,
-            ),
-            simple_var("goal", 1),
-        ];
-        let numeric_variables = vec![
-            NumericVariable::new("const3".to_string(), NumericType::Constant, -1),
-            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
-        ];
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            variables,
-            numeric_variables,
-            vec![Fact::new(1, 0)],
-            vec![],
-            vec![2, 0],
-            vec![3.0, 1.0, 2.0, 3.0],
-            vec![],
-            vec![PropositionalAxiom::new(vec![Fact::new(0, 0)], 1, 0, 1)],
-            vec![ComparisonAxiom::new(
-                3,
-                0,
-                1,
-                ComparisonOperator::GreaterThanOrEqual,
-            )],
-            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-            (0, 0),
-        );
-
-        let projected = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![],
-                numeric: vec![1, 2],
-            },
-        )
-        .unwrap();
-
-        assert_eq!(projected.pattern_numeric_projected_ids().len(), 2);
-        assert_eq!(projected.numeric_variables().len(), 4);
-
-        let mut numeric_names: Vec<_> = projected
-            .numeric_variables()
-            .iter()
-            .map(|var| var.name().to_string())
-            .collect();
-        numeric_names.sort();
-        assert_eq!(numeric_names, vec!["const3", "sum", "x", "y"]);
-    }
-
-    #[test]
-    fn projected_task_keeps_shared_regular_dependency_when_other_helper_uses_it() {
-        let variables = vec![simple_var("goal", -1)];
-        let numeric_variables = vec![
-            NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("z".to_string(), NumericType::Regular, -1),
-            NumericVariable::new("a".to_string(), NumericType::Derived, 0),
-            NumericVariable::new("b".to_string(), NumericType::Derived, 0),
-        ];
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            variables,
-            numeric_variables,
-            vec![],
-            vec![],
-            vec![0],
-            vec![1.0, 2.0, 3.0, 3.0, 4.0],
-            vec![],
-            vec![],
-            vec![],
-            vec![
-                AssignmentAxiom::new(3, CalOperator::Sum, 0, 1),
-                AssignmentAxiom::new(4, CalOperator::Sum, 2, 0),
-            ],
-            (0, 0),
-        );
-
-        let helper_a_id = task.numeric_variables().len();
-        let projected = ProjectedTask::new(
-            &task,
-            &Pattern {
-                regular: vec![],
-                numeric: vec![helper_a_id, 0, 2],
-            },
-        )
-        .unwrap();
-
-        assert_eq!(projected.pattern_numeric_projected_ids().len(), 3);
-        let pattern_names: Vec<_> = projected
-            .pattern_numeric_projected_ids()
-            .iter()
-            .map(|&projected_id| {
-                projected.numeric_variables()[projected_id]
-                    .name()
-                    .to_string()
-            })
-            .collect();
-        assert_eq!(pattern_names, vec!["a", "x", "z"]);
-    }
 }

@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use std::collections::BTreeSet;
 
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, AssignmentOperation, Operator};
@@ -74,7 +77,7 @@ pub fn compute_additive_vars(task: &dyn AbstractNumericTask) -> NumericVariableA
         let propositional_targets: Vec<_> = operator
             .effects()
             .iter()
-            .map(|effect| effect.var_id() as usize)
+            .map(|effect| effect.var_id())
             .collect();
         let numeric_targets =
             affected_numeric_targets(&numeric_support, &helper_dependency_sets, operator);
@@ -108,7 +111,7 @@ fn affected_numeric_targets(
     let mut direct_targets = BTreeSet::new();
 
     for effect in operator.assignment_effects() {
-        let affected_var_id = effect.affected_var_id() as usize;
+        let affected_var_id = effect.affected_var_id();
         direct_targets.insert(affected_var_id);
         targets.insert(affected_var_id);
 
@@ -283,118 +286,4 @@ fn collection_dominates(
             .iter()
             .any(|&superset_id| subset_pattern.is_subset_of(&patterns.as_slice()[superset_id]))
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use planners_sas::numeric::numeric_task::{
-        AssignmentEffect, Effect, ExplicitVariable, Fact, Metric, NumericRootTask, NumericType,
-        NumericVariable, Operator,
-    };
-
-    use super::*;
-
-    fn simple_var(name: &str) -> ExplicitVariable {
-        ExplicitVariable::new(
-            2,
-            name.to_string(),
-            vec![format!("{name}=0"), format!("{name}=1")],
-            -1,
-            1,
-        )
-    }
-
-    fn disjoint_effect_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![simple_var("p"), simple_var("q")],
-            vec![NumericVariable::new(
-                "x".to_string(),
-                NumericType::Regular,
-                -1,
-            )],
-            vec![Fact::new(0, 1), Fact::new(1, 1)],
-            vec![],
-            vec![0, 0],
-            vec![0.0],
-            vec![
-                Operator::new(
-                    "set-p".to_string(),
-                    vec![],
-                    vec![Effect::new(vec![], 0, 0, 1)],
-                    vec![],
-                    1,
-                ),
-                Operator::new(
-                    "set-q".to_string(),
-                    vec![],
-                    vec![Effect::new(vec![], 1, 0, 1)],
-                    vec![],
-                    1,
-                ),
-            ],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        )
-    }
-
-    fn shared_effect_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![simple_var("p"), simple_var("q")],
-            vec![
-                NumericVariable::new("c".to_string(), NumericType::Constant, -1),
-                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-                NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-            ],
-            vec![],
-            vec![],
-            vec![0, 0],
-            vec![1.0, 0.0, 0.0],
-            vec![Operator::new(
-                "touch-both".to_string(),
-                vec![],
-                vec![Effect::new(vec![], 0, 0, 1)],
-                vec![AssignmentEffect::new(
-                    1,
-                    AssignmentOperation::Plus,
-                    0,
-                    false,
-                    vec![],
-                )],
-                1,
-            )],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        )
-    }
-
-    #[test]
-    fn computes_additive_patterns_for_disjoint_effects() {
-        let task = disjoint_effect_task();
-        let patterns = PatternCollection::new(vec![
-            Pattern::new(vec![0], vec![]),
-            Pattern::new(vec![1], vec![]),
-        ]);
-
-        let additivity = compute_additive_vars(&task);
-        let subsets = compute_max_additive_subsets(&patterns, &additivity);
-
-        assert_eq!(subsets, vec![vec![0, 1]]);
-    }
-
-    #[test]
-    fn marks_prop_and_numeric_as_non_additive_when_same_operator_touches_both() {
-        let task = shared_effect_task();
-        let additivity = compute_additive_vars(&task);
-
-        assert!(!additivity.prop_to_num[0][1]);
-        assert!(!additivity.num_to_prop[1][0]);
-    }
 }

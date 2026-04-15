@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
 
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType, Operator};
+use planners_sas::numeric::numeric_task::Operator;
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 
 use super::domain_abstraction_generator::DomainAbstraction;
@@ -18,7 +18,7 @@ use super::utils;
 pub struct DomainAbstractionHeuristic {
     name: String,
     abstraction: DomainAbstraction,
-    prop_scratch: RefCell<Vec<i32>>,
+    prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
 }
 
@@ -58,12 +58,11 @@ impl DomainAbstractionHeuristic {
         Ok((task, registry))
     }
 
-    fn compute_abstract_hash<'s, 't>(
+    fn compute_abstract_hash<'t>(
         &self,
-        task: &'t dyn AbstractNumericTask,
         state: &ConcreteState,
-        registry: &'s StateRegistry<'t>,
-    ) -> Result<i32, EvaluationError> {
+        registry: &StateRegistry<'t>,
+    ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
         let num_numeric = self.abstraction.factory.numeric_domain_sizes().len();
 
@@ -99,7 +98,7 @@ impl DomainAbstractionHeuristic {
             ));
         }
 
-        let mut index: i64 = 0;
+        let mut index: usize = 0;
 
         for num_var_id in 0..num_numeric {
             let val = numeric[num_var_id];
@@ -119,38 +118,31 @@ impl DomainAbstractionHeuristic {
                 ))
             })?;
             let abs_var = num_props + num_var_id;
-            index += i64::from(multipliers[abs_var]) * i64::from(part);
+            index += multipliers[abs_var] * part;
         }
 
-        let mut prop_index: i64 = 0;
+        let mut prop_index: usize = 0;
         for var in 0..num_props {
             let abs_val = abstract_propositional_value(var, prop[var], mapping)?;
-            prop_index += i64::from(multipliers[var]) * i64::from(abs_val);
+            prop_index += multipliers[var] * abs_val;
         }
 
-        i32::try_from(index + prop_index).map_err(|_| {
-            EvaluationError::InvalidState("abstract hash does not fit i32".to_string())
-        })
+        Ok(index + prop_index)
     }
 }
 
 fn abstract_propositional_value(
     var: usize,
-    concrete_val: i32,
-    mapping: &[Vec<i32>],
-) -> Result<i32, EvaluationError> {
-    let cidx = usize::try_from(concrete_val).map_err(|_| {
-        EvaluationError::InvalidState(format!(
-            "invalid propositional value {concrete_val} for var {var}"
-        ))
-    })?;
+    concrete_val: usize,
+    mapping: &[Vec<usize>],
+) -> Result<usize, EvaluationError> {
     mapping
         .get(var)
-        .and_then(|m| m.get(cidx))
+        .and_then(|m| m.get(concrete_val))
         .copied()
         .ok_or_else(|| {
             EvaluationError::InvalidState(format!(
-                "missing domain mapping for var {var} value index {cidx}"
+                "missing domain mapping for var {var} value index {concrete_val}"
             ))
         })
 }
@@ -165,18 +157,15 @@ impl Heuristic for DomainAbstractionHeuristic {
         //    return Ok(0.0);
         //}
 
-        let (task, registry) = Self::require_task_and_registry(eval_state)?;
+        let (_task, registry) = Self::require_task_and_registry(eval_state)?;
         let state = eval_state.state();
 
-        let hash = self.compute_abstract_hash(task, state, registry)?;
-        let idx = usize::try_from(hash).map_err(|_| {
-            EvaluationError::InvalidState(format!("abstract hash negative: {hash}"))
-        })?;
+        let hash = self.compute_abstract_hash(state, registry)?;
         let dist = self
             .abstraction
             .distance_table
             .distances
-            .get(idx)
+            .get(hash)
             .copied()
             .ok_or_else(|| {
                 EvaluationError::InvalidState(format!(

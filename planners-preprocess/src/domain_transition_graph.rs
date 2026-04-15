@@ -1,23 +1,23 @@
 use std::cmp::Ordering;
 use std::io::Write;
 
+use crate::Condition;
 use crate::axiom::AxiomRelational;
+use crate::fact::ExplicitFact;
 use crate::operator::{Operator, PrePost, Prevail};
 use crate::scc::Scc;
-use crate::variable::Variable;
-
-pub type Condition = Vec<(*const Variable, i32)>;
+use crate::variable::ExplicitVariable;
 
 #[derive(Debug, Clone)]
 struct Transition {
-    target: i32,
-    op: i32,
+    target: usize,
+    op: usize,
     cost: f64,
     condition: Condition,
 }
 
 impl Transition {
-    fn new(target: i32, op: i32) -> Self {
+    fn new(target: usize, op: usize) -> Self {
         Self {
             target,
             op,
@@ -64,10 +64,10 @@ pub struct DomainTransitionGraph {
 }
 
 impl DomainTransitionGraph {
-    pub fn new(var: &Variable) -> Self {
+    pub fn new(var: &ExplicitVariable) -> Self {
         let mut vertices: Vec<Vertex> = Vec::new();
         let range = var.get_range();
-        vertices.resize(range as usize, Vec::new());
+        vertices.resize(range, Vec::new());
         let level = var.get_level();
         assert!(level != -1);
         Self { vertices, level }
@@ -75,56 +75,69 @@ impl DomainTransitionGraph {
 
     pub fn add_transition(
         &mut self,
-        from: i32,
-        to: i32,
+        from: usize,
+        to: usize,
         op: &Operator,
-        op_index: i32,
+        op_index: usize,
         pre_post: &PrePost,
+        vars: &[ExplicitVariable],
     ) {
-        let var = unsafe { &*pre_post.var };
-        assert!(var.get_level() == self.level && pre_post.post == to);
+        let var = pre_post.var;
+        assert!(vars[var].get_level() == self.level && pre_post.post == to);
         let mut trans = Transition::new(to, op_index);
         trans.cost = op.get_cost();
         let cond = &mut trans.condition;
 
         let prevail = op.get_prevail();
         for Prevail { var, prev } in prevail {
-            cond.push((*var, *prev));
+            cond.push(ExplicitFact {
+                var: *var,
+                value: *prev,
+            });
         }
         for op_pre_post in op.get_pre_post() {
-            if op_pre_post.pre != -1 {
-                let pp_var = unsafe { &*op_pre_post.var };
-                if pp_var.get_level() == self.level {
-                    if op_pre_post.pre != from {
-                        continue;
-                    }
-                } else {
-                    cond.push((op_pre_post.var, op_pre_post.pre));
-                }
+            if let Some(pre) = op_pre_post.pre
+                && vars[op_pre_post.var].get_level() != self.level
+            {
+                cond.push(ExplicitFact {
+                    var: op_pre_post.var,
+                    value: pre,
+                });
             }
         }
 
         for eff_cond in &pre_post.effect_conds {
-            let eff_var = unsafe { &*eff_cond.var };
-            if eff_var.get_level() == self.level {
+            if vars[eff_cond.var].get_level() == self.level {
                 if eff_cond.cond != from {
                     return;
                 }
             } else {
-                trans.condition.push((eff_cond.var, eff_cond.cond));
+                trans.condition.push(ExplicitFact {
+                    var: eff_cond.var,
+                    value: eff_cond.cond,
+                });
             }
         }
 
-        self.vertices[from as usize].push(trans);
+        self.vertices[from].push(trans);
     }
 
-    pub fn add_ax_transition(&mut self, from: i32, to: i32, ax: &AxiomRelational, ax_index: i32) {
+    pub fn add_ax_transition(
+        &mut self,
+        from: usize,
+        to: usize,
+        ax: &AxiomRelational,
+        ax_index: usize,
+    ) {
         let mut trans = Transition::new(to, ax_index);
         let cond = &mut trans.condition;
         for ax_cond in ax.get_conditions() {
-            cond.push((ax_cond.var, ax_cond.cond));
+            cond.push(ExplicitFact {
+                var: ax_cond.var,
+                value: ax_cond.cond,
+            });
         }
-        self.vertices[from as usize].push(trans);
+        self.vertices[from].push(trans);
     }
 
     pub fn finalize(&mut self) {
@@ -132,11 +145,7 @@ impl DomainTransitionGraph {
             transitions.sort();
             transitions.dedup();
             for trans in transitions.iter_mut() {
-                trans.condition.sort_by(|a, b| {
-                    let ap = a.0 as usize;
-                    let bp = b.0 as usize;
-                    if ap == bp { a.1.cmp(&b.1) } else { ap.cmp(&bp) }
-                });
+                trans.condition.sort();
             }
 
             let mut undominated_trans: Vec<Transition> = Vec::new();
@@ -171,10 +180,10 @@ impl DomainTransitionGraph {
                                 for c1 in &cond {
                                     let mut comp_dominated = false;
                                     for c2 in &other_trans.condition {
-                                        if (c2.0 as usize) > (c1.0 as usize) {
+                                        if c2.var > c1.var {
                                             break;
                                         }
-                                        if c2.0 == c1.0 && c2.1 == c1.1 {
+                                        if c2.var == c1.var && c2.value == c1.value {
                                             comp_dominated = true;
                                             break;
                                         }
@@ -195,7 +204,7 @@ impl DomainTransitionGraph {
         }
     }
 
-    pub fn dump(&self) {
+    pub fn dump(&self, vars: &[ExplicitVariable]) {
         println!("Level: {}", self.level);
         let num_vertices = self.vertices.len();
         for i in 0..num_vertices {
@@ -203,14 +212,13 @@ impl DomainTransitionGraph {
             for trans in &self.vertices[i] {
                 println!("    To value {}", trans.target);
                 for cond in &trans.condition {
-                    let var = unsafe { &*cond.0 };
-                    println!("      if {} = {}", var.get_name(), cond.1);
+                    println!("      if {} = {}", vars[cond.var].get_name(), cond.value);
                 }
             }
         }
     }
 
-    pub fn generate_cpp_input<W: Write>(&self, out: &mut W) {
+    pub fn to_sas<W: Write>(&self, out: &mut W, vars: &[ExplicitVariable]) {
         for vertex in &self.vertices {
             writeln!(out, "{}", vertex.len()).unwrap();
             for trans in vertex {
@@ -218,16 +226,14 @@ impl DomainTransitionGraph {
                 writeln!(out, "{}", trans.op).unwrap();
                 let mut number = 0;
                 for cond in &trans.condition {
-                    let var = unsafe { &*cond.0 };
-                    if var.get_level() != -1 {
+                    if vars[cond.var].get_level() != -1 {
                         number += 1;
                     }
                 }
                 writeln!(out, "{}", number).unwrap();
                 for cond in &trans.condition {
-                    let var = unsafe { &*cond.0 };
-                    if var.get_level() != -1 {
-                        writeln!(out, "{} {}", var.get_level(), cond.1).unwrap();
+                    if vars[cond.var].get_level() != -1 {
+                        writeln!(out, "{} {}", vars[cond.var].get_level(), cond.value).unwrap();
                     }
                 }
             }
@@ -235,46 +241,56 @@ impl DomainTransitionGraph {
     }
 
     pub fn is_strongly_connected(&self) -> bool {
-        let mut easy_graph: Vec<Vec<i32>> = Vec::new();
+        let mut easy_graph: Vec<Vec<usize>> = Vec::new();
         let num_vertices = self.vertices.len();
         for i in 0..num_vertices {
-            let mut edges: Vec<i32> = Vec::new();
+            let mut edges: Vec<usize> = Vec::new();
             for trans in &self.vertices[i] {
                 edges.push(trans.target);
             }
             easy_graph.push(edges);
         }
         let sccs = Scc::new(easy_graph).get_result();
-        let connected = sccs.len() == 1;
-        connected
+
+        sccs.len() == 1
     }
 }
 
 pub fn build_dtgs(
-    var_order: &Vec<*mut Variable>,
+    ordered_variables: &[ExplicitVariable],
     operators: &[Operator],
     axioms: &[AxiomRelational],
-    transition_graphs: &mut Vec<DomainTransitionGraph>,
-) {
-    for var in var_order {
-        let var_ref = unsafe { &**var };
-        transition_graphs.push(DomainTransitionGraph::new(var_ref));
+) -> Vec<DomainTransitionGraph> {
+    let mut transition_graphs = Vec::with_capacity(ordered_variables.len());
+    for var in ordered_variables {
+        transition_graphs.push(DomainTransitionGraph::new(var));
     }
     for (i, op) in operators.iter().enumerate() {
         for eff in op.get_pre_post() {
-            let var = unsafe { &*eff.var };
-            let var_level = var.get_level();
+            let var_level = ordered_variables[eff.var].get_level();
             if var_level != -1 {
                 let pre = eff.pre;
                 let post = eff.post;
-                if pre != -1 {
-                    transition_graphs[var_level as usize]
-                        .add_transition(pre, post, op, i as i32, eff);
+                if let Some(pre_var) = pre {
+                    transition_graphs[var_level as usize].add_transition(
+                        pre_var,
+                        post,
+                        op,
+                        i,
+                        eff,
+                        ordered_variables,
+                    );
                 } else {
-                    for pre_val in 0..var.get_range() {
+                    for pre_val in 0..ordered_variables[eff.var].get_range() {
                         if pre_val != post {
-                            transition_graphs[var_level as usize]
-                                .add_transition(pre_val, post, op, i as i32, eff);
+                            transition_graphs[var_level as usize].add_transition(
+                                pre_val,
+                                post,
+                                op,
+                                i,
+                                eff,
+                                ordered_variables,
+                            );
                         }
                     }
                 }
@@ -282,16 +298,18 @@ pub fn build_dtgs(
         }
     }
     for (i, ax) in axioms.iter().enumerate() {
-        let var = unsafe { &*ax.get_effect_var() };
-        let var_level = var.get_level();
+        let var = ax.get_effect_var();
+        let var_level = ordered_variables[var].get_level();
         assert!(var_level != -1);
         let old_val = ax.get_old_val();
         let new_val = ax.get_effect_val();
-        transition_graphs[var_level as usize].add_ax_transition(old_val, new_val, ax, i as i32);
+        transition_graphs[var_level as usize].add_ax_transition(old_val, new_val, ax, i);
     }
     for transition_graph in transition_graphs.iter_mut() {
         transition_graph.finalize();
     }
+
+    transition_graphs
 }
 
 pub fn are_dtgs_strongly_connected(transition_graphs: &[DomainTransitionGraph]) -> bool {
@@ -300,6 +318,7 @@ pub fn are_dtgs_strongly_connected(transition_graphs: &[DomainTransitionGraph]) 
     for i in 0..num_dtgs.saturating_sub(1) {
         if !transition_graphs[i].is_strongly_connected() {
             connected = false;
+            break;
         }
     }
     connected

@@ -18,7 +18,7 @@ type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 
 use crate::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use crate::numeric::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
-use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node};
+use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator};
 
 use super::projected_task::ProjectedTask;
 use super::utils;
@@ -34,7 +34,7 @@ fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
 }
 
 #[inline]
-fn hash_state_components(propositional: &[i32], numeric: &[f64]) -> u64 {
+fn hash_state_components(propositional: &[usize], numeric: &[f64]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     let mut hash = FNV_OFFSET;
     for value in propositional {
@@ -49,7 +49,7 @@ fn hash_state_components(propositional: &[i32], numeric: &[f64]) -> u64 {
 
 #[inline]
 fn hash_pattern_components(
-    propositional: &[i32],
+    propositional: &[usize],
     numeric: &[f64],
     pattern_regular_ids: &[usize],
     pattern_numeric_ids: &[usize],
@@ -72,20 +72,19 @@ fn build_prop_hash_multipliers(task: &ProjectedTask<'_>) -> Vec<usize> {
     let mut product = 1usize;
     for variable in task.variables() {
         multipliers.push(product);
-        product = product.saturating_mul(variable.domain_size() as usize);
+        product = product.saturating_mul(variable.domain_size());
     }
     multipliers
 }
 
 #[inline]
-fn compute_prop_hash(propositional: &[i32], multipliers: &[usize]) -> Option<usize> {
+fn compute_prop_hash(propositional: &[usize], multipliers: &[usize]) -> Option<usize> {
     if propositional.len() != multipliers.len() {
         return None;
     }
 
     let mut hash = 0usize;
     for (value, multiplier) in propositional.iter().zip(multipliers.iter()) {
-        let value = usize::try_from(*value).ok()?;
         hash = hash.saturating_add(value.saturating_mul(*multiplier));
     }
     Some(hash)
@@ -93,21 +92,16 @@ fn compute_prop_hash(propositional: &[i32], multipliers: &[usize]) -> Option<usi
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct PdbState {
-    propositional: Vec<i32>,
+    propositional: Vec<usize>,
     numeric: Vec<f64>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PdbInternalHeuristic {
+    #[default]
     Blind,
     Lmcut,
-}
-
-impl Default for PdbInternalHeuristic {
-    fn default() -> Self {
-        Self::Blind
-    }
 }
 
 impl fmt::Display for PdbInternalHeuristic {
@@ -141,9 +135,7 @@ impl fmt::Display for PdbHeuristicConfig {
         write!(
             f,
             "exploration_heuristic={}, frontier_heuristic={}, failed_lookup_heuristic={}",
-            self.exploration_heuristic,
-            self.frontier_heuristic,
-            self.failed_lookup_heuristic,
+            self.exploration_heuristic, self.frontier_heuristic, self.failed_lookup_heuristic,
         )
     }
 }
@@ -181,7 +173,7 @@ impl PartialOrd for PdbOpenEntry {
 
 struct LmcutInnerHeuristic<'task> {
     landmark_generator: LandmarkCutLandmarks<'task>,
-    propositional_scratch: Vec<i32>,
+    propositional_scratch: Vec<usize>,
     numeric_scratch: Vec<f64>,
     default_state_buffer_len: usize,
 }
@@ -192,7 +184,7 @@ impl<'task> LmcutInnerHeuristic<'task> {
             landmark_generator: LandmarkCutLandmarks::new(task, LmCutNumericConfig::default()),
             propositional_scratch: Vec::new(),
             numeric_scratch: Vec::new(),
-            default_state_buffer_len: IntDoublePacker::from_abstract_task(task).num_bins() as usize,
+            default_state_buffer_len: IntDoublePacker::from_abstract_task(task).num_bins(),
         }
     }
 
@@ -207,16 +199,12 @@ impl<'task> LmcutInnerHeuristic<'task> {
             .map_err(|err| format!("failed to read projected numeric state: {err:?}"))?;
         let propositional = self.propositional_scratch.clone();
         let numeric = self.numeric_scratch.clone();
-        self.evaluate_from_values(
-            &propositional,
-            &numeric,
-            state.buffer(registry).len(),
-        )
+        self.evaluate_from_values(&propositional, &numeric, state.buffer(registry).len())
     }
 
     fn evaluate_from_values(
         &mut self,
-        propositional: &[i32],
+        propositional: &[usize],
         numeric: &[f64],
         state_buffer_len: usize,
     ) -> Result<InnerHeuristicResult, String> {
@@ -231,7 +219,7 @@ impl<'task> LmcutInnerHeuristic<'task> {
 
     fn evaluate_projected_values(
         &mut self,
-        propositional: &[i32],
+        propositional: &[usize],
         numeric: &[f64],
     ) -> Result<InnerHeuristicResult, String> {
         self.evaluate_from_values(propositional, numeric, self.default_state_buffer_len)
@@ -253,7 +241,7 @@ pub struct PatternDatabase<'task> {
     pub(super) frontier_states: Vec<usize>,
     full_prop_hash_multipliers: Vec<usize>,
     state_dependent_numeric_projected_ids: Vec<usize>,
-    projection_prop_scratch: RefCell<Vec<i32>>,
+    projection_prop_scratch: RefCell<Vec<usize>>,
     projection_numeric_scratch: RefCell<Vec<f64>>,
     projection_helper_scratch: RefCell<Vec<f64>>,
     direct_numeric_cache_scratch: RefCell<Vec<Option<f64>>>,
@@ -296,19 +284,20 @@ impl<'task> PatternDatabase<'task> {
             direct_numeric_cache_scratch: RefCell::new(Vec::new()),
         };
         pdb.full_prop_hash_multipliers = build_prop_hash_multipliers(&pdb.task);
-        pdb.state_dependent_numeric_projected_ids = pdb.task.state_dependent_numeric_projected_ids();
+        pdb.state_dependent_numeric_projected_ids =
+            pdb.task.state_dependent_numeric_projected_ids();
         pdb.build(max_states)?;
-        // NOTE: un-comment to print summary of the built PDB
+        // NOTE: Uncomment to print summary of the built PDB.
         utils::dump_distance_table(&pdb);
         Ok(pdb)
     }
 
-    pub fn lookup(&self, propositional: &[i32], numeric: &[f64]) -> Option<f64> {
+    pub fn lookup(&self, propositional: &[usize], numeric: &[f64]) -> Option<f64> {
         let state_id = self.lookup_state_id(propositional, numeric)?;
         self.distances.get(state_id).copied()
     }
 
-    pub fn lookup_or_fallback(&self, propositional: &[i32], numeric: &[f64]) -> f64 {
+    pub fn lookup_or_fallback(&self, propositional: &[usize], numeric: &[f64]) -> f64 {
         match self.lookup(propositional, numeric) {
             Some(distance) if distance.is_finite() => distance,
             Some(_) if self.is_goal_state(propositional) => 0.0,
@@ -319,7 +308,7 @@ impl<'task> PatternDatabase<'task> {
         }
     }
 
-    fn evaluate_failed_lookup(&self, propositional: &[i32], numeric: &[f64]) -> f64 {
+    fn evaluate_failed_lookup(&self, propositional: &[usize], numeric: &[f64]) -> f64 {
         if self.exhausted_abstract_state_space {
             return f64::INFINITY;
         }
@@ -331,9 +320,7 @@ impl<'task> PatternDatabase<'task> {
             PdbInternalHeuristic::Blind => self.min_operator_cost(),
             PdbInternalHeuristic::Lmcut => {
                 let mut evaluator = LmcutInnerHeuristic::new(&self.task);
-                match evaluator
-                    .evaluate_projected_values(propositional, numeric)
-                {
+                match evaluator.evaluate_projected_values(propositional, numeric) {
                     Ok(result) if result.dead_end => f64::INFINITY,
                     Ok(result) => result.value.max(self.min_operator_cost()),
                     Err(_) => self.min_operator_cost(),
@@ -342,10 +329,10 @@ impl<'task> PatternDatabase<'task> {
         }
     }
 
-    pub fn is_goal_state(&self, propositional: &[i32]) -> bool {
-        (0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0)).all(|goal_index| {
-            let goal = self.task.get_goal_fact(goal_index as i32);
-            propositional.get(goal.var() as usize).copied() == Some(goal.value())
+    pub fn is_goal_state(&self, propositional: &[usize]) -> bool {
+        (0..self.task.get_num_goals().max(0)).all(|goal_index| {
+            let goal = self.task.get_goal_fact(goal_index);
+            propositional.get(goal.var).copied() == Some(goal.value)
         })
     }
 
@@ -359,15 +346,15 @@ impl<'task> PatternDatabase<'task> {
 
     pub fn abstract_state_values(
         &self,
-        propositional: &[i32],
+        propositional: &[usize],
         numeric: &[f64],
-    ) -> Result<(Vec<i32>, Vec<f64>), String> {
+    ) -> Result<(Vec<usize>, Vec<f64>), String> {
         self.task.project_state_values(propositional, numeric)
     }
 
     pub fn lookup_projected_or_fallback_from_state_values(
         &self,
-        propositional: &[i32],
+        propositional: &[usize],
         numeric: &[f64],
     ) -> Result<f64, String> {
         let mut projected_prop = self.projection_prop_scratch.borrow_mut();
@@ -396,7 +383,7 @@ impl<'task> PatternDatabase<'task> {
 
     pub fn lookup_projected_or_fallback_from_expanded_state_values(
         &self,
-        propositional: &[i32],
+        propositional: &[usize],
         expanded_numeric: &[f64],
     ) -> Result<f64, String> {
         let mut projected_prop = self.projection_prop_scratch.borrow_mut();
@@ -444,7 +431,7 @@ impl<'task> PatternDatabase<'task> {
         self.lookup_projected_or_fallback_from_state_values(&propositional, &numeric)
     }
 
-    fn lookup_state_id(&self, propositional: &[i32], numeric: &[f64]) -> Option<usize> {
+    fn lookup_state_id(&self, propositional: &[usize], numeric: &[f64]) -> Option<usize> {
         let full_state_lookup = propositional.len() == self.task.variables().len()
             && numeric.len() == self.task.numeric_variables().len();
         let pattern_regular_ids = self.task.pattern_regular_projected_ids();
@@ -480,7 +467,8 @@ impl<'task> PatternDatabase<'task> {
                             == propositional.get(pattern_index).copied()
                     })
             };
-            let same_numeric = same_propositional
+
+            same_propositional
                 && if full_state_lookup {
                     state.numeric.len() == numeric.len()
                         && state
@@ -496,15 +484,14 @@ impl<'task> PatternDatabase<'task> {
                             state.numeric.get(var_id).map(|value| value.to_bits())
                                 == numeric.get(pattern_index).map(|value| value.to_bits())
                         })
-                };
-            same_numeric
+                }
         })
     }
 
     pub(super) fn state_propositional_values<'state>(
         &self,
         state: &'state PdbState,
-    ) -> &'state [i32] {
+    ) -> &'state [usize] {
         &state.propositional
     }
 
@@ -527,10 +514,9 @@ impl<'task> PatternDatabase<'task> {
                 .or_insert_with(|| Vec::with_capacity(1))
                 .push(state_id);
 
-            if let Some(prop_hash) = compute_prop_hash(
-                &state.propositional,
-                &self.full_prop_hash_multipliers,
-            ) {
+            if let Some(prop_hash) =
+                compute_prop_hash(&state.propositional, &self.full_prop_hash_multipliers)
+            {
                 self.full_prop_index
                     .entry(prop_hash)
                     .or_insert_with(|| Vec::with_capacity(1))
@@ -560,13 +546,15 @@ impl<'task> PatternDatabase<'task> {
             exhausted_abstract_state_space,
         ) = {
             let mut predecessors: Vec<Vec<(usize, f64)>> = Vec::with_capacity(max_states);
-            let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&self.task);
+            let successor_generator =
+                GroundedSuccessorGenerator::construct_node_from_task(&self.task);
             let state_packer = IntDoublePacker::from_abstract_task(&self.task);
             let axiom_evaluator = AxiomEvaluator::new(&self.task, &state_packer);
-            let mut state_registry = StateRegistry::new(&self.task, &state_packer, &axiom_evaluator);
+            let mut state_registry =
+                StateRegistry::new(&self.task, &state_packer, &axiom_evaluator);
             let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
             let initial_registry_state = state_registry.get_initial_state();
-            let mut current_propositional: Vec<i32> = Vec::new();
+            let mut current_propositional: Vec<usize> = Vec::new();
             let mut successor_numeric: Vec<f64> = Vec::new();
             let mut successor_cost_values: Vec<f64> = Vec::new();
             let mut representative_states: Vec<ConcreteState> = vec![initial_registry_state];
@@ -597,12 +585,11 @@ impl<'task> PatternDatabase<'task> {
                 None
             };
             let mut heuristic_cache: Vec<Option<InnerHeuristicResult>> = Vec::new();
-            let mut compute_inner_h = |
-                heuristic: PdbInternalHeuristic,
-                state_id: usize,
-                state: &ConcreteState,
-                registry: &StateRegistry<'_>,
-            | -> Result<InnerHeuristicResult, String> {
+            let mut compute_inner_h = |heuristic: PdbInternalHeuristic,
+                                       state_id: usize,
+                                       state: &ConcreteState,
+                                       registry: &StateRegistry<'_>|
+             -> Result<InnerHeuristicResult, String> {
                 match heuristic {
                     PdbInternalHeuristic::Blind => Ok(InnerHeuristicResult {
                         dead_end: false,
@@ -635,7 +622,7 @@ impl<'task> PatternDatabase<'task> {
                     break;
                 };
                 let state_id = entry.state_id;
-                if representative_states.len() % 500 == 0 {
+                if representative_states.len().is_multiple_of(500) {
                     println!(
                         "Expanding state {}/{} ({} reached goal states, {} truncated frontier states)",
                         state_id + 1,

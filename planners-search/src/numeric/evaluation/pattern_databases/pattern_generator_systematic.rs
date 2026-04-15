@@ -1,13 +1,13 @@
+#[cfg(test)]
+mod tests;
+
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, ExplicitVariable, Fact, Metric, NumericRootTask, NumericType,
-    NumericVariable, Operator,
-};
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
 use serde::{Deserialize, Serialize};
 
 use super::causal_graph::{CausalGraphVariable, MixedCausalGraph};
@@ -15,7 +15,7 @@ use super::numeric_size_estimator::NumericSizeEstimator;
 use super::numeric_support::NumericSupportContext;
 use super::pattern_collection::PatternCollection;
 use super::pattern_generator_greedy::DEFAULT_MAX_PDB_STATES;
-use super::projected_task::{Pattern, ProjectedTask};
+use super::projected_task::Pattern;
 use super::variable_order_finder::GreedyVariableOrderType;
 
 pub const DEFAULT_MAX_PATTERN_SIZE: usize = 2;
@@ -69,7 +69,6 @@ pub fn generate_systematic_patterns(
     let seed_variables = collect_seed_variables(task, &numeric_support);
     if config.only_interesting_patterns {
         build_interesting_patterns(
-            task,
             &causal_graph,
             &seed_variables,
             config.max_pattern_size,
@@ -78,29 +77,17 @@ pub fn generate_systematic_patterns(
     } else {
         let ordered_candidates =
             ordered_relevant_candidates(&causal_graph, &seed_variables, config);
-        generate_relevant_patterns_naive(
-            task,
-            &size_estimator,
-            &ordered_candidates,
-            config,
-        )
+        generate_relevant_patterns_naive(task, &size_estimator, &ordered_candidates, config)
     }
 }
 
 fn build_interesting_patterns(
-    task: &dyn AbstractNumericTask,
     causal_graph: &MixedCausalGraph,
     seed_variables: &BTreeSet<CausalGraphVariable>,
     max_pattern_size: usize,
     config: SystematicPatternGeneratorConfig,
 ) -> PatternCollection {
-    let sga_patterns = build_sga_patterns(
-        task,
-        causal_graph,
-        seed_variables,
-        max_pattern_size,
-        config,
-    );
+    let sga_patterns = build_sga_patterns(causal_graph, seed_variables, max_pattern_size, config);
     let mut sga_patterns_by_variable: BTreeMap<CausalGraphVariable, Vec<&Pattern>> =
         BTreeMap::new();
     for pattern in &sga_patterns {
@@ -145,7 +132,6 @@ fn build_interesting_patterns(
 }
 
 fn build_sga_patterns(
-    task: &dyn AbstractNumericTask,
     causal_graph: &MixedCausalGraph,
     seed_variables: &BTreeSet<CausalGraphVariable>,
     max_pattern_size: usize,
@@ -189,11 +175,17 @@ fn build_sga_patterns(
             match neighbor {
                 CausalGraphVariable::Regular(var_id) => {
                     let inserted = next_pattern.add_regular_var(var_id);
-                    assert!(inserted, "eff-pre neighbor regular variable already in pattern");
+                    assert!(
+                        inserted,
+                        "eff-pre neighbor regular variable already in pattern"
+                    );
                 }
                 CausalGraphVariable::Numeric(var_id) => {
                     let inserted = next_pattern.add_numeric_var(var_id);
-                    assert!(inserted, "eff-pre neighbor numeric variable already in pattern");
+                    assert!(
+                        inserted,
+                        "eff-pre neighbor numeric variable already in pattern"
+                    );
                 }
             }
             enqueue_pattern_if_new(next_pattern, &mut patterns, &mut seen);
@@ -227,6 +219,7 @@ fn generate_relevant_patterns_naive(
     PatternCollection::new(collection)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn extend_patterns_naive(
     task: &dyn AbstractNumericTask,
     size_estimator: &NumericSizeEstimator,
@@ -285,11 +278,9 @@ fn try_extend_pattern(
     max_pdb_states: usize,
 ) -> Option<usize> {
     let factor = match candidate {
-        CausalGraphVariable::Regular(var_id) => task
-            .get_variable_domain_size(var_id as i32)
-            .ok()
-            .and_then(|size| usize::try_from(size.max(1)).ok())
-            .unwrap_or(1),
+        CausalGraphVariable::Regular(var_id) => {
+            task.get_variable_domain_size(var_id).ok().unwrap_or(1)
+        }
         CausalGraphVariable::Numeric(var_id) => size_estimator.estimate_domain_size(var_id),
     };
 
@@ -346,8 +337,12 @@ fn order_causal_graph_variables(
             variables.sort_by_key(|&variable| {
                 (
                     std::cmp::Reverse(causal_graph.predecessor_count(variable)),
-                    causal_graph.goal_distance(variable).unwrap_or(usize::MAX / 2),
-                    causal_graph.causal_level(variable).unwrap_or(usize::MAX / 2),
+                    causal_graph
+                        .goal_distance(variable)
+                        .unwrap_or(usize::MAX / 2),
+                    causal_graph
+                        .causal_level(variable)
+                        .unwrap_or(usize::MAX / 2),
                     variable,
                 )
             });
@@ -355,9 +350,13 @@ fn order_causal_graph_variables(
         GreedyVariableOrderType::GoalCgLevel => {
             variables.sort_by_key(|&variable| {
                 (
-                    causal_graph.goal_distance(variable).unwrap_or(usize::MAX / 2),
+                    causal_graph
+                        .goal_distance(variable)
+                        .unwrap_or(usize::MAX / 2),
                     std::cmp::Reverse(causal_graph.predecessor_count(variable)),
-                    causal_graph.causal_level(variable).unwrap_or(usize::MAX / 2),
+                    causal_graph
+                        .causal_level(variable)
+                        .unwrap_or(usize::MAX / 2),
                     variable,
                 )
             });
@@ -423,23 +422,19 @@ fn collect_seed_variables(
     let mut seed_variables = BTreeSet::new();
     let goal_related_propositional_vars = collect_goal_related_propositional_closure(task);
 
-    for goal_index in 0..usize::try_from(task.get_num_goals().max(0)).unwrap_or(0) {
-        let goal = task.get_goal_fact(goal_index as i32);
-        let goal_var_id = goal.var() as usize;
+    for goal_index in 0..task.get_num_goals() {
+        let goal = task.get_goal_fact(goal_index);
         if task
-            .get_variable_axiom_layer(goal_var_id as i32)
-            .unwrap_or(-1)
-            == -1
+            .get_variable_axiom_layer(goal.var)
+            .unwrap_or(None)
+            .is_none()
         {
-            seed_variables.insert(CausalGraphVariable::Regular(goal_var_id));
+            seed_variables.insert(CausalGraphVariable::Regular(goal.var));
         }
     }
 
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-        let Some(affected_var_id) = usize::try_from(comparison_axiom.get_affected_var_id()).ok()
-        else {
-            continue;
-        };
+        let affected_var_id = comparison_axiom.get_affected_var_id();
         if !goal_related_propositional_vars.contains(&affected_var_id) {
             continue;
         }
@@ -467,19 +462,17 @@ fn is_pattern_numeric_candidate(
 
 fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) -> BTreeSet<usize> {
     let mut goal_related: BTreeSet<usize> = (0..task.get_num_goals())
-        .filter_map(|goal_id| usize::try_from(task.get_goal_fact(goal_id).var()).ok())
+        .map(|goal_id| task.get_goal_fact(goal_id).var)
         .collect();
 
     loop {
         let mut changed = false;
 
         for axiom in task.axioms() {
-            let affected_var_id = axiom.var_id() as usize;
+            let affected_var_id = axiom.var_id();
             if goal_related.contains(&affected_var_id) {
                 for condition in axiom.conditions() {
-                    if let Ok(condition_var_id) = usize::try_from(condition.var()) {
-                        changed |= goal_related.insert(condition_var_id);
-                    }
+                    changed |= goal_related.insert(condition.var);
                 }
             }
         }
@@ -555,221 +548,4 @@ fn compute_union_pattern(lhs: &Pattern, rhs: &Pattern) -> Pattern {
             .chain(rhs.numeric.iter().copied())
             .collect(),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use planners_sas::numeric::axioms::{
-        AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
-    };
-    use planners_sas::numeric::numeric_task::{AssignmentEffect, AssignmentOperation};
-
-    use super::*;
-
-    fn simple_var(name: &str, axiom_layer: i32) -> ExplicitVariable {
-        ExplicitVariable::new(
-            2,
-            name.to_string(),
-            vec![format!("{name}=0"), format!("{name}=1")],
-            axiom_layer,
-            1,
-        )
-    }
-
-    fn propositional_predecessor_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![simple_var("q", -1), simple_var("p", -1)],
-            vec![],
-            vec![Fact::new(1, 1)],
-            vec![],
-            vec![0, 0],
-            vec![],
-            vec![Operator::new(
-                "set-goal".to_string(),
-                vec![Fact::new(0, 1)],
-                vec![planners_sas::numeric::numeric_task::Effect::new(
-                    vec![],
-                    1,
-                    0,
-                    1,
-                )],
-                vec![],
-                1,
-            )],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        )
-    }
-
-    fn numeric_goal_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![simple_var("cmp", 0), simple_var("goal", -1)],
-            vec![
-                NumericVariable::new("threshold".to_string(), NumericType::Constant, -1),
-                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            ],
-            vec![Fact::new(1, 1)],
-            vec![],
-            vec![0, 0],
-            vec![1.0, 0.0],
-            vec![],
-            vec![PropositionalAxiom::new(vec![Fact::new(0, 0)], 1, 0, 1)],
-            vec![ComparisonAxiom::new(
-                0,
-                1,
-                0,
-                ComparisonOperator::GreaterThanOrEqual,
-            )],
-            vec![],
-            (0, 0),
-        )
-    }
-
-    fn eff_eff_goal_join_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![simple_var("g1", -1), simple_var("g2", -1)],
-            vec![],
-            vec![Fact::new(0, 1), Fact::new(1, 1)],
-            vec![],
-            vec![0, 0],
-            vec![],
-            vec![Operator::new(
-                "set-both".to_string(),
-                vec![],
-                vec![
-                    planners_sas::numeric::numeric_task::Effect::new(vec![], 0, 0, 1),
-                    planners_sas::numeric::numeric_task::Effect::new(vec![], 1, 0, 1),
-                ],
-                vec![],
-                1,
-            )],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        )
-    }
-
-    fn helper_goal_with_unsupported_numeric_effect_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![simple_var("cmp", 0), simple_var("goal", -1)],
-            vec![
-                NumericVariable::new("const2".to_string(), NumericType::Constant, -1),
-                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-                NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-                NumericVariable::new("sum".to_string(), NumericType::Derived, 0),
-            ],
-            vec![Fact::new(1, 1)],
-            vec![],
-            vec![0, 0],
-            vec![2.0, 1.0, 1.0, 2.0],
-            vec![Operator::new(
-                "scale-x".to_string(),
-                vec![],
-                vec![],
-                vec![AssignmentEffect::new(
-                    1,
-                    AssignmentOperation::Times,
-                    0,
-                    false,
-                    vec![],
-                )],
-                1,
-            )],
-            vec![PropositionalAxiom::new(vec![Fact::new(0, 0)], 1, 0, 1)],
-            vec![ComparisonAxiom::new(
-                0,
-                3,
-                0,
-                ComparisonOperator::GreaterThanOrEqual,
-            )],
-            vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-            (0, 0),
-        )
-    }
-
-    #[test]
-    fn systematic_generator_includes_goal_singleton_and_predecessor_pair() {
-        let task = propositional_predecessor_task();
-        let collection = generate_systematic_patterns(
-            &task,
-            SystematicPatternGeneratorConfig {
-                max_pattern_size: 2,
-                ..SystematicPatternGeneratorConfig::default()
-            },
-        );
-
-        assert!(collection.contains(&Pattern::new(vec![1], vec![])));
-        assert!(collection.contains(&Pattern::new(vec![0, 1], vec![])));
-    }
-
-    #[test]
-    fn systematic_generator_returns_projectable_numeric_patterns() {
-        let task = numeric_goal_task();
-        let collection =
-            generate_systematic_patterns(&task, SystematicPatternGeneratorConfig::default());
-
-        assert!(collection.contains(&Pattern::new(vec![], vec![1])));
-    }
-
-    #[test]
-    fn systematic_generator_joins_disjoint_sga_patterns_via_connection_points() {
-        let task = eff_eff_goal_join_task();
-        let collection = generate_systematic_patterns(
-            &task,
-            SystematicPatternGeneratorConfig {
-                max_pattern_size: 2,
-                ..SystematicPatternGeneratorConfig::default()
-            },
-        );
-
-        assert!(collection.contains(&Pattern::new(vec![0], vec![])));
-        assert!(collection.contains(&Pattern::new(vec![1], vec![])));
-        assert!(collection.contains(&Pattern::new(vec![0, 1], vec![])));
-    }
-
-    #[test]
-    fn systematic_generator_keeps_patterns_rejected_by_projected_task() {
-        let task = helper_goal_with_unsupported_numeric_effect_task();
-        let helper_var_id = task.numeric_variables().len();
-
-        assert!(ProjectedTask::new(&task, &Pattern::new(vec![], vec![helper_var_id])).is_err());
-
-        let collection = generate_systematic_patterns(
-            &task,
-            SystematicPatternGeneratorConfig {
-                max_pattern_size: 2,
-                ..SystematicPatternGeneratorConfig::default()
-            },
-        );
-
-        assert!(collection.contains(&Pattern::new(vec![], vec![helper_var_id])));
-    }
-
-    #[test]
-    fn systematic_generator_supports_naive_mode() {
-        let task = propositional_predecessor_task();
-        let collection = generate_systematic_patterns(
-            &task,
-            SystematicPatternGeneratorConfig {
-                only_interesting_patterns: false,
-                max_pattern_size: 2,
-                ..SystematicPatternGeneratorConfig::default()
-            },
-        );
-
-        assert!(collection.contains(&Pattern::new(vec![1], vec![])));
-        assert!(collection.contains(&Pattern::new(vec![0], vec![])));
-        assert!(collection.contains(&Pattern::new(vec![0, 1], vec![])));
-    }
 }

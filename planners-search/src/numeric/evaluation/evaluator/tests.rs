@@ -38,7 +38,7 @@ impl Evaluator for TestEvaluator {
 fn test_evaluation_state_basic() {
     let state = create_test_state(1);
     let state_owned = state.clone();
-    let mut eval_state = EvaluationState::new(&state_owned, 5.0, false);
+    let eval_state = EvaluationState::new(&state_owned, 5.0, false);
 
     assert_eq!(eval_state.result().g_value, 5.0);
     assert!(!eval_state.result().is_preferred);

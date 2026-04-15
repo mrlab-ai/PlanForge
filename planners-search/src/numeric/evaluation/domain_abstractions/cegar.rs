@@ -2,7 +2,7 @@
 mod tests;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::fmt::{self, Write as _};
+use std::fmt::{self};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
@@ -11,10 +11,11 @@ use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 
-use libc::exit;
 use planners_sas::numeric::axioms::AxiomEvaluator;
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, Fact, NumericType};
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
+
+use crate::numeric::evaluation::domain_abstractions::utils::fact_is_hold;
 
 use super::abstract_operator_generator::DomainMapping;
 use super::comparison_expression::Interval;
@@ -33,7 +34,7 @@ pub struct NumericFlaw {
 /// Mirrors numeric-fd's `PropFlaw = pair<Fact, vector<NumericFlaw>>`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PropFlaw {
-    pub fact: Fact,
+    pub fact: ExplicitFact,
     pub dependent_numeric_flaws: Vec<NumericFlaw>,
 }
 
@@ -139,7 +140,7 @@ pub struct CegarConfig {
 impl Default for CegarConfig {
     fn default() -> Self {
         Self {
-            max_abstraction_size: i64::MAX as usize,
+            max_abstraction_size: usize::MAX,
             max_iterations: 10_000,
             max_time: None,
             use_wildcard_plans: true,
@@ -159,7 +160,7 @@ impl Default for CegarConfig {
 #[derive(Debug, Clone)]
 pub struct CegarState {
     pub domain_mapping: DomainMapping,
-    pub domain_sizes: Vec<i32>,
+    pub domain_sizes: Vec<usize>,
     pub partitions: NumericPartitions,
     pub numeric_domain_sizes: Vec<usize>,
     pub iteration: usize,
@@ -301,7 +302,7 @@ impl Cegar {
                 continue;
             }
 
-            // execute_entire_plan mode: keep executing even if flaws are found.
+            // Execute_entire_plan mode: keep executing even if flaws are found.
             let mut chosen_op_id: Option<usize> = None;
             let mut fallback_op_id: Option<usize> = None;
             for &op_id in equivalent_ops.iter() {
@@ -330,7 +331,7 @@ impl Cegar {
             }
 
             if !step_flaws.is_empty() {
-                collected_flaws.extend(step_flaws.drain(..));
+                collected_flaws.append(&mut step_flaws);
             }
 
             let chosen = chosen_op_id.or(fallback_op_id);
@@ -384,15 +385,16 @@ impl Cegar {
 
     /// Port of numeric-fd's refinement step (`fix_flaws`).
     ///
-    /// Returns `true` if any refinement was applied.
+    /// Return `true` if any refinement was applied.
+    #[allow(clippy::too_many_arguments)]
     pub fn fix_flaws(
         &self,
         task: &dyn AbstractNumericTask,
         flaws: &[Flaw],
         domain_mapping: &mut DomainMapping,
-        domain_sizes: &mut Vec<i32>,
+        domain_sizes: &mut [usize],
         partitions: &mut NumericPartitions,
-        numeric_domain_sizes: &mut Vec<usize>,
+        numeric_domain_sizes: &mut [usize],
         rng: &mut SmallRng,
         blacklisted_prop_var_ids: &mut HashSet<usize>,
         blacklisted_numeric_var_ids: &mut HashSet<usize>,
@@ -400,7 +402,7 @@ impl Cegar {
         let comparison_var_ids: HashSet<usize> = task
             .comparison_axioms()
             .iter()
-            .filter_map(|ax| usize::try_from(ax.get_affected_var_id()).ok())
+            .map(|ax| ax.get_affected_var_id())
             .collect();
         let abstraction_size = compute_abstraction_size(domain_sizes, numeric_domain_sizes);
 
@@ -429,7 +431,6 @@ impl Cegar {
                 domain_sizes,
                 partitions,
                 numeric_domain_sizes,
-                abstraction_size,
             ),
             FlawTreatment::OneSplitPerVariable => fix_flaws_per_variable(
                 task,
@@ -442,7 +443,6 @@ impl Cegar {
                 domain_sizes,
                 partitions,
                 numeric_domain_sizes,
-                abstraction_size,
             ),
             FlawTreatment::MaxRefinedSingleAtom => fix_single_flaw_max_refined(
                 task,
@@ -461,14 +461,13 @@ impl Cegar {
     }
 }
 
-fn compute_abstraction_size(domain_sizes: &[i32], numeric_domain_sizes: &[usize]) -> usize {
+fn compute_abstraction_size(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) -> usize {
     let mut size: usize = 1;
     for &d in domain_sizes.iter() {
-        let d_usize = usize::try_from(d.max(0)).unwrap_or(0);
-        if d_usize == 0 {
+        if d == 0 {
             return 0;
         }
-        size = size.saturating_mul(d_usize);
+        size = size.saturating_mul(d);
     }
     for &p in numeric_domain_sizes.iter() {
         if p == 0 {
@@ -492,27 +491,27 @@ fn shuffle_indices_with_rng<R: rand::Rng + ?Sized>(indices: &mut [usize], rng: &
     indices.shuffle(rng);
 }
 
-fn abstraction_size_u128(domain_sizes: &[i32], numeric_domain_sizes: &[usize]) -> Option<u128> {
+fn abstraction_size_u128(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) -> Option<u128> {
     super::utils::compute_abstraction_size_u128(domain_sizes, numeric_domain_sizes)
 }
 
 fn can_refine_propositional_variable(
-    domain_sizes: &[i32],
+    domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
     var_id: usize,
-    new_domain_size: i32,
+    new_domain_size: usize,
     max_abstraction_size: usize,
 ) -> bool {
     let Some(total_size) = abstraction_size_u128(domain_sizes, numeric_domain_sizes) else {
         return false;
     };
-    let Some(&old_domain_size_i32) = domain_sizes.get(var_id) else {
+    let Some(&old_domain_size) = domain_sizes.get(var_id) else {
         return false;
     };
-    if old_domain_size_i32 <= 0 || new_domain_size <= 0 {
+    if old_domain_size == 0 || new_domain_size == 0 {
         return false;
     }
-    let reduced = total_size / (old_domain_size_i32 as u128);
+    let reduced = total_size / (old_domain_size as u128);
     reduced
         .checked_mul(new_domain_size as u128)
         .map(|candidate| candidate <= max_abstraction_size as u128)
@@ -520,7 +519,7 @@ fn can_refine_propositional_variable(
 }
 
 fn can_refine_numeric_variable(
-    domain_sizes: &[i32],
+    domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
     numeric_var_id: usize,
     max_abstraction_size: usize,
@@ -542,10 +541,10 @@ fn can_refine_numeric_variable(
 }
 
 fn can_refine_propositional_variable_with_blacklist(
-    domain_sizes: &[i32],
+    domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
     var_id: usize,
-    new_domain_size: i32,
+    new_domain_size: usize,
     max_abstraction_size: usize,
     comparison_var_ids: &HashSet<usize>,
     blacklisted_prop_var_ids: &mut HashSet<usize>,
@@ -571,7 +570,7 @@ fn can_refine_propositional_variable_with_blacklist(
 }
 
 fn can_refine_numeric_variable_with_blacklist(
-    domain_sizes: &[i32],
+    domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
     numeric_var_id: usize,
     max_abstraction_size: usize,
@@ -595,13 +594,7 @@ fn can_refine_numeric_variable_with_blacklist(
 
 fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
     match flaw {
-        Flaw::Propositional(pf) => (
-            0,
-            pf.fact.var() as usize,
-            pf.fact.value() as usize,
-            0,
-            false,
-        ),
+        Flaw::Propositional(pf) => (0, pf.fact.var, pf.fact.value, 0, false),
         Flaw::Numeric(nf) => (
             1,
             nf.numeric_var_id,
@@ -614,36 +607,38 @@ fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
 
 fn flaw_variable_key(flaw: &Flaw) -> (u8, usize) {
     match flaw {
-        Flaw::Propositional(pf) => (0, pf.fact.var() as usize),
+        Flaw::Propositional(pf) => (0, pf.fact.var),
         Flaw::Numeric(nf) => (1, nf.numeric_var_id),
     }
 }
 
+#[allow(unused)]
 fn score_flaw(
     flaw: &Flaw,
-    domain_sizes: &[i32],
+    domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
     _abstraction_size: usize,
-) -> i64 {
+) -> usize {
     match flaw {
         Flaw::Numeric(nf) => numeric_domain_sizes
             .get(nf.numeric_var_id)
             .copied()
-            .unwrap_or(0) as i64,
+            .unwrap_or(0),
         Flaw::Propositional(pf) => {
-            let var_id = pf.fact.var() as usize;
-            let base = domain_sizes.get(var_id).copied().unwrap_or(0) as i64;
+            let var_id = pf.fact.var;
+            let base = domain_sizes.get(var_id).copied().unwrap_or(0);
             let max_dep = pf
                 .dependent_numeric_flaws
                 .iter()
                 .filter_map(|nf| numeric_domain_sizes.get(nf.numeric_var_id).copied())
                 .max()
-                .unwrap_or(0) as i64;
+                .unwrap_or(0);
             base + max_dep
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fix_single_random_flaw(
     task: &dyn AbstractNumericTask,
     flaws: &[Flaw],
@@ -653,9 +648,9 @@ fn fix_single_random_flaw(
     blacklisted_prop_var_ids: &mut HashSet<usize>,
     blacklisted_numeric_var_ids: &mut HashSet<usize>,
     domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut Vec<i32>,
+    domain_sizes: &mut [usize],
     partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut Vec<usize>,
+    numeric_domain_sizes: &mut [usize],
 ) -> Result<bool> {
     if flaws.is_empty() {
         return Ok(false);
@@ -685,6 +680,7 @@ fn fix_single_random_flaw(
     Ok(false)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fix_flaws_per_atom(
     task: &dyn AbstractNumericTask,
     flaws: &[Flaw],
@@ -693,13 +689,12 @@ fn fix_flaws_per_atom(
     blacklisted_prop_var_ids: &mut HashSet<usize>,
     blacklisted_numeric_var_ids: &mut HashSet<usize>,
     domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut Vec<i32>,
+    domain_sizes: &mut [usize],
     partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut Vec<usize>,
-    _abstraction_size: usize,
+    numeric_domain_sizes: &mut [usize],
 ) -> Result<bool> {
     let mut ordered: Vec<&Flaw> = flaws.iter().collect();
-    ordered.sort_by(|a, b| flaw_atom_key(a).cmp(&flaw_atom_key(b)));
+    ordered.sort_by_key(|a| flaw_atom_key(a));
 
     let mut changed = false;
     let mut last: Option<(u8, usize, usize, u64, bool)> = None;
@@ -727,6 +722,7 @@ fn fix_flaws_per_atom(
     Ok(changed)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fix_flaws_per_variable(
     task: &dyn AbstractNumericTask,
     flaws: &[Flaw],
@@ -735,17 +731,14 @@ fn fix_flaws_per_variable(
     blacklisted_prop_var_ids: &mut HashSet<usize>,
     blacklisted_numeric_var_ids: &mut HashSet<usize>,
     domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut Vec<i32>,
+    domain_sizes: &mut [usize],
     partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut Vec<usize>,
-    _abstraction_size: usize,
+    numeric_domain_sizes: &mut [usize],
 ) -> Result<bool> {
     let mut ordered: Vec<&Flaw> = flaws.iter().collect();
-    ordered.sort_by(|a, b| flaw_variable_key(a).cmp(&flaw_variable_key(b)));
+    ordered.sort_by_key(|a| flaw_variable_key(a));
 
     let mut changed = false;
-    let mut refined_prop_vars: HashSet<usize> = HashSet::new();
-    let mut refined_numeric_vars: HashSet<usize> = HashSet::new();
     let mut last: Option<(u8, usize)> = None;
 
     for flaw in ordered {
@@ -772,6 +765,7 @@ fn fix_flaws_per_variable(
     Ok(changed)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fix_single_flaw_max_refined(
     task: &dyn AbstractNumericTask,
     flaws: &[Flaw],
@@ -780,9 +774,9 @@ fn fix_single_flaw_max_refined(
     blacklisted_prop_var_ids: &mut HashSet<usize>,
     blacklisted_numeric_var_ids: &mut HashSet<usize>,
     domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut Vec<i32>,
+    domain_sizes: &mut [usize],
     partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut Vec<usize>,
+    numeric_domain_sizes: &mut [usize],
     abstraction_size: usize,
 ) -> Result<bool> {
     if flaws.is_empty() {
@@ -792,21 +786,21 @@ fn fix_single_flaw_max_refined(
     #[derive(Clone)]
     struct Candidate {
         idx: usize,
-        score: i64,
+        score: usize,
         restricted_dep: Option<Vec<NumericFlaw>>,
     }
 
     let mut candidates: Vec<Candidate> = Vec::with_capacity(flaws.len());
     for (idx, flaw) in flaws.iter().enumerate() {
         let mut restricted_dep: Option<Vec<NumericFlaw>> = None;
-        let score = match flaw {
+        let score: usize = match flaw {
             Flaw::Numeric(nf) => numeric_domain_sizes
                 .get(nf.numeric_var_id)
                 .copied()
-                .unwrap_or(0) as i64,
+                .unwrap_or(0),
             Flaw::Propositional(pf) => {
-                let var_id = pf.fact.var() as usize;
-                let base = domain_sizes.get(var_id).copied().unwrap_or(0) as i64;
+                let var_id = pf.fact.var;
+                let base: usize = domain_sizes.get(var_id).copied().unwrap_or(0);
                 if comparison_var_ids.contains(&var_id) && !pf.dependent_numeric_flaws.is_empty() {
                     let mut best: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
                     for nf in pf.dependent_numeric_flaws.iter().cloned() {
@@ -818,7 +812,7 @@ fn fix_single_flaw_max_refined(
                     }
                     if let Some((&max_partitions, vec)) = best.iter().next_back() {
                         restricted_dep = Some(vec.clone());
-                        base + (max_partitions as i64)
+                        base + (max_partitions)
                     } else {
                         base
                     }
@@ -868,6 +862,7 @@ fn fix_single_flaw_max_refined(
     Ok(false)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_refine_from_flaw(
     task: &dyn AbstractNumericTask,
     flaw: &Flaw,
@@ -876,7 +871,7 @@ fn try_refine_from_flaw(
     blacklisted_prop_var_ids: &mut HashSet<usize>,
     blacklisted_numeric_var_ids: &mut HashSet<usize>,
     domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [i32],
+    domain_sizes: &mut [usize],
     partitions: &mut NumericPartitions,
     numeric_domain_sizes: &mut [usize],
     dependent_numeric_refinement: DependentNumericRefinement,
@@ -894,18 +889,18 @@ fn try_refine_from_flaw(
                 return Ok(false);
             }
             if partitions.split_at(var_id, nf.value, nf.include_in_lower) {
-                if let Some(parts) = partitions.partitions(var_id) {
-                    if let Some(slot) = numeric_domain_sizes.get_mut(var_id) {
-                        *slot = parts.len();
-                    }
+                if let Some(parts) = partitions.partitions(var_id)
+                    && let Some(slot) = numeric_domain_sizes.get_mut(var_id)
+                {
+                    *slot = parts.len();
                 }
                 return Ok(true);
             }
             Ok(false)
         }
         Flaw::Propositional(pf) => {
-            let var_id = pf.fact.var() as usize;
-            let value = pf.fact.value() as usize;
+            let var_id = pf.fact.var;
+            let value = pf.fact.value;
 
             // Bounds and conversion checks: these should hold in normal operation;
             // surface violations during debug builds but keep release behavior.
@@ -920,48 +915,23 @@ fn try_refine_from_flaw(
                 return Ok(false);
             }
 
-            let var_i32 = match i32::try_from(var_id) {
-                Ok(v) => v,
-                Err(_) => {
-                    debug_assert!(
-                        false,
-                        "try_refine_from_flaw: var_id {} doesn't fit in i32",
-                        var_id
-                    );
-                    return Ok(false);
-                }
-            };
-
-            let concrete_size = match task.get_variable_domain_size(var_i32) {
+            let concrete_size = match task.get_variable_domain_size(var_id) {
                 Ok(s) => s,
                 Err(e) => {
                     debug_assert!(
                         false,
                         "try_refine_from_flaw: get_variable_domain_size({}) failed: {}",
-                        var_i32,
-                        e.to_string()
+                        var_id, e
                     );
                     return Ok(false);
                 }
             };
 
-            let concrete_size_usize = match usize::try_from(concrete_size.max(0)) {
-                Ok(u) => u,
-                Err(_) => {
-                    debug_assert!(
-                        false,
-                        "try_refine_from_flaw: concrete_size {} cannot convert to usize",
-                        concrete_size
-                    );
-                    return Ok(false);
-                }
-            };
-
-            if value >= concrete_size_usize {
+            if value >= concrete_size {
                 debug_assert!(
                     false,
                     "try_refine_from_flaw: fact value {} out of range (concrete size {}) for var {}",
-                    value, concrete_size_usize, var_id
+                    value, concrete_size, var_id
                 );
                 return Ok(false);
             }
@@ -987,48 +957,23 @@ fn try_refine_from_flaw(
                     changed = true;
                 }
                 // Ensure mapping values are within the new abstract size.
-                if domain_mapping[var_id].len() >= 1 {
-                    if domain_mapping[var_id][0] != 1 {
-                        domain_mapping[var_id][0] = 1;
-                        changed = true;
-                    }
+                if !domain_mapping[var_id].is_empty() && domain_mapping[var_id][0] != 1 {
+                    domain_mapping[var_id][0] = 1;
+                    changed = true;
                 }
-                if domain_mapping[var_id].len() >= 2 {
-                    if domain_mapping[var_id][1] != 0 {
-                        domain_mapping[var_id][1] = 0;
-                        changed = true;
-                    }
+                if domain_mapping[var_id].len() >= 2 && domain_mapping[var_id][1] != 0 {
+                    domain_mapping[var_id][1] = 0;
+                    changed = true;
                 }
-                if domain_mapping[var_id].len() >= 3 {
-                    if domain_mapping[var_id][2] != 0 {
-                        domain_mapping[var_id][2] = 0;
-                        changed = true;
-                    }
+                if domain_mapping[var_id].len() >= 3 && domain_mapping[var_id][2] != 0 {
+                    domain_mapping[var_id][2] = 0;
+                    changed = true;
                 }
-                let _ = old_size; // keep structure similar to numeric-fd; size tracking handled elsewhere
+                let _ = old_size; // Keep structure similar to numeric-fd; size tracking handled elsewhere.
             } else {
                 let abs_size = domain_sizes[var_id];
-                if abs_size <= 0 {
-                    debug_assert!(
-                        false,
-                        "try_refine_from_flaw: abs_size for var {} is non-positive: {}",
-                        var_id, abs_size
-                    );
-                    return Ok(false);
-                }
-                let abs_size_usize = match usize::try_from(abs_size) {
-                    Ok(u) => u,
-                    Err(_) => {
-                        debug_assert!(
-                            false,
-                            "try_refine_from_flaw: abs_size {} cannot convert to usize",
-                            abs_size
-                        );
-                        return Ok(false);
-                    }
-                };
                 // If we've already fully refined this variable, nothing to do.
-                if abs_size_usize >= concrete_size_usize {
+                if abs_size >= concrete_size {
                     return Ok(false);
                 }
                 // Only refine if the value is still mapped to the default class (0).
@@ -1082,10 +1027,10 @@ fn try_refine_from_flaw(
                     }
 
                     if partitions.split_at(num_id, dep.value, dep.include_in_lower) {
-                        if let Some(parts) = partitions.partitions(num_id) {
-                            if let Some(slot) = numeric_domain_sizes.get_mut(num_id) {
-                                *slot = parts.len();
-                            }
+                        if let Some(parts) = partitions.partitions(num_id)
+                            && let Some(slot) = numeric_domain_sizes.get_mut(num_id)
+                        {
+                            *slot = parts.len();
                         }
                         any_numeric_changed = true;
                         if dependent_numeric_refinement == DependentNumericRefinement::One {
@@ -1101,12 +1046,12 @@ fn try_refine_from_flaw(
     }
 }
 
-fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<(usize, i32)> {
-    let num_goals = usize::try_from(task.get_num_goals().max(0)).unwrap_or(0);
+fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<(usize, usize)> {
+    let num_goals = task.get_num_goals();
     let mut goals = Vec::with_capacity(num_goals);
     for goal_idx in 0..num_goals {
-        let goal = task.get_goal_fact(goal_idx as i32);
-        goals.push((goal.var() as usize, goal.value()));
+        let goal = task.get_goal_fact(goal_idx);
+        goals.push((goal.var, goal.value));
     }
     goals
 }
@@ -1123,42 +1068,36 @@ fn compute_initial_split_mapping(
     task: &dyn AbstractNumericTask,
     config: &CegarConfig,
     var_id: usize,
-    goal_value: Option<i32>,
+    goal_value: Option<usize>,
     rng: &mut SmallRng,
-) -> Option<(i32, Vec<i32>)> {
-    let var_i32 = i32::try_from(var_id).ok()?;
-    let concrete_domain_size =
-        usize::try_from(task.get_variable_domain_size(var_i32).ok()?.max(0)).ok()?;
+) -> Option<(usize, Vec<usize>)> {
+    let concrete_domain_size = task.get_variable_domain_size(var_id).unwrap_or(0);
     if concrete_domain_size == 0 {
         return None;
     }
 
-    let initial_value = usize::try_from(
-        task.get_initial_propositional_state_values()
-            .get(var_id)
-            .copied()
-            .unwrap_or(0)
-            .max(0),
-    )
-    .ok()?;
-    let goal_value_usize = goal_value.and_then(|value| usize::try_from(value).ok());
+    let initial_value = task
+        .get_initial_propositional_state_values()
+        .get(var_id)
+        .copied()
+        .unwrap_or(0);
     let comparison_var_ids: HashSet<usize> = task
         .comparison_axioms()
         .iter()
-        .filter_map(|axiom| usize::try_from(axiom.get_affected_var_id()).ok())
+        .map(|axiom| axiom.get_affected_var_id())
         .collect();
     let is_comparison_var = comparison_var_ids.contains(&var_id);
 
     match config.init_split_method {
         InitSplitMethod::GoalValue => {
-            let goal = goal_value_usize?;
+            let goal = goal_value?;
             let mut mapping = vec![0; concrete_domain_size];
             mapping[goal] = 1;
             Some((2, mapping))
         }
         InitSplitMethod::GoalValueOrRandomIfNonGoal => {
-            let chosen = goal_value_usize
-                .unwrap_or_else(|| choose_random_domain_value(concrete_domain_size, rng));
+            let chosen =
+                goal_value.unwrap_or_else(|| choose_random_domain_value(concrete_domain_size, rng));
             let mut mapping = vec![0; concrete_domain_size];
             mapping[chosen] = 1;
             Some((2, mapping))
@@ -1183,20 +1122,22 @@ fn compute_initial_split_mapping(
             let max_partition = choose_random_domain_value(concrete_domain_size, rng).max(1);
             let mut mapping = vec![0; concrete_domain_size];
             for (index, concrete_value) in order.into_iter().enumerate() {
-                mapping[concrete_value] = (index % (max_partition + 1)) as i32;
+                mapping[concrete_value] = index % (max_partition + 1);
             }
             let abstract_domain_size = mapping.iter().copied().max().unwrap_or(0) + 1;
             Some((abstract_domain_size, mapping))
         }
         InitSplitMethod::RandomBinaryPartitionSeparatingInitGoal => {
-            let mut mapping: Vec<i32> = (0..concrete_domain_size)
-                .map(|_| choose_random_domain_value(2, rng) as i32)
+            let mut mapping: Vec<usize> = (0..concrete_domain_size)
+                .map(|_| choose_random_domain_value(2, rng))
                 .collect();
-            if let Some(goal) = goal_value_usize {
-                if initial_value != goal && initial_value < mapping.len() && goal < mapping.len() {
-                    mapping[initial_value] = 0;
-                    mapping[goal] = 1;
-                }
+            if let Some(goal) = goal_value
+                && initial_value != goal
+                && initial_value < mapping.len()
+                && goal < mapping.len()
+            {
+                mapping[initial_value] = 0;
+                mapping[goal] = 1;
             }
             if mapping.iter().all(|&value| value == mapping[0]) {
                 None
@@ -1204,13 +1145,13 @@ fn compute_initial_split_mapping(
                 Some((2, mapping))
             }
         }
-        InitSplitMethod::Identity => Some((
-            concrete_domain_size as i32,
-            (0..concrete_domain_size as i32).collect(),
-        )),
+        InitSplitMethod::Identity => {
+            Some((concrete_domain_size, (0..concrete_domain_size).collect()))
+        }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_initial_goal_splits(
     task: &dyn AbstractNumericTask,
     config: &CegarConfig,
@@ -1218,11 +1159,11 @@ fn apply_initial_goal_splits(
     blacklisted_prop_var_ids: &HashSet<usize>,
     blacklisted_numeric_var_ids: &HashSet<usize>,
     domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [i32],
+    domain_sizes: &mut [usize],
     partitions: &mut NumericPartitions,
     numeric_domain_sizes: &mut [usize],
 ) {
-    let goal_values: HashMap<usize, i32> = goal_variable_values(task).into_iter().collect();
+    let goal_values: HashMap<usize, usize> = goal_variable_values(task).into_iter().collect();
     let num_prop_vars = task.variables().len();
     let mut candidate_var_ids: Vec<usize> = config
         .init_split_var_ids
@@ -1250,16 +1191,16 @@ fn apply_initial_goal_splits(
             ) {
                 continue;
             }
-            let Some(&init_value) = task.get_initial_numeric_state_values().get(numeric_var_id) else {
+            let Some(&init_value) = task.get_initial_numeric_state_values().get(numeric_var_id)
+            else {
                 continue;
             };
             let include_in_lower = rng.gen_range(0..2) == 0;
-            if partitions.split_at(numeric_var_id, init_value, include_in_lower) {
-                if let Some(parts) = partitions.partitions(numeric_var_id) {
-                    if let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id) {
-                        *slot = parts.len();
-                    }
-                }
+            if partitions.split_at(numeric_var_id, init_value, include_in_lower)
+                && let Some(parts) = partitions.partitions(numeric_var_id)
+                && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id)
+            {
+                *slot = parts.len();
             }
             continue;
         }
@@ -1268,15 +1209,13 @@ fn apply_initial_goal_splits(
         if blacklisted_prop_var_ids.contains(&var_id) {
             continue;
         }
-        let Some((new_domain_size, mapping)) =
-            compute_initial_split_mapping(
-                task,
-                config,
-                var_id,
-                goal_values.get(&var_id).copied(),
-                rng,
-            )
-        else {
+        let Some((new_domain_size, mapping)) = compute_initial_split_mapping(
+            task,
+            config,
+            var_id,
+            goal_values.get(&var_id).copied(),
+            rng,
+        ) else {
             continue;
         };
         if new_domain_size <= 1 {
@@ -1335,10 +1274,10 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
     let mut last_step: Option<CegarStep> = None;
 
     while iteration <= config.max_iterations {
-        if let Some(max_time) = config.max_time {
-            if start.elapsed() >= max_time {
-                break;
-            }
+        if let Some(max_time) = config.max_time
+            && start.elapsed() >= max_time
+        {
+            break;
         }
 
         if config.debug {
@@ -1349,7 +1288,7 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
             );
         }
 
-        // TODO: avoid cloning at all cost.
+        // TODO: Avoid cloning at all cost.
         let factory = DomainAbstractionFactory::new(
             task,
             domain_mapping.clone(),
@@ -1463,53 +1402,40 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
 
 fn trivial_domain_mapping_and_sizes(
     task: &dyn AbstractNumericTask,
-) -> Result<(DomainMapping, Vec<i32>)> {
-    let num_vars_i32 = task.get_num_variables();
-    ensure!(
-        num_vars_i32 >= 0,
-        "task.get_num_variables() must be non-negative"
-    );
-    let num_vars = usize::try_from(num_vars_i32).context("num_vars does not fit usize")?;
+) -> Result<(DomainMapping, Vec<usize>)> {
+    let num_vars = task.get_num_variables();
 
-    let mut domain_sizes: Vec<i32> = vec![1; num_vars];
+    let domain_sizes: Vec<usize> = vec![1; num_vars];
     let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
 
     for var in 0..num_vars {
-        let var_i32 = i32::try_from(var).context("var index does not fit i32")?;
         let size = task
-            .get_variable_domain_size(var_i32)
+            .get_variable_domain_size(var)
             .map_err(|e| anyhow::anyhow!(e.to_string()))
             .with_context(|| format!("get_variable_domain_size({var}) failed"))?;
         ensure!(size > 0, "non-positive domain size for var {var}: {size}");
-        domain_mapping.push(vec![0; size as usize]);
+        domain_mapping.push(vec![0; size]);
     }
 
     Ok((domain_mapping, domain_sizes))
 }
 
+#[allow(unused)]
 fn identity_domain_mapping_and_sizes(
     task: &dyn AbstractNumericTask,
-) -> Result<(DomainMapping, Vec<i32>)> {
-    let num_vars_i32 = task.get_num_variables();
-    ensure!(
-        num_vars_i32 >= 0,
-        "task.get_num_variables() must be non-negative"
-    );
-    let num_vars = usize::try_from(num_vars_i32).context("num_vars does not fit usize")?;
-
-    let mut domain_sizes: Vec<i32> = Vec::with_capacity(num_vars);
+) -> Result<(DomainMapping, Vec<usize>)> {
+    let num_vars = task.get_num_variables();
+    let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
     let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
 
     for var in 0..num_vars {
-        let var_i32 = i32::try_from(var).context("var index does not fit i32")?;
         let size = task
-            .get_variable_domain_size(var_i32)
+            .get_variable_domain_size(var)
             .map_err(|e| anyhow::anyhow!(e.to_string()))
             .with_context(|| format!("get_variable_domain_size({var}) failed"))?;
-        ensure!(size > 0, "non-positive domain size for var {var}: {size}");
         domain_sizes.push(size);
 
-        let mut mapping: Vec<i32> = Vec::with_capacity(size as usize);
+        let mut mapping: Vec<usize> = Vec::with_capacity(size);
         for val in 0..size {
             mapping.push(val);
         }
@@ -1534,16 +1460,11 @@ fn set_initial_prop_values(
 ) {
     let init = task.get_initial_propositional_state_values();
     for (var_id, &val) in init.iter().enumerate() {
-        packer.set(buffer, var_id as i32, val as u64);
+        packer.set(buffer, var_id, val as u64);
     }
 }
 
-fn fact_is_true(fact: &Fact, packer: &IntDoublePacker, buffer: &[u64]) -> bool {
-    let current = packer.get(buffer, fact.var() as i32) as i32;
-    current == fact.value()
-}
-
-fn comparison_eval_code(v: Option<bool>) -> i32 {
+fn comparison_eval_code(v: Option<bool>) -> usize {
     match v {
         Some(true) => 0,
         Some(false) => 1,
@@ -1551,6 +1472,7 @@ fn comparison_eval_code(v: Option<bool>) -> i32 {
     }
 }
 
+#[allow(clippy::if_same_then_else, clippy::needless_bool)]
 fn determine_include_in_lower(
     tree: &super::comparison_expression::ComparisonTree,
     split_var_id: usize,
@@ -1578,7 +1500,7 @@ fn determine_include_in_lower(
     let eval_lower = comparison_eval_code(tree.evaluate_interval(&lower_inputs));
     let eval_upper = comparison_eval_code(tree.evaluate_interval(&upper_inputs));
 
-    // Mirrors numeric-fd's preference: FALSE (=1) over UNKNOWN (=2) over TRUE (=0).
+    // Mirror numeric-fd's preference: FALSE (=1) over UNKNOWN (=2) over TRUE (=0).
     if eval_lower == 1 && eval_upper != 1 {
         true
     } else if eval_upper == 1 && eval_lower != 1 {
@@ -1600,7 +1522,7 @@ fn dependent_numeric_flaws_for_comparison_prop_var(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
     comparison_index: &ComparisonAxiomIndex,
-    prop_var_id: i32,
+    prop_var_id: usize,
     numeric_state: &[f64],
 ) -> Vec<NumericFlaw> {
     let Some(tree) = comparison_index.comparison_tree(prop_var_id) else {
@@ -1609,29 +1531,21 @@ fn dependent_numeric_flaws_for_comparison_prop_var(
 
     let mut out: Vec<NumericFlaw> = Vec::new();
     for dep_var_id in tree.regular_numeric_var_dependencies(task) {
-        let Ok(dep_var_usize) = usize::try_from(dep_var_id) else {
-            continue;
-        };
-        let Some(&concrete_value) = numeric_state.get(dep_var_usize) else {
+        let Some(&concrete_value) = numeric_state.get(dep_var_id) else {
             continue;
         };
         let include_in_lower =
-            determine_include_in_lower(tree, dep_var_usize, concrete_value, numeric_state);
+            determine_include_in_lower(tree, dep_var_id, concrete_value, numeric_state);
 
-        if can_split_numeric_var(partitions, dep_var_usize, concrete_value, include_in_lower) {
+        if can_split_numeric_var(partitions, dep_var_id, concrete_value, include_in_lower) {
             out.push(NumericFlaw {
-                numeric_var_id: dep_var_usize,
+                numeric_var_id: dep_var_id,
                 value: concrete_value,
                 include_in_lower,
             });
-        } else if can_split_numeric_var(
-            partitions,
-            dep_var_usize,
-            concrete_value,
-            !include_in_lower,
-        ) {
+        } else if can_split_numeric_var(partitions, dep_var_id, concrete_value, !include_in_lower) {
             out.push(NumericFlaw {
-                numeric_var_id: dep_var_usize,
+                numeric_var_id: dep_var_id,
                 value: concrete_value,
                 include_in_lower: !include_in_lower,
             });
@@ -1651,8 +1565,8 @@ pub fn get_precondition_flaws(
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for pre in op.preconditions().iter() {
-        if !fact_is_true(pre, packer, buffer) {
-            let prop_var_id = pre.var() as i32;
+        if !fact_is_hold(pre, packer, buffer) {
+            let prop_var_id = pre.var;
             let dependent_numeric_flaws =
                 if comparison_index.is_comparison_axiom_variable(prop_var_id) {
                     dependent_numeric_flaws_for_comparison_prop_var(
@@ -1682,21 +1596,20 @@ fn get_goal_flaws(
     buffer: &[u64],
     numeric_state: &[f64],
 ) -> Vec<Flaw> {
-    let num_goals_i32 = task.get_num_goals();
-    let num_goals = usize::try_from(num_goals_i32.max(0)).unwrap_or(0);
+    let num_goals = task.get_num_goals();
     let mut out: Vec<Flaw> = Vec::new();
-    let mut seen: BTreeSet<Fact> = BTreeSet::new();
-    let mut derived_goal_vars: BTreeSet<u32> = BTreeSet::new();
+    let mut seen: BTreeSet<ExplicitFact> = BTreeSet::new();
+    let mut derived_goal_vars: BTreeSet<usize> = BTreeSet::new();
     for goal_id in 0..num_goals {
-        let goal_fact = task.get_goal_fact(goal_id as i32);
-        let goal_var = goal_fact.var();
+        let goal_fact = task.get_goal_fact(goal_id);
+        let goal_var = goal_fact.var;
         let goal_is_derived = task.axioms().iter().any(|ax| ax.var_id() == goal_var);
         if goal_is_derived {
             derived_goal_vars.insert(goal_var);
             continue;
         }
-        if !fact_is_true(goal_fact, packer, buffer) && seen.insert(goal_fact.clone()) {
-            let prop_var_id = goal_fact.var() as i32;
+        if !fact_is_hold(goal_fact, packer, buffer) && seen.insert(goal_fact.clone()) {
+            let prop_var_id = goal_fact.var;
             let dependent_numeric_flaws =
                 if comparison_index.is_comparison_axiom_variable(prop_var_id) {
                     dependent_numeric_flaws_for_comparison_prop_var(
@@ -1725,8 +1638,8 @@ fn get_goal_flaws(
             continue;
         }
         for pre in ax.conditions().iter() {
-            if !fact_is_true(pre, packer, buffer) && seen.insert(pre.clone()) {
-                let prop_var_id = pre.var() as i32;
+            if !fact_is_hold(pre, packer, buffer) && seen.insert(pre.clone()) {
+                let prop_var_id = pre.var;
                 let dependent_numeric_flaws =
                     if comparison_index.is_comparison_axiom_variable(prop_var_id) {
                         dependent_numeric_flaws_for_comparison_prop_var(
@@ -1753,19 +1666,19 @@ pub(crate) fn apply_operator_to_state(
     op: &planners_sas::numeric::numeric_task::Operator,
     packer: &IntDoublePacker,
     buffer: &mut [u64],
-    numeric_state: &mut Vec<f64>,
+    numeric_state: &mut [f64],
 ) {
     // Propositional effects (respect conditions).
     for eff in op.effects().iter() {
         let mut ok = true;
         for cond in eff.conditions().iter() {
-            if !fact_is_true(cond, packer, buffer) {
+            if !fact_is_hold(cond, packer, buffer) {
                 ok = false;
                 break;
             }
         }
         if ok {
-            packer.set(buffer, eff.var_id() as i32, eff.value() as u64);
+            packer.set(buffer, eff.var_id(), eff.value() as u64);
         }
     }
 
@@ -1774,7 +1687,7 @@ pub(crate) fn apply_operator_to_state(
         if eff.is_conditional() {
             let mut ok = true;
             for cond in eff.conditions().iter() {
-                if !fact_is_true(cond, packer, buffer) {
+                if !fact_is_hold(cond, packer, buffer) {
                     ok = false;
                     break;
                 }
@@ -1784,8 +1697,8 @@ pub(crate) fn apply_operator_to_state(
             }
         }
 
-        let assignment_var_id = eff.var_id() as usize;
-        let affected_var_id = eff.affected_var_id() as usize;
+        let assignment_var_id = eff.var_id();
+        let affected_var_id = eff.affected_var_id();
         if assignment_var_id >= numeric_state.len() || affected_var_id >= numeric_state.len() {
             continue;
         }
@@ -1802,11 +1715,8 @@ pub(crate) fn apply_operator_to_state(
 fn partition_for_value(
     partitions: &[super::comparison_expression::Interval],
     value: f64,
-) -> Option<i32> {
-    partitions
-        .iter()
-        .position(|iv| iv.contains(value))
-        .and_then(|i| i32::try_from(i).ok())
+) -> Option<usize> {
+    partitions.iter().position(|iv| iv.contains(value))
 }
 
 fn can_split_numeric_var(
@@ -1828,7 +1738,7 @@ pub fn get_numeric_deviation_flaws(
     op: &planners_sas::numeric::numeric_task::Operator,
     numeric_current_state: &[f64],
     numeric_successor_state: &[f64],
-    abstract_numeric_successor_state: &[i32],
+    abstract_numeric_successor_state: &[usize],
     partitions: &NumericPartitions,
 ) -> Vec<Flaw> {
     let mut flaws: Vec<Flaw> = Vec::new();
@@ -1840,7 +1750,7 @@ pub fn get_numeric_deviation_flaws(
         let operator_modified_var = op
             .assignment_effects()
             .iter()
-            .any(|eff| eff.affected_var_id() as usize == var_id);
+            .any(|eff| eff.affected_var_id() == var_id);
         if !operator_modified_var {
             continue;
         }

@@ -1,8 +1,8 @@
 use super::open_list::{OpenList, SearchNode};
 use ordered_float::OrderedFloat;
-use std::env;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::env;
 use std::error::Error;
 use std::fmt;
 
@@ -70,7 +70,7 @@ impl Error for TieBreakingOpenListError {}
 /// A tie-breaking open list that sorts lexicographically by evaluation values
 /// and breaks exact ties using FIFO order.
 ///
-/// The evaluator order passed to [`TieBreakingOpenList::new`] defines the
+/// The evaluator order passed to `TieBreakingOpenList::new` defines the
 /// comparison order. For example, using `[f, h]` means nodes are ordered by
 /// increasing `f = g + h`, and for equal `f` values the node with lower `h`
 /// is preferred. If all evaluator values are equal, insertion order is kept.
@@ -78,18 +78,18 @@ impl Error for TieBreakingOpenListError {}
 pub struct TieBreakingOpenList {
     /// Heap of nodes ordered by evaluation key and FIFO insertion order.
     heap: BinaryHeap<HeapEntry>,
-    /// Total number of nodes stored across all buckets
+    /// Total number of nodes stored across all buckets.
     size: usize,
-    /// The names of evaluators used to compute keys
+    /// The names of evaluators used to compute keys.
     evaluator_names: Vec<String>,
-    /// Whether the list is sorted in ascending order (true) or descending (false)
+    /// Whether the list is sorted in ascending order (`true`) or descending (`false`).
     ascending: bool,
     /// Monotonic insertion counter for FIFO tie-breaking.
     next_insertion_order: usize,
 }
 
 impl TieBreakingOpenList {
-    /// Creates a new tie-breaking open list with the given evaluator names.
+    /// Create a new tie-breaking open list with the given evaluator names.
     pub fn new(
         evaluator_names: Vec<String>,
         ascending: bool,
@@ -107,7 +107,7 @@ impl TieBreakingOpenList {
         })
     }
 
-    /// Computes the lexicographic evaluation key for a given node.
+    /// Compute the lexicographic evaluation key for a given node.
     fn compute_key(&self, node: &SearchNode) -> EvaluationKey {
         let mut key = Vec::with_capacity(self.evaluator_names.len());
 

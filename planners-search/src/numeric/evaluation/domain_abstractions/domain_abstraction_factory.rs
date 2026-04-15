@@ -9,7 +9,7 @@ use ordered_float::NotNan;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 
 use super::abstract_operator_generator::{
     AbstractOperator, AbstractOperatorGenerator, DomainMapping,
@@ -22,9 +22,9 @@ use super::numeric_context::{
 };
 use super::utils;
 
-const COMPARISON_TRUE_VAL: i32 = 0;
-const COMPARISON_FALSE_VAL: i32 = 1;
-const COMPARISON_UNKNOWN_VAL: i32 = 2;
+const COMPARISON_TRUE_VAL: usize = 0;
+const COMPARISON_FALSE_VAL: usize = 1;
+const COMPARISON_UNKNOWN_VAL: usize = 2;
 
 fn current_time_seed() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -37,7 +37,7 @@ fn current_time_seed() -> u64 {
 
 #[derive(Debug, Clone, Default)]
 struct MatchTreeNode {
-    value_children: HashMap<i32, Box<MatchTreeNode>>,
+    value_children: HashMap<usize, Box<MatchTreeNode>>,
     wildcard_child: Option<Box<MatchTreeNode>>,
     ops: Vec<usize>,
 }
@@ -45,17 +45,17 @@ struct MatchTreeNode {
 #[derive(Debug, Clone)]
 struct MatchTree {
     var_order: Vec<usize>,
-    domain_sizes: Vec<i32>,
+    domain_sizes: Vec<usize>,
     numeric_domain_sizes: Vec<usize>,
-    hash_multipliers: Vec<i32>,
+    hash_multipliers: Vec<usize>,
     root: MatchTreeNode,
 }
 
 impl MatchTree {
     fn build(
-        domain_sizes: &[i32],
+        domain_sizes: &[usize],
         numeric_domain_sizes: &[usize],
-        hash_multipliers: &[i32],
+        hash_multipliers: &[usize],
         operators: &[AbstractOperator],
         _comparison_var_ids: &[usize],
     ) -> Self {
@@ -63,22 +63,14 @@ impl MatchTree {
         let mut vars_seen: HashSet<usize> = HashSet::new();
         for op in operators {
             for f in op.regression_preconditions.iter() {
-                let Ok(var) = usize::try_from(f.var()) else {
-                    debug_assert!(
-                        false,
-                        "negative regression precondition var id: {}",
-                        f.var()
-                    );
-                    continue;
-                };
-                let domain_size = if var < num_props {
-                    domain_sizes.get(var).copied().unwrap_or(0) as usize
+                let domain_size = if f.var < num_props {
+                    domain_sizes.get(f.var).copied().unwrap_or(0)
                 } else {
-                    let numeric_var = var - num_props;
+                    let numeric_var = f.var - num_props;
                     numeric_domain_sizes.get(numeric_var).copied().unwrap_or(0)
                 };
                 if domain_size > 1 {
-                    vars_seen.insert(var);
+                    vars_seen.insert(f.var);
                 }
             }
         }
@@ -94,17 +86,9 @@ impl MatchTree {
         };
 
         for (op_id, op) in operators.iter().enumerate() {
-            let mut conds: HashMap<usize, i32> = HashMap::new();
+            let mut conds: HashMap<usize, usize> = HashMap::new();
             for f in op.regression_preconditions.iter() {
-                let Ok(var) = usize::try_from(f.var()) else {
-                    debug_assert!(
-                        false,
-                        "negative regression precondition var id: {}",
-                        f.var()
-                    );
-                    continue;
-                };
-                conds.insert(var, f.value());
+                conds.insert(f.var, f.value);
             }
             tree.insert(op_id, &conds);
         }
@@ -112,12 +96,12 @@ impl MatchTree {
         tree
     }
 
-    fn insert(&mut self, op_id: usize, conds: &HashMap<usize, i32>) {
+    fn insert(&mut self, op_id: usize, conds: &HashMap<usize, usize>) {
         fn insert_rec(
             node: &mut MatchTreeNode,
             depth: usize,
             var_order: &[usize],
-            conds: &HashMap<usize, i32>,
+            conds: &HashMap<usize, usize>,
             op_id: usize,
         ) {
             if depth == var_order.len() {
@@ -142,7 +126,7 @@ impl MatchTree {
         insert_rec(&mut self.root, 0, &self.var_order, conds, op_id);
     }
 
-    fn get_applicable_operator_ids(&self, state_hash: i32, out: &mut Vec<usize>) {
+    fn get_applicable_operator_ids(&self, state_hash: usize, out: &mut Vec<usize>) {
         out.clear();
         if self.var_order.is_empty() {
             out.extend_from_slice(&self.root.ops);
@@ -166,7 +150,7 @@ impl MatchTree {
         }
     }
 
-    fn get_var_value(&self, state_hash: i32, var: usize) -> i32 {
+    fn get_var_value(&self, state_hash: usize, var: usize) -> usize {
         let num_props = self.domain_sizes.len();
         debug_assert!(
             var < self.hash_multipliers.len(),
@@ -177,15 +161,15 @@ impl MatchTree {
         let Some(mult) = self.hash_multipliers.get(var).copied() else {
             return 0;
         };
-        let state = state_hash as i64;
-        let dom_size: i64 = if var < num_props {
+        let state = state_hash;
+        let dom_size = if var < num_props {
             debug_assert!(
                 var < self.domain_sizes.len(),
                 "match tree propositional var out of bounds: {} >= {}",
                 var,
                 self.domain_sizes.len()
             );
-            self.domain_sizes.get(var).copied().unwrap_or(0) as i64
+            self.domain_sizes.get(var).copied().unwrap_or(0)
         } else {
             let n = var - num_props;
             debug_assert!(
@@ -194,41 +178,47 @@ impl MatchTree {
                 n,
                 self.numeric_domain_sizes.len()
             );
-            self.numeric_domain_sizes.get(n).copied().unwrap_or(0) as i64
+            self.numeric_domain_sizes.get(n).copied().unwrap_or(0)
         };
         debug_assert!(
             dom_size > 0,
             "match tree domain size must be positive for var {var}"
         );
-        if dom_size <= 0 {
+        if dom_size == 0 {
             return 0;
         }
-        ((state / (mult as i64)) % dom_size) as i32
+
+        (state / mult) % dom_size
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct AbstractDistanceTable {
     pub distances: Vec<f64>,
-    pub generating_op_ids: Vec<Option<usize>>, // per-state operator leading to a goal along a shortest path
-    pub initial_state_hash: i32,
-    pub goal_facts: Vec<planners_sas::numeric::numeric_task::Fact>,
-    pub hash_multipliers: Vec<i32>,
+    // Per-state operator leading to a goal along a shortest path.
+    pub generating_op_ids: Vec<Option<usize>>,
+    pub initial_state_hash: usize,
+    pub goal_facts: Vec<ExplicitFact>,
+    pub hash_multipliers: Vec<usize>,
     pub numeric_domain_sizes: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
 pub struct WildcardPlanResult {
-    pub wildcard_plan: Vec<Vec<usize>>, // per-step set of concrete operator IDs
-    pub abstract_state_hashes: Vec<i32>, // path of abstract state hashes (len = steps+1)
-    pub abstract_prop_states: Vec<Vec<i32>>, // decoded propositional values along path
-    pub abstract_numeric_states: Vec<Vec<i32>>, // decoded numeric partitions along path
+    // Per-step set of concrete operator IDs
+    pub wildcard_plan: Vec<Vec<usize>>,
+    // Path of abstract state hashes (`len = steps+1`).
+    pub abstract_state_hashes: Vec<usize>,
+    // Decoded propositional values along path.
+    pub abstract_prop_states: Vec<Vec<usize>>,
+    // Decoded numeric partitions along path.
+    pub abstract_numeric_states: Vec<Vec<usize>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DomainAbstractionFactory {
     domain_mapping: DomainMapping,
-    domain_sizes: Vec<i32>,
+    domain_sizes: Vec<usize>,
     partitions: NumericPartitions,
     numeric_domain_sizes: Vec<usize>,
     comparison_index: Option<ComparisonAxiomIndex>,
@@ -239,7 +229,7 @@ impl DomainAbstractionFactory {
     pub fn new(
         task: &dyn AbstractNumericTask,
         domain_mapping: DomainMapping,
-        domain_sizes: Vec<i32>,
+        domain_sizes: Vec<usize>,
         partitions: NumericPartitions,
         numeric_domain_sizes: Vec<usize>,
     ) -> Result<Self> {
@@ -253,9 +243,8 @@ impl DomainAbstractionFactory {
                 "non-positive abstract domain size for var {var}: {abs_size}"
             );
 
-            let var_i32 = i32::try_from(var).context("var index does not fit i32")?;
             let concrete_size = task
-                .get_variable_domain_size(var_i32)
+                .get_variable_domain_size(var)
                 .map_err(|e| anyhow!(e.to_string()))
                 .with_context(|| format!("get_variable_domain_size({var}) failed"))?;
             ensure!(
@@ -268,14 +257,14 @@ impl DomainAbstractionFactory {
             );
 
             ensure!(
-                domain_mapping[var].len() == concrete_size as usize,
+                domain_mapping[var].len() == concrete_size,
                 "domain_mapping[{var}] has len {}, expected concrete size {concrete_size}",
                 domain_mapping[var].len()
             );
 
             for (val, &mapped) in domain_mapping[var].iter().enumerate() {
                 ensure!(
-                    mapped >= 0 && mapped < abs_size,
+                    mapped < abs_size,
                     "domain_mapping[{var}][{val}]={mapped} out of range for abstract size {abs_size}"
                 );
             }
@@ -328,7 +317,7 @@ impl DomainAbstractionFactory {
         &self.domain_mapping
     }
 
-    pub fn domain_sizes(&self) -> &[i32] {
+    pub fn domain_sizes(&self) -> &[usize] {
         &self.domain_sizes
     }
 
@@ -373,9 +362,9 @@ impl DomainAbstractionFactory {
     }
 
     /// Computes an abstract wildcard plan (sequence of per-step concrete-op-ID sets) by:
-    /// 1) computing abstract goal distances with implicit regression Dijkstra,
-    /// 2) extracting a shortest-path abstract plan from the initial abstract state,
-    /// 3) collecting all cheapest realizations per step.
+    /// 1) Computing abstract goal distances with implicit regression Dijkstra.
+    /// 2) Extracting a shortest-path abstract plan from the initial abstract state.
+    /// 3) Collecting all cheapest realizations per step.
     pub fn compute_wildcard_plan(
         &self,
         task: &dyn AbstractNumericTask,
@@ -392,8 +381,8 @@ impl DomainAbstractionFactory {
         dump_distances: bool,
         use_wildcard_plans: bool,
     ) -> Result<Option<WildcardPlanResult>> {
-        let mut local_rng = (!use_wildcard_plans)
-            .then(|| SmallRng::seed_from_u64(current_time_seed()));
+        let mut local_rng =
+            (!use_wildcard_plans).then(|| SmallRng::seed_from_u64(current_time_seed()));
         self.compute_plan_with_rng(
             task,
             combine_labels,
@@ -450,7 +439,7 @@ impl DomainAbstractionFactory {
 
         let goal_facts = self.compute_abstract_goals(task);
 
-        // numeric-fd computes a *single* initial abstract state hash directly from the
+        // Numeric-fd computes a *single* initial abstract state hash directly from the
         // concrete initial state (comparisons are evaluated, not enumerated).
         let init_hash = self.compute_initial_state_hash_determined(
             task,
@@ -459,10 +448,7 @@ impl DomainAbstractionFactory {
             &comparison_var_ids,
         )?;
 
-        let num_states_i32 = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
-        ensure!(num_states_i32 >= 0, "num_states must be non-negative");
-        let num_states =
-            usize::try_from(num_states_i32).context("num_states does not fit usize")?;
+        let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
 
         let match_tree = MatchTree::build(
             &self.domain_sizes,
@@ -511,56 +497,53 @@ impl DomainAbstractionFactory {
     fn comparison_var_ids(&self) -> Vec<usize> {
         self.comparison_trees
             .iter()
-            .filter_map(|t| usize::try_from(t.affected_var_id).ok())
+            .map(|t| t.affected_var_id)
             .collect()
     }
 
-    fn compute_abstract_goals(
-        &self,
-        task: &dyn AbstractNumericTask,
-    ) -> Vec<planners_sas::numeric::numeric_task::Fact> {
-        use planners_sas::numeric::numeric_task::Fact;
+    fn compute_abstract_goals(&self, task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
+        use planners_sas::numeric::numeric_task::ExplicitFact;
 
-        let mut goal_axiom_map: HashMap<u32, usize> = HashMap::new();
+        let mut goal_axiom_map: HashMap<usize, usize> = HashMap::new();
         for (idx, ax) in task.axioms().iter().enumerate() {
             if !ax.conditions().is_empty() {
                 goal_axiom_map.insert(ax.var_id(), idx);
             }
         }
 
-        let mut out: Vec<Fact> = Vec::new();
+        let mut out: Vec<ExplicitFact> = Vec::new();
         for i in 0..task.get_num_goals() {
             let g = task.get_goal_fact(i);
-            let var = g.var() as u32;
+            let var = g.var;
             if let Some(&ax_idx) = goal_axiom_map.get(&var) {
                 let ax = &task.axioms()[ax_idx];
                 for cond in ax.conditions() {
-                    let v = cond.var() as usize;
+                    let v = cond.var;
                     if self.domain_sizes.get(v).copied().unwrap_or(1) <= 1 {
                         continue;
                     }
-                    let val = cond.value() as usize;
+                    let val = cond.value;
                     let mapped = self
                         .domain_mapping
                         .get(v)
                         .and_then(|m| m.get(val))
                         .copied()
-                        .unwrap_or(cond.value());
-                    out.push(Fact::new(cond.var() as u32, mapped));
+                        .unwrap_or(cond.value);
+                    out.push(ExplicitFact::new(cond.var, mapped));
                 }
             } else {
-                let v = g.var() as usize;
+                let v = g.var;
                 if self.domain_sizes.get(v).copied().unwrap_or(1) <= 1 {
                     continue;
                 }
-                let val = g.value() as usize;
+                let val = g.value;
                 let mapped = self
                     .domain_mapping
                     .get(v)
                     .and_then(|m| m.get(val))
                     .copied()
-                    .unwrap_or(g.value());
-                out.push(Fact::new(g.var() as u32, mapped));
+                    .unwrap_or(g.value);
+                out.push(ExplicitFact::new(g.var, mapped));
             }
         }
 
@@ -569,27 +552,24 @@ impl DomainAbstractionFactory {
 
     pub fn is_goal_state(
         &self,
-        state_hash: i32,
-        goals: &[planners_sas::numeric::numeric_task::Fact],
+        state_hash: usize,
+        goals: &[ExplicitFact],
         numeric_domain_sizes: &[usize],
-        hash_multipliers: &[i32],
+        hash_multipliers: &[usize],
     ) -> bool {
         let num_props = self.domain_sizes.len();
         for g in goals {
-            let var = g.var() as usize;
-            let expected = g.value();
-            let mult = hash_multipliers[var] as i64;
-            let state = state_hash as i64;
-            let dom_size: i64 = if var < num_props {
-                self.domain_sizes[var] as i64
+            let var = g.var;
+            let expected = g.value;
+            let mult = hash_multipliers[var];
+            let state = state_hash;
+            let dom_size = if var < num_props {
+                self.domain_sizes[var]
             } else {
                 let n = var - num_props;
-                numeric_domain_sizes.get(n).copied().unwrap_or(0) as i64
+                numeric_domain_sizes.get(n).copied().unwrap_or(0)
             };
-            if dom_size <= 0 {
-                return false;
-            }
-            let actual = ((state / mult) % dom_size) as i32;
+            let actual = (state / mult) % dom_size;
             if actual != expected {
                 return false;
             }
@@ -601,9 +581,9 @@ impl DomainAbstractionFactory {
         &self,
         task: &dyn AbstractNumericTask,
         numeric_domain_sizes: &[usize],
-        hash_multipliers: &[i32],
+        hash_multipliers: &[usize],
         comparison_var_ids: &[usize],
-    ) -> Result<i32> {
+    ) -> Result<usize> {
         let prop_init = task.get_initial_propositional_state_values();
         let num_init = task.get_initial_numeric_state_values();
         let num_props = self.domain_sizes.len();
@@ -620,14 +600,14 @@ impl DomainAbstractionFactory {
         );
 
         let comparison_var_ids: HashSet<usize> = comparison_var_ids.iter().copied().collect();
-        let mut index: i64 = 0;
+        let mut index: usize = 0;
         for var in 0..num_props {
-            let mult = hash_multipliers[var] as i64;
+            let mult = hash_multipliers[var];
             let concrete_val = if comparison_var_ids.contains(&var) {
                 if let Some(tree) = self
                     .comparison_trees
                     .iter()
-                    .find(|tree| usize::try_from(tree.affected_var_id).ok() == Some(var))
+                    .find(|tree| tree.affected_var_id == var)
                 {
                     match evaluate_comparison_tree_from_initial_state(task, tree)? {
                         Some(true) => COMPARISON_TRUE_VAL,
@@ -640,18 +620,19 @@ impl DomainAbstractionFactory {
             } else {
                 prop_init[var]
             };
-            let cidx = usize::try_from(concrete_val).with_context(|| {
-                format!("invalid propositional initial value {concrete_val} at var {var}")
-            })?;
-            let abs_val = *self.domain_mapping[var].get(cidx).with_context(|| {
-                format!("missing mapping for propositional var {var} value index {cidx}")
-            })?;
-            index += mult * (abs_val as i64);
+            let abs_val = *self.domain_mapping[var]
+                .get(concrete_val)
+                .with_context(|| {
+                    format!(
+                        "missing mapping for propositional var {var} value index {concrete_val}"
+                    )
+                })?;
+            index += mult * abs_val;
         }
 
         for num_var_id in 0..numeric_domain_sizes.len() {
             let abs_var = num_props + num_var_id;
-            let mult = hash_multipliers[abs_var] as i64;
+            let mult = hash_multipliers[abs_var];
             let val = num_init[num_var_id];
             ensure!(
                 val.is_finite() && !val.is_nan(),
@@ -666,22 +647,22 @@ impl DomainAbstractionFactory {
                     "initial numeric value {val} not contained in any partition for numeric var {num_var_id}"
                 )
             })?;
-            index += mult * (part as i64);
+            index += mult * part;
         }
 
-        i32::try_from(index).context("initial hash does not fit i32")
+        Ok(index)
     }
 
     fn reset_comparison_vars_to_unknown_except(
         &self,
-        state_hash: i32,
-        hash_multipliers: &[i32],
+        state_hash: usize,
+        hash_multipliers: &[usize],
         comparison_var_ids: &[usize],
-        fixed_comparisons: &[planners_sas::numeric::numeric_task::Fact],
-    ) -> Result<i32> {
-        let mut fixed: HashSet<u32> = HashSet::new();
+        fixed_comparisons: &[ExplicitFact],
+    ) -> Result<usize> {
+        let mut fixed: HashSet<usize> = HashSet::new();
         for f in fixed_comparisons {
-            fixed.insert(f.var());
+            fixed.insert(f.var);
         }
 
         let mut out = state_hash;
@@ -690,29 +671,30 @@ impl DomainAbstractionFactory {
                 var_id < self.domain_sizes.len(),
                 "comparison var id out of range: {var_id}"
             );
-            if fixed.contains(&(var_id as u32)) {
+            if fixed.contains(&(var_id)) {
                 continue;
             }
             if self.domain_sizes[var_id] <= 1 {
                 continue;
             }
-            let mult = hash_multipliers[var_id] as i64;
-            let dom = self.domain_sizes[var_id] as i64;
+            let mult = hash_multipliers[var_id];
+            let dom = self.domain_sizes[var_id];
             ensure!(dom > 0, "domain size must be > 0 for var {var_id}");
-            let cur = (((out as i64) / mult) % dom) as i32;
+            let cur = (out / mult) % dom;
             let unknown_abs = *self.domain_mapping[var_id]
-                .get(COMPARISON_UNKNOWN_VAL as usize)
+                .get(COMPARISON_UNKNOWN_VAL)
                 .with_context(|| format!("missing UNKNOWN mapping for comparison var {var_id}"))?;
-            out += ((unknown_abs - cur) as i64 * mult) as i32;
+            out += (unknown_abs - cur) * mult;
         }
         Ok(out)
     }
 
+    #[allow(unused)]
     fn build_numeric_intervals(
         &self,
-        state_hash: i32,
+        state_hash: usize,
         numeric_domain_sizes: &[usize],
-        hash_multipliers: &[i32],
+        hash_multipliers: &[usize],
         task: &dyn AbstractNumericTask,
     ) -> Result<Vec<Interval>> {
         prepare_comparison_tree_inputs_from_abstract_state(
@@ -728,13 +710,13 @@ impl DomainAbstractionFactory {
 
     fn enumerate_states_with_evaluated_comparisons(
         &self,
-        base_state_hash: i32,
+        base_state_hash: usize,
         task: &dyn AbstractNumericTask,
         numeric_domain_sizes: &[usize],
-        hash_multipliers: &[i32],
+        hash_multipliers: &[usize],
         comparison_var_ids: &[usize],
-        fixed_comparisons: &[planners_sas::numeric::numeric_task::Fact],
-    ) -> Result<Vec<i32>> {
+        fixed_comparisons: &[ExplicitFact],
+    ) -> Result<Vec<usize>> {
         let num_props = self.domain_sizes.len();
         let state_unknown = self.reset_comparison_vars_to_unknown_except(
             base_state_hash,
@@ -743,15 +725,14 @@ impl DomainAbstractionFactory {
             fixed_comparisons,
         )?;
 
-        let mut fixed_map: HashMap<u32, i32> = HashMap::new();
+        let mut fixed_map: HashMap<usize, usize> = HashMap::new();
         for f in fixed_comparisons {
-            fixed_map.insert(f.var(), f.value());
+            fixed_map.insert(f.var, f.value);
         }
 
-        let mut states: Vec<i32> = vec![state_unknown];
+        let mut states: Vec<usize> = vec![state_unknown];
         for tree in &self.comparison_trees {
-            let var_id = usize::try_from(tree.affected_var_id)
-                .context("comparison tree affected_var_id does not fit usize")?;
+            let var_id = tree.affected_var_id;
             ensure!(
                 var_id < num_props,
                 "comparison tree affected_var_id out of range: {var_id} >= {num_props}"
@@ -759,26 +740,29 @@ impl DomainAbstractionFactory {
             if self.domain_sizes[var_id] <= 1 {
                 continue;
             }
-            if fixed_map.contains_key(&(var_id as u32)) {
+            if fixed_map.contains_key(&var_id) {
                 continue;
             }
 
             let mult = hash_multipliers[var_id];
             let unknown_abs = *self.domain_mapping[var_id]
-                .get(COMPARISON_UNKNOWN_VAL as usize)
-                .with_context(|| format!("missing UNKNOWN mapping for comparison var {var_id}"))?;
+                .get(COMPARISON_UNKNOWN_VAL)
+                .with_context(|| format!("missing UNKNOWN mapping for comparison var {var_id}"))?
+                as i32;
             let delta_true = (self.domain_mapping[var_id]
-                .get(COMPARISON_TRUE_VAL as usize)
+                .get(COMPARISON_TRUE_VAL)
                 .copied()
                 .with_context(|| format!("missing TRUE mapping for comparison var {var_id}"))?
+                as i32
                 - unknown_abs)
-                * mult;
+                * mult as i32;
             let delta_false = (self.domain_mapping[var_id]
-                .get(COMPARISON_FALSE_VAL as usize)
+                .get(COMPARISON_FALSE_VAL)
                 .copied()
                 .with_context(|| format!("missing FALSE mapping for comparison var {var_id}"))?
+                as i32
                 - unknown_abs)
-                * mult;
+                * mult as i32;
 
             match evaluate_comparison_tree_from_abstract_state(
                 task,
@@ -791,19 +775,19 @@ impl DomainAbstractionFactory {
             )? {
                 Some(true) => {
                     for s in &mut states {
-                        *s += delta_true;
+                        *s = (*s as i32 + delta_true) as usize;
                     }
                 }
                 Some(false) => {
                     for s in &mut states {
-                        *s += delta_false;
+                        *s = (*s as i32 + delta_false) as usize;
                     }
                 }
                 None => {
-                    let mut next: Vec<i32> = Vec::with_capacity(states.len() * 2);
+                    let mut next: Vec<usize> = Vec::with_capacity(states.len() * 2);
                     for &s in &states {
-                        next.push(s + delta_true);
-                        next.push(s + delta_false);
+                        next.push((s as i32 + delta_true) as usize);
+                        next.push((s as i32 + delta_false) as usize);
                     }
                     states = next;
                 }
@@ -812,6 +796,7 @@ impl DomainAbstractionFactory {
         Ok(states)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn compute_wildcard_plan_from_table(
         &self,
         task: &dyn AbstractNumericTask,
@@ -832,19 +817,17 @@ impl DomainAbstractionFactory {
         let generating_op = &table.generating_op_ids;
 
         let mut current_hash = table.initial_state_hash;
-        let cur_idx =
-            usize::try_from(current_hash).context("initial state hash does not fit usize")?;
-        if cur_idx >= dist.len() || !dist[cur_idx].is_finite() {
+        if current_hash >= dist.len() || !dist[current_hash].is_finite() {
             return Ok(None);
         }
 
         let mut wildcard_plan: Vec<Vec<usize>> = Vec::new();
-        let mut abstract_state_hashes: Vec<i32> = vec![current_hash];
-        let mut seen_states: Vec<i32> = Vec::new();
+        let mut abstract_state_hashes: Vec<usize> = vec![current_hash];
+        let mut seen_states: Vec<usize> = Vec::new();
 
         // For debugging / parity with numeric-fd deviation code.
-        let mut abstract_prop_states: Vec<Vec<i32>> = Vec::new();
-        let mut abstract_numeric_states: Vec<Vec<i32>> = Vec::new();
+        let mut abstract_prop_states: Vec<Vec<usize>> = Vec::new();
+        let mut abstract_numeric_states: Vec<Vec<usize>> = Vec::new();
         decode_state_to_vectors(
             current_hash,
             num_props,
@@ -866,9 +849,7 @@ impl DomainAbstractionFactory {
             if safety_steps > dist.len() + 1 {
                 bail!("abstract plan extraction exceeded safety limit")
             }
-            let current_idx =
-                usize::try_from(current_hash).context("current state hash does not fit usize")?;
-            let Some(op_id) = generating_op.get(current_idx).copied().flatten() else {
+            let Some(op_id) = generating_op.get(current_hash).copied().flatten() else {
                 bail!("missing generating operator for state {current_hash} with finite distance");
             };
             let op = operators
@@ -877,7 +858,7 @@ impl DomainAbstractionFactory {
 
             // Recompute successors on-the-fly like numeric-fd.
             let candidate_hash_effect = op.hash_effect;
-            let base_successor = current_hash.wrapping_sub(candidate_hash_effect);
+            let base_successor = (current_hash as i32).wrapping_sub(candidate_hash_effect) as usize;
 
             // Reset all comparison vars to UNKNOWN (no fixed comparisons here).
             let base_successor = self.reset_comparison_vars_to_unknown_except(
@@ -896,9 +877,9 @@ impl DomainAbstractionFactory {
                 &[],
             )?;
 
-            let cur_d = dist[current_idx];
+            let cur_d = dist[current_hash];
             ensure!(cur_d.is_finite(), "current distance must be finite");
-            let mut chosen_successor: Option<i32> = None;
+            let mut chosen_successor: Option<usize> = None;
             let mut lowest_so_far = cur_d;
             for &cand in &possible_successors {
                 if cand == current_hash {
@@ -907,20 +888,16 @@ impl DomainAbstractionFactory {
                 if seen_states.contains(&cand) {
                     continue;
                 }
-                let cand_idx = match usize::try_from(cand) {
-                    Ok(i) => i,
-                    Err(_) => continue,
-                };
-                if cand_idx >= dist.len() {
+                if cand >= dist.len() {
                     continue;
                 }
-                let cd = dist[cand_idx];
+                let cd = dist[cand];
                 if !cd.is_finite() {
                     continue;
                 }
                 let valid_progress =
                     (cd < cur_d && op.cost > 0.0) || ((cd - cur_d).abs() <= 1e-9 && op.cost == 0.0);
-                if valid_progress && cand > chosen_successor.unwrap_or(-1) {
+                if valid_progress && chosen_successor.is_none_or(|x| cand > x) {
                     chosen_successor = Some(cand);
                     lowest_so_far = cd;
                 }
@@ -930,16 +907,10 @@ impl DomainAbstractionFactory {
                     "no successor satisfies dist equation for state {current_hash} with op {op_id}"
                 )
             })?;
-            let successor_idx = usize::try_from(successor_hash)
-                .context("successor hash does not fit usize")
-                .and_then(|i| {
-                    ensure!(
-                        i < dist.len(),
-                        "successor hash out of range: {successor_hash}"
-                    );
-                    Ok(i)
-                })?;
-
+            ensure!(
+                successor_hash < dist.len(),
+                "successor hash out of range: {successor_hash}"
+            );
             ensure!(
                 (lowest_so_far - cur_d + op.cost).abs() <= 1e-6,
                 "chosen successor violates C++ plan-extraction distance relation"
@@ -958,7 +929,8 @@ impl DomainAbstractionFactory {
                 if (cand_op.cost - required_cost).abs() > 1e-9 {
                     continue;
                 }
-                let base_predecessor = base_successor.wrapping_add(cand_op.hash_effect);
+                let base_predecessor =
+                    (base_successor as i32).wrapping_add(cand_op.hash_effect) as usize;
                 let fixed_comparisons = get_comparison_preconditions(cand_op, comparison_var_ids);
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
                     base_predecessor,
@@ -1016,15 +988,16 @@ impl DomainAbstractionFactory {
         }))
     }
 
+    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
     fn compute_distances_and_generating_ops(
         &self,
         task: &dyn AbstractNumericTask,
         operators: &[AbstractOperator],
         match_tree: &MatchTree,
-        goal_facts: &[planners_sas::numeric::numeric_task::Fact],
-        initial_state_hash: i32,
+        goal_facts: &[ExplicitFact],
+        initial_state_hash: usize,
         numeric_domain_sizes: &[usize],
-        hash_multipliers: &[i32],
+        hash_multipliers: &[usize],
         comparison_var_ids: &[usize],
         num_states: usize,
     ) -> Result<(Vec<f64>, Vec<Option<usize>>)> {
@@ -1046,46 +1019,37 @@ impl DomainAbstractionFactory {
         core_vars.sort_unstable();
         core_vars.dedup();
 
-        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, i32)> = BinaryHeap::new();
+        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
 
         // Initialize with feasible goal states.
-        let mut goal_state_count = 0usize;
         for state_hash in 0..num_states {
-            let h = i32::try_from(state_hash).context("state hash does not fit i32")?;
-            if !self.is_goal_state(h, goal_facts, numeric_domain_sizes, hash_multipliers) {
+            if !self.is_goal_state(
+                state_hash,
+                goal_facts,
+                numeric_domain_sizes,
+                hash_multipliers,
+            ) {
                 continue;
             }
             let alts = self.enumerate_states_with_evaluated_comparisons(
-                h,
+                state_hash,
                 task,
                 numeric_domain_sizes,
                 hash_multipliers,
                 comparison_var_ids,
                 &[],
             )?;
-            if !alts.contains(&h) {
+            if !alts.contains(&state_hash) {
                 continue;
             }
-            goal_state_count += 1;
             distances[state_hash] = 0.0;
-            heap.push((Reverse(NotNan::new(0.0).unwrap()), h));
-        }
-
-        // Debug: print operators whose hash_effect could connect goal states to init_hash.
-        if initial_state_hash != 0 {
-            let goal_hashes: Vec<i32> = (0..num_states)
-                .filter_map(|s| {
-                    let h = i32::try_from(s).ok()?;
-                    if distances[s] == 0.0 { Some(h) } else { None }
-                })
-                .collect();
+            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
         }
 
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
         while let Some((Reverse(d), state_hash)) = heap.pop() {
             let d = d.into_inner();
-            let state_idx = usize::try_from(state_hash).context("state hash does not fit usize")?;
-            if d > distances[state_idx] + 1e-12 {
+            if d > distances[state_hash] + 1e-12 {
                 continue;
             }
 
@@ -1101,10 +1065,10 @@ impl DomainAbstractionFactory {
                 let op = &operators[op_id];
                 ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
                 let alternative_cost = d + op.cost;
-                let predecessor_base_i64 = (base_state as i64) + (op.hash_effect as i64);
+                let predecessor_base = (base_state as i32 + op.hash_effect) as usize;
                 debug_assert!(
-                    predecessor_base_i64 >= 0 && predecessor_base_i64 < num_states as i64,
-                    "[DA] predecessor base hash is out of bounds: {predecessor_base_i64}"
+                    predecessor_base < num_states,
+                    "[DA] predecessor base hash is out of bounds: {predecessor_base}"
                 );
                 // TODO: The next line should be impossible. Debug
                 // if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
@@ -1114,7 +1078,6 @@ impl DomainAbstractionFactory {
                 //     );
                 //     continue;
                 // }
-                let predecessor_base = predecessor_base_i64 as i32;
                 let fixed_comparisons = get_comparison_preconditions(op, comparison_var_ids);
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
                     predecessor_base,
@@ -1128,15 +1091,11 @@ impl DomainAbstractionFactory {
                 let representative_predecessor = possible_predecessors.iter().copied().max();
 
                 for pred in possible_predecessors.iter().copied() {
-                    let Ok(pred_idx) = usize::try_from(pred) else {
-                        continue;
-                    };
-                    debug_assert!(pred_idx < num_states, "predecessor hash does not fit usize");
+                    debug_assert!(pred < num_states, "predecessor hash does not fit usize");
 
-                    if alternative_cost + 1e-12 < distances[pred_idx] {
-                        let previous_cost = distances[pred_idx];
-                        distances[pred_idx] = alternative_cost;
-                        generating_op_ids[pred_idx] = Some(op_id);
+                    if alternative_cost + 1e-12 < distances[pred] {
+                        distances[pred] = alternative_cost;
+                        generating_op_ids[pred] = Some(op_id);
                         if pred == initial_state_hash || Some(pred) == representative_predecessor {
                             heap.push((
                                 Reverse(
@@ -1155,42 +1114,29 @@ impl DomainAbstractionFactory {
     }
 }
 
-fn compute_num_states(domain_sizes: &[i32], numeric_domain_sizes: &[usize]) -> Result<i32> {
-    let mut num: i64 = 1;
+fn compute_num_states(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) -> Result<usize> {
+    let mut num: usize = 1;
     for (i, &s) in domain_sizes.iter().enumerate() {
         ensure!(s > 0, "domain size for var {i} must be > 0, got {s}");
         num = num
-            .checked_mul(i64::from(s))
+            .checked_mul(s)
             .context("abstract state space too large (overflow)")?;
-        ensure!(
-            num <= i64::from(i32::MAX),
-            "abstract state space too large for i32 hashing ({num})"
-        );
     }
-    for (i, &s) in numeric_domain_sizes.iter().enumerate() {
-        let s_i64 = i64::try_from(s).context("numeric domain size does not fit i64")?;
-        ensure!(s_i64 > 0, "numeric domain size for var {i} must be > 0");
+    for &s in numeric_domain_sizes.iter() {
         num = num
-            .checked_mul(s_i64)
+            .checked_mul(s)
             .context("abstract state space too large (overflow)")?;
-        ensure!(
-            num <= i64::from(i32::MAX),
-            "abstract state space too large for i32 hashing ({num})"
-        );
     }
-    Ok(num as i32)
+    Ok(num)
 }
 
 fn get_comparison_preconditions(
     op: &AbstractOperator,
     comparison_var_ids: &[usize],
-) -> Vec<planners_sas::numeric::numeric_task::Fact> {
-    let mut out: Vec<planners_sas::numeric::numeric_task::Fact> = Vec::new();
+) -> Vec<ExplicitFact> {
+    let mut out: Vec<ExplicitFact> = Vec::new();
     for f in &op.preconditions {
-        let Ok(var) = usize::try_from(f.var()) else {
-            continue;
-        };
-        if comparison_var_ids.contains(&var) && f.value() != COMPARISON_UNKNOWN_VAL {
+        if comparison_var_ids.contains(&f.var) && f.value != COMPARISON_UNKNOWN_VAL {
             out.push(f.clone());
         }
     }
@@ -1198,27 +1144,27 @@ fn get_comparison_preconditions(
 }
 
 fn decode_state_to_vectors(
-    state_hash: i32,
+    state_hash: usize,
     num_props: usize,
-    domain_sizes: &[i32],
+    domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
-    hash_multipliers: &[i32],
-    prop_out: &mut Vec<Vec<i32>>,
-    num_out: &mut Vec<Vec<i32>>,
+    hash_multipliers: &[usize],
+    prop_out: &mut Vec<Vec<usize>>,
+    num_out: &mut Vec<Vec<usize>>,
 ) {
-    let mut props: Vec<i32> = Vec::with_capacity(num_props);
+    let mut props: Vec<usize> = Vec::with_capacity(num_props);
     for var_id in 0..num_props {
-        let mult = hash_multipliers[var_id] as i64;
-        let dom = domain_sizes[var_id] as i64;
-        let val = (((state_hash as i64) / mult) % dom) as i32;
+        let mult = hash_multipliers[var_id];
+        let dom = domain_sizes[var_id];
+        let val = (state_hash / mult) % dom;
         props.push(val);
     }
-    let mut nums: Vec<i32> = Vec::with_capacity(numeric_domain_sizes.len());
+    let mut nums: Vec<usize> = Vec::with_capacity(numeric_domain_sizes.len());
     for (num_id, &dom_u) in numeric_domain_sizes.iter().enumerate() {
         let abs_var = num_props + num_id;
-        let mult = hash_multipliers[abs_var] as i64;
-        let dom = dom_u as i64;
-        let part = (((state_hash as i64) / mult) % dom) as i32;
+        let mult = hash_multipliers[abs_var];
+        let dom = dom_u;
+        let part = (state_hash / mult) % dom;
         nums.push(part);
     }
     prop_out.push(props);

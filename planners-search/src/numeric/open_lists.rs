@@ -1,4 +1,4 @@
-//! Open list implementations for numeric planning
+//! Open list implementations for numeric planning.
 //!
 //! This module provides various open list implementations used in search algorithms.
 //! Open lists maintain the frontier of states to be explored during search.

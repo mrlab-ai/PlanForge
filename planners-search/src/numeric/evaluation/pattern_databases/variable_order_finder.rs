@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
@@ -11,16 +14,12 @@ use super::numeric_support::NumericSupportContext;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum GreedyVariableOrderType {
     CgGoalLevel,
     CgGoalRandom,
+    #[default]
     GoalCgLevel,
-}
-
-impl Default for GreedyVariableOrderType {
-    fn default() -> Self {
-        Self::GoalCgLevel
-    }
 }
 
 impl fmt::Display for GreedyVariableOrderType {
@@ -50,7 +49,7 @@ impl VariableOrderFinder {
         numeric_support: &NumericSupportContext,
         variable_order_type: GreedyVariableOrderType,
         numeric_variables_first: bool,
-        random_seed: i32,
+        random_seed: u64,
     ) -> Self {
         let causal_graph = MixedCausalGraph::new(task);
         let mut remaining_vars = Vec::new();
@@ -59,11 +58,14 @@ impl VariableOrderFinder {
             add_numeric_vars(task, numeric_support, &mut remaining_vars);
         }
         for var_id in 0..task.variables().len() {
-            if task.get_variable_axiom_layer(var_id as i32).unwrap_or(-1) == -1
+            if task
+                .get_variable_axiom_layer(var_id)
+                .unwrap_or(None)
+                .is_none()
                 && !task
                     .comparison_axioms()
                     .iter()
-                    .any(|axiom| usize::try_from(axiom.get_affected_var_id()).ok() == Some(var_id))
+                    .any(|axiom| axiom.get_affected_var_id() == var_id)
             {
                 remaining_vars.push((var_id, false));
             }
@@ -78,22 +80,21 @@ impl VariableOrderFinder {
         }
 
         let mut is_goal_variable = vec![false; task.variables().len()];
-        for goal_index in 0..usize::try_from(task.get_num_goals().max(0)).unwrap_or(0) {
-            let goal = task.get_goal_fact(goal_index as i32);
-            is_goal_variable[goal.var() as usize] = true;
+        for goal_index in 0..task.get_num_goals() {
+            let goal = task.get_goal_fact(goal_index);
+            is_goal_variable[goal.var] = true;
         }
 
         let helper_space_len = numeric_support.helper_space_len(task);
         let mut is_numeric_goal_variable = vec![false; helper_space_len];
         let goal_related_propositional_vars = collect_goal_related_propositional_closure(task);
         for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-            let Some(affected_var_id) = usize::try_from(comparison_axiom.get_affected_var_id()).ok() else {
-                continue;
-            };
+            let affected_var_id = comparison_axiom.get_affected_var_id();
             if !goal_related_propositional_vars.contains(&affected_var_id) {
                 continue;
             }
-            for numeric_var_id in numeric_support.comparison_support_ids(task, comparison_axiom_id) {
+            for numeric_var_id in numeric_support.comparison_support_ids(task, comparison_axiom_id)
+            {
                 if numeric_var_id < is_numeric_goal_variable.len() {
                     is_numeric_goal_variable[numeric_var_id] = true;
                 }
@@ -115,8 +116,12 @@ impl VariableOrderFinder {
         self.remaining_vars.is_empty()
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<(usize, bool)> {
-        assert!(!self.done(), "VariableOrderFinder::next called with no remaining variables");
+        assert!(
+            !self.done(),
+            "VariableOrderFinder::next called with no remaining variables"
+        );
 
         match self.variable_order_type {
             GreedyVariableOrderType::CgGoalLevel | GreedyVariableOrderType::CgGoalRandom => {
@@ -173,30 +178,40 @@ impl VariableOrderFinder {
     }
 
     fn find_causal_predecessor(&self) -> Option<usize> {
-        self.remaining_vars.iter().position(|&(var_id, is_numeric)| {
-            let index = if is_numeric {
-                self.num_propositional_variables + var_id
-            } else {
-                var_id
-            };
-            self.is_causal_predecessor.get(index).copied().unwrap_or(false)
-        })
+        self.remaining_vars
+            .iter()
+            .position(|&(var_id, is_numeric)| {
+                let index = if is_numeric {
+                    self.num_propositional_variables + var_id
+                } else {
+                    var_id
+                };
+                self.is_causal_predecessor
+                    .get(index)
+                    .copied()
+                    .unwrap_or(false)
+            })
     }
 
     fn find_goal_variable(&self) -> Option<usize> {
-        self.remaining_vars.iter().position(|&(var_id, is_numeric)| {
-            if is_numeric {
-                self.is_numeric_goal_variable.get(var_id).copied().unwrap_or(false)
-            } else {
-                self.is_goal_variable.get(var_id).copied().unwrap_or(false)
-            }
-        })
+        self.remaining_vars
+            .iter()
+            .position(|&(var_id, is_numeric)| {
+                if is_numeric {
+                    self.is_numeric_goal_variable
+                        .get(var_id)
+                        .copied()
+                        .unwrap_or(false)
+                } else {
+                    self.is_goal_variable.get(var_id).copied().unwrap_or(false)
+                }
+            })
     }
 }
 
 fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) -> Vec<usize> {
     let mut goal_related: Vec<usize> = (0..task.get_num_goals())
-        .filter_map(|goal_id| usize::try_from(task.get_goal_fact(goal_id).var()).ok())
+        .map(|goal_id| task.get_goal_fact(goal_id).var)
         .collect();
     goal_related.sort_unstable();
     goal_related.dedup();
@@ -204,14 +219,12 @@ fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) ->
     loop {
         let mut changed = false;
         for axiom in task.axioms() {
-            let affected_var_id = axiom.var_id() as usize;
+            let affected_var_id = axiom.var_id();
             if goal_related.binary_search(&affected_var_id).is_ok() {
                 for condition in axiom.conditions() {
-                    if let Ok(condition_var_id) = usize::try_from(condition.var()) {
-                        if goal_related.binary_search(&condition_var_id).is_err() {
-                            goal_related.push(condition_var_id);
-                            changed = true;
-                        }
+                    if goal_related.binary_search(&condition.var).is_err() {
+                        goal_related.push(condition.var);
+                        changed = true;
                     }
                 }
             }
@@ -240,62 +253,5 @@ fn add_numeric_vars(
         if is_regular {
             remaining_vars.push((numeric_var_id, true));
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
-    use planners_sas::numeric::numeric_task::{ExplicitVariable, Fact, Metric, NumericRootTask, NumericType, NumericVariable};
-
-    use super::*;
-    use crate::numeric::evaluation::pattern_databases::numeric_support::NumericSupportContext;
-
-    fn simple_var(name: &str, axiom_layer: i32) -> ExplicitVariable {
-        ExplicitVariable::new(
-            2,
-            name.to_string(),
-            vec![format!("{name}=0"), format!("{name}=1")],
-            axiom_layer,
-            1,
-        )
-    }
-
-    #[test]
-    fn default_matches_fd_default() {
-        assert_eq!(GreedyVariableOrderType::default(), GreedyVariableOrderType::GoalCgLevel);
-    }
-
-    #[test]
-    fn goal_cg_level_prefers_goal_numeric_variables() {
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![simple_var("cmp", 0)],
-            vec![
-                NumericVariable::new("threshold".to_string(), NumericType::Constant, -1),
-                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-            ],
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0],
-            vec![1.0, 0.0],
-            vec![],
-            vec![],
-            vec![ComparisonAxiom::new(0, 1, 0, ComparisonOperator::GreaterThanOrEqual)],
-            vec![],
-            (0, 0),
-        );
-        let numeric_support = NumericSupportContext::new(&task);
-        let mut order = VariableOrderFinder::new(
-            &task,
-            &numeric_support,
-            GreedyVariableOrderType::GoalCgLevel,
-            true,
-            0,
-        );
-
-        let next = order.next();
-        assert_eq!(next, Some((1, true)));
     }
 }

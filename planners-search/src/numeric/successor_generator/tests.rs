@@ -3,8 +3,8 @@ use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_parser::parse_numeric_sas_output;
 use planners_sas::numeric::{
     numeric_task::{
-        AbstractNumericTask, Effect, ExplicitVariable, Fact, Metric, NumericRootTask, NumericType,
-        NumericVariable, Operator,
+        AbstractNumericTask, Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
+        NumericType, NumericVariable, Operator,
     },
     state_registry::StateRegistry,
     utils::int_packer::IntDoublePacker,
@@ -12,13 +12,13 @@ use planners_sas::numeric::{
 
 fn get_root_task() -> NumericRootTask {
     let version = 4;
-    let metric = Metric::new(true, 1);
+    let metric = Metric::new(true, Some(1));
     let variables = vec![
         ExplicitVariable::new(
             2,
             String::from("var13"),
             vec![String::from("new-axiom"), String::from("not-new-axiom")],
-            1,
+            Some(1),
             0,
         ),
         ExplicitVariable::new(
@@ -32,35 +32,35 @@ fn get_root_task() -> NumericRootTask {
                 String::from("on(d, f)"),
                 String::from("ontable(d)"),
             ],
-            -1,
+            None,
             0,
         ),
     ];
     let numeric_variables = vec![
-        NumericVariable::new(String::from("derived!1.0()"), NumericType::Constant, -1),
-        NumericVariable::new(String::from("total_cost()"), NumericType::Cost, -1),
+        NumericVariable::new(String::from("derived!1.0()"), NumericType::Constant, None),
+        NumericVariable::new(String::from("total_cost()"), NumericType::Cost, None),
     ];
     let goals = vec![
-        Fact::new(9, 4),
-        Fact::new(10, 1),
-        Fact::new(11, 2),
-        Fact::new(12, 5),
-        Fact::new(13, 4),
+        ExplicitFact::new(9, 4),
+        ExplicitFact::new(10, 1),
+        ExplicitFact::new(11, 2),
+        ExplicitFact::new(12, 5),
+        ExplicitFact::new(13, 4),
     ];
     let mutexes = Vec::new();
     let state = vec![1, 1];
     let numeric_state = vec![1f64, 0f64];
     let operators = vec![Operator::new(
         String::from("drop"),
-        vec![Fact::new(1, 1)],
-        vec![Effect::new(Vec::new(), 1, 1, 5)],
+        vec![ExplicitFact::new(1, 1)],
+        vec![Effect::new(Vec::new(), 1, Some(1), 5)],
         Vec::new(),
         1,
     )];
     let axioms = Vec::new();
     let comparison_axioms = Vec::new();
     let assignment_axioms = Vec::new();
-    let global_constraint = (0, 0);
+    let global_constraint = ExplicitFact { var: 0, value: 0 };
     NumericRootTask::new(
         version,
         metric,
@@ -104,8 +104,8 @@ fn test_grounded_successor_generator() {
 
     let applicable = Operator::new(
         String::from("drop"),
-        vec![Fact::new(1, 1)],
-        vec![Effect::new(vec![], 1, 1, 5)],
+        vec![ExplicitFact::new(1, 1)],
+        vec![Effect::new(vec![], 1, Some(1), 5)],
         vec![],
         1,
     );
@@ -133,7 +133,7 @@ fn test_generate_immediate_successor_of_init_state() {
         .get_successor_state(&initial_state, op)
         .expect("Failed to get successor state");
     assert_eq!(successor.get_state(&state_registry), [1, 5]);
-    assert_eq!(state_registry.get_numeric_indices(), [0, 0]);
+    assert_eq!(state_registry.get_numeric_indices(), [Some(0), Some(0)]);
 }
 
 #[test]

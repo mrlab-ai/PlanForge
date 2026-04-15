@@ -46,10 +46,10 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state(
     task: &dyn AbstractNumericTask,
     comparison_trees: &[ComparisonTree],
     partitions: &NumericPartitions,
-    state_hash: i32,
+    state_hash: usize,
     num_props: usize,
     numeric_domain_sizes: &[usize],
-    hash_multipliers: &[i32],
+    hash_multipliers: &[usize],
 ) -> Result<Vec<Interval>> {
     let num_numeric_vars = task.numeric_variables().len();
     ensure!(
@@ -117,10 +117,10 @@ pub fn evaluate_comparison_tree_from_abstract_state(
     task: &dyn AbstractNumericTask,
     tree: &ComparisonTree,
     partitions: &NumericPartitions,
-    state_hash: i32,
+    state_hash: usize,
     num_props: usize,
     numeric_domain_sizes: &[usize],
-    hash_multipliers: &[i32],
+    hash_multipliers: &[usize],
 ) -> Result<Option<bool>> {
     let mut numeric_intervals = prepare_comparison_tree_inputs_from_abstract_state(
         task,

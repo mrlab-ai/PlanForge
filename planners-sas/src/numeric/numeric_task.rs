@@ -22,62 +22,71 @@ pub trait AbstractNumericTask {
     fn axioms(&self) -> &Vec<PropositionalAxiom>;
     fn metric(&self) -> &Metric;
 
-    fn get_num_variables(&self) -> i32;
-    fn get_variable_name(&self, index: i32) -> Result<&str, &str>;
-    fn get_variable_domain_size(&self, index: i32) -> Result<i32, &str>;
-    fn get_variable_axiom_layer(&self, index: i32) -> Result<i32, &str>;
-    fn get_variable_default_axiom_value(&self, index: i32) -> Result<i32, &str>;
-    fn get_fact_name(&self, fact: &Fact) -> &str;
+    fn get_num_variables(&self) -> usize;
+    fn get_variable_name(&self, index: usize) -> Result<&str, &str>;
+    fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str>;
+    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str>;
+    fn get_variable_default_axiom_value(&self, index: usize) -> Result<usize, &str>;
+    fn get_fact_name(&self, fact: &ExplicitFact) -> &str;
 
-    fn are_facts_mutex(&self, fact1: &Fact, fact2: &Fact) -> bool;
+    fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool;
 
     fn get_operators(&self) -> &Vec<Operator>;
-    fn get_operator_cost(&self, index: i32, is_axiom: bool) -> i32;
-    fn get_operator_name(&self, index: i32, is_axiom: bool) -> &str;
-    fn get_num_operators(&self) -> i32;
-    fn get_num_operator_preconditions(&self, index: i32, is_axiom: bool) -> i32;
-    fn get_operator_precondition(&self, index: i32, precond_index: i32, is_axiom: bool) -> &Fact;
-    fn get_num_operator_effects(&self, index: i32, is_axiom: bool) -> i32;
-    fn get_num_operator_effect_conditions(&self, index: i32, eff_index: i32, is_axiom: bool)
-    -> i32;
+    fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64;
+    fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str;
+    fn get_num_operators(&self) -> usize;
+    fn get_num_operator_preconditions(&self, index: usize, is_axiom: bool) -> usize;
+    fn get_operator_precondition(
+        &self,
+        index: usize,
+        precond_index: usize,
+        is_axiom: bool,
+    ) -> &ExplicitFact;
+    fn get_num_operator_effects(&self, index: usize, is_axiom: bool) -> usize;
+    fn get_num_operator_effect_conditions(
+        &self,
+        index: usize,
+        eff_index: usize,
+        is_axiom: bool,
+    ) -> usize;
     fn get_operator_effect_condition(
         &self,
-        index: i32,
-        eff_index: i32,
-        cond_index: i32,
+        index: usize,
+        eff_index: usize,
+        cond_index: usize,
         is_axiom: bool,
-    ) -> &Fact;
-    fn get_operator_effect(&self, index: i32, eff_index: i32, is_axiom: bool) -> &Fact;
+    ) -> &ExplicitFact;
+    fn get_operator_effect(&self, index: usize, eff_index: usize, is_axiom: bool) -> &ExplicitFact;
 
-    fn convert_operator_index(&self, index: i32, ancestor_task: &dyn AbstractNumericTask);
+    fn convert_operator_index(&self, index: usize, ancestor_task: &dyn AbstractNumericTask);
 
-    fn get_num_axioms(&self) -> i32;
-    fn get_num_goals(&self) -> i32;
-    fn get_goal_fact(&self, index: i32) -> &Fact;
+    fn get_num_axioms(&self) -> usize;
+    fn get_num_goals(&self) -> usize;
+    fn get_goal_fact(&self, index: usize) -> &ExplicitFact;
 
-    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<i32>>;
+    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>>;
     fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>>;
 
-    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<i32>>;
+    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>>;
     fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>>;
 
+    fn set_initial_propositional_state_values(&self, values: Vec<usize>);
     fn set_initial_numeric_state_values(&self, values: Vec<f64>);
-    fn set_initial_propositional_state_values(&self, values: Vec<i32>);
 
     fn convert_ancestor_state_values(
         &self,
-        ancestor_state_values: &Vec<i32>,
+        ancestor_state_values: &[usize],
         ancestor_task: &dyn AbstractNumericTask,
-    ) -> Vec<i32>;
+    ) -> Vec<usize>;
 
-    fn get_num_cmp_axioms(&self) -> i32;
+    fn get_num_cmp_axioms(&self) -> usize;
 
-    //TODO: Helpers to get PDB development fast but we dont want the next 4 methods.
+    //TODO: Helpers to get PDB development fast but we don't want the next 4 methods.
     fn abstract_state_values(
         &self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
-    ) -> Result<(Vec<i32>, Vec<f64>), String> {
+    ) -> Result<(Vec<usize>, Vec<f64>), String> {
         if propositional_values.len() != self.variables().len() {
             return Err(format!(
                 "expected {} propositional values, got {}",
@@ -95,7 +104,7 @@ pub trait AbstractNumericTask {
         Ok((propositional_values.to_vec(), numeric_values.to_vec()))
     }
 
-    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<i32>, Vec<f64>), String>;
+    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String>;
 
     fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
         self.get_operators()
@@ -177,11 +186,11 @@ pub trait AbstractNumericTask {
 #[derive(Debug, Clone)]
 pub struct Metric {
     is_min: bool,
-    var_id: i32,
+    var_id: Option<usize>,
 }
 
 impl Metric {
-    pub fn new(is_min: bool, var_id: i32) -> Self {
+    pub fn new(is_min: bool, var_id: Option<usize>) -> Self {
         Metric { is_min, var_id }
     }
 
@@ -189,31 +198,32 @@ impl Metric {
         self.is_min
     }
 
-    pub fn var_id(&self) -> i32 {
+    pub fn var_id(&self) -> Option<usize> {
         self.var_id
     }
 
     pub fn use_metric(&self) -> bool {
-        self.var_id >= 0
+        self.var_id.is_some()
     }
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct ExplicitVariable {
-    domain_size: u32,
+    domain_size: usize,
     name: String,
     fact_names: Vec<String>,
-    axiom_layer: i32,
-    axiom_default_value: u32, //Is this field even required?
+    axiom_layer: Option<usize>,
+    axiom_default_value: usize, // Is this field even required?
 }
 
 impl ExplicitVariable {
     pub fn new(
-        domain_size: u32,
+        domain_size: usize,
         name: String,
         fact_names: Vec<String>,
-        axiom_layer: i32,
-        axiom_default_value: u32,
+        axiom_layer: Option<usize>,
+        axiom_default_value: usize,
     ) -> Self {
         ExplicitVariable {
             domain_size,
@@ -224,11 +234,11 @@ impl ExplicitVariable {
         }
     }
 
-    pub fn axiom_layer(&self) -> i32 {
+    pub fn axiom_layer(&self) -> Option<usize> {
         self.axiom_layer
     }
 
-    pub fn domain_size(&self) -> u32 {
+    pub fn domain_size(&self) -> usize {
         self.domain_size
     }
 }
@@ -237,11 +247,11 @@ impl ExplicitVariable {
 pub struct NumericVariable {
     name: String,
     numeric_type: NumericType,
-    axiom_layer: i32,
+    axiom_layer: Option<usize>,
 }
 
 impl NumericVariable {
-    pub fn new(name: String, numeric_type: NumericType, axiom_layer: i32) -> Self {
+    pub fn new(name: String, numeric_type: NumericType, axiom_layer: Option<usize>) -> Self {
         NumericVariable {
             name,
             numeric_type,
@@ -257,39 +267,30 @@ impl NumericVariable {
         &self.numeric_type
     }
 
-    pub fn axiom_layer(&self) -> i32 {
+    pub fn axiom_layer(&self) -> Option<usize> {
         self.axiom_layer
     }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct Fact {
-    var: u32,
-    value: i32,
+pub struct ExplicitFact {
+    pub var: usize,
+    pub value: usize,
 }
 
-impl Fact {
-    pub fn new(var: u32, value: i32) -> Self {
-        Fact { var, value }
+impl ExplicitFact {
+    pub fn new(var: usize, value: usize) -> Self {
+        ExplicitFact { var, value }
     }
-
-    pub fn var(&self) -> u32 {
-        self.var
-    }
-
-    pub fn value(&self) -> i32 {
-        self.value
-    }
-
-    pub fn is_true(&self, state: &ConcreteState, state_registry: &StateRegistry) -> bool {
+    pub fn is_hold(&self, state: &ConcreteState, state_registry: &StateRegistry) -> bool {
         let buffer = state.buffer(state_registry);
         let state_packer = state_registry.global_state_packer();
-        let value = state_packer.get(buffer, self.var as i32);
+        let value = state_packer.get(buffer, self.var);
         value == self.value as u64
     }
 }
 
-impl fmt::Debug for Fact {
+impl fmt::Debug for ExplicitFact {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Fact(var: {}, value: {})", self.var, self.value)
     }
@@ -297,18 +298,18 @@ impl fmt::Debug for Fact {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Effect {
-    conditions: Vec<Fact>,
-    var_id: u32,
-    precondition_value: i32,
-    effect_value: u32,
+    conditions: Vec<ExplicitFact>,
+    var_id: usize,
+    precondition_value: Option<usize>,
+    effect_value: usize,
 }
 
 impl Effect {
     pub fn new(
-        conditions: Vec<Fact>,
-        var_id: u32,
-        precondition_value: i32,
-        effect_value: u32,
+        conditions: Vec<ExplicitFact>,
+        var_id: usize,
+        precondition_value: Option<usize>,
+        effect_value: usize,
     ) -> Self {
         Effect {
             conditions,
@@ -318,25 +319,25 @@ impl Effect {
         }
     }
 
-    pub fn var_id(&self) -> u32 {
+    pub fn var_id(&self) -> usize {
         self.var_id
     }
 
-    pub fn precondition_value(&self) -> i32 {
+    pub fn precondition_value(&self) -> Option<usize> {
         self.precondition_value
     }
 
-    pub fn conditions(&self) -> &Vec<Fact> {
+    pub fn conditions(&self) -> &Vec<ExplicitFact> {
         &self.conditions
     }
 
-    pub fn value(&self) -> u32 {
+    pub fn value(&self) -> usize {
         self.effect_value
     }
 
     pub fn conditions_met(&self, state: &ConcreteState, state_registry: &StateRegistry) -> bool {
         for condition in &self.conditions {
-            if !condition.is_true(&state, state_registry) {
+            if !condition.is_hold(state, state_registry) {
                 return false;
             }
         }
@@ -375,25 +376,21 @@ pub fn evaluate_metric_from_values<T: AbstractNumericTask + ?Sized>(
     numeric_values: &[f64],
 ) -> f64 {
     let metric_var_id = task.metric().var_id();
-    if metric_var_id < 0 {
-        return 0.0;
+    match metric_var_id {
+        Some(var_id) => numeric_values.get(var_id).copied().unwrap_or(0.0),
+        None => 0.0,
     }
-
-    numeric_values
-        .get(metric_var_id as usize)
-        .copied()
-        .unwrap_or(0.0)
 }
 
 pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
     task: &T,
-    numeric_values: &mut Vec<f64>,
+    numeric_values: &mut [f64],
 ) {
     let mut changed = true;
     while changed {
         changed = false;
         for axiom in task.assignment_axioms() {
-            let affected_var_id = axiom.get_affected_var_id() as usize;
+            let affected_var_id = axiom.get_affected_var_id();
             if affected_var_id >= numeric_values.len() {
                 continue;
             }
@@ -422,8 +419,8 @@ pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>
     let old_metric = evaluate_metric_from_values(task, &numeric_values);
 
     for effect in operator.assignment_effects() {
-        let assignment_var_id = effect.var_id() as usize;
-        let affected_var_id = effect.affected_var_id() as usize;
+        let assignment_var_id = effect.var_id();
+        let affected_var_id = effect.affected_var_id();
         if assignment_var_id >= numeric_values.len() || affected_var_id >= numeric_values.len() {
             continue;
         }
@@ -455,22 +452,20 @@ fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
         return None;
     }
 
-    let metric_var_id = usize::try_from(task.metric().var_id()).ok()?;
+    let metric_var_id = task.metric().var_id().unwrap();
     let metric_variable = task.numeric_variables().get(metric_var_id)?;
     if metric_variable.get_type() != &NumericType::Cost {
         return None;
     }
 
     let operator = task.get_operators().get(operator_id).unwrap_or_else(|| {
-        panic!(
-            "operator id {operator_id} is out of bounds for linear metric-cost extraction"
-        )
+        panic!("operator id {operator_id} is out of bounds for linear metric-cost extraction")
     });
     let metric_direction = if task.metric().is_min() { 1.0 } else { -1.0 };
     let mut linear_cost_expression = None;
 
     for assignment_effect in operator.assignment_effects() {
-        if usize::try_from(assignment_effect.affected_var_id()).ok() != Some(metric_var_id) {
+        if assignment_effect.affected_var_id() != metric_var_id {
             continue;
         }
         if assignment_effect.is_conditional() || !assignment_effect.conditions().is_empty() {
@@ -478,7 +473,7 @@ fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
         }
 
         let source_expression = task
-            .linearize_numeric_var(assignment_effect.var_id() as usize)
+            .linearize_numeric_var(assignment_effect.var_id)
             .unwrap_or_else(|error| {
                 panic!(
                     "failed to linearize metric-cost source variable {} for operator {operator_id}: {error}",
@@ -493,7 +488,11 @@ fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
             | AssignmentOperation::Divide => continue,
         };
 
-        if candidate.coefficients.iter().all(|&coefficient| coefficient == 0.0) {
+        if candidate
+            .coefficients
+            .iter()
+            .all(|&coefficient| coefficient == 0.0)
+        {
             continue;
         }
 
@@ -510,20 +509,20 @@ fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssignmentEffect {
-    affected_var_id: u32,
+    affected_var_id: usize,
     operation: AssignmentOperation,
-    var_id: u32,
+    var_id: usize,
     is_conditional: bool,
-    conditions: Vec<Fact>,
+    conditions: Vec<ExplicitFact>,
 }
 
 impl AssignmentEffect {
     pub fn new(
-        affected_var_id: u32,
+        affected_var_id: usize,
         operation: AssignmentOperation,
-        var_id: u32,
+        var_id: usize,
         is_conditional: bool,
-        conditions: Vec<Fact>,
+        conditions: Vec<ExplicitFact>,
     ) -> Self {
         AssignmentEffect {
             affected_var_id,
@@ -534,10 +533,10 @@ impl AssignmentEffect {
         }
     }
 
-    pub fn affected_var_id(&self) -> u32 {
+    pub fn affected_var_id(&self) -> usize {
         self.affected_var_id
     }
-    pub fn var_id(&self) -> u32 {
+    pub fn var_id(&self) -> usize {
         self.var_id
     }
 
@@ -549,7 +548,7 @@ impl AssignmentEffect {
         self.is_conditional
     }
 
-    pub fn conditions(&self) -> &Vec<Fact> {
+    pub fn conditions(&self) -> &Vec<ExplicitFact> {
         &self.conditions
     }
 }
@@ -557,19 +556,19 @@ impl AssignmentEffect {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Operator {
     name: String,
-    preconditions: Vec<Fact>,
+    preconditions: Vec<ExplicitFact>,
     effects: Vec<Effect>,
     assignment_effects: Vec<AssignmentEffect>,
-    cost: u32,
+    cost: u64,
 }
 
 impl Operator {
     pub fn new(
         name: String,
-        preconditions: Vec<Fact>,
+        preconditions: Vec<ExplicitFact>,
         effects: Vec<Effect>,
         assignment_effects: Vec<AssignmentEffect>,
-        cost: u32,
+        cost: u64,
     ) -> Self {
         Operator {
             name,
@@ -584,11 +583,12 @@ impl Operator {
         &self.name
     }
 
-    pub fn conditions_met(&self, state: &Vec<&Fact>) -> bool {
+    pub fn conditions_met(&self, state: &Vec<&ExplicitFact>) -> bool {
         for precondition in &self.preconditions {
-            if !state.iter().any(|fact| {
-                fact.var() == precondition.var() && fact.value() == precondition.value()
-            }) {
+            if !state
+                .iter()
+                .any(|fact| fact.var == precondition.var && fact.value == precondition.value)
+            {
                 return false;
             }
         }
@@ -603,24 +603,25 @@ impl Operator {
         &self.assignment_effects
     }
 
-    pub fn preconditions(&self) -> &Vec<Fact> {
+    pub fn preconditions(&self) -> &Vec<ExplicitFact> {
         &self.preconditions
     }
 
-    pub fn cost(&self) -> u32 {
+    pub fn cost(&self) -> u64 {
         self.cost
     }
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct NumericRootTask {
     version: u32,
     metric: Metric,
     variables: Vec<ExplicitVariable>,
     numeric_variables: Vec<NumericVariable>,
-    goals: Vec<Fact>,
-    mutexes: Vec<Vec<Fact>>,
-    state: Rc<RefCell<Vec<i32>>>,
+    goals: Vec<ExplicitFact>,
+    mutexes: Vec<Vec<ExplicitFact>>,
+    state: Rc<RefCell<Vec<usize>>>,
     numeric_state: Rc<RefCell<Vec<f64>>>,
     operators: Vec<Operator>,
     abstract_propositional_var_ids: Vec<usize>,
@@ -628,24 +629,25 @@ pub struct NumericRootTask {
     axioms: Vec<PropositionalAxiom>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
-    global_constraint: (u32, u32),
+    global_constraint: ExplicitFact,
 }
 
 impl NumericRootTask {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         version: u32,
         metric: Metric,
         variables: Vec<ExplicitVariable>,
         numeric_variables: Vec<NumericVariable>,
-        goals: Vec<Fact>,
-        mutexes: Vec<Vec<Fact>>,
-        state: Vec<i32>,
+        goals: Vec<ExplicitFact>,
+        mutexes: Vec<Vec<ExplicitFact>>,
+        state: Vec<usize>,
         numeric_state: Vec<f64>,
         operators: Vec<Operator>,
         axioms: Vec<PropositionalAxiom>,
         comparison_axioms: Vec<ComparisonAxiom>,
         assignment_axioms: Vec<AssignmentAxiom>,
-        global_constraint: (u32, u32),
+        global_constraint: ExplicitFact,
     ) -> Self {
         let abstract_propositional_var_ids = (0..state.len()).collect();
         let abstract_numeric_var_ids = (0..numeric_state.len()).collect();
@@ -671,7 +673,7 @@ impl NumericRootTask {
     pub fn from_file(file_name: impl AsRef<std::path::Path>) -> Self {
         let file_content = std::fs::read_to_string(file_name).unwrap();
         parse_numeric_sas_output(&file_content)
-            .unwrap() // TODO: Handle errors properly
+            .unwrap() // TODO: Handle errors properly.
             .1
     }
 
@@ -686,7 +688,7 @@ pub enum NumericType {
     Constant,
     Derived,
     Cost,
-    Regular, // not sure if Root is correct
+    Regular, // Not sure if Root is correct.
 }
 
 impl AbstractNumericTask for NumericRootTask {
@@ -718,137 +720,147 @@ impl AbstractNumericTask for NumericRootTask {
         &self.metric
     }
 
-    fn get_num_variables(&self) -> i32 {
-        self.variables.len() as i32
+    fn get_num_variables(&self) -> usize {
+        self.variables.len()
     }
 
-    fn get_variable_name(&self, index: i32) -> Result<&str, &str> {
-        if index < 0 || index >= (self.variables.len() as i32) {
+    fn get_variable_name(&self, index: usize) -> Result<&str, &str> {
+        if index >= (self.variables.len()) {
             return Err("Index out of bounds");
         }
-        Ok(&self.variables[index as usize].name)
+        Ok(&self.variables[index].name)
     }
 
-    fn get_variable_domain_size(&self, index: i32) -> Result<i32, &str> {
-        if index < 0 || index >= (self.variables.len() as i32) {
+    fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str> {
+        if index >= (self.variables.len()) {
             return Err("Index out of bounds");
         }
-        Ok(self.variables[index as usize].domain_size as i32)
+        Ok(self.variables[index].domain_size)
     }
 
-    fn get_variable_axiom_layer(&self, index: i32) -> Result<i32, &str> {
-        if index < 0 || index >= (self.variables.len() as i32) {
+    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str> {
+        if index >= (self.variables.len()) {
             return Err("Index out of bounds");
         }
-        Ok(self.variables[index as usize].axiom_layer)
+        Ok(self.variables[index].axiom_layer)
     }
 
-    fn get_variable_default_axiom_value(&self, index: i32) -> Result<i32, &str> {
-        if index < 0 || index >= (self.variables.len() as i32) {
+    fn get_variable_default_axiom_value(&self, index: usize) -> Result<usize, &str> {
+        if index >= (self.variables.len()) {
             return Err("Index out of bounds");
         }
-        Ok(self.variables[index as usize].axiom_default_value as i32)
+        Ok(self.variables[index].axiom_default_value)
     }
 
-    fn get_fact_name(&self, fact: &Fact) -> &str {
+    fn get_fact_name(&self, _fact: &ExplicitFact) -> &str {
         ""
     }
 
-    fn are_facts_mutex(&self, fact1: &Fact, fact2: &Fact) -> bool {
+    fn are_facts_mutex(&self, _fact1: &ExplicitFact, _fact2: &ExplicitFact) -> bool {
         false
     }
 
-    fn get_operator_cost(&self, index: i32, is_axiom: bool) -> i32 {
+    fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {
         if is_axiom {
             return 0;
         }
-        if index < 0 || index >= self.operators.len() as i32 {
+        if index >= self.operators.len() {
             return 0;
         }
-        self.operators[index as usize].cost() as i32
+        self.operators[index].cost()
     }
 
-    fn get_operator_name(&self, index: i32, is_axiom: bool) -> &str {
+    fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str {
         if is_axiom {
             return "<axiom>";
         }
-        if index < 0 || index >= self.operators.len() as i32 {
+        if index >= self.operators.len() {
             return "";
         }
-        self.operators[index as usize].name()
+        self.operators[index].name()
     }
 
-    fn get_num_operators(&self) -> i32 {
-        self.operators.len() as i32
+    fn get_num_operators(&self) -> usize {
+        self.operators.len()
     }
 
-    fn get_num_operator_preconditions(&self, index: i32, is_axiom: bool) -> i32 {
+    fn get_num_operator_preconditions(&self, index: usize, is_axiom: bool) -> usize {
         if is_axiom {
             // Axioms don't have preconditions in the same way
             return 0;
         }
-        if index < 0 || index >= self.operators.len() as i32 {
+        if index >= self.operators.len() {
             return 0;
         }
-        self.operators[index as usize].preconditions().len() as i32
+        self.operators[index].preconditions().len()
     }
 
-    fn get_operator_precondition(&self, index: i32, precond_index: i32, is_axiom: bool) -> &Fact {
+    fn get_operator_precondition(
+        &self,
+        _index: usize,
+        _precond_index: usize,
+        _is_axiom: bool,
+    ) -> &ExplicitFact {
         unimplemented!("This function is not yet implemented");
     }
 
-    fn get_num_operator_effects(&self, index: i32, is_axiom: bool) -> i32 {
+    fn get_num_operator_effects(&self, index: usize, is_axiom: bool) -> usize {
         if is_axiom {
-            // Handle axiom effects differently
+            // Handle axiom effects differently.
             return 0;
         }
-        if index < 0 || index >= self.operators.len() as i32 {
+        if index >= self.operators.len() {
             return 0;
         }
-        self.operators[index as usize].effects().len() as i32
+        self.operators[index].effects().len()
     }
 
     fn get_num_operator_effect_conditions(
         &self,
-        index: i32,
-        eff_index: i32,
-        is_axiom: bool,
-    ) -> i32 {
+        _index: usize,
+        _eff_index: usize,
+        _is_axiom: bool,
+    ) -> usize {
         0
     }
 
     fn get_operator_effect_condition(
         &self,
-        index: i32,
-        eff_index: i32,
-        cond_index: i32,
-        is_axiom: bool,
-    ) -> &Fact {
+        _index: usize,
+        _eff_index: usize,
+        _cond_index: usize,
+        _is_axiom: bool,
+    ) -> &ExplicitFact {
         unimplemented!("This function is not yet implemented");
     }
 
-    fn get_operator_effect(&self, index: i32, eff_index: i32, is_axiom: bool) -> &Fact {
+    fn get_operator_effect(
+        &self,
+        _index: usize,
+        _eff_index: usize,
+        _is_axiom: bool,
+    ) -> &ExplicitFact {
         unimplemented!("This function is not yet implemented");
     }
 
-    fn convert_operator_index(&self, index: i32, ancestor_task: &dyn AbstractNumericTask) {}
+    fn convert_operator_index(&self, _index: usize, _ancestor_task: &dyn AbstractNumericTask) {}
 
-    fn get_num_axioms(&self) -> i32 {
-        self.axioms.len() as i32
+    fn get_num_axioms(&self) -> usize {
+        self.axioms.len()
     }
 
-    fn get_num_goals(&self) -> i32 {
-        self.goals.len() as i32
+    fn get_num_goals(&self) -> usize {
+        self.goals.len()
     }
 
-    fn get_goal_fact(&self, index: i32) -> &Fact {
-        if index < 0 || index >= self.goals.len() as i32 {
+    fn get_goal_fact(&self, index: usize) -> &ExplicitFact {
+        if index >= self.goals.len() {
             panic!("Goal index {} out of bounds", index);
         }
-        &self.goals[index as usize]
+        &self.goals[index]
     }
 
-    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<i32>> {
+    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>> {
         self.state.borrow()
     }
 
@@ -856,7 +868,7 @@ impl AbstractNumericTask for NumericRootTask {
         self.numeric_state.borrow()
     }
 
-    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<i32>> {
+    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>> {
         self.state.borrow_mut()
     }
 
@@ -868,23 +880,23 @@ impl AbstractNumericTask for NumericRootTask {
         *self.numeric_state.borrow_mut() = values;
     }
 
-    fn set_initial_propositional_state_values(&self, values: Vec<i32>) {
+    fn set_initial_propositional_state_values(&self, values: Vec<usize>) {
         *self.state.borrow_mut() = values;
     }
 
     fn convert_ancestor_state_values(
         &self,
-        ancestor_state_values: &Vec<i32>,
-        ancestor_task: &dyn AbstractNumericTask,
-    ) -> Vec<i32> {
+        _ancestor_state_values: &[usize],
+        _ancestor_task: &dyn AbstractNumericTask,
+    ) -> Vec<usize> {
         vec![]
     }
 
-    fn get_num_cmp_axioms(&self) -> i32 {
-        self.comparison_axioms.len() as i32
+    fn get_num_cmp_axioms(&self) -> usize {
+        self.comparison_axioms.len()
     }
 
-    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<i32>, Vec<f64>), String> {
+    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
         let mut propositional = self.get_initial_propositional_state_values().to_vec();
         let mut numeric = self.get_initial_numeric_state_values().to_vec();
         evaluate_state_with_axiom_closure(self, &mut propositional, &mut numeric)?;
@@ -894,13 +906,13 @@ impl AbstractNumericTask for NumericRootTask {
 
 fn evaluate_state_with_axiom_closure(
     task: &dyn AbstractNumericTask,
-    propositional: &mut Vec<i32>,
-    numeric: &mut Vec<f64>,
+    propositional: &mut [usize],
+    numeric: &mut [f64],
 ) -> Result<(), String> {
     let packer = abstract_propositional_packer(task);
     let mut packed = vec![0u64; packer.num_bins() as usize];
     for (var_id, value) in propositional.iter().enumerate() {
-        packer.set(&mut packed, var_id as i32, *value as u64);
+        packer.set(&mut packed, var_id, *value as u64);
     }
     evaluate_state_with_axiom_closure_and_packed_dyn(
         task,
@@ -920,12 +932,13 @@ fn abstract_propositional_packer<T: AbstractNumericTask + ?Sized>(task: &T) -> I
     IntDoublePacker::new(&ranges)
 }
 
+#[allow(unused)]
 fn evaluate_state_with_axiom_closure_and_packed_sized<T: AbstractNumericTask>(
     task: &T,
     packer: &IntDoublePacker,
-    propositional: &mut Vec<i32>,
-    numeric: &mut Vec<f64>,
-    packed: &mut Vec<u64>,
+    propositional: &mut [usize],
+    numeric: &mut [f64],
+    packed: &mut [u64],
 ) -> Result<(), String> {
     let axiom_evaluator = AxiomEvaluator::new(task, packer);
     finish_axiom_closure(packer, propositional, numeric, packed, &axiom_evaluator)
@@ -934,9 +947,9 @@ fn evaluate_state_with_axiom_closure_and_packed_sized<T: AbstractNumericTask>(
 fn evaluate_state_with_axiom_closure_and_packed_dyn(
     task: &dyn AbstractNumericTask,
     packer: &IntDoublePacker,
-    propositional: &mut Vec<i32>,
-    numeric: &mut Vec<f64>,
-    packed: &mut Vec<u64>,
+    propositional: &mut [usize],
+    numeric: &mut [f64],
+    packed: &mut [u64],
 ) -> Result<(), String> {
     let axiom_evaluator = AxiomEvaluator::new(task, packer);
     finish_axiom_closure(packer, propositional, numeric, packed, &axiom_evaluator)
@@ -944,9 +957,9 @@ fn evaluate_state_with_axiom_closure_and_packed_dyn(
 
 fn finish_axiom_closure(
     packer: &IntDoublePacker,
-    propositional: &mut Vec<i32>,
-    numeric: &mut Vec<f64>,
-    packed: &mut Vec<u64>,
+    propositional: &mut [usize],
+    numeric: &mut [f64],
+    packed: &mut [u64],
     axiom_evaluator: &AxiomEvaluator<'_>,
 ) -> Result<(), String> {
     axiom_evaluator
@@ -957,22 +970,25 @@ fn finish_axiom_closure(
         .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
 
     for (var_id, slot) in propositional.iter_mut().enumerate() {
-        *slot = packer.get(packed, var_id as i32) as i32;
+        *slot = packer.get(packed, var_id) as usize;
     }
 
     Ok(())
 }
 
-fn facts_hold_values(propositional: &[i32], facts: &[Fact]) -> bool {
+#[allow(unused)]
+fn facts_hold_values(propositional: &[usize], facts: &[ExplicitFact]) -> bool {
     facts
         .iter()
-        .all(|fact| propositional.get(fact.var() as usize).copied() == Some(fact.value()))
+        .all(|fact| propositional.get(fact.var).copied() == Some(fact.value))
 }
 
-fn assignment_effect_holds_values(propositional: &[i32], effect: &AssignmentEffect) -> bool {
+#[allow(unused)]
+fn assignment_effect_holds_values(propositional: &[usize], effect: &AssignmentEffect) -> bool {
     !effect.is_conditional() || facts_hold_values(propositional, effect.conditions())
 }
 
+#[allow(unused)]
 fn overwrite_vec<T: Copy>(dst: &mut Vec<T>, src: &[T]) {
     dst.clear();
     dst.extend_from_slice(src);

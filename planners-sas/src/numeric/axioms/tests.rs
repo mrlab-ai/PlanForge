@@ -1,6 +1,4 @@
 use super::*;
-use crate::numeric::numeric_parser;
-use crate::numeric::numeric_task::NumericRootTask;
 
 use crate::numeric::tests::*;
 
@@ -11,7 +9,7 @@ fn test_axiom_evaluator_creation() {
     for var in problem.variables().iter() {
         domain_sizes.push(var.domain_size() as u64);
     }
-    for numeric_var in problem.numeric_variables().iter() {
+    for _numeric_var in problem.numeric_variables().iter() {
         domain_sizes.push(u64::MAX);
     }
 
@@ -19,13 +17,13 @@ fn test_axiom_evaluator_creation() {
     let axiom_evaluator = AxiomEvaluator::new(&problem, &state_packer);
 
     let init_state = problem.get_initial_propositional_state_values();
-    let mut buffer = vec![0; axiom_evaluator.state_packer.num_bins() as usize];
+    let mut buffer = vec![0; axiom_evaluator.state_packer.num_bins()];
     for (i, value) in init_state.iter().enumerate() {
         dbg!(i, value);
         assert_eq!(*value, 1);
         axiom_evaluator
             .state_packer
-            .set(&mut buffer, i as i32, *value as u64);
+            .set(&mut buffer, i, *value as u64);
     }
 
     assert_eq!(axiom_evaluator.state_packer.get(&buffer, 0), 1);
@@ -43,14 +41,14 @@ fn test_example1_axiom_evaluation() {
     for var in problem.variables().iter() {
         domain_sizes.push(var.domain_size() as u64);
     }
-    for numeric_var in problem.numeric_variables().iter() {
+    for _numeric_var in problem.numeric_variables().iter() {
         domain_sizes.push(u64::MAX);
     }
 
     let state_packer = IntDoublePacker::new(&domain_sizes);
     let axiom_evaluator = AxiomEvaluator::new(&problem, &state_packer);
 
-    // Verify axiom structure is set up correctly
+    // Verify axiom structure is set up correctly.
     assert!(
         axiom_evaluator.has_numeric_axioms(),
         "Should have numeric axioms"

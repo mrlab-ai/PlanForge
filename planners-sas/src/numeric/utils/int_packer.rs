@@ -3,55 +3,42 @@ use crate::numeric::numeric_task::{AbstractNumericTask, NumericRootTask, Numeric
 #[cfg(test)]
 mod tests;
 
-const BITS_PER_BIN: i32 = (std::mem::size_of::<u64>() * 8) as i32;
+const BITS_PER_BIN: u64 = (std::mem::size_of::<u64>() * 8) as u64;
 
-fn get_bit_size_for_range(range: u64) -> i32 {
+fn get_bit_size_for_range(range: u64) -> u64 {
     if range == u64::MAX {
         return BITS_PER_BIN;
     }
     let mut num_bits = 0;
-    while 1u64 << num_bits < range {
+    while 1 << num_bits < range {
         num_bits += 1;
     }
 
     num_bits
 }
 
-fn get_bit_mask(from: i32, to: i32) -> u64 {
-    debug_assert!(from >= 0);
+fn get_bit_mask(from: u64, to: u64) -> u64 {
     debug_assert!(to >= from);
     debug_assert!(to <= BITS_PER_BIN);
     let length = to - from;
     if length == BITS_PER_BIN {
         debug_assert!(from == 0 && to == BITS_PER_BIN);
-        return !0u64;
+        return !0;
     }
     ((1 << length) - 1) << from
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct VariableInfo {
     range: u64,
-    bin_index: i32,
-    shift: i32,
+    bin_index: usize,
+    shift: u64,
     read_mask: u64,
     clear_mask: u64,
 }
 
-impl Default for VariableInfo {
-    fn default() -> Self {
-        VariableInfo {
-            range: 0,
-            bin_index: -1,
-            shift: 0,
-            read_mask: 0,
-            clear_mask: 0,
-        }
-    }
-}
-
 impl VariableInfo {
-    pub fn new(range: u64, bin_index: i32, shift: i32) -> Self {
+    pub fn new(range: u64, bin_index: usize, shift: u64) -> Self {
         let bit_size = get_bit_size_for_range(range);
         let read_mask = get_bit_mask(shift, shift + bit_size);
         let clear_mask = !read_mask;
@@ -65,11 +52,11 @@ impl VariableInfo {
     }
 
     pub fn get(&self, buffer: &[u64]) -> u64 {
-        (buffer[self.bin_index as usize] & self.read_mask) >> self.shift
+        (buffer[self.bin_index] & self.read_mask) >> self.shift
     }
 
     pub fn set(&self, buffer: &mut [u64], value: u64) {
-        let bin_index = self.bin_index as usize;
+        let bin_index = self.bin_index;
         let bin = buffer[bin_index];
         buffer[bin_index] = (bin & self.clear_mask) | ((value << self.shift) & self.read_mask);
     }
@@ -77,7 +64,7 @@ impl VariableInfo {
 
 pub struct IntDoublePacker {
     var_infos: Vec<VariableInfo>,
-    num_bins: i32,
+    num_bins: usize,
 }
 
 impl IntDoublePacker {
@@ -107,11 +94,11 @@ impl IntDoublePacker {
         IntDoublePacker::new(&domain_sizes)
     }
 
-    pub fn num_bins(&self) -> i32 {
+    pub fn num_bins(&self) -> usize {
         self.num_bins
     }
 
-    fn pack_one_bin(&mut self, ranges: &[u64], bits_to_var: &mut Vec<Vec<i32>>) -> i32 {
+    fn pack_one_bin(&mut self, ranges: &[u64], bits_to_var: &mut [Vec<usize>]) -> usize {
         self.num_bins += 1;
         let bin_index = self.num_bins - 1;
         let mut used_bits = 0;
@@ -126,14 +113,12 @@ impl IntDoublePacker {
                 return num_vars_in_bin;
             }
 
-            // Get mutable reference to the best-fit list
+            // Get mutable reference to the best-fit list.
             let best_fit_vars = &mut bits_to_var[bits as usize];
 
             // Pop the last variable index if available
             if let Some(var) = best_fit_vars.pop() {
-                debug_assert!(var >= 0);
-                self.var_infos[var as usize] =
-                    VariableInfo::new(ranges[var as usize], bin_index, used_bits);
+                self.var_infos[var] = VariableInfo::new(ranges[var], bin_index, used_bits);
                 used_bits += bits;
                 num_vars_in_bin += 1;
             } else {
@@ -153,16 +138,16 @@ impl IntDoublePacker {
         let num_vars = ranges.len();
         self.var_infos.resize(num_vars, VariableInfo::default());
 
-        let mut bits_to_var: Vec<Vec<i32>> = vec![vec![]; (BITS_PER_BIN + 1) as usize];
+        let mut bits_to_var: Vec<Vec<usize>> = vec![vec![]; (BITS_PER_BIN + 1) as usize];
 
         for var in (0..num_vars).rev() {
             let bits = get_bit_size_for_range(ranges[var]);
             debug_assert!(bits <= BITS_PER_BIN);
-            bits_to_var[bits as usize].push(var as i32);
+            bits_to_var[bits as usize].push(var);
         }
 
-        let mut packed_vars: i32 = 0;
-        while packed_vars < (num_vars as i32) {
+        let mut packed_vars = 0;
+        while packed_vars < num_vars {
             let num_vars_in_bin = self.pack_one_bin(ranges, &mut bits_to_var);
             packed_vars += num_vars_in_bin;
         }
@@ -176,16 +161,16 @@ impl IntDoublePacker {
         f64::from_bits(packed_double)
     }
 
-    pub fn get_double(&self, buffer: &[u64], var: i32) -> f64 {
-        let packed_double = self.var_infos[var as usize].get(buffer);
+    pub fn get_double(&self, buffer: &[u64], var: usize) -> f64 {
+        let packed_double = self.var_infos[var].get(buffer);
         self.unpack_double(packed_double)
     }
 
-    pub fn get(&self, buffer: &[u64], var: i32) -> u64 {
-        self.var_infos[var as usize].get(buffer)
+    pub fn get(&self, buffer: &[u64], var: usize) -> u64 {
+        self.var_infos[var].get(buffer)
     }
 
-    pub fn set(&self, buffer: &mut [u64], var: i32, value: u64) {
-        self.var_infos[var as usize].set(buffer, value);
+    pub fn set(&self, buffer: &mut [u64], var: usize, value: u64) {
+        self.var_infos[var].set(buffer, value);
     }
 }

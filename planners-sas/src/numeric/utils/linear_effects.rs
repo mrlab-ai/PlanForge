@@ -1,8 +1,11 @@
+#[cfg(test)]
+mod tests;
+
 use std::fmt;
 
 use crate::numeric::axioms::{AssignmentAxiom, CalOperator};
 use crate::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, Fact, NumericType,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericType,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -84,7 +87,7 @@ pub struct LinearNumericEffect {
     pub affected_var_id: usize,
     pub source_var_id: usize,
     pub operation: AssignmentOperation,
-    pub conditions: Vec<Fact>,
+    pub conditions: Vec<ExplicitFact>,
     pub is_conditional: bool,
     pub delta: LinearExpression,
 }
@@ -180,7 +183,7 @@ pub fn build_assignment_axiom_lookup<T: AbstractNumericTask + ?Sized>(
 ) -> Vec<Option<usize>> {
     let mut lookup = vec![None; task.numeric_variables().len()];
     for (axiom_id, axiom) in task.assignment_axioms().iter().enumerate() {
-        let affected_var_id = axiom.get_affected_var_id() as usize;
+        let affected_var_id = axiom.get_affected_var_id();
         if affected_var_id < lookup.len() {
             lookup[affected_var_id] = Some(axiom_id);
         }
@@ -224,7 +227,7 @@ pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
         operator.assignment_effects().iter().enumerate()
     {
         let mut visiting = vec![false; num_numeric_vars];
-        let source_var_id = assignment_effect.var_id() as usize;
+        let source_var_id = assignment_effect.var_id();
         let source_expression = linearize_numeric_var_with_lookup(
             task,
             source_var_id,
@@ -232,7 +235,7 @@ pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
             &initial_numeric_values,
             &mut visiting,
         )?;
-        let affected_var_id = assignment_effect.affected_var_id() as usize;
+        let affected_var_id = assignment_effect.affected_var_id();
         if affected_var_id >= num_numeric_vars {
             return Err(LinearizationError::InvalidAssignmentEffectId {
                 assignment_effect_id,
@@ -294,26 +297,25 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
             visiting[numeric_var_id] = true;
             let lhs = linearize_numeric_var_with_lookup(
                 task,
-                axiom.get_left_var_id() as usize,
+                axiom.get_left_var_id(),
                 assignment_lookup,
                 initial_numeric_values,
                 visiting,
             )?;
             let rhs = linearize_numeric_var_with_lookup(
                 task,
-                axiom.get_right_var_id() as usize,
+                axiom.get_right_var_id(),
                 assignment_lookup,
                 initial_numeric_values,
                 visiting,
             )?;
             visiting[numeric_var_id] = false;
-            linearize_assignment_axiom_expr(num_numeric_vars, numeric_var_id, axiom, &lhs, &rhs)
+            linearize_assignment_axiom_expr(numeric_var_id, axiom, &lhs, &rhs)
         }
     }
 }
 
 fn linearize_assignment_axiom_expr(
-    num_numeric_vars: usize,
     numeric_var_id: usize,
     axiom: &AssignmentAxiom,
     lhs: &LinearExpression,
@@ -383,127 +385,5 @@ fn linearize_assignment_delta(
             }
             Ok(target_expression.scale(1.0 / source_expression.constant - 1.0))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
-    use crate::numeric::numeric_task::{
-        AssignmentEffect, ExplicitVariable, Metric, NumericRootTask, NumericVariable, Operator,
-    };
-
-    fn simple_var(name: &str, values: &[&str], axiom_layer: i32) -> ExplicitVariable {
-        ExplicitVariable::new(
-            values.len() as u32,
-            name.to_string(),
-            values.iter().map(|value| value.to_string()).collect(),
-            axiom_layer,
-            0,
-        )
-    }
-
-    fn base_task(
-        numeric_variables: Vec<NumericVariable>,
-        operators: Vec<Operator>,
-        assignment_axioms: Vec<AssignmentAxiom>,
-        numeric_state: Vec<f64>,
-    ) -> NumericRootTask {
-        NumericRootTask::new(
-            3,
-            Metric::new(true, -1),
-            vec![simple_var("p", &["f", "t"], -1)],
-            numeric_variables,
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0],
-            numeric_state,
-            operators,
-            vec![],
-            Vec::<ComparisonAxiom>::new(),
-            assignment_axioms,
-            (0, 0),
-        )
-    }
-
-    #[test]
-    fn linearizes_derived_sum_expression() {
-        let task = base_task(
-            vec![
-                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-                NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-                NumericVariable::new("sum".to_string(), NumericType::Derived, -1),
-            ],
-            vec![],
-            vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            vec![1.0, 2.0, 3.0],
-        );
-
-        let expression = linearize_numeric_var(&task, 2).expect("derived sum should be linear");
-
-        assert_eq!(expression.coefficients, vec![1.0, 1.0, 0.0]);
-        assert_eq!(expression.constant, 0.0);
-    }
-
-    #[test]
-    fn linearizes_operator_assignment_effect_through_derived_var() {
-        let operators = vec![Operator::new(
-            "increase-z".to_string(),
-            vec![],
-            vec![],
-            vec![AssignmentEffect::new(
-                3,
-                AssignmentOperation::Plus,
-                2,
-                false,
-                vec![],
-            )],
-            1,
-        )];
-        let task = base_task(
-            vec![
-                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-                NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-                NumericVariable::new("sum".to_string(), NumericType::Derived, -1),
-                NumericVariable::new("z".to_string(), NumericType::Regular, -1),
-            ],
-            operators,
-            vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            vec![1.0, 2.0, 3.0, 0.0],
-        );
-
-        let effects = linearize_operator_assignment_effects(&task, 0)
-            .expect("operator effect through derived sum should be linear");
-
-        assert_eq!(effects.len(), 1);
-        assert_eq!(effects[0].affected_var_id, 3);
-        assert_eq!(effects[0].delta.coefficients, vec![1.0, 1.0, 0.0, 0.0]);
-        assert_eq!(effects[0].delta.constant, 0.0);
-    }
-
-    #[test]
-    fn rejects_non_linear_product_of_two_variables() {
-        let task = base_task(
-            vec![
-                NumericVariable::new("x".to_string(), NumericType::Regular, -1),
-                NumericVariable::new("y".to_string(), NumericType::Regular, -1),
-                NumericVariable::new("prod".to_string(), NumericType::Derived, -1),
-            ],
-            vec![],
-            vec![AssignmentAxiom::new(2, CalOperator::Product, 0, 1)],
-            vec![2.0, 3.0, 6.0],
-        );
-
-        let error = linearize_numeric_var(&task, 2)
-            .expect_err("product of two variables should not linearize");
-
-        assert!(matches!(
-            error,
-            LinearizationError::NonLinearAssignmentAxiom {
-                numeric_var_id: 2,
-                operator: "*"
-            }
-        ));
     }
 }

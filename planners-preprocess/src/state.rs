@@ -2,41 +2,38 @@ use std::collections::HashMap;
 
 use crate::helper_functions::InputStream;
 use crate::helper_functions::check_magic;
-use crate::variable::{NumericVariable, Variable};
+use crate::variable::{ExplicitVariable, NumericVariable};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct State {
-    values: HashMap<*const Variable, i32>,
-    numeric_values: HashMap<*const NumericVariable, f64>,
+    values: HashMap<usize, usize>,
+    numeric_values: HashMap<usize, f64>,
 }
 
 impl State {
     pub fn new() -> Self {
-        Self {
-            values: HashMap::new(),
-            numeric_values: HashMap::new(),
-        }
+        Self::default()
     }
 
     pub fn from_stream(
         stream: &mut InputStream,
-        variables: &Vec<*mut Variable>,
-        numeric_variables: &Vec<*mut NumericVariable>,
+        variables: &[ExplicitVariable],
+        numeric_variables: &[NumericVariable],
     ) -> Self {
         check_magic(stream, "begin_state");
-        let mut values: HashMap<*const Variable, i32> = HashMap::new();
+        let mut values: HashMap<usize, usize> = HashMap::new();
         for var in variables {
-            let value = stream.read_i32();
-            values.insert(*var as *const Variable, value);
+            let value = stream.read_usize();
+            values.insert(var.index, value);
         }
         check_magic(stream, "end_state");
 
         check_magic(stream, "begin_numeric_state");
-        let mut numeric_values: HashMap<*const NumericVariable, f64> = HashMap::new();
+        let mut numeric_values: HashMap<usize, f64> = HashMap::new();
         for numvar in numeric_variables {
             let value_str = stream.read_token();
             let num_value = value_str.parse::<f64>().unwrap_or(0.0);
-            numeric_values.insert(*numvar as *const NumericVariable, num_value);
+            numeric_values.insert(numvar.index, num_value);
         }
         check_magic(stream, "end_numeric_state");
 
@@ -46,8 +43,7 @@ impl State {
         }
     }
 
-    pub fn get_nv(&self, var: *const NumericVariable) -> f64 {
-        assert!(!var.is_null());
+    pub fn get_nv(&self, var: usize) -> f64 {
         *self.numeric_values.get(&var).unwrap()
     }
 
@@ -55,14 +51,18 @@ impl State {
         self.numeric_values.len()
     }
 
-    pub fn get(&self, var: *const Variable) -> i32 {
+    pub fn get(&self, var: usize) -> usize {
         *self.values.get(&var).unwrap()
     }
 
-    pub fn dump(&self) {
+    pub fn dump(&self, variables: &[ExplicitVariable], numeric_variables: &[NumericVariable]) {
         for (var, value) in &self.values {
-            let name = unsafe { &**var }.get_name();
-            println!("  {}: {}", name, value);
+            let name = variables[*var].get_name();
+            println!("  {}: {}", name, *value);
+        }
+        for (var, value) in &self.numeric_values {
+            let name = numeric_variables[*var].get_name();
+            println!("  {}: {}", name, *value);
         }
     }
 }

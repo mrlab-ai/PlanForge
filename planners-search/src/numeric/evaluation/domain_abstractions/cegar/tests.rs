@@ -4,7 +4,7 @@ use rand::{SeedableRng, rngs::SmallRng};
 use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
 
 use planners_sas::numeric::numeric_task::{
-    ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable, Operator,
+    Effect, ExplicitVariable, Metric, NumericRootTask, NumericVariable, Operator,
 };
 
 #[test]
@@ -13,18 +13,18 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         2,
         "v".into(),
         vec!["v0".into(), "v1".into()],
-        -1,
+        None,
         0,
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![Fact::new(0, 1)];
+    let goals = vec![ExplicitFact::new(0, 1)];
     let op = Operator::new(
         "set".into(),
-        vec![Fact::new(0, 0)],
+        vec![ExplicitFact::new(0, 0)],
         vec![planners_sas::numeric::numeric_task::Effect::new(
             vec![],
             0,
-            0,
+            Some(0),
             1,
         )],
         vec![],
@@ -32,7 +32,7 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
     );
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         goals,
@@ -43,7 +43,7 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
@@ -75,18 +75,18 @@ fn get_flaws_reports_precondition_violation() {
         2,
         "v".into(),
         vec!["v0".into(), "v1".into()],
-        -1,
+        None,
         0,
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![Fact::new(0, 1)];
+    let goals = vec![ExplicitFact::new(0, 1)];
     let op = Operator::new(
         "set".into(),
-        vec![Fact::new(0, 0)],
+        vec![ExplicitFact::new(0, 0)],
         vec![planners_sas::numeric::numeric_task::Effect::new(
             vec![],
             0,
-            0,
+            Some(0),
             1,
         )],
         vec![],
@@ -94,7 +94,7 @@ fn get_flaws_reports_precondition_violation() {
     );
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         goals,
@@ -105,7 +105,7 @@ fn get_flaws_reports_precondition_violation() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
@@ -133,7 +133,7 @@ fn get_flaws_reports_precondition_violation() {
         .unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
-        Flaw::Propositional(pf) => assert_eq!(pf.fact, Fact::new(0, 0)),
+        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 0)),
         _ => panic!("expected propositional flaw"),
     }
 }
@@ -144,18 +144,18 @@ fn build_abstraction_produces_singleton_plan_without_wildcards() {
         2,
         "v".into(),
         vec!["v0".into(), "v1".into()],
-        -1,
+        None,
         0,
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![Fact::new(0, 1)];
+    let goals = vec![ExplicitFact::new(0, 1)];
     let op0 = Operator::new(
         "set0".into(),
-        vec![Fact::new(0, 0)],
+        vec![ExplicitFact::new(0, 0)],
         vec![planners_sas::numeric::numeric_task::Effect::new(
             vec![],
             0,
-            0,
+            Some(0),
             1,
         )],
         vec![],
@@ -163,11 +163,11 @@ fn build_abstraction_produces_singleton_plan_without_wildcards() {
     );
     let op1 = Operator::new(
         "set1".into(),
-        vec![Fact::new(0, 0)],
+        vec![ExplicitFact::new(0, 0)],
         vec![planners_sas::numeric::numeric_task::Effect::new(
             vec![],
             0,
-            0,
+            Some(0),
             1,
         )],
         vec![],
@@ -175,7 +175,7 @@ fn build_abstraction_produces_singleton_plan_without_wildcards() {
     );
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
         goals,
@@ -186,7 +186,7 @@ fn build_abstraction_produces_singleton_plan_without_wildcards() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let mut config = CegarConfig::default();
@@ -211,15 +211,15 @@ fn get_flaws_reports_numeric_deviation_flaw() {
             3,
             "gt".into(),
             vec!["true".into(), "false".into(), "unknown".into()],
-            0,
+            Some(0),
             2,
         ),
-        ExplicitVariable::new(2, "g".into(), vec!["g0".into(), "g1".into()], -1, 0),
+        ExplicitVariable::new(2, "g".into(), vec!["g0".into(), "g1".into()], None, 0),
     ];
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("c".into(), NumericType::Constant, -1),
-        NumericVariable::new("thresh".into(), NumericType::Constant, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c".into(), NumericType::Constant, None),
+        NumericVariable::new("thresh".into(), NumericType::Constant, None),
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(
         0,
@@ -242,22 +242,17 @@ fn get_flaws_reports_numeric_deviation_flaw() {
     );
     let op1 = Operator::new(
         "set_g".into(),
-        vec![Fact::new(0, 0)],
-        vec![planners_sas::numeric::numeric_task::Effect::new(
-            vec![],
-            1,
-            0,
-            1,
-        )],
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(vec![], 1, Some(0), 1)],
         vec![],
         1,
     );
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![Fact::new(1, 1)],
+        vec![ExplicitFact::new(1, 1)],
         vec![],
         vec![2, 0],
         vec![-10.0, 3.0, -5.0],
@@ -265,7 +260,7 @@ fn get_flaws_reports_numeric_deviation_flaw() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -302,7 +297,7 @@ fn get_flaws_reports_numeric_deviation_flaw() {
 fn cegar_default_config_matches_current_port_defaults() {
     let config = CegarConfig::default();
 
-    assert_eq!(config.max_abstraction_size, i64::MAX as usize);
+    assert_eq!(config.max_abstraction_size, usize::MAX);
     assert_eq!(config.max_iterations, 10_000);
     assert!(config.use_wildcard_plans);
     assert_eq!(config.random_seed, None);
@@ -327,20 +322,21 @@ fn seeded_shuffle_indices_is_not_identity() {
 }
 
 #[test]
+#[allow(clippy::field_reassign_with_default)]
 fn fix_flaws_respects_max_abstraction_size_limit() {
     let variables = vec![ExplicitVariable::new(
         2,
         "v".into(),
         vec!["v0".into(), "v1".into()],
-        -1,
+        None,
         0,
     )];
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         vec![],
-        vec![Fact::new(0, 1)],
+        vec![ExplicitFact::new(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -348,7 +344,7 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let mut config = CegarConfig::default();
@@ -363,7 +359,7 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
     let mut blacklisted_prop_var_ids = HashSet::new();
     let mut blacklisted_numeric_var_ids = HashSet::new();
     let flaws = vec![Flaw::Propositional(PropFlaw {
-        fact: Fact::new(0, 1),
+        fact: ExplicitFact::new(0, 1),
         dependent_numeric_flaws: vec![],
     })];
 
@@ -393,15 +389,15 @@ fn blacklisted_propositional_vars_are_not_refined() {
         2,
         "v".into(),
         vec!["v0".into(), "v1".into()],
-        -1,
+        None,
         0,
     )];
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         vec![],
-        vec![Fact::new(0, 1)],
+        vec![ExplicitFact::new(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -409,7 +405,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let mut config = CegarConfig::default();
@@ -424,7 +420,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
     let mut blacklisted_prop_var_ids = HashSet::from([0usize]);
     let mut blacklisted_numeric_var_ids = HashSet::new();
     let flaws = vec![Flaw::Propositional(PropFlaw {
-        fact: Fact::new(0, 1),
+        fact: ExplicitFact::new(0, 1),
         dependent_numeric_flaws: vec![],
     })];
 
@@ -452,12 +448,12 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
         3,
         "cmp".into(),
         vec!["true".into(), "false".into(), "unknown".into()],
-        0,
+        Some(0),
         2,
     )];
     let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, -1),
-        NumericVariable::new("y".into(), NumericType::Regular, -1),
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(
         0,
@@ -467,10 +463,10 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
     )];
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![Fact::new(0, 0)],
+        vec![ExplicitFact::new(0, 0)],
         vec![],
         vec![2],
         vec![1.0, 0.0],
@@ -478,7 +474,7 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let mut config = CegarConfig::default();
@@ -498,16 +494,16 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         2,
         "g".into(),
         vec!["g0".into(), "g1".into()],
-        -1,
+        None,
         0,
     )];
-    let numeric_variables = vec![NumericVariable::new("x".into(), NumericType::Regular, -1)];
+    let numeric_variables = vec![NumericVariable::new("x".into(), NumericType::Regular, None)];
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![Fact::new(0, 1)],
+        vec![ExplicitFact::new(0, 1)],
         vec![],
         vec![0],
         vec![3.5],
@@ -515,7 +511,7 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let mut config = CegarConfig::default();

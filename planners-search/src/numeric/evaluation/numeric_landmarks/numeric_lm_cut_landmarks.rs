@@ -1,12 +1,9 @@
 use super::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use super::numeric_bound::NumericBound;
-use super::numeric_helper::{
-    LinearNumericCondition as NumericCondition, NumericTaskHelper,
-};
-use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
+use super::numeric_helper::{LinearNumericCondition as NumericCondition, NumericTaskHelper};
+use planners_sas::numeric::axioms::PropositionalAxiom;
 use planners_sas::numeric::numeric_task::{
-    metric_operator_cost_from_initial_values, AbstractNumericTask, AssignmentEffect,
-    Effect, Fact, Operator,
+    AbstractNumericTask, Effect, ExplicitFact, Operator, metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::utils::linear_effects::LinearExpression;
 use planners_sas::numeric::utils::linear_effects::LinearNumericEffect;
@@ -26,7 +23,9 @@ struct PriorityQueue {
 impl PriorityQueue {
     #[inline(always)]
     fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     #[inline(always)]
@@ -268,7 +267,7 @@ pub struct LandmarkCutLandmarks<'task> {
     conditions: Vec<NumericCondition>,
     epsilons: Vec<f64>,
     numeric_helper: NumericTaskHelper,
-    comparison_fact_to_condition_ids: BTreeMap<(usize, i32), Vec<usize>>,
+    comparison_fact_to_condition_ids: BTreeMap<(usize, usize), Vec<usize>>,
     linear_effect_to_conditions_plus: Vec<Vec<Vec<usize>>>,
     linear_effect_to_conditions_minus: Vec<Vec<Vec<usize>>>,
     operator_condition_eval: Vec<Vec<OperatorConditionEval>>,
@@ -316,6 +315,7 @@ pub struct LandmarkCutLandmarks<'task> {
     initialized: bool,
 }
 
+#[allow(unused)]
 impl<'task> LandmarkCutLandmarks<'task> {
     pub fn new(task: &'task dyn AbstractNumericTask, config: LmCutNumericConfig) -> Self {
         // PARITY(numeric-fd): `random_pcf` is still blocked until the randomized supporter
@@ -442,7 +442,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             self.artificial_goal_id,
             "goal".to_string(),
         ));
-        self.num_variables = usize::try_from(self.task.get_num_variables().max(0)).unwrap_or(0);
+        self.num_variables = self.task.get_num_variables();
         self.proposition_index = vec![Vec::new(); self.num_variables];
 
         self.num_propositions = 2;
@@ -543,11 +543,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn is_cut_marked(&self, operator_id: usize) -> bool {
-        self.cut_marks
-            .get(operator_id)
-            .copied()
-            .unwrap_or(0)
-            == self.cut_mark_epoch
+        self.cut_marks.get(operator_id).copied().unwrap_or(0) == self.cut_mark_epoch
     }
 
     fn mark_cut(&mut self, operator_id: usize) {
@@ -758,13 +754,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn build_propositional_propositions(&mut self) {
         for variable_id in 0..self.num_variables {
-            let domain_size = usize::try_from(
-                self.task
-                    .get_variable_domain_size(variable_id as i32)
-                    .expect("variable id must be valid")
-                    .max(0),
-            )
-            .expect("domain size must fit usize");
+            let domain_size = self
+                .task
+                .get_variable_domain_size(variable_id)
+                .expect("variable id must be valid");
             self.proposition_index[variable_id].reserve(domain_size);
             for value in 0..domain_size {
                 let helper_proposition_id = self
@@ -797,14 +790,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .get_condition(condition_id)
                 .cloned()
                 .expect("helper numeric condition must exist");
-            let epsilon = self
-                .numeric_helper
-                .get_epsilon(condition_id)
-                .unwrap_or(if condition.is_strictly_greater {
+            let epsilon = self.numeric_helper.get_epsilon(condition_id).unwrap_or(
+                if condition.is_strictly_greater {
                     self.config.epsilon
                 } else {
                     0.0
-                });
+                },
+            );
             self.add_numeric_condition_proposition_with_epsilon(condition, epsilon);
         }
     }
@@ -887,8 +879,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
     fn prepare_goal_preconditions(&mut self) {
         let mut goal_preconditions = Vec::new();
         let mut seen = BTreeSet::new();
-        for goal_index in 0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0) {
-            let goal = self.task.get_goal_fact(goal_index as i32);
+        for goal_index in 0..self.task.get_num_goals() {
+            let goal = self.task.get_goal_fact(goal_index);
             let helper_propositional_ids = self
                 .numeric_helper
                 .get_propositional_goals(goal_index)
@@ -905,7 +897,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .collect::<Vec<_>>();
 
             if helper_propositional_ids.is_empty() && helper_numeric_ids.is_empty() {
-                if self.is_numeric_axiom_var(goal.var() as usize) {
+                if self.is_numeric_axiom_var(goal.var) {
                     let _ = self.precondition_proposition_ids(goal);
                     continue;
                 }
@@ -934,7 +926,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     goal_preconditions.push(proposition_id);
                 }
             }
-
         }
         self.goal_precondition_ids = goal_preconditions;
     }
@@ -1008,7 +999,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
             self.operator_effect_id_data
                 .extend_from_slice(&operator.effect_ids);
             let effect_end = self.operator_effect_id_data.len();
-            self.operator_effect_id_ranges.push((effect_start, effect_end));
+            self.operator_effect_id_ranges
+                .push((effect_start, effect_end));
         }
     }
 
@@ -1036,15 +1028,15 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let operator_count = self.task.get_operators().len() + self.task.axioms().len();
         self.original_to_relaxed_operators = vec![Vec::new(); operator_count];
         for (relaxed_operator_id, operator) in self.relaxed_operators.iter().enumerate() {
-            if let Some(original_id) = operator.original_op_id_1 {
-                if let Some(mapped) = self.original_to_relaxed_operators.get_mut(original_id) {
-                    mapped.push(relaxed_operator_id);
-                }
+            if let Some(original_id) = operator.original_op_id_1
+                && let Some(mapped) = self.original_to_relaxed_operators.get_mut(original_id)
+            {
+                mapped.push(relaxed_operator_id);
             }
-            if let Some(original_id) = operator.original_op_id_2 {
-                if let Some(mapped) = self.original_to_relaxed_operators.get_mut(original_id) {
-                    mapped.push(relaxed_operator_id);
-                }
+            if let Some(original_id) = operator.original_op_id_2
+                && let Some(mapped) = self.original_to_relaxed_operators.get_mut(original_id)
+            {
+                mapped.push(relaxed_operator_id);
             }
         }
     }
@@ -1058,7 +1050,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
 
         for &operator_id in &self.touched_operator_ids {
-            self.operator_runtime[operator_id] = OperatorRuntime::new(&self.relaxed_operators[operator_id]);
+            self.operator_runtime[operator_id] =
+                OperatorRuntime::new(&self.relaxed_operators[operator_id]);
         }
 
         self.start_exploration_runtime_tracking();
@@ -1066,7 +1059,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn setup_exploration_queue_state(
         &mut self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
     ) -> Result<(), String> {
         assert_eq!(
@@ -1079,15 +1072,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .resize(self.conditions.len(), 0.0);
 
         for (variable_id, &value) in propositional_values.iter().enumerate() {
-            if value < 0 {
-                return Err(format!(
-                    "LM-cut exploration received negative value {value} for variable {variable_id}"
-                ));
-            }
             if self.is_numeric_axiom_var(variable_id) && !self.config.ignore_numeric {
                 continue;
             }
-            let fact = Fact::new(variable_id as u32, value);
+            let fact = ExplicitFact::new(variable_id, value);
             let proposition_id = self.get_proposition_id(&fact);
             self.enqueue_if_necessary(proposition_id, 0.0);
         }
@@ -1109,7 +1097,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn first_exploration(
         &mut self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
     ) -> Result<(), String> {
         assert!(
@@ -1155,13 +1143,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     let (effect_start, _) = self.operator_effect_id_range(operator_id);
                     for effect_index in effect_start..(effect_start + effect_count) {
                         let effect_id = self.operator_effect_id_data[effect_index];
-                            self.update_queue(
+                        self.update_queue(
                             propositional_values,
                             numeric_values,
                             operator_id,
                             proposition_id,
                             effect_id,
-                            );
+                        );
                     }
                 }
             }
@@ -1172,7 +1160,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn first_exploration_incremental(
         &mut self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
         cut: &[usize],
     ) -> Result<(), String> {
@@ -1180,7 +1168,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
             self.priority_queue.is_empty(),
             "LM-cut incremental exploration requires an empty queue"
         );
-        let mut original_ids_to_update = std::mem::take(&mut self.incremental_original_operator_ids_scratch);
+        let mut original_ids_to_update =
+            std::mem::take(&mut self.incremental_original_operator_ids_scratch);
         original_ids_to_update.clear();
         Self::advance_epoch(
             &mut self.incremental_original_operator_epoch,
@@ -1202,7 +1191,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     let mark = self
                         .incremental_original_operator_marks
                         .get_mut(original_id)
-                        .ok_or_else(|| format!("LM-cut original operator id {original_id} is invalid"))?;
+                        .ok_or_else(|| {
+                            format!("LM-cut original operator id {original_id} is invalid")
+                        })?;
                     if *mark != self.incremental_original_operator_epoch {
                         *mark = self.incremental_original_operator_epoch;
                         original_ids_to_update.push(original_id);
@@ -1217,22 +1208,24 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .ok_or_else(|| format!("LM-cut original operator id {original_id} is invalid"))?
                     .len();
                 for mapped_index in 0..mapped_operator_count {
-                    let mapped_operator_id = self.original_to_relaxed_operators[original_id][mapped_index];
-                    let operator =
-                        self.relaxed_operators
-                            .get(mapped_operator_id)
+                    let mapped_operator_id =
+                        self.original_to_relaxed_operators[original_id][mapped_index];
+                    let operator = self.relaxed_operators.get(mapped_operator_id).ok_or_else(
+                        || {
+                            format!(
+                                "LM-cut mapped relaxed operator id {mapped_operator_id} is invalid"
+                            )
+                        },
+                    )?;
+                    if self.operator_unsatisfied_preconditions(mapped_operator_id) == 0 {
+                        let supporter_id = self
+                            .operator_h_max_supporter(mapped_operator_id)
                             .ok_or_else(|| {
                                 format!(
-                                    "LM-cut mapped relaxed operator id {mapped_operator_id} is invalid"
+                                    "LM-cut reachable operator {} must have an h_max supporter",
+                                    operator.name
                                 )
                             })?;
-                    if self.operator_unsatisfied_preconditions(mapped_operator_id) == 0 {
-                        let supporter_id = self.operator_h_max_supporter(mapped_operator_id).ok_or_else(|| {
-                            format!(
-                                "LM-cut reachable operator {} must have an h_max supporter",
-                                operator.name
-                            )
-                        })?;
                         let (effect_start, effect_end) =
                             self.operator_effect_id_range(mapped_operator_id);
                         for effect_index in effect_start..effect_end {
@@ -1267,11 +1260,16 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     let operator_id = self.proposition_precondition_of_data[triggered_index];
                     let update = {
                         if self.operator_h_max_supporter(operator_id) == Some(proposition_id) {
-                            let old_supporter_cost = self.operator_h_max_supporter_cost(operator_id);
+                            let old_supporter_cost =
+                                self.operator_h_max_supporter_cost(operator_id);
                             if old_supporter_cost > proposition_cost {
                                 let new_supporter = self.update_h_max_supporter(operator_id);
                                 if let Some((new_supporter_id, new_cost)) = new_supporter {
-                                    Some((new_supporter_id, new_cost, new_cost != old_supporter_cost))
+                                    Some((
+                                        new_supporter_id,
+                                        new_cost,
+                                        new_cost != old_supporter_cost,
+                                    ))
                                 } else {
                                     None
                                 }
@@ -1287,7 +1285,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         self.set_operator_h_max_supporter(operator_id, Some(new_supporter_id));
                         self.set_operator_h_max_supporter_cost(operator_id, new_cost);
                         if needs_effect_update {
-                            let (effect_start, effect_end) = self.operator_effect_id_range(operator_id);
+                            let (effect_start, effect_end) =
+                                self.operator_effect_id_range(operator_id);
                             for effect_index in effect_start..effect_end {
                                 let effect_id = self.operator_effect_id_data[effect_index];
                                 self.update_queue(
@@ -1322,13 +1321,14 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .map(|supporter_id| self.proposition_h_max_cost(supporter_id))
             .unwrap_or(f64::NEG_INFINITY);
 
-        if let Some(supporter_id) = best_supporter {
-            if self.proposition_status(supporter_id) == PropositionStatus::Unreached {
-                return None;
-            }
+        if let Some(supporter_id) = best_supporter
+            && self.proposition_status(supporter_id) == PropositionStatus::Unreached
+        {
+            return None;
         }
 
-        let (precondition_start, precondition_end) = self.operator_precondition_id_range(operator_id);
+        let (precondition_start, precondition_end) =
+            self.operator_precondition_id_range(operator_id);
         for precondition_index in precondition_start..precondition_end {
             let precondition_id = self.operator_precondition_id_data[precondition_index];
             if self.proposition_status(precondition_id) == PropositionStatus::Unreached {
@@ -1352,12 +1352,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn mark_goal_plateau(
         &mut self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
         proposition_id: usize,
     ) {
-        if self.proposition_status(proposition_id) == PropositionStatus::GoalZone
-        {
+        if self.proposition_status(proposition_id) == PropositionStatus::GoalZone {
             return;
         }
 
@@ -1366,7 +1365,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         for achiever_index in achiever_start..achiever_end {
             let achiever_id = self.proposition_effect_of_data[achiever_index];
             let (is_zero_cost_applicable, achiever_supporter) = {
-                let achiever = self
+                let _achiever = self
                     .relaxed_operators
                     .get(achiever_id)
                     .unwrap_or_else(|| panic!("LM-cut achiever id {achiever_id} is invalid"));
@@ -1401,7 +1400,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn second_exploration(
         &mut self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
         cut: &mut Vec<usize>,
         m_list: &mut Vec<(f64, f64)>,
@@ -1427,7 +1426,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             if self.is_numeric_axiom_var(variable_id) && !self.config.ignore_numeric {
                 continue;
             }
-            let fact = Fact::new(variable_id as u32, value);
+            let fact = ExplicitFact::new(variable_id, value);
             let proposition_id = self.get_proposition_id(&fact);
             if self.proposition_status(proposition_id) != PropositionStatus::BeforeGoalZone {
                 self.set_proposition_status(proposition_id, PropositionStatus::BeforeGoalZone);
@@ -1441,7 +1440,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     let proposition_id = self.get_numeric_proposition_id_infallible(condition_id);
                     if self.proposition_status(proposition_id) != PropositionStatus::BeforeGoalZone
                     {
-                        self.set_proposition_status(proposition_id, PropositionStatus::BeforeGoalZone);
+                        self.set_proposition_status(
+                            proposition_id,
+                            PropositionStatus::BeforeGoalZone,
+                        );
                         queue.push(proposition_id);
                     }
                 }
@@ -1477,7 +1479,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         );
                         let operator = &self.relaxed_operators[operator_id];
                         if (operator.original_op_id_1.is_some() && ms.0 >= self.config.precision)
-                            || (operator.original_op_id_1.is_none() && ms.1 >= self.config.precision)
+                            || (operator.original_op_id_1.is_none()
+                                && ms.1 >= self.config.precision)
                         {
                             let edge_cost = self.edge_cost(operator_id, ms);
                             cut.push(operator_id);
@@ -1510,7 +1513,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         let edge_cost = self.edge_cost(operator_id, ms);
                         if edge_cost < min_cut_cost {
                             assert_eq!(effect_status, PropositionStatus::Reached);
-                            self.set_proposition_status(effect_id, PropositionStatus::BeforeGoalZone);
+                            self.set_proposition_status(
+                                effect_id,
+                                PropositionStatus::BeforeGoalZone,
+                            );
                             queue.push(effect_id);
                         }
                     }
@@ -1613,12 +1619,16 @@ impl<'task> LandmarkCutLandmarks<'task> {
             let eval_row = &self.operator_condition_eval[original_id][condition_id];
             net += eval_row.simple_effect.unwrap_or(0.0);
             if eval_row.composite_expression.is_some() {
-                net += self.cached_composite_expression_value(original_id, condition_id, numeric_values);
+                net += self.cached_composite_expression_value(
+                    original_id,
+                    condition_id,
+                    numeric_values,
+                );
             }
         }
         if self.config.use_constant_assignment {
-            let original_operator_id =
-                original_op_id_2.expect("LM-cut relaxed operator must store its concrete operator id");
+            let original_operator_id = original_op_id_2
+                .expect("LM-cut relaxed operator must store its concrete operator id");
             let has_supported_sose =
                 self.operator_condition_eval[original_operator_id][condition_id].has_sose;
             net += self.calculate_constant_assignment_effect_infallible(
@@ -1645,7 +1655,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     #[inline(never)]
     fn calculate_numeric_times(
         &mut self,
-        _propositional_values: &[i32],
+        _propositional_values: &[usize],
         numeric_values: &[f64],
         effect_id: usize,
         operator_id: usize,
@@ -1672,9 +1682,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 original_op_id_1,
                 original_op_id_2,
             ),
-            (_, original_op_id_2) => {
-                self.calculate_numeric_times_simple_numeric(numeric_values, condition_id, original_op_id_2)
-            }
+            (_, original_op_id_2) => self.calculate_numeric_times_simple_numeric(
+                numeric_values,
+                condition_id,
+                original_op_id_2,
+            ),
         }
     }
 
@@ -1709,7 +1721,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     #[inline(always)]
     fn update_queue(
         &mut self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
         operator_id: usize,
         supporter_id: usize,
@@ -1748,8 +1760,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
             }
             return;
         }
-        let target_cost = self.proposition_h_max_cost(supporter_id)
-            + self.operator_cost_2(operator_id);
+        let target_cost =
+            self.proposition_h_max_cost(supporter_id) + self.operator_cost_2(operator_id);
         self.enqueue_if_necessary(effect_id, target_cost);
     }
 
@@ -1836,9 +1848,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .numeric_helper
             .get_action_linear_effects(operator_id)
             .map(|effects| effects.to_vec())
-            .ok_or_else(|| {
-                format!("LM-cut helper linear effects {operator_id} are missing")
-            })?;
+            .ok_or_else(|| format!("LM-cut helper linear effects {operator_id} are missing"))?;
         let helper_pre_list = self
             .numeric_helper
             .get_action_pre_list(operator_id)
@@ -1850,10 +1860,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .expect("helper action numeric pre-list must exist for operator");
         let precondition_groups = self.precondition_proposition_id_groups(helper_pre_list);
         let mut precondition_ids = self.flatten_precondition_groups(&precondition_groups);
-        self.append_numeric_condition_propositions(
-            &helper_num_list,
-            &mut precondition_ids,
-        );
+        self.append_numeric_condition_propositions(&helper_num_list, &mut precondition_ids);
         let unconditional_linear_assignment_effect_ids = helper_linear_effects
             .iter()
             .filter(|effect| {
@@ -1864,13 +1871,14 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .collect::<Vec<_>>();
 
         for conditional_effect in &helper_conditional_fact_effects {
-            if self.is_numeric_axiom_var(conditional_effect.add_fact.var() as usize) {
+            if self.is_numeric_axiom_var(conditional_effect.add_fact.var) {
                 continue;
             }
             let mut extended_preconditions = precondition_ids.clone();
             let mut seen: BTreeSet<usize> = extended_preconditions.iter().copied().collect();
-            let effect_condition_groups =
-                self.precondition_proposition_id_groups(&conditional_effect.preconditions.propositional_facts);
+            let effect_condition_groups = self.precondition_proposition_id_groups(
+                &conditional_effect.preconditions.propositional_facts,
+            );
             for group in &effect_condition_groups {
                 for &proposition_id in group {
                     if seen.insert(proposition_id) {
@@ -1885,9 +1893,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
             let conditional_name = format!(
                 "{} {}",
                 operator.name(),
-                self.get_proposition_name(conditional_effect.add_fact.var() as usize, conditional_effect.add_fact.value())
+                self.get_proposition_name(
+                    conditional_effect.add_fact.var,
+                    conditional_effect.add_fact.value
+                )
             );
-            let mut conditional_operator = RelaxedOperator::new(
+            let conditional_operator = RelaxedOperator::new(
                 extended_preconditions,
                 vec![self.get_proposition_id(&conditional_effect.add_fact)],
                 operator_id,
@@ -1904,7 +1915,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .get_action_add_list(operator_id)
             .into_iter()
             .flatten()
-            .filter(|fact| !self.is_numeric_axiom_var(fact.var() as usize))
+            .filter(|fact| !self.is_numeric_axiom_var(fact.var))
             .map(|fact| self.get_proposition_id(fact))
             .collect::<Vec<_>>();
 
@@ -1971,7 +1982,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .collect();
 
             for condition_id in 0..self.conditions.len() {
-                let has_supported_sose = self.operator_condition_eval[original_op_id][condition_id].has_sose;
+                let has_supported_sose =
+                    self.operator_condition_eval[original_op_id][condition_id].has_sose;
                 let (has_simple_effect, simple_effect) = self.calculate_simple_effect_constant(
                     original_op_id,
                     &self.conditions[condition_id].coefficients,
@@ -2011,10 +2023,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
         relaxed_operator_id: usize,
         condition_id: usize,
     ) -> Result<(bool, f64), String> {
-        let relaxed_operator = self
-            .relaxed_operators
-            .get(relaxed_operator_id)
-            .ok_or_else(|| format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid"))?;
+        let relaxed_operator =
+            self.relaxed_operators
+                .get(relaxed_operator_id)
+                .ok_or_else(|| {
+                    format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid")
+                })?;
         let condition = self
             .conditions
             .get(condition_id)
@@ -2050,7 +2064,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .numeric_helper
             .get_action_conditional_eff_list(original_operator_id)
             .ok_or_else(|| {
-                format!("LM-cut helper conditional numeric effects {original_operator_id} are missing")
+                format!(
+                    "LM-cut helper conditional numeric effects {original_operator_id} are missing"
+                )
             })?;
         let helper_linear_effects = self
             .numeric_helper
@@ -2111,7 +2127,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
             if use_bounded_linear
                 && weight >= self.config.precision
-                && self.numeric_bound.get_effect_has_ub(original_operator_id, local_var_id)
+                && self
+                    .numeric_bound
+                    .get_effect_has_ub(original_operator_id, local_var_id)
                 && (!self.config.use_constant_assignment
                     || !self
                         .numeric_bound
@@ -2123,7 +2141,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         .get_effect_ub(original_operator_id, local_var_id);
             } else if use_bounded_linear
                 && weight <= -self.config.precision
-                && self.numeric_bound.get_effect_has_lb(original_operator_id, local_var_id)
+                && self
+                    .numeric_bound
+                    .get_effect_has_lb(original_operator_id, local_var_id)
                 && (!self.config.use_constant_assignment
                     || !self
                         .numeric_bound
@@ -2172,9 +2192,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .numeric_helper
             .get_action_linear_effects(operator_id)
             .map(|effects| effects.to_vec())
-            .ok_or_else(|| {
-                format!("LM-cut helper linear effects {operator_id} are missing")
-            })?;
+            .ok_or_else(|| format!("LM-cut helper linear effects {operator_id} are missing"))?;
         if self.numeric_helper.get_action_n_linear_eff(operator_id) == 0 {
             return Ok(());
         }
@@ -2192,8 +2210,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
             let mut precondition_ids = base_precondition_ids.to_vec();
             let mut seen: BTreeSet<usize> = precondition_ids.iter().copied().collect();
-            let assignment_condition_groups = self
-                .precondition_proposition_id_groups(&helper_effect_preconditions.propositional_facts);
+            let assignment_condition_groups = self.precondition_proposition_id_groups(
+                &helper_effect_preconditions.propositional_facts,
+            );
             for group in &assignment_condition_groups {
                 for &proposition_id in group {
                     if seen.insert(proposition_id) {
@@ -2240,8 +2259,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 let mut relaxed_operator = RelaxedOperator::new(
                     {
                         let mut guarded_preconditions = precondition_ids.clone();
-                        for &condition_id in
-                            &self.linear_effect_to_conditions_plus[operator_id][assignment_effect_id]
+                        for &condition_id in &self.linear_effect_to_conditions_plus[operator_id]
+                            [assignment_effect_id]
                         {
                             guarded_preconditions
                                 .push(self.get_numeric_proposition_id(condition_id)?);
@@ -2265,8 +2284,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 let mut relaxed_operator = RelaxedOperator::new(
                     {
                         let mut guarded_preconditions = precondition_ids;
-                        for &condition_id in
-                            &self.linear_effect_to_conditions_minus[operator_id][assignment_effect_id]
+                        for &condition_id in &self.linear_effect_to_conditions_minus[operator_id]
+                            [assignment_effect_id]
                         {
                             guarded_preconditions
                                 .push(self.get_numeric_proposition_id(condition_id)?);
@@ -2367,12 +2386,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
         Ok(expression)
     }
 
+    #[allow(clippy::needless_range_loop)]
     fn build_supported_sose_operators(&mut self) -> Result<(), String> {
         let operator_count = self.task.get_operators().len();
-        self.operator_condition_eval = vec![
-            vec![OperatorConditionEval::default(); self.conditions.len()];
-            operator_count
-        ];
+        self.operator_condition_eval =
+            vec![vec![OperatorConditionEval::default(); self.conditions.len()]; operator_count];
         if !self.config.use_second_order_simple {
             return Ok(());
         }
@@ -2399,17 +2417,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .conditions
                     .get(condition_id)
                     .ok_or_else(|| format!("LM-cut numeric condition {condition_id} is invalid"))?;
-                if !self.has_linear_effect(
-                    op2_id,
-                    &condition.coefficients,
-                    false,
-                    false,
-                )? || self.has_linear_effect(
-                    op2_id,
-                    &condition.coefficients,
-                    false,
-                    true,
-                )?
+                if !self.has_linear_effect(op2_id, &condition.coefficients, false, false)?
+                    || self.has_linear_effect(op2_id, &condition.coefficients, false, true)?
                 {
                     continue;
                 }
@@ -2481,7 +2490,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 self.operator_condition_eval[op2_id][condition_id].composite_expression =
                     Some(composite_expression);
                 if self.use_bounds {
-                    let projected_coefficients = self.regular_numeric_variable_ids
+                    let projected_coefficients = self
+                        .regular_numeric_variable_ids
                         .iter()
                         .map(|&numeric_var_id| {
                             base_expression
@@ -2520,7 +2530,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
                     if has_bound {
                         self.operator_condition_eval[op2_id][condition_id].has_upper_bound = true;
-                        self.operator_condition_eval[op2_id][condition_id].upper_bound = upper_bound;
+                        self.operator_condition_eval[op2_id][condition_id].upper_bound =
+                            upper_bound;
                     }
                 }
 
@@ -2535,7 +2546,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             for (op1_relaxed_id, effects) in supporter_to_effects {
                 let op1 = self.relaxed_operators[op1_relaxed_id].clone();
                 let op2 = self.relaxed_operators[op2_relaxed_id].clone();
-                    let original_op_id_1 = op1
+                let original_op_id_1 = op1
                         .original_op_id_2
                         .filter(|&id| id < operator_count)
                         .ok_or_else(|| {
@@ -2543,7 +2554,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                                 "LM-cut SOSE supporter relaxed operator {op1_relaxed_id} is missing its concrete operator id"
                             )
                         })?;
-                    let original_op_id_2 = op2
+                let original_op_id_2 = op2
                         .original_op_id_2
                         .filter(|&id| id < operator_count)
                         .ok_or_else(|| {
@@ -2552,36 +2563,36 @@ impl<'task> LandmarkCutLandmarks<'task> {
                             )
                         })?;
 
-                    let mut precondition_ids = op1.precondition_ids.clone();
-                    precondition_ids.extend(op2.precondition_ids);
-                    if precondition_ids.is_empty() {
-                        precondition_ids.push(self.artificial_precondition_id);
-                    }
+                let mut precondition_ids = op1.precondition_ids.clone();
+                precondition_ids.extend(op2.precondition_ids);
+                if precondition_ids.is_empty() {
+                    precondition_ids.push(self.artificial_precondition_id);
+                }
 
-                    let mut effect_ids = Vec::new();
-                    let mut sose_constants = vec![0.0; self.conditions.len()];
-                    for (condition_id, sose_constant) in effects {
-                        effect_ids.push(self.get_numeric_proposition_id(condition_id)?);
-                        sose_constants[condition_id] = sose_constant;
-                    }
+                let mut effect_ids = Vec::new();
+                let mut sose_constants = vec![0.0; self.conditions.len()];
+                for (condition_id, sose_constant) in effects {
+                    effect_ids.push(self.get_numeric_proposition_id(condition_id)?);
+                    sose_constants[condition_id] = sose_constant;
+                }
 
-                    let mut sose_operator = RelaxedOperator::new(
-                        precondition_ids,
-                        effect_ids,
-                        original_op_id_2,
-                        op2.base_cost_2,
-                        format!("{} {}", op1.name, op2.name),
-                        false,
-                    );
-                    sose_operator.original_op_id_1 = Some(original_op_id_1);
-                    sose_operator.original_op_id_2 = Some(original_op_id_2);
-                    sose_operator.base_cost_1 = op1.base_cost_2;
-                    sose_operator.base_cost_2 = op2.base_cost_2;
-                    sose_operator.cost_1 = sose_operator.base_cost_1;
-                    sose_operator.cost_2 = sose_operator.base_cost_2;
-                    sose_operator.sose_constants = sose_constants;
-                    sose_operator.linear_assignment_effects = op2.linear_assignment_effects.clone();
-                    sose_operator.assert_well_formed();
+                let mut sose_operator = RelaxedOperator::new(
+                    precondition_ids,
+                    effect_ids,
+                    original_op_id_2,
+                    op2.base_cost_2,
+                    format!("{} {}", op1.name, op2.name),
+                    false,
+                );
+                sose_operator.original_op_id_1 = Some(original_op_id_1);
+                sose_operator.original_op_id_2 = Some(original_op_id_2);
+                sose_operator.base_cost_1 = op1.base_cost_2;
+                sose_operator.base_cost_2 = op2.base_cost_2;
+                sose_operator.cost_1 = sose_operator.base_cost_1;
+                sose_operator.cost_2 = sose_operator.base_cost_2;
+                sose_operator.sose_constants = sose_constants;
+                sose_operator.linear_assignment_effects = op2.linear_assignment_effects.clone();
+                sose_operator.assert_well_formed();
                 new_operators.push(sose_operator);
             }
         }
@@ -2632,7 +2643,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
             if weight >= self.config.precision {
                 let blocked_by_upper_bound = local_var_id
                     .map(|var_id| {
-                        self.numeric_bound.get_effect_has_ub(original_operator_id, var_id)
+                        self.numeric_bound
+                            .get_effect_has_ub(original_operator_id, var_id)
                             || (self.config.use_constant_assignment
                                 && self
                                     .numeric_bound
@@ -2648,7 +2660,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
             if weight <= -self.config.precision {
                 let blocked_by_lower_bound = local_var_id
                     .map(|var_id| {
-                        self.numeric_bound.get_effect_has_lb(original_operator_id, var_id)
+                        self.numeric_bound
+                            .get_effect_has_lb(original_operator_id, var_id)
                             || (self.config.use_constant_assignment
                                 && self
                                     .numeric_bound
@@ -2668,21 +2681,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
         original_operator_id: usize,
         coefficients: &[f64],
     ) -> Result<bool, String> {
-        if self.has_linear_effect(
-            original_operator_id,
-            coefficients,
-            false,
-            false,
-        )? {
+        if self.has_linear_effect(original_operator_id, coefficients, false, false)? {
             return Ok(true);
         }
 
         if self.config.use_constant_assignment
-            && self.has_constant_assignment_effect(
-                original_operator_id,
-                coefficients,
-                false,
-            )?
+            && self.has_constant_assignment_effect(original_operator_id, coefficients, false)?
         {
             return Ok(true);
         }
@@ -2729,9 +2733,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         .numeric_bound
                         .has_no_increasing_assignment_effect(original_operator_id, local_var_id))
                     || (weight <= -self.config.precision
-                        && self
-                            .numeric_bound
-                            .has_no_decreasing_assignment_effect(original_operator_id, local_var_id)))
+                        && self.numeric_bound.has_no_decreasing_assignment_effect(
+                            original_operator_id,
+                            local_var_id,
+                        )))
             {
                 continue;
             }
@@ -2756,9 +2761,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         .numeric_bound
                         .has_no_increasing_assignment_effect(original_operator_id, local_var_id))
                     || (weight <= -self.config.precision
-                        && self
-                            .numeric_bound
-                            .has_no_decreasing_assignment_effect(original_operator_id, local_var_id)))
+                        && self.numeric_bound.has_no_decreasing_assignment_effect(
+                            original_operator_id,
+                            local_var_id,
+                        )))
             {
                 continue;
             }
@@ -2766,24 +2772,28 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
 
         if use_bounded_linear {
-            for (local_var_id, &actual_var_id) in self.regular_numeric_variable_ids.iter().enumerate() {
+            for (local_var_id, &actual_var_id) in
+                self.regular_numeric_variable_ids.iter().enumerate()
+            {
                 let weight = coefficients.get(actual_var_id).copied().unwrap_or(0.0);
                 if (weight >= self.config.precision
                     && self
                         .numeric_bound
                         .get_assignment_has_ub(original_operator_id, local_var_id)
                     && (!self.use_bounds
-                        || !self
-                            .numeric_bound
-                            .has_no_increasing_assignment_effect(original_operator_id, local_var_id)))
+                        || !self.numeric_bound.has_no_increasing_assignment_effect(
+                            original_operator_id,
+                            local_var_id,
+                        )))
                     || (weight <= -self.config.precision
                         && self
                             .numeric_bound
                             .get_assignment_has_lb(original_operator_id, local_var_id)
                         && (!self.use_bounds
-                            || !self
-                                .numeric_bound
-                                .has_no_decreasing_assignment_effect(original_operator_id, local_var_id)))
+                            || !self.numeric_bound.has_no_decreasing_assignment_effect(
+                                original_operator_id,
+                                local_var_id,
+                            )))
                 {
                     return Ok(true);
                 }
@@ -2839,18 +2849,16 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         .numeric_bound
                         .has_no_increasing_assignment_effect(original_operator_id, local_var_id))
                     || (weight <= -self.config.precision
-                        && self
-                            .numeric_bound
-                            .has_no_decreasing_assignment_effect(original_operator_id, local_var_id)))
+                        && self.numeric_bound.has_no_decreasing_assignment_effect(
+                            original_operator_id,
+                            local_var_id,
+                        )))
             {
                 continue;
             }
 
-			let constant_target = helper_assign_list[local_var_id];
-            let state_value = numeric_values
-                .get(actual_var_id)
-                .copied()
-                .unwrap_or(0.0);
+            let constant_target = helper_assign_list[local_var_id];
+            let state_value = numeric_values.get(actual_var_id).copied().unwrap_or(0.0);
             if (weight >= self.config.precision && constant_target > state_value)
                 || (weight <= -self.config.precision && constant_target < state_value)
             {
@@ -2875,9 +2883,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         .numeric_bound
                         .has_no_increasing_assignment_effect(original_operator_id, local_var_id))
                     || (weight <= -self.config.precision
-                        && self
-                            .numeric_bound
-                            .has_no_decreasing_assignment_effect(original_operator_id, local_var_id)))
+                        && self.numeric_bound.has_no_decreasing_assignment_effect(
+                            original_operator_id,
+                            local_var_id,
+                        )))
             {
                 continue;
             }
@@ -2892,17 +2901,21 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
 
         if use_bounded_linear {
-            for (local_var_id, &actual_var_id) in self.regular_numeric_variable_ids.iter().enumerate() {
+            for (local_var_id, &actual_var_id) in
+                self.regular_numeric_variable_ids.iter().enumerate()
+            {
                 let weight = coefficients.get(actual_var_id).copied().unwrap_or(0.0);
                 if self.use_bounds
                     && ((weight >= self.config.precision
-                        && self
-                            .numeric_bound
-                            .has_no_increasing_assignment_effect(original_operator_id, local_var_id))
+                        && self.numeric_bound.has_no_increasing_assignment_effect(
+                            original_operator_id,
+                            local_var_id,
+                        ))
                         || (weight <= -self.config.precision
-                            && self
-                                .numeric_bound
-                                .has_no_decreasing_assignment_effect(original_operator_id, local_var_id)))
+                            && self.numeric_bound.has_no_decreasing_assignment_effect(
+                                original_operator_id,
+                                local_var_id,
+                            )))
                 {
                     continue;
                 }
@@ -2916,7 +2929,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         .numeric_bound
                         .get_assignment_ub(original_operator_id, local_var_id)
                         - numeric_values.get(actual_var_id).copied().unwrap_or(0.0))
-                        .max(0.0);
+                    .max(0.0);
                     if self
                         .numeric_bound
                         .get_effect_has_ub(original_operator_id, local_var_id)
@@ -2936,7 +2949,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         .numeric_bound
                         .get_assignment_lb(original_operator_id, local_var_id)
                         - numeric_values.get(actual_var_id).copied().unwrap_or(0.0))
-                        .min(0.0);
+                    .min(0.0);
                     if self
                         .numeric_bound
                         .get_effect_has_lb(original_operator_id, local_var_id)
@@ -3041,14 +3054,15 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 continue;
             }
 
-            expression = expression.add(&reconstructed_linear_effect.delta.scale(target_coefficient));
+            expression =
+                expression.add(&reconstructed_linear_effect.delta.scale(target_coefficient));
         }
         Ok(expression)
     }
 
     fn numeric_net_effect_for_operator(
         &self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         numeric_values: &[f64],
         relaxed_operator_id: usize,
         condition_id: usize,
@@ -3095,11 +3109,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn numeric_effect_conditions_hold(
         &self,
-        propositional_values: &[i32],
-        conditions: &[Fact],
+        propositional_values: &[usize],
+        conditions: &[ExplicitFact],
     ) -> bool {
         conditions.iter().all(|condition| {
-            propositional_values.get(condition.var() as usize).copied() == Some(condition.value())
+            propositional_values.get(condition.var).copied() == Some(condition.value)
         })
     }
 
@@ -3115,22 +3129,19 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .expect("helper action numeric pre-list for axiom must exist");
         let precondition_groups = self.precondition_proposition_id_groups(helper_preconditions);
         let mut precondition_ids = self.flatten_precondition_groups(&precondition_groups);
-        self.append_numeric_condition_propositions(
-            &helper_num_list,
-            &mut precondition_ids,
-        );
+        self.append_numeric_condition_propositions(&helper_num_list, &mut precondition_ids);
         let effect_fact = self
             .numeric_helper
             .get_action_add_list(operator_id)
             .and_then(|add_facts| add_facts.first())
             .cloned()
-            .unwrap_or_else(|| Fact::new(axiom.var_id(), axiom.effect_value() as i32));
-        let effect_ids = if self.is_numeric_axiom_var(axiom.var_id() as usize) {
+            .unwrap_or_else(|| ExplicitFact::new(axiom.var_id(), axiom.effect_value()));
+        let effect_ids = if self.is_numeric_axiom_var(axiom.var_id()) {
             Vec::new()
         } else {
             vec![self.get_proposition_id(&effect_fact)]
         };
-        let mut relaxed_operator = RelaxedOperator::new(
+        let relaxed_operator = RelaxedOperator::new(
             if precondition_ids.is_empty() {
                 vec![self.artificial_precondition_id]
             } else {
@@ -3139,18 +3150,24 @@ impl<'task> LandmarkCutLandmarks<'task> {
             effect_ids,
             operator_id,
             0.0,
-            format!("axiom {}", self.get_proposition_name(effect_fact.var() as usize, effect_fact.value())),
+            format!(
+                "axiom {}",
+                self.get_proposition_name(effect_fact.var, effect_fact.value)
+            ),
             false,
         );
         relaxed_operator.assert_well_formed();
         self.relaxed_operators.push(relaxed_operator);
     }
 
-    fn build_precondition_ids(&self, preconditions: &[Fact]) -> Vec<usize> {
+    fn build_precondition_ids(&self, preconditions: &[ExplicitFact]) -> Vec<usize> {
         self.flatten_precondition_groups(&self.precondition_proposition_id_groups(preconditions))
     }
 
-    fn precondition_proposition_id_groups(&self, preconditions: &[Fact]) -> Vec<Vec<usize>> {
+    fn precondition_proposition_id_groups(
+        &self,
+        preconditions: &[ExplicitFact],
+    ) -> Vec<Vec<usize>> {
         preconditions
             .iter()
             .map(|precondition| self.precondition_proposition_ids(precondition))
@@ -3189,15 +3206,15 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
     }
 
+    #[allow(clippy::single_element_loop)]
     fn build_comparison_fact_condition_ids(&mut self) {
         if self.config.ignore_numeric {
             return;
         }
 
         for comparison_axiom in self.task.comparison_axioms().iter() {
-            let affected_var_id = usize::try_from(comparison_axiom.get_affected_var_id())
-                .expect("comparison axiom affected variable must be non-negative");
-            for fact_value in [0_i32] {
+            let affected_var_id = comparison_axiom.get_affected_var_id();
+            for fact_value in [0] {
                 let condition_ids = self
                     .numeric_helper
                     .get_comparison_fact_condition_ids(affected_var_id, fact_value);
@@ -3214,10 +3231,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
             return;
         }
 
-        self.linear_effect_to_conditions_plus =
-            vec![Vec::new(); self.task.get_operators().len()];
-        self.linear_effect_to_conditions_minus =
-            vec![Vec::new(); self.task.get_operators().len()];
+        self.linear_effect_to_conditions_plus = vec![Vec::new(); self.task.get_operators().len()];
+        self.linear_effect_to_conditions_minus = vec![Vec::new(); self.task.get_operators().len()];
 
         for (operator_id, operator) in self.task.get_operators().iter().enumerate() {
             let helper_conditional_fact_effects = self
@@ -3235,12 +3250,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
             self.linear_effect_to_conditions_minus[operator_id] =
                 vec![Vec::new(); operator.assignment_effects().len()];
 
-            let base_precondition_groups = self
-                .precondition_proposition_id_groups(
-                    self.numeric_helper
-                        .get_action_pre_list(operator_id)
-                        .expect("helper action pre-list must exist for operator"),
-                );
+            let base_precondition_groups = self.precondition_proposition_id_groups(
+                self.numeric_helper
+                    .get_action_pre_list(operator_id)
+                    .expect("helper action pre-list must exist for operator"),
+            );
             let helper_num_list = self
                 .numeric_helper
                 .get_action_num_list(operator_id)
@@ -3284,11 +3298,11 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 // still materialized globally through `append_*_redundant_numeric_conditions()`.
             }
 
-            let regular_numeric_variable_ids = self.task.regular_numeric_variable_ids();
             for linear_effect in &helper_linear_effects {
                 let assignment_effect_id = linear_effect.source_assignment_effect_id;
                 let helper_effect_preconditions = linear_effect.preconditions.clone();
-                let mut extended_numeric_group_ids = helper_effect_preconditions.numeric_group_ids.clone();
+                let mut extended_numeric_group_ids =
+                    helper_effect_preconditions.numeric_group_ids.clone();
                 for &group_id in &helper_num_list {
                     if !extended_numeric_group_ids.contains(&group_id) {
                         extended_numeric_group_ids.push(group_id);
@@ -3336,8 +3350,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 let affected_var_id = reconstructed_linear_effect.affected_var_id;
                 let delta_expression = reconstructed_linear_effect.delta;
 
-                let plus_proposition_id = self.add_numeric_condition_proposition(
-                    NumericCondition::from_expression(
+                let plus_proposition_id =
+                    self.add_numeric_condition_proposition(NumericCondition::from_expression(
                         delta_expression.clone(),
                         true,
                         format!(
@@ -3345,8 +3359,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                             operator.name(),
                             affected_var_id
                         ),
-                    ),
-                );
+                    ));
                 let plus_condition_id = self.propositions[plus_proposition_id]
                     .id_numeric_condition
                     .expect("new +inf condition proposition must reference its condition");
@@ -3358,7 +3371,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .get(plus_condition_id)
                     .map(|base_condition| {
                         let other_conditions = self
-                            .representative_numeric_conditions_for_group_ids(&extended_numeric_group_ids);
+                            .representative_numeric_conditions_for_group_ids(
+                                &extended_numeric_group_ids,
+                            );
                         self.numeric_helper
                             .combine_condition_with_conditions(base_condition, &other_conditions)
                     })
@@ -3368,13 +3383,15 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         self.add_numeric_condition_proposition(redundant_condition);
                     let redundant_condition_id = self.propositions[redundant_proposition_id]
                         .id_numeric_condition
-                        .expect("new redundant +inf condition proposition must reference its condition");
+                        .expect(
+                            "new redundant +inf condition proposition must reference its condition",
+                        );
                     self.linear_effect_to_conditions_plus[operator_id][assignment_effect_id]
                         .push(redundant_condition_id);
                 }
 
-                let minus_proposition_id = self.add_numeric_condition_proposition(
-                    NumericCondition::from_expression(
+                let minus_proposition_id =
+                    self.add_numeric_condition_proposition(NumericCondition::from_expression(
                         delta_expression.scale(-1.0),
                         true,
                         format!(
@@ -3382,8 +3399,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                             operator.name(),
                             affected_var_id
                         ),
-                    ),
-                );
+                    ));
                 let minus_condition_id = self.propositions[minus_proposition_id]
                     .id_numeric_condition
                     .expect("new -inf condition proposition must reference its condition");
@@ -3395,7 +3411,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     .get(minus_condition_id)
                     .map(|base_condition| {
                         let other_conditions = self
-                            .representative_numeric_conditions_for_group_ids(&extended_numeric_group_ids);
+                            .representative_numeric_conditions_for_group_ids(
+                                &extended_numeric_group_ids,
+                            );
                         self.numeric_helper
                             .combine_condition_with_conditions(base_condition, &other_conditions)
                     })
@@ -3405,7 +3423,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         self.add_numeric_condition_proposition(redundant_condition);
                     let redundant_condition_id = self.propositions[redundant_proposition_id]
                         .id_numeric_condition
-                        .expect("new redundant -inf condition proposition must reference its condition");
+                        .expect(
+                            "new redundant -inf condition proposition must reference its condition",
+                        );
                     self.linear_effect_to_conditions_minus[operator_id][assignment_effect_id]
                         .push(redundant_condition_id);
                 }
@@ -3500,15 +3520,14 @@ impl<'task> LandmarkCutLandmarks<'task> {
         Ok(condition.evaluate_slack(numeric_values, epsilon))
     }
 
-    fn precondition_proposition_ids(&self, fact: &Fact) -> Vec<usize> {
+    fn precondition_proposition_ids(&self, fact: &ExplicitFact) -> Vec<usize> {
         if !self.config.ignore_numeric {
-            let var_id = usize::try_from(fact.var()).expect("fact variable id must fit usize");
-            if self.numeric_helper.is_comparison_axiom_var(var_id) && fact.value() > 0 {
+            if self.numeric_helper.is_comparison_axiom_var(fact.var) && fact.value > 0 {
                 return Vec::new();
             }
             if let Some(condition_ids) = self
                 .comparison_fact_to_condition_ids
-                .get(&(var_id, fact.value()))
+                .get(&(fact.var, fact.value))
             {
                 return condition_ids
                     .iter()
@@ -3520,7 +3539,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             }
         }
 
-        if self.is_numeric_axiom_var(fact.var() as usize) {
+        if self.is_numeric_axiom_var(fact.var) {
             let fact_name = self.task.get_fact_name(fact);
             panic!(
                 "LM-cut numeric conditions do not support disequality comparison fact `{fact_name}`"
@@ -3531,28 +3550,25 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn get_proposition_id_for_effect(&self, effect: &Effect) -> usize {
-        let fact = Fact::new(effect.var_id(), effect.value() as i32);
+        let fact = ExplicitFact::new(effect.var_id(), effect.value());
         self.get_proposition_id(&fact)
     }
 
-    fn get_proposition_name(&self, var_id: usize, value: i32) -> String {
-        usize::try_from(value)
-            .ok()
-            .and_then(|value_id| self.numeric_helper.get_proposition(var_id, value_id))
+    fn get_proposition_name(&self, var_id: usize, value: usize) -> String {
+        self.numeric_helper
+            .get_proposition(var_id, value)
             .and_then(|helper_id| self.numeric_helper.get_proposition_name(helper_id))
             .unwrap_or("")
             .to_string()
     }
 
     fn proposition_name_for_effect(&self, effect: &Effect) -> String {
-        self.get_proposition_name(effect.var_id() as usize, effect.value() as i32)
+        self.get_proposition_name(effect.var_id(), effect.value())
     }
 
-    fn get_proposition_id(&self, fact: &Fact) -> usize {
-        let variable_id = usize::try_from(fact.var()).expect("fact var id must fit usize");
-        let value_id = usize::try_from(fact.value()).expect("fact value must be non-negative");
+    fn get_proposition_id(&self, fact: &ExplicitFact) -> usize {
         self.numeric_helper
-            .get_proposition(variable_id, value_id)
+            .get_proposition(fact.var, fact.value)
             .map(|helper_id| helper_id + 2)
             .expect("helper proposition id must exist")
     }
@@ -3563,7 +3579,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn compute_landmarks_impl(
         &mut self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         state_buffer_len: usize,
         numeric_values: &[f64],
         debug_state: bool,
@@ -3624,10 +3640,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         let operator = &self.relaxed_operators[operator_id];
                         (operator.original_op_id_1, operator.original_op_id_2)
                     };
-                    if multiplier.0 >= self.config.precision {
-                        if let Some(original_id) = original_op_id_1 {
-                            self.update_original_operator_min_cut_cost(original_id, current_cut_cost);
-                        }
+                    if multiplier.0 >= self.config.precision
+                        && let Some(original_id) = original_op_id_1
+                    {
+                        self.update_original_operator_min_cut_cost(original_id, current_cut_cost);
                     }
                     if let Some(original_id) = original_op_id_2 {
                         self.update_original_operator_min_cut_cost(original_id, current_cut_cost);
@@ -3635,9 +3651,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     cut_cost = cut_cost.min(current_cut_cost);
                 }
 
-                if debug_iterations && (iteration <= 20 || iteration % 1000 == 0) {
-                let cut_details = if iteration <= 3 || cut_cost.abs() < self.config.precision {
-                    cut
+                if debug_iterations && (iteration <= 20 || iteration.is_multiple_of(1000)) {
+                    let cut_details = if iteration <= 3 || cut_cost.abs() < self.config.precision {
+                        cut
                         .iter()
                         .zip(m_list.iter())
                         .map(|(&operator_id, &(m1, m2))| {
@@ -3668,23 +3684,23 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         })
                         .collect::<Vec<_>>()
                         .join(" | ")
-                } else {
-                    String::new()
-                };
-                eprintln!(
-                    "LMCUT_DEBUG_ITER iteration={} goal_h={} cut_size={} cut_cost={}",
-                    iteration,
-                    self.proposition_h_max_cost(self.artificial_goal_id),
-                    cut.len(),
-                    cut_cost
-                );
-                if !cut_details.is_empty() {
-                    eprintln!("LMCUT_DEBUG_ZERO_CUT {}", cut_details);
+                    } else {
+                        String::new()
+                    };
+                    eprintln!(
+                        "LMCUT_DEBUG_ITER iteration={} goal_h={} cut_size={} cut_cost={}",
+                        iteration,
+                        self.proposition_h_max_cost(self.artificial_goal_id),
+                        cut.len(),
+                        cut_cost
+                    );
+                    if !cut_details.is_empty() {
+                        eprintln!("LMCUT_DEBUG_ZERO_CUT {}", cut_details);
+                    }
                 }
-            }
 
                 if !cut_cost.is_finite() {
-                let cut_details = cut
+                    let cut_details = cut
                     .iter()
                     .zip(m_list.iter())
                     .map(|(&operator_id, &multiplier)| {
@@ -3763,190 +3779,193 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 }
 
                 if debug_state {
-                let cut_details = cut
-                    .iter()
-                    .zip(m_list.iter())
-                    .map(|(&operator_id, &(m1, m2))| {
-                        let operator = &self.relaxed_operators[operator_id];
-                        format!(
-                            "name={} orig=({:?},{:?}) m=({},{}) cost=({},{})",
-                            operator.name,
-                            operator.original_op_id_1,
-                            operator.original_op_id_2,
-                            m1,
-                            m2,
-                            self.operator_cost_1(operator_id),
-                            self.operator_cost_2(operator_id),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" | ");
-                eprintln!(
-                    "LMCUT_DEBUG_STATE iteration={} cut_cost={} cut=[{}]",
-                    iteration,
-                    cut_cost,
-                    cut_details,
-                );
-            }
-
-                total_cost += cut_cost;
-
-            // PARITY(numeric-fd): the reference implementation has no bailout for repeated
-            // zero-cost cuts here. Returning an error from this loop turns a parity bug into a
-            // synthetic dead end, so the faithful port must continue the LM-cut iterations.
-                for touched_index in 0..self.touched_original_operator_ids.len() {
-                let original_id = self.touched_original_operator_ids[touched_index];
-                let min_cost = self.original_operator_min_cut_costs[original_id];
-                if min_cost < self.config.precision {
-                    continue;
-                }
-                let mapped_operator_count = self.original_to_relaxed_operators[original_id].len();
-                for mapped_index in 0..mapped_operator_count {
-                    let relaxed_operator_id = self.original_to_relaxed_operators[original_id][mapped_index];
-                    let mut multiplier = min_cost;
-                    let mut multiplier_to_record = None;
-                    {
-                        let relaxed_operator = &self.relaxed_operators[relaxed_operator_id];
-                        let runtime = &mut self.operator_runtime[relaxed_operator_id];
-                        if relaxed_operator.original_op_id_1 == Some(original_id)
-                                && runtime.cost_1 >= self.config.precision
-                        {
-                                multiplier /= runtime.cost_1;
-                                runtime.cost_1 = (runtime.cost_1 - cut_cost / multiplier).max(0.0);
-                            if collect_landmarks {
-                                multiplier_to_record = Some(multiplier);
-                            }
-                        }
-                        if relaxed_operator.original_op_id_2 == Some(original_id)
-                                && runtime.cost_2 >= self.config.precision
-                        {
-                                multiplier /= runtime.cost_2;
-                                runtime.cost_2 = (runtime.cost_2 - cut_cost / multiplier).max(0.0);
-                            if collect_landmarks {
-                                multiplier_to_record = Some(multiplier);
-                            }
-                        }
-                    }
-                    if let Some(multiplier_to_record) = multiplier_to_record {
-                        self.record_original_operator_multiplier(original_id, multiplier_to_record);
-                    }
-                }
-            }
-
-                if let Some(landmarks) = landmarks.as_mut() {
-                //self.landmark_original_operator_ids.sort_unstable(); //TODO: Figure out if that is necessary
-                landmarks.push(
-                    self.landmark_original_operator_ids
+                    let cut_details = cut
                         .iter()
-                        .map(|&operator_id| {
-                            (self.original_operator_multipliers[operator_id], operator_id)
-                        })
-                        .collect(),
-                );
-            }
-
-                self.first_exploration_incremental(propositional_values, numeric_values, &cut)?;
-                if debug_focus && iteration <= 3 {
-                for operator in self.relaxed_operators.iter().filter(|operator| {
-                    matches!(
-                        operator.name.as_str(),
-                        "increase_y "
-                            | "decrease_y "
-                            | "increase_z "
-                            | "visit x0y0z0"
-                            | "visit x0y0z1"
-                    )
-                }) {
-                    let supporter = operator
-                        .original_op_id_2
-                        .and(self.operator_h_max_supporter(operator.id))
-                        .or(self.operator_h_max_supporter(operator.id))
-                        .and_then(|supporter_id| {
-                            self.propositions.get(supporter_id).map(|supporter| {
-                                format!(
-                                    "{}:{}:{:?}:h={}",
-                                    supporter_id,
-                                    supporter.name,
-                                        self.proposition_status(supporter_id),
-                                        self.proposition_h_max_cost(supporter_id),
-                                )
-                            })
-                        })
-                        .unwrap_or_else(|| "none".to_string());
-                    let preconditions = operator
-                        .precondition_ids
-                        .iter()
-                        .filter_map(|&precondition_id| {
-                            self.propositions.get(precondition_id).map(|precondition| {
-                                format!(
-                                    "{}:{}:{:?}:h={}",
-                                    precondition_id,
-                                    precondition.name,
-                                        self.proposition_status(precondition_id),
-                                        self.proposition_h_max_cost(precondition_id),
-                                )
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" | ");
-                    let effects = operator
-                        .effect_ids
-                        .iter()
-                        .filter_map(|&effect_id| {
-                            self.propositions.get(effect_id).map(|effect| {
-                                format!(
-                                    "{}:{}:{:?}:h={}",
-                                    effect_id,
-                                    effect.name,
-                                        self.proposition_status(effect_id),
-                                        self.proposition_h_max_cost(effect_id),
-                                )
-                            })
+                        .zip(m_list.iter())
+                        .map(|(&operator_id, &(m1, m2))| {
+                            let operator = &self.relaxed_operators[operator_id];
+                            format!(
+                                "name={} orig=({:?},{:?}) m=({},{}) cost=({},{})",
+                                operator.name,
+                                operator.original_op_id_1,
+                                operator.original_op_id_2,
+                                m1,
+                                m2,
+                                self.operator_cost_1(operator_id),
+                                self.operator_cost_2(operator_id),
+                            )
                         })
                         .collect::<Vec<_>>()
                         .join(" | ");
                     eprintln!(
-                        "LMCUT_DEBUG_FOCUS iteration={} name={} cost=({}, {}) supporter={} preconditions=[{}] effects=[{}]",
-                        iteration,
-                        operator.name,
-                        self.operator_cost_1(operator.id),
-                        self.operator_cost_2(operator.id),
-                        supporter,
-                        preconditions,
-                        effects,
+                        "LMCUT_DEBUG_STATE iteration={} cut_cost={} cut=[{}]",
+                        iteration, cut_cost, cut_details,
                     );
                 }
-                for &proposition_id in &[61usize, 69usize, 80usize, 81usize, 104usize] {
-                    if let Some(proposition) = self.propositions.get(proposition_id) {
-                        let achievers = proposition
-                            .effect_of
+
+                total_cost += cut_cost;
+
+                // PARITY(numeric-fd): the reference implementation has no bailout for repeated
+                // zero-cost cuts here. Returning an error from this loop turns a parity bug into a
+                // synthetic dead end, so the faithful port must continue the LM-cut iterations.
+                for touched_index in 0..self.touched_original_operator_ids.len() {
+                    let original_id = self.touched_original_operator_ids[touched_index];
+                    let min_cost = self.original_operator_min_cut_costs[original_id];
+                    if min_cost < self.config.precision {
+                        continue;
+                    }
+                    let mapped_operator_count =
+                        self.original_to_relaxed_operators[original_id].len();
+                    for mapped_index in 0..mapped_operator_count {
+                        let relaxed_operator_id =
+                            self.original_to_relaxed_operators[original_id][mapped_index];
+                        let mut multiplier = min_cost;
+                        let mut multiplier_to_record = None;
+                        {
+                            let relaxed_operator = &self.relaxed_operators[relaxed_operator_id];
+                            let runtime = &mut self.operator_runtime[relaxed_operator_id];
+                            if relaxed_operator.original_op_id_1 == Some(original_id)
+                                && runtime.cost_1 >= self.config.precision
+                            {
+                                multiplier /= runtime.cost_1;
+                                runtime.cost_1 = (runtime.cost_1 - cut_cost / multiplier).max(0.0);
+                                if collect_landmarks {
+                                    multiplier_to_record = Some(multiplier);
+                                }
+                            }
+                            if relaxed_operator.original_op_id_2 == Some(original_id)
+                                && runtime.cost_2 >= self.config.precision
+                            {
+                                multiplier /= runtime.cost_2;
+                                runtime.cost_2 = (runtime.cost_2 - cut_cost / multiplier).max(0.0);
+                                if collect_landmarks {
+                                    multiplier_to_record = Some(multiplier);
+                                }
+                            }
+                        }
+                        if let Some(multiplier_to_record) = multiplier_to_record {
+                            self.record_original_operator_multiplier(
+                                original_id,
+                                multiplier_to_record,
+                            );
+                        }
+                    }
+                }
+
+                if let Some(landmarks) = landmarks.as_mut() {
+                    //self.landmark_original_operator_ids.sort_unstable(); //TODO: Figure out if that is necessary
+                    landmarks.push(
+                        self.landmark_original_operator_ids
                             .iter()
-                            .filter_map(|&achiever_id| {
-                                self.relaxed_operators.get(achiever_id).map(|achiever| {
+                            .map(|&operator_id| {
+                                (self.original_operator_multipliers[operator_id], operator_id)
+                            })
+                            .collect(),
+                    );
+                }
+
+                self.first_exploration_incremental(propositional_values, numeric_values, &cut)?;
+                if debug_focus && iteration <= 3 {
+                    for operator in self.relaxed_operators.iter().filter(|operator| {
+                        matches!(
+                            operator.name.as_str(),
+                            "increase_y "
+                                | "decrease_y "
+                                | "increase_z "
+                                | "visit x0y0z0"
+                                | "visit x0y0z1"
+                        )
+                    }) {
+                        let supporter = operator
+                            .original_op_id_2
+                            .and(self.operator_h_max_supporter(operator.id))
+                            .or(self.operator_h_max_supporter(operator.id))
+                            .and_then(|supporter_id| {
+                                self.propositions.get(supporter_id).map(|supporter| {
                                     format!(
-                                        "{}:{}:cost=({}, {}):supporter={:?}",
-                                        achiever_id,
-                                        achiever.name,
-                                        self.operator_cost_1(achiever_id),
-                                        self.operator_cost_2(achiever_id),
-                                        self.operator_h_max_supporter(achiever_id),
+                                        "{}:{}:{:?}:h={}",
+                                        supporter_id,
+                                        supporter.name,
+                                        self.proposition_status(supporter_id),
+                                        self.proposition_h_max_cost(supporter_id),
+                                    )
+                                })
+                            })
+                            .unwrap_or_else(|| "none".to_string());
+                        let preconditions = operator
+                            .precondition_ids
+                            .iter()
+                            .filter_map(|&precondition_id| {
+                                self.propositions.get(precondition_id).map(|precondition| {
+                                    format!(
+                                        "{}:{}:{:?}:h={}",
+                                        precondition_id,
+                                        precondition.name,
+                                        self.proposition_status(precondition_id),
+                                        self.proposition_h_max_cost(precondition_id),
+                                    )
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" | ");
+                        let effects = operator
+                            .effect_ids
+                            .iter()
+                            .filter_map(|&effect_id| {
+                                self.propositions.get(effect_id).map(|effect| {
+                                    format!(
+                                        "{}:{}:{:?}:h={}",
+                                        effect_id,
+                                        effect.name,
+                                        self.proposition_status(effect_id),
+                                        self.proposition_h_max_cost(effect_id),
                                     )
                                 })
                             })
                             .collect::<Vec<_>>()
                             .join(" | ");
                         eprintln!(
-                            "LMCUT_DEBUG_PROP iteration={} id={} name={} status={:?} h={} achievers=[{}]",
+                            "LMCUT_DEBUG_FOCUS iteration={} name={} cost=({}, {}) supporter={} preconditions=[{}] effects=[{}]",
                             iteration,
-                            proposition_id,
-                            proposition.name,
-                            self.proposition_status(proposition_id),
-                            self.proposition_h_max_cost(proposition_id),
-                            achievers,
+                            operator.name,
+                            self.operator_cost_1(operator.id),
+                            self.operator_cost_2(operator.id),
+                            supporter,
+                            preconditions,
+                            effects,
                         );
                     }
+                    for &proposition_id in &[61usize, 69usize, 80usize, 81usize, 104usize] {
+                        if let Some(proposition) = self.propositions.get(proposition_id) {
+                            let achievers = proposition
+                                .effect_of
+                                .iter()
+                                .filter_map(|&achiever_id| {
+                                    self.relaxed_operators.get(achiever_id).map(|achiever| {
+                                        format!(
+                                            "{}:{}:cost=({}, {}):supporter={:?}",
+                                            achiever_id,
+                                            achiever.name,
+                                            self.operator_cost_1(achiever_id),
+                                            self.operator_cost_2(achiever_id),
+                                            self.operator_h_max_supporter(achiever_id),
+                                        )
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" | ");
+                            eprintln!(
+                                "LMCUT_DEBUG_PROP iteration={} id={} name={} status={:?} h={} achievers=[{}]",
+                                iteration,
+                                proposition_id,
+                                proposition.name,
+                                self.proposition_status(proposition_id),
+                                self.proposition_h_max_cost(proposition_id),
+                                achievers,
+                            );
+                        }
+                    }
                 }
-            }
                 cut.clear();
                 m_list.clear();
                 self.reset_goal_zone_statuses();
@@ -3968,7 +3987,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     pub fn compute_landmark_cost(
         &mut self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         state_buffer_len: usize,
         numeric_values: &[f64],
         debug_state: bool,
@@ -3985,7 +4004,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     pub fn compute_landmarks(
         &mut self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         state_buffer_len: usize,
         numeric_values: &[f64],
         debug_state: bool,

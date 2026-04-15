@@ -1,9 +1,12 @@
+#[cfg(test)]
+mod tests;
+
 use std::cell::RefCell;
 use std::env;
 use std::fmt;
 
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
-use planners_sas::numeric::state_registry::{StateID, StateRegistry};
+use planners_sas::numeric::state_registry::StateID;
 use serde::{Deserialize, Serialize};
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -80,7 +83,7 @@ pub struct LandmarkCutNumericHeuristic<'task> {
     task: &'task dyn AbstractNumericTask,
     config: LmCutNumericConfig,
     landmark_generator: RefCell<LandmarkCutLandmarks<'task>>,
-    prop_scratch: RefCell<Vec<i32>>,
+    prop_scratch: RefCell<Vec<usize>>,
     state_value_cache: RefCell<Vec<Option<f64>>>,
 }
 
@@ -123,10 +126,10 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
         cache[state_id] = Some(value);
     }
 
-    fn is_goal_state(&self, propositional_values: &[i32]) -> bool {
-        (0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0)).all(|goal_index| {
-            let goal = self.task.get_goal_fact(goal_index as i32);
-            propositional_values.get(goal.var() as usize).copied() == Some(goal.value())
+    fn is_goal_state(&self, propositional_values: &[usize]) -> bool {
+        (0..self.task.get_num_goals()).all(|goal_index| {
+            let goal = self.task.get_goal_fact(goal_index);
+            propositional_values.get(goal.var).copied() == Some(goal.value)
         })
     }
 
@@ -251,193 +254,5 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
 
     fn dead_ends_are_reliable(&self) -> bool {
         true
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use planners_sas::numeric::numeric_task::{ExplicitVariable, Fact, Metric, NumericRootTask};
-
-    fn simple_var(name: &str, values: &[&str], axiom_layer: i32) -> ExplicitVariable {
-        ExplicitVariable::new(
-            values.len() as u32,
-            name.to_string(),
-            values.iter().map(|value| value.to_string()).collect(),
-            axiom_layer,
-            0,
-        )
-    }
-
-    #[test]
-    fn lmcutnumeric_config_defaults_match_fd_parser_defaults() {
-        let config = LmCutNumericConfig::default();
-        assert!(!config.ceiling_less_than_one);
-        assert!(!config.ignore_numeric);
-        assert!(!config.random_pcf);
-        assert!(!config.irmax);
-        assert!(!config.disable_ma);
-        assert!(!config.use_second_order_simple);
-        assert!(!config.use_constant_assignment);
-        assert_eq!(config.bound_iterations, 0);
-        assert_eq!(config.precision, 0.000001);
-        assert_eq!(config.epsilon, 0.0);
-    }
-
-    #[test]
-    fn from_config_accepts_second_order_simple_flag() {
-        let task = NumericRootTask::new(
-            3,
-            Metric::new(true, -1),
-            vec![simple_var("v0", &["zero", "one"], -1)],
-            vec![],
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        );
-        let mut config = LmCutNumericConfig::default();
-        config.use_second_order_simple = true;
-
-        let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
-            .expect("supported SOSE flag should construct the heuristic");
-        assert!(heuristic.config().use_second_order_simple);
-    }
-
-    #[test]
-    fn from_config_accepts_irmax() {
-        let task = NumericRootTask::new(
-            3,
-            Metric::new(true, -1),
-            vec![simple_var("v0", &["zero", "one"], -1)],
-            vec![],
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        );
-        let mut config = LmCutNumericConfig::default();
-        config.irmax = true;
-
-        let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
-            .expect("irmax flag should construct the heuristic");
-
-        assert!(heuristic.config().irmax);
-    }
-
-    #[test]
-    fn from_config_rejects_unimplemented_random_pcf() {
-        let task = NumericRootTask::new(
-            3,
-            Metric::new(true, -1),
-            vec![simple_var("v0", &["zero", "one"], -1)],
-            vec![],
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        );
-        let mut config = LmCutNumericConfig::default();
-        config.random_pcf = true;
-
-        let error = match LandmarkCutNumericHeuristic::from_config(&task, config) {
-            Err(error) => error,
-            Ok(_) => panic!("random_pcf should be rejected until it is implemented"),
-        };
-
-        assert!(error.contains("random_pcf=true"));
-    }
-
-    #[test]
-    fn from_config_accepts_disable_ma() {
-        let task = NumericRootTask::new(
-            3,
-            Metric::new(true, -1),
-            vec![simple_var("v0", &["zero", "one"], -1)],
-            vec![],
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        );
-        let mut config = LmCutNumericConfig::default();
-        config.disable_ma = true;
-
-        let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
-            .expect("disable_ma flag should construct the heuristic");
-
-        assert!(heuristic.config().disable_ma);
-    }
-
-    #[test]
-    fn from_config_accepts_constant_assignment() {
-        let task = NumericRootTask::new(
-            3,
-            Metric::new(true, -1),
-            vec![simple_var("v0", &["zero", "one"], -1)],
-            vec![],
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        );
-        let mut config = LmCutNumericConfig::default();
-        config.use_constant_assignment = true;
-
-        let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
-            .expect("constant assignment flag should construct the heuristic");
-
-        assert!(heuristic.config().use_constant_assignment);
-    }
-
-    #[test]
-    fn from_config_accepts_bound_iterations() {
-        let task = NumericRootTask::new(
-            3,
-            Metric::new(true, -1),
-            vec![simple_var("v0", &["zero", "one"], -1)],
-            vec![],
-            vec![Fact::new(0, 1)],
-            vec![],
-            vec![0],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        );
-        let mut config = LmCutNumericConfig::default();
-        config.bound_iterations = 1;
-
-        let heuristic = LandmarkCutNumericHeuristic::from_config(&task, config)
-            .expect("bound iterations should construct the heuristic once bounds are implemented");
-
-        assert_eq!(heuristic.config().bound_iterations, 1);
     }
 }

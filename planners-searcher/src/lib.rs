@@ -81,6 +81,7 @@ pub fn run_wrapped_process(cli: &PlannersSearcherCli) -> std::io::Result<()> {
     std::process::exit(exit_code)
 }
 
+#[allow(clippy::field_reassign_with_default)]
 pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> {
     register_event_handlers();
 
@@ -142,16 +143,12 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                     config.exec_entire_plan = domain_config.exec_entire_plan;
 
                     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("failed to construct DomainAbstractionGenerator: {e:#}"),
-                        )
+                        std::io::Error::other(format!(
+                            "failed to construct DomainAbstractionGenerator: {e:#}"
+                        ))
                     })?;
                     let abstraction = generator.generate(task_ref).map_err(|e| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("failed to build domain abstraction: {e:#}"),
-                        )
+                        std::io::Error::other(format!("failed to build domain abstraction: {e:#}"))
                     })?;
                     Some(Box::new(DomainAbstractionHeuristic::new(None, abstraction))
                         as Box<

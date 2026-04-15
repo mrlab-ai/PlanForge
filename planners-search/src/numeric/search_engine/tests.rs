@@ -11,20 +11,20 @@ use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 fn test_compute_effective_operator_costs_plus_constants() {
     // Metric var 0 (cost), incremented by constants 1 and 2.
     let version = 4;
-    let metric = Metric::new(true, 0);
+    let metric = Metric::new(true, Some(0));
 
     let variables = vec![ExplicitVariable::new(
         2,
         "v".to_string(),
         vec!["a".to_string(), "b".to_string()],
-        -1,
+        None,
         0,
     )];
 
     let numeric_variables = vec![
-        NumericVariable::new("total_cost()".to_string(), NumericType::Cost, -1),
-        NumericVariable::new("c1".to_string(), NumericType::Constant, -1),
-        NumericVariable::new("c2".to_string(), NumericType::Constant, -1),
+        NumericVariable::new("total_cost()".to_string(), NumericType::Cost, None),
+        NumericVariable::new("c1".to_string(), NumericType::Constant, None),
+        NumericVariable::new("c2".to_string(), NumericType::Constant, None),
     ];
 
     let op1 = Operator::new(
@@ -67,7 +67,7 @@ fn test_compute_effective_operator_costs_plus_constants() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact { var: 0, value: 0 },
     );
 
     let state_packer = IntDoublePacker::from_task(&task);

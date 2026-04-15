@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use std::cell::RefCell;
 use std::fmt;
 
@@ -95,12 +98,8 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
         max_pdb_states: usize,
         heuristic_config: PdbHeuristicConfig,
     ) -> Result<Self, String> {
-        let pdb_collection = PdbCollection::with_heuristic_config(
-            task,
-            patterns,
-            max_pdb_states,
-            heuristic_config,
-        )?;
+        let pdb_collection =
+            PdbCollection::with_heuristic_config(task, patterns, max_pdb_states, heuristic_config)?;
         let are_additive = compute_additive_vars(task);
         let max_additive_subsets =
             compute_max_additive_subsets(pdb_collection.patterns(), &are_additive);
@@ -130,7 +129,7 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
 
     pub fn evaluate_projected_state_values(
         &self,
-        propositional_values: &[i32],
+        propositional_values: &[usize],
         expanded_numeric_values: &[f64],
         pdb_value_cache: &mut Vec<Option<f64>>,
     ) -> Result<f64, String> {
@@ -202,6 +201,7 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
     }
 }
 
+#[allow(unused)]
 pub struct CanonicalNumericPdbHeuristic<'task> {
     name: String,
     task: &'task dyn AbstractNumericTask,
@@ -279,10 +279,11 @@ impl<'task> CanonicalNumericPdbHeuristic<'task> {
         Ok((task, registry))
     }
 
-    fn is_goal_state(&self, propositional_values: &[i32]) -> bool {
-        (0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0)).all(|goal_index| {
-            let goal = self.task.get_goal_fact(goal_index as i32);
-            propositional_values.get(goal.var() as usize).copied() == Some(goal.value())
+    #[allow(unused)]
+    fn is_goal_state(&self, propositional_values: &[usize]) -> bool {
+        (0..self.task.get_num_goals()).all(|goal_index| {
+            let goal = self.task.get_goal_fact(goal_index);
+            propositional_values.get(goal.var).copied() == Some(goal.value)
         })
     }
 }
@@ -310,104 +311,5 @@ impl Heuristic for CanonicalNumericPdbHeuristic<'_> {
 
     fn heuristic_name(&self) -> String {
         self.name.clone()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use planners_sas::numeric::numeric_task::{
-        Effect, ExplicitVariable, Fact, Metric, NumericRootTask, NumericType, NumericVariable,
-        Operator,
-    };
-
-    use super::*;
-    use crate::numeric::evaluation::pattern_databases::projected_task::Pattern;
-
-    fn simple_var(name: &str) -> ExplicitVariable {
-        ExplicitVariable::new(
-            2,
-            name.to_string(),
-            vec![format!("{name}=0"), format!("{name}=1")],
-            -1,
-            1,
-        )
-    }
-
-    fn canonical_sample_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, -1),
-            vec![simple_var("p"), simple_var("q")],
-            vec![NumericVariable::new(
-                "x".to_string(),
-                NumericType::Regular,
-                -1,
-            )],
-            vec![Fact::new(0, 1), Fact::new(1, 1)],
-            vec![],
-            vec![0, 0],
-            vec![0.0],
-            vec![
-                Operator::new(
-                    "set-p".to_string(),
-                    vec![],
-                    vec![Effect::new(vec![], 0, 0, 1)],
-                    vec![],
-                    2,
-                ),
-                Operator::new(
-                    "set-q".to_string(),
-                    vec![],
-                    vec![Effect::new(vec![], 1, 0, 1)],
-                    vec![],
-                    3,
-                ),
-            ],
-            vec![],
-            vec![],
-            vec![],
-            (0, 0),
-        )
-    }
-
-    #[test]
-    fn canonical_collection_information_uses_explicit_subsets() {
-        let task = canonical_sample_task();
-        let patterns = PatternCollection::new(vec![
-            Pattern::new(vec![0], vec![]),
-            Pattern::new(vec![1], vec![]),
-        ]);
-        let pdb_collection = PdbCollection::new(&task, patterns, 32).unwrap();
-        let collection_information = CanonicalPdbCollectionInformation::with_explicit_subsets(
-            pdb_collection,
-            vec![vec![0, 1], vec![0], vec![1]],
-        );
-        let mut pdb_value_cache = Vec::new();
-
-        let value = collection_information
-            .evaluate_projected_state_values(&[0, 0], &[0.0], &mut pdb_value_cache)
-            .unwrap();
-
-        assert_eq!(value, 5.0);
-    }
-
-    #[test]
-    fn canonical_collection_computes_max_additive_subset() {
-        let task = canonical_sample_task();
-        let patterns = PatternCollection::new(vec![
-            Pattern::new(vec![0], vec![]),
-            Pattern::new(vec![1], vec![]),
-        ]);
-
-        let collection_information =
-            CanonicalPdbCollectionInformation::new(
-                &task,
-                patterns,
-                32,
-                PdbHeuristicConfig::default(),
-            )
-            .unwrap();
-
-        assert_eq!(collection_information.max_additive_subsets(), &[vec![0, 1]]);
     }
 }

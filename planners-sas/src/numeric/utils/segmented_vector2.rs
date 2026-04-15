@@ -1,23 +1,23 @@
 use std::cmp;
-use std::slice;
 
 const SEGMENT_BYTES: usize = 8192;
+
+type SegmentAndOffset = (usize, usize);
 
 #[derive(Debug)]
 pub struct SegmentedArrayVector<T: Clone> {
     elements_per_array: usize,
     arrays_per_segment: usize,
     elements_per_segment: usize,
-    pub segments: Vec<Box<[T]>>, // flat arrays per segment
-    size: usize,                 // number of elements (each of size elements_per_array)
+    // Flat arrays per segment.
+    pub segments: Vec<Box<[T]>>,
+    // Number of elements (each of size `elements_per_array`).
+    size: usize,
 }
 
 impl<T: Clone + Default> SegmentedArrayVector<T> {
     pub fn new(elements_per_array: usize) -> Self {
         debug_assert!(elements_per_array > 0);
-        if elements_per_array == 0 {
-            panic!("elements_per_array must be greater than 0");
-        }
         let arrays_per_segment = cmp::max(
             SEGMENT_BYTES / (elements_per_array * std::mem::size_of::<T>()),
             1,
@@ -33,24 +33,20 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
     }
 
     #[inline]
-    fn get_segment_index(&self, index: usize) -> (usize, usize) {
+    fn get_segment_index(&self, index: usize) -> SegmentAndOffset {
         let segment = index / self.arrays_per_segment;
         let offset = (index % self.arrays_per_segment) * self.elements_per_array;
         (segment, offset)
     }
 
     fn add_segment(&mut self) {
-        // Allocate new zeroed segment of size elements_per_segment
+        // Allocate new zeroed segment of size elements_per_segment.
         let new_segment = vec![T::default(); self.elements_per_segment].into_boxed_slice();
         self.segments.push(new_segment);
     }
 
     pub fn push_back(&mut self, entry: &[T]) {
         debug_assert_eq!(entry.len(), self.elements_per_array);
-        if entry.len() != self.elements_per_array {
-            panic!("entry length must match elements_per_array");
-        }
-
         let (segment, offset) = self.get_segment_index(self.size);
         if segment == self.segments.len() {
             self.add_segment();
@@ -60,10 +56,7 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
     }
 
     pub fn push_copy(&mut self, index: usize) {
-        if index >= self.size {
-            panic!("index out of bounds");
-        }
-
+        debug_assert!(index < self.size);
         let (source_segment, source_offset) = self.get_segment_index(index);
         let source_ptr = self.segments[source_segment][source_offset..].as_ptr();
 
@@ -83,18 +76,12 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
 
     pub fn pop_back(&mut self) {
         debug_assert!(self.size > 0);
-        if self.size == 0 {
-            panic!("pop_back on empty SegmentedArrayVector");
-        }
         self.size -= 1;
-        // No actual deallocation; reuse on next push_back
+        // No actual deallocation; reuse on next push_back.
     }
 
     pub fn resize(&mut self, new_size: usize, entry: &[T]) {
         debug_assert_eq!(entry.len(), self.elements_per_array);
-        if entry.len() != self.elements_per_array {
-            panic!("entry length must match elements_per_array");
-        }
         while self.size < new_size {
             self.push_back(entry);
         }
@@ -123,7 +110,7 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
         self.size
     }
 
-    pub fn size(&self) -> usize {
-        self.size
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
     }
 }

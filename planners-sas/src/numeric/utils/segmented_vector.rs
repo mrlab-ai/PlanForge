@@ -1,8 +1,10 @@
-//NOTE: This code is unsafe. Once we know it does not cause seg faults, we can replace the safe but slow implementation.
+// NOTE: This code is unsafe.
+// Once we know it does not cause seg faults, we can replace the safe but slow
+// implementation.
 
-use std::alloc::{ alloc, dealloc, Layout };
-use std::ptr::{ self, NonNull };
-use std::ops::{ Index, IndexMut };
+use std::alloc::{Layout, alloc, dealloc};
+use std::ops::{Index, IndexMut};
+use std::ptr::{self, NonNull};
 
 const SEGMENT_BYTES: usize = 8192;
 
@@ -112,7 +114,10 @@ impl<T> SegmentedVector<T> {
         }
     }
 
-    pub fn resize(&mut self, new_size: usize, value: T) where T: Clone {
+    pub fn resize(&mut self, new_size: usize, value: T)
+    where
+        T: Clone,
+    {
         while new_size < self.the_size {
             self.pop_back();
         }
@@ -306,7 +311,10 @@ impl<T> SegmentedArrayVector<T> {
         }
     }
 
-    pub fn resize(&mut self, new_size: usize, value_array: &[T]) where T: Clone {
+    pub fn resize(&mut self, new_size: usize, value_array: &[T])
+    where
+        T: Clone,
+    {
         while new_size < self.the_size {
             self.pop_back();
         }
@@ -367,7 +375,7 @@ impl<T> IndexMut<usize> for SegmentedArrayVector<T> {
             let segment_ptr = self.segments[segment_idx].as_ptr();
             std::slice::from_raw_parts_mut(
                 segment_ptr.add(offset_in_segment),
-                self.elements_per_array
+                self.elements_per_array,
             )
         }
     }

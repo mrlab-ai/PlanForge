@@ -11,11 +11,12 @@ use super::pattern_generator_greedy::{GreedyPatternGeneratorConfig, generate_gre
 use super::projected_task::ProjectedTask;
 use super::utils;
 
+#[allow(unused)]
 pub struct GreedyNumericPdbHeuristic<'task> {
     name: String,
     task: &'task dyn AbstractNumericTask,
     pdb: PatternDatabase<'task>,
-    prop_scratch: RefCell<Vec<i32>>,
+    prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
     expanded_numeric_scratch: RefCell<Vec<f64>>,
     state_value_cache: RefCell<Vec<Option<f64>>>,
@@ -77,10 +78,11 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
         Ok((task, registry))
     }
 
-    fn is_goal_state(&self, propositional_values: &[i32]) -> bool {
-        (0..usize::try_from(self.task.get_num_goals().max(0)).unwrap_or(0)).all(|goal_index| {
-            let goal = self.task.get_goal_fact(goal_index as i32);
-            propositional_values.get(goal.var() as usize).copied() == Some(goal.value())
+    #[allow(unused)]
+    fn is_goal_state(&self, propositional_values: &[usize]) -> bool {
+        (0..self.task.get_num_goals()).all(|goal_index| {
+            let goal = self.task.get_goal_fact(goal_index);
+            propositional_values.get(goal.var).copied() == Some(goal.value)
         })
     }
 }

@@ -4,7 +4,7 @@ use planners_sas::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
 };
 use planners_sas::numeric::numeric_task::{
-    Fact, Metric, NumericRootTask, NumericType, NumericVariable,
+    ExplicitFact, Metric, NumericRootTask, NumericType, NumericVariable,
 };
 
 #[test]
@@ -12,15 +12,15 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
     // numeric vars: x0 (regular), c1 (constant)
     // cmp: x0 < c1 (affected var id 0)
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("c1".into(), NumericType::Constant, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
     ];
 
     let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         vec![],
         numeric_variables,
         vec![],
@@ -31,7 +31,7 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
         vec![],
         comparison_axioms,
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let index = ComparisonAxiomIndex::from_task(&task).unwrap();
@@ -40,29 +40,14 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
     let intervals = [Interval::closed(0.0, 5.0), Interval::singleton(10.0)];
 
     // precondition var0==0 means comparison is true (we store !result)
-    assert_eq!(
-        index.precondition_is_contradicted(&Fact::new(0, 0), &intervals),
-        false
-    );
-    assert_eq!(
-        index.precondition_is_contradicted(&Fact::new(0, 1), &intervals),
-        true
-    );
+    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 0), &intervals));
+    assert!(index.precondition_is_contradicted(&ExplicitFact::new(0, 1), &intervals),);
 
     // Unknown case: x0 in [0, 20]
     let intervals = [Interval::closed(0.0, 20.0), Interval::singleton(10.0)];
-    assert_eq!(
-        index.precondition_is_contradicted(&Fact::new(0, 0), &intervals),
-        false
-    );
-    assert_eq!(
-        index.precondition_is_contradicted(&Fact::new(0, 1), &intervals),
-        false
-    );
-    assert_eq!(
-        index.precondition_is_contradicted(&Fact::new(0, 2), &intervals),
-        false
-    );
+    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 0), &intervals),);
+    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 1), &intervals),);
+    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 2), &intervals),);
 }
 
 #[test]
@@ -75,9 +60,13 @@ fn reachable_partitions_overlaps_result_interval() {
 
     let dummy_task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         vec![],
-        vec![NumericVariable::new("x0".into(), NumericType::Regular, -1)],
+        vec![NumericVariable::new(
+            "x0".into(),
+            NumericType::Regular,
+            None,
+        )],
         vec![],
         vec![],
         vec![],
@@ -86,7 +75,7 @@ fn reachable_partitions_overlaps_result_interval() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(parts);
@@ -116,13 +105,13 @@ fn reachable_partitions_overlaps_result_interval() {
 #[test]
 fn trivial_partitions_use_singletons_for_constants() {
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("c7".into(), NumericType::Constant, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c7".into(), NumericType::Constant, None),
     ];
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         vec![],
         numeric_variables,
         vec![],
@@ -133,7 +122,7 @@ fn trivial_partitions_use_singletons_for_constants() {
         vec![],
         vec![],
         vec![],
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let partitions = NumericPartitions::trivial(&task);
@@ -148,9 +137,9 @@ fn trivial_partitions_use_singletons_for_constants() {
 #[test]
 fn comparison_tree_index_can_build_for_assignment_axioms() {
     let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, -1),
-        NumericVariable::new("x1".into(), NumericType::Regular, -1),
-        NumericVariable::new("d2".into(), NumericType::Derived, -1),
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("x1".into(), NumericType::Regular, None),
+        NumericVariable::new("d2".into(), NumericType::Derived, None),
     ];
 
     // d2 = x0 + x1
@@ -161,7 +150,7 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
 
     let task = NumericRootTask::new(
         4,
-        Metric::new(true, -1),
+        Metric::new(true, None),
         vec![],
         numeric_variables,
         vec![],
@@ -172,7 +161,7 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        (0, 0),
+        ExplicitFact::new(0, 0),
     );
 
     let _ = ComparisonAxiomIndex::from_task(&task).unwrap();

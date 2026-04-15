@@ -57,6 +57,7 @@ impl NumericSupportContext {
             && numeric_var_id < self.helper_space_len(task)
     }
 
+    #[allow(unused)]
     pub(crate) fn helper_source_numeric_var_id(&self, helper_id: usize) -> Option<usize> {
         self.auxiliary_numeric_vars
             .iter()
@@ -85,9 +86,6 @@ impl NumericSupportContext {
             comparison_axiom.get_left_var_id(),
             comparison_axiom.get_right_var_id(),
         ] {
-            let Ok(numeric_var_id) = usize::try_from(numeric_var_id) else {
-                continue;
-            };
             self.collect_numeric_support_ids(
                 task,
                 numeric_var_id,
@@ -158,22 +156,18 @@ impl NumericSupportContext {
                     .get(numeric_var_id)
                     .copied()
                     .flatten()
+                    && let Some(assignment_axiom) = task.assignment_axioms().get(axiom_id)
                 {
-                    if let Some(assignment_axiom) = task.assignment_axioms().get(axiom_id) {
-                        for dependency_var_id in [
-                            assignment_axiom.get_left_var_id(),
-                            assignment_axiom.get_right_var_id(),
-                        ] {
-                            let Ok(dependency_var_id) = usize::try_from(dependency_var_id) else {
-                                continue;
-                            };
-                            self.collect_numeric_support_ids(
-                                task,
-                                dependency_var_id,
-                                visiting,
-                                support_ids,
-                            );
-                        }
+                    for dependency_var_id in [
+                        assignment_axiom.get_left_var_id(),
+                        assignment_axiom.get_right_var_id(),
+                    ] {
+                        self.collect_numeric_support_ids(
+                            task,
+                            dependency_var_id,
+                            visiting,
+                            support_ids,
+                        );
                     }
                 }
 
@@ -208,22 +202,18 @@ impl NumericSupportContext {
                     .get(numeric_var_id)
                     .copied()
                     .flatten()
+                    && let Some(assignment_axiom) = task.assignment_axioms().get(axiom_id)
                 {
-                    if let Some(assignment_axiom) = task.assignment_axioms().get(axiom_id) {
-                        for dependency_var_id in [
-                            assignment_axiom.get_left_var_id(),
-                            assignment_axiom.get_right_var_id(),
-                        ] {
-                            let Ok(dependency_var_id) = usize::try_from(dependency_var_id) else {
-                                continue;
-                            };
-                            self.collect_numeric_leaf_support_ids(
-                                task,
-                                dependency_var_id,
-                                visiting,
-                                support_ids,
-                            );
-                        }
+                    for dependency_var_id in [
+                        assignment_axiom.get_left_var_id(),
+                        assignment_axiom.get_right_var_id(),
+                    ] {
+                        self.collect_numeric_leaf_support_ids(
+                            task,
+                            dependency_var_id,
+                            visiting,
+                            support_ids,
+                        );
                     }
                 }
 

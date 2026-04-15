@@ -1,7 +1,7 @@
 #[derive(Debug)]
 pub struct InvalidIndex {
-    pub length: u32,
-    pub index: u32,
+    pub length: usize,
+    pub index: usize,
 }
 
 #[derive(Debug)]
@@ -11,8 +11,8 @@ pub struct ConstructError {
 
 #[derive(Debug)]
 pub struct WrongAxiomLayer {
-    pub axiom_layer: i32,
-    pub last_arithmetic_axiom_layer: i32,
+    pub axiom_layer: Option<usize>,
+    pub last_arithmetic_axiom_layer: Option<usize>,
 }
 
 #[derive(Debug)]
