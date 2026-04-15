@@ -291,6 +291,7 @@ fn read_axioms_numeric(
     axioms_numeric
 }
 
+#[allow(clippy::type_complexity)]
 pub fn read_preprocessed_problem_description(
     stream: &mut InputStream,
 ) -> (
@@ -367,6 +368,7 @@ pub fn read_preprocessed_problem_description(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn dump_preprocessed_problem_description(
     variables: &[ExplicitVariable],
     numeric_variables: &[NumericVariable],
@@ -411,6 +413,7 @@ pub fn dump_dtgs(ordering: &[ExplicitVariable], transition_graphs: &mut [DomainT
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn to_sas(
     orig_vars: &[ExplicitVariable],
     orig_numeric_vars: &[NumericVariable],
@@ -444,6 +447,7 @@ pub fn to_sas(
     );
 }
 
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 pub fn to_sas_at_path(
     orig_vars: &[ExplicitVariable],
     orig_numeric_vars: &[NumericVariable],

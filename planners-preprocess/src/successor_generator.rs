@@ -182,6 +182,7 @@ impl SuccessorGenerator {
         sg
     }
 
+    #[allow(clippy::needless_range_loop)]
     fn construct_recursive(
         &mut self,
         mut switch_var_no: usize,

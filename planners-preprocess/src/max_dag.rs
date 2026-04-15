@@ -14,6 +14,7 @@ impl MaxDag {
         }
     }
 
+    #[allow(clippy::needless_range_loop)]
     pub fn get_result(&self) -> Vec<usize> {
         let num_nodes = self.weighted_graph.len();
         if self.debug {

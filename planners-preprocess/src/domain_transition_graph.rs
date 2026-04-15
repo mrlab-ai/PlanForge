@@ -258,6 +258,7 @@ impl DomainTransitionGraph {
 
 pub fn build_dtgs(
     ordered_variables: &[ExplicitVariable],
+    orig_variables: &[ExplicitVariable],
     operators: &[Operator],
     axioms: &[AxiomRelational],
 ) -> Vec<DomainTransitionGraph> {
@@ -267,7 +268,7 @@ pub fn build_dtgs(
     }
     for (i, op) in operators.iter().enumerate() {
         for eff in op.get_pre_post() {
-            let var_level = ordered_variables[eff.var].get_level();
+            let var_level = orig_variables[eff.var].get_level();
             if var_level != -1 {
                 let pre = eff.pre;
                 let post = eff.post;
@@ -278,7 +279,7 @@ pub fn build_dtgs(
                         op,
                         i,
                         eff,
-                        ordered_variables,
+                        orig_variables,
                     );
                 } else {
                     for pre_val in 0..ordered_variables[eff.var].get_range() {
@@ -289,7 +290,7 @@ pub fn build_dtgs(
                                 op,
                                 i,
                                 eff,
-                                ordered_variables,
+                                orig_variables,
                             );
                         }
                     }
@@ -299,7 +300,7 @@ pub fn build_dtgs(
     }
     for (i, ax) in axioms.iter().enumerate() {
         let var = ax.get_effect_var();
-        let var_level = ordered_variables[var].get_level();
+        let var_level = orig_variables[var].get_level();
         assert!(var_level != -1);
         let old_val = ax.get_old_val();
         let new_val = ax.get_effect_val();
@@ -312,6 +313,7 @@ pub fn build_dtgs(
     transition_graphs
 }
 
+#[allow(clippy::needless_range_loop)]
 pub fn are_dtgs_strongly_connected(transition_graphs: &[DomainTransitionGraph]) -> bool {
     let mut connected = true;
     let num_dtgs = transition_graphs.len();

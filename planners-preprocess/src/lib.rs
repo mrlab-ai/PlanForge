@@ -117,7 +117,8 @@ pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) 
     }
 
     println!("Building domain transition graphs...");
-    let transition_graphs = build_dtgs(&ordered_variables, &operators, &axioms_rel);
+    let transition_graphs =
+        build_dtgs(&ordered_variables, &orig_variables, &operators, &axioms_rel);
 
     let mut solvable_in_poly_time = false;
     if cg_acyclic {

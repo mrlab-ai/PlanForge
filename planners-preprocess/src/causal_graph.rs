@@ -72,6 +72,7 @@ pub struct CausalGraph {
 }
 
 impl CausalGraph {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         variables: Vec<ExplicitVariable>,
         numeric_variables: Vec<NumericVariable>,
@@ -334,6 +335,7 @@ impl CausalGraph {
         (result, weighted_graph)
     }
 
+    #[allow(clippy::needless_range_loop)]
     fn calculate_topological_pseudo_sort(
         goals: &[ExplicitFact],
         weighted_graph: WeightedGraph,
@@ -669,6 +671,7 @@ impl CausalGraph {
         );
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn finalize(
         mut self,
     ) -> (
