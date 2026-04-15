@@ -99,7 +99,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         let problem = &cli.inputs[1];
         translate_to_sas(domain, problem).map_err(|err| std::io::Error::other(err.to_string()))?;
 
-        run_preprocess(&["preprocess".to_string(), "output.sas".to_string()]);
+        run_preprocess(&["preprocess".to_string(), "output".to_string()]);
         "output"
     } else {
         &cli.inputs[0]

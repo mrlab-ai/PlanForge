@@ -38,7 +38,7 @@ pub struct GlobalConstraint {
 pub type Condition = Vec<ExplicitFact>;
 
 pub fn run_preprocess(args: &[String]) {
-    run_preprocess_to_output(args, std::path::Path::new("output.sas"));
+    run_preprocess_to_output(args, std::path::Path::new("output"));
 }
 
 pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) {
