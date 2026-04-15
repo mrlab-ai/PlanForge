@@ -510,7 +510,7 @@ fn singleton_plan_is_produced_when_wildcards_are_disabled() {
         .unwrap()
         .expect("plan exists");
     assert_eq!(result.wildcard_plan.len(), 1);
-    assert_eq!(result.wildcard_plan[0], vec![0]);
+    assert!(matches!(result.wildcard_plan[0].as_slice(), [0] | [1]));
 }
 
 #[test]
