@@ -612,10 +612,7 @@ impl<'task> ProjectedTask<'task> {
                 .get_variable_name(original_var_id)
                 .unwrap_or("<projected-var>")
                 .to_string();
-            let domain_size = base
-                .get_variable_domain_size(original_var_id)
-                .unwrap_or(0)
-                .max(0);
+            let domain_size = base.get_variable_domain_size(original_var_id).unwrap_or(0);
 
             let var_fact_names = (0..domain_size)
                 .map(|value| {
@@ -632,8 +629,7 @@ impl<'task> ProjectedTask<'task> {
             variable_domain_sizes.push(domain_size);
             variable_default_values.push(
                 base.get_variable_default_axiom_value(original_var_id)
-                    .unwrap_or(0)
-                    .max(0),
+                    .unwrap_or(0),
             );
             variable_names.push(variable_name);
             fact_names.push(var_fact_names);
@@ -822,7 +818,7 @@ impl<'task> ProjectedTask<'task> {
             assignment_axioms,
             comparison_axioms,
             axioms,
-            metric: Metric::new(base.metric().is_min(), base.metric().var_id()),
+            metric: Metric::new(base.metric().is_min(), metric_var_id),
             operators,
             operator_costs,
             propositional_packer,
