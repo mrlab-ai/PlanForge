@@ -2,6 +2,7 @@ use super::*;
 use rand::{SeedableRng, rngs::SmallRng};
 
 use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
+use planners_sas::numeric::axioms::PropositionalAxiom;
 
 use planners_sas::numeric::numeric_task::{
     Effect, ExplicitVariable, Metric, NumericRootTask, NumericVariable, Operator,
@@ -486,6 +487,37 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
 
     assert_eq!(new_domain_size, 2);
     assert_eq!(mapping, vec![1, 0, 0]);
+}
+
+#[test]
+fn goal_variable_values_expand_goal_axiom_preconditions() {
+    let variables = vec![
+        ExplicitVariable::new(2, "need_a".into(), vec!["f".into(), "t".into()], None, 0),
+        ExplicitVariable::new(2, "need_b".into(), vec!["f".into(), "t".into()], None, 0),
+        ExplicitVariable::new(2, "goal_flag".into(), vec!["off".into(), "on".into()], None, 0),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        vec![],
+        vec![ExplicitFact::new(2, 1)],
+        vec![],
+        vec![0, 0, 0],
+        vec![],
+        vec![],
+        vec![PropositionalAxiom::new(
+            vec![ExplicitFact::new(0, 1), ExplicitFact::new(1, 1)],
+            2,
+            0,
+            1,
+        )],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    assert_eq!(goal_variable_values(&task), vec![(0, 1), (1, 1)]);
 }
 
 #[test]
