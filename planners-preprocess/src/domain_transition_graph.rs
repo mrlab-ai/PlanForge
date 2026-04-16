@@ -282,7 +282,7 @@ pub fn build_dtgs(
                         orig_variables,
                     );
                 } else {
-                    for pre_val in 0..ordered_variables[eff.var].get_range() {
+                    for pre_val in 0..orig_variables[eff.var].get_range() {
                         if pre_val != post {
                             transition_graphs[var_level as usize].add_transition(
                                 pre_val,
