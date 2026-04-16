@@ -1,8 +1,3 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_mut)]
-
 use clap::Parser;
 use planners::*;
 use planners_searcher::exit_code_for_search_status;
