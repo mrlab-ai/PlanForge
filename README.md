@@ -1,46 +1,45 @@
 # Numeric PlanneRS
 
-<pre>                                                                                       
-                ....... ...:.                                                  
-          .......@*#@...+#=#@..                                                
-        ...@@%::-======-@##*@.                                                
-    ....+@---=====:---====%#@-----........                                     
-    ..@=*+========%@@*=====:@--.....----..                                     
-    @*******=======+*=======:@..:----------.....                               
-  ..@**%@#**================-:@---------------..                               
-  ..@*******===============-==%@*------------:..                              
-  . @*#*****===================:@---------.........                            
-  ...*@******==============-====:@+---.........:++:..                          
-  ...*@@@@@*=================:====%@%......=+++++++:..                         
-  ....%@@@@@@@++++*+++=======-======:@@++++++++++++..                         
-    ...-----#*++++++++=============-===::=@++++++++...                         
-    ..:----:@+++++++=======================:@#+=......                         
-    ..:.....@....@+=======+....%-........:%%=:@....*##                         
-      .....#.  ..@==+===@.....%-............@=%%#####..                       
-    . ..-++*.  ...:*+%=%.   ..@@@@@@@@%+.....#=*%####.                        
-    ..++++++@...    .#@...   ..%======@#==@....-=@+... .                       
-    ..++++++@..*.@  ......-. ..%====@==-==%....===@                            
-    ..:++++++. .%@#..  ..@+....##****##*......@===@.*.                         
-    ..++++++   .@==....#=+..  ..............#===+@#*.                         
-      .+++++   .@#*+@:#*=+..     .@@@%....@====*+@#.                          
-      ..++++.  .@#@**+****..      @**=@.. ..=+++*%..                          
-      ...:...  .@%:*@@#**#..      %@++**.. ..@++@.                            
-          ..@....@@#@@#@**#........%*@%+++@....-@..                            
-      ..:@@@#%##@@@@@+%*#**@@@#*%%#%***##++++@@@@@..                          
-        ......+*%@@@@@@@@@@@@@@@@@@@@@@@@@#*-.. ..                            
-                ..   .....    ..  .        ........                            
+<pre>
+                ....... ...:.
+          .......@*#@...+#=#@..
+        ...@@%::-======-@##*@.
+    ....+@---=====:---====%#@-----........
+    ..@=*+========%@@*=====:@--.....----..
+    @*******=======+*=======:@..:----------.....
+  ..@**%@#**================-:@---------------..
+  ..@*******===============-==%@*------------:..
+  . @*#*****===================:@---------.........
+  ...*@******==============-====:@+---.........:++:..
+  ...*@@@@@*=================:====%@%......=+++++++:..
+  ....%@@@@@@@++++*+++=======-======:@@++++++++++++..
+    ...-----#*++++++++=============-===::=@++++++++...
+    ..:----:@+++++++=======================:@#+=......
+    ..:.....@....@+=======+....%-........:%%=:@....*##
+      .....#.  ..@==+===@.....%-............@=%%#####..
+    . ..-++*.  ...:*+%=%.   ..@@@@@@@@%+.....#=*%####.
+    ..++++++@...    .#@...   ..%======@#==@....-=@+... .
+    ..++++++@..*.@  ......-. ..%====@==-==%....===@
+    ..:++++++. .%@#..  ..@+....##****##*......@===@.*.
+    ..++++++   .@==....#=+..  ..............#===+@#*.
+      .+++++   .@#*+@:#*=+..     .@@@%....@====*+@#.
+      ..++++.  .@#@**+****..      @**=@.. ..=+++*%..
+      ...:...  .@%:*@@#**#..      %@++**.. ..@++@.
+          ..@....@@#@@#@**#........%*@%+++@....-@..
+      ..:@@@#%##@@@@@+%*#**@@@#*%%#%***##++++@@@@@..
+        ......+*%@@@@@@@@@@@@@@@@@@@@@@@@@#*-.. ..
+                ..   .....    ..  .        ........
 
 </pre>
 
 [![Rust](https://img.shields.io/badge/rust-stable-brightgreen.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](#)
 
 A high-performance automated planning library written in Rust, designed as a modern replacement for Fast Downward with enhanced support for numeric planning.
 
 ## 🚀 Features
 
 ### Current Implementation
+
 - ✅ **SAS+ Parser**: Complete parser for SAS+ files (classical and numeric)
 - ✅ **State Registry**: Efficient state management with deduplication
 - ✅ **Axiom Evaluation**: Support for propositional and arithmetic axioms
@@ -49,6 +48,7 @@ A high-performance automated planning library written in Rust, designed as a mod
 - ✅ **Numeric Planning**: Full support for numeric variables and operations
 
 ### 🔧 Architecture
+
 - **Modular Design**: Clean separation between parsing, search, and utilities
 - **Memory Efficient**: Uses segmented vectors and smart caching
 - **Type Safe**: Leverages Rust's type system for compile-time guarantees
@@ -76,6 +76,7 @@ src/
 ## 🚧 Usage
 
 ### Command Line Interface
+
 ```bash
 # Parse and analyze a SAS+ file
 cargo run --bin planners path/to/problem.sas
@@ -91,6 +92,7 @@ cargo test test_name -- --nocapture
 ```
 
 ### Profiling
+
 ```bash
 # Profile with flamegraph (requires cargo-flamegraph: cargo install flamegraph)
 cargo flamegraph --bin planners -- <sas file here>
@@ -100,6 +102,7 @@ cargo flamegraph --bin planners -- <sas file here>
 ```
 
 ### Library Usage (Planned)
+
 ```rust
 use numeric_planners::{parse_sas, StateRegistry, SearchAlgorithm};
 
@@ -117,24 +120,28 @@ let solution = SearchAlgorithm::new().solve(&task, initial_state)?;
 ## 🎯 Roadmap
 
 ### Phase 1: Core Infrastructure ✅
+
 - [x] SAS+ parsing with numeric extensions
 - [x] State representation and management
 - [x] Basic successor generation
 - [x] Axiom evaluation system
 
 ### Phase 2: Search Algorithms 🔄
+
 - [ ] A* search implementation
 - [ ] Greedy best-first search
 - [ ] Lazy search with deferred evaluation
 - [ ] Multi-threaded search algorithms
 
 ### Phase 3: Heuristics 📋
+
 - [ ] Landmark-based heuristics
 - [ ] Pattern database heuristics
 - [ ] Numeric planning heuristics (h^max, h^add)
 - [ ] Learning-based heuristics
 
 ### Phase 4: Advanced Features 📋
+
 - [ ] PDDL parsing support
 - [ ] Python bindings via PyO3
 - [ ] Task transformations and preprocessing
@@ -142,6 +149,7 @@ let solution = SearchAlgorithm::new().solve(&task, initial_state)?;
 - [ ] Goal estimation and sampling
 
 ### Phase 5: ML Integration 📋
+
 - [ ] Candle tensor library integration
 - [ ] State space sampling for learning
 - [ ] Serialization for training data
@@ -150,12 +158,14 @@ let solution = SearchAlgorithm::new().solve(&task, initial_state)?;
 ## 🔬 Technical Details
 
 ### Performance Optimizations
+
 - **Segmented Vectors**: Memory-efficient storage for large datasets
 - **State Packing**: Compact representation using bit manipulation
 - **Caching**: Smart caching of frequently accessed data
 - **Zero-Allocation**: Minimal heap allocations in hot paths
 
 ### Numeric Planning Support
+
 - **Variable Types**: Regular, constant, derived, and cost variables
 - **Operations**: Addition, subtraction, multiplication, division
 - **Axioms**: Arithmetic and comparison axioms
@@ -179,6 +189,7 @@ cargo test -- --nocapture
 ```
 
 ### Test Coverage
+
 - Parser validation with real SAS+ files
 - State registry operations and deduplication
 - Successor generation with numeric effects
@@ -190,12 +201,14 @@ cargo test -- --nocapture
 We welcome contributions! Please see our [contributing guidelines](CONTRIBUTING.md) for details.
 
 ### Development Setup
-1. Install Rust (stable): https://rustup.rs/
+
+1. Install Rust (stable): <https://rustup.rs/>
 2. Clone the repository: `git clone https://github.com/mrlab-ai/numeric_planneRS.git`
 3. Run tests: `cargo test`
 4. Build: `cargo build --release`
 
 ### Code Style
+
 - Follow standard Rust formatting: `cargo fmt`
 - Run clippy for lints: `cargo clippy`
 - Ensure tests pass: `cargo test`
