@@ -197,7 +197,24 @@ We welcome contributions!
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Binary crates in this project are licensed under GPLv3:
+
+- [planners](./planners)
+- [planners-translator](./planners-translator)
+- [planners-preprocessor](./planners-preprocessor)
+- [planners-searcher](./planners-searcher)
+
+Library crates in this project are licensed under LGPLv3:
+
+- [planners-cli-utils](./planners-cli-utils)
+- [planners-sas](./planners-sas)
+- [planners-translate](./planners-translate)
+- [planners-preprocess](./planners-preprocess)
+- [planners-search](./planners-search)
+
+Integration tests ([tests](./tests)) are licensed under GPLv3.
+
+Lab files ([lab-files](lab-files)) are licensed under MIT license.
 
 ## 🏆 Acknowledgments
 
