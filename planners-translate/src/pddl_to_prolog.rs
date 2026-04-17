@@ -2,6 +2,8 @@
 /// Translates a PDDL task into a logic program for grounding.
 use std::collections::{HashMap, HashSet};
 
+use log::info;
+
 use super::normalize;
 use super::pddl::conditions::*;
 use super::pddl::pddl_types::{TypedObject, get_type_predicate_name};
@@ -174,7 +176,7 @@ impl PrologProgram {
             }
         }
         if must_add_predicate {
-            eprintln!("Unbound effect variables: Adding @object predicate.");
+            info!("Unbound effect variables: Adding @object predicate.");
             for obj in self.objects.clone() {
                 self.add_fact(vec!["@object".to_string(), obj]);
             }

@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::env;
 use std::fmt;
 
+use log::debug;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use planners_sas::numeric::state_registry::StateID;
 use serde::{Deserialize, Serialize};
@@ -223,14 +224,14 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
                     })
                     .collect::<Vec<_>>()
                     .join(" | ");
-                eprintln!(
+                debug!(
                     "LMCUT_DEBUG_STATE state_id={} iteration={} landmark=[{}]",
                     state_id,
                     iteration + 1,
                     details,
                 );
             }
-            eprintln!(
+            debug!(
                 "LMCUT_DEBUG_STATE state_id={} total_cost={}",
                 state_id, total_cost
             );

@@ -3,6 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use log::debug;
+
 use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
 use super::f_expression::{FunctionAssignment, FunctionalExpression, PrimitiveNumericExpression};
 use super::pddl_types::TypedObject;
@@ -29,15 +31,15 @@ impl Effect {
     /// Python: def dump(self)
     pub fn dump(&self) {
         let indent = "  ";
-        println!("{}Effect(", indent);
+        debug!("{}Effect(", indent);
         if !self.parameters.is_empty() {
-            println!("{}  parameters: {:?}", indent, self.parameters);
+            debug!("{}  parameters: {:?}", indent, self.parameters);
         }
         if !matches!(self.condition, Condition::Truth) {
-            println!("{}  condition: {}", indent, self.condition);
+            debug!("{}  condition: {}", indent, self.condition);
         }
-        println!("{}  peffect: {}", indent, self.peffect);
-        println!("{})", indent);
+        debug!("{}  peffect: {}", indent, self.peffect);
+        debug!("{})", indent);
     }
 
     /// Python: def relaxed(self)

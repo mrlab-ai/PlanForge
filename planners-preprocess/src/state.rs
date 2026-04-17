@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use log::debug;
+
 use crate::helper_functions::InputStream;
 use crate::helper_functions::check_magic;
 use crate::variable::{ExplicitVariable, NumericVariable};
@@ -58,11 +60,11 @@ impl State {
     pub fn dump(&self, variables: &[ExplicitVariable], numeric_variables: &[NumericVariable]) {
         for (var, value) in &self.values {
             let name = variables[*var].get_name();
-            println!("  {}: {}", name, *value);
+            debug!("  {}: {}", name, *value);
         }
         for (var, value) in &self.numeric_values {
             let name = numeric_variables[*var].get_name();
-            println!("  {}: {}", name, *value);
+            debug!("  {}: {}", name, *value);
         }
     }
 }

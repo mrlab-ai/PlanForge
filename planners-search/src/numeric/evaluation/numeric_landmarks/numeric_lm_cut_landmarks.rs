@@ -1,6 +1,7 @@
 use super::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use super::numeric_bound::NumericBound;
 use super::numeric_helper::{LinearNumericCondition as NumericCondition, NumericTaskHelper};
+use log::debug;
 use planners_sas::numeric::axioms::PropositionalAxiom;
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, Effect, ExplicitFact, Operator, metric_operator_cost_from_initial_values,
@@ -448,7 +449,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.num_propositions = 2;
         self.build_propositional_propositions();
         if debug_summary {
-            eprintln!(
+            debug!(
                 "LMCUT_DEBUG_STAGE after_props prop={} numeric_conditions={}",
                 self.num_propositions,
                 self.conditions.len()
@@ -456,7 +457,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
         self.build_numeric_conditions();
         if debug_summary {
-            eprintln!(
+            debug!(
                 "LMCUT_DEBUG_STAGE after_numeric_conditions prop={} numeric_conditions={}",
                 self.num_propositions,
                 self.conditions.len()
@@ -465,7 +466,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.build_comparison_fact_condition_ids();
         self.add_linear_conditions();
         if debug_summary {
-            eprintln!(
+            debug!(
                 "LMCUT_DEBUG_STAGE after_linear_conditions prop={} numeric_conditions={}",
                 self.num_propositions,
                 self.conditions.len()
@@ -521,7 +522,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .iter()
                 .filter(|operator| operator.original_op_id_1.is_some())
                 .count();
-            eprintln!(
+            debug!(
                 "LMCUT_DEBUG_SUMMARY infinite={} sose={} ops={} prop={} numeric_conditions={}",
                 infinite_operators,
                 second_order_simple_operators,
@@ -3687,7 +3688,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     } else {
                         String::new()
                     };
-                    eprintln!(
+                    debug!(
                         "LMCUT_DEBUG_ITER iteration={} goal_h={} cut_size={} cut_cost={}",
                         iteration,
                         self.proposition_h_max_cost(self.artificial_goal_id),
@@ -3695,7 +3696,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         cut_cost
                     );
                     if !cut_details.is_empty() {
-                        eprintln!("LMCUT_DEBUG_ZERO_CUT {}", cut_details);
+                        debug!("LMCUT_DEBUG_ZERO_CUT {}", cut_details);
                     }
                 }
 
@@ -3797,7 +3798,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         })
                         .collect::<Vec<_>>()
                         .join(" | ");
-                    eprintln!(
+                    debug!(
                         "LMCUT_DEBUG_STATE iteration={} cut_cost={} cut=[{}]",
                         iteration, cut_cost, cut_details,
                     );
@@ -3924,7 +3925,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                             })
                             .collect::<Vec<_>>()
                             .join(" | ");
-                        eprintln!(
+                        debug!(
                             "LMCUT_DEBUG_FOCUS iteration={} name={} cost=({}, {}) supporter={} preconditions=[{}] effects=[{}]",
                             iteration,
                             operator.name,
@@ -3954,7 +3955,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                                 })
                                 .collect::<Vec<_>>()
                                 .join(" | ");
-                            eprintln!(
+                            debug!(
                                 "LMCUT_DEBUG_PROP iteration={} id={} name={} status={:?} h={} achievers=[{}]",
                                 iteration,
                                 proposition_id,

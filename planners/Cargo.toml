@@ -19,4 +19,6 @@ planners-cli-utils = { path = "../planners-cli-utils" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
+log = { version = "0.4", features = ["serde"] }
+env_logger = { version = "0.11", features = ["humantime"] }
 ordered-float = "5.1.0"

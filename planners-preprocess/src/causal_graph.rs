@@ -3,6 +3,9 @@ use std::cmp::max;
 use std::collections::BTreeMap;
 use std::ops::Deref;
 
+use log::{debug, info};
+
+use crate::GlobalConstraint;
 use crate::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
 use crate::fact::ExplicitFact;
 use crate::max_dag::MaxDag;
@@ -10,7 +13,6 @@ use crate::mutex_group::MutexGroup;
 use crate::operator::Operator;
 use crate::scc::Scc;
 use crate::variable::{ExplicitVariable, NumType, NumericVariable};
-use crate::{DEBUG, GlobalConstraint};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EitherVar {
@@ -109,7 +111,7 @@ impl CausalGraph {
             Self::calculate_topological_pseudo_sort(&goals, weighted_graph, &sccs);
 
         let acyclic = sccs.len() == (variables.len() + numeric_variables.len());
-        println!(
+        info!(
             "The causal graph is {}acyclic.",
             if acyclic { "" } else { "not " }
         );
@@ -390,12 +392,10 @@ impl CausalGraph {
         for goal in self.goals.iter() {
             let var = goal.var;
             if !variables[var].is_necessary() {
-                if DEBUG {
-                    println!(
-                        "var {} is directly necessary (goal).",
-                        variables[var].get_name()
-                    );
-                }
+                debug!(
+                    "var {} is directly necessary (goal).",
+                    variables[var].get_name()
+                );
                 variables[var].set_necessary();
                 self.dfs(
                     EitherVar::ExplicitVariable(goal.var),
@@ -408,12 +408,10 @@ impl CausalGraph {
         if let Some(gc) = self.global_constraint {
             let gc_var = gc.var;
             if !variables[gc_var].is_necessary() {
-                if DEBUG {
-                    println!(
-                        "var {} is directly necessary (global constraint).",
-                        variables[gc_var].get_name()
-                    );
-                }
+                debug!(
+                    "var {} is directly necessary (global constraint).",
+                    variables[gc_var].get_name()
+                );
                 variables[gc_var].set_necessary();
                 self.dfs(
                     EitherVar::ExplicitVariable(gc.var),
@@ -460,12 +458,12 @@ impl CausalGraph {
         for (i, nvar) in self.numeric_ordering.iter().enumerate() {
             numeric_variables[*nvar].set_level(i as i32);
         }
-        println!(
+        info!(
             "{} variables of {} necessary",
             self.propositional_ordering.len(),
             variables.len()
         );
-        println!(
+        info!(
             "{} numeric variables of {} necessary",
             self.numeric_ordering.len(),
             numeric_variables.len()
@@ -485,18 +483,14 @@ impl CausalGraph {
                     EitherVar::ExplicitVariable(v) => {
                         if !vars[v].is_necessary() {
                             vars[v].set_necessary();
-                            if DEBUG {
-                                println!("var {} is necessary.", vars[v].get_name());
-                            }
+                            debug!("var {} is necessary.", vars[v].get_name());
                             self.dfs(curr_predecessor, vars, numeric_vars);
                         }
                     }
                     EitherVar::NumericVariable(v) => {
                         if !numeric_vars[v].is_necessary() {
                             numeric_vars[v].set_necessary();
-                            if DEBUG {
-                                println!("var {} is necessary.", numeric_vars[v].get_name());
-                            }
+                            debug!("var {} is necessary.", numeric_vars[v].get_name());
                             self.dfs(curr_predecessor, vars, numeric_vars);
                         }
                     }
@@ -511,12 +505,10 @@ impl CausalGraph {
         inst_var: usize,
     ) {
         if !numeric_variables[inst_var].is_necessary() {
-            if DEBUG {
-                println!(
-                    "{} is necessary for the metric",
-                    numeric_variables[inst_var].get_name()
-                );
-            }
+            debug!(
+                "{} is necessary for the metric",
+                numeric_variables[inst_var].get_name()
+            );
             numeric_variables[inst_var].set_instrumentation();
         }
         for ass_ax in self.ass_axioms.iter() {
@@ -543,12 +535,10 @@ impl CausalGraph {
             }
         }
         if max_num_index_before != max_num_index_after {
-            if DEBUG {
-                println!(
-                    "index before = {} after = {}",
-                    max_num_index_before, max_num_index_after
-                );
-            }
+            debug!(
+                "index before = {} after = {}",
+                max_num_index_before, max_num_index_after
+            );
             let decrement = max_num_index_before - max_num_index_after;
 
             let mut vars = self.variables.borrow_mut();
@@ -580,12 +570,12 @@ impl CausalGraph {
 
     pub fn dump(&self) {
         for (source, succs) in &self.weighted_graph {
-            println!(
+            debug!(
                 "dependent on var {}: ",
                 source.get_name(&self.variables.borrow(), &self.numeric_variables.borrow())
             );
             for (succ, weight) in succs {
-                println!(
+                debug!(
                     "  [{}, {}]",
                     succ.get_name(&self.variables.borrow(), &self.numeric_variables.borrow()),
                     weight
@@ -593,12 +583,12 @@ impl CausalGraph {
             }
         }
         for (source, succs) in &self.predecessor_graph {
-            println!(
+            debug!(
                 "var {} is dependent of: ",
                 source.get_name(&self.variables.borrow(), &self.numeric_variables.borrow())
             );
             for (succ, weight) in succs {
-                println!(
+                debug!(
                     "  [{}, {}]",
                     succ.get_name(&self.variables.borrow(), &self.numeric_variables.borrow()),
                     weight
@@ -617,7 +607,7 @@ impl CausalGraph {
         }
         self.operators
             .retain(|op| !op.is_redundant(&self.numeric_variables.borrow()));
-        println!(
+        info!(
             "{} of {} operators necessary.",
             self.operators.len(),
             old_count
@@ -630,7 +620,7 @@ impl CausalGraph {
             mutex.strip_unimportant_facts(&self.variables.borrow());
         }
         self.mutexes.retain(|m| !m.is_redundant());
-        println!(
+        info!(
             "{} of {} mutex groups necessary.",
             self.mutexes.len(),
             old_count
@@ -641,7 +631,7 @@ impl CausalGraph {
         let old_count = self.axioms.len();
         self.axioms
             .retain(|axiom| !axiom.is_redundant(&self.variables.borrow()));
-        println!(
+        info!(
             "{} of {} axiom rules necessary.",
             self.axioms.len(),
             old_count
@@ -653,7 +643,7 @@ impl CausalGraph {
         self.comp_axioms.retain(|axiom| {
             !axiom.is_redundant(&self.variables.borrow(), &self.numeric_variables.borrow())
         });
-        println!(
+        info!(
             "{} of {} axiom_functional assignment rules necessary.",
             self.comp_axioms.len(),
             old_count
@@ -664,7 +654,7 @@ impl CausalGraph {
         let old_count = self.ass_axioms.len();
         self.ass_axioms
             .retain(|axiom| !axiom.is_redundant(&self.numeric_variables.borrow()));
-        println!(
+        info!(
             "{} of {} axiom_functional comparison rules necessary.",
             self.ass_axioms.len(),
             old_count

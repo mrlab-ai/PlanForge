@@ -1,6 +1,8 @@
 use std::fmt;
 use std::io::Write;
 
+use log::debug;
+
 use crate::helper_functions::InputStream;
 use crate::helper_functions::check_magic;
 
@@ -145,18 +147,18 @@ impl ExplicitVariable {
     }
 
     pub fn dump(&self) {
-        print!("{} [range {}", self.name, self.get_range());
+        debug!("{} [range {}", self.name, self.get_range());
         if self.level != -1 {
-            print!("; level {}", self.level);
+            debug!("; level {}", self.level);
         }
         if self.is_derived() {
-            print!("; derived; layer: {}", self.layer);
+            debug!("; derived; layer: {}", self.layer);
         }
-        print!("] {{");
+        debug!("] {{");
         for fact in &self.values {
-            print!("{}, ", fact);
+            debug!("{}, ", fact);
         }
-        println!("}}");
+        debug!("}}");
     }
 
     pub fn get_fact_name(&self, value: usize) -> String {
@@ -303,13 +305,13 @@ impl NumericVariable {
     }
 
     pub fn dump(&self) {
-        print!("nv{} : >{}", self.level, self.name);
+        debug!("nv{} : >{}", self.level, self.name);
         if self.level != -1 {
-            print!("; level {}", self.level);
+            debug!("; level {}", self.level);
         }
         if self.is_derived() {
-            print!("; derived; layer: {}", self.layer);
+            debug!("; derived; layer: {}", self.layer);
         }
-        println!("<");
+        debug!("<");
     }
 }

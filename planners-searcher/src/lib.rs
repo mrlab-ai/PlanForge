@@ -1,4 +1,5 @@
 use clap::Parser;
+use log::{error, info};
 use planners_cli_utils::*;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
@@ -26,6 +27,23 @@ use std::time::Duration;
 pub mod recursive_config;
 
 pub use recursive_config::{HeuristicSpec, SearchSpec, parse_search_spec};
+use std::io::Write;
+
+pub fn init_logger(level: log::LevelFilter) -> Result<(), log::SetLoggerError> {
+    let mut builder = env_logger::Builder::new();
+    builder.filter_level(level);
+    builder.format(|formatter, record| {
+        writeln!(
+            formatter,
+            "[{}] {}: {}",
+            formatter.timestamp_seconds(),
+            record.level(),
+            record.args()
+        )
+    });
+
+    builder.try_init()
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about = "Numeric planner")]
@@ -35,6 +53,9 @@ pub struct PlannersSearcherCli {
 
     #[arg(long = "max-time", value_name = "DURATION", value_parser = parse_time_limit)]
     pub max_time: Option<Duration>,
+
+    #[arg(long = "log-level")]
+    pub log_level: Option<log::LevelFilter>,
 
     #[arg(long, hide = true)]
     pub internal_run: bool,
@@ -58,6 +79,10 @@ pub fn run_wrapped_process(cli: &PlannersSearcherCli) -> std::io::Result<()> {
     let current_executable = std::env::current_exe()?;
     let mut child_args = vec![OsString::from("--internal-run")];
     // Preserve the selected search configuration when re-executing ourselves.
+    if let Some(level) = cli.log_level {
+        child_args.push(OsString::from("--log-level"));
+        child_args.push(OsString::from(level.to_string()));
+    }
     child_args.push(OsString::from("--search"));
     child_args.push(OsString::from(cli.search.to_string()));
     child_args.extend([cli.sas_file.clone()].iter().map(OsString::from));
@@ -90,11 +115,11 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let start_time = std::time::Instant::now();
     let task = NumericRootTask::from_file(sas_file);
     let parse_time = start_time.elapsed();
-    println!("Parsed numeric SAS output in: {:?}", parse_time);
+    info!("Parsed numeric SAS output in: {:?}", parse_time);
 
-    println!("=== Search Engine ===");
-    println!("File: {}", sas_file);
-    println!(
+    info!("=== Search Engine ===");
+    info!("File: {}", sas_file);
+    info!(
         "Variables: {} regular, {} numeric",
         task.variables().len(),
         task.numeric_variables().len()
@@ -112,7 +137,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 crate::recursive_config::HeuristicSpec::CanonicalDomainAbstractions(config) => {
                     let generator =
                         DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
-                    println!("Building canonical domain abstractions (CEGAR)...");
+                    info!("Building canonical domain abstractions (CEGAR)...");
                     let abstractions = generator.generate_collection(task_ref).map_err(|e| {
                         std::io::Error::other(format!(
                             "failed to build canonical domain abstractions: {e:#}"
@@ -128,7 +153,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                     ) as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>)
                 }
                 crate::recursive_config::HeuristicSpec::DomainAbstraction(domain_config) => {
-                    println!("Building domain abstraction (CEGAR)...");
+                    info!("Building domain abstraction (CEGAR)...");
                     let mut config = CegarConfig::default();
                     config.max_abstraction_size = domain_config.max_abstraction_size;
                     config.use_wildcard_plans = domain_config.use_wildcard_plans;
@@ -186,7 +211,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 crate::recursive_config::HeuristicSpec::MultiDomainAbstractions(config) => {
                     let generator =
                         DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
-                    println!("Building multiple domain abstractions (CEGAR)...");
+                    info!("Building multiple domain abstractions (CEGAR)...");
                     let abstractions = generator.generate_collection(task_ref).map_err(|e| {
                         std::io::Error::other(format!(
                             "failed to build multi domain abstractions: {e:#}"
@@ -211,7 +236,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 },
             );
 
-            println!("Starting A* search with {:?}...", heuristic);
+            info!("Starting A* search with {:?}...", heuristic);
             search.search()
         }
         crate::recursive_config::SearchSpec::DaDebug => {
@@ -242,7 +267,7 @@ pub fn exit_code_for_search_status(status: &SearchStatus) -> i32 {
 pub fn print_search_result(result: &SearchResult) {
     match result.status {
         SearchStatus::Solved(_) => {
-            println!("Solution found!");
+            info!("Solution found!");
             if let Some(plan) = result.plan.as_ref() {
                 let plan_cost = result
                     .solution_cost
@@ -255,54 +280,54 @@ pub fn print_search_result(result: &SearchResult) {
 
                 match fs::write("sas_plan", plan_content) {
                     Ok(()) => {}
-                    Err(e) => eprintln!("Error writing plan file: {}", e),
+                    Err(e) => error!("Error writing plan file: {}", e),
                 }
 
                 for (i, op) in plan.iter().enumerate() {
-                    println!("  {}: {}", i + 1, op.name());
+                    info!("  {}: {}", i + 1, op.name());
                 }
 
-                println!("Plan length: {} step(s).", plan.len());
-                println!("Plan cost: {:.6}", plan_cost);
+                info!("Plan length: {} step(s).", plan.len());
+                info!("Plan cost: {:.6}", plan_cost);
             }
         }
         SearchStatus::Failed => {
-            println!("No solution found");
+            info!("No solution found");
         }
         SearchStatus::Timeout => {
-            println!("Search timed out");
+            info!("Search timed out");
         }
         SearchStatus::MemoryLimitReached => {
-            println!("Search stopped after reaching the memory limit");
+            info!("Search stopped after reaching the memory limit");
         }
         SearchStatus::InProgress => {
-            println!("Search ended in progress");
+            info!("Search ended in progress");
         }
     }
 
     // Fast Downward-style statistics block.
-    println!("Expanded {} state(s).", result.nodes_expanded);
-    println!("Reopened {} state(s).", result.nodes_reopened);
-    println!("Evaluated {} state(s).", result.nodes_evaluated);
-    println!("Evaluations: {}", result.evaluations);
-    println!("Generated {} state(s).", result.nodes_generated);
-    println!("Dead ends: {} state(s).", result.dead_ends);
-    println!(
+    info!("Expanded {} state(s).", result.nodes_expanded);
+    info!("Reopened {} state(s).", result.nodes_reopened);
+    info!("Evaluated {} state(s).", result.nodes_evaluated);
+    info!("Evaluations: {}", result.evaluations);
+    info!("Generated {} state(s).", result.nodes_generated);
+    info!("Dead ends: {} state(s).", result.dead_ends);
+    info!(
         "Expanded until last jump: {} state(s).",
         result.nodes_expanded_until_last_jump
     );
-    println!(
+    info!(
         "Reopened until last jump: {} state(s).",
         result.nodes_reopened_until_last_jump
     );
-    println!(
+    info!(
         "Evaluated until last jump: {} state(s).",
         result.nodes_evaluated_until_last_jump
     );
-    println!(
+    info!(
         "Generated until last jump: {} state(s).",
         result.nodes_generated_until_last_jump
     );
-    println!("Number of registered states: {}", result.registered_states);
-    println!("Search time: {:.6}s", result.search_time.as_secs_f64());
+    info!("Number of registered states: {}", result.registered_states);
+    info!("Search time: {:.6}s", result.search_time.as_secs_f64());
 }

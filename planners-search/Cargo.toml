@@ -7,6 +7,7 @@ edition = "2024"
 planners-sas = { path = "../planners-sas" }
 planners-preprocess = { path = "../planners-preprocess" }
 libc = "0.2"
+log = { version = "0.4", features = ["serde"] }
 ordered-float = "5.1.0"
 anyhow = "1"
 serde_json = "1"

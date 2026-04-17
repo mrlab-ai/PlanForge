@@ -1,6 +1,7 @@
 use std::io::Write;
 
-use crate::DEBUG;
+use log::debug;
+
 use crate::helper_functions::{InputStream, check_magic};
 use crate::variable::{ExplicitVariable, NumType, NumericVariable};
 
@@ -278,19 +279,15 @@ impl Operator {
         if self.pre_post.is_empty() {
             for ass_eff in &self.assign_effects {
                 if num_vars[ass_eff.var].get_type() == NumType::Regular {
-                    if DEBUG {
-                        println!(
-                            "Operator {} is not redundant because of effect on {}",
-                            self.name,
-                            num_vars[ass_eff.var].get_name()
-                        );
-                    }
+                    debug!(
+                        "Operator {} is not redundant because of effect on {}",
+                        self.name,
+                        num_vars[ass_eff.var].get_name()
+                    );
                     return false;
                 }
             }
-            if DEBUG {
-                println!("Operator {} is redundant", self.name);
-            }
+            debug!("Operator {} is redundant", self.name);
             true
         } else {
             false
@@ -298,22 +295,22 @@ impl Operator {
     }
 
     pub fn dump(&self, vars: &[ExplicitVariable], num_vars: &[NumericVariable]) {
-        println!("{}:", self.name);
-        print!("prevail:");
+        debug!("{}:", self.name);
+        debug!("prevail:");
         for prev in &self.prevail {
-            print!("  {} := {}", vars[prev.var].get_name(), prev.prev);
+            debug!("  {} := {}", vars[prev.var].get_name(), prev.prev);
         }
-        println!();
-        println!("pre-post:");
+        debug!("");
+        debug!("pre-post:");
         for eff in &self.pre_post {
             if eff.is_conditional_effect {
-                print!("  if (");
+                debug!("  if (");
                 for cond in &eff.effect_conds {
-                    print!("{} := {}", vars[cond.var].get_name(), cond.cond);
+                    debug!("{} := {}", vars[cond.var].get_name(), cond.cond);
                 }
-                print!(") then");
+                debug!(") then");
             }
-            print!(
+            debug!(
                 " {} : {:?} -> {}",
                 vars[eff.var].get_name(),
                 eff.pre,
@@ -321,19 +318,19 @@ impl Operator {
             );
         }
         for eff in &self.assign_effects {
-            println!("conds:");
+            debug!("conds:");
             for cond in &eff.effect_conds {
-                print!(" {}={}", num_vars[cond.var].get_name(), cond.cond);
+                debug!(" {}={}", num_vars[cond.var].get_name(), cond.cond);
             }
-            println!("effect:");
-            println!(
+            debug!("effect:");
+            debug!(
                 " {} {} {}",
                 num_vars[eff.var].get_name(),
                 eff.fop,
                 num_vars[eff.foperand].get_name()
             );
         }
-        println!();
+        debug!("");
     }
 
     pub fn get_encoding_size(&self) -> usize {

@@ -1,3 +1,4 @@
+use log::debug;
 use ordered_float::OrderedFloat;
 /// Port of pddl/f_expression.py
 /// Functional expression hierarchy for numeric PDDL.
@@ -68,7 +69,7 @@ impl PrimitiveNumericExpression {
 
     /// Python: def dump(self)
     pub fn dump(&self) {
-        println!("PNE {} {:?} [{}]", self.symbol, self.args, self.ntype);
+        debug!("PNE {} {:?} [{}]", self.symbol, self.args, self.ntype);
     }
 }
 
@@ -241,7 +242,7 @@ impl FunctionAssignment {
     }
 
     pub fn dump(&self) {
-        println!(
+        debug!(
             "FunctionAssignment {} {} := {}",
             self.symbol, self.fluent, self.expression
         );

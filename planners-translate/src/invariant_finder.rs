@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use log::info;
 /// Port of invariant_finder.py
 /// Finds mutex invariants among ground atoms.
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -181,7 +182,7 @@ fn find_invariants(
     let limit = options::INVARIANT_GENERATION_MAX_CANDIDATES;
     let initial = get_initial_invariants(task);
     let mut candidates: VecDeque<Invariant> = initial.into_iter().take(limit).collect();
-    println!("{} initial candidates", candidates.len());
+    info!("{} initial candidates", candidates.len());
     let mut seen_candidates: HashSet<Invariant> = candidates.iter().cloned().collect();
 
     let balance_checker = build_balance_checker(task, reachable_action_params);
@@ -191,7 +192,7 @@ fn find_invariants(
 
     while let Some(candidate) = candidates.pop_front() {
         if start_time.elapsed().as_secs() > options::INVARIANT_GENERATION_MAX_TIME {
-            println!("Time limit reached, aborting invariant generation");
+            info!("Time limit reached, aborting invariant generation");
             return result;
         }
 
@@ -269,13 +270,13 @@ pub fn get_groups(
     task: &Task,
     reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
 ) -> Vec<Vec<Atom>> {
-    println!("Finding invariants...");
+    info!("Finding invariants...");
     let mut invariants = find_invariants(task, reachable_action_params);
     invariants.sort();
-    println!("Found {} invariants", invariants.len());
+    info!("Found {} invariants", invariants.len());
 
-    println!("Checking invariant weight...");
+    info!("Checking invariant weight...");
     let groups = useful_groups(&invariants, &task.init);
-    println!("Found {} useful groups", groups.len());
+    info!("Found {} useful groups", groups.len());
     groups
 }

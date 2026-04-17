@@ -2,6 +2,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use log::debug;
+
 use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
 use super::f_expression::{
     FunctionalExpression, PrimitiveNumericExpression, instantiate_expression,
@@ -52,13 +54,13 @@ impl Axiom {
 
     /// Python: def dump(self)
     pub fn dump(&self) {
-        println!(
+        debug!(
             "Axiom {} ({} params, global={})",
             self.name,
             self.parameters.len(),
             self.is_global_constraint
         );
-        println!("  condition: {}", self.condition);
+        debug!("  condition: {}", self.condition);
     }
 
     /// Python: def uniquify_variables(self)
@@ -142,11 +144,11 @@ impl PropositionalAxiom {
     }
 
     pub fn dump(&self) {
-        println!("PropositionalAxiom");
-        println!("  effect: {}", self.effect);
-        println!("  conditions:");
+        debug!("PropositionalAxiom");
+        debug!("  effect: {}", self.effect);
+        debug!("  conditions:");
         for c in &self.condition {
-            println!("    {}", c);
+            debug!("    {}", c);
         }
     }
 }
@@ -242,9 +244,9 @@ impl NumericAxiom {
     }
 
     pub fn dump(&self) {
-        println!("NumericAxiom {} op={}", self.name, self.op);
+        debug!("NumericAxiom {} op={}", self.name, self.op);
         for p in &self.parts {
-            println!("  part: {}", p);
+            debug!("  part: {}", p);
         }
     }
 }
@@ -280,10 +282,10 @@ impl InstantiatedNumericAxiom {
     }
 
     pub fn dump(&self) {
-        println!("InstantiatedNumericAxiom {} op={}", self.name, self.op);
-        println!("  effect: {}", self.effect);
+        debug!("InstantiatedNumericAxiom {} op={}", self.name, self.op);
+        debug!("  effect: {}", self.effect);
         for p in &self.parts {
-            println!("  part: {}", p);
+            debug!("  part: {}", p);
         }
     }
 }

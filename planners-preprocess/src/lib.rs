@@ -14,6 +14,8 @@ pub mod variable;
 use std::fs::File;
 use std::io::Read;
 
+use log::{debug, info};
+
 use crate::causal_graph::CausalGraph;
 use crate::domain_transition_graph::{are_dtgs_strongly_connected, build_dtgs};
 use crate::fact::ExplicitFact;
@@ -21,8 +23,6 @@ use crate::helper_functions::{InputStream, read_preprocessed_problem_description
 
 pub const SAS_FILE_VERSION: i32 = 4;
 pub const PRE_FILE_VERSION: i32 = SAS_FILE_VERSION;
-
-pub const DEBUG: bool = false;
 
 #[derive(Debug, Clone)]
 pub struct Metric {
@@ -55,7 +55,7 @@ pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) 
     }
 
     let prune_variables = if argc != 1 {
-        println!("*** do not perform relevance analysis ***");
+        info!("*** do not perform relevance analysis ***");
         false
     } else {
         true
@@ -77,7 +77,7 @@ pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) 
         global_constraint,
     ) = read_preprocessed_problem_description(&mut stream);
 
-    println!("Building causal graph...");
+    info!("Building causal graph...");
     let old_metric_index = metric.index;
     let (
         orig_variables,
@@ -109,14 +109,12 @@ pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) 
     .finalize();
 
     metric.index = new_metric_index;
-    if DEBUG {
-        println!(
-            "Metric index changed from {} to {}",
-            old_metric_index, new_metric_index
-        );
-    }
+    debug!(
+        "Metric index changed from {} to {}",
+        old_metric_index, new_metric_index
+    );
 
-    println!("Building domain transition graphs...");
+    info!("Building domain transition graphs...");
     let transition_graphs =
         build_dtgs(&ordered_variables, &orig_variables, &operators, &axioms_rel);
 
@@ -124,7 +122,7 @@ pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) 
     if cg_acyclic {
         solvable_in_poly_time = are_dtgs_strongly_connected(&transition_graphs);
     }
-    println!("solvable in poly time {}", solvable_in_poly_time);
+    info!("solvable in poly time {}", solvable_in_poly_time);
 
     let mut facts = 0;
     let mut derived_vars = 0;
@@ -134,8 +132,8 @@ pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) 
             derived_vars += 1;
         }
     }
-    println!("Preprocessor facts: {}", facts);
-    println!("Preprocessor derived variables: {}", derived_vars);
+    info!("Preprocessor facts: {}", facts);
+    info!("Preprocessor derived variables: {}", derived_vars);
 
     let mut task_size =
         ordered_variables.len() + ordered_numeric_variables.len() + facts + goals.len();
@@ -154,9 +152,9 @@ pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) 
     for axiom in &axioms_func_comp {
         task_size += axiom.get_encoding_size();
     }
-    println!("Preprocessor task size: {}", task_size);
+    info!("Preprocessor task size: {}", task_size);
 
-    println!("Writing output...");
+    info!("Writing output...");
     to_sas_at_path(
         &orig_variables,
         &orig_numeric_variables,
@@ -173,5 +171,5 @@ pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) 
         &global_constraint,
         output_path,
     );
-    println!("done");
+    info!("done");
 }

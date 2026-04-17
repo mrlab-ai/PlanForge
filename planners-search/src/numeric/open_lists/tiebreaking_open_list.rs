@@ -1,4 +1,5 @@
 use super::open_list::{OpenList, SearchNode};
+use log::debug;
 use ordered_float::OrderedFloat;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -129,7 +130,7 @@ impl OpenList for TieBreakingOpenList {
                 .map(|value| format!("{:.17}", value.into_inner()))
                 .collect::<Vec<_>>()
                 .join(",");
-            println!(
+            debug!(
                 "TRACE open-list-insert sid={} key=[{}]",
                 node.state.get_id(),
                 key_str

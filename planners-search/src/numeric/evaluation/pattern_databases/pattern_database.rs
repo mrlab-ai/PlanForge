@@ -6,6 +6,7 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 use std::fmt;
 
+use log::info;
 use ordered_float::NotNan;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
@@ -623,7 +624,7 @@ impl<'task> PatternDatabase<'task> {
                 };
                 let state_id = entry.state_id;
                 if representative_states.len().is_multiple_of(500) {
-                    println!(
+                    info!(
                         "Expanding state {}/{} ({} reached goal states, {} truncated frontier states)",
                         state_id + 1,
                         representative_states.len(),

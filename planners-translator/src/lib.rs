@@ -1,4 +1,21 @@
 use planners_translate::{normalize, pddl_parser::PddlTask};
+use std::io::Write;
+
+pub fn init_logger(level: log::LevelFilter) -> Result<(), log::SetLoggerError> {
+    let mut builder = env_logger::Builder::new();
+    builder.filter_level(level);
+    builder.format(|formatter, record| {
+        writeln!(
+            formatter,
+            "[{}] {}: {}",
+            formatter.timestamp_seconds(),
+            record.level(),
+            record.args()
+        )
+    });
+
+    builder.try_init()
+}
 
 pub fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
     translate_to_sas_to_path(domain, problem, std::path::Path::new("output.sas"))

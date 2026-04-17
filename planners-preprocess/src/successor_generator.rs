@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use log::debug;
+
 use crate::Condition;
 use crate::fact::ExplicitFact;
 use crate::operator::{Operator, PrePost, Prevail};
@@ -57,16 +59,16 @@ impl GeneratorSwitch {
 
     fn dump(&self, indent: &str, vars: &[ExplicitVariable]) {
         let var = self.switch_var;
-        println!("{}switch on {}", indent, vars[var].get_name());
-        println!("{}immediately:", indent);
+        debug!("{}switch on {}", indent, vars[var].get_name());
+        debug!("{}immediately:", indent);
         for op_id in &self.immediate_ops_indices {
-            println!("{}{}", indent, op_id);
+            debug!("{}{}", indent, op_id);
         }
         for i in 0..vars[var].get_range() {
-            println!("{}case {}:", indent, i);
+            debug!("{}case {}:", indent, i);
             self.generator_for_value[i].dump(&format!("{}  ", indent), vars);
         }
-        println!("{}always:", indent);
+        debug!("{}always:", indent);
         self.default_generator.dump(&format!("{}  ", indent), vars);
     }
 
@@ -102,7 +104,7 @@ impl GeneratorLeaf {
 
     fn dump(&self, indent: &str) {
         for op_id in &self.applicable_ops_indices {
-            println!("{}{}", indent, op_id);
+            debug!("{}{}", indent, op_id);
         }
     }
 
@@ -119,7 +121,7 @@ struct GeneratorEmpty;
 
 impl GeneratorEmpty {
     fn dump(&self, indent: &str) {
-        println!("{}<empty>", indent);
+        debug!("{}<empty>", indent);
     }
 
     fn generate_cpp_input<W: Write>(&self, out: &mut W) {
@@ -256,7 +258,7 @@ impl SuccessorGenerator {
     }
 
     pub fn dump(&self, vars: &[ExplicitVariable]) {
-        println!("Successor Generator:");
+        debug!("Successor Generator:");
         if let Some(root) = &self.root {
             root.dump("  ", vars);
         }

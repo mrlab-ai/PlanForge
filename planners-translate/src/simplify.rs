@@ -2,9 +2,9 @@
 /// Simplification of SAS+ tasks by removing unreachable propositions.
 use std::collections::{HashMap, HashSet};
 
-use super::sas_tasks::*;
+use log::{Level, debug, info, log_enabled};
 
-const DEBUG: bool = false;
+use super::sas_tasks::*;
 
 // ============================================================
 // Exceptions
@@ -252,14 +252,10 @@ impl VarValueRenaming {
                 let (new_var_no, new_value) = self.translate_pair(var_no, value);
                 match new_value {
                     RenamedValue::AlwaysTrue => {
-                        if DEBUG {
-                            println!("Removed true proposition: {}", value_name);
-                        }
+                        debug!("Removed true proposition: {}", value_name);
                     }
                     RenamedValue::AlwaysFalse => {
-                        if DEBUG {
-                            println!("Removed false proposition: {}", value_name);
-                        }
+                        debug!("Removed false proposition: {}", value_name);
                     }
                     RenamedValue::Normal(nv) => {
                         if let Some(nvn) = new_var_no {
@@ -356,7 +352,7 @@ impl VarValueRenaming {
             }
             RenamedValue::Normal(nv) => {
                 let nvn = new_var.expect("global constraint variable removed");
-                println!(
+                info!(
                     "Simplified global constraint to new variable ordering {:?}",
                     (nvn, nv)
                 );
@@ -373,13 +369,11 @@ impl VarValueRenaming {
                 Some(new_op) => new_operators.push(new_op),
                 None => {
                     num_removed += 1;
-                    if DEBUG {
-                        println!("Removed operator: {}", op.name);
-                    }
+                    debug!("Removed operator: {}", op.name);
                 }
             }
         }
-        println!("{} operators removed", num_removed);
+        info!("{} operators removed", num_removed);
         *operators = new_operators;
     }
 
@@ -391,14 +385,12 @@ impl VarValueRenaming {
                 Ok(new_axiom) => new_axioms.push(new_axiom),
                 Err(_) => {
                     num_removed += 1;
-                    if DEBUG {
-                        println!("Removed axiom:");
-                        axiom.dump();
-                    }
+                    debug!("Removed axiom:");
+                    axiom.dump();
                 }
             }
         }
-        println!("{} axioms removed", num_removed);
+        info!("{} axioms removed", num_removed);
         *axioms = new_axioms;
 
         for cax in comp_axioms.iter_mut() {
@@ -605,7 +597,7 @@ fn build_renaming(dtgs: &[DomainTransitionGraph]) -> VarValueRenaming {
 /// Simplifies the task in-place. Returns Err(Impossible) or Err(TriviallySolvable)
 /// if the task is detected as unsolvable or trivially solvable.
 pub fn filter_unreachable_propositions(sas_task: &mut SASTask) -> Result<(), SimplifyError> {
-    if DEBUG {
+    if log_enabled!(Level::Debug) {
         sas_task.validate();
     }
 
@@ -614,9 +606,9 @@ pub fn filter_unreachable_propositions(sas_task: &mut SASTask) -> Result<(), Sim
 
     renaming.apply_to_task(sas_task)?;
 
-    println!("{} propositions removed", renaming.num_removed_values);
+    info!("{} propositions removed", renaming.num_removed_values);
 
-    if DEBUG {
+    if log_enabled!(Level::Debug) {
         sas_task.validate();
     }
 

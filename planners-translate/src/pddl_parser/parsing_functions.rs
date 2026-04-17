@@ -2,6 +2,8 @@
 /// Main PDDL parsing functions that convert S-expressions into PDDL AST.
 use std::collections::HashMap;
 
+use log::warn;
+
 use super::lisp_parser::SExpr;
 use crate::pddl::actions::Action;
 use crate::pddl::axioms::Axiom;
@@ -729,7 +731,7 @@ fn parse_domain_pddl(
             }
             _ => {
                 // Unknown section, skip
-                eprintln!("Warning: Unknown domain section: {}", tag);
+                warn!("Warning: Unknown domain section: {}", tag);
             }
         }
     }
@@ -889,7 +891,7 @@ pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
     let mut seen = HashSet::new();
     for item in lst {
         if !seen.insert(item) {
-            eprintln!(
+            warn!(
                 "Warning: duplicate {} in {}: {}",
                 what_type, what_list, item
             );

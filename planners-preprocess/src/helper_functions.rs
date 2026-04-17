@@ -1,5 +1,7 @@
 use std::io::{Read, Write};
 
+use log::{debug, error, info};
+
 use crate::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
 use crate::domain_transition_graph::DomainTransitionGraph;
 use crate::fact::ExplicitFact;
@@ -7,7 +9,7 @@ use crate::mutex_group::MutexGroup;
 use crate::operator::Operator;
 use crate::state::State;
 use crate::variable::{ExplicitVariable, NumericVariable};
-use crate::{DEBUG, GlobalConstraint, Metric, PRE_FILE_VERSION, SAS_FILE_VERSION};
+use crate::{GlobalConstraint, Metric, PRE_FILE_VERSION, SAS_FILE_VERSION};
 
 pub struct InputStream {
     input: String,
@@ -104,13 +106,11 @@ impl InputStream {
 pub fn check_magic(stream: &mut InputStream, magic: &str) {
     let word = stream.read_token();
     if word != magic {
-        eprintln!("Failed to match magic word '{}'.", magic);
-        eprintln!("Got '{}'.", word);
+        error!("Failed to match magic word '{}'.", magic);
+        error!("Got '{}'.", word);
         if magic == "begin_version" {
-            eprintln!(
-                "Possible cause: you are running the preprocessor on a translator file from an"
-            );
-            eprintln!("older version.");
+            error!("Possible cause: you are running the preprocessor on a translator file from an");
+            error!("older version.");
         }
         std::process::exit(1);
     }
@@ -121,11 +121,11 @@ fn read_and_verify_version(stream: &mut InputStream) {
     let version = stream.read_i32();
     check_magic(stream, "end_version");
     if version != SAS_FILE_VERSION {
-        eprintln!(
+        error!(
             "Expected translator file version {}, got {}.",
             SAS_FILE_VERSION, version
         );
-        eprintln!("Exiting.");
+        error!("Exiting.");
         std::process::exit(1);
     }
 }
@@ -185,7 +185,7 @@ fn read_global_constraint(stream: &mut InputStream) -> Option<GlobalConstraint> 
     } else {
         None
     };
-    println!("read global constraint at var {} value {}", index, val);
+    info!("read global constraint at var {} value {}", index, val);
     check_magic(stream, "end_global_constraint");
 
     gc
@@ -209,9 +209,9 @@ fn read_goal(stream: &mut InputStream) -> Vec<ExplicitFact> {
 }
 
 fn dump_goal(goals: &[ExplicitFact], variables: &[ExplicitVariable]) {
-    println!("Goal Conditions:");
+    info!("Goal Conditions:");
     for goal in goals {
-        println!("  {}: {}", variables[goal.var].get_name(), goal.value);
+        info!("  {}: {}", variables[goal.var].get_name(), goal.value);
     }
 }
 
@@ -307,50 +307,28 @@ pub fn read_preprocessed_problem_description(
     Vec<AxiomNumericComputation>,
     Option<GlobalConstraint>,
 ) {
-    if DEBUG {
-        println!("reading version...");
-    }
+    debug!("reading version...");
     read_and_verify_version(stream);
-    if DEBUG {
-        println!("reading metric...");
-    }
+    debug!("reading metric...");
     let metric = read_metric(stream);
-    if DEBUG {
-        println!("reading variables...");
-    }
+    debug!("reading variables...");
     let mut variables = read_variables(stream);
-    if DEBUG {
-        println!("reading numeric variables...");
-    }
+    debug!("reading numeric variables...");
     let mut numeric_variables = read_numeric_variables(stream);
-    if DEBUG {
-        println!("reading mutexes...");
-    }
+    debug!("reading mutexes...");
     let mutexes = read_mutexes(stream);
-    if DEBUG {
-        println!("reading initial state...");
-    }
+    debug!("reading initial state...");
     let initial_state = State::from_stream(stream, &variables, &numeric_variables);
     let goal = read_goal(stream);
-    if DEBUG {
-        println!("reading operators...");
-    }
+    debug!("reading operators...");
     let operators = read_operators(stream);
-    if DEBUG {
-        println!("reading propositional axioms...");
-    }
+    debug!("reading propositional axioms...");
     let axioms_rel = read_axioms_rel(stream, &variables);
-    if DEBUG {
-        println!("reading functional comparison axioms...");
-    }
+    debug!("reading functional comparison axioms...");
     let axioms_func_comp = read_axioms_func_comp(stream, &mut variables, &numeric_variables);
-    if DEBUG {
-        println!("reading functional assignment axioms...");
-    }
+    debug!("reading functional assignment axioms...");
     let axioms_numeric = read_axioms_numeric(stream, &mut numeric_variables);
-    if DEBUG {
-        println!("reading global constraint");
-    }
+    debug!("reading global constraint");
     let global_constraint = read_global_constraint(stream);
 
     (
@@ -379,15 +357,15 @@ pub fn dump_preprocessed_problem_description(
     axioms_func_ass: &Vec<AxiomNumericComputation>,
     axioms_func_comp: &Vec<AxiomFunctionalComparison>,
 ) {
-    println!("Variables ({}):", variables.len());
+    info!("Variables ({}):", variables.len());
     for var in variables {
         var.dump();
     }
-    println!("Numeric variables ({}):", numeric_variables.len());
+    info!("Numeric variables ({}):", numeric_variables.len());
     for var in numeric_variables {
         var.dump();
     }
-    println!("Initial State:");
+    debug!("Initial State:");
     initial_state.dump(variables, numeric_variables);
     dump_goal(goals, variables);
     for op in operators {
@@ -408,7 +386,7 @@ pub fn dump_dtgs(ordering: &[ExplicitVariable], transition_graphs: &mut [DomainT
     let num_graphs = transition_graphs.len();
     for i in 0..num_graphs {
         let name = ordering[i].get_name();
-        println!("Domain transition graph for {}:", name);
+        debug!("Domain transition graph for {}:", name);
         transition_graphs[i].dump(ordering);
     }
 }
@@ -482,30 +460,22 @@ pub fn to_sas_at_path(
 
     let num_vars = ordered_vars.len();
     writeln!(outfile, "{}", num_vars).unwrap();
-    if DEBUG {
-        println!("Variables in output are: ");
-    }
+    debug!("Variables in output are: ");
     for var in ordered_vars {
         var.to_sas(&mut outfile);
-        if DEBUG {
-            print!("{} {{", var.get_name());
-            for i in 0..var.get_range() {
-                print!("{}, ", var.get_fact_name(i));
-            }
-            println!("}}");
-            println!("Initial value = {}", initial_state.get(var.index));
+        debug!("{} {{", var.get_name());
+        for i in 0..var.get_range() {
+            debug!("{}, ", var.get_fact_name(i));
         }
+        debug!("}}");
+        debug!("Initial value = {}", initial_state.get(var.index));
     }
 
-    if DEBUG {
-        println!("Numeric Variables in output are: ");
-    }
+    debug!("Numeric Variables in output are: ");
     writeln!(outfile, "{}", ordered_numeric_vars.len()).unwrap();
     writeln!(outfile, "begin_numeric_variables").unwrap();
     for numeric_var in ordered_numeric_vars {
-        if DEBUG {
-            numeric_var.dump();
-        }
+        numeric_var.dump();
         numeric_var.to_sas(&mut outfile);
     }
     writeln!(outfile, "end_numeric_variables").unwrap();
