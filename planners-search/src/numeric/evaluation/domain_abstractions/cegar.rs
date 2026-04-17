@@ -145,7 +145,7 @@ impl Default for CegarConfig {
             max_iterations: 10_000,
             max_time: None,
             use_wildcard_plans: true,
-            combine_labels: false,
+            combine_labels: true,
             debug: false,
             random_seed: None,
             flaw_treatment: FlawTreatment::RandomSingleAtom,
@@ -1048,12 +1048,28 @@ fn try_refine_from_flaw(
 }
 
 fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<(usize, usize)> {
+    let mut goal_axiom_map: HashMap<usize, usize> = HashMap::new();
+    for (axiom_idx, axiom) in task.axioms().iter().enumerate() {
+        if !axiom.conditions().is_empty() {
+            goal_axiom_map.insert(axiom.var_id(), axiom_idx);
+        }
+    }
+
     let num_goals = task.get_num_goals();
     let mut goals = Vec::with_capacity(num_goals);
     for goal_idx in 0..num_goals {
         let goal = task.get_goal_fact(goal_idx);
-        goals.push((goal.var, goal.value));
+        if let Some(&axiom_idx) = goal_axiom_map.get(&goal.var) {
+            let axiom = &task.axioms()[axiom_idx];
+            for condition in axiom.conditions() {
+                goals.push((condition.var, condition.value));
+            }
+        } else {
+            goals.push((goal.var, goal.value));
+        }
     }
+    goals.sort_unstable();
+    goals.dedup();
     goals
 }
 

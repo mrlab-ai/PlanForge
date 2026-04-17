@@ -110,7 +110,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             init_split_quantity: InitSplitQuantity::Single,
             random_seed: -1,
             use_wildcard_plans: true,
-            combine_labels: false,
+            combine_labels: true,
             deviation_flaws: true,
             flaw_treatment: FlawTreatment::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,

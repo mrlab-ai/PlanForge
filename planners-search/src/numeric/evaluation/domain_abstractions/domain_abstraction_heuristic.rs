@@ -9,8 +9,13 @@ use crate::numeric::evaluation::heuristic::Heuristic;
 use planners_sas::numeric::numeric_task::Operator;
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 
+use super::comparison_expression::{ComparisonTree, ComparisonTreeNode, Interval};
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::utils;
+
+const COMPARISON_TRUE_VAL: usize = 0;
+const COMPARISON_FALSE_VAL: usize = 1;
+const COMPARISON_UNKNOWN_VAL: usize = 2;
 
 /// Heuristic that evaluates a concrete state by mapping it to an abstract state
 /// and looking up its precomputed goal distance.
@@ -123,12 +128,80 @@ impl DomainAbstractionHeuristic {
 
         let mut prop_index: usize = 0;
         for var in 0..num_props {
-            let abs_val = abstract_propositional_value(var, prop[var], mapping)?;
+            let concrete_val = resolved_propositional_value(
+                var,
+                prop[var],
+                &numeric,
+                self.abstraction.factory.comparison_trees(),
+            )?;
+            let abs_val = abstract_propositional_value(var, concrete_val, mapping)?;
             prop_index += multipliers[var] * abs_val;
         }
 
         Ok(index + prop_index)
     }
+}
+
+fn resolved_propositional_value(
+    var: usize,
+    stored_val: usize,
+    numeric: &[f64],
+    comparison_trees: &[ComparisonTree],
+) -> Result<usize, EvaluationError> {
+    let Some(tree) = comparison_trees.iter().find(|tree| tree.affected_var_id == var) else {
+        return Ok(stored_val);
+    };
+
+    let eval = evaluate_comparison_tree_on_concrete_numeric_state(tree, numeric)?;
+    Ok(match eval {
+        Some(true) => COMPARISON_TRUE_VAL,
+        Some(false) => COMPARISON_FALSE_VAL,
+        None => stored_val.min(COMPARISON_UNKNOWN_VAL),
+    })
+}
+
+fn evaluate_comparison_tree_on_concrete_numeric_state(
+    tree: &ComparisonTree,
+    numeric: &[f64],
+) -> Result<Option<bool>, EvaluationError> {
+    let required_len = comparison_tree_numeric_len(tree);
+    if numeric.len() < required_len {
+        return Err(EvaluationError::InvalidState(format!(
+            "numeric state too short for comparison tree on var {}: {} < {}",
+            tree.affected_var_id,
+            numeric.len(),
+            required_len
+        )));
+    }
+
+    let mut intervals: Vec<Interval> = numeric
+        .iter()
+        .map(|&value| Interval::singleton(value))
+        .collect();
+    Ok(tree.evaluate_interval_and_fill(&mut intervals))
+}
+
+fn comparison_tree_numeric_len(tree: &ComparisonTree) -> usize {
+    let mut max_numeric_var_id = tree.left_numeric_var_id.max(tree.right_numeric_var_id);
+    for node in &tree.nodes {
+        match node {
+            ComparisonTreeNode::Leaf { numeric_var_id } => {
+                max_numeric_var_id = max_numeric_var_id.max(*numeric_var_id);
+            }
+            ComparisonTreeNode::Arith {
+                result_numeric_var_id,
+                left_numeric_var_id,
+                right_numeric_var_id,
+                ..
+            } => {
+                max_numeric_var_id = max_numeric_var_id
+                    .max(*result_numeric_var_id)
+                    .max(*left_numeric_var_id)
+                    .max(*right_numeric_var_id);
+            }
+        }
+    }
+    max_numeric_var_id + 1
 }
 
 fn abstract_propositional_value(

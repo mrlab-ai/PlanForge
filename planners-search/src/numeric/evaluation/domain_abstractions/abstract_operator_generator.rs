@@ -365,10 +365,11 @@ impl AbstractOperatorGenerator {
 
     #[inline]
     fn variable_is_trivial(&self, var_id: usize) -> bool {
-        self.domain_mapping
+        self.domain_sizes
             .get(var_id)
+            .copied()
             .unwrap_or_else(|| panic!("variable_is_trivial: var_id {var_id} out of bounds"))
-            .is_empty()
+            <= 1
     }
 
     #[inline]

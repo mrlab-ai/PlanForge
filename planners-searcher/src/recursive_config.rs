@@ -38,7 +38,7 @@ impl Default for DomainAbstractionConfig {
         Self {
             max_abstraction_size: i64::MAX as usize,
             use_wildcard_plans: true,
-            combine_labels: false,
+            combine_labels: true,
             random_seed: -1,
             flaw_treatment: FlawTreatment::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
