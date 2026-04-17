@@ -54,25 +54,6 @@ A high-performance automated planning library written in Rust, designed as a mod
 - **Type Safe**: Leverages Rust's type system for compile-time guarantees
 - **Zero-Copy**: Minimal data copying with efficient reference management
 
-## 🏗️ Project Structure
-
-```
-src/
-├── parser/                 # SAS+ file parsing
-│   └── numeric_parser.rs   # Numeric planning extensions
-├── search/
-│   └── numeric/           # Numeric planning components
-│       ├── axioms.rs      # Axiom evaluation system
-│       ├── numeric_task.rs # Task representation
-│       ├── state_registry.rs # State management
-│       ├── successor_generator.rs # Operator application
-│       └── utils/         # Utility modules
-│           ├── per_state_info.rs # State-associated data
-│           ├── int_packer.rs     # Efficient state packing
-│           └── errors.rs         # Error types
-└── main.rs                # CLI interface
-```
-
 ## 🚧 Usage
 
 ### Command Line Interface
@@ -82,7 +63,7 @@ src/
 cargo run --bin planners path/to/problem.sas
 
 # Run with debug information
-RUST_LOG=debug cargo run --bin planners path/to/problem.sas
+cargo run --bin planners --log-level=debug path/to/problem.sas
 
 # Run tests
 cargo test
@@ -128,7 +109,7 @@ let solution = SearchAlgorithm::new().solve(&task, initial_state)?;
 
 ### Phase 2: Search Algorithms 🔄
 
-- [ ] A* search implementation
+- [x] A* search implementation
 - [ ] Greedy best-first search
 - [ ] Lazy search with deferred evaluation
 - [ ] Multi-threaded search algorithms
@@ -136,7 +117,7 @@ let solution = SearchAlgorithm::new().solve(&task, initial_state)?;
 ### Phase 3: Heuristics 📋
 
 - [ ] Landmark-based heuristics
-- [ ] Pattern database heuristics
+- [x] Pattern database heuristics
 - [ ] Numeric planning heuristics (h^max, h^add)
 - [ ] Learning-based heuristics
 
@@ -179,11 +160,6 @@ The project includes comprehensive tests covering:
 # Run all tests
 cargo test
 
-# Test specific components
-cargo test state_registry
-cargo test successor_generator
-cargo test per_state_info
-
 # Run with output
 cargo test -- --nocapture
 ```
@@ -198,7 +174,8 @@ cargo test -- --nocapture
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [contributing guidelines](CONTRIBUTING.md) for details.
+We welcome contributions!
+<!-- Please see our [contributing guidelines](CONTRIBUTING.md) for details. -->
 
 ### Development Setup
 
