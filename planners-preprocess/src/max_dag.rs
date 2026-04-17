@@ -1,29 +1,29 @@
 use std::collections::BTreeMap;
 
+use log::{Level, debug, log_enabled};
+
 #[derive(Debug, Clone)]
 pub struct MaxDag {
     weighted_graph: Vec<Vec<(usize, u64)>>,
-    debug: bool,
 }
 
 impl MaxDag {
     pub fn new(graph: Vec<Vec<(usize, u64)>>) -> Self {
         Self {
             weighted_graph: graph,
-            debug: false,
         }
     }
 
     #[allow(clippy::needless_range_loop)]
     pub fn get_result(&self) -> Vec<usize> {
         let num_nodes = self.weighted_graph.len();
-        if self.debug {
+        if log_enabled!(Level::Debug) {
             for i in 0..num_nodes {
-                print!("From {}:", i);
+                debug!("From {}:", i);
                 for trans in &self.weighted_graph[i] {
-                    print!(" {} [weight {}]", trans.0, trans.1);
+                    debug!(" {} [weight {}]", trans.0, trans.1);
                 }
-                println!();
+                debug!("");
             }
         }
 
@@ -37,9 +37,7 @@ impl MaxDag {
         let mut heap: BTreeMap<(u64, usize), usize> = BTreeMap::new();
         let mut heap_positions: Vec<(u64, usize)> = Vec::new();
         for node in 0..num_nodes {
-            if self.debug {
-                println!("node {} has {} edges", node, incoming_weights[node]);
-            }
+            debug!("node {} has {} edges", node, incoming_weights[node]);
             let key = (incoming_weights[node], node);
             heap.insert(key, node);
             heap_positions.push(key);
@@ -51,9 +49,7 @@ impl MaxDag {
         while !heap.is_empty() {
             let first_key = *heap.keys().next().unwrap();
             let removed = heap.remove(&first_key).unwrap();
-            if self.debug {
-                println!("minimal element is {}", removed);
-            }
+            debug!("minimal element is {}", removed);
             done[removed] = true;
             result.push(removed);
             let succs = &self.weighted_graph[removed];
@@ -70,19 +66,17 @@ impl MaxDag {
                     let new_key = (new_weight, target);
                     heap.insert(new_key, target);
                     heap_positions[target] = new_key;
-                    if self.debug {
-                        println!("node {} has now {} edges", target, new_weight);
-                    }
+                    debug!("node {} has now {} edges", target, new_weight);
                 }
             }
         }
 
-        if self.debug {
-            print!("result: ");
+        if log_enabled!(Level::Debug) {
+            debug!("result: ");
             for r in &result {
-                print!("{} - ", r);
+                debug!("{} - ", r);
             }
-            println!();
+            debug!("");
         }
         result
     }

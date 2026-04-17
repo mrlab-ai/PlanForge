@@ -13,6 +13,7 @@ use crate::numeric::{
     open_lists::{OpenList, SearchNode, TieBreakingOpenList},
     successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node},
 };
+use log::{debug, info};
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, ExplicitFact, Operator, metric_operator_cost_from_initial_values,
@@ -278,7 +279,7 @@ impl<'a> AStarSearch<'a> {
             generated: self.nodes_generated,
         };
 
-        println!(
+        info!(
             "f = {} [{} evaluated, {} expanded, t={:.6}s, {} KB]",
             f_layer,
             self.nodes_evaluated,
@@ -309,7 +310,7 @@ impl<'a> AStarSearch<'a> {
         }
 
         self.best_reported_heuristic_value = Some(h_value);
-        println!(
+        info!(
             "New best heuristic value for {}: {}",
             self.heuristic.name(),
             format_progress_value(h_value.into_inner()),
@@ -320,7 +321,7 @@ impl<'a> AStarSearch<'a> {
     }
 
     fn print_checkpoint_line(&self, g_value: f64, start_time: &Instant) {
-        println!(
+        info!(
             "[g={}, {} evaluated, {} expanded, t={:.6}s, {} KB]",
             format_progress_value(g_value),
             self.nodes_evaluated,
@@ -442,7 +443,7 @@ impl<'a> AStarSearch<'a> {
         self.maybe_print_f_layer(&node, start_time);
 
         if env::var_os("TRACE_EXPANDED_STATES").is_some() {
-            println!(
+            debug!(
                 "TRACE expanded sid={} g={:.17} h={:.17} f={:.17}",
                 state_id,
                 node.g_value(),
@@ -500,7 +501,7 @@ impl<'a> AStarSearch<'a> {
             // Count every successfully constructed successor state.
             self.nodes_generated += 1;
             if trace_generated_states {
-                println!(
+                debug!(
                     "TRACE generated parent_sid={} succ_sid={} op={} g={}",
                     state_id,
                     succ_state_id,
@@ -535,7 +536,7 @@ impl<'a> AStarSearch<'a> {
                 }
 
                 if trace_evaluated_successors {
-                    println!(
+                    debug!(
                         "TRACE evaluated-successor parent_sid={} succ_sid={} op={} g={:.17} h={:.17} f={:.17} dead_end={}",
                         state_id,
                         succ_state_id,
@@ -548,7 +549,7 @@ impl<'a> AStarSearch<'a> {
                 }
 
                 if improved_duplicate && trace_improved_duplicates {
-                    println!(
+                    debug!(
                         "TRACE improved-duplicate sid={} op={} old_g={} new_g={} h={} dead_end={}",
                         succ_state_id,
                         operator.name(),
@@ -577,7 +578,7 @@ impl<'a> AStarSearch<'a> {
                 if trace_initial_successors {
                     let h_value = evaluation.get_heuristic_value(&self.heuristic.name());
                     let f_value = evaluation.get_heuristic_value(&self.f_evaluator.name());
-                    println!(
+                    debug!(
                         "TRACE initial-successor op={} g={} h={} f={} dead_end={} state_id={}",
                         operator.name(),
                         format_progress_value(new_g_value),
@@ -704,7 +705,7 @@ impl<'a> SearchEngine for AStarSearch<'a> {
     fn print_initial_h_values(&mut self) {
         let initial_state = self.state_registry.get_initial_state();
         if let Ok(evaluation) = self.evaluate_state(&initial_state, 0.0) {
-            println!(
+            info!(
                 "Initial heuristic value for {}: {}",
                 self.heuristic.name(),
                 format_progress_value(evaluation.get_heuristic_value(&self.heuristic.name()))

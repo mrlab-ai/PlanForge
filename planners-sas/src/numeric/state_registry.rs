@@ -497,6 +497,8 @@ impl<'a> StateRegistry<'a> {
     /// Log initial state information in debug builds.
     #[cfg(debug_assertions)]
     fn log_initial_state_info(&self, cost_variables: &[f64]) {
+        use log::info;
+
         let initial_propositional_len = self.task.get_initial_propositional_state_values().len();
         let regular_count = self
             .numeric_indices
@@ -511,7 +513,7 @@ impl<'a> StateRegistry<'a> {
             .filter(|var| var.get_type() == &NumericType::Derived)
             .count();
 
-        println!(
+        info!(
             "Initial state: {} regular, {} constants, {} cost variables, {} derived variables",
             regular_count,
             constant_count,

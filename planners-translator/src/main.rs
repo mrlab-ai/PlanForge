@@ -3,8 +3,10 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
+use log::info;
 use planners_translate::normalize;
 use planners_translate::pddl_parser::PddlTask;
+use planners_translator::init_logger;
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
 #[derive(Parser)]
 #[clap(
@@ -28,6 +30,8 @@ enum Commands {
         /// Optional output file (default: output.sas)
         #[clap(short, long)]
         output: Option<PathBuf>,
+        #[arg(long = "log-level")]
+        log_level: Option<log::LevelFilter>,
     },
     // /// Preprocess: read SAS+ from stdin and write a preprocessed search input (writes to stdout or file)
     // Preprocess {
@@ -41,20 +45,23 @@ enum Commands {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-
     match cli.command {
         Commands::Translate {
             domain,
             problem,
             output,
+            log_level,
         } => {
+            init_logger(log_level.unwrap_or(log::LevelFilter::Info))
+                .expect("Error initialising logging");
+
             let start = Instant::now();
-            eprintln!(
+            info!(
                 "translator: reading domain {:?} and problem {:?}",
                 domain, problem
             );
             let task = PddlTask::from_files(&domain, &problem).map_err(|e| anyhow::anyhow!(e))?;
-            eprintln!(
+            info!(
                 "translator: parsed forms: {} domain / {} problem",
                 task.domain_forms.len(),
                 task.problem_forms.len()
@@ -62,11 +69,11 @@ fn main() -> anyhow::Result<()> {
             let parsed_task = task.to_task();
 
             // Create normalizable task and run normalization
-            eprintln!("translator: normalizing task...");
+            info!("translator: normalizing task...");
             let mut norm_task = normalize::NormalizableTask::from_task(parsed_task);
             norm_task.add_global_constraints();
             normalize::normalize(&mut norm_task).expect("normalization failed");
-            eprintln!(
+            info!(
                 "translator: normalized - {} actions, {} axioms, {} numeric axioms",
                 norm_task.task.actions.len(),
                 norm_task.task.axioms.len(),
@@ -74,30 +81,30 @@ fn main() -> anyhow::Result<()> {
             );
             // Debug: print axioms
             for (i, ax) in norm_task.task.axioms.iter().enumerate() {
-                eprintln!(
+                info!(
                     "  axiom[{}]: name={}, condition={:?}",
                     i, ax.name, ax.condition
                 );
             }
-            eprintln!("  goal={:?}", norm_task.goal);
+            info!("  goal={:?}", norm_task.goal);
 
             // Run instantiation (Phase 1: model-guided grounding)
             // Use the normalized task for proper exploration rule generation
-            eprintln!("\ntranslator: running instantiation...");
+            info!("\ntranslator: running instantiation...");
             let result = planners_translate::instantiate::explore_normalized(&norm_task)
                 .map_err(|e| anyhow::anyhow!(e))?;
-            eprintln!(
+            info!(
                 "translator: instantiated {} grounded operators (model-guided)",
                 result.grounded_ops.len()
             );
-            eprintln!(
+            info!(
                 "translator: relaxed reachable: {}",
                 result.relaxed_reachable
             );
-            eprintln!("translator: atoms: {}", result.atoms.len());
+            info!("translator: atoms: {}", result.atoms.len());
 
             // Debug: print action breakdown
-            eprintln!("\nAction breakdown:");
+            info!("\nAction breakdown:");
             let mut action_counts: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
             for op in &result.grounded_ops {
@@ -105,20 +112,20 @@ fn main() -> anyhow::Result<()> {
                 *action_counts.entry(action_type.to_string()).or_insert(0) += 1;
             }
             for (action_type, count) in action_counts.iter() {
-                eprintln!("  {}: {}", action_type, count);
+                info!("  {}: {}", action_type, count);
             }
 
-            eprintln!("\nFirst 20 grounded actions:");
+            info!("\nFirst 20 grounded actions:");
             for (i, op) in result.grounded_ops.iter().take(20).enumerate() {
-                eprintln!("  {}: {}", i + 1, op.name);
+                info!("  {}: {}", i + 1, op.name);
             }
 
             // Build SAS task
-            eprintln!("\ntranslator: building SAS task...");
+            info!("\ntranslator: building SAS task...");
 
             // Use the instantiated numeric axioms from the model-guided grounding
             // These are the 60+ axioms that were instantiated from the 8 templates
-            eprintln!(
+            info!(
                 "translator: processing {} instantiated numeric axioms from model",
                 result.numeric_axioms.len()
             );
@@ -141,28 +148,28 @@ fn main() -> anyhow::Result<()> {
             .map_err(|err| anyhow::anyhow!(err))?;
             match planners_translate::simplify::filter_unreachable_propositions(&mut sastask) {
                 Ok(()) => {
-                    eprintln!("translator: simplified task");
+                    info!("translator: simplified task");
                 }
                 Err(planners_translate::simplify::SimplifyError::Impossible) => {
-                    eprintln!("translator: task simplified to unsolvable");
+                    info!("translator: task simplified to unsolvable");
                     sastask = planners_translate::simplify::trivial_task(false);
                 }
                 Err(planners_translate::simplify::SimplifyError::TriviallySolvable) => {
-                    eprintln!("translator: task simplified to trivially solvable");
+                    info!("translator: task simplified to trivially solvable");
                     sastask = planners_translate::simplify::trivial_task(true);
                 }
                 Err(planners_translate::simplify::SimplifyError::DoesNothing) => {
-                    eprintln!("translator: simplification made no changes");
+                    info!("translator: simplification made no changes");
                 }
             }
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
             let py_task = planners_translate::sas_tasks::from_internal(&sastask);
             let mut out_file = std::fs::File::create(&out_path)?;
             py_task.output(&mut out_file)?;
-            eprintln!("translator: wrote {}", out_path.display());
+            info!("translator: wrote {}", out_path.display());
 
             let duration = start.elapsed();
-            eprintln!("translator: completed in {:.2?} seconds", duration);
+            info!("translator: completed in {:.2?} seconds", duration);
         }
     }
 

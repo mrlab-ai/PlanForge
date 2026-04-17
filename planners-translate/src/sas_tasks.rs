@@ -2,6 +2,8 @@
 /// SAS+ task representation for the planner output format.
 use std::io::Write;
 
+use log::debug;
+
 pub const SAS_FILE_VERSION: i32 = 4;
 
 /// Planning task in finite-domain representation.
@@ -90,26 +92,26 @@ impl SASTask {
     }
 
     pub fn dump(&self) {
-        println!("variables:");
+        debug!("variables:");
         self.variables.dump();
-        println!("{} mutex groups:", self.mutexes.len());
+        debug!("{} mutex groups:", self.mutexes.len());
         for mutex in &self.mutexes {
-            println!("group:");
+            debug!("group:");
             mutex.dump();
         }
-        println!("init:");
+        debug!("init:");
         self.init.dump();
-        println!("goal:");
+        debug!("goal:");
         self.goal.dump();
-        println!("{} operators:", self.operators.len());
+        debug!("{} operators:", self.operators.len());
         for op in &self.operators {
             op.dump();
         }
-        println!("{} axioms:", self.axioms.len());
+        debug!("{} axioms:", self.axioms.len());
         for axiom in &self.axioms {
             axiom.dump();
         }
-        println!("metric: ({}, {})", self.metric.0, self.metric.1);
+        debug!("metric: ({}, {})", self.metric.0, self.metric.1);
     }
 
     pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
@@ -288,7 +290,7 @@ impl SASVariables {
                 .zip(names.iter())
                 .map(|(i, n)| format!("{}:{}", i, n))
                 .collect();
-            println!("v{} in {{{}}}{}", var, vals.join(", "), axiom_str);
+            debug!("v{} in {{{}}}{}", var, vals.join(", "), axiom_str);
         }
     }
 
@@ -341,7 +343,7 @@ impl SASNumericVariables {
 
     pub fn dump(&self) {
         for (v, nv) in self.variable_names.iter().enumerate() {
-            println!("numv{}: {}", v, nv);
+            debug!("numv{}: {}", v, nv);
         }
     }
 
@@ -383,7 +385,7 @@ impl SASMutexGroup {
 
     pub fn dump(&self) {
         for (var, val) in &self.facts {
-            println!("v{}: {}", var, val);
+            debug!("v{}: {}", var, val);
         }
     }
 
@@ -435,11 +437,11 @@ impl SASInit {
     pub fn dump(&self) {
         for (var, val) in self.values.iter().enumerate() {
             if *val != -1 {
-                println!("v{}: {}", var, val);
+                debug!("v{}: {}", var, val);
             }
         }
         for (var, val) in self.num_values.iter().enumerate() {
-            println!("nv{}: {}", var, val);
+            debug!("nv{}: {}", var, val);
         }
     }
 
@@ -480,7 +482,7 @@ impl SASGoal {
 
     pub fn dump(&self) {
         for (var, val) in &self.pairs {
-            println!("v{}: {}", var, val);
+            debug!("v{}: {}", var, val);
         }
     }
 
@@ -603,12 +605,12 @@ impl SASOperator {
     }
 
     pub fn dump(&self) {
-        println!("{}", self.name);
-        println!("Prevail:");
+        debug!("{}", self.name);
+        debug!("Prevail:");
         for (var, val) in &self.prevail {
-            println!("  v{}: {}", var, val);
+            debug!("  v{}: {}", var, val);
         }
-        println!("Pre/Post:");
+        debug!("Pre/Post:");
         for (var, pre, post, cond) in &self.pre_post {
             let cond_str = if cond.is_empty() {
                 String::new()
@@ -619,7 +621,7 @@ impl SASOperator {
                     .collect();
                 format!(" [{}]", parts.join(", "))
             };
-            println!("  v{}: {} -> {}{}", var, pre, post, cond_str);
+            debug!("  v{}: {} -> {}{}", var, pre, post, cond_str);
         }
         for (var, ass_op, ass_var, cond) in &self.assign_effects {
             let cond_str = if cond.is_empty() {
@@ -631,10 +633,10 @@ impl SASOperator {
                     .collect();
                 format!(" [{}]", parts.join(", "))
             };
-            println!("  nv{}: {} nv{}{}", var, ass_op, ass_var, cond_str);
+            debug!("  nv{}: {} nv{}{}", var, ass_op, ass_var, cond_str);
         }
-        println!("Cost:");
-        println!("  {}", self.cost);
+        debug!("Cost:");
+        debug!("  {}", self.cost);
     }
 
     pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
@@ -756,13 +758,13 @@ impl SASAxiom {
     }
 
     pub fn dump(&self) {
-        println!("Condition:");
+        debug!("Condition:");
         for (var, val) in &self.condition {
-            println!("  v{}: {}", var, val);
+            debug!("  v{}: {}", var, val);
         }
-        println!("Effect:");
+        debug!("Effect:");
         let (var, val) = self.effect;
-        println!("  v{}: {}", var, val);
+        debug!("  v{}: {}", var, val);
     }
 
     pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
@@ -822,7 +824,7 @@ impl SASCompareAxiom {
             .map(|v| v.to_string())
             .collect::<Vec<_>>()
             .join(" ");
-        println!("v{}: {} {}", self.effect, self.comp, parts_str);
+        debug!("v{}: {} {}", self.effect, self.comp, parts_str);
     }
 
     pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
@@ -870,7 +872,7 @@ impl SASNumericAxiom {
             .map(|v| v.to_string())
             .collect::<Vec<_>>()
             .join(" ");
-        println!("nv{}: {} {}", self.effect, self.op, parts_str);
+        debug!("nv{}: {} {}", self.effect, self.op, parts_str);
     }
 
     pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {

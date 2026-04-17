@@ -4,6 +4,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use log::info;
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
 use planners_sas::numeric::numeric_task::{
@@ -289,7 +290,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let remaining_abstraction_size =
                 remaining_collection_size.min(self.config.max_abstraction_size);
 
-            println!(
+            info!(
                 "Iteration {}: elapsed={:.2}s, remaining_collection_size={}, remaining_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
                 iteration,
                 elapsed,

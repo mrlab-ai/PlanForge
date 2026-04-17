@@ -1,3 +1,4 @@
+use log::{debug, info};
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 
 use super::pattern_database::PatternDatabase;
@@ -8,20 +9,20 @@ pub(crate) fn print_projection_summary(
     pattern: &Pattern,
     projected_task: &ProjectedTask<'_>,
 ) {
-    println!("\n=== GREEDY NUMERIC PDB ===");
-    println!(
+    info!("=== GREEDY NUMERIC PDB ===");
+    info!(
         "  propositional vars: base={} pattern={} projected={}",
         base.variables().len(),
         pattern.regular.len(),
         projected_task.variables().len()
     );
-    println!(
+    info!(
         "  numeric vars:       base={} pattern={} projected={}",
         base.numeric_variables().len(),
         pattern.numeric.len(),
         projected_task.numeric_variables().len()
     );
-    println!(
+    info!(
         "  goals/operators:    goals={} operators={}",
         projected_task.get_num_goals(),
         projected_task.get_operators().len()
@@ -45,18 +46,18 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
         .filter(|distance| !distance.is_finite())
         .count();
 
-    println!("\n=== GREEDY NUMERIC PDB DISTANCES ===");
-    println!("  initial state:      0");
-    println!("  reachable states:   {}", pdb.states.len());
-    println!(
+    debug!("=== GREEDY NUMERIC PDB DISTANCES ===");
+    debug!("  initial state:      0");
+    debug!("  reachable states:   {}", pdb.states.len());
+    debug!(
         "  goal states:        {} {:?}",
         goal_states.len(),
         goal_states
     );
-    println!("  truncated:          {}", pdb.truncated);
-    println!("  frontier states:    {:?}", pdb.frontier_states);
-    println!("  dead ends:          {}", dead_end_count);
-    println!(
+    debug!("  truncated:          {}", pdb.truncated);
+    debug!("  frontier states:    {:?}", pdb.frontier_states);
+    debug!("  dead ends:          {}", dead_end_count);
+    debug!(
         "  min operator cost:  {}",
         fmt_distance(pdb.min_operator_cost)
     );
@@ -113,18 +114,18 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
     for (header, width) in num_headers.iter().zip(num_widths.iter()) {
         header_line.push_str(&format!("{header:>width$} | ", width = *width));
     }
-    println!("{header_line}");
+    debug!("{header_line}");
 
     let mut separator = String::from("------|-------|----------|");
     for width in prop_widths.iter().chain(num_widths.iter()) {
         separator.push_str(&"-".repeat(*width + 2));
         separator.push('|');
     }
-    println!("{separator}");
+    debug!("{separator}");
 
     for (state_id, state) in pdb.states.iter().enumerate() {
         if state_id > 200 {
-            println!("... (truncated)");
+            debug!("... (truncated)");
             break;
         }
         let is_init = state_id == 0;
@@ -166,7 +167,7 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
             ));
         }
 
-        println!("{line}");
+        debug!("{line}");
     }
 }
 

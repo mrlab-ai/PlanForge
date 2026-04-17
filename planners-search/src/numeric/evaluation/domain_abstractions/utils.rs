@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
+use log::debug;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
@@ -51,7 +52,7 @@ pub(crate) fn debug_print_abstraction_stats(
     let prop_max = domain_sizes.iter().copied().max().unwrap_or(0);
     let num_max = numeric_domain_sizes.iter().copied().max().unwrap_or(0);
 
-    println!(
+    debug!(
         "[CEGAR] iteration {iteration}: abstract_states={size} (prop_vars={prop_vars}, num_vars={num_vars}, refined_prop={refined_props}, refined_num={refined_nums}, max_prop_size={prop_max}, max_num_parts={num_max})"
     );
 }
@@ -69,7 +70,7 @@ pub(crate) fn debug_print_refinement_summary(
     let after_s = after
         .map(|v| v.to_string())
         .unwrap_or_else(|| "<overflow>".to_string());
-    println!("[Refine] refined={refined} abstract_states: {before_s} -> {after_s}");
+    debug!("[Refine] refined={refined} abstract_states: {before_s} -> {after_s}");
 
     let mut refined_props: Vec<(usize, usize)> = domain_sizes
         .iter()
@@ -97,7 +98,7 @@ pub(crate) fn debug_print_refinement_summary(
         if refined_props.len() > preview {
             let _ = write!(&mut line, " ...");
         }
-        println!("{line}");
+        debug!("{line}");
     }
     if !refined_nums.is_empty() {
         let preview = 30usize;
@@ -113,32 +114,32 @@ pub(crate) fn debug_print_refinement_summary(
         if refined_nums.len() > preview {
             let _ = write!(&mut line, " ...");
         }
-        println!("{line}");
+        debug!("{line}");
     }
 }
 
 pub(crate) fn debug_print_flaws(flaws: &[Flaw]) {
-    println!("[Flaws] count={}", flaws.len());
+    debug!("[Flaws] count={}", flaws.len());
     let max = 200usize;
     let shown = flaws.len().min(max);
     for (i, flaw) in flaws.iter().take(shown).enumerate() {
         match flaw {
             Flaw::Propositional(pf) => {
-                println!(
+                debug!(
                     "  {i}: PropFlaw fact=(var={}, val={}) deps={}",
                     pf.fact.var,
                     pf.fact.value,
                     pf.dependent_numeric_flaws.len()
                 );
                 for (j, nf) in pf.dependent_numeric_flaws.iter().enumerate() {
-                    println!(
+                    debug!(
                         "      - dep[{j}]: NumericFlaw var={} value={} include_in_lower={}",
                         nf.numeric_var_id, nf.value, nf.include_in_lower
                     );
                 }
             }
             Flaw::Numeric(nf) => {
-                println!(
+                debug!(
                     "  {i}: NumericFlaw var={} value={} include_in_lower={}",
                     nf.numeric_var_id, nf.value, nf.include_in_lower
                 );
@@ -146,7 +147,7 @@ pub(crate) fn debug_print_flaws(flaws: &[Flaw]) {
         }
     }
     if flaws.len() > max {
-        println!("[Flaws] (truncated: showing {shown} of {})", flaws.len());
+        debug!("[Flaws] (truncated: showing {shown} of {})", flaws.len());
     }
 }
 
@@ -267,22 +268,22 @@ pub(crate) fn debug_print_wildcard_plan(
     partitions: &NumericPartitions,
 ) {
     let steps = plan.wildcard_plan.len();
-    println!("[Abstract Plan] steps={steps}");
+    debug!("[Abstract Plan] steps={steps}");
 
     let max_steps = 200usize;
     let shown_steps = steps.min(max_steps);
     if steps > max_steps {
-        println!("[Abstract Plan] (truncated to first {shown_steps} steps)");
+        debug!("[Abstract Plan] (truncated to first {shown_steps} steps)");
     }
 
     if let Some(prop0) = plan.abstract_prop_states.first() {
-        println!(
+        debug!(
             "  s0 props: {}",
             fmt_nontrivial_props(prop0, domain_sizes, 100)
         );
     }
     if let Some(num0) = plan.abstract_numeric_states.first() {
-        println!(
+        debug!(
             "  s0 nums:  {}",
             fmt_nontrivial_nums(num0, numeric_domain_sizes, partitions, 100)
         );
@@ -310,14 +311,14 @@ pub(crate) fn debug_print_wildcard_plan(
         if choice_count > preview {
             let _ = write!(&mut line, " ...");
         }
-        println!("{line}");
+        debug!("{line}");
 
         if i + 1 < plan.abstract_prop_states.len() {
             let prev = &plan.abstract_prop_states[i];
             let cur = &plan.abstract_prop_states[i + 1];
             let delta = fmt_delta_i32(prev, cur, 50);
             if !delta.is_empty() {
-                println!("    props Δ: {delta}");
+                debug!("    props Δ: {delta}");
             }
         }
         if i + 1 < plan.abstract_numeric_states.len() {
@@ -325,12 +326,12 @@ pub(crate) fn debug_print_wildcard_plan(
             let cur = &plan.abstract_numeric_states[i + 1];
             let delta = fmt_delta_numeric_partitions(prev, cur, partitions, 50);
             if !delta.is_empty() {
-                println!("    nums  Δ: {delta}");
+                debug!("    nums  Δ: {delta}");
             }
         }
     }
 
-    println!("[Plan] {}", representative.join(" -> "));
+    debug!("[Plan] {}", representative.join(" -> "));
     debug_print_concrete_trace(task, plan, partitions, shown_steps);
 }
 
@@ -351,16 +352,16 @@ fn debug_print_concrete_trace(
     let _ = axiom_evaluator.evaluate(&mut buffer, &mut numeric_state);
 
     let (prop_scope, num_scope) = trace_variable_scope(task, plan, shown_steps);
-    println!(
+    debug!(
         "[Concrete Trace] scope: props={} nums={}",
         prop_scope.len(),
         num_scope.len()
     );
-    println!(
+    debug!(
         "  s0 props: {}",
         fmt_concrete_props(task, &state_packer, &buffer, &prop_scope, 200)
     );
-    println!(
+    debug!(
         "  s0 nums:  {}",
         fmt_concrete_nums(&numeric_state, &num_scope, partitions, 200)
     );
@@ -382,7 +383,7 @@ fn debug_print_concrete_trace(
         let mut tries = 0usize;
         for &op_id in choices.iter() {
             if tries >= max_tries_per_step {
-                println!("  step {step}: ... (tried first {max_tries_per_step} options)");
+                debug!("  step {step}: ... (tried first {max_tries_per_step} options)");
                 break;
             }
             let Some(op) = task.get_operators().get(op_id) else {
@@ -425,20 +426,20 @@ fn debug_print_concrete_trace(
             );
 
             if deviation_flaws.is_empty() {
-                println!("  step {step}: choose [{op_id}:{}]", op.name());
+                debug!("  step {step}: choose [{op_id}:{}]", op.name());
                 chosen = Some((op_id, cand_buffer, cand_numeric));
                 break;
             } else {
-                println!(
+                debug!(
                     "  step {step}: try    [{op_id}:{}] (reject: numeric deviation)",
                     op.name()
                 );
-                println!(
+                debug!(
                     "    s{}' props: {}",
                     step + 1,
                     fmt_concrete_props(task, &state_packer, &cand_buffer, &prop_scope, 80)
                 );
-                println!(
+                debug!(
                     "    s{}' nums:  {}",
                     step + 1,
                     fmt_concrete_nums(&cand_numeric, &num_scope, partitions, 80)
@@ -447,18 +448,18 @@ fn debug_print_concrete_trace(
         }
 
         let Some((_op_id, next_buffer, next_numeric)) = chosen else {
-            println!("  step {step}: no applicable concrete operator found for wildcard options");
+            debug!("  step {step}: no applicable concrete operator found for wildcard options");
             break;
         };
         buffer = next_buffer;
         numeric_state = next_numeric;
 
-        println!(
+        debug!(
             "  s{} props: {}",
             step + 1,
             fmt_concrete_props(task, &state_packer, &buffer, &prop_scope, 200)
         );
-        println!(
+        debug!(
             "  s{} nums:  {}",
             step + 1,
             fmt_concrete_nums(&numeric_state, &num_scope, partitions, 200)
@@ -707,12 +708,12 @@ pub(crate) fn debug_print_evaluate_state(
     abs_num_str: &[String],
     dist: f64,
 ) {
-    println!("[Evaluate State]");
-    println!("  concrete props: {}", prop_str);
-    println!("  concrete nums:  {}", num_str_vec.join(" "));
-    println!("  abstract props: {}", abs_prop_str.join(" "));
-    println!("  abstract nums:  {}", abs_num_str.join(" "));
-    println!("  distance:       {}", dist);
+    debug!("[Evaluate State]");
+    debug!("  concrete props: {}", prop_str);
+    debug!("  concrete nums:  {}", num_str_vec.join(" "));
+    debug!("  abstract props: {}", abs_prop_str.join(" "));
+    debug!("  abstract nums:  {}", abs_num_str.join(" "));
+    debug!("  distance:       {}", dist);
 }
 
 pub(crate) fn dump_distances(
@@ -721,11 +722,11 @@ pub(crate) fn dump_distances(
     table: &AbstractDistanceTable,
 ) {
     let num_states = table.distances.len();
-    println!("\n=== TABLE OF CORE VARIABLES FOR ALL {num_states} STATES ===\n");
+    debug!("\n=== TABLE OF CORE VARIABLES FOR ALL {num_states} STATES ===\n");
 
     let num_prop_vars = factory.domain_sizes().len();
     if table.hash_multipliers.len() < num_prop_vars + table.numeric_domain_sizes.len() {
-        println!(
+        debug!(
             "[dump_distances] invalid hash_multipliers len={} (expected >= {})",
             table.hash_multipliers.len(),
             num_prop_vars + table.numeric_domain_sizes.len()
@@ -762,11 +763,11 @@ pub(crate) fn dump_distances(
         .collect();
 
     if !refined_numeric_vars.is_empty() || !non_axiom_vars.is_empty() {
-        println!("=== ABSTRACT DOMAINS ===");
+        debug!("=== ABSTRACT DOMAINS ===");
     }
 
     if !refined_numeric_vars.is_empty() {
-        println!("[NumericPartitions]");
+        debug!("[NumericPartitions]");
         for &num_var_id in &refined_numeric_vars {
             let name = task
                 .numeric_variables()
@@ -774,9 +775,9 @@ pub(crate) fn dump_distances(
                 .map(|v| v.name())
                 .unwrap_or("<unknown>");
             let parts = factory.partitions().partitions(num_var_id).unwrap_or(&[]);
-            println!("  n{num_var_id}({name}) parts={}", parts.len());
+            debug!("  n{num_var_id}({name}) parts={}", parts.len());
             for (pid, iv) in parts.iter().enumerate() {
-                println!("    p{pid}: {}", fmt_interval(*iv));
+                debug!("    p{pid}: {}", fmt_interval(*iv));
             }
         }
     }
@@ -786,12 +787,12 @@ pub(crate) fn dump_distances(
     }
 
     if !non_axiom_vars.is_empty() {
-        println!("[PropositionalDomains]");
+        debug!("[PropositionalDomains]");
         for &var_id in &non_axiom_vars {
             let abs_dom = factory.domain_sizes().get(var_id).copied().unwrap_or(0);
             let name = task.get_variable_name(var_id).unwrap_or("<unknown>");
             let mapping = factory.domain_mapping().get(var_id);
-            println!("  var{var_id}({name}) abs_dom={abs_dom}");
+            debug!("  var{var_id}({name}) abs_dom={abs_dom}");
 
             let concrete_size = task.get_variable_domain_size(var_id).unwrap_or(0);
             let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); abs_dom];
@@ -840,7 +841,7 @@ pub(crate) fn dump_distances(
                         }
                     }
                 }
-                println!("{line}");
+                debug!("{line}");
             }
         }
     }
@@ -889,7 +890,7 @@ pub(crate) fn dump_distances(
     for (i, h) in prop_headers.iter().enumerate() {
         header_line.push_str(&format!("{h:>width$} | ", width = prop_widths[i]));
     }
-    println!("{header_line}");
+    debug!("{header_line}");
 
     let mut sep = String::new();
     sep.push_str("------|-------|----------|");
@@ -901,7 +902,7 @@ pub(crate) fn dump_distances(
         sep.push_str(&"-".repeat(w + 2));
         sep.push('|');
     }
-    println!("{sep}");
+    debug!("{sep}");
 
     for state_hash in 0..(num_states) {
         let dist = table
@@ -962,8 +963,8 @@ pub(crate) fn dump_distances(
             ));
         }
 
-        println!("{line}");
+        debug!("{line}");
     }
 
-    println!();
+    debug!("");
 }

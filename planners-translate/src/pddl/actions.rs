@@ -2,6 +2,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use log::debug;
+
 use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
 use super::effects::{Effect, EffectKind, EffectType};
 use super::f_expression::{
@@ -87,13 +89,13 @@ impl Action {
 
     /// Python: def dump(self)
     pub fn dump(&self) {
-        println!("Action {} ({} params)", self.name, self.parameters.len());
-        println!("  precondition: {}", self.precondition);
+        debug!("Action {} ({} params)", self.name, self.parameters.len());
+        debug!("  precondition: {}", self.precondition);
         for eff in &self.effects {
             eff.dump();
         }
         if let Some(ref cost) = self.cost {
-            println!("  cost: {}", cost);
+            debug!("  cost: {}", cost);
         }
     }
 
@@ -288,22 +290,22 @@ impl PropositionalAction {
     }
 
     pub fn dump(&self) {
-        println!("PropositionalAction {}", self.name);
-        println!("  Preconditions:");
+        debug!("PropositionalAction {}", self.name);
+        debug!("  Preconditions:");
         for p in &self.precondition {
-            println!("    {}", p);
+            debug!("    {}", p);
         }
-        println!("  Add effects:");
+        debug!("  Add effects:");
         for (cond, atom) in &self.add_effects {
-            println!("    {} <- {:?}", atom, cond);
+            debug!("    {} <- {:?}", atom, cond);
         }
-        println!("  Del effects:");
+        debug!("  Del effects:");
         for (cond, atom) in &self.del_effects {
-            println!("    {} <- {:?}", atom, cond);
+            debug!("    {} <- {:?}", atom, cond);
         }
-        println!("  Assign effects:");
+        debug!("  Assign effects:");
         for (cond, assign) in &self.assign_effects {
-            println!("    {} <- {:?}", assign, cond);
+            debug!("    {} <- {:?}", assign, cond);
         }
     }
 }

@@ -2,6 +2,7 @@
 mod tests;
 
 use clap::Parser;
+use log::{debug, info};
 use ordered_float::NotNan;
 use planners_cli_utils::*;
 use planners_preprocess::run_preprocess;
@@ -38,6 +39,24 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+use std::io::Write;
+
+pub fn init_logger(level: log::LevelFilter) -> Result<(), log::SetLoggerError> {
+    let mut builder = env_logger::Builder::new();
+    builder.filter_level(level);
+    builder.format(|formatter, record| {
+        writeln!(
+            formatter,
+            "[{}] {}: {}",
+            formatter.timestamp_seconds(),
+            record.level(),
+            record.args()
+        )
+    });
+
+    builder.try_init()
+}
+
 type OpenListElements = (Reverse<NotNan<f64>>, Reverse<NotNan<f64>>, usize);
 
 #[derive(Parser, Debug, Clone)]
@@ -48,6 +67,9 @@ pub struct PlannersCli {
 
     #[arg(long = "max-time", value_name = "DURATION", value_parser = parse_time_limit)]
     pub max_time: Option<Duration>,
+
+    #[arg(long = "log-level")]
+    pub log_level: Option<log::LevelFilter>,
 
     #[arg(long, hide = true)]
     pub internal_run: bool,
@@ -70,6 +92,10 @@ pub struct PlannersCli {
 pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     let current_executable = std::env::current_exe()?;
     let mut child_args = vec![OsString::from("--internal-run")];
+    if let Some(level) = cli.log_level {
+        child_args.push(OsString::from("--log-level"));
+        child_args.push(OsString::from(level.to_string()));
+    }
     child_args.push(OsString::from("--search"));
     child_args.push(OsString::from(cli.search.to_string()));
     child_args.extend(cli.inputs.iter().cloned().map(OsString::from));
@@ -111,11 +137,11 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     let start_time = std::time::Instant::now();
     let task = NumericRootTask::from_file(sas_file);
     let parse_time = start_time.elapsed();
-    println!("Parsed numeric SAS output in: {:?}", parse_time);
+    info!("Parsed numeric SAS output in: {:?}", parse_time);
 
-    println!("=== Search Engine ===");
-    println!("File: {}", sas_file);
-    println!(
+    info!("=== Search Engine ===");
+    info!("File: {}", sas_file);
+    info!(
         "Variables: {} regular, {} numeric",
         task.variables().len(),
         task.numeric_variables().len()
@@ -133,7 +159,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                 planners_searcher::HeuristicSpec::CanonicalDomainAbstractions(config) => {
                     let generator =
                         DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
-                    println!("Building canonical domain abstractions (CEGAR)...");
+                    info!("Building canonical domain abstractions (CEGAR)...");
                     let abstractions = generator.generate_collection(task_ref).map_err(|e| {
                         std::io::Error::other(format!(
                             "failed to build canonical domain abstractions: {e:#}"
@@ -149,7 +175,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     ) as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>)
                 }
                 planners_searcher::HeuristicSpec::DomainAbstraction(domain_config) => {
-                    println!("Building domain abstraction (CEGAR)...");
+                    info!("Building domain abstraction (CEGAR)...");
                     let mut config = CegarConfig::default();
                     config.max_abstraction_size = domain_config.max_abstraction_size;
                     config.use_wildcard_plans = domain_config.use_wildcard_plans;
@@ -203,7 +229,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                 planners_searcher::HeuristicSpec::MultiDomainAbstractions(config) => {
                     let generator =
                         DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
-                    println!("Building multiple domain abstractions (CEGAR)...");
+                    info!("Building multiple domain abstractions (CEGAR)...");
                     let abstractions = generator.generate_collection(task_ref).map_err(|e| {
                         std::io::Error::other(format!(
                             "failed to build multi domain abstractions: {e:#}"
@@ -228,7 +254,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                 },
             );
 
-            println!("Starting A* search with {:?}...", heuristic);
+            info!("Starting A* search with {:?}...", heuristic);
             search.search()
         }
         planners_searcher::SearchSpec::DaDebug => run_da_debug(
@@ -324,7 +350,7 @@ fn build_da_heuristic(
     task: &dyn AbstractNumericTask,
     name: Option<String>,
 ) -> std::io::Result<DomainAbstractionHeuristic> {
-    println!("Building domain abstraction (CEGAR)...");
+    info!("Building domain abstraction (CEGAR)...");
     let config = CegarConfig {
         debug: true,
         ..Default::default()
@@ -360,7 +386,7 @@ struct AdmissibilityWitness {
 
 fn first_witness_line(prefix: &str, witness: &Option<AdmissibilityWitness>) {
     match witness {
-        Some(witness) => println!(
+        Some(witness) => debug!(
             "[{prefix}] first {} witness: sid={} g={:.3} h={:.3} f={:.3} blind_remaining={:.3} delta={:.3}",
             witness.phase,
             witness.state_id,
@@ -370,7 +396,7 @@ fn first_witness_line(prefix: &str, witness: &Option<AdmissibilityWitness>) {
             witness.blind_remaining,
             witness.h_value - witness.blind_remaining,
         ),
-        None => println!("[{prefix}] no inadmissible states found."),
+        None => debug!("[{prefix}] no inadmissible states found."),
     }
 }
 
@@ -704,7 +730,7 @@ fn print_witness_details(
         exact_remaining_plan(task, state_registry, &witness_state, operator_costs)?;
     let (props, nums) = format_state_snapshot(task, state_registry, &witness_state)?;
 
-    println!(
+    debug!(
         "[{label}] {} witness details: sid={} g={:.3} h={:.3} f={:.3} blind_remaining={:.3} delta={:.3}",
         witness.phase,
         witness.state_id,
@@ -714,14 +740,14 @@ fn print_witness_details(
         witness.blind_remaining,
         witness.h_value - witness.blind_remaining,
     );
-    println!(
+    info!(
         "[{label}] prefix_len={} prefix={}",
         prefix_plan.len(),
         format_operator_sequence(&prefix_plan)
     );
-    println!("[{label}] state props: {props}");
-    println!("[{label}] state nums: {nums}");
-    println!(
+    info!("[{label}] state props: {props}");
+    info!("[{label}] state nums: {nums}");
+    info!(
         "[{label}] exact_suffix_len={} exact_suffix_cost={:.3} exact_suffix={}",
         exact_suffix_plan.len(),
         exact_suffix_cost,
@@ -810,7 +836,7 @@ fn run_da_debug(
     mut state_registry: StateRegistry<'_>,
     _time_limit: Option<Duration>,
 ) -> std::io::Result<SearchResult> {
-    println!(
+    debug!(
         "Running da_debug(): build terminal domain abstraction, replay wildcard plan, and compare h(s) to exact remaining distance."
     );
 
@@ -850,7 +876,7 @@ fn run_da_debug(
     let mut total_cost = 0.0;
     let mut witness: Option<(usize, f64, f64)> = None;
 
-    println!(
+    debug!(
         "[DA_DEBUG] wildcard steps={}",
         wildcard_plan.wildcard_plan.len()
     );
@@ -858,7 +884,7 @@ fn run_da_debug(
     let initial_h = evaluate_da_heuristic(task, &state_registry, &heuristic, &current_state, 0.0)?;
     let initial_exact =
         exact_remaining_distance(task, &mut state_registry, &current_state, &operator_costs)?;
-    println!(
+    debug!(
         "[DA_DEBUG] state=0 g=0.000 h={initial_h:.3} exact_remaining={initial_exact:.3} delta={:.3}",
         initial_h - initial_exact
     );
@@ -913,7 +939,7 @@ fn run_da_debug(
         )?;
         let exact_remaining =
             exact_remaining_distance(task, &mut state_registry, &current_state, &operator_costs)?;
-        println!(
+        debug!(
             "[DA_DEBUG] state={} g={:.3} step={} op=[{}:{}] h={:.3} exact_remaining={:.3} delta={:.3}",
             step_idx + 1,
             total_cost,
@@ -930,7 +956,7 @@ fn run_da_debug(
     }
 
     if let Some((state_index, h_value, exact_remaining)) = witness {
-        println!(
+        debug!(
             "[DA_DEBUG][WITNESS] first inadmissible state={} h={:.3} exact_remaining={:.3} delta={:.3}",
             state_index,
             h_value,
@@ -938,16 +964,16 @@ fn run_da_debug(
             h_value - exact_remaining
         );
     } else {
-        println!(
+        debug!(
             "[DA_DEBUG] no inadmissibility witness found along the final wildcard-plan execution."
         );
     }
 
     let solved = state_is_goal(task, &state_registry, &current_state);
     if solved {
-        println!("[DA_DEBUG] replayed concrete plan reaches the goal.");
+        debug!("[DA_DEBUG] replayed concrete plan reaches the goal.");
     } else {
-        println!("[DA_DEBUG] replayed concrete plan does not reach the goal.");
+        debug!("[DA_DEBUG] replayed concrete plan does not reach the goal.");
     }
 
     Ok(SearchResult {
@@ -978,7 +1004,7 @@ fn run_astar_da_debug(
     mut state_registry: StateRegistry<'_>,
     _time_limit: Option<Duration>,
 ) -> std::io::Result<SearchResult> {
-    println!(
+    debug!(
         "Running astar_da_debug(): execute DA-guided A* and compare h(s) to exact remaining distance on the states A* actually touches."
     );
 
@@ -1255,7 +1281,7 @@ fn run_astar_da_debug(
         }
     };
 
-    println!(
+    debug!(
         "[ASTAR_DA_DEBUG] checked {} evaluated state(s) and {} expanded state(s).",
         evaluated_checks, expanded_checks
     );
@@ -1269,7 +1295,7 @@ fn run_astar_da_debug(
         &operator_costs,
     )?;
     match &first_expanded_witness {
-        Some(witness) => println!(
+        Some(witness) => debug!(
             "[ASTAR_DA_DEBUG] first expanded witness: sid={} g={:.3} h={:.3} f={:.3} blind_remaining={:.3} delta={:.3}",
             witness.state_id,
             witness.g_value,
@@ -1278,7 +1304,7 @@ fn run_astar_da_debug(
             witness.blind_remaining,
             witness.h_value - witness.blind_remaining,
         ),
-        None => println!("[ASTAR_DA_DEBUG] no inadmissible expanded states found."),
+        None => debug!("[ASTAR_DA_DEBUG] no inadmissible expanded states found."),
     }
     print_witness_details(
         "ASTAR_DA_DEBUG_EXPANDED",

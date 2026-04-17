@@ -1,6 +1,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::os::unix::process::ExitStatusExt;
 
+use log::info;
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -307,15 +308,15 @@ pub fn normalize_wrapped_exit(
 ) -> i32 {
     if let Some(signal) = status.signal() {
         if signal == libc::SIGXCPU && time_limit.is_some() {
-            println!("Time limit reached. Abort search.");
+            info!("Time limit reached. Abort search.");
             return EXIT_TIMEOUT;
         }
 
         if memory_limit.is_some()
             && (signal == libc::SIGABRT || signal == libc::SIGSEGV || signal == libc::SIGKILL)
         {
-            println!("Failed to allocate memory.");
-            println!("Memory limit has been reached.");
+            info!("Failed to allocate memory.");
+            info!("Memory limit has been reached.");
             return EXIT_OUT_OF_MEMORY;
         }
     }
@@ -323,7 +324,7 @@ pub fn normalize_wrapped_exit(
     let exit_code = wrapper_exit_code(status);
 
     if time_limit.is_some() && exit_code == 128 + libc::SIGXCPU {
-        println!("Time limit reached. Abort search.");
+        info!("Time limit reached. Abort search.");
         return EXIT_TIMEOUT;
     }
 
@@ -332,8 +333,8 @@ pub fn normalize_wrapped_exit(
             || exit_code == 128 + libc::SIGSEGV
             || exit_code == 128 + libc::SIGKILL)
     {
-        println!("Failed to allocate memory.");
-        println!("Memory limit has been reached.");
+        info!("Failed to allocate memory.");
+        info!("Memory limit has been reached.");
         return EXIT_OUT_OF_MEMORY;
     }
 

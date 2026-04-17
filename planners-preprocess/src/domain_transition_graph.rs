@@ -1,6 +1,8 @@
 use std::cmp::Ordering;
 use std::io::Write;
 
+use log::debug;
+
 use crate::Condition;
 use crate::axiom::AxiomRelational;
 use crate::fact::ExplicitFact;
@@ -205,14 +207,14 @@ impl DomainTransitionGraph {
     }
 
     pub fn dump(&self, vars: &[ExplicitVariable]) {
-        println!("Level: {}", self.level);
+        debug!("Level: {}", self.level);
         let num_vertices = self.vertices.len();
         for i in 0..num_vertices {
-            println!("  From value {}:", i);
+            debug!("  From value {}:", i);
             for trans in &self.vertices[i] {
-                println!("    To value {}", trans.target);
+                debug!("    To value {}", trans.target);
                 for cond in &trans.condition {
-                    println!("      if {} = {}", vars[cond.var].get_name(), cond.value);
+                    debug!("      if {} = {}", vars[cond.var].get_name(), cond.value);
                 }
             }
         }

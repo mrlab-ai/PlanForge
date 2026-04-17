@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use log::debug;
+
 use crate::fact::ExplicitFact;
 use crate::helper_functions::{InputStream, check_magic};
 use crate::variable::ExplicitVariable;
@@ -52,11 +54,11 @@ impl MutexGroup {
     }
 
     pub fn dump(&self, vars: &[ExplicitVariable]) {
-        println!("mutex group of size {}:", self.facts.len());
+        debug!("mutex group of size {}:", self.facts.len());
         for fact in &self.facts {
             let var = fact.var;
             let value = fact.value;
-            println!(
+            debug!(
                 "   {} = {} ({})",
                 vars[var].get_name(),
                 value,

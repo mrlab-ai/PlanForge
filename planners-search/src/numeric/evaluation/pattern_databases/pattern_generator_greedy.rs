@@ -3,12 +3,13 @@ mod tests;
 
 use std::fmt;
 
+use log::info;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use serde::{Deserialize, Serialize};
 
 use super::numeric_size_estimator::NumericSizeEstimator;
-use super::pattern_database::PdbHeuristicConfig;
 use super::numeric_support::NumericSupportContext;
+use super::pattern_database::PdbHeuristicConfig;
 use super::projected_task::Pattern;
 use super::variable_order_finder::{GreedyVariableOrderType, VariableOrderFinder};
 
@@ -112,7 +113,7 @@ pub fn generate_greedy_pattern(
     }
 
     validate_and_normalize_pattern(task, &numeric_support, &mut pattern);
-    println!(
+    info!(
         "Greedy pattern: propositional {:?}; numeric {:?}",
         pattern.regular, pattern.numeric
     );

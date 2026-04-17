@@ -1,10 +1,14 @@
 use clap::Parser;
+use log::info;
 use planners_preprocess::run_preprocess;
-use planners_preprocessor::PlannersPreprocessorCli;
+use planners_preprocessor::{PlannersPreprocessorCli, init_logger};
 use planners_translator::translate_to_sas;
 
 fn main() -> std::io::Result<()> {
     let cli = PlannersPreprocessorCli::parse();
+
+    init_logger(cli.log_level.unwrap_or(log::LevelFilter::Info))
+        .expect("Error initialising logging");
     if cli.inputs.len() == 1 {
         run_preprocess(&[cli.inputs[0].to_string(), "output.sas".to_string()]);
     } else if cli.inputs.len() == 2 {
@@ -17,7 +21,7 @@ fn main() -> std::io::Result<()> {
 
     let start_time = std::time::Instant::now();
     let parse_time = start_time.elapsed();
-    println!("Parsed numeric SAS output in: {:?}", parse_time);
+    info!("Parsed numeric SAS output in: {:?}", parse_time);
 
     Ok(())
 }

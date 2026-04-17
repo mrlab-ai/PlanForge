@@ -3,6 +3,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 
+use log::info;
+
 use super::axiom_rules;
 use super::fact_groups;
 use super::normalize::NormalizableTask;
@@ -1349,9 +1351,9 @@ fn translate_task(
 
 fn trivial_task(solvable: bool, msg: &str) -> SASTask {
     if solvable {
-        println!("{}! Generating solvable task...", msg);
+        info!("{}! Generating solvable task...", msg);
     } else {
-        println!("{}! Generating unsolvable task...", msg);
+        info!("{}! Generating unsolvable task...", msg);
     }
     simplify::trivial_task(solvable)
 }
@@ -1373,7 +1375,7 @@ fn build_mutex_key(
                     group_key.push((var, val));
                 }
             } else {
-                println!("not in strips_to_sas, left out: {:?}", fact);
+                info!("not in strips_to_sas, left out: {:?}", fact);
             }
         }
         group_keys.push(group_key);
@@ -1593,11 +1595,11 @@ pub fn translate_task_from_grounded_internal(
             .collect::<Vec<_>>(),
     )?;
 
-    println!(
+    info!(
         "{} effect conditions simplified",
         simplified_effect_condition_counter
     );
-    println!(
+    info!(
         "{} implied preconditions added",
         added_implied_precondition_counter
     );
@@ -1626,8 +1628,8 @@ pub fn translate_task_from_grounded_internal(
 // ============================================================
 
 pub fn dump_statistics(sas_task: &SASTask) {
-    println!("Translator variables: {}", sas_task.variables.ranges.len());
-    println!(
+    info!("Translator variables: {}", sas_task.variables.ranges.len());
+    info!(
         "Translator derived variables: {}",
         sas_task
             .variables
@@ -1636,13 +1638,13 @@ pub fn dump_statistics(sas_task: &SASTask) {
             .filter(|&&l| l >= 0)
             .count()
     );
-    println!(
+    info!(
         "Translator facts: {}",
         sas_task.variables.ranges.iter().sum::<usize>()
     );
-    println!("Translator goal facts: {}", sas_task.goal.pairs.len());
-    println!("Translator mutex groups: {}", sas_task.mutexes.len());
-    println!(
+    info!("Translator goal facts: {}", sas_task.goal.pairs.len());
+    info!("Translator mutex groups: {}", sas_task.mutexes.len());
+    info!(
         "Translator total mutex groups size: {}",
         sas_task
             .mutexes
@@ -1650,9 +1652,9 @@ pub fn dump_statistics(sas_task: &SASTask) {
             .map(|m| m.get_encoding_size())
             .sum::<usize>()
     );
-    println!("Translator operators: {}", sas_task.operators.len());
-    println!("Translator axioms: {}", sas_task.axioms.len());
-    println!("Translator task size: {}", sas_task.get_encoding_size());
+    info!("Translator operators: {}", sas_task.operators.len());
+    info!("Translator axioms: {}", sas_task.axioms.len());
+    info!("Translator task size: {}", sas_task.get_encoding_size());
 }
 
 // ============================================================

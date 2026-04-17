@@ -2,6 +2,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use log::{debug, warn};
+
 use super::actions::Action;
 use super::axioms::{Axiom, NumericAxiom};
 use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
@@ -155,16 +157,16 @@ impl Task {
 
     /// Python: def dump(self)
     pub fn dump(&self) {
-        println!("Task: {} (domain: {})", self.task_name, self.domain_name);
-        println!("  {} types", self.types.len());
-        println!("  {} objects", self.objects.len());
-        println!("  {} predicates", self.predicates.len());
-        println!("  {} functions", self.functions.len());
-        println!("  {} init facts", self.init.len());
-        println!("  {} numeric init", self.num_init.len());
-        println!("  goal: {}", self.goal);
-        println!("  {} actions", self.actions.len());
-        println!("  {} axioms", self.axioms.len());
+        debug!("Task: {} (domain: {})", self.task_name, self.domain_name);
+        debug!("  {} types", self.types.len());
+        debug!("  {} objects", self.objects.len());
+        debug!("  {} predicates", self.predicates.len());
+        debug!("  {} functions", self.functions.len());
+        debug!("  {} init facts", self.init.len());
+        debug!("  {} numeric init", self.num_init.len());
+        debug!("  goal: {}", self.goal);
+        debug!("  {} actions", self.actions.len());
+        debug!("  {} axioms", self.axioms.len());
     }
 }
 
@@ -349,9 +351,9 @@ impl DerivedFunctionAdministrator {
     }
 
     pub fn dump(&self) {
-        println!("DerivedFunctionAdministrator:");
+        debug!("DerivedFunctionAdministrator:");
         for (key, axiom) in &self.derived_functions {
-            println!("  {:?} -> {} ({})", key, axiom.get_head(), axiom);
+            debug!("  {:?} -> {} ({})", key, axiom.get_head(), axiom);
         }
     }
 }
@@ -375,7 +377,7 @@ pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
     let mut seen = HashSet::new();
     for item in lst {
         if !seen.insert(item) {
-            eprintln!(
+            warn!(
                 "Warning: duplicate {} in {}: {}",
                 what_type, what_list, item
             );

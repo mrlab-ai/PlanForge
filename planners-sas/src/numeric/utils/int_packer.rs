@@ -1,3 +1,5 @@
+use log::error;
+
 use crate::numeric::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType};
 
 #[cfg(test)]
@@ -123,7 +125,7 @@ impl IntDoublePacker {
                 num_vars_in_bin += 1;
             } else {
                 // This shouldn't happen because of the `is_empty()` check above
-                eprintln!(
+                error!(
                     "Unexpected: no variable with {} bits available for bin {}",
                     bits, bin_index
                 );

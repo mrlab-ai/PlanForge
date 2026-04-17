@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use log::debug;
+
 use crate::helper_functions::{InputStream, check_magic};
 use crate::operator::{CompOperator, FOperator, stringify};
 use crate::variable::{ExplicitVariable, NumericVariable};
@@ -67,19 +69,19 @@ impl AxiomRelational {
     }
 
     pub fn dump(&self, vars: &[ExplicitVariable]) {
-        println!("axiom:");
-        print!("conditions:");
+        debug!("axiom:");
+        debug!("conditions:");
         for cond in &self.conditions {
-            print!("  {} := {}", vars[cond.var].get_name(), cond.cond);
+            debug!("  {} := {}", vars[cond.var].get_name(), cond.cond);
         }
-        println!();
-        println!("derived:");
-        println!(
+        debug!("");
+        debug!("derived:");
+        debug!(
             "{} -> {}",
             vars[self.effect_var].get_name(),
             self.effect_val
         );
-        println!();
+        debug!("");
     }
 
     pub fn get_encoding_size(&self) -> usize {
@@ -195,8 +197,8 @@ impl AxiomFunctionalComparison {
         let effect_var = self.effect_var;
         let left_var = self.left_var;
         let right_var = self.right_var;
-        println!("functional comparison axiom:");
-        println!(
+        debug!("functional comparison axiom:");
+        debug!(
             "{} := {} {} {}",
             vars[effect_var].get_name(),
             numeric_vars[left_var].get_name(),
@@ -300,8 +302,8 @@ impl AxiomNumericComputation {
         let effect_var = self.effect_var;
         let left_var = self.left_var;
         let right_var = self.right_var;
-        println!("functional assignment axiom:");
-        println!(
+        debug!("functional assignment axiom:");
+        debug!(
             "{} := {} {} {}",
             num_vars[effect_var].get_name(),
             num_vars[left_var].get_name(),

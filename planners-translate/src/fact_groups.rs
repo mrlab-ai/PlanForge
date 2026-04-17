@@ -2,6 +2,8 @@
 /// Groups atoms into mutex groups / FDR variables.
 use std::collections::{HashMap, HashSet};
 
+use log::info;
+
 use super::invariant_finder;
 use super::options;
 use super::pddl::conditions::*;
@@ -147,7 +149,7 @@ fn choose_groups(groups: &[Vec<Atom>], reachable_facts: &HashSet<Atom>) -> Vec<V
         }
         result.push(group);
     }
-    println!("{} uncovered facts", uncovered_facts.len());
+    info!("{} uncovered facts", uncovered_facts.len());
     for fact in &uncovered_facts {
         result.push(vec![fact.clone()]);
     }
@@ -207,20 +209,20 @@ pub fn compute_groups(
 ) -> (Vec<Vec<Atom>>, Vec<Vec<Atom>>, Vec<Vec<String>>) {
     let groups = invariant_finder::get_groups(task, reachable_action_params);
 
-    println!("Instantiating groups...");
+    info!("Instantiating groups...");
     let groups = instantiate_groups(&groups, task, atoms);
 
     let groups = sort_groups(groups);
 
-    println!("Collecting mutex groups...");
+    info!("Collecting mutex groups...");
     let mutex_groups = collect_all_mutex_groups(&groups, atoms);
 
-    println!("Choosing groups...");
+    info!("Choosing groups...");
     let groups = choose_groups(&groups, atoms);
 
     let groups = sort_groups(groups);
 
-    println!("Building translation key...");
+    info!("Building translation key...");
     let translation_key = build_translation_key(&groups);
 
     (groups, mutex_groups, translation_key)

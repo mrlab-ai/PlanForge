@@ -6,6 +6,7 @@ use std::fmt::{self};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
+use log::debug;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
@@ -1338,7 +1339,7 @@ pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<
                     &numeric_domain_sizes,
                     &partitions,
                 ),
-                None => println!("[Abstract Plan] <none>"),
+                None => debug!("[Abstract Plan] <none>"),
             }
         }
 

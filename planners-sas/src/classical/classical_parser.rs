@@ -1,4 +1,5 @@
 use crate::classical::classical_task::{Axiom, Effect, ExplicitVariable, Fact, Operator, RootTask};
+use log::info;
 use nom::{
     IResult, Parser,
     bytes::complete::tag,
@@ -65,7 +66,7 @@ fn parse_variable(input: &str) -> IResult<&str, ExplicitVariable> {
 fn parse_all_variables(input: &str) -> IResult<&str, Vec<ExplicitVariable>> {
     let (input, num_variables) = u32(input)?;
     let (input, _) = line_ending(input)?;
-    println!("Number of variables: {}", num_variables);
+    info!("Number of variables: {}", num_variables);
     let mut variables = Vec::new();
     let mut input = input;
     for _ in 0..num_variables {
@@ -298,18 +299,18 @@ fn parse_axioms(input: &str) -> IResult<&str, Vec<Axiom>> {
 
 pub fn parse_sas_output(input: &str) -> IResult<&str, RootTask> {
     let (input, version) = parse_version(input)?;
-    println!("Parsed version: {}", version);
+    info!("Parsed version: {}", version);
     let (input, metric) = parse_metric(input)?;
-    println!("Parsed metric: {}", metric);
+    info!("Parsed metric: {}", metric);
 
     let (input, variables) = parse_all_variables(input)?;
 
     let (input, mutexes) = parse_mutexes(input)?;
     let (input, states) = parse_state(input)?;
-    println!("Parsed states: {:?}", states);
+    info!("Parsed states: {:?}", states);
 
     let (input, goals) = parse_goal(input)?;
-    println!("Parsed goals: {:?}", goals);
+    info!("Parsed goals: {:?}", goals);
 
     let (input, operators) = parse_operators(input)?;
 

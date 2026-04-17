@@ -1,3 +1,5 @@
+use log::info;
+
 use super::pddl_to_prolog::{Fact, PrologProgram, RuleType};
 /// Port of build_model.py
 /// Forward-chaining model builder for grounding.
@@ -609,7 +611,7 @@ pub fn compute_model(prog: &PrologProgram) -> Vec<Fact> {
 
     let mut queue = Queue::new(fact_atoms);
 
-    println!("Generated {} rules.", rules.len());
+    info!("Generated {} rules.", rules.len());
 
     let mut relevant_atoms = 0;
     let mut auxiliary_atoms = 0;
@@ -631,10 +633,10 @@ pub fn compute_model(prog: &PrologProgram) -> Vec<Fact> {
         }
     }
 
-    println!("{} relevant atoms", relevant_atoms);
-    println!("{} auxiliary atoms", auxiliary_atoms);
-    println!("{} final queue length", queue.queue.len());
-    println!("{} total queue pushes", queue.num_pushes);
+    info!("{} relevant atoms", relevant_atoms);
+    info!("{} auxiliary atoms", auxiliary_atoms);
+    info!("{} final queue length", queue.queue.len());
+    info!("{} total queue pushes", queue.num_pushes);
 
     queue.queue.into_iter().map(|a| a.to_fact()).collect()
 }

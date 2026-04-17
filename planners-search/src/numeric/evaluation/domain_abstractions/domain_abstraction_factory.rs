@@ -1072,7 +1072,7 @@ impl DomainAbstractionFactory {
                 );
                 // TODO: The next line should be impossible. Debug
                 // if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
-                //     eprintln!(
+                //     warn!(
                 //         "[DA_OOB] SKIPPED predecessor_base={predecessor_base_i64} num_states={num_states} base_state={base_state} hash_effect={}",
                 //         op.hash_effect
                 //     );
