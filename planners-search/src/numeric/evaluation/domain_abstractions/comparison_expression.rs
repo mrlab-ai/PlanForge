@@ -12,6 +12,13 @@ pub struct Interval {
     pub upper_closed: bool,
 }
 
+const EMPTY_INTERVAL: Interval = Interval {
+    lower: 1.0,
+    upper: 0.0,
+    lower_closed: false,
+    upper_closed: false,
+};
+
 impl Interval {
     #[inline]
     pub fn new(lower: f64, upper: f64, lower_closed: bool, upper_closed: bool) -> Self {
@@ -188,7 +195,7 @@ impl ArithOp {
             ArithOp::Add => lhs + rhs,
             ArithOp::Sub => {
                 if lhs.is_empty() || rhs.is_empty() {
-                    return Interval::open(1.0, 0.0);
+                    return EMPTY_INTERVAL;
                 }
                 Interval {
                     lower: lhs.lower - rhs.upper,
@@ -200,7 +207,7 @@ impl ArithOp {
             }
             ArithOp::Mul => {
                 if lhs.is_empty() || rhs.is_empty() {
-                    return Interval::open(1.0, 0.0);
+                    return EMPTY_INTERVAL;
                 }
                 let lhs_bounds = [(lhs.lower, lhs.lower_closed), (lhs.upper, lhs.upper_closed)];
                 let rhs_bounds = [(rhs.lower, rhs.lower_closed), (rhs.upper, rhs.upper_closed)];
@@ -258,7 +265,7 @@ impl ArithOp {
             }
             ArithOp::Div => {
                 if lhs.is_empty() || rhs.is_empty() {
-                    return Interval::open(1.0, 0.0);
+                    return EMPTY_INTERVAL;
                 }
 
                 // If divisor contains 0, we conservatively give up.
@@ -425,8 +432,7 @@ impl Expr {
     fn alloc_arith_cache_slot(&mut self) -> usize {
         let idx = self.arith_cache.len();
         self.arith_cache.push((false, 0.0));
-        self.arith_interval_cache
-            .push((false, Interval::open(1.0, 0.0)));
+        self.arith_interval_cache.push((false, EMPTY_INTERVAL));
         idx
     }
 

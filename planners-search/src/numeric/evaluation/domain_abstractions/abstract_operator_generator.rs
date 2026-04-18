@@ -48,7 +48,6 @@ impl AbstractOperator {
         preconditions.extend_from_slice(prev_pairs);
         preconditions.sort();
         debug_assert!(preconditions.windows(2).all(|w| w[0].var != w[1].var));
-        debug_assert!(preconditions.windows(2).all(|w| w[0].var != w[1].var));
 
         let mut regression_preconditions: Vec<ExplicitFact> = prev_pairs.to_vec();
         regression_preconditions.extend_from_slice(eff_pairs);
@@ -253,8 +252,12 @@ impl AbstractOperatorGenerator {
         let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
         let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
         for var_id in 0..num_vars {
-            if derived_prop.contains(&(var_id)) {
-                domain_mapping.push(vec![0, 1, 2]);
+            if derived_prop.contains(&var_id) {
+                domain_mapping.push(vec![
+                    COMPARISON_TRUE_VAL,
+                    COMPARISON_FALSE_VAL,
+                    COMPARISON_UNKNOWN_VAL,
+                ]);
                 domain_sizes.push(3);
             } else {
                 let size = task
