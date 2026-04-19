@@ -1,8 +1,9 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::fmt::{self};
+pub mod flaw_search;
+
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
@@ -10,116 +11,22 @@ use log::debug;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
-use serde::{Deserialize, Serialize};
 
-use planners_sas::numeric::axioms::AxiomEvaluator;
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType};
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
-use crate::numeric::evaluation::domain_abstractions::utils::fact_is_hold;
+use flaw_search::split_selection::{FlawTreatment, InitSplitMethod};
+use flaw_search::{
+    DependentNumericRefinement, ExecEntirePlanMode, Flaw, NumericFlaw, fix_flaws, get_flaws,
+};
 
 use super::abstract_operator_generator::DomainMapping;
 use super::comparison_expression::Interval;
-use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
-
-/// Mirrors numeric-fd's `NumericFlaw = tuple<int, ap_float, bool>`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct NumericFlaw {
-    pub numeric_var_id: usize,
-    pub value: f64,
-    pub include_in_lower: bool,
-}
-
-/// Mirrors numeric-fd's `PropFlaw = pair<Fact, vector<NumericFlaw>>`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PropFlaw {
-    pub fact: ExplicitFact,
-    pub dependent_numeric_flaws: Vec<NumericFlaw>,
-}
-
-/// Mirrors numeric-fd's `Flaw = variant<PropFlaw, NumericFlaw>`.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Flaw {
-    Propositional(PropFlaw),
-    Numeric(NumericFlaw),
-}
-
-/// How `fix_flaws` chooses which flaws to refine.
-///
-/// This mirrors numeric-fd's `FlawTreatment` options, but our defaults aim to
-/// stay deterministic.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum FlawTreatment {
-    RandomSingleAtom,
-    OneSplitPerAtom,
-    OneSplitPerVariable,
-    MaxRefinedSingleAtom,
-}
-
-impl fmt::Display for FlawTreatment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::RandomSingleAtom => write!(f, "random_single_atom"),
-            Self::OneSplitPerAtom => write!(f, "one_split_per_atom"),
-            Self::OneSplitPerVariable => write!(f, "one_split_per_variable"),
-            Self::MaxRefinedSingleAtom => write!(f, "max_refined_single_atom"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum InitSplitMethod {
-    GoalValue,
-    GoalValueOrRandomIfNonGoal,
-    InitValue,
-    RandomValue,
-    RandomPartition,
-    RandomBinaryPartitionSeparatingInitGoal,
-    Identity,
-}
-
-impl fmt::Display for InitSplitMethod {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::GoalValue => write!(f, "goal_value"),
-            Self::GoalValueOrRandomIfNonGoal => write!(f, "goal_value_or_random_if_non_goal"),
-            Self::InitValue => write!(f, "init_value"),
-            Self::RandomValue => write!(f, "random_value"),
-            Self::RandomPartition => write!(f, "random_partition"),
-            Self::RandomBinaryPartitionSeparatingInitGoal => {
-                write!(f, "random_binary_partition_separating_init_goal")
-            }
-            Self::Identity => write!(f, "identity"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecEntirePlanMode {
-    StopAtFirstFlaw,
-    ExecuteEntirePlan,
-}
-
-impl fmt::Display for ExecEntirePlanMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::StopAtFirstFlaw => write!(f, "stop_at_first_flaw"),
-            Self::ExecuteEntirePlan => write!(f, "execute_entire_plan"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DependentNumericRefinement {
-    None,
-    One,
-    All,
-}
+use super::domain_abstraction_heuristic::{
+    COMPARISON_FALSE_VAL, COMPARISON_TRUE_VAL, COMPARISON_UNKNOWN_VAL,
+};
 
 #[derive(Debug, Clone)]
 pub struct CegarConfig {
@@ -195,270 +102,171 @@ impl Cegar {
     }
 
     pub fn build_abstraction(&self, task: &dyn AbstractNumericTask) -> Result<CegarOutcome> {
-        run_cegar(task, self.config.clone())
+        self.run_cegar(task)
     }
 
-    pub fn get_flaws(
-        &self,
-        task: &dyn AbstractNumericTask,
-        partitions: &NumericPartitions,
-        wildcard_plan: &WildcardPlanResult,
-        execute_entire_plan: bool,
-    ) -> Result<Vec<Flaw>> {
-        let comparison_index = ComparisonAxiomIndex::from_task(task)
-            .map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
-
-        let state_packer = make_prop_state_packer(task);
-        let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
-
-        let mut buffer = vec![0u64; state_packer.num_bins()];
-        set_initial_prop_values(task, &state_packer, &mut buffer);
-        let mut numeric_state: Vec<f64> = task.get_initial_numeric_state_values().to_vec();
-
-        axiom_evaluator
-            .evaluate_arithmetic_axioms(&mut numeric_state)
-            .map_err(|e| {
-                anyhow::anyhow!("failed to evaluate arithmetic axioms for initial state: {e:?}")
-            })?;
-        axiom_evaluator
-            .evaluate(&mut buffer, &mut numeric_state)
-            .map_err(|e| anyhow::anyhow!("failed to evaluate axioms for initial state: {e:?}"))?;
-
-        let mut step_flaws: Vec<Flaw> = Vec::new();
-        let mut collected_flaws: Vec<Flaw> = Vec::new();
-        let mut step_num: usize = 1;
-
-        for equivalent_ops in wildcard_plan.wildcard_plan.iter() {
-            ensure!(
-                step_num < wildcard_plan.abstract_numeric_states.len(),
-                "WildcardPlanResult abstract_numeric_states too short for step {step_num}"
-            );
-            let expected_abs_numeric_state = &wildcard_plan.abstract_numeric_states[step_num];
-
-            step_flaws.clear();
-
-            if !execute_entire_plan {
-                let mut applied = false;
-                for &op_id in equivalent_ops.iter() {
-                    let Some(op) = task.get_operators().get(op_id) else {
-                        continue;
-                    };
-                    let operator_flaws = get_precondition_flaws(
-                        task,
-                        partitions,
-                        &comparison_index,
-                        op,
-                        &state_packer,
-                        &buffer,
-                        &numeric_state,
-                    );
-                    if operator_flaws.is_empty() {
-                        let mut candidate_buffer = buffer.clone();
-                        let numeric_state_before_op = numeric_state.clone();
-                        let mut candidate_numeric_state = numeric_state.clone();
-                        apply_operator_to_state(
-                            op,
-                            &state_packer,
-                            &mut candidate_buffer,
-                            &mut candidate_numeric_state,
-                        );
-                        axiom_evaluator
-                            .evaluate_arithmetic_axioms(&mut candidate_numeric_state)
-                            .map_err(|e| {
-                                anyhow::anyhow!(
-                                    "failed to evaluate arithmetic axioms after operator: {e:?}"
-                                )
-                            })?;
-                        axiom_evaluator
-                            .evaluate(&mut candidate_buffer, &mut candidate_numeric_state)
-                            .map_err(|e| {
-                                anyhow::anyhow!("failed to evaluate axioms after operator: {e:?}")
-                            })?;
-
-                        let deviation_flaws = get_numeric_deviation_flaws(
-                            op,
-                            &numeric_state_before_op,
-                            &candidate_numeric_state,
-                            expected_abs_numeric_state,
-                            partitions,
-                        );
-                        if deviation_flaws.is_empty() {
-                            buffer = candidate_buffer;
-                            numeric_state = candidate_numeric_state;
-                            applied = true;
-                            step_flaws.clear();
-                            break;
-                        } else {
-                            step_flaws.extend(deviation_flaws);
-                        }
-                    } else {
-                        step_flaws.extend(operator_flaws);
-                    }
-                }
-
-                if !applied {
-                    return Ok(step_flaws.clone());
-                }
-                step_num += 1;
-                continue;
-            }
-
-            // Execute_entire_plan mode: keep executing even if flaws are found.
-            let mut chosen_op_id: Option<usize> = None;
-            let mut fallback_op_id: Option<usize> = None;
-            for &op_id in equivalent_ops.iter() {
-                if task.get_operators().get(op_id).is_none() {
-                    continue;
-                }
-                if fallback_op_id.is_none() {
-                    fallback_op_id = Some(op_id);
-                }
-                let op = &task.get_operators()[op_id];
-                let operator_flaws = get_precondition_flaws(
-                    task,
-                    partitions,
-                    &comparison_index,
-                    op,
-                    &state_packer,
-                    &buffer,
-                    &numeric_state,
-                );
-                if operator_flaws.is_empty() {
-                    chosen_op_id = Some(op_id);
-                    break;
-                } else {
-                    step_flaws.extend(operator_flaws);
-                }
-            }
-
-            if !step_flaws.is_empty() {
-                collected_flaws.append(&mut step_flaws);
-            }
-
-            let chosen = chosen_op_id.or(fallback_op_id);
-            if let Some(op_id) = chosen {
-                let op = &task.get_operators()[op_id];
-                let numeric_state_before_op = numeric_state.clone();
-                apply_operator_to_state(op, &state_packer, &mut buffer, &mut numeric_state);
-                axiom_evaluator
-                    .evaluate_arithmetic_axioms(&mut numeric_state)
-                    .map_err(|e| {
-                        anyhow::anyhow!(
-                            "failed to evaluate arithmetic axioms after operator: {e:?}"
-                        )
-                    })?;
-                axiom_evaluator
-                    .evaluate(&mut buffer, &mut numeric_state)
-                    .map_err(|e| {
-                        anyhow::anyhow!("failed to evaluate axioms after operator: {e:?}")
-                    })?;
-
-                let deviation_flaws = get_numeric_deviation_flaws(
-                    op,
-                    &numeric_state_before_op,
-                    &numeric_state,
-                    expected_abs_numeric_state,
-                    partitions,
-                );
-                if !deviation_flaws.is_empty() {
-                    collected_flaws.extend(deviation_flaws);
-                }
-            }
-
-            step_num += 1;
-        }
-
-        let goal_flaws = get_goal_flaws(
-            task,
-            partitions,
-            &comparison_index,
-            &state_packer,
-            &buffer,
-            &numeric_state,
+    fn run_cegar(&self, task: &dyn AbstractNumericTask) -> Result<CegarOutcome> {
+        let config = &self.config;
+        ensure!(
+            config.max_abstraction_size > 0,
+            "max_abstraction_size must be > 0"
         );
-        if execute_entire_plan {
-            collected_flaws.extend(goal_flaws);
-            Ok(collected_flaws)
-        } else {
-            Ok(goal_flaws)
-        }
-    }
+        ensure!(config.max_iterations > 0, "max_iterations must be > 0");
 
-    /// Port of numeric-fd's refinement step (`fix_flaws`).
-    ///
-    /// Return `true` if any refinement was applied.
-    #[allow(clippy::too_many_arguments)]
-    pub fn fix_flaws(
-        &self,
-        task: &dyn AbstractNumericTask,
-        flaws: &[Flaw],
-        domain_mapping: &mut DomainMapping,
-        domain_sizes: &mut [usize],
-        partitions: &mut NumericPartitions,
-        numeric_domain_sizes: &mut [usize],
-        rng: &mut SmallRng,
-        blacklisted_prop_var_ids: &mut HashSet<usize>,
-        blacklisted_numeric_var_ids: &mut HashSet<usize>,
-    ) -> Result<bool> {
-        let comparison_var_ids: HashSet<usize> = task
-            .comparison_axioms()
-            .iter()
-            .map(|ax| ax.get_affected_var_id())
-            .collect();
-        let abstraction_size = compute_abstraction_size(domain_sizes, numeric_domain_sizes);
+        let start = Instant::now();
+        let mut rng = SmallRng::seed_from_u64(config.random_seed.unwrap_or_else(current_time_seed));
 
-        match self.config.flaw_treatment {
-            FlawTreatment::RandomSingleAtom => fix_single_random_flaw(
+        let (mut domain_mapping, mut domain_sizes) = trivial_domain_mapping_and_sizes(task)
+            .context("failed to build trivial domain mapping")?;
+
+        let mut partitions = NumericPartitions::trivial(task);
+        let mut numeric_domain_sizes: Vec<usize> = vec![1; task.numeric_variables().len()];
+        let mut blacklisted_prop_var_ids = config.blacklisted_prop_var_ids.clone();
+        let mut blacklisted_numeric_var_ids = config.blacklisted_numeric_var_ids.clone();
+
+        apply_initial_goal_splits(
+            task,
+            config,
+            &mut rng,
+            &blacklisted_prop_var_ids,
+            &blacklisted_numeric_var_ids,
+            &mut domain_mapping,
+            &mut domain_sizes,
+            &mut partitions,
+            &mut numeric_domain_sizes,
+        );
+
+        let mut iteration: usize = 1;
+        let mut last_step: Option<CegarStep> = None;
+
+        while iteration <= config.max_iterations {
+            if let Some(max_time) = config.max_time
+                && start.elapsed() >= max_time
+            {
+                break;
+            }
+
+            if config.debug {
+                super::utils::debug_print_abstraction_stats(
+                    iteration,
+                    &domain_sizes,
+                    &numeric_domain_sizes,
+                );
+            }
+
+            // TODO: Avoid cloning at all cost.
+            let factory = DomainAbstractionFactory::new(
                 task,
-                flaws,
+                domain_mapping.clone(),
+                domain_sizes.clone(),
+                partitions.clone(),
+                numeric_domain_sizes.clone(),
+            )
+            .with_context(|| {
+                format!("failed to construct DomainAbstractionFactory (iteration {iteration})")
+            })?;
+
+            let wildcard_plan = factory
+                .compute_plan_with_rng(
+                    task,
+                    config.combine_labels,
+                    config.debug,
+                    config.use_wildcard_plans,
+                    if config.use_wildcard_plans {
+                        None
+                    } else {
+                        Some(&mut rng)
+                    },
+                )
+                .with_context(|| {
+                    format!("failed to compute abstract plan (iteration {iteration})")
+                })?;
+            if config.debug {
+                match wildcard_plan.as_ref() {
+                    Some(plan) => super::utils::debug_print_wildcard_plan(
+                        task,
+                        plan,
+                        &domain_sizes,
+                        &numeric_domain_sizes,
+                        &partitions,
+                    ),
+                    None => debug!("[Abstract Plan] <none>"),
+                }
+            }
+
+            let step = CegarStep {
+                factory,
+                wildcard_plan,
+            };
+            last_step = Some(step);
+
+            let Some(plan) = last_step.as_ref().and_then(|s| s.wildcard_plan.as_ref()) else {
+                break;
+            };
+
+            let execute_entire_plan = match config.exec_entire_plan {
+                ExecEntirePlanMode::StopAtFirstFlaw => false,
+                ExecEntirePlanMode::ExecuteEntirePlan => true,
+            };
+
+            let flaws = get_flaws(task, &partitions, plan, execute_entire_plan)
+                .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
+            if config.debug {
+                super::utils::debug_print_flaws(&flaws);
+            }
+            if flaws.is_empty() {
+                break;
+            }
+
+            let before_size = if config.debug {
+                super::utils::compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes)
+            } else {
+                None
+            };
+            let refined = fix_flaws(
                 &self.config,
-                &comparison_var_ids,
-                rng,
-                blacklisted_prop_var_ids,
-                blacklisted_numeric_var_ids,
-                domain_mapping,
-                domain_sizes,
-                partitions,
-                numeric_domain_sizes,
-            ),
-            FlawTreatment::OneSplitPerAtom => fix_flaws_per_atom(
                 task,
-                flaws,
-                &self.config,
-                &comparison_var_ids,
-                blacklisted_prop_var_ids,
-                blacklisted_numeric_var_ids,
-                domain_mapping,
-                domain_sizes,
-                partitions,
-                numeric_domain_sizes,
-            ),
-            FlawTreatment::OneSplitPerVariable => fix_flaws_per_variable(
-                task,
-                flaws,
-                &self.config,
-                &comparison_var_ids,
-                blacklisted_prop_var_ids,
-                blacklisted_numeric_var_ids,
-                domain_mapping,
-                domain_sizes,
-                partitions,
-                numeric_domain_sizes,
-            ),
-            FlawTreatment::MaxRefinedSingleAtom => fix_single_flaw_max_refined(
-                task,
-                flaws,
-                &self.config,
-                &comparison_var_ids,
-                blacklisted_prop_var_ids,
-                blacklisted_numeric_var_ids,
-                domain_mapping,
-                domain_sizes,
-                partitions,
-                numeric_domain_sizes,
-                abstraction_size,
-            ),
+                &flaws,
+                &mut domain_mapping,
+                &mut domain_sizes,
+                &mut partitions,
+                &mut numeric_domain_sizes,
+                &mut rng,
+                &mut blacklisted_prop_var_ids,
+                &mut blacklisted_numeric_var_ids,
+            )
+            .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
+            if config.debug {
+                let after_size = super::utils::compute_abstraction_size_u128(
+                    &domain_sizes,
+                    &numeric_domain_sizes,
+                );
+                super::utils::debug_print_refinement_summary(
+                    before_size,
+                    after_size,
+                    &domain_sizes,
+                    &numeric_domain_sizes,
+                    refined,
+                );
+            }
+            if !refined {
+                break;
+            }
+
+            iteration += 1;
         }
+
+        let last_step = last_step.context("CEGAR did not perform any iterations")?;
+        Ok(CegarOutcome {
+            final_state: CegarState {
+                domain_mapping,
+                domain_sizes,
+                partitions,
+                numeric_domain_sizes,
+                iteration,
+            },
+            last_step,
+        })
     }
 }
 
@@ -591,276 +399,6 @@ fn can_refine_numeric_variable_with_blacklist(
         blacklisted_numeric_var_ids.insert(numeric_var_id);
         false
     }
-}
-
-fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
-    match flaw {
-        Flaw::Propositional(pf) => (0, pf.fact.var, pf.fact.value, 0, false),
-        Flaw::Numeric(nf) => (
-            1,
-            nf.numeric_var_id,
-            0,
-            nf.value.to_bits(),
-            nf.include_in_lower,
-        ),
-    }
-}
-
-fn flaw_variable_key(flaw: &Flaw) -> (u8, usize) {
-    match flaw {
-        Flaw::Propositional(pf) => (0, pf.fact.var),
-        Flaw::Numeric(nf) => (1, nf.numeric_var_id),
-    }
-}
-
-#[allow(unused)]
-fn score_flaw(
-    flaw: &Flaw,
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-    _abstraction_size: usize,
-) -> usize {
-    match flaw {
-        Flaw::Numeric(nf) => numeric_domain_sizes
-            .get(nf.numeric_var_id)
-            .copied()
-            .unwrap_or(0),
-        Flaw::Propositional(pf) => {
-            let var_id = pf.fact.var;
-            let base = domain_sizes.get(var_id).copied().unwrap_or(0);
-            let max_dep = pf
-                .dependent_numeric_flaws
-                .iter()
-                .filter_map(|nf| numeric_domain_sizes.get(nf.numeric_var_id).copied())
-                .max()
-                .unwrap_or(0);
-            base + max_dep
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn fix_single_random_flaw(
-    task: &dyn AbstractNumericTask,
-    flaws: &[Flaw],
-    config: &CegarConfig,
-    comparison_var_ids: &HashSet<usize>,
-    rng: &mut SmallRng,
-    blacklisted_prop_var_ids: &mut HashSet<usize>,
-    blacklisted_numeric_var_ids: &mut HashSet<usize>,
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [usize],
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut [usize],
-) -> Result<bool> {
-    if flaws.is_empty() {
-        return Ok(false);
-    }
-
-    let mut indices: Vec<usize> = (0..flaws.len()).collect();
-    shuffle_indices_with_rng(&mut indices, rng);
-
-    for idx in indices {
-        if try_refine_from_flaw(
-            task,
-            &flaws[idx],
-            config,
-            comparison_var_ids,
-            blacklisted_prop_var_ids,
-            blacklisted_numeric_var_ids,
-            domain_mapping,
-            domain_sizes,
-            partitions,
-            numeric_domain_sizes,
-            DependentNumericRefinement::One,
-        )? {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn fix_flaws_per_atom(
-    task: &dyn AbstractNumericTask,
-    flaws: &[Flaw],
-    config: &CegarConfig,
-    comparison_var_ids: &HashSet<usize>,
-    blacklisted_prop_var_ids: &mut HashSet<usize>,
-    blacklisted_numeric_var_ids: &mut HashSet<usize>,
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [usize],
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut [usize],
-) -> Result<bool> {
-    let mut ordered: Vec<&Flaw> = flaws.iter().collect();
-    ordered.sort_by_key(|a| flaw_atom_key(a));
-
-    let mut changed = false;
-    let mut last: Option<(u8, usize, usize, u64, bool)> = None;
-    for flaw in ordered {
-        let key = flaw_atom_key(flaw);
-        if last.as_ref() == Some(&key) {
-            continue;
-        }
-        last = Some(key);
-        let local_changed = try_refine_from_flaw(
-            task,
-            flaw,
-            config,
-            comparison_var_ids,
-            blacklisted_prop_var_ids,
-            blacklisted_numeric_var_ids,
-            domain_mapping,
-            domain_sizes,
-            partitions,
-            numeric_domain_sizes,
-            DependentNumericRefinement::All,
-        )?;
-        changed = changed || local_changed;
-    }
-    Ok(changed)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn fix_flaws_per_variable(
-    task: &dyn AbstractNumericTask,
-    flaws: &[Flaw],
-    config: &CegarConfig,
-    comparison_var_ids: &HashSet<usize>,
-    blacklisted_prop_var_ids: &mut HashSet<usize>,
-    blacklisted_numeric_var_ids: &mut HashSet<usize>,
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [usize],
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut [usize],
-) -> Result<bool> {
-    let mut ordered: Vec<&Flaw> = flaws.iter().collect();
-    ordered.sort_by_key(|a| flaw_variable_key(a));
-
-    let mut changed = false;
-    let mut last: Option<(u8, usize)> = None;
-
-    for flaw in ordered {
-        let key = flaw_variable_key(flaw);
-        if last.as_ref() == Some(&key) {
-            continue;
-        }
-        last = Some(key);
-        let local_changed = try_refine_from_flaw(
-            task,
-            flaw,
-            config,
-            comparison_var_ids,
-            blacklisted_prop_var_ids,
-            blacklisted_numeric_var_ids,
-            domain_mapping,
-            domain_sizes,
-            partitions,
-            numeric_domain_sizes,
-            DependentNumericRefinement::One,
-        )?;
-        changed = changed || local_changed;
-    }
-    Ok(changed)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn fix_single_flaw_max_refined(
-    task: &dyn AbstractNumericTask,
-    flaws: &[Flaw],
-    config: &CegarConfig,
-    comparison_var_ids: &HashSet<usize>,
-    blacklisted_prop_var_ids: &mut HashSet<usize>,
-    blacklisted_numeric_var_ids: &mut HashSet<usize>,
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [usize],
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut [usize],
-    abstraction_size: usize,
-) -> Result<bool> {
-    if flaws.is_empty() {
-        return Ok(false);
-    }
-
-    #[derive(Clone)]
-    struct Candidate {
-        idx: usize,
-        score: usize,
-        restricted_dep: Option<Vec<NumericFlaw>>,
-    }
-
-    let mut candidates: Vec<Candidate> = Vec::with_capacity(flaws.len());
-    for (idx, flaw) in flaws.iter().enumerate() {
-        let mut restricted_dep: Option<Vec<NumericFlaw>> = None;
-        let score: usize = match flaw {
-            Flaw::Numeric(nf) => numeric_domain_sizes
-                .get(nf.numeric_var_id)
-                .copied()
-                .unwrap_or(0),
-            Flaw::Propositional(pf) => {
-                let var_id = pf.fact.var;
-                let base: usize = domain_sizes.get(var_id).copied().unwrap_or(0);
-                if comparison_var_ids.contains(&var_id) && !pf.dependent_numeric_flaws.is_empty() {
-                    let mut best: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
-                    for nf in pf.dependent_numeric_flaws.iter().cloned() {
-                        let partitions = numeric_domain_sizes
-                            .get(nf.numeric_var_id)
-                            .copied()
-                            .unwrap_or(0);
-                        best.entry(partitions).or_default().push(nf);
-                    }
-                    if let Some((&max_partitions, vec)) = best.iter().next_back() {
-                        restricted_dep = Some(vec.clone());
-                        base + (max_partitions)
-                    } else {
-                        base
-                    }
-                } else {
-                    base
-                }
-            }
-        };
-        candidates.push(Candidate {
-            idx,
-            score,
-            restricted_dep,
-        });
-    }
-
-    // Highest score first; tie-break by stable atom key for determinism.
-    candidates.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
-            .then_with(|| flaw_atom_key(&flaws[a.idx]).cmp(&flaw_atom_key(&flaws[b.idx])))
-    });
-
-    for cand in candidates {
-        let mut chosen = flaws[cand.idx].clone();
-        if let (Flaw::Propositional(pf), Some(restricted)) = (&mut chosen, cand.restricted_dep) {
-            pf.dependent_numeric_flaws = restricted;
-        }
-
-        if try_refine_from_flaw(
-            task,
-            &chosen,
-            config,
-            comparison_var_ids,
-            blacklisted_prop_var_ids,
-            blacklisted_numeric_var_ids,
-            domain_mapping,
-            domain_sizes,
-            partitions,
-            numeric_domain_sizes,
-            DependentNumericRefinement::One,
-        )? {
-            return Ok(true);
-        }
-    }
-
-    let _ = abstraction_size;
-    Ok(false)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1256,167 +794,6 @@ fn apply_initial_goal_splits(
     }
 }
 
-pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<CegarOutcome> {
-    ensure!(
-        config.max_abstraction_size > 0,
-        "max_abstraction_size must be > 0"
-    );
-    ensure!(config.max_iterations > 0, "max_iterations must be > 0");
-
-    let start = Instant::now();
-    let cegar = Cegar::new(config.clone())?;
-    let mut rng = SmallRng::seed_from_u64(config.random_seed.unwrap_or_else(current_time_seed));
-
-    let (mut domain_mapping, mut domain_sizes) =
-        trivial_domain_mapping_and_sizes(task).context("failed to build trivial domain mapping")?;
-
-    let mut partitions = NumericPartitions::trivial(task);
-    let mut numeric_domain_sizes: Vec<usize> = vec![1; task.numeric_variables().len()];
-    let mut blacklisted_prop_var_ids = config.blacklisted_prop_var_ids.clone();
-    let mut blacklisted_numeric_var_ids = config.blacklisted_numeric_var_ids.clone();
-
-    apply_initial_goal_splits(
-        task,
-        &config,
-        &mut rng,
-        &blacklisted_prop_var_ids,
-        &blacklisted_numeric_var_ids,
-        &mut domain_mapping,
-        &mut domain_sizes,
-        &mut partitions,
-        &mut numeric_domain_sizes,
-    );
-
-    let mut iteration: usize = 1;
-    let mut last_step: Option<CegarStep> = None;
-
-    while iteration <= config.max_iterations {
-        if let Some(max_time) = config.max_time
-            && start.elapsed() >= max_time
-        {
-            break;
-        }
-
-        if config.debug {
-            super::utils::debug_print_abstraction_stats(
-                iteration,
-                &domain_sizes,
-                &numeric_domain_sizes,
-            );
-        }
-
-        // TODO: Avoid cloning at all cost.
-        let factory = DomainAbstractionFactory::new(
-            task,
-            domain_mapping.clone(),
-            domain_sizes.clone(),
-            partitions.clone(),
-            numeric_domain_sizes.clone(),
-        )
-        .with_context(|| {
-            format!("failed to construct DomainAbstractionFactory (iteration {iteration})")
-        })?;
-
-        let wildcard_plan = factory
-            .compute_plan_with_rng(
-                task,
-                config.combine_labels,
-                config.debug,
-                config.use_wildcard_plans,
-                if config.use_wildcard_plans {
-                    None
-                } else {
-                    Some(&mut rng)
-                },
-            )
-            .with_context(|| format!("failed to compute abstract plan (iteration {iteration})"))?;
-        if config.debug {
-            match wildcard_plan.as_ref() {
-                Some(plan) => super::utils::debug_print_wildcard_plan(
-                    task,
-                    plan,
-                    &domain_sizes,
-                    &numeric_domain_sizes,
-                    &partitions,
-                ),
-                None => debug!("[Abstract Plan] <none>"),
-            }
-        }
-
-        let step = CegarStep {
-            factory,
-            wildcard_plan,
-        };
-        last_step = Some(step);
-
-        let Some(plan) = last_step.as_ref().and_then(|s| s.wildcard_plan.as_ref()) else {
-            break;
-        };
-
-        let execute_entire_plan = match config.exec_entire_plan {
-            ExecEntirePlanMode::StopAtFirstFlaw => false,
-            ExecEntirePlanMode::ExecuteEntirePlan => true,
-        };
-
-        let flaws = cegar
-            .get_flaws(task, &partitions, plan, execute_entire_plan)
-            .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
-        if config.debug {
-            super::utils::debug_print_flaws(&flaws);
-        }
-        if flaws.is_empty() {
-            break;
-        }
-
-        let before_size = if config.debug {
-            super::utils::compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes)
-        } else {
-            None
-        };
-        let refined = cegar
-            .fix_flaws(
-                task,
-                &flaws,
-                &mut domain_mapping,
-                &mut domain_sizes,
-                &mut partitions,
-                &mut numeric_domain_sizes,
-                &mut rng,
-                &mut blacklisted_prop_var_ids,
-                &mut blacklisted_numeric_var_ids,
-            )
-            .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
-        if config.debug {
-            let after_size =
-                super::utils::compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes);
-            super::utils::debug_print_refinement_summary(
-                before_size,
-                after_size,
-                &domain_sizes,
-                &numeric_domain_sizes,
-                refined,
-            );
-        }
-        if !refined {
-            break;
-        }
-
-        iteration += 1;
-    }
-
-    let last_step = last_step.context("CEGAR did not perform any iterations")?;
-    Ok(CegarOutcome {
-        final_state: CegarState {
-            domain_mapping,
-            domain_sizes,
-            partitions,
-            numeric_domain_sizes,
-            iteration,
-        },
-        last_step,
-    })
-}
-
 fn trivial_domain_mapping_and_sizes(
     task: &dyn AbstractNumericTask,
 ) -> Result<(DomainMapping, Vec<usize>)> {
@@ -1470,22 +847,11 @@ fn make_prop_state_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {
     IntDoublePacker::new(&domain_sizes)
 }
 
-fn set_initial_prop_values(
-    task: &dyn AbstractNumericTask,
-    packer: &IntDoublePacker,
-    buffer: &mut [u64],
-) {
-    let init = task.get_initial_propositional_state_values();
-    for (var_id, &val) in init.iter().enumerate() {
-        packer.set(buffer, var_id, val as u64);
-    }
-}
-
 fn comparison_eval_code(v: Option<bool>) -> usize {
     match v {
-        Some(true) => 0,
-        Some(false) => 1,
-        None => 2,
+        Some(true) => COMPARISON_TRUE_VAL,
+        Some(false) => COMPARISON_FALSE_VAL,
+        None => COMPARISON_UNKNOWN_VAL,
     }
 }
 
@@ -1518,302 +884,19 @@ fn determine_include_in_lower(
     let eval_upper = comparison_eval_code(tree.evaluate_interval(&upper_inputs));
 
     // Mirror numeric-fd's preference: FALSE (=1) over UNKNOWN (=2) over TRUE (=0).
-    if eval_lower == 1 && eval_upper != 1 {
+    if eval_lower == COMPARISON_FALSE_VAL && eval_upper != COMPARISON_FALSE_VAL {
         true
-    } else if eval_upper == 1 && eval_lower != 1 {
+    } else if eval_upper == COMPARISON_FALSE_VAL && eval_lower != COMPARISON_FALSE_VAL {
         false
-    } else if eval_lower == 1 && eval_upper == 1 {
+    } else if eval_lower == COMPARISON_FALSE_VAL && eval_upper == COMPARISON_FALSE_VAL {
         false
-    } else if eval_lower == 2 && eval_upper == 2 {
+    } else if eval_lower == COMPARISON_UNKNOWN_VAL && eval_upper == COMPARISON_UNKNOWN_VAL {
         false
-    } else if eval_lower == 2 {
+    } else if eval_lower == COMPARISON_UNKNOWN_VAL {
         true
-    } else if eval_upper == 2 {
+    } else if eval_upper == COMPARISON_UNKNOWN_VAL {
         false
     } else {
         false
     }
-}
-
-fn dependent_numeric_flaws_for_comparison_prop_var(
-    task: &dyn AbstractNumericTask,
-    partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
-    prop_var_id: usize,
-    numeric_state: &[f64],
-) -> Vec<NumericFlaw> {
-    let Some(tree) = comparison_index.comparison_tree(prop_var_id) else {
-        return vec![];
-    };
-
-    let mut out: Vec<NumericFlaw> = Vec::new();
-    for dep_var_id in tree.regular_numeric_var_dependencies(task) {
-        let Some(&concrete_value) = numeric_state.get(dep_var_id) else {
-            continue;
-        };
-        let include_in_lower =
-            determine_include_in_lower(tree, dep_var_id, concrete_value, numeric_state);
-
-        if can_split_numeric_var(partitions, dep_var_id, concrete_value, include_in_lower) {
-            out.push(NumericFlaw {
-                numeric_var_id: dep_var_id,
-                value: concrete_value,
-                include_in_lower,
-            });
-        } else if can_split_numeric_var(partitions, dep_var_id, concrete_value, !include_in_lower) {
-            out.push(NumericFlaw {
-                numeric_var_id: dep_var_id,
-                value: concrete_value,
-                include_in_lower: !include_in_lower,
-            });
-        }
-    }
-    out
-}
-
-pub fn get_precondition_flaws(
-    task: &dyn AbstractNumericTask,
-    partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
-    op: &planners_sas::numeric::numeric_task::Operator,
-    packer: &IntDoublePacker,
-    buffer: &[u64],
-    numeric_state: &[f64],
-) -> Vec<Flaw> {
-    let mut out: Vec<Flaw> = Vec::new();
-    for pre in op.preconditions().iter() {
-        if !fact_is_hold(pre, packer, buffer) {
-            let prop_var_id = pre.var;
-            let dependent_numeric_flaws =
-                if comparison_index.is_comparison_axiom_variable(prop_var_id) {
-                    dependent_numeric_flaws_for_comparison_prop_var(
-                        task,
-                        partitions,
-                        comparison_index,
-                        prop_var_id,
-                        numeric_state,
-                    )
-                } else {
-                    vec![]
-                };
-            out.push(Flaw::Propositional(PropFlaw {
-                fact: pre.clone(),
-                dependent_numeric_flaws,
-            }));
-        }
-    }
-    out
-}
-
-fn get_goal_flaws(
-    task: &dyn AbstractNumericTask,
-    partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
-    packer: &IntDoublePacker,
-    buffer: &[u64],
-    numeric_state: &[f64],
-) -> Vec<Flaw> {
-    let num_goals = task.get_num_goals();
-    let mut out: Vec<Flaw> = Vec::new();
-    let mut seen: BTreeSet<ExplicitFact> = BTreeSet::new();
-    let mut derived_goal_vars: BTreeSet<usize> = BTreeSet::new();
-    for goal_id in 0..num_goals {
-        let goal_fact = task.get_goal_fact(goal_id);
-        let goal_var = goal_fact.var;
-        let goal_is_derived = task.axioms().iter().any(|ax| ax.var_id() == goal_var);
-        if goal_is_derived {
-            derived_goal_vars.insert(goal_var);
-            continue;
-        }
-        if !fact_is_hold(goal_fact, packer, buffer) && seen.insert(goal_fact.clone()) {
-            let prop_var_id = goal_fact.var;
-            let dependent_numeric_flaws =
-                if comparison_index.is_comparison_axiom_variable(prop_var_id) {
-                    dependent_numeric_flaws_for_comparison_prop_var(
-                        task,
-                        partitions,
-                        comparison_index,
-                        prop_var_id,
-                        numeric_state,
-                    )
-                } else {
-                    vec![]
-                };
-            out.push(Flaw::Propositional(PropFlaw {
-                fact: goal_fact.clone(),
-                dependent_numeric_flaws,
-            }));
-        }
-    }
-
-    // Reconstruct (potentially hidden) goal conditions from propositional goal axioms.
-    for ax in task.axioms().iter() {
-        if ax.conditions().is_empty() {
-            continue;
-        }
-        if !derived_goal_vars.is_empty() && !derived_goal_vars.contains(&ax.var_id()) {
-            continue;
-        }
-        for pre in ax.conditions().iter() {
-            if !fact_is_hold(pre, packer, buffer) && seen.insert(pre.clone()) {
-                let prop_var_id = pre.var;
-                let dependent_numeric_flaws =
-                    if comparison_index.is_comparison_axiom_variable(prop_var_id) {
-                        dependent_numeric_flaws_for_comparison_prop_var(
-                            task,
-                            partitions,
-                            comparison_index,
-                            prop_var_id,
-                            numeric_state,
-                        )
-                    } else {
-                        vec![]
-                    };
-                out.push(Flaw::Propositional(PropFlaw {
-                    fact: pre.clone(),
-                    dependent_numeric_flaws,
-                }));
-            }
-        }
-    }
-    out
-}
-
-pub(crate) fn apply_operator_to_state(
-    op: &planners_sas::numeric::numeric_task::Operator,
-    packer: &IntDoublePacker,
-    buffer: &mut [u64],
-    numeric_state: &mut [f64],
-) {
-    // Propositional effects (respect conditions).
-    for eff in op.effects().iter() {
-        let mut ok = true;
-        for cond in eff.conditions().iter() {
-            if !fact_is_hold(cond, packer, buffer) {
-                ok = false;
-                break;
-            }
-        }
-        if ok {
-            packer.set(buffer, eff.var_id(), eff.value() as u64);
-        }
-    }
-
-    // Numeric assignment effects.
-    for eff in op.assignment_effects().iter() {
-        if eff.is_conditional() {
-            let mut ok = true;
-            for cond in eff.conditions().iter() {
-                if !fact_is_hold(cond, packer, buffer) {
-                    ok = false;
-                    break;
-                }
-            }
-            if !ok {
-                continue;
-            }
-        }
-
-        let assignment_var_id = eff.var_id();
-        let affected_var_id = eff.affected_var_id();
-        if assignment_var_id >= numeric_state.len() || affected_var_id >= numeric_state.len() {
-            continue;
-        }
-        let operand = numeric_state[assignment_var_id];
-        numeric_state[affected_var_id] =
-            planners_sas::numeric::numeric_task::AssignmentOperation::apply(
-                numeric_state[affected_var_id],
-                eff.operation(),
-                operand,
-            );
-    }
-}
-
-fn partition_for_value(
-    partitions: &[super::comparison_expression::Interval],
-    value: f64,
-) -> Option<usize> {
-    partitions.iter().position(|iv| iv.contains(value))
-}
-
-fn can_split_numeric_var(
-    partitions: &NumericPartitions,
-    numeric_var_id: usize,
-    value: f64,
-    include_in_lower: bool,
-) -> bool {
-    let Some(parts) = partitions.partitions(numeric_var_id) else {
-        return false;
-    };
-    let Some(part_id) = parts.iter().position(|iv| iv.contains(value)) else {
-        return false;
-    };
-    parts[part_id].can_split_at(value, include_in_lower)
-}
-
-pub fn get_numeric_deviation_flaws(
-    op: &planners_sas::numeric::numeric_task::Operator,
-    numeric_current_state: &[f64],
-    numeric_successor_state: &[f64],
-    abstract_numeric_successor_state: &[usize],
-    partitions: &NumericPartitions,
-) -> Vec<Flaw> {
-    let mut flaws: Vec<Flaw> = Vec::new();
-
-    let num_vars = numeric_successor_state
-        .len()
-        .min(abstract_numeric_successor_state.len());
-    for var_id in 0..num_vars {
-        let operator_modified_var = op
-            .assignment_effects()
-            .iter()
-            .any(|eff| eff.affected_var_id() == var_id);
-        if !operator_modified_var {
-            continue;
-        }
-
-        let abstract_value = abstract_numeric_successor_state[var_id];
-        let Some(parts) = partitions.partitions(var_id) else {
-            continue;
-        };
-        let Some(correct_abstract_value) =
-            partition_for_value(parts, numeric_successor_state[var_id])
-        else {
-            continue;
-        };
-        if abstract_value == correct_abstract_value {
-            continue;
-        }
-
-        let concrete_next_value = numeric_successor_state[var_id];
-        let concrete_current_value = numeric_current_state
-            .get(var_id)
-            .copied()
-            .unwrap_or(concrete_next_value);
-        if concrete_next_value == concrete_current_value {
-            continue;
-        }
-
-        let operator_increased_value = concrete_next_value > concrete_current_value;
-        let mut include_in_lower = !operator_increased_value;
-
-        if can_split_numeric_var(partitions, var_id, concrete_current_value, include_in_lower) {
-            flaws.push(Flaw::Numeric(NumericFlaw {
-                numeric_var_id: var_id,
-                value: concrete_current_value,
-                include_in_lower,
-            }));
-        } else {
-            include_in_lower = !include_in_lower;
-            if can_split_numeric_var(partitions, var_id, concrete_current_value, include_in_lower) {
-                flaws.push(Flaw::Numeric(NumericFlaw {
-                    numeric_var_id: var_id,
-                    value: concrete_current_value,
-                    include_in_lower,
-                }));
-            }
-        }
-    }
-
-    flaws
 }

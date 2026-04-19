@@ -16,7 +16,8 @@ use rand::{SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 
 use super::cegar::CegarConfig;
-pub use super::cegar::{ExecEntirePlanMode, FlawTreatment, InitSplitMethod};
+pub use super::cegar::flaw_search::ExecEntirePlanMode;
+pub use super::cegar::flaw_search::split_selection::{FlawTreatment, InitSplitMethod};
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::domain_abstraction_generator::DomainAbstractionGenerator;
 use super::utils::compute_abstraction_size_u128;

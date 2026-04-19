@@ -6,12 +6,16 @@ use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
-use super::cegar::Flaw;
+use super::cegar::flaw_search::Flaw;
 use super::comparison_expression::Interval;
 use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{
     AbstractDistanceTable, DomainAbstractionFactory, WildcardPlanResult,
+};
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::apply_operator_to_state;
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::{
+    get_numeric_deviation_flaws, get_precondition_flaws,
 };
 
 pub(crate) fn compute_abstraction_size_u128(
@@ -212,54 +216,6 @@ pub(crate) fn fact_is_hold(fact: &ExplicitFact, packer: &IntDoublePacker, buffer
     current == fact.value
 }
 
-pub(crate) fn apply_operator_to_state(
-    op: &planners_sas::numeric::numeric_task::Operator,
-    packer: &IntDoublePacker,
-    buffer: &mut [u64],
-    numeric_state: &mut [f64],
-) {
-    for eff in op.effects().iter() {
-        let mut ok = true;
-        for cond in eff.conditions().iter() {
-            if !fact_is_hold(cond, packer, buffer) {
-                ok = false;
-                break;
-            }
-        }
-        if ok {
-            packer.set(buffer, eff.var_id(), eff.value() as u64);
-        }
-    }
-
-    for eff in op.assignment_effects().iter() {
-        if eff.is_conditional() {
-            let mut ok = true;
-            for cond in eff.conditions().iter() {
-                if !fact_is_hold(cond, packer, buffer) {
-                    ok = false;
-                    break;
-                }
-            }
-            if !ok {
-                continue;
-            }
-        }
-
-        let assignment_var_id = eff.var_id();
-        let affected_var_id = eff.affected_var_id();
-        if assignment_var_id >= numeric_state.len() || affected_var_id >= numeric_state.len() {
-            continue;
-        }
-        let operand = numeric_state[assignment_var_id];
-        numeric_state[affected_var_id] =
-            planners_sas::numeric::numeric_task::AssignmentOperation::apply(
-                numeric_state[affected_var_id],
-                eff.operation(),
-                operand,
-            );
-    }
-}
-
 pub(crate) fn debug_print_wildcard_plan(
     task: &dyn AbstractNumericTask,
     plan: &WildcardPlanResult,
@@ -392,7 +348,7 @@ fn debug_print_concrete_trace(
             tries += 1;
 
             let applicable = if let Some(idx) = comparison_index.as_ref() {
-                super::cegar::get_precondition_flaws(
+                get_precondition_flaws(
                     task,
                     partitions,
                     idx,
@@ -417,7 +373,7 @@ fn debug_print_concrete_trace(
             let _ = axiom_evaluator.evaluate_arithmetic_axioms(&mut cand_numeric);
             let _ = axiom_evaluator.evaluate(&mut cand_buffer, &mut cand_numeric);
 
-            let deviation_flaws = super::cegar::get_numeric_deviation_flaws(
+            let deviation_flaws = get_numeric_deviation_flaws(
                 op,
                 &numeric_state,
                 &cand_numeric,
