@@ -20,10 +20,8 @@ use crate::numeric::evaluation::domain_abstractions::domain_abstraction::{
     ComparisonAxiomIndex, NumericPartitions,
 };
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction_factory::WildcardPlanResult;
-use crate::numeric::evaluation::domain_abstractions::utils::{
-    fact_is_hold, set_initial_prop_values,
-};
-use state::apply_operator_to_state;
+use crate::numeric::evaluation::domain_abstractions::utils::{fact_is_hold, get_initial_state};
+use state::progress;
 
 /// Mirrors numeric-FD's `NumericFlaw = tuple<int, ap_float, bool>`.
 #[derive(Debug, Clone, PartialEq)]
@@ -82,18 +80,8 @@ pub fn get_flaws(
     let state_packer = make_prop_state_packer(task);
     let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
 
-    let mut buffer = vec![0u64; state_packer.num_bins()];
-    set_initial_prop_values(task, &state_packer, &mut buffer);
-    let mut numeric_state: Vec<f64> = task.get_initial_numeric_state_values().to_vec();
-
-    axiom_evaluator
-        .evaluate_arithmetic_axioms(&mut numeric_state)
-        .map_err(|e| {
-            anyhow::anyhow!("failed to evaluate arithmetic axioms for initial state: {e:?}")
-        })?;
-    axiom_evaluator
-        .evaluate(&mut buffer, &mut numeric_state)
-        .map_err(|e| anyhow::anyhow!("failed to evaluate axioms for initial state: {e:?}"))?;
+    let (mut prop_state, mut numeric_state) =
+        get_initial_state(task, &state_packer, &axiom_evaluator)?;
 
     let mut step_flaws: Vec<Flaw> = Vec::new();
     let mut collected_flaws: Vec<Flaw> = Vec::new();
@@ -120,31 +108,20 @@ pub fn get_flaws(
                     &comparison_index,
                     op,
                     &state_packer,
-                    &buffer,
+                    &prop_state,
                     &numeric_state,
                 );
                 if operator_flaws.is_empty() {
-                    let mut candidate_buffer = buffer.clone();
+                    let mut candidate_prop_state = prop_state.clone();
                     let numeric_state_before_op = numeric_state.clone();
                     let mut candidate_numeric_state = numeric_state.clone();
-                    apply_operator_to_state(
+                    progress(
                         op,
+                        &axiom_evaluator,
                         &state_packer,
-                        &mut candidate_buffer,
+                        &mut candidate_prop_state,
                         &mut candidate_numeric_state,
-                    );
-                    axiom_evaluator
-                        .evaluate_arithmetic_axioms(&mut candidate_numeric_state)
-                        .map_err(|e| {
-                            anyhow::anyhow!(
-                                "failed to evaluate arithmetic axioms after operator: {e:?}"
-                            )
-                        })?;
-                    axiom_evaluator
-                        .evaluate(&mut candidate_buffer, &mut candidate_numeric_state)
-                        .map_err(|e| {
-                            anyhow::anyhow!("failed to evaluate axioms after operator: {e:?}")
-                        })?;
+                    )?;
 
                     let deviation_flaws = get_numeric_deviation_flaws(
                         op,
@@ -154,7 +131,7 @@ pub fn get_flaws(
                         partitions,
                     );
                     if deviation_flaws.is_empty() {
-                        buffer = candidate_buffer;
+                        prop_state = candidate_prop_state;
                         numeric_state = candidate_numeric_state;
                         applied = true;
                         step_flaws.clear();
@@ -191,7 +168,7 @@ pub fn get_flaws(
                 &comparison_index,
                 op,
                 &state_packer,
-                &buffer,
+                &prop_state,
                 &numeric_state,
             );
             if operator_flaws.is_empty() {
@@ -210,15 +187,13 @@ pub fn get_flaws(
         if let Some(op_id) = chosen {
             let op = &task.get_operators()[op_id];
             let numeric_state_before_op = numeric_state.clone();
-            apply_operator_to_state(op, &state_packer, &mut buffer, &mut numeric_state);
-            axiom_evaluator
-                .evaluate_arithmetic_axioms(&mut numeric_state)
-                .map_err(|e| {
-                    anyhow::anyhow!("failed to evaluate arithmetic axioms after operator: {e:?}")
-                })?;
-            axiom_evaluator
-                .evaluate(&mut buffer, &mut numeric_state)
-                .map_err(|e| anyhow::anyhow!("failed to evaluate axioms after operator: {e:?}"))?;
+            progress(
+                op,
+                &axiom_evaluator,
+                &state_packer,
+                &mut prop_state,
+                &mut numeric_state,
+            )?;
 
             let deviation_flaws = get_numeric_deviation_flaws(
                 op,
@@ -240,7 +215,7 @@ pub fn get_flaws(
         partitions,
         &comparison_index,
         &state_packer,
-        &buffer,
+        &prop_state,
         &numeric_state,
     );
     if execute_entire_plan {

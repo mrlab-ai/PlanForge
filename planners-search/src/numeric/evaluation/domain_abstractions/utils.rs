@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
@@ -13,7 +14,7 @@ use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{
     AbstractDistanceTable, DomainAbstractionFactory, WildcardPlanResult,
 };
-use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::apply_operator_to_state;
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::progress;
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::{
     get_numeric_deviation_flaws, get_precondition_flaws,
 };
@@ -211,6 +212,27 @@ pub(crate) fn set_initial_prop_values(
     }
 }
 
+pub(crate) fn get_initial_state(
+    task: &dyn AbstractNumericTask,
+    state_packer: &IntDoublePacker,
+    axiom_evaluator: &AxiomEvaluator,
+) -> Result<(Vec<u64>, Vec<f64>)> {
+    let mut buffer = vec![0u64; state_packer.num_bins()];
+    set_initial_prop_values(task, state_packer, &mut buffer);
+    let mut numeric_state: Vec<f64> = task.get_initial_numeric_state_values().to_vec();
+
+    axiom_evaluator
+        .evaluate_arithmetic_axioms(&mut numeric_state)
+        .map_err(|e| {
+            anyhow::anyhow!("failed to evaluate arithmetic axioms for initial state: {e:?}")
+        })?;
+    axiom_evaluator
+        .evaluate(&mut buffer, &mut numeric_state)
+        .map_err(|e| anyhow::anyhow!("failed to evaluate axioms for initial state: {e:?}"))?;
+
+    Ok((buffer, numeric_state))
+}
+
 pub(crate) fn fact_is_hold(fact: &ExplicitFact, packer: &IntDoublePacker, buffer: &[u64]) -> bool {
     let current = packer.get(buffer, fact.var) as usize;
     current == fact.value
@@ -369,9 +391,14 @@ fn debug_print_concrete_trace(
 
             let mut cand_buffer = buffer.clone();
             let mut cand_numeric = numeric_state.clone();
-            apply_operator_to_state(op, &state_packer, &mut cand_buffer, &mut cand_numeric);
-            let _ = axiom_evaluator.evaluate_arithmetic_axioms(&mut cand_numeric);
-            let _ = axiom_evaluator.evaluate(&mut cand_buffer, &mut cand_numeric);
+            progress(
+                op,
+                &axiom_evaluator,
+                &state_packer,
+                &mut cand_buffer,
+                &mut cand_numeric,
+            )
+            .expect("Error applying operator");
 
             let deviation_flaws = get_numeric_deviation_flaws(
                 op,
