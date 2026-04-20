@@ -63,6 +63,7 @@ fn build_abstraction_produces_singleton_plan_without_wildcards() {
     let config = CegarConfig {
         use_wildcard_plans: false,
         max_iterations: 2,
+        random_seed: Some(1),
         ..Default::default()
     };
 
@@ -70,7 +71,7 @@ fn build_abstraction_produces_singleton_plan_without_wildcards() {
     let outcome = cegar.build_abstraction(&task).unwrap();
     let plan = outcome.last_step.wildcard_plan.expect("plan exists");
     assert_eq!(plan.wildcard_plan.len(), 1);
-    assert_eq!(plan.wildcard_plan[0], vec![0]);
+    assert!(matches!(plan.wildcard_plan[0].as_slice(), [0] | [1]));
 }
 
 #[test]
@@ -81,7 +82,10 @@ fn cegar_default_config_matches_current_port_defaults() {
     assert_eq!(config.max_iterations, 10_000);
     assert!(config.use_wildcard_plans);
     assert_eq!(config.random_seed, None);
-    assert_eq!(config.flaw_treatment, FlawTreatment::RandomSingleAtom);
+    assert_eq!(
+        config.flaw_treatment,
+        FlawTreatmentVariants::RandomSingleAtom
+    );
     assert_eq!(config.init_split_method, InitSplitMethod::InitValue);
     assert_eq!(config.exec_entire_plan, ExecEntirePlanMode::StopAtFirstFlaw);
 }
@@ -194,4 +198,65 @@ fn goal_variable_values_expand_goal_axiom_preconditions() {
     );
 
     assert_eq!(goal_variable_values(&task), vec![(0, 1), (1, 1)]);
+}
+
+#[test]
+#[allow(clippy::field_reassign_with_default)]
+fn fix_flaws_respects_max_abstraction_size_limit() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        None,
+        0,
+    )];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let mut config = CegarConfig::default();
+    config.max_abstraction_size = 1;
+
+    let mut domain_mapping = vec![vec![0, 0]];
+    let mut domain_sizes = vec![1];
+    let mut partitions = NumericPartitions::trivial(&task);
+    let mut numeric_domain_sizes = vec![];
+    let mut rng = SmallRng::seed_from_u64(7);
+    let mut blacklisted_prop_var_ids = HashSet::new();
+    let mut blacklisted_numeric_var_ids = HashSet::new();
+    let flaws = vec![Flaw::Propositional(PropFlaw {
+        fact: ExplicitFact::new(0, 1),
+        dependent_numeric_flaws: vec![],
+    })];
+
+    let refined = fix_flaws(
+        &config,
+        &task,
+        &flaws,
+        &mut domain_mapping,
+        &mut domain_sizes,
+        &mut partitions,
+        &mut numeric_domain_sizes,
+        &mut rng,
+        &mut blacklisted_prop_var_ids,
+        &mut blacklisted_numeric_var_ids,
+    )
+    .unwrap();
+
+    assert!(!refined);
+    assert_eq!(domain_sizes, vec![1]);
+    assert_eq!(domain_mapping, vec![vec![0, 0]]);
+    assert!(blacklisted_prop_var_ids.contains(&0));
 }

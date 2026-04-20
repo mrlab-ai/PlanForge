@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use super::cegar::CegarConfig;
 pub use super::cegar::flaw_search::ExecEntirePlanMode;
-pub use super::cegar::flaw_search::split_selection::{FlawTreatment, InitSplitMethod};
+pub use super::cegar::flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::domain_abstraction_generator::DomainAbstractionGenerator;
 use super::utils::compute_abstraction_size_u128;
@@ -90,7 +90,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
     pub deviation_flaws: bool,
-    pub flaw_treatment: FlawTreatment,
+    pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub numeric_split_strategy: NumericSplitStrategy,
     pub exec_entire_plan: ExecEntirePlanMode,
@@ -113,7 +113,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             use_wildcard_plans: true,
             combine_labels: true,
             deviation_flaws: true,
-            flaw_treatment: FlawTreatment::RandomSingleAtom,
+            flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,
             exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,

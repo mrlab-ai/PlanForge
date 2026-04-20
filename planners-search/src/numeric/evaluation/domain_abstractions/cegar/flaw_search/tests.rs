@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+
 use crate::numeric::evaluation::domain_abstractions::cegar::{
-    apply_initial_goal_splits, compute_initial_split_mapping, identity_domain_mapping_and_sizes
+    CegarConfig, apply_initial_goal_splits, compute_initial_split_mapping, identity_domain_mapping_and_sizes
 };
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::InitSplitMethod;
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
@@ -286,67 +288,6 @@ fn get_flaws_reports_numeric_deviation_flaw() {
         flaws.iter().any(|f| matches!(f, Flaw::Numeric(_))),
         "expected a numeric deviation flaw"
     );
-}
-
-#[test]
-#[allow(clippy::field_reassign_with_default)]
-fn fix_flaws_respects_max_abstraction_size_limit() {
-    let variables = vec![ExplicitVariable::new(
-        2,
-        "v".into(),
-        vec!["v0".into(), "v1".into()],
-        None,
-        0,
-    )];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        variables,
-        vec![],
-        vec![ExplicitFact::new(0, 1)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::new(0, 0),
-    );
-
-    let mut config = CegarConfig::default();
-    config.max_abstraction_size = 1;
-
-    let mut domain_mapping = vec![vec![0, 0]];
-    let mut domain_sizes = vec![1];
-    let mut partitions = NumericPartitions::trivial(&task);
-    let mut numeric_domain_sizes = vec![];
-    let mut rng = SmallRng::seed_from_u64(7);
-    let mut blacklisted_prop_var_ids = HashSet::new();
-    let mut blacklisted_numeric_var_ids = HashSet::new();
-    let flaws = vec![Flaw::Propositional(PropFlaw {
-        fact: ExplicitFact::new(0, 1),
-        dependent_numeric_flaws: vec![],
-    })];
-
-    let refined = fix_flaws(
-        &config,
-        &task,
-        &flaws,
-        &mut domain_mapping,
-        &mut domain_sizes,
-        &mut partitions,
-        &mut numeric_domain_sizes,
-        &mut rng,
-        &mut blacklisted_prop_var_ids,
-        &mut blacklisted_numeric_var_ids,
-    )
-    .unwrap();
-
-    assert!(!refined);
-    assert_eq!(domain_sizes, vec![1]);
-    assert_eq!(domain_mapping, vec![vec![0, 0]]);
-    assert!(blacklisted_prop_var_ids.contains(&0));
 }
 
 #[test]

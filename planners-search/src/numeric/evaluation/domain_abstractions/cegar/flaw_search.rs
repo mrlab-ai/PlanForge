@@ -1,5 +1,5 @@
+pub mod flaw_selection;
 pub mod progression;
-pub mod split_selection;
 pub mod state;
 #[cfg(test)]
 mod tests;
@@ -7,16 +7,14 @@ mod tests;
 use anyhow::{Result, ensure};
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
-use rand::rngs::SmallRng;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::fmt;
 
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact, Operator};
 
 use serde::{Deserialize, Serialize};
 
-use super::{CegarConfig, determine_include_in_lower, make_prop_state_packer};
-use crate::numeric::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
+use super::{determine_include_in_lower, make_prop_state_packer};
 use crate::numeric::evaluation::domain_abstractions::comparison_expression::Interval;
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction::{
     ComparisonAxiomIndex, NumericPartitions,
@@ -27,7 +25,7 @@ use crate::numeric::evaluation::domain_abstractions::utils::{
 };
 use state::apply_operator_to_state;
 
-/// Mirrors numeric-fd's `NumericFlaw = tuple<int, ap_float, bool>`.
+/// Mirrors numeric-FD's `NumericFlaw = tuple<int, ap_float, bool>`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumericFlaw {
     pub numeric_var_id: usize,
@@ -35,14 +33,14 @@ pub struct NumericFlaw {
     pub include_in_lower: bool,
 }
 
-/// Mirrors numeric-fd's `PropFlaw = pair<Fact, vector<NumericFlaw>>`.
+/// Mirrors numeric-FD's `PropFlaw = pair<Fact, vector<NumericFlaw>>`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PropFlaw {
     pub fact: ExplicitFact,
     pub dependent_numeric_flaws: Vec<NumericFlaw>,
 }
 
-/// Mirrors numeric-fd's `Flaw = variant<PropFlaw, NumericFlaw>`.
+/// Mirrors numeric-FD's `Flaw = variant<PropFlaw, NumericFlaw>`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Flaw {
     Propositional(PropFlaw),
@@ -253,63 +251,6 @@ pub fn get_flaws(
     }
 }
 
-/// Port of numeric-fd's refinement step (`fix_flaws`).
-///
-/// Return `true` if any refinement was applied.
-#[allow(clippy::too_many_arguments)]
-pub fn fix_flaws(
-    config: &CegarConfig,
-    task: &dyn AbstractNumericTask,
-    flaws: &[Flaw],
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [usize],
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut [usize],
-    rng: &mut SmallRng,
-    blacklisted_prop_var_ids: &mut HashSet<usize>,
-    blacklisted_numeric_var_ids: &mut HashSet<usize>,
-) -> Result<bool> {
-    let comparison_var_ids: HashSet<usize> = task
-        .comparison_axioms()
-        .iter()
-        .map(|ax| ax.get_affected_var_id())
-        .collect();
-
-    config.flaw_treatment.fix(
-        task,
-        flaws,
-        config,
-        &comparison_var_ids,
-        rng,
-        blacklisted_prop_var_ids,
-        blacklisted_numeric_var_ids,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-}
-
-fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
-    match flaw {
-        Flaw::Propositional(pf) => (0, pf.fact.var, pf.fact.value, 0, false),
-        Flaw::Numeric(nf) => (
-            1,
-            nf.numeric_var_id,
-            0,
-            nf.value.to_bits(),
-            nf.include_in_lower,
-        ),
-    }
-}
-
-fn flaw_variable_key(flaw: &Flaw) -> (u8, usize) {
-    match flaw {
-        Flaw::Propositional(pf) => (0, pf.fact.var),
-        Flaw::Numeric(nf) => (1, nf.numeric_var_id),
-    }
-}
-
 #[allow(unused)]
 fn score_flaw(
     flaw: &Flaw,
@@ -376,7 +317,7 @@ pub fn get_precondition_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
     comparison_index: &ComparisonAxiomIndex,
-    op: &planners_sas::numeric::numeric_task::Operator,
+    op: &Operator,
     packer: &IntDoublePacker,
     buffer: &[u64],
     numeric_state: &[f64],
@@ -496,7 +437,7 @@ fn can_split_numeric_var(
 }
 
 pub fn get_numeric_deviation_flaws(
-    op: &planners_sas::numeric::numeric_task::Operator,
+    op: &Operator,
     numeric_current_state: &[f64],
     numeric_successor_state: &[f64],
     abstract_numeric_successor_state: &[usize],

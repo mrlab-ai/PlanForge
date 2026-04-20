@@ -15,10 +15,10 @@ use rand::{SeedableRng, rngs::SmallRng};
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
-use flaw_search::split_selection::{FlawTreatment, InitSplitMethod};
-use flaw_search::{
-    DependentNumericRefinement, ExecEntirePlanMode, Flaw, NumericFlaw, fix_flaws, get_flaws,
-};
+use flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
+use flaw_search::{DependentNumericRefinement, ExecEntirePlanMode, Flaw, NumericFlaw, get_flaws};
+
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::flaw_selection::FlawTreatment;
 
 use super::abstract_operator_generator::DomainMapping;
 use super::comparison_expression::Interval;
@@ -27,6 +27,7 @@ use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanRe
 use super::domain_abstraction_heuristic::{
     COMPARISON_FALSE_VAL, COMPARISON_TRUE_VAL, COMPARISON_UNKNOWN_VAL,
 };
+use super::utils::{compute_abstraction_size_u128, debug_print_refinement_summary};
 
 #[derive(Debug, Clone)]
 pub struct CegarConfig {
@@ -37,7 +38,7 @@ pub struct CegarConfig {
     pub combine_labels: bool,
     pub debug: bool,
     pub random_seed: Option<u64>,
-    pub flaw_treatment: FlawTreatment,
+    pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub exec_entire_plan: ExecEntirePlanMode,
     pub init_split_var_ids: Option<HashSet<usize>>,
@@ -55,7 +56,7 @@ impl Default for CegarConfig {
             combine_labels: true,
             debug: false,
             random_seed: None,
-            flaw_treatment: FlawTreatment::RandomSingleAtom,
+            flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
             init_split_var_ids: None,
@@ -64,6 +65,14 @@ impl Default for CegarConfig {
         }
     }
 }
+
+#[derive(Clone)]
+pub struct FlawCandidate {
+    idx: usize,
+    score: usize,
+    restricted_dep: Option<Vec<NumericFlaw>>,
+}
+pub type ChosenFlaws = Vec<FlawCandidate>;
 
 #[derive(Debug, Clone)]
 pub struct CegarState {
@@ -219,7 +228,7 @@ impl Cegar {
             }
 
             let before_size = if config.debug {
-                super::utils::compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes)
+                compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes)
             } else {
                 None
             };
@@ -237,11 +246,9 @@ impl Cegar {
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
             if config.debug {
-                let after_size = super::utils::compute_abstraction_size_u128(
-                    &domain_sizes,
-                    &numeric_domain_sizes,
-                );
-                super::utils::debug_print_refinement_summary(
+                let after_size =
+                    compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes);
+                debug_print_refinement_summary(
                     before_size,
                     after_size,
                     &domain_sizes,
@@ -270,23 +277,6 @@ impl Cegar {
     }
 }
 
-fn compute_abstraction_size(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) -> usize {
-    let mut size: usize = 1;
-    for &d in domain_sizes.iter() {
-        if d == 0 {
-            return 0;
-        }
-        size = size.saturating_mul(d);
-    }
-    for &p in numeric_domain_sizes.iter() {
-        if p == 0 {
-            return 0;
-        }
-        size = size.saturating_mul(p);
-    }
-    size
-}
-
 fn current_time_seed() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -301,7 +291,7 @@ fn shuffle_indices_with_rng<R: rand::Rng + ?Sized>(indices: &mut [usize], rng: &
 }
 
 fn abstraction_size_u128(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) -> Option<u128> {
-    super::utils::compute_abstraction_size_u128(domain_sizes, numeric_domain_sizes)
+    compute_abstraction_size_u128(domain_sizes, numeric_domain_sizes)
 }
 
 fn can_refine_propositional_variable(
@@ -399,6 +389,82 @@ fn can_refine_numeric_variable_with_blacklist(
         blacklisted_numeric_var_ids.insert(numeric_var_id);
         false
     }
+}
+
+/// Port of numeric-FD's refinement step (`fix_flaws`).
+///
+/// Return `true` if any refinement was applied.
+#[allow(clippy::too_many_arguments)]
+pub fn fix_flaws(
+    config: &CegarConfig,
+    task: &dyn AbstractNumericTask,
+    flaws: &[Flaw],
+    domain_mapping: &mut DomainMapping,
+    domain_sizes: &mut [usize],
+    partitions: &mut NumericPartitions,
+    numeric_domain_sizes: &mut [usize],
+    rng: &mut SmallRng,
+    blacklisted_prop_var_ids: &mut HashSet<usize>,
+    blacklisted_numeric_var_ids: &mut HashSet<usize>,
+) -> Result<bool> {
+    let comparison_var_ids: HashSet<usize> = task
+        .comparison_axioms()
+        .iter()
+        .map(|ax| ax.get_affected_var_id())
+        .collect();
+
+    let chosen_flaws: ChosenFlaws = config.flaw_treatment.choose_flaws(
+        task,
+        flaws,
+        config,
+        &comparison_var_ids,
+        rng,
+        blacklisted_prop_var_ids,
+        blacklisted_numeric_var_ids,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    );
+
+    let mut any_refined = false;
+    let mut last_refined = None;
+    for cand in chosen_flaws {
+        let mut chosen = flaws[cand.idx].clone();
+        if let (Flaw::Propositional(pf), Some(restricted)) = (&mut chosen, cand.restricted_dep) {
+            pf.dependent_numeric_flaws = restricted;
+        }
+
+        if !any_refined
+            || config
+                .flaw_treatment
+                .should_be_refined(&chosen, last_refined.unwrap())
+        {
+            let flaw_refined = try_refine_from_flaw(
+                task,
+                &chosen,
+                config,
+                &comparison_var_ids,
+                blacklisted_prop_var_ids,
+                blacklisted_numeric_var_ids,
+                domain_mapping,
+                domain_sizes,
+                partitions,
+                numeric_domain_sizes,
+                DependentNumericRefinement::One,
+            )?;
+
+            any_refined = any_refined || flaw_refined;
+            if flaw_refined {
+                if !config.flaw_treatment.refine_all() {
+                    return Ok(true);
+                }
+                last_refined = Some(&flaws[cand.idx]);
+            }
+        }
+    }
+
+    Ok(any_refined)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -883,7 +949,7 @@ fn determine_include_in_lower(
     let eval_lower = comparison_eval_code(tree.evaluate_interval(&lower_inputs));
     let eval_upper = comparison_eval_code(tree.evaluate_interval(&upper_inputs));
 
-    // Mirror numeric-fd's preference: FALSE (=1) over UNKNOWN (=2) over TRUE (=0).
+    // Mirror numeric-FD's preference: FALSE (=1) over UNKNOWN (=2) over TRUE (=0).
     if eval_lower == COMPARISON_FALSE_VAL && eval_upper != COMPARISON_FALSE_VAL {
         true
     } else if eval_upper == COMPARISON_FALSE_VAL && eval_lower != COMPARISON_FALSE_VAL {

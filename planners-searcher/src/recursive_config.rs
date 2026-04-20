@@ -14,7 +14,7 @@ use nom::{
 
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
-    FlawTreatment, InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
+    FlawTreatmentVariants, InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
 };
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -28,7 +28,7 @@ pub struct DomainAbstractionConfig {
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
     pub random_seed: i32,
-    pub flaw_treatment: FlawTreatment,
+    pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub exec_entire_plan: ExecEntirePlanMode,
 }
@@ -40,7 +40,7 @@ impl Default for DomainAbstractionConfig {
             use_wildcard_plans: true,
             combine_labels: true,
             random_seed: -1,
-            flaw_treatment: FlawTreatment::RandomSingleAtom,
+            flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
         }
@@ -296,12 +296,12 @@ fn parse_init_split_quantity(value: &str) -> Result<InitSplitQuantity, String> {
     }
 }
 
-fn parse_flaw_treatment(value: &str) -> Result<FlawTreatment, String> {
+fn parse_flaw_treatment(value: &str) -> Result<FlawTreatmentVariants, String> {
     match value {
-        "random_single_atom" => Ok(FlawTreatment::RandomSingleAtom),
-        "one_split_per_atom" => Ok(FlawTreatment::OneSplitPerAtom),
-        "one_split_per_variable" => Ok(FlawTreatment::OneSplitPerVariable),
-        "max_refined_single_atom" => Ok(FlawTreatment::MaxRefinedSingleAtom),
+        "random_single_atom" => Ok(FlawTreatmentVariants::RandomSingleAtom),
+        "one_split_per_atom" => Ok(FlawTreatmentVariants::OneSplitPerAtom),
+        "one_split_per_variable" => Ok(FlawTreatmentVariants::OneSplitPerVariable),
+        "max_refined_single_atom" => Ok(FlawTreatmentVariants::MaxRefinedSingleAtom),
         _ => Err(format!("invalid FlawTreatment `{value}`")),
     }
 }
@@ -574,10 +574,9 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
         tuple((
             ws(tag_no_case("canonical_domain_abstractions")),
             opt(ws(alt((
-                map(
-                    empty_parens,
-                    |_| DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
-                ),
+                map(empty_parens, |_| {
+                    DomainAbstractionCollectionGeneratorMultipleCegarConfig::default()
+                }),
                 multi_domain_abstractions_parens,
             )))),
         )),
