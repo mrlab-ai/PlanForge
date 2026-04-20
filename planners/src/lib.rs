@@ -854,7 +854,7 @@ fn run_da_debug(
     let wildcard_plan = outcome.last_step.wildcard_plan.clone().ok_or_else(|| {
         std::io::Error::other("da_debug requires a final wildcard plan, but CEGAR returned none")
     })?;
-    let factory = outcome.last_step.factory.clone();
+    let factory = outcome.final_state.factory.clone();
     let distance_table = factory
         .build_abstract_distance_table(task, config.combine_labels, false)
         .map_err(|e| std::io::Error::other(format!("failed to build distance table: {e:#}")))?;

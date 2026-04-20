@@ -217,10 +217,10 @@ pub struct WildcardPlanResult {
 
 #[derive(Debug, Clone)]
 pub struct DomainAbstractionFactory {
-    domain_mapping: DomainMapping,
-    domain_sizes: Vec<usize>,
-    partitions: NumericPartitions,
-    numeric_domain_sizes: Vec<usize>,
+    pub domain_mapping: DomainMapping,
+    pub domain_sizes: Vec<usize>,
+    pub partitions: NumericPartitions,
+    pub numeric_domain_sizes: Vec<usize>,
     comparison_index: Option<ComparisonAxiomIndex>,
     comparison_trees: Vec<ComparisonTree>,
 }

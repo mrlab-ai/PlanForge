@@ -76,16 +76,18 @@ pub type ChosenFlaws = Vec<FlawCandidate>;
 
 #[derive(Debug, Clone)]
 pub struct CegarState {
-    pub domain_mapping: DomainMapping,
-    pub domain_sizes: Vec<usize>,
-    pub partitions: NumericPartitions,
-    pub numeric_domain_sizes: Vec<usize>,
+    pub factory: DomainAbstractionFactory,
     pub iteration: usize,
+}
+
+impl CegarState {
+    pub fn new(factory: DomainAbstractionFactory, iteration: usize) -> CegarState {
+        CegarState { factory, iteration }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct CegarStep {
-    pub factory: DomainAbstractionFactory,
     pub wildcard_plan: Option<WildcardPlanResult>,
 }
 
@@ -146,7 +148,18 @@ impl Cegar {
         );
 
         let mut iteration: usize = 1;
-        let mut last_step: Option<CegarStep> = None;
+
+        let mut factory = DomainAbstractionFactory::new(
+            task,
+            domain_mapping,
+            domain_sizes,
+            partitions,
+            numeric_domain_sizes,
+        )
+        .with_context(|| {
+            format!("failed to construct DomainAbstractionFactory (iteration {iteration})")
+        })?;
+        let mut wildcard_plan = None;
 
         while iteration <= config.max_iterations {
             if let Some(max_time) = config.max_time
@@ -158,24 +171,12 @@ impl Cegar {
             if config.debug {
                 super::utils::debug_print_abstraction_stats(
                     iteration,
-                    &domain_sizes,
-                    &numeric_domain_sizes,
+                    &factory.domain_sizes,
+                    &factory.numeric_domain_sizes,
                 );
             }
 
-            // TODO: Avoid cloning at all cost.
-            let factory = DomainAbstractionFactory::new(
-                task,
-                domain_mapping.clone(),
-                domain_sizes.clone(),
-                partitions.clone(),
-                numeric_domain_sizes.clone(),
-            )
-            .with_context(|| {
-                format!("failed to construct DomainAbstractionFactory (iteration {iteration})")
-            })?;
-
-            let wildcard_plan = factory
+            wildcard_plan = factory
                 .compute_plan_with_rng(
                     task,
                     config.combine_labels,
@@ -195,21 +196,15 @@ impl Cegar {
                     Some(plan) => super::utils::debug_print_wildcard_plan(
                         task,
                         plan,
-                        &domain_sizes,
-                        &numeric_domain_sizes,
-                        &partitions,
+                        &factory.domain_sizes,
+                        &factory.numeric_domain_sizes,
+                        &factory.partitions,
                     ),
                     None => debug!("[Abstract Plan] <none>"),
                 }
             }
 
-            let step = CegarStep {
-                factory,
-                wildcard_plan,
-            };
-            last_step = Some(step);
-
-            let Some(plan) = last_step.as_ref().and_then(|s| s.wildcard_plan.as_ref()) else {
+            let Some(plan) = wildcard_plan.as_ref() else {
                 break;
             };
 
@@ -218,7 +213,7 @@ impl Cegar {
                 ExecEntirePlanMode::ExecuteEntirePlan => true,
             };
 
-            let flaws = get_flaws(task, &partitions, plan, execute_entire_plan)
+            let flaws = get_flaws(task, &factory.partitions, plan, execute_entire_plan)
                 .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
             if config.debug {
                 super::utils::debug_print_flaws(&flaws);
@@ -228,7 +223,7 @@ impl Cegar {
             }
 
             let before_size = if config.debug {
-                compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes)
+                compute_abstraction_size_u128(&factory.domain_sizes, &factory.numeric_domain_sizes)
             } else {
                 None
             };
@@ -236,23 +231,25 @@ impl Cegar {
                 &self.config,
                 task,
                 &flaws,
-                &mut domain_mapping,
-                &mut domain_sizes,
-                &mut partitions,
-                &mut numeric_domain_sizes,
+                &mut factory.domain_mapping,
+                &mut factory.domain_sizes,
+                &mut factory.partitions,
+                &mut factory.numeric_domain_sizes,
                 &mut rng,
                 &mut blacklisted_prop_var_ids,
                 &mut blacklisted_numeric_var_ids,
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
             if config.debug {
-                let after_size =
-                    compute_abstraction_size_u128(&domain_sizes, &numeric_domain_sizes);
+                let after_size = compute_abstraction_size_u128(
+                    &factory.domain_sizes,
+                    &factory.numeric_domain_sizes,
+                );
                 debug_print_refinement_summary(
                     before_size,
                     after_size,
-                    &domain_sizes,
-                    &numeric_domain_sizes,
+                    &factory.domain_sizes,
+                    &factory.numeric_domain_sizes,
                     refined,
                 );
             }
@@ -263,15 +260,9 @@ impl Cegar {
             iteration += 1;
         }
 
-        let last_step = last_step.context("CEGAR did not perform any iterations")?;
+        let last_step = CegarStep { wildcard_plan };
         Ok(CegarOutcome {
-            final_state: CegarState {
-                domain_mapping,
-                domain_sizes,
-                partitions,
-                numeric_domain_sizes,
-                iteration,
-            },
+            final_state: CegarState::new(factory, iteration),
             last_step,
         })
     }
