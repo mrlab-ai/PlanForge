@@ -370,7 +370,7 @@ fn debug_print_concrete_trace(
             tries += 1;
 
             let applicable = if let Some(idx) = comparison_index.as_ref() {
-                get_precondition_flaws(
+                get_progression_precondition_flaws(
                     task,
                     partitions,
                     idx,
@@ -400,7 +400,7 @@ fn debug_print_concrete_trace(
             )
             .expect("Error applying operator");
 
-            let deviation_flaws = get_numeric_deviation_flaws(
+            let deviation_flaws = get_progression_numeric_deviation_flaws(
                 op,
                 &numeric_state,
                 &cand_numeric,

@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 
 use crate::numeric::evaluation::domain_abstractions::cegar::{
-    CegarConfig, apply_initial_goal_splits, compute_initial_split_mapping, identity_domain_mapping_and_sizes
+    CegarConfig, apply_initial_goal_splits, compute_initial_split_mapping
 };
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::InitSplitMethod;
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
+use crate::numeric::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 
 use super::*;
 use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
@@ -70,7 +71,15 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         .unwrap()
         .expect("plan exists");
 
-    let flaws = get_flaws(&task, factory.partitions(), &plan, false).unwrap();
+    let flaws = get_flaws(
+        &task,
+        factory.partitions(),
+        &factory.domain_mapping,
+        &plan,
+        false,
+        FlawKind::Progression,
+    )
+    .unwrap();
     assert!(flaws.is_empty());
 }
 
@@ -132,7 +141,15 @@ fn get_flaws_reports_precondition_violation() {
     // Make the stored wildcard plan invalid in the concrete initial state.
     task.set_initial_propositional_state_values(vec![1]);
 
-    let flaws = get_flaws(&task, factory.partitions(), &plan, false).unwrap();
+    let flaws = get_flaws(
+        &task,
+        factory.partitions(),
+        &factory.domain_mapping,
+        &plan,
+        false,
+        FlawKind::Progression,
+    )
+    .unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 0)),
@@ -283,7 +300,17 @@ fn get_flaws_reports_numeric_deviation_flaw() {
         ],
     };
 
-    let flaws = get_flaws(&task, &partitions, &plan, false).unwrap();
+    // Fake domain mapping, not needed for progression flaws.
+    let domain_mapping = vec![vec![]];
+    let flaws = get_flaws(
+        &task,
+        &partitions,
+        &domain_mapping,
+        &plan,
+        false,
+        FlawKind::Progression,
+    )
+    .unwrap();
     assert!(
         flaws.iter().any(|f| matches!(f, Flaw::Numeric(_))),
         "expected a numeric deviation flaw"
