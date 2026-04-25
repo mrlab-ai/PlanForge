@@ -16,4 +16,3 @@ clap = { version = "4", features = ["derive"] }
 log = { version = "0.4", features = ["serde"] }
 env_logger = { version = "0.11", features = ["humantime"] }
 serde = { version = "1", features = ["derive"] }
-nom = "7"

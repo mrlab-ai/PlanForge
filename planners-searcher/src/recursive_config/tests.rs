@@ -138,6 +138,92 @@ fn parses_astar_greedy_numeric_pdb_with_named_options() {
 }
 
 #[test]
+fn parses_registry_style_search_with_keyed_heuristic() {
+    let spec = parse_search_spec(
+        "search(astar(heuristic=greedy_numeric_pdb(max_pdb_states=321, numeric_first=false)))",
+    )
+    .unwrap();
+
+    let SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(config)) = spec else {
+        panic!("expected greedy_numeric_pdb config");
+    };
+
+    assert_eq!(config.max_pdb_states, 321);
+    assert!(!config.numeric_first);
+}
+
+#[test]
+fn parses_positional_config_values_in_field_order() {
+    let spec = parse_search_spec("search(astar(greedy_numeric_pdb(321, false, 7)))").unwrap();
+
+    let SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(config)) = spec else {
+        panic!("expected greedy_numeric_pdb config");
+    };
+
+    assert_eq!(config.max_pdb_states, 321);
+    assert!(!config.numeric_first);
+    assert_eq!(config.random_seed, 7);
+}
+
+#[test]
+fn configurable_structs_build_from_generic_config_calls() {
+    let call = ConfigParser::new("greedy_numeric_pdb(max_pdb_states=321, numeric_first=false)")
+        .parse_all()
+        .unwrap();
+
+    let config = GreedyPatternGeneratorConfig::from_config(&call).unwrap();
+
+    assert_eq!(config.max_pdb_states, 321);
+    assert!(!config.numeric_first);
+}
+
+#[test]
+fn search_engines_build_from_generic_config_calls() {
+    let call = ConfigParser::new("astar(heuristic=greedy_numeric_pdb(max_pdb_states=321))")
+        .parse_all()
+        .unwrap();
+
+    let config = AStarConfig::from_config(&call).unwrap();
+
+    let HeuristicSpec::GreedyNumericPdb(heuristic_config) = config.heuristic else {
+        panic!("expected greedy_numeric_pdb config");
+    };
+    assert_eq!(heuristic_config.max_pdb_states, 321);
+}
+
+#[test]
+fn configurable_structs_do_not_need_display_impls() {
+    #[derive(Default, PartialEq)]
+    struct ConfigWithoutDisplay {
+        enabled: bool,
+    }
+
+    impl FromConfig for ConfigWithoutDisplay {
+        fn config_fields() -> Vec<Field<Self>> {
+            vec![Field::new(
+                "enabled",
+                |config, value| {
+                    config.enabled = parse_bool(value.as_atom()?)?;
+                    Ok(())
+                },
+                |config| config.enabled.to_string(),
+            )]
+        }
+    }
+
+    let call = ConfigParser::new("without_display(enabled=true)")
+        .parse_all()
+        .unwrap();
+    let config = ConfigWithoutDisplay::from_config(&call).unwrap();
+
+    assert!(config.enabled);
+    assert_eq!(
+        config.format_config_call("without_display"),
+        "without_display(enabled=true)"
+    );
+}
+
+#[test]
 fn parses_astar_canonical_numeric_pdb_with_or_without_unit_parens() {
     assert_eq!(
         parse_search_spec("astar(canonical_numeric_pdb)").unwrap(),
