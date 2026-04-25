@@ -86,6 +86,39 @@ fn shared_effect_task() -> NumericRootTask {
     )
 }
 
+fn zero_additive_effect_task() -> NumericRootTask {
+    NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![simple_var("p")],
+        vec![
+            NumericVariable::new("zero".to_string(), NumericType::Constant, None),
+            NumericVariable::new("x".to_string(), NumericType::Regular, None),
+        ],
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 0.0],
+        vec![Operator::new(
+            "set-p-and-add-zero".to_string(),
+            vec![],
+            vec![Effect::new(vec![], 0, Some(0), 1)],
+            vec![AssignmentEffect::new(
+                1,
+                AssignmentOperation::Plus,
+                0,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    )
+}
+
 #[test]
 fn computes_additive_patterns_for_disjoint_effects() {
     let task = disjoint_effect_task();
@@ -107,4 +140,13 @@ fn marks_prop_and_numeric_as_non_additive_when_same_operator_touches_both() {
 
     assert!(!additivity.prop_to_num[0][1]);
     assert!(!additivity.num_to_prop[1][0]);
+}
+
+#[test]
+fn zero_constant_additive_effect_does_not_break_additivity_like_fd() {
+    let task = zero_additive_effect_task();
+    let additivity = compute_additive_vars(&task);
+
+    assert!(additivity.prop_to_num[0][1]);
+    assert!(additivity.num_to_prop[1][0]);
 }

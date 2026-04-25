@@ -119,6 +119,19 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
         &self.max_additive_subsets
     }
 
+    pub fn requires_derived_numeric_values(&self) -> bool {
+        self.pdb_collection.requires_derived_numeric_values()
+    }
+
+    pub fn expand_numeric_state_values_into(
+        &self,
+        numeric_values: &[f64],
+        expanded_numeric_values: &mut Vec<f64>,
+    ) -> Result<(), String> {
+        self.pdb_collection
+            .expand_numeric_state_values_into(numeric_values, expanded_numeric_values)
+    }
+
     pub fn evaluate_projected_state_values(
         &self,
         propositional_values: &[usize],
@@ -149,6 +162,9 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
                     *slot = Some(value);
                     value
                 };
+                if value.is_infinite() {
+                    return Ok(f64::INFINITY);
+                }
                 subset_value += value;
             }
             best_value = best_value.max(subset_value);
@@ -184,6 +200,9 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
                     *slot = Some(value);
                     value
                 };
+                if value.is_infinite() {
+                    return Ok(f64::INFINITY);
+                }
                 subset_value += value;
             }
             best_value = best_value.max(subset_value);
@@ -198,7 +217,7 @@ pub struct CanonicalNumericPdbHeuristic<'task> {
     name: String,
     task: &'task dyn AbstractNumericTask,
     collection_information: CanonicalPdbCollectionInformation<'task>,
-    prop_scratch: RefCell<Vec<i32>>,
+    prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
     expanded_numeric_scratch: RefCell<Vec<f64>>,
     pdb_value_cache: RefCell<Vec<Option<f64>>>,
@@ -291,10 +310,31 @@ impl Heuristic for CanonicalNumericPdbHeuristic<'_> {
         }
 
         let (_task, registry) = Self::require_task_and_registry(eval_state)?;
+        let mut propositional_values = self.prop_scratch.borrow_mut();
+        let mut numeric_values = self.numeric_scratch.borrow_mut();
+        registry
+            .fill_state_and_numeric_vars_with_options(
+                eval_state.state(),
+                &mut propositional_values,
+                &mut numeric_values,
+                self.collection_information
+                    .requires_derived_numeric_values(),
+            )
+            .map_err(|err| EvaluationError::InvalidState(format!("{err:?}")))?;
+
+        let mut expanded_numeric_values = self.expanded_numeric_scratch.borrow_mut();
+        self.collection_information
+            .expand_numeric_state_values_into(&numeric_values, &mut expanded_numeric_values)
+            .map_err(EvaluationError::ComputationFailed)?;
+
         let mut pdb_value_cache = self.pdb_value_cache.borrow_mut();
         let heuristic_value = self
             .collection_information
-            .evaluate_concrete_state(eval_state.state(), registry, &mut pdb_value_cache)
+            .evaluate_projected_state_values(
+                &propositional_values,
+                &expanded_numeric_values,
+                &mut pdb_value_cache,
+            )
             .map_err(EvaluationError::ComputationFailed)?;
 
         self.cache_state_value(state_id, heuristic_value);
