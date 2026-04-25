@@ -1,9 +1,6 @@
 #[cfg(test)]
 mod tests;
 
-use rand::SeedableRng;
-use rand::rngs::SmallRng;
-use rand::seq::SliceRandom;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -11,13 +8,11 @@ use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
 use serde::{Deserialize, Serialize};
 
 use super::causal_graph::{CausalGraphVariable, MixedCausalGraph};
-use super::numeric_size_estimator::NumericSizeEstimator;
 use super::numeric_support::NumericSupportContext;
 use super::pattern_collection::PatternCollection;
-use super::pattern_generator_greedy::DEFAULT_MAX_PDB_STATES;
 use super::projected_task::Pattern;
-use super::variable_order_finder::GreedyVariableOrderType;
 
+pub const DEFAULT_SYSTEMATIC_MAX_PDB_STATES: usize = 50_000;
 pub const DEFAULT_MAX_PATTERN_SIZE: usize = 2;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -25,18 +20,14 @@ pub struct SystematicPatternGeneratorConfig {
     pub max_pdb_states: usize,
     pub max_pattern_size: usize,
     pub only_interesting_patterns: bool,
-    pub random_seed: i32,
-    pub variable_order_type: GreedyVariableOrderType,
 }
 
 impl Default for SystematicPatternGeneratorConfig {
     fn default() -> Self {
         Self {
-            max_pdb_states: DEFAULT_MAX_PDB_STATES,
+            max_pdb_states: DEFAULT_SYSTEMATIC_MAX_PDB_STATES,
             max_pattern_size: DEFAULT_MAX_PATTERN_SIZE,
             only_interesting_patterns: true,
-            random_seed: 0,
-            variable_order_type: GreedyVariableOrderType::default(),
         }
     }
 }
@@ -45,12 +36,8 @@ impl fmt::Display for SystematicPatternGeneratorConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "max_pdb_states={}, max_pattern_size={}, only_interesting_patterns={}, random_seed={}, variable_order_type={}",
-            self.max_pdb_states,
-            self.max_pattern_size,
-            self.only_interesting_patterns,
-            self.random_seed,
-            self.variable_order_type,
+            "max_pdb_states={}, max_pattern_size={}, only_interesting_patterns={}",
+            self.max_pdb_states, self.max_pattern_size, self.only_interesting_patterns,
         )
     }
 }
@@ -63,27 +50,24 @@ pub fn generate_systematic_patterns(
         return PatternCollection::empty();
     }
 
+    if !config.only_interesting_patterns {
+        panic!("not implemented: numeric systematic naive pattern generation");
+    }
+
     let numeric_support = NumericSupportContext::new(task);
     let causal_graph = MixedCausalGraph::new(task);
-    let size_estimator = NumericSizeEstimator::new(task);
     let seed_variables = collect_seed_variables(task, &numeric_support);
-    if config.only_interesting_patterns {
-        build_interesting_patterns(
-            &causal_graph,
-            &seed_variables,
-            config.max_pattern_size,
-            config,
-        )
-    } else {
-        let ordered_candidates =
-            ordered_relevant_candidates(&causal_graph, &seed_variables, config);
-        generate_relevant_patterns_naive(task, &size_estimator, &ordered_candidates, config)
-    }
+    build_interesting_patterns(
+        &causal_graph,
+        &seed_variables,
+        config.max_pattern_size,
+        config,
+    )
 }
 
 fn build_interesting_patterns(
     causal_graph: &MixedCausalGraph,
-    seed_variables: &BTreeSet<CausalGraphVariable>,
+    seed_variables: &[CausalGraphVariable],
     max_pattern_size: usize,
     config: SystematicPatternGeneratorConfig,
 ) -> PatternCollection {
@@ -113,7 +97,7 @@ fn build_interesting_patterns(
                 continue;
             };
             for candidate in candidates {
-                if pattern.total_len() + candidate.total_len() > max_pattern_size {
+                if cpp_systematic_combined_size(&pattern, candidate) > max_pattern_size {
                     break;
                 }
                 if patterns_are_disjoint(&pattern, candidate) {
@@ -133,24 +117,16 @@ fn build_interesting_patterns(
 
 fn build_sga_patterns(
     causal_graph: &MixedCausalGraph,
-    seed_variables: &BTreeSet<CausalGraphVariable>,
+    seed_variables: &[CausalGraphVariable],
     max_pattern_size: usize,
-    config: SystematicPatternGeneratorConfig,
+    _config: SystematicPatternGeneratorConfig,
 ) -> Vec<Pattern> {
     let mut patterns = Vec::new();
     let mut seen = BTreeSet::new();
 
-    let mut ordered_seeds: Vec<_> = seed_variables.iter().copied().collect();
-    order_causal_graph_variables(
-        &mut ordered_seeds,
-        causal_graph,
-        config.variable_order_type,
-        config.random_seed,
-    );
-
-    for seed in ordered_seeds {
+    for seed in seed_variables {
         let mut pattern = Pattern::new(Vec::new(), Vec::new());
-        match seed {
+        match *seed {
             CausalGraphVariable::Regular(var_id) => {
                 let inserted = pattern.add_regular_var(var_id);
                 assert!(inserted, "goal singleton regular variable inserted twice");
@@ -195,173 +171,6 @@ fn build_sga_patterns(
     }
 
     patterns
-}
-
-fn generate_relevant_patterns_naive(
-    task: &dyn AbstractNumericTask,
-    size_estimator: &NumericSizeEstimator,
-    ordered_candidates: &[CausalGraphVariable],
-    config: SystematicPatternGeneratorConfig,
-) -> PatternCollection {
-    let mut collection = Vec::new();
-    let mut seen = BTreeSet::new();
-    extend_patterns_naive(
-        task,
-        size_estimator,
-        ordered_candidates,
-        &mut collection,
-        &mut seen,
-        Pattern::new(Vec::new(), Vec::new()),
-        1,
-        config,
-        0,
-    );
-    PatternCollection::new(collection)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn extend_patterns_naive(
-    task: &dyn AbstractNumericTask,
-    size_estimator: &NumericSizeEstimator,
-    ordered_candidates: &[CausalGraphVariable],
-    collection: &mut Vec<Pattern>,
-    seen: &mut BTreeSet<Pattern>,
-    pattern: Pattern,
-    estimated_size: usize,
-    config: SystematicPatternGeneratorConfig,
-    min_candidate_index: usize,
-) {
-    if pattern.total_len() >= config.max_pattern_size {
-        return;
-    }
-
-    for (candidate_index, candidate) in ordered_candidates.iter().copied().enumerate() {
-        if candidate_index < min_candidate_index {
-            continue;
-        }
-
-        let mut next_pattern = pattern.clone();
-        let Some(next_size) = try_extend_pattern(
-            task,
-            size_estimator,
-            &mut next_pattern,
-            estimated_size,
-            candidate,
-            config.max_pdb_states,
-        ) else {
-            continue;
-        };
-
-        if seen.insert(next_pattern.clone()) {
-            collection.push(next_pattern.clone());
-            extend_patterns_naive(
-                task,
-                size_estimator,
-                ordered_candidates,
-                collection,
-                seen,
-                next_pattern,
-                next_size,
-                config,
-                candidate_index + 1,
-            );
-        }
-    }
-}
-
-fn try_extend_pattern(
-    task: &dyn AbstractNumericTask,
-    size_estimator: &NumericSizeEstimator,
-    pattern: &mut Pattern,
-    current_size: usize,
-    candidate: CausalGraphVariable,
-    max_pdb_states: usize,
-) -> Option<usize> {
-    let factor = match candidate {
-        CausalGraphVariable::Regular(var_id) => {
-            task.get_variable_domain_size(var_id).ok().unwrap_or(1)
-        }
-        CausalGraphVariable::Numeric(var_id) => size_estimator.estimate_domain_size(var_id),
-    };
-
-    let next_size = current_size.saturating_mul(factor.max(1));
-    if next_size > max_pdb_states {
-        return None;
-    }
-
-    let inserted = match candidate {
-        CausalGraphVariable::Regular(var_id) => pattern.add_regular_var(var_id),
-        CausalGraphVariable::Numeric(var_id) => pattern.add_numeric_var(var_id),
-    };
-    inserted.then_some(next_size)
-}
-
-fn ordered_relevant_candidates(
-    causal_graph: &MixedCausalGraph,
-    seed_variables: &BTreeSet<CausalGraphVariable>,
-    config: SystematicPatternGeneratorConfig,
-) -> Vec<CausalGraphVariable> {
-    let mut reachable = seed_variables.clone();
-    let mut agenda: Vec<_> = seed_variables.iter().copied().collect();
-
-    while let Some(variable) = agenda.pop() {
-        for predecessor in causal_graph.predecessors_of(variable) {
-            if reachable.insert(predecessor) {
-                agenda.push(predecessor);
-            }
-        }
-    }
-
-    let mut ordered: Vec<_> = reachable.into_iter().collect();
-    order_causal_graph_variables(
-        &mut ordered,
-        causal_graph,
-        config.variable_order_type,
-        config.random_seed,
-    );
-    ordered
-}
-
-fn order_causal_graph_variables(
-    variables: &mut [CausalGraphVariable],
-    causal_graph: &MixedCausalGraph,
-    variable_order_type: GreedyVariableOrderType,
-    random_seed: i32,
-) {
-    match variable_order_type {
-        GreedyVariableOrderType::CgGoalRandom => {
-            let mut rng = SmallRng::seed_from_u64(random_seed as i64 as u64);
-            variables.shuffle(&mut rng);
-        }
-        GreedyVariableOrderType::CgGoalLevel => {
-            variables.sort_by_key(|&variable| {
-                (
-                    std::cmp::Reverse(causal_graph.predecessor_count(variable)),
-                    causal_graph
-                        .goal_distance(variable)
-                        .unwrap_or(usize::MAX / 2),
-                    causal_graph
-                        .causal_level(variable)
-                        .unwrap_or(usize::MAX / 2),
-                    variable,
-                )
-            });
-        }
-        GreedyVariableOrderType::GoalCgLevel => {
-            variables.sort_by_key(|&variable| {
-                (
-                    causal_graph
-                        .goal_distance(variable)
-                        .unwrap_or(usize::MAX / 2),
-                    std::cmp::Reverse(causal_graph.predecessor_count(variable)),
-                    causal_graph
-                        .causal_level(variable)
-                        .unwrap_or(usize::MAX / 2),
-                    variable,
-                )
-            });
-        }
-    }
 }
 
 fn enqueue_pattern_if_new(
@@ -418,8 +227,9 @@ fn compute_connection_points(
 fn collect_seed_variables(
     task: &dyn AbstractNumericTask,
     numeric_support: &NumericSupportContext,
-) -> BTreeSet<CausalGraphVariable> {
-    let mut seed_variables = BTreeSet::new();
+) -> Vec<CausalGraphVariable> {
+    let mut seed_variables = Vec::new();
+    let mut seen = BTreeSet::new();
     let goal_related_propositional_vars = collect_goal_related_propositional_closure(task);
 
     for goal_index in 0..task.get_num_goals() {
@@ -429,7 +239,11 @@ fn collect_seed_variables(
             .unwrap_or(None)
             .is_none()
         {
-            seed_variables.insert(CausalGraphVariable::Regular(goal.var));
+            push_seed_variable(
+                &mut seed_variables,
+                &mut seen,
+                CausalGraphVariable::Regular(goal.var),
+            );
         }
     }
 
@@ -441,12 +255,33 @@ fn collect_seed_variables(
 
         for numeric_var_id in numeric_support.comparison_support_ids(task, comparison_axiom_id) {
             if is_pattern_numeric_candidate(task, numeric_var_id, numeric_support) {
-                seed_variables.insert(CausalGraphVariable::Numeric(numeric_var_id));
+                push_seed_variable(
+                    &mut seed_variables,
+                    &mut seen,
+                    CausalGraphVariable::Numeric(numeric_var_id),
+                );
             }
         }
     }
 
     seed_variables
+}
+
+fn push_seed_variable(
+    seed_variables: &mut Vec<CausalGraphVariable>,
+    seen: &mut BTreeSet<CausalGraphVariable>,
+    variable: CausalGraphVariable,
+) {
+    if seen.insert(variable) {
+        seed_variables.push(variable);
+    }
+}
+
+fn cpp_systematic_combined_size(pattern: &Pattern, candidate: &Pattern) -> usize {
+    pattern.regular.len()
+        + pattern.numeric.len()
+        + candidate.numeric.len()
+        + candidate.numeric.len()
 }
 
 fn is_pattern_numeric_candidate(

@@ -461,10 +461,6 @@ fn build_canonical_numeric_pdb_config(
             "max_pdb_states" => config.max_pdb_states = parse_usize(&value)?,
             "max_pattern_size" => config.max_pattern_size = parse_usize(&value)?,
             "only_interesting_patterns" => config.only_interesting_patterns = parse_bool(&value)?,
-            "random_seed" => config.random_seed = parse_i32(&value)?,
-            "variable_order_type" => {
-                config.variable_order_type = parse_greedy_variable_order_type(&value)?
-            }
             "exploration_heuristic" => {
                 config.exploration_heuristic = parse_pdb_internal_heuristic(&value)?
             }

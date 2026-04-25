@@ -156,7 +156,7 @@ fn parses_astar_canonical_numeric_pdb_with_or_without_unit_parens() {
 #[test]
 fn parses_astar_canonical_numeric_pdb_with_named_options() {
     let spec = parse_search_spec(
-        "astar(canonical_numeric_pdb(max_pdb_states=321, max_pattern_size=3, only_interesting_patterns=false, random_seed=7, variable_order_type=cg_goal_random, exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut))",
+        "astar(canonical_numeric_pdb(max_pdb_states=321, max_pattern_size=3, only_interesting_patterns=false, exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut))",
     )
     .unwrap();
 
@@ -167,11 +167,6 @@ fn parses_astar_canonical_numeric_pdb_with_named_options() {
     assert_eq!(config.max_pdb_states, 321);
     assert_eq!(config.max_pattern_size, 3);
     assert!(!config.only_interesting_patterns);
-    assert_eq!(config.random_seed, 7);
-    assert_eq!(
-        config.variable_order_type,
-        GreedyVariableOrderType::CgGoalRandom
-    );
     assert_eq!(config.exploration_heuristic, PdbInternalHeuristic::Blind);
     assert_eq!(config.frontier_heuristic, PdbInternalHeuristic::Lmcut);
     assert_eq!(config.failed_lookup_heuristic, PdbInternalHeuristic::Lmcut);
@@ -300,7 +295,7 @@ fn display_round_trips_greedy_numeric_pdb() {
 #[test]
 fn display_round_trips_canonical_numeric_pdb() {
     let parsed = parse_search_spec(
-        "astar(canonical_numeric_pdb(max_pdb_states=42, max_pattern_size=3, only_interesting_patterns=false, random_seed=9, variable_order_type=cg_goal_random, exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut))",
+        "astar(canonical_numeric_pdb(max_pdb_states=42, max_pattern_size=3, only_interesting_patterns=false, exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();

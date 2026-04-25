@@ -24,8 +24,6 @@ pub struct CanonicalNumericPdbConfig {
     pub max_pdb_states: usize,
     pub max_pattern_size: usize,
     pub only_interesting_patterns: bool,
-    pub random_seed: i32,
-    pub variable_order_type: super::variable_order_finder::GreedyVariableOrderType,
     pub exploration_heuristic: PdbInternalHeuristic,
     pub frontier_heuristic: PdbInternalHeuristic,
     pub failed_lookup_heuristic: PdbInternalHeuristic,
@@ -38,8 +36,6 @@ impl Default for CanonicalNumericPdbConfig {
             max_pdb_states: config.max_pdb_states,
             max_pattern_size: config.max_pattern_size,
             only_interesting_patterns: config.only_interesting_patterns,
-            random_seed: config.random_seed,
-            variable_order_type: config.variable_order_type,
             exploration_heuristic: Default::default(),
             frontier_heuristic: Default::default(),
             failed_lookup_heuristic: Default::default(),
@@ -51,12 +47,10 @@ impl fmt::Display for CanonicalNumericPdbConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "max_pdb_states={}, max_pattern_size={}, only_interesting_patterns={}, random_seed={}, variable_order_type={}, exploration_heuristic={}, frontier_heuristic={}, failed_lookup_heuristic={}",
+            "max_pdb_states={}, max_pattern_size={}, only_interesting_patterns={}, exploration_heuristic={}, frontier_heuristic={}, failed_lookup_heuristic={}",
             self.max_pdb_states,
             self.max_pattern_size,
             self.only_interesting_patterns,
-            self.random_seed,
-            self.variable_order_type,
             self.exploration_heuristic,
             self.frontier_heuristic,
             self.failed_lookup_heuristic,
@@ -70,8 +64,6 @@ impl From<CanonicalNumericPdbConfig> for SystematicPatternGeneratorConfig {
             max_pdb_states: config.max_pdb_states,
             max_pattern_size: config.max_pattern_size,
             only_interesting_patterns: config.only_interesting_patterns,
-            random_seed: config.random_seed,
-            variable_order_type: config.variable_order_type,
         }
     }
 }
