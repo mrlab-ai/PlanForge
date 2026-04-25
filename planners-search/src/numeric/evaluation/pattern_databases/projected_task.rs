@@ -954,6 +954,121 @@ impl<'task> ProjectedTask<'task> {
         Ok(())
     }
 
+    pub fn pack_pattern_state_values_from_expanded_numeric_into(
+        &self,
+        propositional_values: &[usize],
+        expanded_numeric_values: &[f64],
+        packer: &IntDoublePacker,
+        packed_values: &mut Vec<u64>,
+    ) -> Result<(), String> {
+        if propositional_values.len() < self.base.variables().len() {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base.variables().len()
+            ));
+        }
+        if expanded_numeric_values.len()
+            < self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+        {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+            ));
+        }
+
+        packed_values.clear();
+        packed_values.resize(packer.num_bins(), 0);
+
+        for (compact_index, &projected_var_id) in self.pattern_regular_projected_ids.iter().enumerate() {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            packer.set(
+                packed_values,
+                compact_index,
+                propositional_values[original_var_id] as u64,
+            );
+        }
+
+        let prop_len = self.pattern_regular_projected_ids.len();
+        for (numeric_index, &projected_numeric_id) in self.pattern_numeric_projected_ids.iter().enumerate() {
+            packer.set(
+                packed_values,
+                prop_len + numeric_index,
+                self.projected_numeric_value_from_expanded_numeric(
+                    projected_numeric_id,
+                    expanded_numeric_values,
+                )?
+                .to_bits(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn pack_pattern_numeric_state_values_from_expanded_numeric_into(
+        &self,
+        expanded_numeric_values: &[f64],
+        packer: &IntDoublePacker,
+        packed_values: &mut Vec<u64>,
+    ) -> Result<(), String> {
+        if expanded_numeric_values.len()
+            < self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+        {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+            ));
+        }
+
+        packed_values.clear();
+        packed_values.resize(packer.num_bins(), 0);
+
+        for (numeric_index, &projected_numeric_id) in self.pattern_numeric_projected_ids.iter().enumerate() {
+            packer.set(
+                packed_values,
+                numeric_index,
+                self.projected_numeric_value_from_expanded_numeric(
+                    projected_numeric_id,
+                    expanded_numeric_values,
+                )?
+                .to_bits(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn compact_pattern_prop_hash_from_state_values(
+        &self,
+        propositional_values: &[usize],
+        multipliers: &[usize],
+    ) -> Result<usize, String> {
+        if self.pattern_regular_projected_ids.len() != multipliers.len() {
+            return Err("pattern regular ids and multipliers length mismatch".to_string());
+        }
+        if propositional_values.len() < self.base.variables().len() {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base.variables().len()
+            ));
+        }
+
+        let mut hash = 0usize;
+        for (&projected_var_id, &multiplier) in self
+            .pattern_regular_projected_ids
+            .iter()
+            .zip(multipliers.iter())
+        {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            let value = propositional_values[original_var_id];
+            hash = hash.saturating_add(value.saturating_mul(multiplier));
+        }
+        Ok(hash)
+    }
+
     pub fn project_state_values_into(
         &self,
         propositional_values: &[usize],
@@ -1194,6 +1309,119 @@ impl<'task> ProjectedTask<'task> {
         }
 
         Ok(())
+    }
+
+    pub fn pack_pattern_concrete_state_values_into(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        packer: &IntDoublePacker,
+        packed_values: &mut Vec<u64>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<(), String> {
+        if !self.supports_direct_concrete_state_projection() {
+            return Err("direct projected-task lookup requires derived numeric values".to_string());
+        }
+
+        numeric_value_cache.clear();
+        numeric_value_cache.resize(
+            self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len(),
+            None,
+        );
+
+        packed_values.clear();
+        packed_values.resize(packer.num_bins(), 0);
+
+        for (compact_index, &projected_var_id) in self.pattern_regular_projected_ids.iter().enumerate() {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            packer.set(
+                packed_values,
+                compact_index,
+                registry
+                    .get_propositional_var_value(state, original_var_id)
+                    .map_err(|err| format!("{err:?}"))? as u64,
+            );
+        }
+
+        let prop_len = self.pattern_regular_projected_ids.len();
+        for (numeric_index, &projected_numeric_id) in self.pattern_numeric_projected_ids.iter().enumerate() {
+            packer.set(
+                packed_values,
+                prop_len + numeric_index,
+                self.projected_numeric_value_from_concrete_state(
+                    projected_numeric_id,
+                    state,
+                    registry,
+                    numeric_value_cache,
+                )?
+                .to_bits(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn pack_pattern_numeric_concrete_state_values_into(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        packer: &IntDoublePacker,
+        packed_values: &mut Vec<u64>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<(), String> {
+        if !self.supports_direct_concrete_state_projection() {
+            return Err("direct projected-task lookup requires derived numeric values".to_string());
+        }
+
+        numeric_value_cache.clear();
+        numeric_value_cache.resize(
+            self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len(),
+            None,
+        );
+
+        packed_values.clear();
+        packed_values.resize(packer.num_bins(), 0);
+
+        for (numeric_index, &projected_numeric_id) in self.pattern_numeric_projected_ids.iter().enumerate() {
+            packer.set(
+                packed_values,
+                numeric_index,
+                self.projected_numeric_value_from_concrete_state(
+                    projected_numeric_id,
+                    state,
+                    registry,
+                    numeric_value_cache,
+                )?
+                .to_bits(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn compact_pattern_prop_hash_from_concrete_state(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        multipliers: &[usize],
+    ) -> Result<usize, String> {
+        if self.pattern_regular_projected_ids.len() != multipliers.len() {
+            return Err("pattern regular ids and multipliers length mismatch".to_string());
+        }
+
+        let mut hash = 0usize;
+        for (&projected_var_id, &multiplier) in self
+            .pattern_regular_projected_ids
+            .iter()
+            .zip(multipliers.iter())
+        {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            let value = registry
+                .get_propositional_var_value(state, original_var_id)
+                .map_err(|err| format!("{err:?}"))?;
+            hash = hash.saturating_add(value.saturating_mul(multiplier));
+        }
+        Ok(hash)
     }
 
     pub fn project_concrete_state_values_into(

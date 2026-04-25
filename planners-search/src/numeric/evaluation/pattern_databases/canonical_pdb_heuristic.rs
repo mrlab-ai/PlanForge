@@ -19,6 +19,48 @@ use super::pattern_generator_systematic::{
 };
 use super::pdb_collection::PdbCollection;
 
+#[derive(Default)]
+pub(crate) struct PdbValueCache {
+    values: Vec<f64>,
+    generations: Vec<u32>,
+    current_generation: u32,
+}
+
+impl PdbValueCache {
+    fn begin_evaluation(&mut self, len: usize) {
+        if self.values.len() != len {
+            self.values.resize(len, 0.0);
+            self.generations.resize(len, 0);
+            self.current_generation = 1;
+            return;
+        }
+
+        if self.current_generation == u32::MAX {
+            self.generations.fill(0);
+            self.current_generation = 1;
+        } else {
+            self.current_generation += 1;
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<f64> {
+        (self.generations.get(index).copied() == Some(self.current_generation))
+            .then(|| self.values[index])
+    }
+
+    fn insert(&mut self, index: usize, value: f64) -> Result<(), String> {
+        let Some(slot) = self.values.get_mut(index) else {
+            return Err(format!("invalid canonical subset pdb cache index {index}"));
+        };
+        let Some(generation) = self.generations.get_mut(index) else {
+            return Err(format!("invalid canonical subset pdb cache generation index {index}"));
+        };
+        *slot = value;
+        *generation = self.current_generation;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CanonicalNumericPdbConfig {
     pub max_pdb_states: usize,
@@ -127,12 +169,8 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
         self.pdb_collection.supports_direct_concrete_state_projection()
     }
 
-    fn prepare_pdb_value_cache(&self, pdb_value_cache: &mut Vec<f64>) {
-        if pdb_value_cache.len() != self.pdb_collection.len() {
-            pdb_value_cache.resize(self.pdb_collection.len(), f64::NAN);
-        } else {
-            pdb_value_cache.fill(f64::NAN);
-        }
+    fn prepare_pdb_value_cache(&self, pdb_value_cache: &mut PdbValueCache) {
+        pdb_value_cache.begin_evaluation(self.pdb_collection.len());
     }
 
     pub fn expand_numeric_state_values_into(
@@ -144,11 +182,11 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
             .expand_numeric_state_values_into(numeric_values, expanded_numeric_values)
     }
 
-    pub fn evaluate_projected_state_values(
+    pub(crate) fn evaluate_projected_state_values(
         &self,
         propositional_values: &[usize],
         expanded_numeric_values: &[f64],
-        pdb_value_cache: &mut Vec<f64>,
+        pdb_value_cache: &mut PdbValueCache,
     ) -> Result<f64, String> {
         self.prepare_pdb_value_cache(pdb_value_cache);
 
@@ -157,23 +195,8 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
         for subset in &self.max_additive_subsets {
             let mut subset_value = 0.0;
             for &pdb_id in subset {
-                let value = if let Some(&cached_value) = pdb_value_cache.get(pdb_id) {
-                    if !cached_value.is_nan() {
-                        cached_value
-                    } else {
-                        let Some(pdb) = self.pdb_collection.pdb(pdb_id) else {
-                            return Err(format!("invalid canonical subset pdb index {pdb_id}"));
-                        };
-                        let value = pdb.lookup_projected_or_fallback_from_expanded_state_values(
-                            propositional_values,
-                            expanded_numeric_values,
-                        )?;
-                        let Some(slot) = pdb_value_cache.get_mut(pdb_id) else {
-                            return Err(format!("invalid canonical subset pdb cache index {pdb_id}"));
-                        };
-                        *slot = value;
-                        value
-                    }
+                let value = if let Some(cached_value) = pdb_value_cache.get(pdb_id) {
+                    cached_value
                 } else {
                     let Some(pdb) = self.pdb_collection.pdb(pdb_id) else {
                         return Err(format!("invalid canonical subset pdb index {pdb_id}"));
@@ -182,6 +205,7 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
                         propositional_values,
                         expanded_numeric_values,
                     )?;
+                    pdb_value_cache.insert(pdb_id, value)?;
                     value
                 };
                 if value.is_infinite() {
@@ -195,11 +219,11 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
         Ok(best_value)
     }
 
-    pub fn evaluate_concrete_state(
+    pub(crate) fn evaluate_concrete_state(
         &self,
         state: &ConcreteState,
         registry: &StateRegistry<'_>,
-        pdb_value_cache: &mut Vec<f64>,
+        pdb_value_cache: &mut PdbValueCache,
     ) -> Result<f64, String> {
         self.prepare_pdb_value_cache(pdb_value_cache);
 
@@ -208,25 +232,14 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
         for subset in &self.max_additive_subsets {
             let mut subset_value = 0.0;
             for &pdb_id in subset {
-                let value = if let Some(&cached_value) = pdb_value_cache.get(pdb_id) {
-                    if !cached_value.is_nan() {
-                        cached_value
-                    } else {
-                        let Some(pdb) = self.pdb_collection.pdb(pdb_id) else {
-                            return Err(format!("invalid canonical subset pdb index {pdb_id}"));
-                        };
-                        let value = pdb.lookup_or_fallback_from_concrete_state(state, registry)?;
-                        let Some(slot) = pdb_value_cache.get_mut(pdb_id) else {
-                            return Err(format!("invalid canonical subset pdb cache index {pdb_id}"));
-                        };
-                        *slot = value;
-                        value
-                    }
+                let value = if let Some(cached_value) = pdb_value_cache.get(pdb_id) {
+                    cached_value
                 } else {
                     let Some(pdb) = self.pdb_collection.pdb(pdb_id) else {
                         return Err(format!("invalid canonical subset pdb index {pdb_id}"));
                     };
                     let value = pdb.lookup_or_fallback_from_concrete_state(state, registry)?;
+                    pdb_value_cache.insert(pdb_id, value)?;
                     value
                 };
                 if value.is_infinite() {
@@ -249,7 +262,7 @@ pub struct CanonicalNumericPdbHeuristic<'task> {
     prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
     expanded_numeric_scratch: RefCell<Vec<f64>>,
-    pdb_value_cache: RefCell<Vec<f64>>,
+    pdb_value_cache: RefCell<PdbValueCache>,
     state_value_cache: RefCell<Vec<f64>>,
 }
 
@@ -282,7 +295,7 @@ impl<'task> CanonicalNumericPdbHeuristic<'task> {
             prop_scratch: RefCell::new(Vec::new()),
             numeric_scratch: RefCell::new(Vec::new()),
             expanded_numeric_scratch: RefCell::new(Vec::new()),
-            pdb_value_cache: RefCell::new(Vec::new()),
+            pdb_value_cache: RefCell::new(PdbValueCache::default()),
             state_value_cache: RefCell::new(Vec::new()),
         }
     }

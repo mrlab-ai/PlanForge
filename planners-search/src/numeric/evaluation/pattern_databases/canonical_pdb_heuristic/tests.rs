@@ -65,7 +65,7 @@ fn canonical_collection_information_uses_explicit_subsets() {
         pdb_collection,
         vec![vec![0, 1], vec![0], vec![1]],
     );
-    let mut pdb_value_cache = Vec::new();
+    let mut pdb_value_cache = PdbValueCache::default();
 
     let value = collection_information
         .evaluate_projected_state_values(&[0, 0], &[0.0], &mut pdb_value_cache)
