@@ -91,6 +91,39 @@ fn compute_prop_hash(propositional: &[usize], multipliers: &[usize]) -> Option<u
     Some(hash)
 }
 
+#[inline]
+fn fast_hash_bins(bins: &[u64]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x00000100000001B3;
+    let mut hash = FNV_OFFSET;
+    for &value in bins {
+        for byte in value.to_le_bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+    }
+    hash
+}
+
+fn build_pattern_lookup_packer(task: &ProjectedTask<'_>) -> IntDoublePacker {
+    let mut ranges = Vec::with_capacity(
+        task.pattern_regular_projected_ids().len() + task.pattern_numeric_projected_ids().len(),
+    );
+    for &projected_var_id in task.pattern_regular_projected_ids() {
+        ranges.push(task.variables()[projected_var_id].domain_size() as u64);
+    }
+    ranges.extend(
+        std::iter::repeat_n(u64::MAX, task.pattern_numeric_projected_ids().len()),
+    );
+    IntDoublePacker::new(&ranges)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct PackedDistanceEntry {
+    bins: Box<[u64]>,
+    distance: f64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct PdbState {
     propositional: Vec<usize>,
@@ -233,6 +266,8 @@ pub struct PatternDatabase<'task> {
     pub(super) states: Vec<PdbState>,
     state_index: HashMap<u64, Vec<usize>>,
     pattern_index: HashMap<u64, Vec<usize>>,
+    packed_pattern_index: HashMap<u64, Vec<usize>>,
+    packed_pattern_entries: Vec<PackedDistanceEntry>,
     full_prop_index: HashMap<usize, Vec<usize>>,
     pub(super) distances: Vec<f64>,
     pub(super) min_operator_cost: f64,
@@ -241,11 +276,15 @@ pub struct PatternDatabase<'task> {
     exhausted_abstract_state_space: bool,
     pub(super) frontier_states: Vec<usize>,
     full_prop_hash_multipliers: Vec<usize>,
+    pattern_lookup_packer: IntDoublePacker,
     state_dependent_numeric_projected_ids: Vec<usize>,
     projection_prop_scratch: RefCell<Vec<usize>>,
     projection_numeric_scratch: RefCell<Vec<f64>>,
     projection_helper_scratch: RefCell<Vec<f64>>,
     direct_numeric_cache_scratch: RefCell<Vec<Option<f64>>>,
+    pattern_projection_prop_scratch: RefCell<Vec<usize>>,
+    pattern_projection_numeric_scratch: RefCell<Vec<f64>>,
+    pattern_lookup_bins_scratch: RefCell<Vec<u64>>,
 }
 
 impl<'task> PatternDatabase<'task> {
@@ -261,6 +300,10 @@ impl<'task> PatternDatabase<'task> {
         let min_operator_cost = task.min_operator_cost();
         let projection_prop_capacity = task.variables().len();
         let projection_numeric_capacity = task.numeric_variables().len();
+        let pattern_prop_capacity = task.pattern_regular_projected_ids().len();
+        let pattern_numeric_capacity = task.pattern_numeric_projected_ids().len();
+        let pattern_lookup_packer = build_pattern_lookup_packer(&task);
+        let pattern_lookup_bin_count = pattern_lookup_packer.num_bins();
 
         let mut pdb = Self {
             task,
@@ -268,6 +311,8 @@ impl<'task> PatternDatabase<'task> {
             states: Vec::with_capacity(max_states),
             state_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
             pattern_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
+            packed_pattern_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
+            packed_pattern_entries: Vec::with_capacity(max_states),
             full_prop_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
             distances: Vec::new(),
             min_operator_cost,
@@ -276,6 +321,7 @@ impl<'task> PatternDatabase<'task> {
             exhausted_abstract_state_space: false,
             frontier_states: Vec::new(),
             full_prop_hash_multipliers: Vec::new(),
+            pattern_lookup_packer,
             state_dependent_numeric_projected_ids: Vec::new(),
             projection_prop_scratch: RefCell::new(Vec::with_capacity(projection_prop_capacity)),
             projection_numeric_scratch: RefCell::new(Vec::with_capacity(
@@ -283,6 +329,13 @@ impl<'task> PatternDatabase<'task> {
             )),
             projection_helper_scratch: RefCell::new(Vec::new()),
             direct_numeric_cache_scratch: RefCell::new(Vec::new()),
+            pattern_projection_prop_scratch: RefCell::new(Vec::with_capacity(
+                pattern_prop_capacity,
+            )),
+            pattern_projection_numeric_scratch: RefCell::new(Vec::with_capacity(
+                pattern_numeric_capacity,
+            )),
+            pattern_lookup_bins_scratch: RefCell::new(vec![0; pattern_lookup_bin_count]),
         };
         pdb.full_prop_hash_multipliers = build_prop_hash_multipliers(&pdb.task);
         pdb.state_dependent_numeric_projected_ids =
@@ -316,6 +369,12 @@ impl<'task> PatternDatabase<'task> {
                 })
                 .filter_map(|state_id| self.distances.get(state_id).copied())
                 .min_by(|lhs, rhs| lhs.total_cmp(rhs));
+        }
+
+        if propositional.len() == self.task.pattern_regular_projected_ids().len()
+            && numeric.len() == self.task.pattern_numeric_projected_ids().len()
+        {
+            return self.lookup_packed_pattern_distance_from_compact_values(propositional, numeric);
         }
 
         let lookup_key = hash_state_components(propositional, numeric);
@@ -367,30 +426,140 @@ impl<'task> PatternDatabase<'task> {
             return self.lookup(propositional, numeric);
         }
 
-        let pattern_regular_ids = self.task.pattern_regular_projected_ids();
-        let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
-        let pattern_key = hash_pattern_components(
-            propositional,
-            numeric,
-            pattern_regular_ids,
-            pattern_numeric_ids,
-        );
-        let candidates = self.pattern_index.get(&pattern_key)?;
+        self.lookup_packed_pattern_distance_from_projected_values(propositional, numeric)
+    }
 
+    fn pack_pattern_values_into_bins(
+        &self,
+        propositional: &[usize],
+        numeric: &[f64],
+        bins: &mut Vec<u64>,
+    ) -> Option<()> {
+        if propositional.len() != self.task.pattern_regular_projected_ids().len()
+            || numeric.len() != self.task.pattern_numeric_projected_ids().len()
+        {
+            return None;
+        }
+
+        bins.clear();
+        bins.resize(self.pattern_lookup_packer.num_bins(), 0);
+
+        for (var_id, value) in propositional.iter().enumerate() {
+            self.pattern_lookup_packer.set(bins, var_id, *value as u64);
+        }
+        let prop_len = propositional.len();
+        for (numeric_index, value) in numeric.iter().enumerate() {
+            self.pattern_lookup_packer
+                .set(bins, prop_len + numeric_index, value.to_bits());
+        }
+
+        Some(())
+    }
+
+    fn pack_pattern_projected_values_into_bins(
+        &self,
+        propositional: &[usize],
+        numeric: &[f64],
+        bins: &mut Vec<u64>,
+    ) -> Option<()> {
+        if propositional.len() != self.task.variables().len()
+            || numeric.len() != self.task.numeric_variables().len()
+        {
+            return None;
+        }
+
+        bins.clear();
+        bins.resize(self.pattern_lookup_packer.num_bins(), 0);
+
+        for (compact_index, &projected_var_id) in self.task.pattern_regular_projected_ids().iter().enumerate() {
+            self.pattern_lookup_packer.set(
+                bins,
+                compact_index,
+                propositional[projected_var_id] as u64,
+            );
+        }
+        let prop_len = self.task.pattern_regular_projected_ids().len();
+        for (numeric_index, &projected_numeric_id) in self.task.pattern_numeric_projected_ids().iter().enumerate() {
+            self.pattern_lookup_packer.set(
+                bins,
+                prop_len + numeric_index,
+                numeric[projected_numeric_id].to_bits(),
+            );
+        }
+
+        Some(())
+    }
+
+    fn lookup_packed_pattern_distance(&self, bins: &[u64]) -> Option<f64> {
+        let hash = fast_hash_bins(bins);
+        let candidates = self.packed_pattern_index.get(&hash)?;
         candidates
             .iter()
             .copied()
-            .filter(|&state_id| {
-                let state = &self.states[state_id];
-                pattern_regular_ids.iter().all(|&var_id| {
-                    state.propositional.get(var_id).copied() == propositional.get(var_id).copied()
-                }) && pattern_numeric_ids.iter().all(|&var_id| {
-                    state.numeric.get(var_id).map(|value| value.to_bits())
-                        == numeric.get(var_id).map(|value| value.to_bits())
-                })
+            .find_map(|entry_id| {
+                let entry = self.packed_pattern_entries.get(entry_id)?;
+                (entry.bins.as_ref() == bins).then_some(entry.distance)
             })
-            .filter_map(|state_id| self.distances.get(state_id).copied())
-            .min_by(|lhs, rhs| lhs.total_cmp(rhs))
+    }
+
+    fn lookup_packed_pattern_distance_from_compact_values(
+        &self,
+        propositional: &[usize],
+        numeric: &[f64],
+    ) -> Option<f64> {
+        let mut bins = self.pattern_lookup_bins_scratch.borrow_mut();
+        self.pack_pattern_values_into_bins(propositional, numeric, &mut bins)?;
+        self.lookup_packed_pattern_distance(&bins)
+    }
+
+    fn lookup_packed_pattern_distance_from_projected_values(
+        &self,
+        propositional: &[usize],
+        numeric: &[f64],
+    ) -> Option<f64> {
+        let mut bins = self.pattern_lookup_bins_scratch.borrow_mut();
+        self.pack_pattern_projected_values_into_bins(propositional, numeric, &mut bins)?;
+        self.lookup_packed_pattern_distance(&bins)
+    }
+
+    fn lookup_pattern_distance_from_concrete_state(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+    ) -> Result<Option<f64>, String> {
+        let mut pattern_prop = self.pattern_projection_prop_scratch.borrow_mut();
+        let mut pattern_num = self.pattern_projection_numeric_scratch.borrow_mut();
+        let mut numeric_cache = self.direct_numeric_cache_scratch.borrow_mut();
+        self.task.project_pattern_concrete_state_values_into(
+            state,
+            registry,
+            &mut pattern_prop,
+            &mut pattern_num,
+            &mut numeric_cache,
+        )?;
+        Ok(self.lookup_packed_pattern_distance_from_compact_values(
+            &pattern_prop,
+            &pattern_num,
+        ))
+    }
+
+    fn lookup_pattern_distance_from_expanded_state_values(
+        &self,
+        propositional: &[usize],
+        expanded_numeric: &[f64],
+    ) -> Result<Option<f64>, String> {
+        let mut pattern_prop = self.pattern_projection_prop_scratch.borrow_mut();
+        let mut pattern_num = self.pattern_projection_numeric_scratch.borrow_mut();
+        self.task.project_pattern_state_values_from_expanded_numeric_into(
+            propositional,
+            expanded_numeric,
+            &mut pattern_prop,
+            &mut pattern_num,
+        )?;
+        Ok(self.lookup_packed_pattern_distance_from_compact_values(
+            &pattern_prop,
+            &pattern_num,
+        ))
     }
 
     fn lookup_pattern_or_fallback_in_projected_values(
@@ -486,6 +655,13 @@ impl<'task> PatternDatabase<'task> {
         propositional: &[usize],
         expanded_numeric: &[f64],
     ) -> Result<f64, String> {
+        if let Some(distance) =
+            self.lookup_pattern_distance_from_expanded_state_values(propositional, expanded_numeric)?
+            && distance.is_finite()
+        {
+            return Ok(distance);
+        }
+
         let mut projected_prop = self.projection_prop_scratch.borrow_mut();
         let mut projected_num = self.projection_numeric_scratch.borrow_mut();
 
@@ -505,6 +681,12 @@ impl<'task> PatternDatabase<'task> {
         registry: &StateRegistry<'_>,
     ) -> Result<f64, String> {
         if self.task.supports_direct_concrete_state_projection() {
+            if let Some(distance) = self.lookup_pattern_distance_from_concrete_state(state, registry)?
+                && distance.is_finite()
+            {
+                return Ok(distance);
+            }
+
             let mut projected_prop = self.projection_prop_scratch.borrow_mut();
             let mut projected_num = self.projection_numeric_scratch.borrow_mut();
             let mut numeric_cache = self.direct_numeric_cache_scratch.borrow_mut();
@@ -546,10 +728,13 @@ impl<'task> PatternDatabase<'task> {
     fn rebuild_lookup_indexes(&mut self) {
         self.state_index.clear();
         self.pattern_index.clear();
+        self.packed_pattern_index.clear();
+        self.packed_pattern_entries.clear();
         self.full_prop_index.clear();
 
         let pattern_regular_ids = self.task.pattern_regular_projected_ids();
         let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
+        let mut packed_bins = vec![0; self.pattern_lookup_packer.num_bins()];
 
         for (state_id, state) in self.states.iter().enumerate() {
             let full_key = hash_state_components(&state.propositional, &state.numeric);
@@ -577,6 +762,43 @@ impl<'task> PatternDatabase<'task> {
                 .entry(pattern_key)
                 .or_insert_with(|| Vec::with_capacity(1))
                 .push(state_id);
+
+            packed_bins.fill(0);
+            for (compact_index, &projected_var_id) in pattern_regular_ids.iter().enumerate() {
+                self.pattern_lookup_packer.set(
+                    &mut packed_bins,
+                    compact_index,
+                    state.propositional[projected_var_id] as u64,
+                );
+            }
+            let prop_len = pattern_regular_ids.len();
+            for (numeric_index, &projected_numeric_id) in pattern_numeric_ids.iter().enumerate() {
+                self.pattern_lookup_packer.set(
+                    &mut packed_bins,
+                    prop_len + numeric_index,
+                    state.numeric[projected_numeric_id].to_bits(),
+                );
+            }
+            let packed_hash = fast_hash_bins(&packed_bins);
+            let distance = self.distances[state_id];
+            let bucket = self
+                .packed_pattern_index
+                .entry(packed_hash)
+                .or_insert_with(|| Vec::with_capacity(1));
+            if let Some(existing_entry_id) = bucket.iter().copied().find(|&entry_id| {
+                self.packed_pattern_entries[entry_id].bins.as_ref() == packed_bins.as_slice()
+            }) {
+                if distance < self.packed_pattern_entries[existing_entry_id].distance {
+                    self.packed_pattern_entries[existing_entry_id].distance = distance;
+                }
+            } else {
+                let entry_id = self.packed_pattern_entries.len();
+                self.packed_pattern_entries.push(PackedDistanceEntry {
+                    bins: packed_bins.clone().into_boxed_slice(),
+                    distance,
+                });
+                bucket.push(entry_id);
+            }
         }
     }
 

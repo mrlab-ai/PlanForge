@@ -911,6 +911,49 @@ impl<'task> ProjectedTask<'task> {
         Ok(())
     }
 
+    pub fn project_pattern_state_values_from_expanded_numeric_into(
+        &self,
+        propositional_values: &[usize],
+        expanded_numeric_values: &[f64],
+        pattern_prop_values: &mut Vec<usize>,
+        pattern_numeric_values: &mut Vec<f64>,
+    ) -> Result<(), String> {
+        if propositional_values.len() < self.base.variables().len() {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base.variables().len()
+            ));
+        }
+        if expanded_numeric_values.len()
+            < self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+        {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+            ));
+        }
+
+        pattern_prop_values.clear();
+        pattern_prop_values.reserve(self.pattern_regular_projected_ids.len());
+        for &projected_var_id in &self.pattern_regular_projected_ids {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            pattern_prop_values.push(propositional_values[original_var_id]);
+        }
+
+        pattern_numeric_values.clear();
+        pattern_numeric_values.reserve(self.pattern_numeric_projected_ids.len());
+        for &projected_numeric_id in &self.pattern_numeric_projected_ids {
+            pattern_numeric_values.push(self.projected_numeric_value_from_expanded_numeric(
+                projected_numeric_id,
+                expanded_numeric_values,
+            )?);
+        }
+
+        Ok(())
+    }
+
     pub fn project_state_values_into(
         &self,
         propositional_values: &[usize],
@@ -1110,6 +1153,49 @@ impl<'task> ProjectedTask<'task> {
         !self.requires_derived_numeric_values()
     }
 
+    pub fn project_pattern_concrete_state_values_into(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        pattern_prop_values: &mut Vec<usize>,
+        pattern_numeric_values: &mut Vec<f64>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<(), String> {
+        if !self.supports_direct_concrete_state_projection() {
+            return Err("direct projected-task lookup requires derived numeric values".to_string());
+        }
+
+        numeric_value_cache.clear();
+        numeric_value_cache.resize(
+            self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len(),
+            None,
+        );
+
+        pattern_prop_values.clear();
+        pattern_prop_values.reserve(self.pattern_regular_projected_ids.len());
+        for &projected_var_id in &self.pattern_regular_projected_ids {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            pattern_prop_values.push(
+                registry
+                    .get_propositional_var_value(state, original_var_id)
+                    .map_err(|err| format!("{err:?}"))?,
+            );
+        }
+
+        pattern_numeric_values.clear();
+        pattern_numeric_values.reserve(self.pattern_numeric_projected_ids.len());
+        for &projected_numeric_id in &self.pattern_numeric_projected_ids {
+            pattern_numeric_values.push(self.projected_numeric_value_from_concrete_state(
+                projected_numeric_id,
+                state,
+                registry,
+                numeric_value_cache,
+            )?);
+        }
+
+        Ok(())
+    }
+
     pub fn project_concrete_state_values_into(
         &self,
         state: &ConcreteState,
@@ -1150,6 +1236,45 @@ impl<'task> ProjectedTask<'task> {
         }
 
         Ok(())
+    }
+
+    fn projected_numeric_value_from_expanded_numeric(
+        &self,
+        projected_index: usize,
+        expanded_numeric_values: &[f64],
+    ) -> Result<f64, String> {
+        if self.is_auxiliary_constant[projected_index] {
+            return self.projected_initial_numeric_values[projected_index].ok_or_else(|| {
+                format!("missing constant projected numeric value at index {projected_index}")
+            });
+        }
+
+        let Some(original_numeric_var) = self.projected_num_var_to_original[projected_index] else {
+            return Err(
+                "missing original numeric variable for projected numeric variable".to_string(),
+            );
+        };
+
+        if self.is_auxiliary_num_var[projected_index] {
+            let helper_id = self.helper_id_by_source_numeric_var[original_numeric_var]
+                .ok_or_else(|| {
+                    format!(
+                        "missing helper id for auxiliary projected numeric variable {original_numeric_var}"
+                    )
+                })?;
+            return expanded_numeric_values.get(helper_id).copied().ok_or_else(|| {
+                format!("expanded numeric state too short for helper id {helper_id}")
+            });
+        }
+
+        expanded_numeric_values
+            .get(original_numeric_var)
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "expanded numeric state too short for numeric variable {original_numeric_var}"
+                )
+            })
     }
 
     fn projected_numeric_value_from_concrete_state(

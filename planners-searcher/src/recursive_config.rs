@@ -10,7 +10,6 @@ use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuri
 use planners_search::numeric::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
 use planners_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planners_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
-
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DomainAbstractionConfig {
     pub max_abstraction_size: usize,

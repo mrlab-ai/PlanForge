@@ -96,6 +96,12 @@ impl<'task> PdbCollection<'task> {
             .any(|pdb| pdb.requires_derived_numeric_values())
     }
 
+    pub fn supports_direct_concrete_state_projection(&self) -> bool {
+        self.pdbs
+            .iter()
+            .all(|pdb| pdb.task.supports_direct_concrete_state_projection())
+    }
+
     pub fn singleton_additive_subsets(&self) -> Vec<Vec<usize>> {
         (0..self.pdbs.len()).map(|index| vec![index]).collect()
     }
