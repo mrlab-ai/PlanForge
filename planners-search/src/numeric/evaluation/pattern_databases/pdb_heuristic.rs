@@ -97,6 +97,11 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
             return Ok(value);
         }
 
+        if eval_state.is_goal() {
+            self.cache_state_value(state_id, 0.0);
+            return Ok(0.0);
+        }
+
         let (_task, registry) = Self::require_task_and_registry(eval_state)?;
         let heuristic_value = self
             .pdb
@@ -109,5 +114,81 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
 
     fn heuristic_name(&self) -> String {
         self.name.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use planners_sas::numeric::axioms::{AssignmentAxiom, AxiomEvaluator, CalOperator};
+    use planners_sas::numeric::numeric_task::{
+        Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
+        NumericVariable, Operator,
+    };
+    use planners_sas::numeric::state_registry::StateRegistry;
+    use planners_sas::numeric::utils::int_packer::IntDoublePacker;
+
+    use crate::numeric::evaluation::evaluator::{EvaluationState, Evaluator};
+    use crate::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
+
+    use super::GreedyNumericPdbHeuristic;
+
+    fn initial_goal_task() -> NumericRootTask {
+        NumericRootTask::new(
+            1,
+            Metric::new(true, None),
+            vec![ExplicitVariable::new(
+                2,
+                "p".to_string(),
+                vec!["p=0".to_string(), "p=1".to_string()],
+                None,
+                0,
+            )],
+            vec![NumericVariable::new(
+                "x".to_string(),
+                NumericType::Regular,
+                None,
+            )],
+            vec![ExplicitFact::new(0, 1)],
+            vec![],
+            vec![1],
+            vec![0.0],
+            vec![Operator::new(
+                "leave-goal".to_string(),
+                vec![ExplicitFact::new(0, 1)],
+                vec![Effect::new(vec![], 0, Some(1), 0)],
+                vec![],
+                1,
+            )],
+            vec![],
+            vec![],
+            vec![AssignmentAxiom::new(0, CalOperator::Sum, 0, 0)],
+            ExplicitFact::new(0, 0),
+        )
+    }
+
+    #[test]
+    fn greedy_numeric_pdb_returns_zero_for_concrete_goal_state() {
+        let task = initial_goal_task();
+        let state_packer = IntDoublePacker::from_task(&task);
+        let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+        let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+        let initial_state = state_registry.get_initial_state();
+        let heuristic = GreedyNumericPdbHeuristic::new(
+            &task,
+            GreedyPatternGeneratorConfig {
+                max_pdb_states: 16,
+                ..GreedyPatternGeneratorConfig::default()
+            },
+        )
+        .expect("greedy numeric PDB should build for simple goal task");
+
+        let mut eval_state =
+            EvaluationState::new_with_registry(&initial_state, 0.0, false, &task, &state_registry);
+        eval_state.set_is_goal(true);
+        let value = heuristic
+            .evaluate_state(&mut eval_state)
+            .expect("goal evaluation should succeed");
+
+        assert_eq!(value, 0.0);
     }
 }

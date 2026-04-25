@@ -1,8 +1,8 @@
 use super::*;
 use rand::{SeedableRng, rngs::SmallRng};
 
-use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
 use planners_sas::numeric::axioms::PropositionalAxiom;
+use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
 
 use planners_sas::numeric::numeric_task::{
     Effect, ExplicitVariable, Metric, NumericRootTask, NumericVariable, Operator,
@@ -494,7 +494,13 @@ fn goal_variable_values_expand_goal_axiom_preconditions() {
     let variables = vec![
         ExplicitVariable::new(2, "need_a".into(), vec!["f".into(), "t".into()], None, 0),
         ExplicitVariable::new(2, "need_b".into(), vec!["f".into(), "t".into()], None, 0),
-        ExplicitVariable::new(2, "goal_flag".into(), vec!["off".into(), "on".into()], None, 0),
+        ExplicitVariable::new(
+            2,
+            "goal_flag".into(),
+            vec!["off".into(), "on".into()],
+            None,
+            0,
+        ),
     ];
     let task = NumericRootTask::new(
         4,

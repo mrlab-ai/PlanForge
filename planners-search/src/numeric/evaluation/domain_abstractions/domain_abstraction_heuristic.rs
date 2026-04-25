@@ -148,7 +148,10 @@ fn resolved_propositional_value(
     numeric: &[f64],
     comparison_trees: &[ComparisonTree],
 ) -> Result<usize, EvaluationError> {
-    let Some(tree) = comparison_trees.iter().find(|tree| tree.affected_var_id == var) else {
+    let Some(tree) = comparison_trees
+        .iter()
+        .find(|tree| tree.affected_var_id == var)
+    else {
         return Ok(stored_val);
     };
 

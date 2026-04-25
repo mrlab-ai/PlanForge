@@ -16,10 +16,12 @@ use crate::numeric::{
 use log::{debug, info};
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, ExplicitFact, Operator, metric_operator_cost_from_initial_values,
+    AbstractNumericTask, ExplicitFact, NumericType, Operator,
+    metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistry};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::env;
 use std::time::{Duration, Instant};
 
@@ -129,6 +131,8 @@ pub struct AStarSearch<'a> {
     counters_at_last_jump: SearchCounters,
     last_reported_f_layer: Option<i64>,
     best_reported_heuristic_value: Option<OrderedFloat<f64>>,
+    exact_remaining_debug_reported: bool,
+    admissibility_witness_reported: bool,
     state_values_buffer: Vec<usize>,
     applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
     successor_numeric_values_buffer: Vec<f64>,
@@ -212,6 +216,8 @@ impl<'a> AStarSearch<'a> {
             counters_at_last_jump: SearchCounters::default(),
             last_reported_f_layer: None,
             best_reported_heuristic_value: None,
+            exact_remaining_debug_reported: false,
+            admissibility_witness_reported: false,
             state_values_buffer: Vec::with_capacity(task.variables().len()),
             applicable_operators_buffer: Vec::new(),
             successor_numeric_values_buffer: Vec::with_capacity(task.numeric_variables().len()),
@@ -331,6 +337,256 @@ impl<'a> AStarSearch<'a> {
         );
     }
 
+    fn exact_remaining_distance(&mut self, start_state: &ConcreteState) -> std::io::Result<f64> {
+        if self.is_goal_state(start_state) {
+            return Ok(0.0);
+        }
+
+        let mut best_g: HashMap<StateID, f64> = HashMap::new();
+        let mut open: BinaryHeap<(Reverse<OrderedFloat<f64>>, StateID)> = BinaryHeap::new();
+        let successor_generator = Self::create_successor_generator(self.task);
+        let mut state_values_buffer: Vec<usize> = Vec::new();
+        let mut applicable_operators: Vec<ApplicableOperator<'a>> = Vec::new();
+        let mut successor_numeric_values: Vec<f64> = Vec::new();
+        let mut successor_cost_values: Vec<f64> = Vec::new();
+
+        best_g.insert(start_state.get_id(), 0.0);
+        open.push((Reverse(OrderedFloat(0.0)), start_state.get_id()));
+
+        while let Some((Reverse(OrderedFloat(g_value)), state_id)) = open.pop() {
+            let Some(&known_best) = best_g.get(&state_id) else {
+                continue;
+            };
+            if g_value > known_best + 1e-12 {
+                continue;
+            }
+
+            let state = self.state_registry.lookup_state(state_id).map_err(|err| {
+                std::io::Error::other(format!(
+                    "failed to look up exact-remaining state {state_id}: {err:?}"
+                ))
+            })?;
+            if self.is_goal_state(&state) {
+                return Ok(g_value);
+            }
+
+            state.fill_state(&self.state_registry, &mut state_values_buffer);
+            applicable_operators.clear();
+            successor_generator
+                .get_applicable_operators(&state_values_buffer, &mut applicable_operators);
+
+            for (operator, operator_id) in applicable_operators.iter().copied() {
+                let (successor, op_cost) = self
+                    .state_registry
+                    .get_successor_state_with_buffers_and_cost(
+                        &state,
+                        operator,
+                        &mut successor_numeric_values,
+                        &mut successor_cost_values,
+                    )
+                    .map_err(|err| {
+                        std::io::Error::other(format!(
+                            "failed to generate exact-remaining successor for {}: {err:?}",
+                            operator.name()
+                        ))
+                    })?;
+
+                let step_cost = if self.task.metric().use_metric() {
+                    op_cost
+                } else {
+                    self.operator_costs
+                        .get(operator_id)
+                        .copied()
+                        .unwrap_or(operator.cost() as f64)
+                };
+                let successor_id = successor.get_id();
+                let new_g = g_value + step_cost;
+
+                if new_g + 1e-12 >= *best_g.get(&successor_id).unwrap_or(&f64::INFINITY) {
+                    continue;
+                }
+
+                best_g.insert(successor_id, new_g);
+                open.push((Reverse(OrderedFloat(new_g)), successor_id));
+            }
+        }
+
+        Ok(f64::INFINITY)
+    }
+
+    fn format_state_facts(&self, state: &ConcreteState) -> String {
+        let values = state.get_state(&self.state_registry);
+        let facts: Vec<String> = values
+            .iter()
+            .enumerate()
+            .map(|(var_id, &value)| {
+                let fact = ExplicitFact::new(var_id, value);
+                let name = self.task.get_fact_name(&fact);
+                if name.is_empty() {
+                    format!("v{var_id}={value}")
+                } else {
+                    name.to_string()
+                }
+            })
+            .collect();
+        facts.join(", ")
+    }
+
+    fn format_non_zero_numeric_values(&self, state: &ConcreteState) -> String {
+        let mut numeric_values = Vec::new();
+        if self
+            .state_registry
+            .fill_numeric_vars(state, &mut numeric_values)
+            .is_err()
+        {
+            return "<unavailable>".to_string();
+        }
+
+        let values: Vec<String> = self
+            .task
+            .numeric_variables()
+            .iter()
+            .enumerate()
+            .filter_map(|(numeric_var_id, numeric_var)| {
+                if numeric_var.get_type() != &NumericType::Regular {
+                    return None;
+                }
+                let value = numeric_values.get(numeric_var_id).copied().unwrap_or(0.0);
+                (value.abs() > 1e-9).then(|| format!("{}={:.6}", numeric_var.name(), value))
+            })
+            .collect();
+
+        if values.is_empty() {
+            "<all zero>".to_string()
+        } else {
+            values.join(", ")
+        }
+    }
+
+    fn maybe_report_exact_remaining_debug(
+        &mut self,
+        phase: &str,
+        state: &ConcreteState,
+        evaluation: &EvaluationResult,
+    ) {
+        if self.exact_remaining_debug_reported {
+            return;
+        }
+
+        let Ok(bound_raw) = env::var("TRACE_EXACT_REMAINING_F_BOUND") else {
+            return;
+        };
+        let Ok(bound) = bound_raw.parse::<f64>() else {
+            return;
+        };
+
+        let h_value = evaluation.get_heuristic_value(&self.heuristic.name());
+        let f_value = evaluation.get_heuristic_value(&self.f_evaluator.name());
+        if f_value <= bound + 1e-9 {
+            return;
+        }
+
+        self.exact_remaining_debug_reported = true;
+
+        match self.exact_remaining_distance(state) {
+            Ok(exact_remaining) => {
+                info!(
+                    "EXACT_REMAINING_DEBUG phase={} sid={} g={:.6} h={:.6} f={:.6} bound={:.6} exact_remaining={:.6} delta={:.6}",
+                    phase,
+                    state.get_id(),
+                    evaluation.g_value,
+                    h_value,
+                    f_value,
+                    bound,
+                    exact_remaining,
+                    h_value - exact_remaining,
+                );
+                info!(
+                    "EXACT_REMAINING_DEBUG props: {}",
+                    self.format_state_facts(state)
+                );
+                info!(
+                    "EXACT_REMAINING_DEBUG nums: {}",
+                    self.format_non_zero_numeric_values(state)
+                );
+            }
+            Err(err) => {
+                info!(
+                    "EXACT_REMAINING_DEBUG phase={} sid={} failed to compute exact remaining distance: {}",
+                    phase,
+                    state.get_id(),
+                    err,
+                );
+            }
+        }
+    }
+
+    fn maybe_report_admissibility_witness(
+        &mut self,
+        phase: &str,
+        state: &ConcreteState,
+        evaluation: &EvaluationResult,
+    ) {
+        if self.admissibility_witness_reported
+            || env::var_os("TRACE_ADMISSIBILITY_WITNESS").is_none()
+        {
+            return;
+        }
+
+        let phase_filter =
+            env::var("TRACE_ADMISSIBILITY_PHASE").unwrap_or_else(|_| "all".to_string());
+        if phase_filter != "all" && phase_filter != phase {
+            return;
+        }
+
+        let h_value = evaluation.get_heuristic_value(&self.heuristic.name());
+        if !h_value.is_finite() {
+            return;
+        }
+
+        let min_h = env::var("TRACE_ADMISSIBILITY_MIN_H")
+            .ok()
+            .and_then(|raw| raw.parse::<f64>().ok())
+            .unwrap_or(f64::NEG_INFINITY);
+        if h_value <= min_h + 1e-9 {
+            return;
+        }
+
+        match self.exact_remaining_distance(state) {
+            Ok(exact_remaining) if h_value > exact_remaining + 1e-9 => {
+                self.admissibility_witness_reported = true;
+                let f_value = evaluation.get_heuristic_value(&self.f_evaluator.name());
+                info!(
+                    "ADMISSIBILITY_WITNESS phase={} sid={} g={:.6} h={:.6} f={:.6} exact_remaining={:.6} delta={:.6}",
+                    phase,
+                    state.get_id(),
+                    evaluation.g_value,
+                    h_value,
+                    f_value,
+                    exact_remaining,
+                    h_value - exact_remaining,
+                );
+                info!(
+                    "ADMISSIBILITY_WITNESS props: {}",
+                    self.format_state_facts(state)
+                );
+                info!(
+                    "ADMISSIBILITY_WITNESS nums: {}",
+                    self.format_non_zero_numeric_values(state)
+                );
+            }
+            Ok(_) => {}
+            Err(err) => {
+                info!(
+                    "ADMISSIBILITY_WITNESS phase={} sid={} failed to compute exact remaining distance: {}",
+                    phase,
+                    state.get_id(),
+                    err,
+                );
+            }
+        }
+    }
+
     /// Check if the given state satisfies all goal conditions.
     fn is_goal_state(&self, state: &ConcreteState) -> bool {
         for i in 0..self.task.get_num_goals() {
@@ -401,7 +657,6 @@ impl<'a> AStarSearch<'a> {
             }
             Err(err) => return Err(Box::new(err)),
         }
-
         Ok(eval_state.into_result())
     }
 
@@ -452,6 +707,9 @@ impl<'a> AStarSearch<'a> {
                     .get_heuristic_value(&self.f_evaluator.name())
             );
         }
+
+        self.maybe_report_exact_remaining_debug("expanded", &node.state, &node.evaluation);
+        self.maybe_report_admissibility_witness("expanded", &node.state, &node.evaluation);
 
         self.closed_set.insert(state_id);
         self.nodes_expanded += 1;
@@ -590,12 +848,14 @@ impl<'a> AStarSearch<'a> {
                 }
                 if evaluation.is_dead_end {
                     self.dead_ends += 1;
+                    self.maybe_report_admissibility_witness("evaluated", &succ_state, &evaluation);
                     if !self.open_list.accepts_dead_ends() {
                         continue;
                     }
                 }
 
                 if !evaluation.is_dead_end {
+                    self.maybe_report_admissibility_witness("evaluated", &succ_state, &evaluation);
                     let _ = self.maybe_report_heuristic_progress(&evaluation, start_time);
                 }
 
@@ -628,6 +888,11 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             if initial_evaluation.is_dead_end {
                 self.dead_ends += 1;
             } else {
+                self.maybe_report_admissibility_witness(
+                    "evaluated",
+                    &initial_state,
+                    &initial_evaluation,
+                );
                 let progress =
                     self.maybe_report_heuristic_progress(&initial_evaluation, &start_time);
                 if progress.improved {

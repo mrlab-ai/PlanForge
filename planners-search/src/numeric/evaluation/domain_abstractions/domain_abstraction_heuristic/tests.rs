@@ -44,7 +44,12 @@ fn resolved_propositional_value_recomputes_comparison_axioms_from_numeric_state(
         vec![2.0, 1.0],
         vec![],
         vec![],
-        vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::GreaterThan)],
+        vec![ComparisonAxiom::new(
+            0,
+            0,
+            1,
+            ComparisonOperator::GreaterThan,
+        )],
         vec![],
         ExplicitFact::new(0, 0),
     );

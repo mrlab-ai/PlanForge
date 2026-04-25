@@ -574,10 +574,9 @@ fn heuristic_spec(input: &str) -> Res<'_, HeuristicSpec> {
         tuple((
             ws(tag_no_case("canonical_domain_abstractions")),
             opt(ws(alt((
-                map(
-                    empty_parens,
-                    |_| DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
-                ),
+                map(empty_parens, |_| {
+                    DomainAbstractionCollectionGeneratorMultipleCegarConfig::default()
+                }),
                 multi_domain_abstractions_parens,
             )))),
         )),

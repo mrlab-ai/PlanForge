@@ -1,3 +1,5 @@
+use std::env;
+
 use log::{debug, info};
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 
@@ -27,6 +29,30 @@ pub(crate) fn print_projection_summary(
         projected_task.get_num_goals(),
         projected_task.get_operators().len()
     );
+
+    if env::var_os("TRACE_GREEDY_NUMERIC_PDB_PROJECTION").is_some() {
+        let numeric_names: Vec<String> = projected_task
+            .numeric_variables()
+            .iter()
+            .enumerate()
+            .map(|(projected_id, numeric_var)| {
+                format!(
+                    "{projected_id}:{}:{:?}",
+                    numeric_var.name(),
+                    numeric_var.get_type()
+                )
+            })
+            .collect();
+        info!("  projected numeric vars: {}", numeric_names.join(", "));
+        info!(
+            "  state-dependent projected numeric ids: {:?}",
+            projected_task.state_dependent_numeric_projected_ids()
+        );
+        info!(
+            "  pattern projected numeric ids: {:?}",
+            projected_task.pattern_numeric_projected_ids()
+        );
+    }
 }
 
 #[allow(unused)]

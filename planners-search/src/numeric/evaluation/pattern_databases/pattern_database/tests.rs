@@ -498,7 +498,7 @@ fn pdb_build_expands_from_axiom_closed_initial_state() {
     .unwrap();
 
     let (initial_prop, initial_num) = projected_task.evaluated_initial_state_values().unwrap();
-    assert_eq!(initial_prop, vec![0, 0]);
+    assert_eq!(initial_prop, vec![0]);
 
     let pdb = PatternDatabase::new(projected_task, 16).unwrap();
 
@@ -591,6 +591,67 @@ fn pdb_collapses_hidden_cost_dimensions_outside_pattern() {
     assert_eq!(pdb.states.len(), 2);
     assert_eq!(pdb.lookup(&[0], &[]), Some(1.0));
     assert_eq!(pdb.lookup(&[1], &[]), Some(0.0));
+}
+
+#[test]
+fn lookup_uses_min_distance_across_pattern_aliases() {
+    let task = comparison_guarded_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![1],
+            numeric: vec![1],
+        },
+    )
+    .unwrap();
+
+    let mut pdb = PatternDatabase::new(projected_task, 16).unwrap();
+    pdb.states = vec![
+        super::PdbState {
+            propositional: vec![1, 0],
+            numeric: vec![0.0, 0.0],
+        },
+        super::PdbState {
+            propositional: vec![0, 0],
+            numeric: vec![0.0, 0.0],
+        },
+    ];
+    pdb.distances = vec![5.0, 1.0];
+    pdb.rebuild_lookup_indexes();
+
+    assert_eq!(pdb.lookup(&[0], &[0.0]), Some(1.0));
+}
+
+#[test]
+fn projected_runtime_lookup_uses_pattern_min_across_full_projected_aliases() {
+    let task = comparison_guarded_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![1],
+            numeric: vec![1],
+        },
+    )
+    .unwrap();
+
+    let mut pdb = PatternDatabase::new(projected_task, 16).unwrap();
+    pdb.states = vec![
+        super::PdbState {
+            propositional: vec![1],
+            numeric: vec![0.0, 0.0],
+        },
+        super::PdbState {
+            propositional: vec![0],
+            numeric: vec![0.0, 0.0],
+        },
+    ];
+    pdb.distances = vec![5.0, 1.0];
+    pdb.rebuild_lookup_indexes();
+
+    assert_eq!(
+        pdb.lookup_pattern_or_fallback_in_projected_values(&[0], &[0.0, 0.0]),
+        1.0
+    );
 }
 
 #[test]

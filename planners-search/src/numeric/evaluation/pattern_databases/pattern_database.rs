@@ -294,12 +294,111 @@ impl<'task> PatternDatabase<'task> {
     }
 
     pub fn lookup(&self, propositional: &[usize], numeric: &[f64]) -> Option<f64> {
-        let state_id = self.lookup_state_id(propositional, numeric)?;
-        self.distances.get(state_id).copied()
+        let full_state_lookup = propositional.len() == self.task.variables().len()
+            && numeric.len() == self.task.numeric_variables().len();
+        let pattern_regular_ids = self.task.pattern_regular_projected_ids();
+        let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
+
+        if full_state_lookup {
+            let prop_hash = compute_prop_hash(propositional, &self.full_prop_hash_multipliers)?;
+            let candidates = self.full_prop_index.get(&prop_hash)?;
+            return candidates
+                .iter()
+                .copied()
+                .filter(|&state_id| {
+                    let state = &self.states[state_id];
+                    state.numeric.len() == numeric.len()
+                        && state
+                            .numeric
+                            .iter()
+                            .zip(numeric.iter())
+                            .all(|(lhs, rhs)| lhs.to_bits() == rhs.to_bits())
+                })
+                .filter_map(|state_id| self.distances.get(state_id).copied())
+                .min_by(|lhs, rhs| lhs.total_cmp(rhs));
+        }
+
+        let lookup_key = hash_state_components(propositional, numeric);
+        let candidates = self.pattern_index.get(&lookup_key)?;
+
+        candidates
+            .iter()
+            .copied()
+            .filter(|&state_id| {
+                let state = &self.states[state_id];
+                pattern_regular_ids
+                    .iter()
+                    .enumerate()
+                    .all(|(pattern_index, &var_id)| {
+                        state.propositional.get(var_id).copied()
+                            == propositional.get(pattern_index).copied()
+                    })
+                    && pattern_numeric_ids
+                        .iter()
+                        .enumerate()
+                        .all(|(pattern_index, &var_id)| {
+                            state.numeric.get(var_id).map(|value| value.to_bits())
+                                == numeric.get(pattern_index).map(|value| value.to_bits())
+                        })
+            })
+            .filter_map(|state_id| self.distances.get(state_id).copied())
+            .min_by(|lhs, rhs| lhs.total_cmp(rhs))
     }
 
     pub fn lookup_or_fallback(&self, propositional: &[usize], numeric: &[f64]) -> f64 {
         match self.lookup(propositional, numeric) {
+            Some(distance) if distance.is_finite() => distance,
+            Some(_) if self.is_goal_state(propositional) => 0.0,
+            Some(_) if self.exhausted_abstract_state_space => f64::INFINITY,
+            Some(_) if self.truncated => self.evaluate_failed_lookup(propositional, numeric),
+            Some(distance) => distance,
+            None => self.evaluate_failed_lookup(propositional, numeric),
+        }
+    }
+
+    fn lookup_pattern_distance_in_projected_values(
+        &self,
+        propositional: &[usize],
+        numeric: &[f64],
+    ) -> Option<f64> {
+        if propositional.len() != self.task.variables().len()
+            || numeric.len() != self.task.numeric_variables().len()
+        {
+            return self.lookup(propositional, numeric);
+        }
+
+        let pattern_regular_ids = self.task.pattern_regular_projected_ids();
+        let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
+        let pattern_key = hash_pattern_components(
+            propositional,
+            numeric,
+            pattern_regular_ids,
+            pattern_numeric_ids,
+        );
+        let candidates = self.pattern_index.get(&pattern_key)?;
+
+        candidates
+            .iter()
+            .copied()
+            .filter(|&state_id| {
+                let state = &self.states[state_id];
+                pattern_regular_ids.iter().all(|&var_id| {
+                    state.propositional.get(var_id).copied() == propositional.get(var_id).copied()
+                }) && pattern_numeric_ids.iter().all(|&var_id| {
+                    state.numeric.get(var_id).map(|value| value.to_bits())
+                        == numeric.get(var_id).map(|value| value.to_bits())
+                })
+            })
+            .filter_map(|state_id| self.distances.get(state_id).copied())
+            .min_by(|lhs, rhs| lhs.total_cmp(rhs))
+    }
+
+    fn lookup_pattern_or_fallback_in_projected_values(
+        &self,
+        propositional: &[usize],
+        numeric: &[f64],
+    ) -> f64 {
+        match self.lookup_pattern_distance_in_projected_values(propositional, numeric) {
             Some(distance) if distance.is_finite() => distance,
             Some(_) if self.is_goal_state(propositional) => 0.0,
             Some(_) if self.exhausted_abstract_state_space => f64::INFINITY,
@@ -370,7 +469,7 @@ impl<'task> PatternDatabase<'task> {
             &mut helper_values,
         )?;
 
-        Ok(self.lookup_or_fallback(&projected_prop, &projected_num))
+        Ok(self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num))
     }
 
     pub fn expand_numeric_state_values_into(
@@ -397,7 +496,7 @@ impl<'task> PatternDatabase<'task> {
             &mut projected_num,
         )?;
 
-        Ok(self.lookup_or_fallback(&projected_prop, &projected_num))
+        Ok(self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num))
     }
 
     pub fn lookup_or_fallback_from_concrete_state(
@@ -416,7 +515,8 @@ impl<'task> PatternDatabase<'task> {
                 &mut projected_num,
                 &mut numeric_cache,
             )?;
-            return Ok(self.lookup_or_fallback(&projected_prop, &projected_num));
+            return Ok(self
+                .lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num));
         }
 
         let mut propositional = Vec::new();
@@ -430,63 +530,6 @@ impl<'task> PatternDatabase<'task> {
             )
             .map_err(|err| format!("{err:?}"))?;
         self.lookup_projected_or_fallback_from_state_values(&propositional, &numeric)
-    }
-
-    fn lookup_state_id(&self, propositional: &[usize], numeric: &[f64]) -> Option<usize> {
-        let full_state_lookup = propositional.len() == self.task.variables().len()
-            && numeric.len() == self.task.numeric_variables().len();
-        let pattern_regular_ids = self.task.pattern_regular_projected_ids();
-        let pattern_numeric_ids = self.task.pattern_numeric_projected_ids();
-
-        if full_state_lookup {
-            let prop_hash = compute_prop_hash(propositional, &self.full_prop_hash_multipliers)?;
-            let candidates = self.full_prop_index.get(&prop_hash)?;
-            return candidates.iter().copied().find(|&state_id| {
-                let state = &self.states[state_id];
-                state.numeric.len() == numeric.len()
-                    && state
-                        .numeric
-                        .iter()
-                        .zip(numeric.iter())
-                        .all(|(lhs, rhs)| lhs.to_bits() == rhs.to_bits())
-            });
-        }
-
-        let lookup_key = hash_state_components(propositional, numeric);
-        let candidates = self.pattern_index.get(&lookup_key)?;
-
-        candidates.iter().copied().find(|&state_id| {
-            let state = &self.states[state_id];
-            let same_propositional = if full_state_lookup {
-                state.propositional == propositional
-            } else {
-                pattern_regular_ids
-                    .iter()
-                    .enumerate()
-                    .all(|(pattern_index, &var_id)| {
-                        state.propositional.get(var_id).copied()
-                            == propositional.get(pattern_index).copied()
-                    })
-            };
-
-            same_propositional
-                && if full_state_lookup {
-                    state.numeric.len() == numeric.len()
-                        && state
-                            .numeric
-                            .iter()
-                            .zip(numeric.iter())
-                            .all(|(lhs, rhs)| lhs.to_bits() == rhs.to_bits())
-                } else {
-                    pattern_numeric_ids
-                        .iter()
-                        .enumerate()
-                        .all(|(pattern_index, &var_id)| {
-                            state.numeric.get(var_id).map(|value| value.to_bits())
-                                == numeric.get(pattern_index).map(|value| value.to_bits())
-                        })
-                }
-        })
     }
 
     pub(super) fn state_propositional_values<'state>(

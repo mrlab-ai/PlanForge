@@ -52,7 +52,10 @@ fn parses_astar_domain_abstraction_with_named_options() {
     assert!(!config.use_wildcard_plans);
     assert!(config.combine_labels);
     assert_eq!(config.random_seed, 7);
-    assert_eq!(config.exec_entire_plan, ExecEntirePlanMode::ExecuteEntirePlan);
+    assert_eq!(
+        config.exec_entire_plan,
+        ExecEntirePlanMode::ExecuteEntirePlan
+    );
 }
 
 #[test]
