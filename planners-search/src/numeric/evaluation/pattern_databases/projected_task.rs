@@ -476,6 +476,27 @@ impl PatternLookupProjection {
         Ok(hash)
     }
 
+    #[inline]
+    pub(super) fn compact_prop_hash_from_state_values_unchecked(
+        &self,
+        propositional_values: &[usize],
+        multipliers: &[usize],
+    ) -> usize {
+        debug_assert_eq!(self.pattern_regular_original_ids.len(), multipliers.len());
+        debug_assert!(propositional_values.len() >= self.base_propositional_len);
+
+        let mut hash = 0usize;
+        for (&original_var_id, &multiplier) in self
+            .pattern_regular_original_ids
+            .iter()
+            .zip(multipliers.iter())
+        {
+            let value = propositional_values[original_var_id];
+            hash = hash.saturating_add(value.saturating_mul(multiplier));
+        }
+        hash
+    }
+
     fn numeric_value_from_expanded(
         lookup: &ProjectedNumericLookup,
         expanded_numeric_values: &[f64],
@@ -509,6 +530,25 @@ impl PatternLookupProjection {
                 Self::numeric_value_from_expanded(lookup, expanded_numeric_values)?.to_bits();
         }
         Ok(())
+    }
+
+    #[inline]
+    pub(super) fn fill_pattern_numeric_bins_from_expanded_numeric_into_unchecked(
+        &self,
+        expanded_numeric_values: &[f64],
+        bins: &mut Vec<u64>,
+    ) {
+        debug_assert!(expanded_numeric_values.len() >= self.expanded_numeric_len);
+
+        bins.clear();
+        bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
+        for (numeric_index, lookup) in self.pattern_numeric_lookup.iter().enumerate() {
+            bins[numeric_index + 1] = match *lookup {
+                ProjectedNumericLookup::Constant(value) => value,
+                ProjectedNumericLookup::Expanded(index) => expanded_numeric_values[index],
+            }
+            .to_bits();
+        }
     }
 
     pub(super) fn pack_pattern_state_values_from_expanded_numeric_into(
@@ -596,6 +636,34 @@ impl PatternLookupProjection {
             )?);
         }
         Ok(())
+    }
+
+    #[inline]
+    pub(super) fn project_state_values_from_expanded_numeric_into_unchecked(
+        &self,
+        propositional_values: &[usize],
+        expanded_numeric_values: &[f64],
+        projected_prop_values: &mut Vec<usize>,
+        projected_numeric_values: &mut Vec<f64>,
+    ) {
+        debug_assert!(propositional_values.len() >= self.base_propositional_len);
+        debug_assert!(expanded_numeric_values.len() >= self.expanded_numeric_len);
+
+        projected_prop_values.clear();
+        projected_prop_values.extend(
+            self.projected_regular_original_ids
+                .iter()
+                .map(|&original_var_id| propositional_values[original_var_id]),
+        );
+
+        projected_numeric_values.clear();
+        projected_numeric_values.reserve(self.projected_numeric_lookup.len());
+        for lookup in &self.projected_numeric_lookup {
+            projected_numeric_values.push(match *lookup {
+                ProjectedNumericLookup::Constant(value) => value,
+                ProjectedNumericLookup::Expanded(index) => expanded_numeric_values[index],
+            });
+        }
     }
 }
 

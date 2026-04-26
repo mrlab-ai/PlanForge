@@ -7,9 +7,8 @@
 mod tests;
 
 use crate::numeric::{
-    evaluation::g_evaluator::{GEvaluator, SumEvaluator},
     evaluation::heuristic::BlindHeuristic,
-    evaluation::{EvaluationError, EvaluationResult, EvaluationState, Evaluator, Heuristic},
+    evaluation::{EvaluationError, EvaluationState, Heuristic},
     successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node},
 };
 use log::{debug, info};
@@ -96,6 +95,14 @@ struct SearchNodeInfo {
     g_value: f64,
     is_dead_end: bool,
     is_closed: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SearchEvaluation {
+    h_value: f64,
+    f_value: f64,
+    g_value: f64,
+    is_dead_end: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -199,9 +206,6 @@ pub struct AStarSearch<'a> {
     // Evaluators.
     heuristic: Box<dyn Heuristic + 'a>,
     heuristic_name: String,
-    g_evaluator: GEvaluator,
-    f_evaluator: SumEvaluator,
-    f_evaluator_name: String,
 
     // Configuration.
     time_limit: Option<Duration>,
@@ -272,11 +276,6 @@ impl<'a> AStarSearch<'a> {
         });
         let heuristic_name = heuristic.name();
 
-        // Create evaluators for A*.
-        let g_evaluator = GEvaluator::new(None);
-        let f_evaluator = SumEvaluator::f_evaluator(heuristic_name.clone());
-        let f_evaluator_name = f_evaluator.name();
-
         Self {
             task,
             state_registry,
@@ -286,9 +285,6 @@ impl<'a> AStarSearch<'a> {
             search_nodes: Vec::new(),
             heuristic,
             heuristic_name,
-            g_evaluator,
-            f_evaluator,
-            f_evaluator_name,
             time_limit,
             max_memory_bytes,
             initial_state: Some(initial_state),
@@ -408,10 +404,10 @@ impl<'a> AStarSearch<'a> {
 
     fn maybe_report_heuristic_progress(
         &mut self,
-        evaluation: &EvaluationResult,
+        evaluation: &SearchEvaluation,
         start_time: &Instant,
     ) -> ProgressSnapshot {
-        let h_value = OrderedFloat(evaluation.get_heuristic_value(&self.heuristic_name));
+        let h_value = OrderedFloat(evaluation.h_value);
         if self
             .best_reported_heuristic_value
             .is_some_and(|best| h_value >= best)
@@ -477,12 +473,12 @@ impl<'a> AStarSearch<'a> {
         plan
     }
 
-    /// Evaluate a state and creates evaluation result.
+    /// Evaluate a state for A* without materializing named evaluator results.
     fn evaluate_state(
         &self,
         state: &ConcreteState,
         g_value: f64,
-    ) -> Result<EvaluationResult, Box<dyn std::error::Error>> {
+    ) -> Result<SearchEvaluation, Box<dyn std::error::Error>> {
         let mut eval_state = EvaluationState::new_with_registry(
             state,
             g_value,
@@ -493,25 +489,33 @@ impl<'a> AStarSearch<'a> {
         let is_goal = self.is_goal_state(state);
         eval_state.set_is_goal(is_goal);
 
-        // Evaluate `g`-value.
-        self.g_evaluator.evaluate_state(&mut eval_state)?;
-
-        // Evaluate heuristic (can use goal flag).
-        match self.heuristic.evaluate_state(&mut eval_state) {
-            Ok(_) => {
-                // Evaluate `f`-value
-                self.f_evaluator.evaluate_state(&mut eval_state)?;
+        let evaluation = match self.heuristic.compute_heuristic(&eval_state) {
+            Ok(h_value) if h_value.is_infinite() && h_value.is_sign_positive() => {
+                SearchEvaluation {
+                    h_value,
+                    f_value: f64::INFINITY,
+                    g_value,
+                    is_dead_end: true,
+                }
             }
-            Err(EvaluationError::DeadEnd { .. }) => {
-                // Fast Downward still materializes dead-end evaluations so the
-                // caller can count and prune them consistently.
-                eval_state
-                    .result_mut()
-                    .set_heuristic_value(self.f_evaluator_name.clone(), f64::INFINITY);
+            Ok(h_value) => SearchEvaluation {
+                h_value,
+                f_value: g_value + h_value,
+                g_value,
+                is_dead_end: false,
+            },
+            Err(EvaluationError::DeadEnd { reliable }) => {
+                let _ = reliable;
+                SearchEvaluation {
+                    h_value: f64::INFINITY,
+                    f_value: f64::INFINITY,
+                    g_value,
+                    is_dead_end: true,
+                }
             }
             Err(err) => return Err(Box::new(err)),
-        }
-        Ok(eval_state.into_result())
+        };
+        Ok(evaluation)
     }
 
     fn populate_applicable_operators(&mut self, state: &ConcreteState) {
@@ -675,8 +679,8 @@ impl<'a> AStarSearch<'a> {
                         succ_state_id,
                         operator.name(),
                         new_g_value,
-                        evaluation.get_heuristic_value(&self.heuristic_name),
-                        evaluation.get_heuristic_value(&self.f_evaluator_name),
+                        evaluation.h_value,
+                        evaluation.f_value,
                         evaluation.is_dead_end,
                     );
                 }
@@ -690,7 +694,7 @@ impl<'a> AStarSearch<'a> {
                             .map(format_progress_value)
                             .unwrap_or_else(|| "<missing>".to_string()),
                         format_progress_value(new_g_value),
-                        format_progress_value(evaluation.get_heuristic_value(&self.heuristic_name)),
+                        format_progress_value(evaluation.h_value),
                         evaluation.is_dead_end,
                     );
                 }
@@ -707,14 +711,12 @@ impl<'a> AStarSearch<'a> {
                 self.set_search_node_info(succ_state_id, node_info);
 
                 if trace_initial_successors {
-                    let h_value = evaluation.get_heuristic_value(&self.heuristic_name);
-                    let f_value = evaluation.get_heuristic_value(&self.f_evaluator_name);
                     debug!(
                         "TRACE initial-successor op={} g={} h={} f={} dead_end={} state_id={}",
                         operator.name(),
                         format_progress_value(new_g_value),
-                        format_progress_value(h_value),
-                        format_progress_value(f_value),
+                        format_progress_value(evaluation.h_value),
+                        format_progress_value(evaluation.f_value),
                         evaluation.is_dead_end,
                         succ_state_id
                     );
@@ -724,11 +726,13 @@ impl<'a> AStarSearch<'a> {
                     continue;
                 }
 
-                let h_value = evaluation.get_heuristic_value(&self.heuristic_name);
-                let f_value = evaluation.get_heuristic_value(&self.f_evaluator_name);
                 let _ = self.maybe_report_heuristic_progress(&evaluation, start_time);
-                self.open_list
-                    .insert(succ_state_id, new_g_value, h_value, f_value);
+                self.open_list.insert(
+                    succ_state_id,
+                    new_g_value,
+                    evaluation.h_value,
+                    evaluation.f_value,
+                );
             }
         }
 
@@ -759,18 +763,17 @@ impl<'a> SearchEngine for AStarSearch<'a> {
                 let progress =
                     self.maybe_report_heuristic_progress(&initial_evaluation, &start_time);
                 if progress.improved {
-                    self.maybe_print_f_value(
-                        initial_evaluation.get_heuristic_value(&self.f_evaluator_name),
-                        &start_time,
-                    );
+                    self.maybe_print_f_value(initial_evaluation.f_value, &start_time);
                 }
             }
 
             if !initial_evaluation.is_dead_end {
-                let h_value = initial_evaluation.get_heuristic_value(&self.heuristic_name);
-                let f_value = initial_evaluation.get_heuristic_value(&self.f_evaluator_name);
-                self.open_list
-                    .insert(initial_state.get_id(), 0.0, h_value, f_value);
+                self.open_list.insert(
+                    initial_state.get_id(),
+                    0.0,
+                    initial_evaluation.h_value,
+                    initial_evaluation.f_value,
+                );
             }
 
             self.print_initial_h_values();
@@ -837,7 +840,7 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             info!(
                 "Initial heuristic value for {}: {}",
                 self.heuristic_name,
-                format_progress_value(evaluation.get_heuristic_value(&self.heuristic_name))
+                format_progress_value(evaluation.h_value)
             );
         }
     }

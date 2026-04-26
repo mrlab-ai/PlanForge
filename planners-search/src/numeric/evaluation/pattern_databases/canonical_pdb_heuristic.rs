@@ -48,18 +48,10 @@ impl PdbValueCache {
             .then(|| self.values[index])
     }
 
-    fn insert(&mut self, index: usize, value: f64) -> Result<(), String> {
-        let Some(slot) = self.values.get_mut(index) else {
-            return Err(format!("invalid canonical subset pdb cache index {index}"));
-        };
-        let Some(generation) = self.generations.get_mut(index) else {
-            return Err(format!(
-                "invalid canonical subset pdb cache generation index {index}"
-            ));
-        };
-        *slot = value;
-        *generation = self.current_generation;
-        Ok(())
+    #[inline]
+    fn insert_unchecked(&mut self, index: usize, value: f64) {
+        self.values[index] = value;
+        self.generations[index] = self.current_generation;
     }
 }
 
@@ -185,10 +177,11 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
         propositional_values: &[usize],
         expanded_numeric_values: &[f64],
         pdb_value_cache: &mut PdbValueCache,
-    ) -> Result<f64, String> {
+    ) -> f64 {
         self.prepare_pdb_value_cache(pdb_value_cache);
 
         let mut best_value = 0.0_f64;
+        let pdbs = self.pdb_collection.pdbs();
 
         for subset in &self.max_additive_subsets {
             let mut subset_value = 0.0;
@@ -196,25 +189,23 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
                 let value = if let Some(cached_value) = pdb_value_cache.get(pdb_id) {
                     cached_value
                 } else {
-                    let Some(pdb) = self.pdb_collection.pdb(pdb_id) else {
-                        return Err(format!("invalid canonical subset pdb index {pdb_id}"));
-                    };
-                    let value = pdb.lookup_projected_or_fallback_from_expanded_state_values(
-                        propositional_values,
-                        expanded_numeric_values,
-                    )?;
-                    pdb_value_cache.insert(pdb_id, value)?;
+                    let value = pdbs[pdb_id]
+                        .lookup_projected_or_fallback_from_expanded_state_values_fast(
+                            propositional_values,
+                            expanded_numeric_values,
+                        );
+                    pdb_value_cache.insert_unchecked(pdb_id, value);
                     value
                 };
                 if value.is_infinite() {
-                    return Ok(f64::INFINITY);
+                    return f64::INFINITY;
                 }
                 subset_value += value;
             }
             best_value = best_value.max(subset_value);
         }
 
-        Ok(best_value)
+        best_value
     }
 }
 
@@ -335,14 +326,11 @@ impl Heuristic for CanonicalNumericPdbHeuristic<'_> {
             .expand_numeric_state_values_into(&numeric_values, &mut expanded_numeric_values)
             .map_err(EvaluationError::ComputationFailed)?;
 
-        let heuristic_value = self
-            .collection_information
-            .evaluate_projected_state_values(
-                &propositional_values,
-                &expanded_numeric_values,
-                &mut pdb_value_cache,
-            )
-            .map_err(EvaluationError::ComputationFailed)?;
+        let heuristic_value = self.collection_information.evaluate_projected_state_values(
+            &propositional_values,
+            &expanded_numeric_values,
+            &mut pdb_value_cache,
+        );
 
         self.cache_state_value(state_id, heuristic_value);
         Ok(heuristic_value)

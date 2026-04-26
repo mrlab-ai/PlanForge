@@ -200,6 +200,85 @@ impl FrozenPackedDistanceRegistry {
     }
 }
 
+enum CompactNumericDistanceIndex {
+    Empty,
+    One(HashMap<(u64, u64), f64>),
+    Two(HashMap<(u64, u64, u64), f64>),
+    Many(FrozenPackedDistanceRegistry),
+}
+
+impl CompactNumericDistanceIndex {
+    fn new(numeric_count: usize, capacity: usize) -> Self {
+        match numeric_count {
+            0 => Self::Empty,
+            1 => Self::One(HashMap::with_capacity_and_hasher(capacity, FxBuildHasher)),
+            2 => Self::Two(HashMap::with_capacity_and_hasher(capacity, FxBuildHasher)),
+            _ => Self::Many(FrozenPackedDistanceRegistry::new(
+                1 + numeric_count,
+                capacity,
+            )),
+        }
+    }
+
+    fn clear(&mut self) {
+        match self {
+            Self::Empty => {}
+            Self::One(index) => index.clear(),
+            Self::Two(index) => index.clear(),
+            Self::Many(index) => index.clear(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Empty => true,
+            Self::One(index) => index.is_empty(),
+            Self::Two(index) => index.is_empty(),
+            Self::Many(index) => index.is_empty(),
+        }
+    }
+
+    fn lookup_distance(&self, bins: &[u64]) -> Option<f64> {
+        match self {
+            Self::Empty => None,
+            Self::One(index) => {
+                let [prop_hash, value] = *bins else {
+                    return None;
+                };
+                index.get(&(prop_hash, value)).copied()
+            }
+            Self::Two(index) => {
+                let [prop_hash, first, second] = *bins else {
+                    return None;
+                };
+                index.get(&(prop_hash, first, second)).copied()
+            }
+            Self::Many(index) => index.lookup_distance(bins),
+        }
+    }
+
+    fn insert_min_distance(&mut self, bins: &[u64], distance: f64) {
+        match self {
+            Self::Empty => {}
+            Self::One(index) => {
+                let [prop_hash, value] = *bins else {
+                    return;
+                };
+                let slot = index.entry((prop_hash, value)).or_insert(distance);
+                *slot = slot.min(distance);
+            }
+            Self::Two(index) => {
+                let [prop_hash, first, second] = *bins else {
+                    return;
+                };
+                let slot = index.entry((prop_hash, first, second)).or_insert(distance);
+                *slot = slot.min(distance);
+            }
+            Self::Many(index) => index.insert_min_distance(bins, distance),
+        }
+    }
+}
+
 fn build_pattern_lookup_packer(task: &ProjectedTask<'_>) -> IntDoublePacker {
     let mut ranges = Vec::with_capacity(
         task.pattern_regular_projected_ids().len() + task.pattern_numeric_projected_ids().len(),
@@ -369,7 +448,7 @@ pub struct PatternDatabase<'task> {
     compact_prop_hash_multipliers: Vec<usize>,
     compact_prop_distances: Vec<f64>,
     pattern_lookup_packer: IntDoublePacker,
-    compact_numeric_registry: FrozenPackedDistanceRegistry,
+    compact_numeric_registry: CompactNumericDistanceIndex,
     state_dependent_numeric_projected_ids: Vec<usize>,
     failed_lookup_cache: RefCell<HashMap<u64, f64>>,
     projection_prop_scratch: RefCell<Vec<usize>>,
@@ -424,8 +503,8 @@ impl<'task> PatternDatabase<'task> {
             compact_prop_hash_multipliers,
             compact_prop_distances: Vec::new(),
             pattern_lookup_packer,
-            compact_numeric_registry: FrozenPackedDistanceRegistry::new(
-                compact_numeric_bin_count,
+            compact_numeric_registry: CompactNumericDistanceIndex::new(
+                compact_numeric_bin_count.saturating_sub(1),
                 max_states,
             ),
             state_dependent_numeric_projected_ids: Vec::new(),
@@ -809,6 +888,38 @@ impl<'task> PatternDatabase<'task> {
         Ok(self.lookup_packed_pattern_distance(&packed_bins))
     }
 
+    #[inline]
+    fn lookup_pattern_distance_from_expanded_state_values_fast(
+        &self,
+        propositional: &[usize],
+        expanded_numeric: &[f64],
+    ) -> Option<f64> {
+        if self.task.pattern_numeric_projected_ids().is_empty() {
+            let prop_hash = self
+                .lookup_projection
+                .compact_prop_hash_from_state_values_unchecked(
+                    propositional,
+                    &self.compact_prop_hash_multipliers,
+                );
+            return self.lookup_compact_prop_distance_by_hash(prop_hash);
+        }
+
+        let prop_hash = self
+            .lookup_projection
+            .compact_prop_hash_from_state_values_unchecked(
+                propositional,
+                &self.compact_prop_hash_multipliers,
+            );
+        let mut packed_bins = self.compact_numeric_bins_scratch.borrow_mut();
+        self.lookup_projection
+            .fill_pattern_numeric_bins_from_expanded_numeric_into_unchecked(
+                expanded_numeric,
+                &mut packed_bins,
+            );
+        packed_bins[0] = prop_hash as u64;
+        self.lookup_compact_numeric_distance(&packed_bins)
+    }
+
     fn lookup_pattern_or_fallback_in_projected_values(
         &self,
         propositional: &[usize],
@@ -931,6 +1042,33 @@ impl<'task> PatternDatabase<'task> {
             )?;
 
         Ok(self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num))
+    }
+
+    pub(crate) fn lookup_projected_or_fallback_from_expanded_state_values_fast(
+        &self,
+        propositional: &[usize],
+        expanded_numeric: &[f64],
+    ) -> f64 {
+        if let Some(distance) = self.lookup_pattern_distance_from_expanded_state_values_fast(
+            propositional,
+            expanded_numeric,
+        ) && distance.is_finite()
+        {
+            return distance;
+        }
+
+        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
+        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
+
+        self.lookup_projection
+            .project_state_values_from_expanded_numeric_into_unchecked(
+                propositional,
+                expanded_numeric,
+                &mut projected_prop,
+                &mut projected_num,
+            );
+
+        self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num)
     }
 
     pub fn lookup_or_fallback_from_concrete_state(
