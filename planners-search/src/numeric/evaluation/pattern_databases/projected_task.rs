@@ -301,6 +301,7 @@ impl fmt::Display for ProjectedTaskBuildError {
 impl std::error::Error for ProjectedTaskBuildError {}
 
 #[allow(unused)]
+#[derive(Clone)]
 pub struct ProjectedTask<'task> {
     base: &'task dyn AbstractNumericTask,
     variables: Vec<ExplicitVariable>,
@@ -2453,7 +2454,7 @@ pub(crate) fn build_auxiliary_numeric_vars(
         assignment_lookup: &'a [Option<usize>],
         base_initial_numeric_values: &'a [f64],
         auxiliary_numeric_vars: Vec<AuxiliaryNumericVar>,
-        derived_to_helper_id: Vec<Option<usize>>,
+        source_to_helper_id: Vec<Option<usize>>,
     }
 
     impl<'a> Builder<'a> {
@@ -2467,7 +2468,7 @@ pub(crate) fn build_auxiliary_numeric_vars(
                     self.base_initial_numeric_values[numeric_var_id],
                 )),
                 NumericType::Derived => {
-                    if let Some(helper_id) = self.derived_to_helper_id[numeric_var_id] {
+                    if let Some(helper_id) = self.source_to_helper_id[numeric_var_id] {
                         return Ok(ArithmeticExpr::Var(helper_id));
                     }
                     let Some(axiom_id) = self.assignment_lookup[numeric_var_id] else {
@@ -2482,25 +2483,48 @@ pub(crate) fn build_auxiliary_numeric_vars(
                         ArithmeticExpr::op(lhs.clone(), axiom.get_operator().clone(), rhs.clone());
 
                     if !lhs.is_constant() && !rhs.is_constant() {
-                        let helper_id =
-                            self.task.numeric_variables().len() + self.auxiliary_numeric_vars.len();
-                        let mut helper_values = self.base_initial_numeric_values.to_vec();
-                        for auxiliary_numeric_var in &self.auxiliary_numeric_vars {
-                            helper_values.push(auxiliary_numeric_var.initial_value);
-                        }
-                        let initial_value = expr.evaluate(&helper_values);
-                        self.auxiliary_numeric_vars.push(AuxiliaryNumericVar {
-                            helper_id,
-                            source_numeric_var_id: numeric_var_id,
-                            expr: expr.clone(),
-                            initial_value,
-                        });
-                        self.derived_to_helper_id[numeric_var_id] = Some(helper_id);
-                        Ok(ArithmeticExpr::Var(helper_id))
+                        self.create_auxiliary_variable(numeric_var_id, expr)
                     } else {
                         Ok(expr)
                     }
                 }
+            }
+        }
+
+        fn create_auxiliary_variable(
+            &mut self,
+            source_numeric_var_id: usize,
+            expr: ArithmeticExpr,
+        ) -> Result<ArithmeticExpr, ProjectedTaskBuildError> {
+            if let Some(helper_id) = self.source_to_helper_id[source_numeric_var_id] {
+                return Ok(ArithmeticExpr::Var(helper_id));
+            }
+
+            let helper_id = self.task.numeric_variables().len() + self.auxiliary_numeric_vars.len();
+            let mut helper_values = self.base_initial_numeric_values.to_vec();
+            for auxiliary_numeric_var in &self.auxiliary_numeric_vars {
+                helper_values.push(auxiliary_numeric_var.initial_value);
+            }
+            let initial_value = expr.evaluate(&helper_values);
+            self.auxiliary_numeric_vars.push(AuxiliaryNumericVar {
+                helper_id,
+                source_numeric_var_id,
+                expr,
+                initial_value,
+            });
+            self.source_to_helper_id[source_numeric_var_id] = Some(helper_id);
+            Ok(ArithmeticExpr::Var(helper_id))
+        }
+
+        fn parse_comparison_side_as_helper(
+            &mut self,
+            numeric_var_id: usize,
+        ) -> Result<ArithmeticExpr, ProjectedTaskBuildError> {
+            let expr = self.parse_numeric_expression(numeric_var_id)?;
+            if expr.is_constant() {
+                Ok(expr)
+            } else {
+                self.create_auxiliary_variable(numeric_var_id, expr)
             }
         }
     }
@@ -2510,12 +2534,21 @@ pub(crate) fn build_auxiliary_numeric_vars(
         assignment_lookup,
         base_initial_numeric_values,
         auxiliary_numeric_vars: Vec::new(),
-        derived_to_helper_id: vec![None; task.numeric_variables().len()],
+        source_to_helper_id: vec![None; task.numeric_variables().len()],
     };
 
     for numeric_var_id in 0..task.numeric_variables().len() {
         if task.numeric_variables()[numeric_var_id].get_type() == &NumericType::Derived {
             builder.parse_numeric_expression(numeric_var_id)?;
+        }
+    }
+
+    for comparison_axiom in task.comparison_axioms() {
+        let lhs = builder.parse_numeric_expression(comparison_axiom.get_left_var_id())?;
+        let rhs = builder.parse_numeric_expression(comparison_axiom.get_right_var_id())?;
+        if !lhs.is_constant() && !rhs.is_constant() {
+            builder.parse_comparison_side_as_helper(comparison_axiom.get_left_var_id())?;
+            builder.parse_comparison_side_as_helper(comparison_axiom.get_right_var_id())?;
         }
     }
 

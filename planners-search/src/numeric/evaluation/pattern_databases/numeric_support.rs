@@ -10,7 +10,7 @@ use super::projected_task::{
 pub(crate) struct NumericSupportContext {
     assignment_lookup: Vec<Option<usize>>,
     auxiliary_numeric_vars: Vec<AuxiliaryNumericVar>,
-    derived_to_helper_id: Vec<Option<usize>>,
+    source_to_helper_id: Vec<Option<usize>>,
 }
 
 impl NumericSupportContext {
@@ -20,16 +20,16 @@ impl NumericSupportContext {
         let auxiliary_numeric_vars =
             build_auxiliary_numeric_vars(task, &assignment_lookup, &base_initial_numeric_values)
                 .unwrap_or_default();
-        let mut derived_to_helper_id = vec![None; task.numeric_variables().len()];
+        let mut source_to_helper_id = vec![None; task.numeric_variables().len()];
         for auxiliary_numeric_var in &auxiliary_numeric_vars {
-            derived_to_helper_id[auxiliary_numeric_var.source_numeric_var_id] =
+            source_to_helper_id[auxiliary_numeric_var.source_numeric_var_id] =
                 Some(auxiliary_numeric_var.helper_id);
         }
 
         Self {
             assignment_lookup,
             auxiliary_numeric_vars,
-            derived_to_helper_id,
+            source_to_helper_id,
         }
     }
 
@@ -66,7 +66,14 @@ impl NumericSupportContext {
     }
 
     pub(crate) fn helper_id_for_derived(&self, numeric_var_id: usize) -> Option<usize> {
-        self.derived_to_helper_id
+        self.source_to_helper_id
+            .get(numeric_var_id)
+            .copied()
+            .flatten()
+    }
+
+    pub(crate) fn helper_id_for_source(&self, numeric_var_id: usize) -> Option<usize> {
+        self.source_to_helper_id
             .get(numeric_var_id)
             .copied()
             .flatten()
@@ -81,17 +88,44 @@ impl NumericSupportContext {
             return Vec::new();
         };
 
+        let left_id = comparison_axiom.get_left_var_id();
+        let right_id = comparison_axiom.get_right_var_id();
+        let left_nonconstant = !matches!(
+            task.numeric_variables()
+                .get(left_id)
+                .map(|var| var.get_type()),
+            Some(NumericType::Constant | NumericType::Cost)
+        );
+        let right_nonconstant = !matches!(
+            task.numeric_variables()
+                .get(right_id)
+                .map(|var| var.get_type()),
+            Some(NumericType::Constant | NumericType::Cost)
+        );
+
         let mut support_ids = BTreeSet::new();
-        for numeric_var_id in [
-            comparison_axiom.get_left_var_id(),
-            comparison_axiom.get_right_var_id(),
-        ] {
-            self.collect_numeric_support_ids(
-                task,
-                numeric_var_id,
-                &mut BTreeSet::new(),
-                &mut support_ids,
-            );
+        if left_nonconstant && right_nonconstant {
+            for numeric_var_id in [left_id, right_id] {
+                if let Some(helper_id) = self.helper_id_for_source(numeric_var_id) {
+                    support_ids.insert(helper_id);
+                } else {
+                    self.collect_numeric_support_ids(
+                        task,
+                        numeric_var_id,
+                        &mut BTreeSet::new(),
+                        &mut support_ids,
+                    );
+                }
+            }
+        } else {
+            for numeric_var_id in [left_id, right_id] {
+                self.collect_numeric_support_ids(
+                    task,
+                    numeric_var_id,
+                    &mut BTreeSet::new(),
+                    &mut support_ids,
+                );
+            }
         }
         support_ids.into_iter().collect()
     }

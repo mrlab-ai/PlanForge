@@ -459,6 +459,8 @@ pub struct PatternDatabase<'task> {
     direct_numeric_cache_scratch: RefCell<Vec<Option<f64>>>,
     pattern_lookup_bins_scratch: RefCell<Vec<u64>>,
     compact_numeric_bins_scratch: RefCell<Vec<u64>>,
+    failed_lookup_lmcut: RefCell<Option<LmcutInnerHeuristic<'task>>>,
+    failed_lookup_lmcut_task: RefCell<Option<Box<ProjectedTask<'task>>>>,
 }
 
 impl<'task> PatternDatabase<'task> {
@@ -519,6 +521,8 @@ impl<'task> PatternDatabase<'task> {
             direct_numeric_cache_scratch: RefCell::new(Vec::new()),
             pattern_lookup_bins_scratch: RefCell::new(vec![0; pattern_lookup_bin_count]),
             compact_numeric_bins_scratch: RefCell::new(vec![0; compact_numeric_bin_count]),
+            failed_lookup_lmcut: RefCell::new(None),
+            failed_lookup_lmcut_task: RefCell::new(None),
         };
         pdb.full_prop_hash_multipliers = build_prop_hash_multipliers(&pdb.task);
         pdb.state_dependent_numeric_projected_ids =
@@ -952,8 +956,7 @@ impl<'task> PatternDatabase<'task> {
                     return distance;
                 }
 
-                let mut evaluator = LmcutInnerHeuristic::new(&self.task);
-                let distance = match evaluator.evaluate_projected_values(propositional, numeric) {
+                let distance = match self.evaluate_failed_lookup_lmcut(propositional, numeric) {
                     Ok(result) if result.dead_end => f64::INFINITY,
                     Ok(result) => result.value.max(self.min_operator_cost()),
                     Err(_) => self.min_operator_cost(),
@@ -964,6 +967,41 @@ impl<'task> PatternDatabase<'task> {
                 distance
             }
         }
+    }
+
+    fn evaluate_failed_lookup_lmcut(
+        &self,
+        propositional: &[usize],
+        numeric: &[f64],
+    ) -> Result<InnerHeuristicResult, String> {
+        if self.failed_lookup_lmcut.borrow().is_none() {
+            let mut task_slot = self.failed_lookup_lmcut_task.borrow_mut();
+            if task_slot.is_none() {
+                *task_slot = Some(Box::new(self.task.clone()));
+            }
+            let task_ref = task_slot
+                .as_deref()
+                .expect("failed lookup LM-cut task must be initialized")
+                as &dyn AbstractNumericTask;
+            // The boxed task is stored in `failed_lookup_lmcut_task` and is
+            // declared after `failed_lookup_lmcut`, so it outlives the LM-cut
+            // object during `PatternDatabase` drop. The box allocation is
+            // stable even if `PatternDatabase` moves.
+            let task_ref = unsafe {
+                std::mem::transmute::<&dyn AbstractNumericTask, &'task dyn AbstractNumericTask>(
+                    task_ref,
+                )
+            };
+            drop(task_slot);
+
+            *self.failed_lookup_lmcut.borrow_mut() = Some(LmcutInnerHeuristic::new(task_ref));
+        }
+
+        self.failed_lookup_lmcut
+            .borrow_mut()
+            .as_mut()
+            .expect("failed lookup LM-cut must be initialized")
+            .evaluate_projected_values(propositional, numeric)
     }
 
     pub fn is_goal_state(&self, propositional: &[usize]) -> bool {
@@ -1275,9 +1313,6 @@ impl<'task> PatternDatabase<'task> {
                 PdbInternalHeuristic::Lmcut
             ) || matches!(
                 self.heuristic_config.frontier_heuristic,
-                PdbInternalHeuristic::Lmcut
-            ) || matches!(
-                self.heuristic_config.failed_lookup_heuristic,
                 PdbInternalHeuristic::Lmcut
             );
             let mut construction_lmcut = if uses_lmcut {

@@ -64,6 +64,7 @@ impl VariableInfo {
     }
 }
 
+#[derive(Clone)]
 pub struct IntDoublePacker {
     var_infos: Vec<VariableInfo>,
     num_bins: usize,

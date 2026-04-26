@@ -3,8 +3,9 @@ mod tests;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use planners_sas::numeric::axioms::PropositionalAxiom;
-use planners_sas::numeric::numeric_task::AbstractNumericTask;
+use planners_sas::numeric::numeric_task::{
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, NumericType,
+};
 
 use super::numeric_support::NumericSupportContext;
 
@@ -27,86 +28,48 @@ impl MixedCausalGraph {
     pub fn new(task: &dyn AbstractNumericTask) -> Self {
         let mut graph = Self::default();
         let numeric_support = NumericSupportContext::new(task);
-        let comparison_axiom_by_affected_var = build_comparison_axiom_lookup(task);
-        let propositional_axioms_by_affected_var = build_propositional_axiom_lookup(task);
 
         for var_id in 0..task.variables().len() {
-            graph.ensure_node(CausalGraphVariable::Regular(var_id));
+            if is_cpp_regular_propositional_var(task, var_id) {
+                graph.ensure_node(CausalGraphVariable::Regular(var_id));
+            }
         }
         for numeric_var_id in 0..numeric_support.helper_space_len(task) {
-            graph.ensure_node(CausalGraphVariable::Numeric(numeric_var_id));
+            if is_cpp_regular_numeric_var(task, numeric_var_id, &numeric_support) {
+                graph.ensure_node(CausalGraphVariable::Numeric(numeric_var_id));
+            }
         }
 
         for operator in task.get_operators() {
-            let precondition_sources: Vec<CausalGraphVariable> = operator
-                .preconditions()
-                .iter()
-                .flat_map(|fact| {
-                    fact_support_sources(
-                        task,
-                        fact.var,
-                        &comparison_axiom_by_affected_var,
-                        &propositional_axioms_by_affected_var,
-                        &numeric_support,
-                    )
-                })
-                .collect();
-
-            for effect in operator.effects() {
-                let target = CausalGraphVariable::Regular(effect.var_id());
-                for source in
-                    precondition_sources
-                        .iter()
-                        .copied()
-                        .chain(effect.conditions().iter().flat_map(|fact| {
-                            fact_support_sources(
-                                task,
-                                fact.var,
-                                &comparison_axiom_by_affected_var,
-                                &propositional_axioms_by_affected_var,
-                                &numeric_support,
-                            )
-                        }))
-                {
-                    graph.add_pre_eff_arc(source, target);
-                }
-            }
-
-            for effect in operator.assignment_effects() {
-                let target = CausalGraphVariable::Numeric(effect.affected_var_id());
-                for source in precondition_sources
-                    .iter()
-                    .copied()
-                    .chain(effect.conditions().iter().flat_map(|fact| {
-                        fact_support_sources(
-                            task,
-                            fact.var,
-                            &comparison_axiom_by_affected_var,
-                            &propositional_axioms_by_affected_var,
-                            &numeric_support,
-                        )
-                    }))
-                    .chain(
-                        numeric_support
-                            .numeric_var_support_ids(task, effect.var_id())
-                            .into_iter()
-                            .map(CausalGraphVariable::Numeric),
-                    )
-                {
-                    graph.add_pre_eff_arc(source, target);
-                }
-            }
-
-            let effect_targets: Vec<_> = operator
+            let precondition_sources =
+                cpp_operator_precondition_sources(task, &numeric_support, operator.preconditions());
+            let propositional_effect_targets: Vec<_> = operator
                 .effects()
                 .iter()
-                .map(|effect| CausalGraphVariable::Regular(effect.var_id()))
-                .chain(
-                    operator
-                        .assignment_effects()
-                        .iter()
-                        .map(|effect| CausalGraphVariable::Numeric(effect.affected_var_id())),
-                )
+                .filter_map(|effect| {
+                    is_cpp_regular_propositional_var(task, effect.var_id())
+                        .then_some(CausalGraphVariable::Regular(effect.var_id()))
+                })
+                .collect();
+            let numeric_effect_targets: Vec<_> = operator
+                .assignment_effects()
+                .iter()
+                .filter_map(|effect| cpp_numeric_effect_target(task, &numeric_support, effect))
+                .collect();
+
+            for target in propositional_effect_targets
+                .iter()
+                .chain(numeric_effect_targets.iter())
+                .copied()
+            {
+                for source in precondition_sources.iter().copied() {
+                    graph.add_pre_eff_arc(source, target);
+                }
+            }
+
+            let effect_targets: Vec<_> = propositional_effect_targets
+                .into_iter()
+                .chain(numeric_effect_targets.into_iter())
                 .collect();
 
             for effect_index in 0..effect_targets.len() {
@@ -116,48 +79,6 @@ impl MixedCausalGraph {
                         effect_targets[other_index],
                     );
                 }
-            }
-        }
-
-        for axiom in task.axioms() {
-            let target = CausalGraphVariable::Regular(axiom.var_id());
-            for source in axiom.conditions().iter().flat_map(|fact| {
-                fact_support_sources(
-                    task,
-                    fact.var,
-                    &comparison_axiom_by_affected_var,
-                    &propositional_axioms_by_affected_var,
-                    &numeric_support,
-                )
-            }) {
-                graph.add_pre_eff_arc(source, target);
-            }
-        }
-
-        for (comparison_axiom_id, axiom) in task.comparison_axioms().iter().enumerate() {
-            let target_var_id = axiom.get_affected_var_id();
-            let target = CausalGraphVariable::Regular(target_var_id);
-            for source_var_id in numeric_support.comparison_support_ids(task, comparison_axiom_id) {
-                graph.add_pre_eff_arc(CausalGraphVariable::Numeric(source_var_id), target);
-            }
-        }
-
-        for auxiliary_numeric_var in numeric_support.auxiliary_numeric_vars() {
-            let Some(axiom_id) = numeric_support
-                .assignment_axiom_id_for(auxiliary_numeric_var.source_numeric_var_id)
-            else {
-                continue;
-            };
-            let Some(axiom) = task.assignment_axioms().get(axiom_id) else {
-                continue;
-            };
-            let target = CausalGraphVariable::Numeric(auxiliary_numeric_var.helper_id);
-            for source_var_id in numeric_support
-                .numeric_var_leaf_support_ids(task, axiom.get_left_var_id())
-                .into_iter()
-                .chain(numeric_support.numeric_var_leaf_support_ids(task, axiom.get_right_var_id()))
-            {
-                graph.add_pre_eff_arc(CausalGraphVariable::Numeric(source_var_id), target);
             }
         }
 
@@ -308,93 +229,152 @@ impl MixedCausalGraph {
     }
 }
 
-fn build_comparison_axiom_lookup(task: &dyn AbstractNumericTask) -> BTreeMap<usize, usize> {
-    task.comparison_axioms()
-        .iter()
-        .enumerate()
-        .map(|(comparison_axiom_id, comparison_axiom)| {
-            (comparison_axiom.get_affected_var_id(), comparison_axiom_id)
-        })
-        .collect()
-}
-
-fn build_propositional_axiom_lookup(
+fn cpp_operator_precondition_sources(
     task: &dyn AbstractNumericTask,
-) -> BTreeMap<usize, Vec<PropositionalAxiom>> {
-    let mut axioms_by_var: BTreeMap<usize, Vec<PropositionalAxiom>> = BTreeMap::new();
-    for axiom in task.axioms() {
-        axioms_by_var
-            .entry(axiom.var_id())
-            .or_default()
-            .push(axiom.clone());
-    }
-    axioms_by_var
-}
-
-fn fact_support_sources(
-    task: &dyn AbstractNumericTask,
-    var_id: usize,
-    comparison_axiom_by_affected_var: &BTreeMap<usize, usize>,
-    propositional_axioms_by_affected_var: &BTreeMap<usize, Vec<PropositionalAxiom>>,
     numeric_support: &NumericSupportContext,
+    preconditions: &[planners_sas::numeric::numeric_task::ExplicitFact],
 ) -> Vec<CausalGraphVariable> {
     let mut sources = BTreeSet::new();
-    collect_fact_support_sources(
-        task,
-        var_id,
-        comparison_axiom_by_affected_var,
-        propositional_axioms_by_affected_var,
-        numeric_support,
-        &mut BTreeSet::new(),
-        &mut sources,
-    );
+    for fact in preconditions {
+        if let Some(comparison_axiom_id) = comparison_axiom_id_for_var(task, fact.var) {
+            if let Some(numeric_var_id) =
+                cpp_regular_numeric_condition_var_id(task, numeric_support, comparison_axiom_id)
+            {
+                sources.insert(CausalGraphVariable::Numeric(numeric_var_id));
+            }
+        } else if is_cpp_regular_propositional_var(task, fact.var) {
+            sources.insert(CausalGraphVariable::Regular(fact.var));
+        }
+    }
     sources.into_iter().collect()
 }
 
-fn collect_fact_support_sources(
-    task: &dyn AbstractNumericTask,
-    var_id: usize,
-    comparison_axiom_by_affected_var: &BTreeMap<usize, usize>,
-    propositional_axioms_by_affected_var: &BTreeMap<usize, Vec<PropositionalAxiom>>,
-    numeric_support: &NumericSupportContext,
-    visiting_props: &mut BTreeSet<usize>,
-    sources: &mut BTreeSet<CausalGraphVariable>,
-) {
-    if let Some(&comparison_axiom_id) = comparison_axiom_by_affected_var.get(&var_id) {
-        for numeric_var_id in numeric_support.comparison_support_ids(task, comparison_axiom_id) {
-            sources.insert(CausalGraphVariable::Numeric(numeric_var_id));
-        }
-        return;
-    }
-
+fn is_cpp_regular_propositional_var(task: &dyn AbstractNumericTask, var_id: usize) -> bool {
     if task
         .get_variable_axiom_layer(var_id)
         .unwrap_or(None)
-        .is_none()
+        .is_some()
     {
-        sources.insert(CausalGraphVariable::Regular(var_id));
-        return;
+        return false;
+    }
+    comparison_axiom_id_for_var(task, var_id).is_none()
+}
+
+fn is_cpp_regular_numeric_var(
+    task: &dyn AbstractNumericTask,
+    numeric_var_id: usize,
+    numeric_support: &NumericSupportContext,
+) -> bool {
+    task.numeric_variables()
+        .get(numeric_var_id)
+        .map(|numeric_var| numeric_var.get_type() == &NumericType::Regular)
+        .unwrap_or_else(|| numeric_support.is_helper_var_id(task, numeric_var_id))
+}
+
+fn cpp_numeric_effect_target(
+    task: &dyn AbstractNumericTask,
+    numeric_support: &NumericSupportContext,
+    effect: &AssignmentEffect,
+) -> Option<CausalGraphVariable> {
+    if !is_cpp_regular_numeric_var(task, effect.affected_var_id(), numeric_support) {
+        return None;
     }
 
-    if !visiting_props.insert(var_id) {
-        return;
+    if matches!(
+        effect.operation(),
+        AssignmentOperation::Plus | AssignmentOperation::Minus
+    ) && task
+        .numeric_variables()
+        .get(effect.var_id())
+        .is_some_and(|var| var.get_type() == &NumericType::Constant)
+        && task
+            .get_initial_numeric_state_values()
+            .get(effect.var_id())
+            .copied()
+            == Some(0.0)
+    {
+        return None;
     }
 
-    if let Some(axioms) = propositional_axioms_by_affected_var.get(&var_id) {
-        for axiom in axioms {
-            for condition in axiom.conditions() {
-                collect_fact_support_sources(
-                    task,
-                    condition.var,
-                    comparison_axiom_by_affected_var,
-                    propositional_axioms_by_affected_var,
-                    numeric_support,
-                    visiting_props,
-                    sources,
-                );
+    Some(CausalGraphVariable::Numeric(effect.affected_var_id()))
+}
+
+fn comparison_axiom_id_for_var(task: &dyn AbstractNumericTask, var_id: usize) -> Option<usize> {
+    task.comparison_axioms()
+        .iter()
+        .position(|axiom| axiom.get_affected_var_id() == var_id)
+}
+
+pub(crate) fn cpp_regular_numeric_condition_var_id(
+    task: &dyn AbstractNumericTask,
+    numeric_support: &NumericSupportContext,
+    comparison_axiom_id: usize,
+) -> Option<usize> {
+    let comparison_axiom = task.comparison_axioms().get(comparison_axiom_id)?;
+    let left_id = comparison_axiom.get_left_var_id();
+    let right_id = comparison_axiom.get_right_var_id();
+    let left_nonconstant = !numeric_expr_is_constant(task, numeric_support, left_id);
+    let right_nonconstant = !numeric_expr_is_constant(task, numeric_support, right_id);
+
+    if left_nonconstant && right_nonconstant {
+        return numeric_condition_side_var_id(task, numeric_support, right_id);
+    }
+    if right_nonconstant {
+        return numeric_condition_side_var_id(task, numeric_support, right_id);
+    }
+    if left_nonconstant {
+        return numeric_condition_side_var_id(task, numeric_support, left_id);
+    }
+    None
+}
+
+fn numeric_condition_side_var_id(
+    task: &dyn AbstractNumericTask,
+    numeric_support: &NumericSupportContext,
+    numeric_var_id: usize,
+) -> Option<usize> {
+    if let Some(helper_id) = numeric_support.helper_id_for_source(numeric_var_id) {
+        return Some(helper_id);
+    }
+    if task
+        .numeric_variables()
+        .get(numeric_var_id)
+        .is_some_and(|var| var.get_type() == &NumericType::Regular)
+    {
+        return Some(numeric_var_id);
+    }
+    let support_ids = numeric_support.numeric_var_support_ids(task, numeric_var_id);
+    (support_ids.len() == 1).then_some(support_ids[0])
+}
+
+fn numeric_expr_is_constant(
+    task: &dyn AbstractNumericTask,
+    numeric_support: &NumericSupportContext,
+    numeric_var_id: usize,
+) -> bool {
+    match task
+        .numeric_variables()
+        .get(numeric_var_id)
+        .map(|var| var.get_type())
+    {
+        Some(NumericType::Constant | NumericType::Cost) => true,
+        Some(NumericType::Regular) => false,
+        Some(NumericType::Derived) => {
+            if numeric_support
+                .helper_id_for_source(numeric_var_id)
+                .is_some()
+            {
+                return false;
             }
+            let Some(axiom_id) = numeric_support.assignment_axiom_id_for(numeric_var_id) else {
+                return false;
+            };
+            let Some(axiom) = task.assignment_axioms().get(axiom_id) else {
+                return false;
+            };
+            numeric_expr_is_constant(task, numeric_support, axiom.get_left_var_id())
+                && numeric_expr_is_constant(task, numeric_support, axiom.get_right_var_id())
         }
+        None => false,
     }
-
-    visiting_props.remove(&var_id);
 }

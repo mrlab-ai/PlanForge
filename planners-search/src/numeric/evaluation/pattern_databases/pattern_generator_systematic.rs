@@ -7,7 +7,9 @@ use std::fmt;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
 use serde::{Deserialize, Serialize};
 
-use super::causal_graph::{CausalGraphVariable, MixedCausalGraph};
+use super::causal_graph::{
+    CausalGraphVariable, MixedCausalGraph, cpp_regular_numeric_condition_var_id,
+};
 use super::numeric_support::NumericSupportContext;
 use super::pattern_collection::PatternCollection;
 use super::projected_task::Pattern;
@@ -253,14 +255,15 @@ fn collect_seed_variables(
             continue;
         }
 
-        for numeric_var_id in numeric_support.comparison_support_ids(task, comparison_axiom_id) {
-            if is_pattern_numeric_candidate(task, numeric_var_id, numeric_support) {
-                push_seed_variable(
-                    &mut seed_variables,
-                    &mut seen,
-                    CausalGraphVariable::Numeric(numeric_var_id),
-                );
-            }
+        if let Some(numeric_var_id) =
+            cpp_regular_numeric_condition_var_id(task, numeric_support, comparison_axiom_id)
+            && is_pattern_numeric_candidate(task, numeric_var_id, numeric_support)
+        {
+            push_seed_variable(
+                &mut seed_variables,
+                &mut seen,
+                CausalGraphVariable::Numeric(numeric_var_id),
+            );
         }
     }
 
