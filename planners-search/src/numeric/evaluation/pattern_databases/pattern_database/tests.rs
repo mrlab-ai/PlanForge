@@ -314,6 +314,27 @@ fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
     )
 }
 
+fn numeric_pair_task() -> NumericRootTask {
+    NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![simple_var("p", None)],
+        vec![
+            NumericVariable::new("x".to_string(), NumericType::Regular, None),
+            NumericVariable::new("y".to_string(), NumericType::Regular, None),
+        ],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![3.0, 7.0],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    )
+}
+
 fn failed_lookup_chain_task() -> NumericRootTask {
     NumericRootTask::new(
         1,
@@ -591,6 +612,63 @@ fn pdb_collapses_hidden_cost_dimensions_outside_pattern() {
     assert_eq!(pdb.states.len(), 2);
     assert_eq!(pdb.lookup(&[0], &[]), Some(1.0));
     assert_eq!(pdb.lookup(&[1], &[]), Some(0.0));
+}
+
+#[test]
+fn direct_concrete_lookup_uses_compact_prop_table_for_pure_propositional_patterns() {
+    let task = cost_only_hidden_numeric_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![0],
+            numeric: vec![],
+        },
+    )
+    .unwrap();
+
+    let pdb = PatternDatabase::new(projected_task, 64).unwrap();
+    let state_packer = IntDoublePacker::from_abstract_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let initial_state = state_registry.get_initial_state();
+
+    assert_eq!(
+        pdb.lookup_or_fallback_from_concrete_state(&initial_state, &state_registry)
+            .unwrap(),
+        1.0,
+    );
+}
+
+#[test]
+fn direct_concrete_numeric_lookup_keeps_slot_zero_for_prop_hash() {
+    let task = numeric_pair_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![],
+            numeric: vec![0, 1],
+        },
+    )
+    .unwrap();
+
+    let mut pdb = PatternDatabase::new(projected_task, 0).unwrap();
+    pdb.states = vec![super::PdbState {
+        propositional: vec![],
+        numeric: vec![3.0, 7.0],
+    }];
+    pdb.distances = vec![11.0];
+    pdb.rebuild_lookup_indexes();
+
+    let state_packer = IntDoublePacker::from_abstract_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let initial_state = state_registry.get_initial_state();
+
+    assert_eq!(
+        pdb.lookup_or_fallback_from_concrete_state(&initial_state, &state_registry)
+            .unwrap(),
+        11.0,
+    );
 }
 
 #[test]

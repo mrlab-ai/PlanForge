@@ -364,6 +364,241 @@ struct CachedOperator {
     assignment_effects: Vec<CachedAssignmentEffect>,
 }
 
+#[derive(Debug, Clone)]
+enum ProjectedNumericLookup {
+    Constant(f64),
+    Expanded(usize),
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct PatternLookupProjection {
+    base_propositional_len: usize,
+    expanded_numeric_len: usize,
+    pattern_regular_original_ids: Vec<usize>,
+    pattern_numeric_lookup: Vec<ProjectedNumericLookup>,
+    projected_regular_original_ids: Vec<usize>,
+    projected_numeric_lookup: Vec<ProjectedNumericLookup>,
+}
+
+impl PatternLookupProjection {
+    fn numeric_lookup_for_projected_index(
+        task: &ProjectedTask<'_>,
+        projected_index: usize,
+    ) -> Result<ProjectedNumericLookup, String> {
+        if task.is_auxiliary_constant[projected_index] {
+            return task.projected_initial_numeric_values[projected_index]
+                .map(ProjectedNumericLookup::Constant)
+                .ok_or_else(|| {
+                    format!("missing constant projected numeric value at index {projected_index}")
+                });
+        }
+
+        let original_numeric_var =
+            task.projected_num_var_to_original[projected_index].ok_or_else(|| {
+                "missing original numeric variable for projected numeric variable".to_string()
+            })?;
+
+        if task.is_auxiliary_num_var[projected_index] {
+            let helper_id = task.helper_id_by_source_numeric_var[original_numeric_var]
+                .ok_or_else(|| {
+                    format!(
+                        "missing helper id for auxiliary projected numeric variable {original_numeric_var}"
+                    )
+                })?;
+            return Ok(ProjectedNumericLookup::Expanded(helper_id));
+        }
+
+        Ok(ProjectedNumericLookup::Expanded(original_numeric_var))
+    }
+
+    pub(super) fn from_projected_task(task: &ProjectedTask<'_>) -> Result<Self, String> {
+        let pattern_regular_original_ids = task
+            .pattern_regular_projected_ids
+            .iter()
+            .map(|&projected_var_id| task.projected_var_to_original[projected_var_id])
+            .collect();
+
+        let mut pattern_numeric_lookup =
+            Vec::with_capacity(task.pattern_numeric_projected_ids.len());
+        for &projected_numeric_id in &task.pattern_numeric_projected_ids {
+            pattern_numeric_lookup.push(Self::numeric_lookup_for_projected_index(
+                task,
+                projected_numeric_id,
+            )?);
+        }
+
+        let projected_regular_original_ids = task.projected_var_to_original.clone();
+        let mut projected_numeric_lookup =
+            Vec::with_capacity(task.projected_num_var_to_original.len());
+        for projected_index in 0..task.projected_num_var_to_original.len() {
+            projected_numeric_lookup.push(Self::numeric_lookup_for_projected_index(
+                task,
+                projected_index,
+            )?);
+        }
+
+        Ok(Self {
+            base_propositional_len: task.base.variables().len(),
+            expanded_numeric_len: task.base.numeric_variables().len()
+                + task.auxiliary_numeric_vars.len(),
+            pattern_regular_original_ids,
+            pattern_numeric_lookup,
+            projected_regular_original_ids,
+            projected_numeric_lookup,
+        })
+    }
+
+    pub(super) fn compact_prop_hash_from_state_values(
+        &self,
+        propositional_values: &[usize],
+        multipliers: &[usize],
+    ) -> Result<usize, String> {
+        if self.pattern_regular_original_ids.len() != multipliers.len() {
+            return Err("pattern regular ids and multipliers length mismatch".to_string());
+        }
+        if propositional_values.len() < self.base_propositional_len {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base_propositional_len
+            ));
+        }
+
+        let mut hash = 0usize;
+        for (&original_var_id, &multiplier) in self
+            .pattern_regular_original_ids
+            .iter()
+            .zip(multipliers.iter())
+        {
+            let value = propositional_values[original_var_id];
+            hash = hash.saturating_add(value.saturating_mul(multiplier));
+        }
+        Ok(hash)
+    }
+
+    fn numeric_value_from_expanded(
+        lookup: &ProjectedNumericLookup,
+        expanded_numeric_values: &[f64],
+    ) -> Result<f64, String> {
+        match *lookup {
+            ProjectedNumericLookup::Constant(value) => Ok(value),
+            ProjectedNumericLookup::Expanded(index) => expanded_numeric_values
+                .get(index)
+                .copied()
+                .ok_or_else(|| format!("expanded numeric state too short for index {index}")),
+        }
+    }
+
+    pub(super) fn fill_pattern_numeric_bins_from_expanded_numeric_into(
+        &self,
+        expanded_numeric_values: &[f64],
+        bins: &mut Vec<u64>,
+    ) -> Result<(), String> {
+        if expanded_numeric_values.len() < self.expanded_numeric_len {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.expanded_numeric_len
+            ));
+        }
+
+        bins.clear();
+        bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
+        for (numeric_index, lookup) in self.pattern_numeric_lookup.iter().enumerate() {
+            bins[numeric_index + 1] =
+                Self::numeric_value_from_expanded(lookup, expanded_numeric_values)?.to_bits();
+        }
+        Ok(())
+    }
+
+    pub(super) fn pack_pattern_state_values_from_expanded_numeric_into(
+        &self,
+        propositional_values: &[usize],
+        expanded_numeric_values: &[f64],
+        packer: &IntDoublePacker,
+        packed_values: &mut Vec<u64>,
+    ) -> Result<(), String> {
+        if propositional_values.len() < self.base_propositional_len {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base_propositional_len
+            ));
+        }
+        if expanded_numeric_values.len() < self.expanded_numeric_len {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.expanded_numeric_len
+            ));
+        }
+
+        packed_values.clear();
+        packed_values.resize(packer.num_bins(), 0);
+
+        for (compact_index, &original_var_id) in
+            self.pattern_regular_original_ids.iter().enumerate()
+        {
+            packer.set(
+                packed_values,
+                compact_index,
+                propositional_values[original_var_id] as u64,
+            );
+        }
+
+        let prop_len = self.pattern_regular_original_ids.len();
+        for (numeric_index, lookup) in self.pattern_numeric_lookup.iter().enumerate() {
+            packer.set(
+                packed_values,
+                prop_len + numeric_index,
+                Self::numeric_value_from_expanded(lookup, expanded_numeric_values)?.to_bits(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub(super) fn project_state_values_from_expanded_numeric_into(
+        &self,
+        propositional_values: &[usize],
+        expanded_numeric_values: &[f64],
+        projected_prop_values: &mut Vec<usize>,
+        projected_numeric_values: &mut Vec<f64>,
+    ) -> Result<(), String> {
+        if propositional_values.len() < self.base_propositional_len {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base_propositional_len
+            ));
+        }
+        if expanded_numeric_values.len() < self.expanded_numeric_len {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.expanded_numeric_len
+            ));
+        }
+
+        projected_prop_values.clear();
+        projected_prop_values.extend(
+            self.projected_regular_original_ids
+                .iter()
+                .map(|&original_var_id| propositional_values[original_var_id]),
+        );
+
+        projected_numeric_values.clear();
+        projected_numeric_values.reserve(self.projected_numeric_lookup.len());
+        for lookup in &self.projected_numeric_lookup {
+            projected_numeric_values.push(Self::numeric_value_from_expanded(
+                lookup,
+                expanded_numeric_values,
+            )?);
+        }
+        Ok(())
+    }
+}
+
 impl<'task> ProjectedTask<'task> {
     pub fn new(
         base: &'task dyn AbstractNumericTask,
@@ -981,7 +1216,9 @@ impl<'task> ProjectedTask<'task> {
         packed_values.clear();
         packed_values.resize(packer.num_bins(), 0);
 
-        for (compact_index, &projected_var_id) in self.pattern_regular_projected_ids.iter().enumerate() {
+        for (compact_index, &projected_var_id) in
+            self.pattern_regular_projected_ids.iter().enumerate()
+        {
             let original_var_id = self.projected_var_to_original[projected_var_id];
             packer.set(
                 packed_values,
@@ -991,7 +1228,9 @@ impl<'task> ProjectedTask<'task> {
         }
 
         let prop_len = self.pattern_regular_projected_ids.len();
-        for (numeric_index, &projected_numeric_id) in self.pattern_numeric_projected_ids.iter().enumerate() {
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
@@ -1025,16 +1264,49 @@ impl<'task> ProjectedTask<'task> {
         packed_values.clear();
         packed_values.resize(packer.num_bins(), 0);
 
-        for (numeric_index, &projected_numeric_id) in self.pattern_numeric_projected_ids.iter().enumerate() {
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
             packer.set(
                 packed_values,
-                numeric_index,
+                numeric_index + 1,
                 self.projected_numeric_value_from_expanded_numeric(
                     projected_numeric_id,
                     expanded_numeric_values,
                 )?
                 .to_bits(),
             );
+        }
+
+        Ok(())
+    }
+
+    pub fn fill_pattern_numeric_bins_from_expanded_numeric_into(
+        &self,
+        expanded_numeric_values: &[f64],
+        bins: &mut Vec<u64>,
+    ) -> Result<(), String> {
+        if expanded_numeric_values.len()
+            < self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+        {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+            ));
+        }
+
+        bins.clear();
+        bins.resize(1 + self.pattern_numeric_projected_ids.len(), 0);
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
+            bins[numeric_index + 1] = self
+                .projected_numeric_value_from_expanded_numeric(
+                    projected_numeric_id,
+                    expanded_numeric_values,
+                )?
+                .to_bits();
         }
 
         Ok(())
@@ -1332,7 +1604,9 @@ impl<'task> ProjectedTask<'task> {
         packed_values.clear();
         packed_values.resize(packer.num_bins(), 0);
 
-        for (compact_index, &projected_var_id) in self.pattern_regular_projected_ids.iter().enumerate() {
+        for (compact_index, &projected_var_id) in
+            self.pattern_regular_projected_ids.iter().enumerate()
+        {
             let original_var_id = self.projected_var_to_original[projected_var_id];
             packer.set(
                 packed_values,
@@ -1344,7 +1618,9 @@ impl<'task> ProjectedTask<'task> {
         }
 
         let prop_len = self.pattern_regular_projected_ids.len();
-        for (numeric_index, &projected_numeric_id) in self.pattern_numeric_projected_ids.iter().enumerate() {
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
@@ -1382,10 +1658,12 @@ impl<'task> ProjectedTask<'task> {
         packed_values.clear();
         packed_values.resize(packer.num_bins(), 0);
 
-        for (numeric_index, &projected_numeric_id) in self.pattern_numeric_projected_ids.iter().enumerate() {
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
             packer.set(
                 packed_values,
-                numeric_index,
+                numeric_index + 1,
                 self.projected_numeric_value_from_concrete_state(
                     projected_numeric_id,
                     state,
@@ -1394,6 +1672,41 @@ impl<'task> ProjectedTask<'task> {
                 )?
                 .to_bits(),
             );
+        }
+
+        Ok(())
+    }
+
+    pub fn fill_pattern_numeric_concrete_state_bins_into(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        bins: &mut Vec<u64>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<(), String> {
+        if !self.supports_direct_concrete_state_projection() {
+            return Err("direct projected-task lookup requires derived numeric values".to_string());
+        }
+
+        numeric_value_cache.clear();
+        numeric_value_cache.resize(
+            self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len(),
+            None,
+        );
+
+        bins.clear();
+        bins.resize(1 + self.pattern_numeric_projected_ids.len(), 0);
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
+            bins[numeric_index + 1] = self
+                .projected_numeric_value_from_concrete_state(
+                    projected_numeric_id,
+                    state,
+                    registry,
+                    numeric_value_cache,
+                )?
+                .to_bits();
         }
 
         Ok(())
@@ -1465,7 +1778,6 @@ impl<'task> ProjectedTask<'task> {
 
         Ok(())
     }
-
     fn projected_numeric_value_from_expanded_numeric(
         &self,
         projected_index: usize,
@@ -1490,9 +1802,12 @@ impl<'task> ProjectedTask<'task> {
                         "missing helper id for auxiliary projected numeric variable {original_numeric_var}"
                     )
                 })?;
-            return expanded_numeric_values.get(helper_id).copied().ok_or_else(|| {
-                format!("expanded numeric state too short for helper id {helper_id}")
-            });
+            return expanded_numeric_values
+                .get(helper_id)
+                .copied()
+                .ok_or_else(|| {
+                    format!("expanded numeric state too short for helper id {helper_id}")
+                });
         }
 
         expanded_numeric_values
