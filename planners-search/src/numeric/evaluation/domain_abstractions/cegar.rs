@@ -198,11 +198,7 @@ impl Cegar {
                     config.combine_labels,
                     config.debug,
                     config.use_wildcard_plans,
-                    if config.use_wildcard_plans {
-                        None
-                    } else {
-                        Some(&mut rng)
-                    },
+                    Some(&mut rng),
                 )
                 .with_context(|| {
                     format!("failed to compute abstract plan (iteration {iteration})")
@@ -970,6 +966,9 @@ fn apply_initial_goal_splits(
     }
 }
 
+pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<CegarOutcome> {
+    Cegar::new(config)?.build_abstraction(task)
+}
 fn trivial_domain_mapping_and_sizes(
     task: &dyn AbstractNumericTask,
 ) -> Result<(DomainMapping, Vec<usize>)> {

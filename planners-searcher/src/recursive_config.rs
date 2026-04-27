@@ -808,6 +808,11 @@ fn multi_domain_abstractions_fields()
             random_seed
         ),
         field_bool!(
+            "debug",
+            DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+            debug
+        ),
+        field_bool!(
             "use_wildcard_plans",
             DomainAbstractionCollectionGeneratorMultipleCegarConfig,
             use_wildcard_plans
@@ -962,6 +967,14 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
                 Ok(())
             },
             format: |config| config.collection_config.random_seed.to_string(),
+        },
+        Field {
+            name: "debug",
+            apply: |config, value| {
+                config.collection_config.debug = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.debug.to_string(),
         },
         Field {
             name: "use_wildcard_plans",

@@ -12,7 +12,7 @@ use planners_sas::numeric::numeric_task::{
     Operator,
 };
 use rand::seq::SliceRandom;
-use rand::{SeedableRng, rngs::SmallRng};
+use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 
 use crate::numeric::evaluation::domain_abstractions::cegar::FlawKind;
@@ -89,6 +89,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub init_split_candidates: VariableSubset,
     pub init_split_quantity: InitSplitQuantity,
     pub random_seed: i32,
+    pub debug: bool,
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
     pub deviation_flaws: bool,
@@ -113,6 +114,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             init_split_candidates: VariableSubset::All,
             init_split_quantity: InitSplitQuantity::Single,
             random_seed: -1,
+            debug: false,
             use_wildcard_plans: true,
             combine_labels: true,
             deviation_flaws: true,
@@ -149,6 +151,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "init_split_candidates={}, ",
                 "init_split_quantity={}, ",
                 "random_seed={}, ",
+                "debug={}, ",
                 "use_wildcard_plans={}, ",
                 "combine_labels={}, ",
                 "deviation_flaws={}, ",
@@ -168,6 +171,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.init_split_candidates,
             self.init_split_quantity,
             self.random_seed,
+            self.debug,
             self.use_wildcard_plans,
             self.combine_labels,
             self.deviation_flaws,
@@ -222,6 +226,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         init_split_var_ids: Option<HashSet<usize>>,
         blacklisted_prop_var_ids: HashSet<usize>,
         blacklisted_numeric_var_ids: HashSet<usize>,
+        random_seed: Option<u64>,
     ) -> CegarConfig {
         CegarConfig {
             max_abstraction_size,
@@ -233,12 +238,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             },
             use_wildcard_plans: self.config.use_wildcard_plans,
             combine_labels: self.config.combine_labels,
-            debug: false,
-            random_seed: if self.config.random_seed >= 0 {
-                Some(self.config.random_seed as u64)
-            } else {
-                None
-            },
+            debug: self.config.debug,
+            random_seed,
             flaw_kind: self.config.flaw_kind,
             flaw_treatment: self.config.flaw_treatment,
             init_split_method: match self.config.init_split_quantity {
@@ -330,6 +331,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 init_split_var_ids,
                 blacklisted_prop_var_ids,
                 blacklisted_numeric_var_ids,
+                Some(rng.next_u64()),
             );
             let generator = DomainAbstractionGenerator::new(cegar_config)
                 .context("failed to construct single-abstraction CEGAR generator")?;
@@ -783,5 +785,25 @@ impl AbstractionKey {
             domain_mapping: factory.domain_mapping().clone(),
             numeric_fingerprint,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_init_split_selection_uses_round_robin_iteration_order() {
+        let candidates = [0usize, 1, 2, 3, 4];
+        let selected = (1..=8)
+            .map(|iteration| select_single_init_split_var(&candidates, iteration).unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(selected, vec![1, 2, 3, 4, 0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn single_init_split_selection_handles_empty_candidates() {
+        assert_eq!(select_single_init_split_var(&[], 1), None);
     }
 }

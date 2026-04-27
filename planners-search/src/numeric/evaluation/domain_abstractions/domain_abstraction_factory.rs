@@ -399,8 +399,7 @@ impl DomainAbstractionFactory {
         dump_distances: bool,
         use_wildcard_plans: bool,
     ) -> Result<Option<WildcardPlanResult>> {
-        let mut local_rng =
-            (!use_wildcard_plans).then(|| SmallRng::seed_from_u64(current_time_seed()));
+        let mut local_rng = Some(SmallRng::seed_from_u64(current_time_seed()));
         self.compute_plan_with_rng(
             task,
             combine_labels,
@@ -416,7 +415,7 @@ impl DomainAbstractionFactory {
         combine_labels: bool,
         dump_distances: bool,
         use_wildcard_plans: bool,
-        singleton_step_rng: Option<&mut SmallRng>,
+        plan_step_rng: Option<&mut SmallRng>,
     ) -> Result<Option<WildcardPlanResult>> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let operators = generator.build_abstract_operators(task)?;
@@ -440,7 +439,7 @@ impl DomainAbstractionFactory {
             &comparison_var_ids,
             &match_tree,
             use_wildcard_plans,
-            singleton_step_rng,
+            plan_step_rng,
         )
     }
 
@@ -910,7 +909,7 @@ impl DomainAbstractionFactory {
         comparison_var_ids: &[usize],
         match_tree: &MatchTree,
         use_wildcard_plans: bool,
-        mut singleton_step_rng: Option<&mut SmallRng>,
+        mut plan_step_rng: Option<&mut SmallRng>,
     ) -> Result<Option<WildcardPlanResult>> {
         let domain_sizes = generator.domain_sizes();
         let hash_multipliers = generator.hash_multipliers();
@@ -1048,8 +1047,12 @@ impl DomainAbstractionFactory {
                     step = cand_op.concrete_op_ids.clone();
                     step.sort_unstable();
                     step.dedup();
-                    if !use_wildcard_plans {
-                        let selected_op = match singleton_step_rng.as_deref_mut() {
+                    if use_wildcard_plans {
+                        if let Some(rng) = plan_step_rng.as_deref_mut() {
+                            step.shuffle(rng);
+                        }
+                    } else {
+                        let selected_op = match plan_step_rng.as_deref_mut() {
                             Some(rng) => step.choose(rng).copied(),
                             None => step.first().copied(),
                         }
