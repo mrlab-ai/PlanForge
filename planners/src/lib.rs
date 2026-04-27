@@ -303,15 +303,19 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     } else {
                         Vec::new()
                     };
-                    Some(Box::new(SaturatedCostPartitioningOnlineHeuristic::new(
+                    let h = SaturatedCostPartitioningOnlineHeuristic::new(
                         None,
                         abstractions,
                         pdbs,
                         config.clone(),
-                    ))
-                        as Box<
-                            dyn planners_search::numeric::evaluation::Heuristic + '_,
-                        >)
+                        task_ref,
+                    )
+                    .map_err(|e| {
+                        std::io::Error::other(format!(
+                            "failed to construct scp_online heuristic: {e}"
+                        ))
+                    })?;
+                    Some(Box::new(h) as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>)
                 }
             };
 

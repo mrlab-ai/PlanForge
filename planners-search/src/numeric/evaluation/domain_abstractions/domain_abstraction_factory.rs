@@ -379,6 +379,34 @@ impl DomainAbstractionFactory {
         Ok((table, saturated_costs))
     }
 
+    /// Builds goal distances using the supplied operator costs, without computing
+    /// saturated costs. Used by the order generator during diversification.
+    pub fn build_goal_distances(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operator_costs: &[f64],
+    ) -> Result<AbstractDistanceTable> {
+        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let mut operators = generator.build_abstract_operators(task)?;
+        apply_operator_costs(&mut operators, operator_costs)?;
+        self.build_distance_table_with_operators(task, &generator, &operators, false)
+    }
+
+    /// Computes saturated costs for the *already-built* distance table and
+    /// abstract operators.  This is public so the online SCP heuristic can
+    /// cap h-values for PERIM saturation before computing saturated costs.
+    pub fn saturated_costs_for_table(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operators: &[AbstractOperator],
+        table: &AbstractDistanceTable,
+    ) -> Result<Vec<f64>> {
+        let generator = self.make_operator_generator(task, combine_labels)?;
+        self.compute_saturated_costs(task, &generator, operators, table)
+    }
+
     /// Computes an abstract wildcard plan (sequence of per-step concrete-op-ID sets) by:
     /// 1) Computing abstract goal distances with implicit regression Dijkstra.
     /// 2) Extracting a shortest-path abstract plan from the initial abstract state.

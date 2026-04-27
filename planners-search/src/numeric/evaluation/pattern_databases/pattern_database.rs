@@ -1133,6 +1133,151 @@ impl<'task> PatternDatabase<'task> {
         Ok((distances, saturated_costs))
     }
 
+    /// Builds goal distances using the supplied operator costs without computing
+    /// saturated costs.  Used by the SCP online order generator.
+    pub fn build_goal_distances(
+        &self,
+        operator_costs: &[f64],
+    ) -> Result<Vec<f64>, String> {
+        let mut distances = vec![f64::INFINITY; self.states.len()];
+        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+
+        for &goal_state_id in &self.goal_state_ids {
+            if goal_state_id < distances.len() {
+                distances[goal_state_id] = 0.0;
+                heap.push((
+                    Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
+                    goal_state_id,
+                ));
+            }
+        }
+        if self.truncated {
+            for &frontier_state_id in &self.frontier_states {
+                if frontier_state_id < distances.len() && distances[frontier_state_id] > 0.0 {
+                    distances[frontier_state_id] = 0.0;
+                    heap.push((
+                        Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
+                        frontier_state_id,
+                    ));
+                }
+            }
+        }
+
+        while let Some((Reverse(distance), state_id)) = heap.pop() {
+            let distance = distance.into_inner();
+            if distance > distances[state_id] + 1e-12 {
+                continue;
+            }
+            for &(parent_id, projected_operator_id) in &self.transition_predecessors[state_id] {
+                let base_operator_id = self
+                    .task
+                    .base_operator_id(projected_operator_id)
+                    .ok_or_else(|| format!("missing base operator id for projected operator {projected_operator_id}"))?;
+                let operator_cost = *operator_costs.get(base_operator_id).ok_or_else(|| {
+                    format!("missing residual cost for operator {base_operator_id}")
+                })?;
+                let alternative = distance + operator_cost;
+                if alternative + 1e-12 < distances[parent_id] {
+                    distances[parent_id] = alternative;
+                    heap.push((
+                        Reverse(NotNan::new(alternative).map_err(|err| err.to_string())?),
+                        parent_id,
+                    ));
+                }
+            }
+        }
+
+        Ok(distances)
+    }
+
+    /// Builds a cost-partitioned distance table, capping every heuristic value
+    /// at `h_cap` (PERIM saturation).  Returns (capped_distances, saturated_costs).
+    pub fn build_cost_partitioned_distance_table_capped(
+        &self,
+        operator_costs: &[f64],
+        h_cap: f64,
+    ) -> Result<(Vec<f64>, Vec<f64>), String> {
+        let mut distances = vec![f64::INFINITY; self.states.len()];
+        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+
+        for &goal_state_id in &self.goal_state_ids {
+            if goal_state_id < distances.len() {
+                distances[goal_state_id] = 0.0;
+                heap.push((
+                    Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
+                    goal_state_id,
+                ));
+            }
+        }
+        if self.truncated {
+            for &frontier_state_id in &self.frontier_states {
+                if frontier_state_id < distances.len() && distances[frontier_state_id] > 0.0 {
+                    distances[frontier_state_id] = 0.0;
+                    heap.push((
+                        Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
+                        frontier_state_id,
+                    ));
+                }
+            }
+        }
+
+        while let Some((Reverse(distance), state_id)) = heap.pop() {
+            let distance = distance.into_inner();
+            if distance > distances[state_id] + 1e-12 {
+                continue;
+            }
+            for &(parent_id, projected_operator_id) in &self.transition_predecessors[state_id] {
+                let base_operator_id = self
+                    .task
+                    .base_operator_id(projected_operator_id)
+                    .ok_or_else(|| format!("missing base operator id for projected operator {projected_operator_id}"))?;
+                let operator_cost = *operator_costs.get(base_operator_id).ok_or_else(|| {
+                    format!("missing residual cost for operator {base_operator_id}")
+                })?;
+                let alternative = distance + operator_cost;
+                if alternative + 1e-12 < distances[parent_id] {
+                    distances[parent_id] = alternative;
+                    heap.push((
+                        Reverse(NotNan::new(alternative).map_err(|err| err.to_string())?),
+                        parent_id,
+                    ));
+                }
+            }
+        }
+
+        // Cap h-values at h_cap (finite only).
+        if h_cap.is_finite() {
+            for h in &mut distances {
+                if h.is_finite() && *h > h_cap {
+                    *h = h_cap;
+                }
+            }
+        }
+
+        let mut saturated_costs = vec![f64::NEG_INFINITY; operator_costs.len()];
+        for (target_id, predecessors) in self.transition_predecessors.iter().enumerate() {
+            let target_h = distances[target_id];
+            if !target_h.is_finite() {
+                continue;
+            }
+            for &(parent_id, projected_operator_id) in predecessors {
+                let parent_h = distances[parent_id];
+                if !parent_h.is_finite() {
+                    continue;
+                }
+                let Some(base_operator_id) = self.task.base_operator_id(projected_operator_id)
+                else {
+                    continue;
+                };
+                if let Some(slot) = saturated_costs.get_mut(base_operator_id) {
+                    *slot = slot.max(parent_h - target_h);
+                }
+            }
+        }
+
+        Ok((distances, saturated_costs))
+    }
+
     pub fn requires_derived_numeric_values(&self) -> bool {
         self.task.requires_derived_numeric_values()
     }
