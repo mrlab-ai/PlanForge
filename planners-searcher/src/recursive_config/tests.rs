@@ -113,7 +113,7 @@ fn parses_astar_scp_online_with_or_without_unit_parens() {
 #[test]
 fn parses_astar_scp_online_with_named_options() {
     let spec = parse_search_spec(
-        "astar(scp_online(max_time=12.5, max_size=2048, interval=3, combine_labels=true))",
+        "astar(scp_online(max_time=12.5, max_size=2048, interval=3, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, exec_entire_plan=execute_entire_plan, use_wildcard_plans=false, combine_labels=true, random_seed=7))",
     )
     .unwrap();
 
@@ -125,6 +125,23 @@ fn parses_astar_scp_online_with_named_options() {
     assert_eq!(config.max_size, 2048);
     assert_eq!(config.interval, 3);
     assert!(config.combine_labels);
+    assert_eq!(config.collection_config.max_collection_size, 123);
+    assert_eq!(config.collection_config.total_max_time, 4.5);
+    assert_eq!(
+        config.collection_config.blacklist_option,
+        VariableSubset::NonGoals
+    );
+    assert_eq!(
+        config.collection_config.init_split_quantity,
+        InitSplitQuantity::All
+    );
+    assert_eq!(
+        config.collection_config.exec_entire_plan,
+        ExecEntirePlanMode::ExecuteEntirePlan
+    );
+    assert!(!config.collection_config.use_wildcard_plans);
+    assert!(config.collection_config.combine_labels);
+    assert_eq!(config.collection_config.random_seed, 7);
 }
 
 #[test]
@@ -391,6 +408,16 @@ fn display_round_trips_multi_domain_abstractions() {
 fn display_round_trips_canonical_domain_abstractions() {
     let parsed = parse_search_spec(
         "astar(canonical_domain_abstractions(max_abstraction_size=42, abstraction_generation_max_time=infinity))",
+    )
+    .unwrap();
+    let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
+    assert_eq!(parsed, reparsed);
+}
+
+#[test]
+fn display_round_trips_scp_online() {
+    let parsed = parse_search_spec(
+        "astar(scp_online(max_time=12.5, max_abstraction_size=42, abstraction_generation_max_time=infinity, exec_entire_plan=execute_entire_plan))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();

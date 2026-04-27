@@ -862,7 +862,167 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
         field_f64!("max_time", ScpOnlineConfig, max_time),
         field_usize!("max_size", ScpOnlineConfig, max_size),
         field_usize!("interval", ScpOnlineConfig, interval),
-        field_bool!("combine_labels", ScpOnlineConfig, combine_labels),
+        Field {
+            name: "max_abstraction_size",
+            apply: |config, value| {
+                config.collection_config.max_abstraction_size = parse_usize(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.max_abstraction_size.to_string(),
+        },
+        Field {
+            name: "max_collection_size",
+            apply: |config, value| {
+                config.collection_config.max_collection_size = parse_usize(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.max_collection_size.to_string(),
+        },
+        Field {
+            name: "abstraction_generation_max_time",
+            apply: |config, value| {
+                config.collection_config.abstraction_generation_max_time =
+                    parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                format_f64_or_infinity(config.collection_config.abstraction_generation_max_time)
+            },
+        },
+        Field {
+            name: "total_max_time",
+            apply: |config, value| {
+                config.collection_config.total_max_time = parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_f64_or_infinity(config.collection_config.total_max_time),
+        },
+        Field {
+            name: "stagnation_limit",
+            apply: |config, value| {
+                config.collection_config.stagnation_limit = parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_f64_or_infinity(config.collection_config.stagnation_limit),
+        },
+        Field {
+            name: "blacklist_trigger_percentage",
+            apply: |config, value| {
+                config.collection_config.blacklist_trigger_percentage =
+                    parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                format_f64_or_infinity(config.collection_config.blacklist_trigger_percentage)
+            },
+        },
+        Field {
+            name: "enable_blacklist_on_stagnation",
+            apply: |config, value| {
+                config.collection_config.enable_blacklist_on_stagnation = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                config
+                    .collection_config
+                    .enable_blacklist_on_stagnation
+                    .to_string()
+            },
+        },
+        Field {
+            name: "blacklist_option",
+            apply: |config, value| {
+                config.collection_config.blacklist_option = parse_variable_subset(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.blacklist_option.to_string(),
+        },
+        Field {
+            name: "init_split_candidates",
+            apply: |config, value| {
+                config.collection_config.init_split_candidates =
+                    parse_variable_subset(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.init_split_candidates.to_string(),
+        },
+        Field {
+            name: "init_split_quantity",
+            apply: |config, value| {
+                config.collection_config.init_split_quantity =
+                    parse_init_split_quantity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.init_split_quantity.to_string(),
+        },
+        Field {
+            name: "random_seed",
+            apply: |config, value| {
+                config.collection_config.random_seed = parse_i32(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.random_seed.to_string(),
+        },
+        Field {
+            name: "use_wildcard_plans",
+            apply: |config, value| {
+                config.collection_config.use_wildcard_plans = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.use_wildcard_plans.to_string(),
+        },
+        Field {
+            name: "combine_labels",
+            apply: |config, value| {
+                let combine_labels = parse_bool(atom(value)?)?;
+                config.combine_labels = combine_labels;
+                config.collection_config.combine_labels = combine_labels;
+                Ok(())
+            },
+            format: |config| config.combine_labels.to_string(),
+        },
+        Field {
+            name: "deviation_flaws",
+            apply: |config, value| {
+                config.collection_config.deviation_flaws = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.deviation_flaws.to_string(),
+        },
+        Field {
+            name: "flaw_treatment",
+            apply: |config, value| {
+                config.collection_config.flaw_treatment = parse_flaw_treatment(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.flaw_treatment.to_string(),
+        },
+        Field {
+            name: "init_split_method",
+            apply: |config, value| {
+                config.collection_config.init_split_method = parse_init_split_method(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.init_split_method.to_string(),
+        },
+        Field {
+            name: "numeric_split_strategy",
+            apply: |config, value| {
+                config.collection_config.numeric_split_strategy =
+                    parse_numeric_split_strategy(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.numeric_split_strategy.to_string(),
+        },
+        Field {
+            name: "exec_entire_plan",
+            apply: |config, value| {
+                config.collection_config.exec_entire_plan =
+                    parse_exec_entire_plan_mode(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.exec_entire_plan.to_string(),
+        },
     ]
 }
 

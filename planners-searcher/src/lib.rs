@@ -9,7 +9,6 @@ use planners_search::numeric::evaluation::domain_abstractions::cegar::CegarConfi
 use planners_search::numeric::evaluation::domain_abstractions::canonical_domain_abstraction_heuristic::CanonicalDomainAbstractionHeuristic;
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
@@ -249,11 +248,9 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                     )
                 }
                 crate::recursive_config::HeuristicSpec::ScpOnline(config) => {
-                    let mut collection_config =
-                        DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-                    collection_config.combine_labels = config.combine_labels;
-                    let generator =
-                        DomainAbstractionCollectionGeneratorMultipleCegar::new(collection_config);
+                    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+                        config.collection_config.clone(),
+                    );
                     info!("Building scp_online domain abstractions (CEGAR)...");
                     let abstractions = generator.generate_collection(task_ref).map_err(|e| {
                         std::io::Error::other(format!(
