@@ -6,7 +6,7 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 use std::fmt;
 
-use log::info;
+use tracing::info;
 use ordered_float::NotNan;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;

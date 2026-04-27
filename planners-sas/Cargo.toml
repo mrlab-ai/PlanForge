@@ -5,5 +5,5 @@ edition = "2024"
 license = "LGPL-3.0"
 
 [dependencies]
-log = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
 nom = "8"

@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
 
-use log::{debug, error, info};
+use tracing::{debug, error, info};
 
 use crate::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
 use crate::domain_transition_graph::DomainTransitionGraph;

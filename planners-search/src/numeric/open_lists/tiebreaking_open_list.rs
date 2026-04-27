@@ -1,5 +1,5 @@
 use super::open_list::{OpenList, SearchNode};
-use log::debug;
+use tracing::debug;
 use ordered_float::OrderedFloat;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;

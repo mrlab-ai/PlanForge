@@ -2,7 +2,7 @@
 /// Translates a PDDL task into a logic program for grounding.
 use std::collections::{HashMap, HashSet};
 
-use log::info;
+use tracing::info;
 
 use super::normalize;
 use super::pddl::conditions::*;

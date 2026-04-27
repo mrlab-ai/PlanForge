@@ -3,7 +3,7 @@ use std::cmp::max;
 use std::collections::BTreeMap;
 use std::ops::Deref;
 
-use log::{debug, info};
+use tracing::{debug, info};
 
 use crate::GlobalConstraint;
 use crate::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};

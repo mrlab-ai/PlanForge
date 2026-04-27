@@ -1,4 +1,4 @@
-use log::error;
+use tracing::error;
 
 use crate::numeric::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType};
 

@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::{error, info};
+use tracing::{error, info};
 use planners_cli_utils::*;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
@@ -27,22 +27,27 @@ use std::time::Duration;
 pub mod recursive_config;
 
 pub use recursive_config::{HeuristicSpec, SearchSpec, parse_search_spec};
-use std::io::Write;
 
-pub fn init_logger(level: log::LevelFilter) -> Result<(), log::SetLoggerError> {
-    let mut builder = env_logger::Builder::new();
-    builder.filter_level(level);
-    builder.format(|formatter, record| {
-        writeln!(
-            formatter,
-            "[{}] {}: {}",
-            formatter.timestamp_seconds(),
-            record.level(),
-            record.args()
-        )
-    });
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::filter::LevelFilter;
 
-    builder.try_init()
+pub fn init_logger(level: LevelFilter) {
+    // Layer for stdout (info + deubg + trace)
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stdout)
+        .with_target(false)
+        .with_filter(level);
+
+    // Layer for stderr (error + warn only)
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_target(false)
+        .with_filter(LevelFilter::WARN);
+
+    tracing_subscriber::registry()
+        .with(stdout_layer)
+        .with(stderr_layer)
+        .init();
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -55,7 +60,7 @@ pub struct PlannersSearcherCli {
     pub max_time: Option<Duration>,
 
     #[arg(long = "log-level")]
-    pub log_level: Option<log::LevelFilter>,
+    pub log_level: Option<LevelFilter>,
 
     #[arg(long, hide = true)]
     pub internal_run: bool,

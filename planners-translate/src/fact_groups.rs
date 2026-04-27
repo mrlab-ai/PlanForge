@@ -2,7 +2,7 @@
 /// Groups atoms into mutex groups / FDR variables.
 use std::collections::{HashMap, HashSet};
 
-use log::info;
+use tracing::info;
 
 use super::invariant_finder;
 use super::options;

@@ -13,6 +13,6 @@ planners-sas = { path = "../planners-sas" }
 planners-search = { path = "../planners-search" }
 planners-cli-utils = { path = "../planners-cli-utils" }
 clap = { version = "4", features = ["derive"] }
-log = { version = "0.4", features = ["serde"] }
-env_logger = { version = "0.11", features = ["humantime"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }

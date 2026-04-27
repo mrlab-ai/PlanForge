@@ -6,7 +6,7 @@ use std::fmt::{self};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
-use log::debug;
+use tracing::debug;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};

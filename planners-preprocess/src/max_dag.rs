@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use log::{Level, debug, log_enabled};
+use tracing::{Level, debug};
 
 #[derive(Debug, Clone)]
 pub struct MaxDag {
@@ -17,7 +17,7 @@ impl MaxDag {
     #[allow(clippy::needless_range_loop)]
     pub fn get_result(&self) -> Vec<usize> {
         let num_nodes = self.weighted_graph.len();
-        if log_enabled!(Level::Debug) {
+        if tracing::enabled!(Level::DEBUG) {
             for i in 0..num_nodes {
                 debug!("From {}:", i);
                 for trans in &self.weighted_graph[i] {
@@ -71,7 +71,7 @@ impl MaxDag {
             }
         }
 
-        if log_enabled!(Level::Debug) {
+        if tracing::enabled!(Level::DEBUG) {
             debug!("result: ");
             for r in &result {
                 debug!("{} - ", r);

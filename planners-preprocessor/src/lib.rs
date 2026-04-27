@@ -1,21 +1,25 @@
 use clap::Parser;
 
-use std::io::Write;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::filter::LevelFilter;
 
-pub fn init_logger(level: log::LevelFilter) -> Result<(), log::SetLoggerError> {
-    let mut builder = env_logger::Builder::new();
-    builder.filter_level(level);
-    builder.format(|formatter, record| {
-        writeln!(
-            formatter,
-            "[{}] {}: {}",
-            formatter.timestamp_seconds(),
-            record.level(),
-            record.args()
-        )
-    });
+pub fn init_logger(level: LevelFilter) {
+    // Layer for stdout (info + debug + trace)
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stdout)
+        .with_target(false)
+        .with_filter(level);
 
-    builder.try_init()
+    // Layer for stderr (error + warn only)
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_target(false)
+        .with_filter(LevelFilter::WARN);
+
+    tracing_subscriber::registry()
+        .with(stdout_layer)
+        .with(stderr_layer)
+        .init();
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -25,5 +29,5 @@ pub struct PlannersPreprocessorCli {
     pub inputs: Vec<String>,
 
     #[arg(long = "log-level")]
-    pub log_level: Option<log::LevelFilter>,
+    pub log_level: Option<LevelFilter>,
 }

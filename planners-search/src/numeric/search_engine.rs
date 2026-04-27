@@ -11,7 +11,7 @@ use crate::numeric::{
     evaluation::{EvaluationError, EvaluationState, Heuristic},
     successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node},
 };
-use log::{debug, info};
+use tracing::{debug, info};
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, ExplicitFact, Operator, metric_operator_cost_from_initial_values,

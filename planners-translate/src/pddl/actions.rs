@@ -2,7 +2,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use log::debug;
+use tracing::debug;
 
 use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
 use super::effects::{Effect, EffectKind, EffectType};

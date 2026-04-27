@@ -1,4 +1,4 @@
-use log::{debug, info};
+use tracing::{debug, info};
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 
 use super::pattern_database::PatternDatabase;

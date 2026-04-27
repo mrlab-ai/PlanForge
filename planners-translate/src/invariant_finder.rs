@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use log::info;
+use tracing::info;
 /// Port of invariant_finder.py
 /// Finds mutex invariants among ground atoms.
 use std::collections::{HashMap, HashSet, VecDeque};

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use log::debug;
+use tracing::debug;
 
 use crate::helper_functions::InputStream;
 use crate::helper_functions::check_magic;

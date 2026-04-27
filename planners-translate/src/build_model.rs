@@ -1,4 +1,4 @@
-use log::info;
+use tracing::info;
 
 use super::pddl_to_prolog::{Fact, PrologProgram, RuleType};
 /// Port of build_model.py

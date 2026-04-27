@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use log::debug;
+use tracing::debug;
 
 use crate::Condition;
 use crate::fact::ExplicitFact;
