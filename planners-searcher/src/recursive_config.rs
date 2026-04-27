@@ -25,6 +25,7 @@ use planners_search::numeric::evaluation::pattern_databases::variable_order_find
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DomainAbstractionConfig {
     pub max_abstraction_size: usize,
+    pub max_iterations: usize,
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
     pub random_seed: i32,
@@ -36,7 +37,8 @@ pub struct DomainAbstractionConfig {
 impl Default for DomainAbstractionConfig {
     fn default() -> Self {
         Self {
-            max_abstraction_size: i64::MAX as usize,
+            max_abstraction_size: usize::MAX,
+            max_iterations: 10_000,
             use_wildcard_plans: true,
             combine_labels: true,
             random_seed: -1,
@@ -53,6 +55,7 @@ impl fmt::Display for DomainAbstractionConfig {
             f,
             concat!(
                 "max_abstraction_size={}, ",
+                "max_iterations={}, ",
                 "use_wildcard_plans={}, ",
                 "combine_labels={}, ",
                 "random_seed={}, ",
@@ -61,6 +64,7 @@ impl fmt::Display for DomainAbstractionConfig {
                 "exec_entire_plan={}"
             ),
             self.max_abstraction_size,
+            self.max_iterations,
             self.use_wildcard_plans,
             self.combine_labels,
             self.random_seed,
@@ -350,6 +354,7 @@ fn build_domain_abstraction_config(
 
         match key.as_str() {
             "max_abstraction_size" => config.max_abstraction_size = parse_usize(&value)?,
+            "max_iterations" => config.max_iterations = parse_usize(&value)?,
             "use_wildcard_plans" => config.use_wildcard_plans = parse_bool(&value)?,
             "combine_labels" => config.combine_labels = parse_bool(&value)?,
             "random_seed" => config.random_seed = parse_i32(&value)?,

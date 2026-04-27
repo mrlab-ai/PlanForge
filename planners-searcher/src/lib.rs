@@ -156,6 +156,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                     info!("Building domain abstraction (CEGAR)...");
                     let mut config = CegarConfig::default();
                     config.max_abstraction_size = domain_config.max_abstraction_size;
+                    config.max_iterations = domain_config.max_iterations;
                     config.use_wildcard_plans = domain_config.use_wildcard_plans;
                     config.combine_labels = domain_config.combine_labels;
                     config.random_seed = if domain_config.random_seed >= 0 {
