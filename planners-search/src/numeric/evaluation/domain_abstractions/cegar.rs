@@ -934,7 +934,7 @@ fn determine_include_in_lower(
     }
 }
 
-#[allow(clippy::if_same_then_else, clippy::needless_bool)]
+#[allow(unused, clippy::if_same_then_else, clippy::needless_bool)]
 fn determine_include_in_lower_for_flaw_search_state(
     tree: &super::comparison_expression::ComparisonTree,
     state: &FlawSearchState,

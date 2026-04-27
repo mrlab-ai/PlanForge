@@ -74,12 +74,39 @@ cargo test test_name -- --nocapture
 
 ### Profiling
 
+Enable debug function names in the `release` profile of Cargo.toml by adding the following line
+
+```toml
+debug = "line-tables-only"
+```
+
+**Run all command-lines to profile with the `--internal-run` argument**.
+
 ```bash
-# Profile with flamegraph (requires cargo-flamegraph: cargo install flamegraph)
+# Profile with flamegraph (requires cargo-flamegraph: cargo install flamegraph or the devenv profile)
 cargo flamegraph --bin planners -- <sas file here>
 
 # This will generate a flamegraph.svg file showing performance hotspots
 # Open flamegraph.svg in a web browser to view the interactive flame graph
+
+# Alternatively, you use samply to get interactive analysis (already in the devenv profile).
+# The following command will run the profiling and open it in Firefox Profiler in the
+# default browser with a local server opened
+samply record command
+
+# Or you can save it in a file with the following command
+samply record --save-only -o file.json -- command
+
+# And load it with the following one (unfortunately loading the json file
+# directly in Firefox Profiler does not get the symbol names).
+samply load file.json
+
+
+# Alternatively, you can use callgrind (but much slower):
+valgrind --tool=callgrind --callgrind-out-file=file.out command
+
+# And then open the output file with kcachegrind
+kcachegrind file.out
 ```
 
 ### Library Usage (Planned)
