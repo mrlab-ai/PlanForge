@@ -312,6 +312,7 @@ pub struct ProjectedTask<'task> {
     metric: Metric,
     operators: Vec<Operator>,
     operator_costs: Vec<f64>,
+    base_operator_ids: Vec<usize>,
     propositional_packer: IntDoublePacker,
     initial_packed_propositional: Vec<u64>,
     compiled_axiom_evaluator_data: CompiledAxiomEvaluatorData,
@@ -905,7 +906,8 @@ impl<'task> ProjectedTask<'task> {
 
         let mut operators: Vec<Operator> = Vec::new();
         let mut operator_costs: Vec<f64> = Vec::new();
-        for operator in base.get_operators().iter() {
+        let mut base_operator_ids: Vec<usize> = Vec::new();
+        for (base_operator_id, operator) in base.get_operators().iter().enumerate() {
             let operator_cost = metric_operator_cost_from_initial_values(base, operator);
             if let Some(projected_operator) = project_operator(
                 base,
@@ -924,6 +926,7 @@ impl<'task> ProjectedTask<'task> {
             )? {
                 operators.push(projected_operator);
                 operator_costs.push(operator_cost);
+                base_operator_ids.push(base_operator_id);
             }
         }
 
@@ -1054,6 +1057,7 @@ impl<'task> ProjectedTask<'task> {
             metric: Metric::new(base.metric().is_min(), metric_var_id),
             operators,
             operator_costs,
+            base_operator_ids,
             propositional_packer,
             initial_packed_propositional,
             compiled_axiom_evaluator_data,
@@ -1560,6 +1564,10 @@ impl<'task> ProjectedTask<'task> {
         } else {
             0.0
         }
+    }
+
+    pub fn base_operator_id(&self, projected_operator_id: usize) -> Option<usize> {
+        self.base_operator_ids.get(projected_operator_id).copied()
     }
 
     pub fn pattern_numeric_projected_ids(&self) -> &[usize] {

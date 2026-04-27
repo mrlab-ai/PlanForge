@@ -26,6 +26,10 @@ use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_pa
 use planners_search::numeric::evaluation::evaluator::EvaluationState;
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbHeuristic;
+use planners_search::numeric::evaluation::pattern_databases::pattern_generator_systematic::{
+    SystematicPatternGeneratorConfig, generate_systematic_patterns,
+};
+use planners_search::numeric::evaluation::pattern_databases::pdb_collection::PdbCollection;
 use planners_search::numeric::evaluation::pattern_databases::pdb_heuristic::GreedyNumericPdbHeuristic;
 use planners_search::numeric::evaluation::{EvaluationResult, Evaluator};
 use planners_search::numeric::open_lists::{OpenList, SearchNode, TieBreakingOpenList};
@@ -274,9 +278,35 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                             "failed to build scp_online domain abstractions: {e:#}"
                         ))
                     })?;
+                    let pdbs = if config.use_numeric_pdbs {
+                        info!("Building scp_online systematic numeric PDBs...");
+                        let patterns = generate_systematic_patterns(
+                            task_ref,
+                            SystematicPatternGeneratorConfig {
+                                max_pdb_states: config.max_pdb_states,
+                                max_pattern_size: config.max_pattern_size,
+                                only_interesting_patterns: config.only_interesting_patterns,
+                            },
+                        );
+                        PdbCollection::with_heuristic_config(
+                            task_ref,
+                            patterns,
+                            config.max_pdb_states,
+                            config.pdb_heuristic_config(),
+                        )
+                        .map_err(|e| {
+                            std::io::Error::other(format!(
+                                "failed to build scp_online numeric PDBs: {e}"
+                            ))
+                        })?
+                        .into_pdbs()
+                    } else {
+                        Vec::new()
+                    };
                     Some(Box::new(SaturatedCostPartitioningOnlineHeuristic::new(
                         None,
                         abstractions,
+                        pdbs,
                         config.clone(),
                     ))
                         as Box<

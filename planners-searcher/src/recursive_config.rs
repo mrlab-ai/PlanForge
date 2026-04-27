@@ -571,6 +571,7 @@ fn parse_greedy_variable_order_type(value: &str) -> Result<GreedyVariableOrderTy
 
 fn parse_pdb_internal_heuristic(value: &str) -> Result<PdbInternalHeuristic, String> {
     match value {
+        "zero" => Ok(PdbInternalHeuristic::Zero),
         "blind" => Ok(PdbInternalHeuristic::Blind),
         "lmcut" => Ok(PdbInternalHeuristic::Lmcut),
         _ => Err(format!("invalid PdbInternalHeuristic `{value}`")),
@@ -867,6 +868,38 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
         field_f64!("max_time", ScpOnlineConfig, max_time),
         field_usize!("max_size", ScpOnlineConfig, max_size),
         field_usize!("interval", ScpOnlineConfig, interval),
+        field_bool!("use_numeric_pdbs", ScpOnlineConfig, use_numeric_pdbs),
+        field_usize!("max_pdb_states", ScpOnlineConfig, max_pdb_states),
+        field_usize!("max_pattern_size", ScpOnlineConfig, max_pattern_size),
+        field_bool!(
+            "only_interesting_patterns",
+            ScpOnlineConfig,
+            only_interesting_patterns
+        ),
+        Field {
+            name: "pdb_exploration_heuristic",
+            apply: |config, value| {
+                config.pdb_exploration_heuristic = parse_pdb_internal_heuristic(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.pdb_exploration_heuristic.to_string(),
+        },
+        Field {
+            name: "pdb_frontier_heuristic",
+            apply: |config, value| {
+                config.pdb_frontier_heuristic = parse_pdb_internal_heuristic(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.pdb_frontier_heuristic.to_string(),
+        },
+        Field {
+            name: "pdb_failed_lookup_heuristic",
+            apply: |config, value| {
+                config.pdb_failed_lookup_heuristic = parse_pdb_internal_heuristic(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.pdb_failed_lookup_heuristic.to_string(),
+        },
         Field {
             name: "max_abstraction_size",
             apply: |config, value| {
