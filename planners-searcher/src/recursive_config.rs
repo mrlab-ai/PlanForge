@@ -8,6 +8,7 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
     InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
 };
+use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig;
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use planners_search::numeric::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
@@ -86,6 +87,8 @@ pub enum HeuristicSpec {
     Lmcutnumeric(LmCutNumericConfig),
     #[serde(rename = "multi_domain_abstractions")]
     MultiDomainAbstractions(DomainAbstractionCollectionGeneratorMultipleCegarConfig),
+    #[serde(rename = "scp_online")]
+    ScpOnline(ScpOnlineConfig),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -127,6 +130,9 @@ impl fmt::Display for HeuristicSpec {
                     "multi_domain_abstractions({})",
                     config.format_config_args()
                 )
+            }
+            HeuristicSpec::ScpOnline(config) => {
+                write!(f, "{}", config.format_config_call("scp_online"))
             }
         }
     }
@@ -851,6 +857,15 @@ fn multi_domain_abstractions_fields()
     ]
 }
 
+fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
+    vec![
+        field_f64!("max_time", ScpOnlineConfig, max_time),
+        field_usize!("max_size", ScpOnlineConfig, max_size),
+        field_usize!("interval", ScpOnlineConfig, interval),
+        field_bool!("combine_labels", ScpOnlineConfig, combine_labels),
+    ]
+}
+
 fn greedy_numeric_pdb_fields() -> Vec<Field<GreedyPatternGeneratorConfig>> {
     vec![
         field_usize!(
@@ -987,6 +1002,12 @@ impl FromConfig for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     }
 }
 
+impl FromConfig for ScpOnlineConfig {
+    fn config_fields() -> Vec<Field<Self>> {
+        scp_online_fields()
+    }
+}
+
 impl FromConfig for GreedyPatternGeneratorConfig {
     fn config_fields() -> Vec<Field<Self>> {
         greedy_numeric_pdb_fields()
@@ -1046,6 +1067,14 @@ fn heuristic_registry() -> Vec<HeuristicPlugin> {
                 Ok(HeuristicSpec::MultiDomainAbstractions(
                     DomainAbstractionCollectionGeneratorMultipleCegarConfig::from_config(call)?,
                 ))
+            },
+        },
+        HeuristicPlugin {
+            name: "scp_online",
+            build: |call| {
+                Ok(HeuristicSpec::ScpOnline(ScpOnlineConfig::from_config(
+                    call,
+                )?))
             },
         },
         HeuristicPlugin {

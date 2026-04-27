@@ -14,12 +14,16 @@ use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use planners_search::numeric::evaluation::g_evaluator::{GEvaluator, SumEvaluator};
 use planners_search::numeric::evaluation::domain_abstractions::canonical_domain_abstraction_heuristic::CanonicalDomainAbstractionHeuristic;
 use planners_search::numeric::evaluation::domain_abstractions::cegar::{Cegar, CegarConfig};
-use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegar;
+use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
+    DomainAbstractionCollectionGeneratorMultipleCegar,
+    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+};
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, compute_hash_multipliers,
 };
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planners_search::numeric::evaluation::domain_abstractions::max_domain_abstraction_heuristic::MaxDomainAbstractionHeuristic;
+use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::SaturatedCostPartitioningOnlineHeuristic;
 use planners_search::numeric::evaluation::evaluator::EvaluationState;
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbHeuristic;
@@ -260,6 +264,27 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                         Box::new(MaxDomainAbstractionHeuristic::new(None, abstractions))
                             as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>,
                     )
+                }
+                planners_searcher::HeuristicSpec::ScpOnline(config) => {
+                    let mut collection_config =
+                        DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+                    collection_config.combine_labels = config.combine_labels;
+                    let generator =
+                        DomainAbstractionCollectionGeneratorMultipleCegar::new(collection_config);
+                    info!("Building scp_online domain abstractions (CEGAR)...");
+                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
+                        std::io::Error::other(format!(
+                            "failed to build scp_online domain abstractions: {e:#}"
+                        ))
+                    })?;
+                    Some(Box::new(SaturatedCostPartitioningOnlineHeuristic::new(
+                        None,
+                        abstractions,
+                        config.clone(),
+                    ))
+                        as Box<
+                            dyn planners_search::numeric::evaluation::Heuristic + '_,
+                        >)
                 }
             };
 

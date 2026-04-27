@@ -361,6 +361,24 @@ impl DomainAbstractionFactory {
         self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)
     }
 
+    /// Builds an abstract distance table using the supplied per-concrete-operator costs and
+    /// returns the saturated costs induced by the resulting distances.
+    pub fn build_cost_partitioned_distance_table(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operator_costs: &[f64],
+        dump_distances: bool,
+    ) -> Result<(AbstractDistanceTable, Vec<f64>)> {
+        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let mut operators = generator.build_abstract_operators(task)?;
+        apply_operator_costs(&mut operators, operator_costs)?;
+        let table =
+            self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)?;
+        let saturated_costs = self.compute_saturated_costs(task, &generator, &operators, &table)?;
+        Ok((table, saturated_costs))
+    }
+
     /// Computes an abstract wildcard plan (sequence of per-step concrete-op-ID sets) by:
     /// 1) Computing abstract goal distances with implicit regression Dijkstra.
     /// 2) Extracting a shortest-path abstract plan from the initial abstract state.
@@ -484,6 +502,83 @@ impl DomainAbstractionFactory {
         }
 
         Ok(table)
+    }
+
+    fn compute_saturated_costs(
+        &self,
+        task: &dyn AbstractNumericTask,
+        generator: &AbstractOperatorGenerator,
+        operators: &[AbstractOperator],
+        table: &AbstractDistanceTable,
+    ) -> Result<Vec<f64>> {
+        let num_operators = task.get_operators().len();
+        let num_states = table.distances.len();
+        let mut saturated_costs = vec![f64::NEG_INFINITY; num_operators];
+
+        let comparison_var_ids = self.comparison_var_ids();
+        let match_tree = MatchTree::build(
+            generator.domain_sizes(),
+            generator.numeric_domain_sizes(),
+            generator.hash_multipliers(),
+            operators,
+            &comparison_var_ids,
+        );
+
+        let mut applicable_operator_ids = Vec::new();
+        for target_hash in 0..num_states {
+            let target_h = table.distances[target_hash];
+            if !target_h.is_finite() {
+                continue;
+            }
+
+            let base_state = self.reset_comparison_vars_to_unknown_except(
+                target_hash,
+                generator.hash_multipliers(),
+                &comparison_var_ids,
+                &[],
+            )?;
+
+            match_tree.get_applicable_operator_ids(base_state, &mut applicable_operator_ids);
+            for &abstract_op_id in &applicable_operator_ids {
+                let op = &operators[abstract_op_id];
+                let predecessor_base = (base_state as i32 + op.hash_effect) as usize;
+                if predecessor_base >= num_states {
+                    continue;
+                }
+                let fixed_comparisons = get_comparison_preconditions(op, &comparison_var_ids);
+                let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
+                    predecessor_base,
+                    task,
+                    generator.numeric_domain_sizes(),
+                    generator.hash_multipliers(),
+                    &comparison_var_ids,
+                    &fixed_comparisons,
+                )?;
+
+                for pred in possible_predecessors {
+                    let Some(&src_h) = table.distances.get(pred) else {
+                        continue;
+                    };
+                    if !src_h.is_finite() {
+                        continue;
+                    }
+                    let needed = src_h - target_h;
+                    for &op_id in &op.concrete_op_ids {
+                        if let Some(slot) = saturated_costs.get_mut(op_id) {
+                            *slot = slot.max(needed);
+                        }
+                    }
+                }
+            }
+        }
+
+        for cost in &mut saturated_costs {
+            if *cost == f64::NEG_INFINITY {
+                *cost = 0.0;
+            }
+        }
+
+        Ok(saturated_costs)
     }
 
     /// Prints a numeric-fd style table of core variables for all reachable abstract states.
@@ -682,7 +777,18 @@ impl DomainAbstractionFactory {
             let unknown_abs = *self.domain_mapping[var_id]
                 .get(COMPARISON_UNKNOWN_VAL)
                 .with_context(|| format!("missing UNKNOWN mapping for comparison var {var_id}"))?;
-            out += (unknown_abs - cur) * mult;
+            let cur_offset = cur
+                .checked_mul(mult)
+                .context("comparison current digit offset overflow")?;
+            let unknown_offset = unknown_abs
+                .checked_mul(mult)
+                .context("comparison UNKNOWN digit offset overflow")?;
+            out = out
+                .checked_sub(cur_offset)
+                .context("comparison reset encountered an invalid state hash")?;
+            out = out
+                .checked_add(unknown_offset)
+                .context("comparison reset hash overflow")?;
         }
         Ok(out)
     }
@@ -1126,6 +1232,28 @@ fn compute_num_states(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) ->
             .context("abstract state space too large (overflow)")?;
     }
     Ok(num)
+}
+
+fn apply_operator_costs(operators: &mut [AbstractOperator], operator_costs: &[f64]) -> Result<()> {
+    for op in operators {
+        ensure!(
+            !op.concrete_op_ids.is_empty(),
+            "abstract operator without concrete labels"
+        );
+        let mut cost = f64::INFINITY;
+        for &concrete_op_id in &op.concrete_op_ids {
+            let concrete_cost = *operator_costs.get(concrete_op_id).with_context(|| {
+                format!("missing residual cost for concrete operator {concrete_op_id}")
+            })?;
+            ensure!(
+                concrete_cost.is_finite(),
+                "residual cost for concrete operator {concrete_op_id} must be finite"
+            );
+            cost = cost.min(concrete_cost);
+        }
+        op.cost = cost;
+    }
+    Ok(())
 }
 
 fn get_comparison_preconditions(

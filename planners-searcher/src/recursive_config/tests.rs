@@ -99,6 +99,35 @@ fn parses_astar_canonical_domain_abstractions_with_named_options() {
 }
 
 #[test]
+fn parses_astar_scp_online_with_or_without_unit_parens() {
+    assert_eq!(
+        parse_search_spec("astar(scp_online)").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::ScpOnline(ScpOnlineConfig::default()))
+    );
+    assert_eq!(
+        parse_search_spec("astar(scp_online())").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::ScpOnline(ScpOnlineConfig::default()))
+    );
+}
+
+#[test]
+fn parses_astar_scp_online_with_named_options() {
+    let spec = parse_search_spec(
+        "astar(scp_online(max_time=12.5, max_size=2048, interval=3, combine_labels=true))",
+    )
+    .unwrap();
+
+    let SearchSpec::Astar(HeuristicSpec::ScpOnline(config)) = spec else {
+        panic!("expected scp_online config");
+    };
+
+    assert_eq!(config.max_time, 12.5);
+    assert_eq!(config.max_size, 2048);
+    assert_eq!(config.interval, 3);
+    assert!(config.combine_labels);
+}
+
+#[test]
 fn parses_astar_greedy_numeric_pdb_with_or_without_unit_parens() {
     assert_eq!(
         parse_search_spec("astar(greedy_numeric_pdb)").unwrap(),
