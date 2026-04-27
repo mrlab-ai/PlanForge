@@ -502,8 +502,6 @@ impl DomainAbstractionFactory {
     }
 
     fn compute_abstract_goals(&self, task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
-        use planners_sas::numeric::numeric_task::ExplicitFact;
-
         let mut goal_axiom_map: HashMap<usize, usize> = HashMap::new();
         for (idx, ax) in task.axioms().iter().enumerate() {
             if !ax.conditions().is_empty() {

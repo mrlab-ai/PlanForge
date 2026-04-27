@@ -1,28 +1,26 @@
 pub mod flaw_selection;
 pub mod progression;
+pub mod regression;
 pub mod state;
 #[cfg(test)]
 mod tests;
 
-use anyhow::{Result, ensure};
-use planners_sas::numeric::axioms::AxiomEvaluator;
-use planners_sas::numeric::utils::int_packer::IntDoublePacker;
-use std::collections::BTreeSet;
+use anyhow::Result;
 use std::fmt;
 
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact, Operator};
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 
 use serde::{Deserialize, Serialize};
 
-use super::{determine_include_in_lower, make_prop_state_packer};
-use crate::numeric::evaluation::domain_abstractions::comparison_expression::Interval;
+use super::determine_include_in_lower;
+use crate::numeric::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::progression::get_progression_flaws;
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::regression::get_regression_flaws;
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction::{
     ComparisonAxiomIndex, NumericPartitions,
 };
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction_factory::WildcardPlanResult;
-use crate::numeric::evaluation::domain_abstractions::utils::{fact_is_hold, get_initial_state};
-use state::progress;
+use crate::numeric::evaluation::domain_abstractions::utils::partition_for_value;
 
 /// Mirrors numeric-FD's `NumericFlaw = tuple<int, ap_float, bool>`.
 #[derive(Debug, Clone, PartialEq)]
@@ -62,6 +60,53 @@ impl fmt::Display for ExecEntirePlanMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FlawKind {
+    Progression,
+    Regression,
+}
+
+impl fmt::Display for FlawKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Progression => write!(f, "progression"),
+            Self::Regression => write!(f, "regression"),
+        }
+    }
+}
+
+impl FlawKind {
+    pub fn get_flaws(
+        &self,
+        task: &dyn AbstractNumericTask,
+        partitions: &NumericPartitions,
+        domain_mapping: &DomainMapping,
+        wildcard_plan: &WildcardPlanResult,
+        execute_entire_plan: bool,
+    ) -> Result<Vec<Flaw>> {
+        match self {
+            Self::Progression => {
+                get_progression_flaws(task, partitions, wildcard_plan, execute_entire_plan)
+            }
+            Self::Regression => {
+                let mut flaws =
+                    get_regression_flaws(task, domain_mapping, wildcard_plan, execute_entire_plan);
+                // Progression flaw fallback if no regression flaw is found
+                // (numeric deviation flaws not detected).
+                if let Ok(ref flaws_ok) = flaws
+                    && flaws_ok.is_empty()
+                {
+                    flaws =
+                        get_progression_flaws(task, partitions, wildcard_plan, execute_entire_plan);
+                }
+
+                flaws
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DependentNumericRefinement {
     None,
@@ -72,10 +117,18 @@ pub enum DependentNumericRefinement {
 pub fn get_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
+    domain_mapping: &DomainMapping,
     wildcard_plan: &WildcardPlanResult,
     execute_entire_plan: bool,
+    flaw_kind: FlawKind,
 ) -> Result<Vec<Flaw>> {
-    get_progression_flaws(task, partitions, wildcard_plan, execute_entire_plan)
+    flaw_kind.get_flaws(
+        task,
+        partitions,
+        domain_mapping,
+        wildcard_plan,
+        execute_entire_plan,
+    )
 }
 
 #[allow(unused)]
@@ -149,7 +202,7 @@ fn can_split_numeric_var(
     let Some(parts) = partitions.partitions(numeric_var_id) else {
         return false;
     };
-    let Some(part_id) = parts.iter().position(|iv| iv.contains(value)) else {
+    let Some(part_id) = partition_for_value(parts, value) else {
         return false;
     };
     parts[part_id].can_split_at(value, include_in_lower)

@@ -121,6 +121,30 @@ fn interval_le_handles_open_touching_bounds() {
 }
 
 #[test]
+fn interval_intersections() {
+    let smaller = Interval::new(2.0, 4.0, false, false);
+    let closed_smaller = Interval::new(2.0, 4.0, true, true);
+    let larger = Interval::new(-2.0, 8.0, true, true);
+    let lefter = Interval::new(-2.0, 2.0, true, true);
+    let righter = Interval::new(4.0, 6.0, true, false);
+    let very_lefter = Interval::new(-2.0, 0.0, true, true);
+    let very_righter = Interval::new(8.0, f64::INFINITY, true, false);
+    let empty = Interval::new(4.0, 0.0, true, true);
+
+    assert!(smaller.intersects(&larger));
+    assert!(larger.intersects(&smaller));
+    assert!(!smaller.intersects(&lefter));
+    assert!(closed_smaller.intersects(&lefter));
+    assert!(!smaller.intersects(&righter));
+    assert!(closed_smaller.intersects(&righter));
+    assert!(!smaller.intersects(&very_lefter));
+    assert!(!smaller.intersects(&very_righter));
+    assert!(!smaller.intersects(&empty));
+    assert!(UNBOUNDED_INTERVAL.intersects(&very_righter));
+    assert!(UNBOUNDED_INTERVAL.intersects(&smaller));
+}
+
+#[test]
 fn comparison_tree_build_and_dependencies() {
     let numeric_variables = vec![
         NumericVariable::new("x0".into(), NumericType::Regular, None),

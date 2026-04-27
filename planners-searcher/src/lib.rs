@@ -164,6 +164,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                     } else {
                         None
                     };
+                    config.flaw_kind = domain_config.flaw_kind;
                     config.flaw_treatment = domain_config.flaw_treatment;
                     config.init_split_method = domain_config.init_split_method;
                     config.exec_entire_plan = domain_config.exec_entire_plan;

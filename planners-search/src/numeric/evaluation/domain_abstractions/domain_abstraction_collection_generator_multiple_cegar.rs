@@ -15,6 +15,8 @@ use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 
+use crate::numeric::evaluation::domain_abstractions::cegar::FlawKind;
+
 use super::cegar::CegarConfig;
 pub use super::cegar::flaw_search::ExecEntirePlanMode;
 pub use super::cegar::flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
@@ -90,6 +92,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
     pub deviation_flaws: bool,
+    pub flaw_kind: FlawKind,
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub numeric_split_strategy: NumericSplitStrategy,
@@ -113,6 +116,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             use_wildcard_plans: true,
             combine_labels: true,
             deviation_flaws: true,
+            flaw_kind: FlawKind::Progression,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,
@@ -235,6 +239,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             } else {
                 None
             },
+            flaw_kind: self.config.flaw_kind,
             flaw_treatment: self.config.flaw_treatment,
             init_split_method: match self.config.init_split_quantity {
                 InitSplitQuantity::None => InitSplitMethod::Identity,

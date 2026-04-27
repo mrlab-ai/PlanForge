@@ -1,5 +1,5 @@
-use anyhow::Result;
-use std::collections::BTreeSet;
+use anyhow::{Context, Result, anyhow};
+use std::collections::{BTreeSet, HashSet};
 use std::fmt::Write as _;
 
 use log::debug;
@@ -14,10 +14,11 @@ use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{
     AbstractDistanceTable, DomainAbstractionFactory, WildcardPlanResult,
 };
-use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::progress;
-use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::{
-    get_numeric_deviation_flaws, get_precondition_flaws,
+use crate::numeric::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::progression::{
+    get_progression_numeric_deviation_flaws, get_progression_precondition_flaws,
 };
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::progress;
 
 pub(crate) fn compute_abstraction_size_u128(
     domain_sizes: &[usize],
@@ -39,6 +40,36 @@ pub(crate) fn compute_abstraction_size_u128(
         size = size.checked_mul(pu)?;
     }
     Some(size)
+}
+
+#[allow(unused)]
+pub(crate) fn identity_domain_mapping_and_sizes(
+    task: &dyn AbstractNumericTask,
+) -> Result<(DomainMapping, Vec<usize>)> {
+    let num_vars = task.get_num_variables();
+    let derived_prop: HashSet<usize> = task
+        .comparison_axioms()
+        .iter()
+        .map(|ax| ax.get_affected_var_id())
+        .collect();
+
+    let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
+    let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
+    for var_id in 0..num_vars {
+        if derived_prop.contains(&(var_id)) {
+            domain_mapping.push(vec![0, 1, 2]);
+            domain_sizes.push(3);
+        } else {
+            let size = task
+                .get_variable_domain_size(var_id)
+                .map_err(|e| anyhow!(e.to_string()))
+                .with_context(|| format!("failed to get domain size for variable {var_id}"))?;
+            domain_mapping.push((0..size).collect());
+            domain_sizes.push(size);
+        }
+    }
+
+    Ok((domain_mapping, domain_sizes))
 }
 
 pub(crate) fn debug_print_abstraction_stats(
@@ -191,6 +222,15 @@ pub(crate) fn fmt_f64_compact(v: f64) -> String {
 
 pub(crate) fn partition_for_value(partitions: &[Interval], value: f64) -> Option<usize> {
     partitions.iter().position(|iv| iv.contains(value))
+}
+
+#[allow(unused)]
+pub(crate) fn partitions_for_interval(partitions: &[Interval], value: &Interval) -> Vec<usize> {
+    partitions
+        .iter()
+        .enumerate()
+        .filter_map(|(i, iv)| if iv.intersects(value) { Some(i) } else { None })
+        .collect()
 }
 
 pub(crate) fn make_prop_state_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {

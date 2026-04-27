@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use rand::{SeedableRng, rngs::SmallRng};
 
+use crate::numeric::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 use planners_sas::numeric::axioms::PropositionalAxiom;
 use planners_sas::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
@@ -12,35 +13,6 @@ use planners_sas::numeric::numeric_task::{
     Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
     Operator,
 };
-
-fn identity_domain_mapping_and_sizes(
-    task: &dyn AbstractNumericTask,
-) -> Result<(DomainMapping, Vec<usize>)> {
-    let num_vars = task.get_num_variables();
-    let derived_prop: HashSet<usize> = task
-        .comparison_axioms()
-        .iter()
-        .map(|ax| ax.get_affected_var_id())
-        .collect();
-
-    let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
-    let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
-    for var_id in 0..num_vars {
-        if derived_prop.contains(&(var_id)) {
-            domain_mapping.push(vec![0, 1, 2]);
-            domain_sizes.push(3);
-        } else {
-            let size = task
-                .get_variable_domain_size(var_id)
-                .map_err(|e| anyhow!(e.to_string()))
-                .with_context(|| format!("failed to get domain size for variable {var_id}"))?;
-            domain_mapping.push((0..size).collect());
-            domain_sizes.push(size);
-        }
-    }
-
-    Ok((domain_mapping, domain_sizes))
-}
 
 fn constant_leaf_values(
     tree: &ComparisonTree,

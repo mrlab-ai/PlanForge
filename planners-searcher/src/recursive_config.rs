@@ -12,9 +12,13 @@ use nom::{
     sequence::{delimited, terminated, tuple},
 };
 
-use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
-    FlawTreatmentVariants, InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
+use planners_search::numeric::evaluation::domain_abstractions::{
+    cegar::FlawKind,
+    domain_abstraction_collection_generator_multiple_cegar::{
+        DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
+        FlawTreatmentVariants, InitSplitMethod, InitSplitQuantity, NumericSplitStrategy,
+        VariableSubset,
+    },
 };
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -29,6 +33,7 @@ pub struct DomainAbstractionConfig {
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
     pub random_seed: i32,
+    pub flaw_kind: FlawKind,
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub exec_entire_plan: ExecEntirePlanMode,
@@ -42,6 +47,7 @@ impl Default for DomainAbstractionConfig {
             use_wildcard_plans: true,
             combine_labels: true,
             random_seed: -1,
+            flaw_kind: FlawKind::Progression,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
@@ -59,6 +65,7 @@ impl fmt::Display for DomainAbstractionConfig {
                 "use_wildcard_plans={}, ",
                 "combine_labels={}, ",
                 "random_seed={}, ",
+                "flaw_kind={}, ",
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
                 "exec_entire_plan={}"
@@ -68,6 +75,7 @@ impl fmt::Display for DomainAbstractionConfig {
             self.use_wildcard_plans,
             self.combine_labels,
             self.random_seed,
+            self.flaw_kind,
             self.flaw_treatment,
             self.init_split_method,
             self.exec_entire_plan,
@@ -300,6 +308,14 @@ fn parse_init_split_quantity(value: &str) -> Result<InitSplitQuantity, String> {
     }
 }
 
+fn parse_flaw_kind(value: &str) -> Result<FlawKind, String> {
+    match value {
+        "progression" => Ok(FlawKind::Progression),
+        "regression" => Ok(FlawKind::Regression),
+        _ => Err(format!("invalid FlawKind `{value}`")),
+    }
+}
+
 fn parse_flaw_treatment(value: &str) -> Result<FlawTreatmentVariants, String> {
     match value {
         "random_single_atom" => Ok(FlawTreatmentVariants::RandomSingleAtom),
@@ -358,6 +374,7 @@ fn build_domain_abstraction_config(
             "use_wildcard_plans" => config.use_wildcard_plans = parse_bool(&value)?,
             "combine_labels" => config.combine_labels = parse_bool(&value)?,
             "random_seed" => config.random_seed = parse_i32(&value)?,
+            "flaw_kind" => config.flaw_kind = parse_flaw_kind(&value)?,
             "flaw_treatment" => config.flaw_treatment = parse_flaw_treatment(&value)?,
             "init_split_method" => config.init_split_method = parse_init_split_method(&value)?,
             "exec_entire_plan" => config.exec_entire_plan = parse_exec_entire_plan_mode(&value)?,

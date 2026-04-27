@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use std::collections::BTreeSet;
 
 use anyhow::{Result, ensure};
@@ -172,6 +175,73 @@ fn progress_and_get_deviation_flaws(
     Ok((Some(next_prop_state), Some(next_numeric_state), flawed))
 }
 
+pub fn get_progression_numeric_deviation_flaws(
+    op: &Operator,
+    numeric_current_state: &[f64],
+    numeric_successor_state: &[f64],
+    abstract_numeric_successor_state: &[usize],
+    partitions: &NumericPartitions,
+) -> Vec<Flaw> {
+    let mut flaws: Vec<Flaw> = Vec::new();
+
+    let num_vars = numeric_successor_state
+        .len()
+        .min(abstract_numeric_successor_state.len());
+    for var_id in 0..num_vars {
+        let operator_modified_var = op
+            .assignment_effects()
+            .iter()
+            .any(|eff| eff.affected_var_id() == var_id);
+        if !operator_modified_var {
+            continue;
+        }
+
+        let abstract_value = abstract_numeric_successor_state[var_id];
+        let Some(parts) = partitions.partitions(var_id) else {
+            continue;
+        };
+        let Some(correct_abstract_value) =
+            partition_for_value(parts, numeric_successor_state[var_id])
+        else {
+            continue;
+        };
+        if abstract_value == correct_abstract_value {
+            continue;
+        }
+
+        let concrete_next_value = numeric_successor_state[var_id];
+        let concrete_current_value = numeric_current_state
+            .get(var_id)
+            .copied()
+            .unwrap_or(concrete_next_value);
+        if concrete_next_value == concrete_current_value {
+            continue;
+        }
+
+        let operator_increased_value = concrete_next_value > concrete_current_value;
+        let mut include_in_lower = !operator_increased_value;
+
+        if can_split_numeric_var(partitions, var_id, concrete_current_value, include_in_lower) {
+            flaws.push(Flaw::Numeric(NumericFlaw {
+                numeric_var_id: var_id,
+                value: concrete_current_value,
+                include_in_lower,
+            }));
+        } else {
+            include_in_lower = !include_in_lower;
+            if can_split_numeric_var(partitions, var_id, concrete_current_value, include_in_lower) {
+                flaws.push(Flaw::Numeric(NumericFlaw {
+                    numeric_var_id: var_id,
+                    value: concrete_current_value,
+                    include_in_lower,
+                }));
+            }
+        }
+    }
+
+    flaws
+}
+
 pub fn get_progression_precondition_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
@@ -278,71 +348,4 @@ fn get_goal_flaws(
         }
     }
     out
-}
-
-pub fn get_progression_numeric_deviation_flaws(
-    op: &Operator,
-    numeric_current_state: &[f64],
-    numeric_successor_state: &[f64],
-    abstract_numeric_successor_state: &[usize],
-    partitions: &NumericPartitions,
-) -> Vec<Flaw> {
-    let mut flaws: Vec<Flaw> = Vec::new();
-
-    let num_vars = numeric_successor_state
-        .len()
-        .min(abstract_numeric_successor_state.len());
-    for var_id in 0..num_vars {
-        let operator_modified_var = op
-            .assignment_effects()
-            .iter()
-            .any(|eff| eff.affected_var_id() == var_id);
-        if !operator_modified_var {
-            continue;
-        }
-
-        let abstract_value = abstract_numeric_successor_state[var_id];
-        let Some(parts) = partitions.partitions(var_id) else {
-            continue;
-        };
-        let Some(correct_abstract_value) =
-            partition_for_value(parts, numeric_successor_state[var_id])
-        else {
-            continue;
-        };
-        if abstract_value == correct_abstract_value {
-            continue;
-        }
-
-        let concrete_next_value = numeric_successor_state[var_id];
-        let concrete_current_value = numeric_current_state
-            .get(var_id)
-            .copied()
-            .unwrap_or(concrete_next_value);
-        if concrete_next_value == concrete_current_value {
-            continue;
-        }
-
-        let operator_increased_value = concrete_next_value > concrete_current_value;
-        let mut include_in_lower = !operator_increased_value;
-
-        if can_split_numeric_var(partitions, var_id, concrete_current_value, include_in_lower) {
-            flaws.push(Flaw::Numeric(NumericFlaw {
-                numeric_var_id: var_id,
-                value: concrete_current_value,
-                include_in_lower,
-            }));
-        } else {
-            include_in_lower = !include_in_lower;
-            if can_split_numeric_var(partitions, var_id, concrete_current_value, include_in_lower) {
-                flaws.push(Flaw::Numeric(NumericFlaw {
-                    numeric_var_id: var_id,
-                    value: concrete_current_value,
-                    include_in_lower,
-                }));
-            }
-        }
-    }
-
-    flaws
 }

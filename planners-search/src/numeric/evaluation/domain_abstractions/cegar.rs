@@ -13,12 +13,13 @@ use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
-use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
-use flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
-use flaw_search::{DependentNumericRefinement, ExecEntirePlanMode, Flaw, NumericFlaw, get_flaws};
+use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw, get_flaws};
 
-use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::flaw_selection::FlawTreatment;
+pub use flaw_search::flaw_selection::{FlawTreatment, FlawTreatmentVariants, InitSplitMethod};
+pub use flaw_search::{ExecEntirePlanMode, FlawKind};
+
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::FlawSearchState;
 
 use super::abstract_operator_generator::DomainMapping;
 use super::comparison_expression::Interval;
@@ -38,6 +39,7 @@ pub struct CegarConfig {
     pub combine_labels: bool,
     pub debug: bool,
     pub random_seed: Option<u64>,
+    pub flaw_kind: FlawKind,
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub exec_entire_plan: ExecEntirePlanMode,
@@ -56,6 +58,7 @@ impl Default for CegarConfig {
             combine_labels: true,
             debug: false,
             random_seed: None,
+            flaw_kind: FlawKind::Progression,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
@@ -134,6 +137,10 @@ impl Cegar {
         let mut numeric_domain_sizes: Vec<usize> = vec![1; task.numeric_variables().len()];
         let mut blacklisted_prop_var_ids = config.blacklisted_prop_var_ids.clone();
         let mut blacklisted_numeric_var_ids = config.blacklisted_numeric_var_ids.clone();
+        let execute_entire_plan = match config.exec_entire_plan {
+            ExecEntirePlanMode::StopAtFirstFlaw => false,
+            ExecEntirePlanMode::ExecuteEntirePlan => true,
+        };
 
         apply_initial_goal_splits(
             task,
@@ -208,13 +215,15 @@ impl Cegar {
                 break;
             };
 
-            let execute_entire_plan = match config.exec_entire_plan {
-                ExecEntirePlanMode::StopAtFirstFlaw => false,
-                ExecEntirePlanMode::ExecuteEntirePlan => true,
-            };
-
-            let flaws = get_flaws(task, &factory.partitions, plan, execute_entire_plan)
-                .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
+            let flaws = get_flaws(
+                task,
+                &factory.partitions,
+                &factory.domain_mapping,
+                plan,
+                execute_entire_plan,
+                self.config.flaw_kind,
+            )
+            .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
             if config.debug {
                 super::utils::debug_print_flaws(&flaws);
             }
@@ -871,39 +880,6 @@ fn trivial_domain_mapping_and_sizes(
     Ok((domain_mapping, domain_sizes))
 }
 
-#[allow(unused)]
-fn identity_domain_mapping_and_sizes(
-    task: &dyn AbstractNumericTask,
-) -> Result<(DomainMapping, Vec<usize>)> {
-    let num_vars = task.get_num_variables();
-    let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
-    let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
-
-    for var in 0..num_vars {
-        let size = task
-            .get_variable_domain_size(var)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
-            .with_context(|| format!("get_variable_domain_size({var}) failed"))?;
-        domain_sizes.push(size);
-
-        let mut mapping: Vec<usize> = Vec::with_capacity(size);
-        for val in 0..size {
-            mapping.push(val);
-        }
-        domain_mapping.push(mapping);
-    }
-
-    Ok((domain_mapping, domain_sizes))
-}
-
-fn make_prop_state_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {
-    let mut domain_sizes: Vec<u64> = Vec::with_capacity(task.variables().len());
-    for var in task.variables().iter() {
-        domain_sizes.push(var.domain_size() as u64);
-    }
-    IntDoublePacker::new(&domain_sizes)
-}
-
 fn comparison_eval_code(v: Option<bool>) -> usize {
     match v {
         Some(true) => COMPARISON_TRUE_VAL,
@@ -936,6 +912,43 @@ fn determine_include_in_lower(
         // value belongs to [split_value, inf).
         upper_inputs[split_var_id] = Interval::new(split_value, f64::INFINITY, true, false);
     }
+
+    let eval_lower = comparison_eval_code(tree.evaluate_interval(&lower_inputs));
+    let eval_upper = comparison_eval_code(tree.evaluate_interval(&upper_inputs));
+
+    // Mirror numeric-FD's preference: FALSE (=1) over UNKNOWN (=2) over TRUE (=0).
+    if eval_lower == COMPARISON_FALSE_VAL && eval_upper != COMPARISON_FALSE_VAL {
+        true
+    } else if eval_upper == COMPARISON_FALSE_VAL && eval_lower != COMPARISON_FALSE_VAL {
+        false
+    } else if eval_lower == COMPARISON_FALSE_VAL && eval_upper == COMPARISON_FALSE_VAL {
+        false
+    } else if eval_lower == COMPARISON_UNKNOWN_VAL && eval_upper == COMPARISON_UNKNOWN_VAL {
+        false
+    } else if eval_lower == COMPARISON_UNKNOWN_VAL {
+        true
+    } else if eval_upper == COMPARISON_UNKNOWN_VAL {
+        false
+    } else {
+        false
+    }
+}
+
+#[allow(clippy::if_same_then_else, clippy::needless_bool)]
+fn determine_include_in_lower_for_flaw_search_state(
+    tree: &super::comparison_expression::ComparisonTree,
+    state: &FlawSearchState,
+) -> bool {
+    let lower_inputs: Vec<Interval> = state
+        .numeric
+        .iter()
+        .map(|v| Interval::singleton(v.lower))
+        .collect();
+    let upper_inputs: Vec<Interval> = state
+        .numeric
+        .iter()
+        .map(|v| Interval::singleton(v.upper))
+        .collect();
 
     let eval_lower = comparison_eval_code(tree.evaluate_interval(&lower_inputs));
     let eval_upper = comparison_eval_code(tree.evaluate_interval(&upper_inputs));
