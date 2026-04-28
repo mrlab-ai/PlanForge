@@ -3,8 +3,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::f_expression::PrimitiveNumericExpression;
-
 /// The root condition enum, mirroring Python's Condition class hierarchy.
 /// Python used class inheritance; Rust uses an enum.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

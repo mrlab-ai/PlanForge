@@ -390,7 +390,7 @@ impl FunctionalExpression {
                     FunctionalExpression::PrimitiveNumericExpression(derived)
                 }
             }
-            FunctionalExpression::AdditiveInverse(ai) => {
+            FunctionalExpression::AdditiveInverse(_) => {
                 let derived = task_function_admin.get_derived_function(self, fluent_functions);
                 FunctionalExpression::PrimitiveNumericExpression(derived)
             }
