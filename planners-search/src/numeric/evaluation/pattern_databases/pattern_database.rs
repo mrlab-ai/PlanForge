@@ -947,6 +947,7 @@ impl<'task> PatternDatabase<'task> {
 
     fn evaluate_failed_lookup(&self, propositional: &[usize], numeric: &[f64]) -> f64 {
         if self.exhausted_abstract_state_space {
+            // TODO: Supposed to be an error. Can never happen. 
             return f64::INFINITY;
         }
         if self.is_goal_state(propositional) {
