@@ -297,15 +297,15 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let remaining_abstraction_size =
                 remaining_collection_size.min(self.config.max_abstraction_size);
 
-            info!(
-                "Iteration {}: elapsed={:.2}s, remaining_collection_size={}, remaining_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
-                iteration,
-                elapsed,
-                remaining_collection_size,
-                remaining_abstraction_size,
-                remaining_generation_time,
-                blacklisting
-            );
+            //info!(
+            //    "Iteration {}: elapsed={:.2}s, remaining_collection_size={}, remaining_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
+            //    iteration,
+            //    elapsed,
+            //    remaining_collection_size,
+            //    remaining_abstraction_size,
+            //    remaining_generation_time,
+            //    blacklisting
+            //);
             if remaining_abstraction_size == 0 || remaining_generation_time <= 0.0 {
                 break;
             }
