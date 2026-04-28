@@ -7,19 +7,28 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
-use tracing::debug;
+use planners_sas::numeric::axioms::AxiomEvaluator;
+use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
+use tracing::debug;
 
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
+use planners_sas::numeric::numeric_task::{
+    AbstractNumericTask, ExplicitFact, NumericType, Operator,
+};
 
 use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw, get_flaws};
 
 pub use flaw_search::flaw_selection::{FlawTreatment, FlawTreatmentVariants, InitSplitMethod};
 pub use flaw_search::{ExecEntirePlanMode, FlawKind};
 
-use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::FlawSearchState;
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::{
+    FlawSearchState, progress,
+};
+use crate::numeric::evaluation::domain_abstractions::utils::{
+    fact_is_hold, get_initial_state, make_prop_state_packer,
+};
 
 use super::abstract_operator_generator::DomainMapping;
 use super::comparison_expression::Interval;
@@ -214,6 +223,10 @@ impl Cegar {
             let Some(plan) = wildcard_plan.as_ref() else {
                 break;
             };
+            if wildcard_plan_is_real(task, plan)? {
+                // There is a real plan in the abstract plan, perfect heuristic.
+                break;
+            }
 
             let flaws = get_flaws(
                 task,
@@ -275,6 +288,99 @@ impl Cegar {
             last_step,
         })
     }
+}
+
+fn wildcard_plan_is_real(
+    task: &dyn AbstractNumericTask,
+    wildcard_plan: &WildcardPlanResult,
+) -> Result<bool> {
+    let state_packer = make_prop_state_packer(task);
+    let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
+
+    let plan_length = wildcard_plan.wildcard_plan.len();
+    let (mut prop_state, mut numeric_state) =
+        get_initial_state(task, &state_packer, &axiom_evaluator)?;
+    let mut last_state_per_layer = vec![None; plan_length];
+    last_state_per_layer[0] = Some((prop_state.clone(), numeric_state.clone()));
+
+    let mut real_plan_exists = false;
+    // TODO: A set of dead ends could be used if `f64` could be hashed.
+    // let mut dead_ends: HashSet<ConcreteState> = HashSet::new();
+    let mut current_step: usize = 0;
+    let mut equiv_op_iterators = Vec::with_capacity(plan_length);
+    // Equivalent operators of the first layer.
+    equiv_op_iterators.push(wildcard_plan.wildcard_plan[0].iter());
+
+    loop {
+        if let Some(op_id) = equiv_op_iterators[current_step].next() {
+            let Some(op) = task.get_operators().get(*op_id) else {
+                continue;
+            };
+            if is_applicable(&prop_state, &state_packer, op) {
+                progress(
+                    op,
+                    &axiom_evaluator,
+                    &state_packer,
+                    &mut prop_state,
+                    &mut numeric_state,
+                )?;
+                // if dead_ends.contains((prop_state, numeric_state)) { // Go to the previous layer. }
+                current_step += 1;
+                if current_step == plan_length {
+                    if is_goal(task, &prop_state, &state_packer) {
+                        real_plan_exists = true;
+                        break;
+                    } else {
+                        // Go to the previous layer.
+                        current_step -= 1;
+                        (prop_state, numeric_state) =
+                            last_state_per_layer[current_step].clone().unwrap();
+                        continue;
+                    }
+                }
+                last_state_per_layer[current_step] =
+                    Some((prop_state.clone(), numeric_state.clone()));
+                // All operators must be tried again from this state.
+                equiv_op_iterators.push(wildcard_plan.wildcard_plan[current_step].iter());
+            } else {
+                // dead_ends.insert((prop_state, numeric_state));
+                continue;
+            }
+        } else {
+            if current_step == 0 {
+                // All operators tried.
+                break;
+            } else {
+                // Go to the previous layer.
+                current_step -= 1;
+                equiv_op_iterators.pop();
+                (prop_state, numeric_state) = last_state_per_layer[current_step].clone().unwrap();
+                continue;
+            }
+        }
+    }
+
+    Ok(real_plan_exists)
+}
+
+fn is_applicable(buffer: &[u64], packer: &IntDoublePacker, op: &Operator) -> bool {
+    for pre in op.preconditions().iter() {
+        if !fact_is_hold(pre, packer, buffer) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn is_goal(task: &dyn AbstractNumericTask, buffer: &[u64], packer: &IntDoublePacker) -> bool {
+    for goal_fact in goal_variable_values(task) {
+        if !fact_is_hold(&goal_fact, packer, buffer) {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn current_time_seed() -> u64 {
@@ -651,7 +757,7 @@ fn try_refine_from_flaw(
     }
 }
 
-fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<(usize, usize)> {
+fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
     let mut goal_axiom_map: HashMap<usize, usize> = HashMap::new();
     for (axiom_idx, axiom) in task.axioms().iter().enumerate() {
         if !axiom.conditions().is_empty() {
@@ -666,14 +772,15 @@ fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<(usize, usize)> {
         if let Some(&axiom_idx) = goal_axiom_map.get(&goal.var) {
             let axiom = &task.axioms()[axiom_idx];
             for condition in axiom.conditions() {
-                goals.push((condition.var, condition.value));
+                goals.push(ExplicitFact::new(condition.var, condition.value));
             }
         } else {
-            goals.push((goal.var, goal.value));
+            goals.push(ExplicitFact::new(goal.var, goal.value));
         }
     }
     goals.sort_unstable();
     goals.dedup();
+
     goals
 }
 
@@ -784,7 +891,10 @@ fn apply_initial_goal_splits(
     partitions: &mut NumericPartitions,
     numeric_domain_sizes: &mut [usize],
 ) {
-    let goal_values: HashMap<usize, usize> = goal_variable_values(task).into_iter().collect();
+    let goal_values: HashMap<usize, usize> = goal_variable_values(task)
+        .into_iter()
+        .map(|v| (v.var, v.value))
+        .collect();
     let num_prop_vars = task.variables().len();
     let mut candidate_var_ids: Vec<usize> = config
         .init_split_var_ids
