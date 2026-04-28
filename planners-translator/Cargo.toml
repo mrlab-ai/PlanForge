@@ -14,5 +14,11 @@ planners-preprocess = { path = "../planners-preprocess" }
 planners-cli-utils = { path = "../planners-cli-utils" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+time = "0.3"
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "fmt",
+    "std",
+    "time",
+] }

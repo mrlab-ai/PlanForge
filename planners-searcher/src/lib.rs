@@ -23,19 +23,34 @@ use std::fs;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::time::Duration;
+use std::num::NonZero;
+use time::format_description::well_known::iso8601::{Config, TimePrecision};
+use tracing_subscriber::fmt::time::UtcTime;
+use tracing_subscriber::prelude::*;
 
 pub mod recursive_config;
 
 pub use recursive_config::{HeuristicSpec, SearchSpec, parse_search_spec};
 
-use tracing_subscriber::prelude::*;
 use tracing_subscriber::filter::LevelFilter;
 
 pub fn init_logger(level: LevelFilter) {
+    let timer = UtcTime::new(
+        time::format_description::well_known::Iso8601::<
+            {
+                Config::DEFAULT
+                    .set_time_precision(TimePrecision::Second {
+                        decimal_digits: NonZero::new(3),
+                    })
+                    .encode()
+            },
+        >,
+    );
     // Layer for stdout (info + deubg + trace)
     let stdout_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stdout)
         .with_target(false)
+        .with_timer(timer)
         .with_filter(level);
 
     // Layer for stderr (error + warn only)

@@ -20,6 +20,12 @@ planners-cli-utils = { path = "../planners-cli-utils" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
+time = "0.3"
 tracing = { version = "0.1", features = ["log"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "fmt",
+    "std",
+    "time",
+] }
 ordered-float = "5.1.0"

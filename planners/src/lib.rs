@@ -3,6 +3,7 @@ mod tests;
 
 use clap::Parser;
 use ordered_float::NotNan;
+use time::format_description::well_known::iso8601::{Config, TimePrecision};
 use tracing::{debug, info};
 use planners_cli_utils::*;
 use planners_preprocess::run_preprocess;
@@ -33,20 +34,34 @@ use planners_translator::*;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
+use std::num::NonZero;
 use std::process::Command;
 use std::time::Duration;
+use tracing_subscriber::fmt::{time::UtcTime};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use tracing_subscriber::prelude::*;
 use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::prelude::*;
 
 pub fn init_logger(level: LevelFilter) {
+    let timer = UtcTime::new(
+        time::format_description::well_known::Iso8601::<
+            {
+                Config::DEFAULT
+                    .set_time_precision(TimePrecision::Second {
+                        decimal_digits: NonZero::new(3),
+                    })
+                    .encode()
+            },
+        >,
+    );
     // Layer for stdout (info + debug + trace)
     let stdout_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stdout)
         .with_target(false)
+        .with_timer(timer)
         .with_filter(level);
 
     // Layer for stderr (error + warn only)
