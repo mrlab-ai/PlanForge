@@ -1,4 +1,5 @@
-use std::collections::BTreeSet;
+use anyhow::{Context, Result, anyhow};
+use std::collections::{BTreeSet, HashSet};
 use std::fmt::Write as _;
 
 use tracing::debug;
@@ -6,13 +7,18 @@ use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
-use super::cegar::Flaw;
+use super::cegar::flaw_search::Flaw;
 use super::comparison_expression::Interval;
 use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{
     AbstractDistanceTable, DomainAbstractionFactory, WildcardPlanResult,
 };
+use crate::numeric::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::progression::{
+    get_progression_numeric_deviation_flaws, get_progression_precondition_flaws,
+};
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::progress;
 
 pub(crate) fn compute_abstraction_size_u128(
     domain_sizes: &[usize],
@@ -34,6 +40,36 @@ pub(crate) fn compute_abstraction_size_u128(
         size = size.checked_mul(pu)?;
     }
     Some(size)
+}
+
+#[allow(unused)]
+pub(crate) fn identity_domain_mapping_and_sizes(
+    task: &dyn AbstractNumericTask,
+) -> Result<(DomainMapping, Vec<usize>)> {
+    let num_vars = task.get_num_variables();
+    let derived_prop: HashSet<usize> = task
+        .comparison_axioms()
+        .iter()
+        .map(|ax| ax.get_affected_var_id())
+        .collect();
+
+    let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
+    let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
+    for var_id in 0..num_vars {
+        if derived_prop.contains(&(var_id)) {
+            domain_mapping.push(vec![0, 1, 2]);
+            domain_sizes.push(3);
+        } else {
+            let size = task
+                .get_variable_domain_size(var_id)
+                .map_err(|e| anyhow!(e.to_string()))
+                .with_context(|| format!("failed to get domain size for variable {var_id}"))?;
+            domain_mapping.push((0..size).collect());
+            domain_sizes.push(size);
+        }
+    }
+
+    Ok((domain_mapping, domain_sizes))
 }
 
 pub(crate) fn debug_print_abstraction_stats(
@@ -188,6 +224,15 @@ pub(crate) fn partition_for_value(partitions: &[Interval], value: f64) -> Option
     partitions.iter().position(|iv| iv.contains(value))
 }
 
+#[allow(unused)]
+pub(crate) fn partitions_for_interval(partitions: &[Interval], value: &Interval) -> Vec<usize> {
+    partitions
+        .iter()
+        .enumerate()
+        .filter_map(|(i, iv)| if iv.intersects(value) { Some(i) } else { None })
+        .collect()
+}
+
 pub(crate) fn make_prop_state_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {
     let mut domain_sizes: Vec<u64> = Vec::with_capacity(task.variables().len());
     for var in task.variables().iter() {
@@ -207,57 +252,30 @@ pub(crate) fn set_initial_prop_values(
     }
 }
 
+pub(crate) fn get_initial_state(
+    task: &dyn AbstractNumericTask,
+    state_packer: &IntDoublePacker,
+    axiom_evaluator: &AxiomEvaluator,
+) -> Result<(Vec<u64>, Vec<f64>)> {
+    let mut buffer = vec![0u64; state_packer.num_bins()];
+    set_initial_prop_values(task, state_packer, &mut buffer);
+    let mut numeric_state: Vec<f64> = task.get_initial_numeric_state_values().to_vec();
+
+    axiom_evaluator
+        .evaluate_arithmetic_axioms(&mut numeric_state)
+        .map_err(|e| {
+            anyhow::anyhow!("failed to evaluate arithmetic axioms for initial state: {e:?}")
+        })?;
+    axiom_evaluator
+        .evaluate(&mut buffer, &mut numeric_state)
+        .map_err(|e| anyhow::anyhow!("failed to evaluate axioms for initial state: {e:?}"))?;
+
+    Ok((buffer, numeric_state))
+}
+
 pub(crate) fn fact_is_hold(fact: &ExplicitFact, packer: &IntDoublePacker, buffer: &[u64]) -> bool {
     let current = packer.get(buffer, fact.var) as usize;
     current == fact.value
-}
-
-pub(crate) fn apply_operator_to_state(
-    op: &planners_sas::numeric::numeric_task::Operator,
-    packer: &IntDoublePacker,
-    buffer: &mut [u64],
-    numeric_state: &mut [f64],
-) {
-    for eff in op.effects().iter() {
-        let mut ok = true;
-        for cond in eff.conditions().iter() {
-            if !fact_is_hold(cond, packer, buffer) {
-                ok = false;
-                break;
-            }
-        }
-        if ok {
-            packer.set(buffer, eff.var_id(), eff.value() as u64);
-        }
-    }
-
-    for eff in op.assignment_effects().iter() {
-        if eff.is_conditional() {
-            let mut ok = true;
-            for cond in eff.conditions().iter() {
-                if !fact_is_hold(cond, packer, buffer) {
-                    ok = false;
-                    break;
-                }
-            }
-            if !ok {
-                continue;
-            }
-        }
-
-        let assignment_var_id = eff.var_id();
-        let affected_var_id = eff.affected_var_id();
-        if assignment_var_id >= numeric_state.len() || affected_var_id >= numeric_state.len() {
-            continue;
-        }
-        let operand = numeric_state[assignment_var_id];
-        numeric_state[affected_var_id] =
-            planners_sas::numeric::numeric_task::AssignmentOperation::apply(
-                numeric_state[affected_var_id],
-                eff.operation(),
-                operand,
-            );
-    }
 }
 
 pub(crate) fn debug_print_wildcard_plan(
@@ -392,7 +410,7 @@ fn debug_print_concrete_trace(
             tries += 1;
 
             let applicable = if let Some(idx) = comparison_index.as_ref() {
-                super::cegar::get_precondition_flaws(
+                get_progression_precondition_flaws(
                     task,
                     partitions,
                     idx,
@@ -413,11 +431,16 @@ fn debug_print_concrete_trace(
 
             let mut cand_buffer = buffer.clone();
             let mut cand_numeric = numeric_state.clone();
-            apply_operator_to_state(op, &state_packer, &mut cand_buffer, &mut cand_numeric);
-            let _ = axiom_evaluator.evaluate_arithmetic_axioms(&mut cand_numeric);
-            let _ = axiom_evaluator.evaluate(&mut cand_buffer, &mut cand_numeric);
+            progress(
+                op,
+                &axiom_evaluator,
+                &state_packer,
+                &mut cand_buffer,
+                &mut cand_numeric,
+            )
+            .expect("Error applying operator");
 
-            let deviation_flaws = super::cegar::get_numeric_deviation_flaws(
+            let deviation_flaws = get_progression_numeric_deviation_flaws(
                 op,
                 &numeric_state,
                 &cand_numeric,

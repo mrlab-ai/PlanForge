@@ -118,7 +118,7 @@ impl<'a> CompiledAxiomEvaluator<'a> {
         numeric_state: &mut [f64],
     ) -> Result<bool, AxiomEvalError> {
         for axiom in self.numeric_task.comparison_axioms() {
-            let result = axiom.update_values(numeric_state).map_err(|e| {
+            let result = axiom.is_hold(numeric_state).map_err(|e| {
                 AxiomEvalError::InvalidIndex(InvalidIndex {
                     length: numeric_state.len(),
                     index: e.index,

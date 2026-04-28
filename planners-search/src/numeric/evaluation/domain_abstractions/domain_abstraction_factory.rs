@@ -205,7 +205,7 @@ pub struct AbstractDistanceTable {
 
 #[derive(Debug, Clone)]
 pub struct WildcardPlanResult {
-    // Per-step set of concrete operator IDs
+    // Per-step set of concrete operator IDs.
     pub wildcard_plan: Vec<Vec<usize>>,
     // Path of abstract state hashes (`len = steps+1`).
     pub abstract_state_hashes: Vec<usize>,
@@ -217,10 +217,10 @@ pub struct WildcardPlanResult {
 
 #[derive(Debug, Clone)]
 pub struct DomainAbstractionFactory {
-    domain_mapping: DomainMapping,
-    domain_sizes: Vec<usize>,
-    partitions: NumericPartitions,
-    numeric_domain_sizes: Vec<usize>,
+    pub domain_mapping: DomainMapping,
+    pub domain_sizes: Vec<usize>,
+    pub partitions: NumericPartitions,
+    pub numeric_domain_sizes: Vec<usize>,
     comparison_index: Option<ComparisonAxiomIndex>,
     comparison_trees: Vec<ComparisonTree>,
 }
@@ -502,8 +502,6 @@ impl DomainAbstractionFactory {
     }
 
     fn compute_abstract_goals(&self, task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
-        use planners_sas::numeric::numeric_task::ExplicitFact;
-
         let mut goal_axiom_map: HashMap<usize, usize> = HashMap::new();
         for (idx, ax) in task.axioms().iter().enumerate() {
             if !ax.conditions().is_empty() {
@@ -1005,15 +1003,15 @@ impl DomainAbstractionFactory {
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
         let mut generating_op_ids: Vec<Option<usize>> = vec![None; num_states];
 
-        let mut core_vars: Vec<u32> = Vec::new();
+        let mut core_vars: Vec<usize> = Vec::new();
         for (v, &dom) in self.domain_sizes.iter().enumerate() {
             if dom > 1 {
-                core_vars.push(v as u32);
+                core_vars.push(v);
             }
         }
         for (n, &dom) in numeric_domain_sizes.iter().enumerate() {
             if dom > 1 {
-                core_vars.push((num_props + n) as u32);
+                core_vars.push(num_props + n);
             }
         }
         core_vars.sort_unstable();

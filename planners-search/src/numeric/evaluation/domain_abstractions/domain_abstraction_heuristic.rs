@@ -13,9 +13,9 @@ use super::comparison_expression::{ComparisonTree, ComparisonTreeNode, Interval}
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::utils;
 
-const COMPARISON_TRUE_VAL: usize = 0;
-const COMPARISON_FALSE_VAL: usize = 1;
-const COMPARISON_UNKNOWN_VAL: usize = 2;
+pub(crate) const COMPARISON_TRUE_VAL: usize = 0;
+pub(crate) const COMPARISON_FALSE_VAL: usize = 1;
+pub(crate) const COMPARISON_UNKNOWN_VAL: usize = 2;
 
 /// Heuristic that evaluates a concrete state by mapping it to an abstract state
 /// and looking up its precomputed goal distance.

@@ -182,6 +182,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     info!("Building domain abstraction (CEGAR)...");
                     let mut config = CegarConfig::default();
                     config.max_abstraction_size = domain_config.max_abstraction_size;
+                    config.max_iterations = domain_config.max_iterations;
                     config.use_wildcard_plans = domain_config.use_wildcard_plans;
                     config.combine_labels = domain_config.combine_labels;
                     config.random_seed = if domain_config.random_seed >= 0 {
@@ -189,6 +190,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     } else {
                         None
                     };
+                    config.flaw_kind = domain_config.flaw_kind;
                     config.flaw_treatment = domain_config.flaw_treatment;
                     config.init_split_method = domain_config.init_split_method;
                     config.exec_entire_plan = domain_config.exec_entire_plan;
@@ -858,7 +860,7 @@ fn run_da_debug(
     let wildcard_plan = outcome.last_step.wildcard_plan.clone().ok_or_else(|| {
         std::io::Error::other("da_debug requires a final wildcard plan, but CEGAR returned none")
     })?;
-    let factory = outcome.last_step.factory.clone();
+    let factory = outcome.final_state.factory.clone();
     let distance_table = factory
         .build_abstract_distance_table(task, config.combine_labels, false)
         .map_err(|e| std::io::Error::other(format!("failed to build distance table: {e:#}")))?;

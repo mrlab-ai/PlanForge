@@ -2,7 +2,7 @@
 mod tests;
 
 use planners_sas::numeric::axioms::{CalOperator, ComparisonOperator};
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, AssignmentOperation, NumericType};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Interval {
@@ -11,6 +11,19 @@ pub struct Interval {
     pub lower_closed: bool,
     pub upper_closed: bool,
 }
+
+pub const EMPTY_INTERVAL: Interval = Interval {
+    lower: 1.0,
+    upper: 0.0,
+    lower_closed: false,
+    upper_closed: false,
+};
+pub const UNBOUNDED_INTERVAL: Interval = Interval {
+    lower: f64::NEG_INFINITY,
+    upper: f64::INFINITY,
+    lower_closed: false,
+    upper_closed: false,
+};
 
 impl Interval {
     #[inline]
@@ -46,12 +59,7 @@ impl Interval {
 
     #[inline]
     pub fn unbounded() -> Self {
-        Self {
-            lower: f64::NEG_INFINITY,
-            upper: f64::INFINITY,
-            lower_closed: false,
-            upper_closed: false,
-        }
+        UNBOUNDED_INTERVAL
     }
 
     #[inline]
@@ -66,6 +74,21 @@ impl Interval {
             return true;
         }
         false
+    }
+
+    #[inline]
+    pub fn is_constant(&self, constant: f64) -> bool {
+        self.lower_closed && self.upper_closed && self.lower == constant && self.upper == constant
+    }
+
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        self.is_constant(0.0)
+    }
+
+    #[inline]
+    pub fn any_bound_is_zero(&self) -> bool {
+        self.lower == 0.0 || self.upper == 0.0
     }
 
     #[inline]
@@ -91,6 +114,53 @@ impl Interval {
         };
 
         lower_ok && upper_ok
+    }
+
+    #[inline]
+    pub fn intersects(&self, value: &Interval) -> bool {
+        if value.is_empty() || self.is_empty() {
+            return false;
+        }
+
+        // `value` is at right of `self`.
+        if value.lower > self.upper
+            || (value.lower == self.upper && (!value.lower_closed || !self.upper_closed))
+        {
+            return false;
+        }
+
+        // `value` is at left of `self`.
+        if value.upper < self.lower
+            || (value.upper == self.lower && (!value.upper_closed || !self.lower_closed))
+        {
+            return false;
+        }
+
+        true
+    }
+
+    #[inline]
+    #[allow(clippy::if_same_then_else)]
+    pub fn lower_is_lower(&self, other: &Self) -> bool {
+        if self.lower < other.lower {
+            return true;
+        } else if self.lower == other.lower && self.lower_closed && !other.lower_closed {
+            return true;
+        }
+
+        false
+    }
+
+    #[inline]
+    #[allow(clippy::if_same_then_else)]
+    pub fn higher_is_higher(&self, other: &Self) -> bool {
+        if self.upper > other.upper {
+            return true;
+        } else if self.upper == other.upper && self.upper_closed && !other.upper_closed {
+            return true;
+        }
+
+        false
     }
 
     #[inline]
@@ -144,6 +214,24 @@ impl Interval {
     fn contains_zero(&self) -> bool {
         self.contains(0.0)
     }
+
+    pub fn apply_reverse_op(&mut self, op: &AssignmentOperation, operand: &Interval) {
+        match op {
+            // Unknown previous value.
+            AssignmentOperation::Assign => *self = UNBOUNDED_INTERVAL,
+            AssignmentOperation::Plus => *self = *self - *operand,
+            AssignmentOperation::Minus => *self = *self + *operand,
+            AssignmentOperation::Times => {
+                if operand.any_bound_is_zero() {
+                    // Unknown previous value.
+                    *self = UNBOUNDED_INTERVAL
+                } else {
+                    *self = *self / *operand
+                }
+            }
+            AssignmentOperation::Divide => *self = *self * *operand,
+        };
+    }
 }
 
 impl std::ops::Add for Interval {
@@ -156,6 +244,58 @@ impl std::ops::Add for Interval {
         Interval {
             lower: self.lower + rhs.lower,
             upper: self.upper + rhs.upper,
+            lower_closed: self.lower_closed && rhs.lower_closed,
+            upper_closed: self.upper_closed && rhs.upper_closed,
+        }
+        .normalized()
+    }
+}
+
+impl std::ops::Sub for Interval {
+    type Output = Interval;
+
+    #[inline]
+    fn sub(self, rhs: Interval) -> Interval {
+        debug_assert!(!self.is_empty() && !rhs.is_empty());
+
+        Interval {
+            lower: self.lower - rhs.lower,
+            upper: self.upper - rhs.upper,
+            lower_closed: self.lower_closed && rhs.lower_closed,
+            upper_closed: self.upper_closed && rhs.upper_closed,
+        }
+        .normalized()
+    }
+}
+
+impl std::ops::Mul for Interval {
+    type Output = Interval;
+
+    #[inline]
+    fn mul(self, rhs: Interval) -> Interval {
+        debug_assert!(!self.is_empty() && !rhs.is_empty());
+
+        Interval {
+            lower: self.lower * rhs.lower,
+            upper: self.upper * rhs.upper,
+            lower_closed: self.lower_closed && rhs.lower_closed,
+            upper_closed: self.upper_closed && rhs.upper_closed,
+        }
+        .normalized()
+    }
+}
+
+impl std::ops::Div for Interval {
+    type Output = Interval;
+
+    #[inline]
+    fn div(self, rhs: Interval) -> Interval {
+        debug_assert!(!self.is_empty() && !rhs.is_empty());
+        assert!(rhs.lower != 0.0 && rhs.upper != 0.0);
+
+        Interval {
+            lower: self.lower / rhs.lower,
+            upper: self.upper / rhs.upper,
             lower_closed: self.lower_closed && rhs.lower_closed,
             upper_closed: self.upper_closed && rhs.upper_closed,
         }
@@ -188,7 +328,7 @@ impl ArithOp {
             ArithOp::Add => lhs + rhs,
             ArithOp::Sub => {
                 if lhs.is_empty() || rhs.is_empty() {
-                    return Interval::open(1.0, 0.0);
+                    return EMPTY_INTERVAL;
                 }
                 Interval {
                     lower: lhs.lower - rhs.upper,
@@ -200,7 +340,7 @@ impl ArithOp {
             }
             ArithOp::Mul => {
                 if lhs.is_empty() || rhs.is_empty() {
-                    return Interval::open(1.0, 0.0);
+                    return EMPTY_INTERVAL;
                 }
                 let lhs_bounds = [(lhs.lower, lhs.lower_closed), (lhs.upper, lhs.upper_closed)];
                 let rhs_bounds = [(rhs.lower, rhs.lower_closed), (rhs.upper, rhs.upper_closed)];
@@ -258,7 +398,7 @@ impl ArithOp {
             }
             ArithOp::Div => {
                 if lhs.is_empty() || rhs.is_empty() {
-                    return Interval::open(1.0, 0.0);
+                    return EMPTY_INTERVAL;
                 }
 
                 // If divisor contains 0, we conservatively give up.
@@ -425,8 +565,7 @@ impl Expr {
     fn alloc_arith_cache_slot(&mut self) -> usize {
         let idx = self.arith_cache.len();
         self.arith_cache.push((false, 0.0));
-        self.arith_interval_cache
-            .push((false, Interval::open(1.0, 0.0)));
+        self.arith_interval_cache.push((false, EMPTY_INTERVAL));
         idx
     }
 

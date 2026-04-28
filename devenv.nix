@@ -9,5 +9,9 @@
   packages = [
     pkgs.vscode-extensions.vadimcn.vscode-lldb
     pkgs.taplo
+    pkgs.valgrind
+    pkgs.kdePackages.kcachegrind
+    pkgs.cargo-flamegraph
+    pkgs.samply
   ];
 }

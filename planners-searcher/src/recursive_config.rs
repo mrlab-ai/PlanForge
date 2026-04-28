@@ -1,9 +1,12 @@
+use planners_search::numeric::evaluation::domain_abstractions::cegar::{
+    FlawKind, FlawTreatmentVariants,
+};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
-    FlawTreatment, InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
+    InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
 };
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -13,10 +16,12 @@ use planners_search::numeric::evaluation::pattern_databases::variable_order_find
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DomainAbstractionConfig {
     pub max_abstraction_size: usize,
+    pub max_iterations: usize,
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
     pub random_seed: i32,
-    pub flaw_treatment: FlawTreatment,
+    pub flaw_kind: FlawKind,
+    pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub exec_entire_plan: ExecEntirePlanMode,
 }
@@ -24,11 +29,13 @@ pub struct DomainAbstractionConfig {
 impl Default for DomainAbstractionConfig {
     fn default() -> Self {
         Self {
-            max_abstraction_size: i64::MAX as usize,
+            max_abstraction_size: usize::MAX,
+            max_iterations: 10_000,
             use_wildcard_plans: true,
             combine_labels: true,
             random_seed: -1,
-            flaw_treatment: FlawTreatment::RandomSingleAtom,
+            flaw_kind: FlawKind::Progression,
+            flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
         }
@@ -41,17 +48,21 @@ impl fmt::Display for DomainAbstractionConfig {
             f,
             concat!(
                 "max_abstraction_size={}, ",
+                "max_iterations={}, ",
                 "use_wildcard_plans={}, ",
                 "combine_labels={}, ",
                 "random_seed={}, ",
+                "flaw_kind={}, ",
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
                 "exec_entire_plan={}"
             ),
             self.max_abstraction_size,
+            self.max_iterations,
             self.use_wildcard_plans,
             self.combine_labels,
             self.random_seed,
+            self.flaw_kind,
             self.flaw_treatment,
             self.init_split_method,
             self.exec_entire_plan,
@@ -578,12 +589,20 @@ fn parse_init_split_quantity(value: &str) -> Result<InitSplitQuantity, String> {
     }
 }
 
-fn parse_flaw_treatment(value: &str) -> Result<FlawTreatment, String> {
+fn parse_flaw_kind(value: &str) -> Result<FlawKind, String> {
     match value {
-        "random_single_atom" => Ok(FlawTreatment::RandomSingleAtom),
-        "one_split_per_atom" => Ok(FlawTreatment::OneSplitPerAtom),
-        "one_split_per_variable" => Ok(FlawTreatment::OneSplitPerVariable),
-        "max_refined_single_atom" => Ok(FlawTreatment::MaxRefinedSingleAtom),
+        "progression" => Ok(FlawKind::Progression),
+        "regression" => Ok(FlawKind::Regression),
+        _ => Err(format!("invalid FlawKind `{value}`")),
+    }
+}
+
+fn parse_flaw_treatment(value: &str) -> Result<FlawTreatmentVariants, String> {
+    match value {
+        "random_single_atom" => Ok(FlawTreatmentVariants::RandomSingleAtom),
+        "one_split_per_atom" => Ok(FlawTreatmentVariants::OneSplitPerAtom),
+        "one_split_per_variable" => Ok(FlawTreatmentVariants::OneSplitPerVariable),
+        "max_refined_single_atom" => Ok(FlawTreatmentVariants::MaxRefinedSingleAtom),
         _ => Err(format!("invalid FlawTreatment `{value}`")),
     }
 }
@@ -672,6 +691,7 @@ fn domain_abstraction_fields() -> Vec<Field<DomainAbstractionConfig>> {
             DomainAbstractionConfig,
             max_abstraction_size
         ),
+        field_usize!("max_iterations", DomainAbstractionConfig, max_iterations),
         field_bool!(
             "use_wildcard_plans",
             DomainAbstractionConfig,
@@ -686,6 +706,14 @@ fn domain_abstraction_fields() -> Vec<Field<DomainAbstractionConfig>> {
                 Ok(())
             },
             format: |config| config.flaw_treatment.to_string(),
+        },
+        Field {
+            name: "flaw_kind",
+            apply: |config, value| {
+                config.flaw_kind = parse_flaw_kind(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.flaw_kind.to_string(),
         },
         Field {
             name: "init_split_method",

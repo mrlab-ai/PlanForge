@@ -140,7 +140,7 @@ pub enum ComparisonOperator {
 }
 
 impl ComparisonOperator {
-    pub fn compare(&self, numeric_values: &mut [f64], left: usize, right: usize) -> bool {
+    pub fn compare(&self, numeric_values: &[f64], left: usize, right: usize) -> bool {
         let (left, right) = (numeric_values[left], numeric_values[right]);
         match self {
             ComparisonOperator::LessThan => left < right,
@@ -176,7 +176,7 @@ impl ComparisonAxiom {
         }
     }
 
-    pub fn update_values(&self, numeric_state: &mut [f64]) -> Result<bool, InvalidIndex> {
+    pub fn is_hold(&self, numeric_state: &[f64]) -> Result<bool, InvalidIndex> {
         let left = self.left_hand_side;
         let right = self.right_hand_side;
         if left >= numeric_state.len() || right >= numeric_state.len() {
@@ -406,6 +406,11 @@ impl<'a> AxiomEvaluator<'a> {
 
         Ok(())
     }
+    pub fn affected_vars_by_arithmetic_axioms(&self, affected: &mut Vec<usize>) {
+        for axiom in self.numeric_task.assignment_axioms() {
+            affected.push(axiom.get_affected_var_id());
+        }
+    }
 
     pub fn evaluate_comparison_axioms(
         &self,
@@ -413,17 +418,23 @@ impl<'a> AxiomEvaluator<'a> {
         numeric_state: &mut [f64],
     ) -> Result<bool, AxiomEvalError> {
         for axiom in self.numeric_task.comparison_axioms() {
-            let result = axiom.update_values(numeric_state).map_err(|e| {
+            let is_hold = axiom.is_hold(numeric_state).map_err(|e| {
                 AxiomEvalError::InvalidIndex(InvalidIndex {
                     length: numeric_state.len(),
                     index: e.index,
                 })
             })?;
             self.state_packer
-                .set(buffer, axiom.get_affected_var_id(), !result as u64);
+                .set(buffer, axiom.get_affected_var_id(), !is_hold as u64);
         }
 
         Ok(true)
+    }
+
+    pub fn affected_vars_by_comparison_axioms(&self, affected: &mut Vec<usize>) {
+        for axiom in self.numeric_task.comparison_axioms() {
+            affected.push(axiom.get_affected_var_id());
+        }
     }
 
     pub fn evaluate_propositional_axioms(&self, buffer: &mut [u64]) -> Result<(), AxiomEvalError> {
@@ -439,7 +450,7 @@ impl<'a> AxiomEvaluator<'a> {
             unsatisfied_conditions.resize(self.rules.len(), 0);
         }
 
-        // Initialize queue with current variable values (following C++ logic)
+        // Initialize queue with current variable values (following C++ logic).
         for i in 0..self.numeric_task.get_num_variables() {
             let axiom_layer = self.numeric_task.get_variable_axiom_layer(i).unwrap();
             match axiom_layer {
@@ -556,6 +567,18 @@ impl<'a> AxiomEvaluator<'a> {
             self.evaluate_propositional_axioms(buffer)?;
         }
         Ok(())
+    }
+
+    pub fn affected_propositional_vars(&self, affected_prop_vars: &mut Vec<usize>) {
+        if self.has_axioms() {
+            self.affected_vars_by_comparison_axioms(affected_prop_vars);
+        }
+    }
+
+    pub fn affected_numeric_vars(&self, affected_numeric_vars: &mut Vec<usize>) {
+        if self.has_numeric_axioms() {
+            self.affected_vars_by_arithmetic_axioms(affected_numeric_vars);
+        }
     }
 
     fn has_axioms(&self) -> bool {

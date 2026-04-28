@@ -38,7 +38,7 @@ impl DomainAbstractionGenerator {
             .build_abstraction(task)
             .context("CEGAR failed to build abstraction")?;
 
-        let factory = outcome.last_step.factory;
+        let factory = outcome.final_state.factory;
         let distance_table = factory
             .build_abstract_distance_table(task, self.config.combine_labels, false)
             .context("failed to build abstract distance table")?;

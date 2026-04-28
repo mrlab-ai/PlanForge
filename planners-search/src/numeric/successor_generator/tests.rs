@@ -1,6 +1,5 @@
 use super::*;
 use planners_sas::numeric::axioms::AxiomEvaluator;
-use planners_sas::numeric::numeric_parser::parse_numeric_sas_output;
 use planners_sas::numeric::{
     numeric_task::{
         AbstractNumericTask, Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
@@ -172,7 +171,7 @@ fn test_automatic_cleanup_on_drop() {
     let state_packer = IntDoublePacker::from_task(&task);
     let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
 
-    let registry_id = {
+    let _registry_id = {
         let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
         let id = state_registry.id();
 
