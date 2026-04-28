@@ -438,24 +438,6 @@ impl DomainAbstractionFactory {
         )
     }
 
-    pub(crate) fn compute_plan_with_rng(
-        &self,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        dump_distances: bool,
-        use_wildcard_plans: bool,
-        plan_step_rng: Option<&mut SmallRng>,
-    ) -> Result<Option<WildcardPlanResult>> {
-        self.compute_plan_with_rng_and_cache(
-            task,
-            combine_labels,
-            dump_distances,
-            use_wildcard_plans,
-            None,
-            plan_step_rng,
-        )
-    }
-
     pub(crate) fn compute_plan_with_rng_and_cache(
         &self,
         task: &dyn AbstractNumericTask,
