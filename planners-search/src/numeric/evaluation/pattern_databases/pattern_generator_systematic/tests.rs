@@ -211,9 +211,10 @@ fn systematic_generator_keeps_patterns_rejected_by_projected_task() {
 }
 
 #[test]
-fn systematic_generator_supports_naive_mode() {
+#[should_panic(expected = "not implemented: numeric systematic naive pattern generation")]
+fn systematic_generator_rejects_naive_mode_like_cpp() {
     let task = propositional_predecessor_task();
-    let collection = generate_systematic_patterns(
+    let _ = generate_systematic_patterns(
         &task,
         SystematicPatternGeneratorConfig {
             only_interesting_patterns: false,
@@ -221,8 +222,4 @@ fn systematic_generator_supports_naive_mode() {
             ..SystematicPatternGeneratorConfig::default()
         },
     );
-
-    assert!(collection.contains(&Pattern::new(vec![1], vec![])));
-    assert!(collection.contains(&Pattern::new(vec![0], vec![])));
-    assert!(collection.contains(&Pattern::new(vec![0, 1], vec![])));
 }

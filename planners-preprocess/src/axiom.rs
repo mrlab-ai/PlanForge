@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use log::debug;
+use tracing::debug;
 
 use crate::helper_functions::{InputStream, check_magic};
 use crate::operator::{CompOperator, FOperator, stringify};

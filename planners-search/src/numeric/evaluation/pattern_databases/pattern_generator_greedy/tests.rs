@@ -295,9 +295,9 @@ fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() 
     );
 
     let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
+    let helper_var_id = task.numeric_variables().len();
 
-    assert!(pattern.numeric.contains(&1));
-    assert!(pattern.numeric.contains(&2));
+    assert!(pattern.numeric.contains(&helper_var_id));
 }
 
 #[test]

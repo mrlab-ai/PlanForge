@@ -1,4 +1,4 @@
-use log::error;
+use tracing::error;
 
 use crate::numeric::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType};
 
@@ -64,6 +64,7 @@ impl VariableInfo {
     }
 }
 
+#[derive(Clone)]
 pub struct IntDoublePacker {
     var_infos: Vec<VariableInfo>,
     num_bins: usize,

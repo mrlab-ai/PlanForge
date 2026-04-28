@@ -2,8 +2,8 @@
 mod tests;
 
 use clap::Parser;
-use log::{debug, info};
 use ordered_float::NotNan;
+use tracing::{debug, info};
 use planners_cli_utils::*;
 use planners_preprocess::run_preprocess;
 use planners_sas::numeric::axioms::AxiomEvaluator;
@@ -39,22 +39,26 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use std::io::Write;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::filter::LevelFilter;
 
-pub fn init_logger(level: log::LevelFilter) -> Result<(), log::SetLoggerError> {
-    let mut builder = env_logger::Builder::new();
-    builder.filter_level(level);
-    builder.format(|formatter, record| {
-        writeln!(
-            formatter,
-            "[{}] {}: {}",
-            formatter.timestamp_seconds(),
-            record.level(),
-            record.args()
-        )
-    });
+pub fn init_logger(level: LevelFilter) {
+    // Layer for stdout (info + debug + trace)
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stdout)
+        .with_target(false)
+        .with_filter(level);
 
-    builder.try_init()
+    // Layer for stderr (error + warn only)
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_target(false)
+        .with_filter(LevelFilter::WARN);
+
+    tracing_subscriber::registry()
+        .with(stdout_layer)
+        .with(stderr_layer)
+        .init();
 }
 
 type OpenListElements = (Reverse<NotNan<f64>>, Reverse<NotNan<f64>>, usize);
@@ -69,7 +73,7 @@ pub struct PlannersCli {
     pub max_time: Option<Duration>,
 
     #[arg(long = "log-level")]
-    pub log_level: Option<log::LevelFilter>,
+    pub log_level: Option<tracing_subscriber::filter::LevelFilter>,
 
     #[arg(long, hide = true)]
     pub internal_run: bool,

@@ -1,7 +1,7 @@
 use super::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use super::numeric_bound::NumericBound;
 use super::numeric_helper::{LinearNumericCondition as NumericCondition, NumericTaskHelper};
-use log::debug;
+use tracing::debug;
 use planners_sas::numeric::axioms::PropositionalAxiom;
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, Effect, ExplicitFact, Operator, metric_operator_cost_from_initial_values,

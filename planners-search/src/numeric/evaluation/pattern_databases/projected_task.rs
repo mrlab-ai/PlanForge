@@ -7,7 +7,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use planners_sas::numeric::axioms::{
-    AssignmentAxiom, CalOperator, ComparisonAxiom, PropositionalAxiom,
+    AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, Effect, ExplicitFact,
@@ -301,6 +301,7 @@ impl fmt::Display for ProjectedTaskBuildError {
 impl std::error::Error for ProjectedTaskBuildError {}
 
 #[allow(unused)]
+#[derive(Clone)]
 pub struct ProjectedTask<'task> {
     base: &'task dyn AbstractNumericTask,
     variables: Vec<ExplicitVariable>,
@@ -364,6 +365,309 @@ struct CachedOperator {
     assignment_effects: Vec<CachedAssignmentEffect>,
 }
 
+#[derive(Debug, Clone)]
+enum ProjectedNumericLookup {
+    Constant(f64),
+    Expanded(usize),
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct PatternLookupProjection {
+    base_propositional_len: usize,
+    expanded_numeric_len: usize,
+    pattern_regular_original_ids: Vec<usize>,
+    pattern_numeric_lookup: Vec<ProjectedNumericLookup>,
+    projected_regular_original_ids: Vec<usize>,
+    projected_numeric_lookup: Vec<ProjectedNumericLookup>,
+}
+
+impl PatternLookupProjection {
+    fn numeric_lookup_for_projected_index(
+        task: &ProjectedTask<'_>,
+        projected_index: usize,
+    ) -> Result<ProjectedNumericLookup, String> {
+        if task.is_auxiliary_constant[projected_index] {
+            return task.projected_initial_numeric_values[projected_index]
+                .map(ProjectedNumericLookup::Constant)
+                .ok_or_else(|| {
+                    format!("missing constant projected numeric value at index {projected_index}")
+                });
+        }
+
+        let original_numeric_var =
+            task.projected_num_var_to_original[projected_index].ok_or_else(|| {
+                "missing original numeric variable for projected numeric variable".to_string()
+            })?;
+
+        if task.is_auxiliary_num_var[projected_index] {
+            let helper_id = task.helper_id_by_source_numeric_var[original_numeric_var]
+                .ok_or_else(|| {
+                    format!(
+                        "missing helper id for auxiliary projected numeric variable {original_numeric_var}"
+                    )
+                })?;
+            return Ok(ProjectedNumericLookup::Expanded(helper_id));
+        }
+
+        Ok(ProjectedNumericLookup::Expanded(original_numeric_var))
+    }
+
+    pub(super) fn from_projected_task(task: &ProjectedTask<'_>) -> Result<Self, String> {
+        let pattern_regular_original_ids = task
+            .pattern_regular_projected_ids
+            .iter()
+            .map(|&projected_var_id| task.projected_var_to_original[projected_var_id])
+            .collect();
+
+        let mut pattern_numeric_lookup =
+            Vec::with_capacity(task.pattern_numeric_projected_ids.len());
+        for &projected_numeric_id in &task.pattern_numeric_projected_ids {
+            pattern_numeric_lookup.push(Self::numeric_lookup_for_projected_index(
+                task,
+                projected_numeric_id,
+            )?);
+        }
+
+        let projected_regular_original_ids = task.projected_var_to_original.clone();
+        let mut projected_numeric_lookup =
+            Vec::with_capacity(task.projected_num_var_to_original.len());
+        for projected_index in 0..task.projected_num_var_to_original.len() {
+            projected_numeric_lookup.push(Self::numeric_lookup_for_projected_index(
+                task,
+                projected_index,
+            )?);
+        }
+
+        Ok(Self {
+            base_propositional_len: task.base.variables().len(),
+            expanded_numeric_len: task.base.numeric_variables().len()
+                + task.auxiliary_numeric_vars.len(),
+            pattern_regular_original_ids,
+            pattern_numeric_lookup,
+            projected_regular_original_ids,
+            projected_numeric_lookup,
+        })
+    }
+
+    pub(super) fn compact_prop_hash_from_state_values(
+        &self,
+        propositional_values: &[usize],
+        multipliers: &[usize],
+    ) -> Result<usize, String> {
+        if self.pattern_regular_original_ids.len() != multipliers.len() {
+            return Err("pattern regular ids and multipliers length mismatch".to_string());
+        }
+        if propositional_values.len() < self.base_propositional_len {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base_propositional_len
+            ));
+        }
+
+        let mut hash = 0usize;
+        for (&original_var_id, &multiplier) in self
+            .pattern_regular_original_ids
+            .iter()
+            .zip(multipliers.iter())
+        {
+            let value = propositional_values[original_var_id];
+            hash = hash.saturating_add(value.saturating_mul(multiplier));
+        }
+        Ok(hash)
+    }
+
+    #[inline]
+    pub(super) fn compact_prop_hash_from_state_values_unchecked(
+        &self,
+        propositional_values: &[usize],
+        multipliers: &[usize],
+    ) -> usize {
+        debug_assert_eq!(self.pattern_regular_original_ids.len(), multipliers.len());
+        debug_assert!(propositional_values.len() >= self.base_propositional_len);
+
+        let mut hash = 0usize;
+        for (&original_var_id, &multiplier) in self
+            .pattern_regular_original_ids
+            .iter()
+            .zip(multipliers.iter())
+        {
+            let value = propositional_values[original_var_id];
+            hash = hash.saturating_add(value.saturating_mul(multiplier));
+        }
+        hash
+    }
+
+    fn numeric_value_from_expanded(
+        lookup: &ProjectedNumericLookup,
+        expanded_numeric_values: &[f64],
+    ) -> Result<f64, String> {
+        match *lookup {
+            ProjectedNumericLookup::Constant(value) => Ok(value),
+            ProjectedNumericLookup::Expanded(index) => expanded_numeric_values
+                .get(index)
+                .copied()
+                .ok_or_else(|| format!("expanded numeric state too short for index {index}")),
+        }
+    }
+
+    pub(super) fn fill_pattern_numeric_bins_from_expanded_numeric_into(
+        &self,
+        expanded_numeric_values: &[f64],
+        bins: &mut Vec<u64>,
+    ) -> Result<(), String> {
+        if expanded_numeric_values.len() < self.expanded_numeric_len {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.expanded_numeric_len
+            ));
+        }
+
+        bins.clear();
+        bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
+        for (numeric_index, lookup) in self.pattern_numeric_lookup.iter().enumerate() {
+            bins[numeric_index + 1] =
+                Self::numeric_value_from_expanded(lookup, expanded_numeric_values)?.to_bits();
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub(super) fn fill_pattern_numeric_bins_from_expanded_numeric_into_unchecked(
+        &self,
+        expanded_numeric_values: &[f64],
+        bins: &mut Vec<u64>,
+    ) {
+        debug_assert!(expanded_numeric_values.len() >= self.expanded_numeric_len);
+
+        bins.clear();
+        bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
+        for (numeric_index, lookup) in self.pattern_numeric_lookup.iter().enumerate() {
+            bins[numeric_index + 1] = match *lookup {
+                ProjectedNumericLookup::Constant(value) => value,
+                ProjectedNumericLookup::Expanded(index) => expanded_numeric_values[index],
+            }
+            .to_bits();
+        }
+    }
+
+    pub(super) fn pack_pattern_state_values_from_expanded_numeric_into(
+        &self,
+        propositional_values: &[usize],
+        expanded_numeric_values: &[f64],
+        packer: &IntDoublePacker,
+        packed_values: &mut Vec<u64>,
+    ) -> Result<(), String> {
+        if propositional_values.len() < self.base_propositional_len {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base_propositional_len
+            ));
+        }
+        if expanded_numeric_values.len() < self.expanded_numeric_len {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.expanded_numeric_len
+            ));
+        }
+
+        packed_values.clear();
+        packed_values.resize(packer.num_bins(), 0);
+
+        for (compact_index, &original_var_id) in
+            self.pattern_regular_original_ids.iter().enumerate()
+        {
+            packer.set(
+                packed_values,
+                compact_index,
+                propositional_values[original_var_id] as u64,
+            );
+        }
+
+        let prop_len = self.pattern_regular_original_ids.len();
+        for (numeric_index, lookup) in self.pattern_numeric_lookup.iter().enumerate() {
+            packer.set(
+                packed_values,
+                prop_len + numeric_index,
+                Self::numeric_value_from_expanded(lookup, expanded_numeric_values)?.to_bits(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub(super) fn project_state_values_from_expanded_numeric_into(
+        &self,
+        propositional_values: &[usize],
+        expanded_numeric_values: &[f64],
+        projected_prop_values: &mut Vec<usize>,
+        projected_numeric_values: &mut Vec<f64>,
+    ) -> Result<(), String> {
+        if propositional_values.len() < self.base_propositional_len {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base_propositional_len
+            ));
+        }
+        if expanded_numeric_values.len() < self.expanded_numeric_len {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.expanded_numeric_len
+            ));
+        }
+
+        projected_prop_values.clear();
+        projected_prop_values.extend(
+            self.projected_regular_original_ids
+                .iter()
+                .map(|&original_var_id| propositional_values[original_var_id]),
+        );
+
+        projected_numeric_values.clear();
+        projected_numeric_values.reserve(self.projected_numeric_lookup.len());
+        for lookup in &self.projected_numeric_lookup {
+            projected_numeric_values.push(Self::numeric_value_from_expanded(
+                lookup,
+                expanded_numeric_values,
+            )?);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub(super) fn project_state_values_from_expanded_numeric_into_unchecked(
+        &self,
+        propositional_values: &[usize],
+        expanded_numeric_values: &[f64],
+        projected_prop_values: &mut Vec<usize>,
+        projected_numeric_values: &mut Vec<f64>,
+    ) {
+        debug_assert!(propositional_values.len() >= self.base_propositional_len);
+        debug_assert!(expanded_numeric_values.len() >= self.expanded_numeric_len);
+
+        projected_prop_values.clear();
+        projected_prop_values.extend(
+            self.projected_regular_original_ids
+                .iter()
+                .map(|&original_var_id| propositional_values[original_var_id]),
+        );
+
+        projected_numeric_values.clear();
+        projected_numeric_values.reserve(self.projected_numeric_lookup.len());
+        for lookup in &self.projected_numeric_lookup {
+            projected_numeric_values.push(match *lookup {
+                ProjectedNumericLookup::Constant(value) => value,
+                ProjectedNumericLookup::Expanded(index) => expanded_numeric_values[index],
+            });
+        }
+    }
+}
+
 impl<'task> ProjectedTask<'task> {
     pub fn new(
         base: &'task dyn AbstractNumericTask,
@@ -388,10 +692,6 @@ impl<'task> ProjectedTask<'task> {
                 Some(auxiliary_numeric_var.helper_id);
         }
         let helper_space_len = num_numeric_vars + auxiliary_numeric_vars.len();
-        let derived_vars_with_helpers: BTreeSet<usize> = auxiliary_numeric_vars
-            .iter()
-            .map(|auxiliary_numeric_var| auxiliary_numeric_var.source_numeric_var_id)
-            .collect();
         let mut selected_helper_backed_vars: BTreeSet<usize> = BTreeSet::new();
 
         let mut projected_var_to_original: Vec<usize> = Vec::new();
@@ -509,97 +809,21 @@ impl<'task> ProjectedTask<'task> {
             }
         }
 
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for (axiom_id, axiom) in base.assignment_axioms().iter().enumerate() {
-                let affected = axiom.get_affected_var_id();
-                if affected >= num_numeric_vars || original_num_var_to_projected[affected].is_some()
-                {
-                    continue;
-                }
-                if derived_vars_with_helpers.contains(&affected)
-                    && selected_helper_backed_vars.contains(&affected)
-                {
-                    continue;
-                }
-                ensure_supported_assignment_operator(axiom_id, affected, axiom.get_operator())?;
-                let deps = regular_numeric_dependencies(
-                    base,
-                    affected,
-                    &affected_to_assignment_axiom,
-                    &original_num_var_to_projected,
-                    &is_auxiliary_num_var,
-                )?;
-                if deps
-                    .iter()
-                    .all(|&dep| original_num_var_to_projected[dep].is_some())
-                {
-                    push_projected_base_numeric_var(
-                        affected,
-                        &mut projected_num_var_to_original,
-                        &mut original_num_var_to_projected,
-                        &mut is_auxiliary_num_var,
-                        &mut is_auxiliary_constant,
-                        &mut auxiliary_exprs,
-                        &mut projected_aux_initial_values,
-                    );
-                    changed = true;
-                }
-            }
-        }
-
-        for comparison_axiom_id in 0..base.comparison_axioms().len() {
-            let comparison_axiom = &base.comparison_axioms()[comparison_axiom_id];
-            let tree = ComparisonTree::from_task(base, comparison_axiom_id).map_err(|_| {
-                ProjectedTaskBuildError::UnsupportedComparisonTree {
-                    comparison_axiom_id,
-                    reason: "failed to build comparison tree",
-                }
-            })?;
-            ensure_supported_comparison_tree(base, &tree)?;
-
-            let left = comparison_axiom.get_left_var_id();
-            let right = comparison_axiom.get_right_var_id();
-            if left < num_numeric_vars
-                && right < num_numeric_vars
-                && original_num_var_to_projected[left].is_some()
-                && original_num_var_to_projected[right].is_some()
-            {
-                let affected_var = comparison_axiom.get_affected_var_id();
-                if affected_var < num_vars {
-                    push_unique_mapping(
-                        affected_var,
-                        &mut projected_var_to_original,
-                        &mut original_var_to_projected,
-                    );
-                }
-            }
-        }
-
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for axiom in base.axioms() {
-                let affected = axiom.var_id();
-                if affected >= num_vars || original_var_to_projected[affected].is_some() {
-                    continue;
-                }
-                if axiom.conditions().iter().any(|fact| {
-                    original_var_to_projected
-                        .get(fact.var)
-                        .and_then(|mapped| *mapped)
-                        .is_some()
-                }) {
-                    push_unique_mapping(
-                        affected,
-                        &mut projected_var_to_original,
-                        &mut original_var_to_projected,
-                    );
-                    changed = true;
-                }
-            }
-        }
+        let comparison_axiom_by_affected_var =
+            build_comparison_axiom_lookup(base, base.variables().len());
+        let propositional_axiom_by_affected_var =
+            build_propositional_axiom_lookup(base, base.variables().len());
+        let goal_facts = collect_cpp_like_projected_goals(
+            base,
+            pattern,
+            &base_initial_numeric_values,
+            &affected_to_assignment_axiom,
+            &helper_id_by_source_numeric_var,
+            &comparison_axiom_by_affected_var,
+            &propositional_axiom_by_affected_var,
+            &mut projected_var_to_original,
+            &mut original_var_to_projected,
+        )?;
 
         let mut variable_names: Vec<String> = Vec::with_capacity(projected_var_to_original.len());
         let mut fact_names: Vec<Vec<String>> = Vec::with_capacity(projected_var_to_original.len());
@@ -674,11 +898,9 @@ impl<'task> ProjectedTask<'task> {
             }
         }
 
-        let goals: Vec<ExplicitFact> = (0..base.get_num_goals())
-            .filter_map(|goal_index| {
-                let goal = base.get_goal_fact(goal_index);
-                project_fact(goal, &original_var_to_projected)
-            })
+        let goals: Vec<ExplicitFact> = goal_facts
+            .iter()
+            .filter_map(|goal| project_fact(goal, &original_var_to_projected))
             .collect();
 
         let mut operators: Vec<Operator> = Vec::new();
@@ -711,17 +933,28 @@ impl<'task> ProjectedTask<'task> {
             .filter_map(|axiom| project_propositional_axiom(axiom, &original_var_to_projected))
             .collect();
 
-        let comparison_axioms: Vec<ComparisonAxiom> = base
-            .comparison_axioms()
-            .iter()
-            .filter_map(|axiom| {
-                project_comparison_axiom(
-                    axiom,
-                    &original_var_to_projected,
-                    &original_num_var_to_projected,
-                )
-            })
-            .collect();
+        let mut comparison_axioms: Vec<ComparisonAxiom> = Vec::new();
+        for comparison_axiom_id in 0..base.comparison_axioms().len() {
+            if let Some(projected_axiom) = project_comparison_axiom(
+                base,
+                comparison_axiom_id,
+                &base_initial_numeric_values,
+                &affected_to_assignment_axiom,
+                &helper_id_by_source_numeric_var,
+                &auxiliary_numeric_vars,
+                &original_var_to_projected,
+                &original_num_var_to_projected,
+                &mut projected_num_var_to_original,
+                &mut is_auxiliary_num_var,
+                &mut is_auxiliary_constant,
+                &mut auxiliary_exprs,
+                &mut projected_aux_initial_values,
+                &mut numeric_variables,
+                &mut projected_numeric_values,
+            )? {
+                comparison_axioms.push(projected_axiom);
+            }
+        }
 
         let assignment_axioms: Vec<AssignmentAxiom> = base
             .assignment_axioms()
@@ -982,6 +1215,201 @@ impl<'task> ProjectedTask<'task> {
         Ok(())
     }
 
+    pub fn project_pattern_state_values_from_expanded_numeric_into(
+        &self,
+        propositional_values: &[usize],
+        expanded_numeric_values: &[f64],
+        pattern_prop_values: &mut Vec<usize>,
+        pattern_numeric_values: &mut Vec<f64>,
+    ) -> Result<(), String> {
+        if propositional_values.len() < self.base.variables().len() {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base.variables().len()
+            ));
+        }
+        if expanded_numeric_values.len()
+            < self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+        {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+            ));
+        }
+
+        pattern_prop_values.clear();
+        pattern_prop_values.reserve(self.pattern_regular_projected_ids.len());
+        for &projected_var_id in &self.pattern_regular_projected_ids {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            pattern_prop_values.push(propositional_values[original_var_id]);
+        }
+
+        pattern_numeric_values.clear();
+        pattern_numeric_values.reserve(self.pattern_numeric_projected_ids.len());
+        for &projected_numeric_id in &self.pattern_numeric_projected_ids {
+            pattern_numeric_values.push(self.projected_numeric_value_from_expanded_numeric(
+                projected_numeric_id,
+                expanded_numeric_values,
+            )?);
+        }
+
+        Ok(())
+    }
+
+    pub fn pack_pattern_state_values_from_expanded_numeric_into(
+        &self,
+        propositional_values: &[usize],
+        expanded_numeric_values: &[f64],
+        packer: &IntDoublePacker,
+        packed_values: &mut Vec<u64>,
+    ) -> Result<(), String> {
+        if propositional_values.len() < self.base.variables().len() {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base.variables().len()
+            ));
+        }
+        if expanded_numeric_values.len()
+            < self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+        {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+            ));
+        }
+
+        packed_values.clear();
+        packed_values.resize(packer.num_bins(), 0);
+
+        for (compact_index, &projected_var_id) in
+            self.pattern_regular_projected_ids.iter().enumerate()
+        {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            packer.set(
+                packed_values,
+                compact_index,
+                propositional_values[original_var_id] as u64,
+            );
+        }
+
+        let prop_len = self.pattern_regular_projected_ids.len();
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
+            packer.set(
+                packed_values,
+                prop_len + numeric_index,
+                self.projected_numeric_value_from_expanded_numeric(
+                    projected_numeric_id,
+                    expanded_numeric_values,
+                )?
+                .to_bits(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn pack_pattern_numeric_state_values_from_expanded_numeric_into(
+        &self,
+        expanded_numeric_values: &[f64],
+        packer: &IntDoublePacker,
+        packed_values: &mut Vec<u64>,
+    ) -> Result<(), String> {
+        if expanded_numeric_values.len()
+            < self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+        {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+            ));
+        }
+
+        packed_values.clear();
+        packed_values.resize(packer.num_bins(), 0);
+
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
+            packer.set(
+                packed_values,
+                numeric_index + 1,
+                self.projected_numeric_value_from_expanded_numeric(
+                    projected_numeric_id,
+                    expanded_numeric_values,
+                )?
+                .to_bits(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn fill_pattern_numeric_bins_from_expanded_numeric_into(
+        &self,
+        expanded_numeric_values: &[f64],
+        bins: &mut Vec<u64>,
+    ) -> Result<(), String> {
+        if expanded_numeric_values.len()
+            < self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+        {
+            return Err(format!(
+                "expanded numeric state too short: {} < {}",
+                expanded_numeric_values.len(),
+                self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len()
+            ));
+        }
+
+        bins.clear();
+        bins.resize(1 + self.pattern_numeric_projected_ids.len(), 0);
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
+            bins[numeric_index + 1] = self
+                .projected_numeric_value_from_expanded_numeric(
+                    projected_numeric_id,
+                    expanded_numeric_values,
+                )?
+                .to_bits();
+        }
+
+        Ok(())
+    }
+
+    pub fn compact_pattern_prop_hash_from_state_values(
+        &self,
+        propositional_values: &[usize],
+        multipliers: &[usize],
+    ) -> Result<usize, String> {
+        if self.pattern_regular_projected_ids.len() != multipliers.len() {
+            return Err("pattern regular ids and multipliers length mismatch".to_string());
+        }
+        if propositional_values.len() < self.base.variables().len() {
+            return Err(format!(
+                "propositional state too short: {} < {}",
+                propositional_values.len(),
+                self.base.variables().len()
+            ));
+        }
+
+        let mut hash = 0usize;
+        for (&projected_var_id, &multiplier) in self
+            .pattern_regular_projected_ids
+            .iter()
+            .zip(multipliers.iter())
+        {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            let value = propositional_values[original_var_id];
+            hash = hash.saturating_add(value.saturating_mul(multiplier));
+        }
+        Ok(hash)
+    }
+
     pub fn project_state_values_into(
         &self,
         propositional_values: &[usize],
@@ -1181,6 +1609,203 @@ impl<'task> ProjectedTask<'task> {
         !self.requires_derived_numeric_values()
     }
 
+    pub fn project_pattern_concrete_state_values_into(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        pattern_prop_values: &mut Vec<usize>,
+        pattern_numeric_values: &mut Vec<f64>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<(), String> {
+        if !self.supports_direct_concrete_state_projection() {
+            return Err("direct projected-task lookup requires derived numeric values".to_string());
+        }
+
+        numeric_value_cache.clear();
+        numeric_value_cache.resize(
+            self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len(),
+            None,
+        );
+
+        pattern_prop_values.clear();
+        pattern_prop_values.reserve(self.pattern_regular_projected_ids.len());
+        for &projected_var_id in &self.pattern_regular_projected_ids {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            pattern_prop_values.push(
+                registry
+                    .get_propositional_var_value(state, original_var_id)
+                    .map_err(|err| format!("{err:?}"))?,
+            );
+        }
+
+        pattern_numeric_values.clear();
+        pattern_numeric_values.reserve(self.pattern_numeric_projected_ids.len());
+        for &projected_numeric_id in &self.pattern_numeric_projected_ids {
+            pattern_numeric_values.push(self.projected_numeric_value_from_concrete_state(
+                projected_numeric_id,
+                state,
+                registry,
+                numeric_value_cache,
+            )?);
+        }
+
+        Ok(())
+    }
+
+    pub fn pack_pattern_concrete_state_values_into(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        packer: &IntDoublePacker,
+        packed_values: &mut Vec<u64>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<(), String> {
+        if !self.supports_direct_concrete_state_projection() {
+            return Err("direct projected-task lookup requires derived numeric values".to_string());
+        }
+
+        numeric_value_cache.clear();
+        numeric_value_cache.resize(
+            self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len(),
+            None,
+        );
+
+        packed_values.clear();
+        packed_values.resize(packer.num_bins(), 0);
+
+        for (compact_index, &projected_var_id) in
+            self.pattern_regular_projected_ids.iter().enumerate()
+        {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            packer.set(
+                packed_values,
+                compact_index,
+                registry
+                    .get_propositional_var_value(state, original_var_id)
+                    .map_err(|err| format!("{err:?}"))? as u64,
+            );
+        }
+
+        let prop_len = self.pattern_regular_projected_ids.len();
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
+            packer.set(
+                packed_values,
+                prop_len + numeric_index,
+                self.projected_numeric_value_from_concrete_state(
+                    projected_numeric_id,
+                    state,
+                    registry,
+                    numeric_value_cache,
+                )?
+                .to_bits(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn pack_pattern_numeric_concrete_state_values_into(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        packer: &IntDoublePacker,
+        packed_values: &mut Vec<u64>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<(), String> {
+        if !self.supports_direct_concrete_state_projection() {
+            return Err("direct projected-task lookup requires derived numeric values".to_string());
+        }
+
+        numeric_value_cache.clear();
+        numeric_value_cache.resize(
+            self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len(),
+            None,
+        );
+
+        packed_values.clear();
+        packed_values.resize(packer.num_bins(), 0);
+
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
+            packer.set(
+                packed_values,
+                numeric_index + 1,
+                self.projected_numeric_value_from_concrete_state(
+                    projected_numeric_id,
+                    state,
+                    registry,
+                    numeric_value_cache,
+                )?
+                .to_bits(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn fill_pattern_numeric_concrete_state_bins_into(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        bins: &mut Vec<u64>,
+        numeric_value_cache: &mut Vec<Option<f64>>,
+    ) -> Result<(), String> {
+        if !self.supports_direct_concrete_state_projection() {
+            return Err("direct projected-task lookup requires derived numeric values".to_string());
+        }
+
+        numeric_value_cache.clear();
+        numeric_value_cache.resize(
+            self.base.numeric_variables().len() + self.auxiliary_numeric_vars.len(),
+            None,
+        );
+
+        bins.clear();
+        bins.resize(1 + self.pattern_numeric_projected_ids.len(), 0);
+        for (numeric_index, &projected_numeric_id) in
+            self.pattern_numeric_projected_ids.iter().enumerate()
+        {
+            bins[numeric_index + 1] = self
+                .projected_numeric_value_from_concrete_state(
+                    projected_numeric_id,
+                    state,
+                    registry,
+                    numeric_value_cache,
+                )?
+                .to_bits();
+        }
+
+        Ok(())
+    }
+
+    pub fn compact_pattern_prop_hash_from_concrete_state(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+        multipliers: &[usize],
+    ) -> Result<usize, String> {
+        if self.pattern_regular_projected_ids.len() != multipliers.len() {
+            return Err("pattern regular ids and multipliers length mismatch".to_string());
+        }
+
+        let mut hash = 0usize;
+        for (&projected_var_id, &multiplier) in self
+            .pattern_regular_projected_ids
+            .iter()
+            .zip(multipliers.iter())
+        {
+            let original_var_id = self.projected_var_to_original[projected_var_id];
+            let value = registry
+                .get_propositional_var_value(state, original_var_id)
+                .map_err(|err| format!("{err:?}"))?;
+            hash = hash.saturating_add(value.saturating_mul(multiplier));
+        }
+        Ok(hash)
+    }
+
     pub fn project_concrete_state_values_into(
         &self,
         state: &ConcreteState,
@@ -1221,6 +1846,47 @@ impl<'task> ProjectedTask<'task> {
         }
 
         Ok(())
+    }
+    fn projected_numeric_value_from_expanded_numeric(
+        &self,
+        projected_index: usize,
+        expanded_numeric_values: &[f64],
+    ) -> Result<f64, String> {
+        if self.is_auxiliary_constant[projected_index] {
+            return self.projected_initial_numeric_values[projected_index].ok_or_else(|| {
+                format!("missing constant projected numeric value at index {projected_index}")
+            });
+        }
+
+        let Some(original_numeric_var) = self.projected_num_var_to_original[projected_index] else {
+            return Err(
+                "missing original numeric variable for projected numeric variable".to_string(),
+            );
+        };
+
+        if self.is_auxiliary_num_var[projected_index] {
+            let helper_id = self.helper_id_by_source_numeric_var[original_numeric_var]
+                .ok_or_else(|| {
+                    format!(
+                        "missing helper id for auxiliary projected numeric variable {original_numeric_var}"
+                    )
+                })?;
+            return expanded_numeric_values
+                .get(helper_id)
+                .copied()
+                .ok_or_else(|| {
+                    format!("expanded numeric state too short for helper id {helper_id}")
+                });
+        }
+
+        expanded_numeric_values
+            .get(original_numeric_var)
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "expanded numeric state too short for numeric variable {original_numeric_var}"
+                )
+            })
     }
 
     fn projected_numeric_value_from_concrete_state(
@@ -1788,7 +2454,7 @@ pub(crate) fn build_auxiliary_numeric_vars(
         assignment_lookup: &'a [Option<usize>],
         base_initial_numeric_values: &'a [f64],
         auxiliary_numeric_vars: Vec<AuxiliaryNumericVar>,
-        derived_to_helper_id: Vec<Option<usize>>,
+        source_to_helper_id: Vec<Option<usize>>,
     }
 
     impl<'a> Builder<'a> {
@@ -1802,7 +2468,7 @@ pub(crate) fn build_auxiliary_numeric_vars(
                     self.base_initial_numeric_values[numeric_var_id],
                 )),
                 NumericType::Derived => {
-                    if let Some(helper_id) = self.derived_to_helper_id[numeric_var_id] {
+                    if let Some(helper_id) = self.source_to_helper_id[numeric_var_id] {
                         return Ok(ArithmeticExpr::Var(helper_id));
                     }
                     let Some(axiom_id) = self.assignment_lookup[numeric_var_id] else {
@@ -1817,25 +2483,48 @@ pub(crate) fn build_auxiliary_numeric_vars(
                         ArithmeticExpr::op(lhs.clone(), axiom.get_operator().clone(), rhs.clone());
 
                     if !lhs.is_constant() && !rhs.is_constant() {
-                        let helper_id =
-                            self.task.numeric_variables().len() + self.auxiliary_numeric_vars.len();
-                        let mut helper_values = self.base_initial_numeric_values.to_vec();
-                        for auxiliary_numeric_var in &self.auxiliary_numeric_vars {
-                            helper_values.push(auxiliary_numeric_var.initial_value);
-                        }
-                        let initial_value = expr.evaluate(&helper_values);
-                        self.auxiliary_numeric_vars.push(AuxiliaryNumericVar {
-                            helper_id,
-                            source_numeric_var_id: numeric_var_id,
-                            expr: expr.clone(),
-                            initial_value,
-                        });
-                        self.derived_to_helper_id[numeric_var_id] = Some(helper_id);
-                        Ok(ArithmeticExpr::Var(helper_id))
+                        self.create_auxiliary_variable(numeric_var_id, expr)
                     } else {
                         Ok(expr)
                     }
                 }
+            }
+        }
+
+        fn create_auxiliary_variable(
+            &mut self,
+            source_numeric_var_id: usize,
+            expr: ArithmeticExpr,
+        ) -> Result<ArithmeticExpr, ProjectedTaskBuildError> {
+            if let Some(helper_id) = self.source_to_helper_id[source_numeric_var_id] {
+                return Ok(ArithmeticExpr::Var(helper_id));
+            }
+
+            let helper_id = self.task.numeric_variables().len() + self.auxiliary_numeric_vars.len();
+            let mut helper_values = self.base_initial_numeric_values.to_vec();
+            for auxiliary_numeric_var in &self.auxiliary_numeric_vars {
+                helper_values.push(auxiliary_numeric_var.initial_value);
+            }
+            let initial_value = expr.evaluate(&helper_values);
+            self.auxiliary_numeric_vars.push(AuxiliaryNumericVar {
+                helper_id,
+                source_numeric_var_id,
+                expr,
+                initial_value,
+            });
+            self.source_to_helper_id[source_numeric_var_id] = Some(helper_id);
+            Ok(ArithmeticExpr::Var(helper_id))
+        }
+
+        fn parse_comparison_side_as_helper(
+            &mut self,
+            numeric_var_id: usize,
+        ) -> Result<ArithmeticExpr, ProjectedTaskBuildError> {
+            let expr = self.parse_numeric_expression(numeric_var_id)?;
+            if expr.is_constant() {
+                Ok(expr)
+            } else {
+                self.create_auxiliary_variable(numeric_var_id, expr)
             }
         }
     }
@@ -1845,12 +2534,21 @@ pub(crate) fn build_auxiliary_numeric_vars(
         assignment_lookup,
         base_initial_numeric_values,
         auxiliary_numeric_vars: Vec::new(),
-        derived_to_helper_id: vec![None; task.numeric_variables().len()],
+        source_to_helper_id: vec![None; task.numeric_variables().len()],
     };
 
     for numeric_var_id in 0..task.numeric_variables().len() {
         if task.numeric_variables()[numeric_var_id].get_type() == &NumericType::Derived {
             builder.parse_numeric_expression(numeric_var_id)?;
+        }
+    }
+
+    for comparison_axiom in task.comparison_axioms() {
+        let lhs = builder.parse_numeric_expression(comparison_axiom.get_left_var_id())?;
+        let rhs = builder.parse_numeric_expression(comparison_axiom.get_right_var_id())?;
+        if !lhs.is_constant() && !rhs.is_constant() {
+            builder.parse_comparison_side_as_helper(comparison_axiom.get_left_var_id())?;
+            builder.parse_comparison_side_as_helper(comparison_axiom.get_right_var_id())?;
         }
     }
 
@@ -1866,6 +2564,371 @@ pub(crate) fn build_assignment_axiom_lookup(task: &dyn AbstractNumericTask) -> V
         }
     }
     lookup
+}
+
+fn build_comparison_axiom_lookup(
+    task: &dyn AbstractNumericTask,
+    num_vars: usize,
+) -> Vec<Option<usize>> {
+    let mut lookup = vec![None; num_vars];
+    for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
+        let affected = comparison_axiom.get_affected_var_id();
+        if affected < lookup.len() {
+            lookup[affected] = Some(comparison_axiom_id);
+        }
+    }
+    lookup
+}
+
+fn build_propositional_axiom_lookup(
+    task: &dyn AbstractNumericTask,
+    num_vars: usize,
+) -> Vec<Option<usize>> {
+    let mut lookup = vec![None; num_vars];
+    for (axiom_id, axiom) in task.axioms().iter().enumerate() {
+        let affected = axiom.var_id();
+        if affected < lookup.len() {
+            lookup[affected] = Some(axiom_id);
+        }
+    }
+    lookup
+}
+
+fn collect_cpp_like_projected_goals(
+    task: &dyn AbstractNumericTask,
+    pattern: &Pattern,
+    base_initial_numeric_values: &[f64],
+    assignment_lookup: &[Option<usize>],
+    helper_id_by_source_numeric_var: &[Option<usize>],
+    comparison_axiom_by_affected_var: &[Option<usize>],
+    propositional_axiom_by_affected_var: &[Option<usize>],
+    projected_var_to_original: &mut Vec<usize>,
+    original_var_to_projected: &mut [Option<usize>],
+) -> Result<Vec<ExplicitFact>, ProjectedTaskBuildError> {
+    let pattern_numeric: BTreeSet<usize> = pattern.numeric.iter().copied().collect();
+    let mut goals = Vec::new();
+    let mut visited_vars = HashSet::new();
+
+    for goal_index in 0..task.get_num_goals() {
+        let goal = task.get_goal_fact(goal_index);
+        collect_cpp_like_projected_goal_fact(
+            task,
+            goal,
+            &pattern_numeric,
+            base_initial_numeric_values,
+            assignment_lookup,
+            helper_id_by_source_numeric_var,
+            comparison_axiom_by_affected_var,
+            propositional_axiom_by_affected_var,
+            projected_var_to_original,
+            original_var_to_projected,
+            &mut goals,
+            &mut visited_vars,
+        )?;
+    }
+
+    goals.sort();
+    goals.dedup();
+    Ok(goals)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_cpp_like_projected_goal_fact(
+    task: &dyn AbstractNumericTask,
+    fact: &ExplicitFact,
+    pattern_numeric: &BTreeSet<usize>,
+    base_initial_numeric_values: &[f64],
+    assignment_lookup: &[Option<usize>],
+    helper_id_by_source_numeric_var: &[Option<usize>],
+    comparison_axiom_by_affected_var: &[Option<usize>],
+    propositional_axiom_by_affected_var: &[Option<usize>],
+    projected_var_to_original: &mut Vec<usize>,
+    original_var_to_projected: &mut [Option<usize>],
+    goals: &mut Vec<ExplicitFact>,
+    visited_vars: &mut HashSet<usize>,
+) -> Result<(), ProjectedTaskBuildError> {
+    if !visited_vars.insert(fact.var) {
+        return Ok(());
+    }
+
+    if let Some(comparison_axiom_id) = comparison_axiom_by_affected_var
+        .get(fact.var)
+        .and_then(|comparison_axiom_id| *comparison_axiom_id)
+    {
+        if comparison_condition_var_id(
+            task,
+            comparison_axiom_id,
+            base_initial_numeric_values,
+            assignment_lookup,
+            helper_id_by_source_numeric_var,
+        )?
+        .is_some_and(|numeric_var_id| pattern_numeric.contains(&numeric_var_id))
+        {
+            push_unique_mapping(
+                fact.var,
+                projected_var_to_original,
+                original_var_to_projected,
+            );
+            goals.push(fact.clone());
+        }
+        return Ok(());
+    }
+
+    if let Some(axiom_id) = propositional_axiom_by_affected_var
+        .get(fact.var)
+        .and_then(|axiom_id| *axiom_id)
+    {
+        let axiom = &task.axioms()[axiom_id];
+        if axiom.conditions().is_empty() {
+            push_unique_mapping(
+                fact.var,
+                projected_var_to_original,
+                original_var_to_projected,
+            );
+            goals.push(fact.clone());
+        } else {
+            for condition in axiom.conditions() {
+                collect_cpp_like_projected_goal_fact(
+                    task,
+                    condition,
+                    pattern_numeric,
+                    base_initial_numeric_values,
+                    assignment_lookup,
+                    helper_id_by_source_numeric_var,
+                    comparison_axiom_by_affected_var,
+                    propositional_axiom_by_affected_var,
+                    projected_var_to_original,
+                    original_var_to_projected,
+                    goals,
+                    visited_vars,
+                )?;
+            }
+        }
+        return Ok(());
+    }
+
+    push_unique_mapping(
+        fact.var,
+        projected_var_to_original,
+        original_var_to_projected,
+    );
+    goals.push(fact.clone());
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum NumericConditionExpr {
+    Constant(f64),
+    Affine {
+        raw_var_id: usize,
+        coefficient: f64,
+        constant: f64,
+    },
+}
+
+fn comparison_condition_var_id(
+    task: &dyn AbstractNumericTask,
+    comparison_axiom_id: usize,
+    base_initial_numeric_values: &[f64],
+    assignment_lookup: &[Option<usize>],
+    helper_id_by_source_numeric_var: &[Option<usize>],
+) -> Result<Option<usize>, ProjectedTaskBuildError> {
+    let tree = ComparisonTree::from_task(task, comparison_axiom_id).map_err(|_| {
+        ProjectedTaskBuildError::UnsupportedComparisonTree {
+            comparison_axiom_id,
+            reason: "failed to build comparison tree",
+        }
+    })?;
+    ensure_supported_comparison_tree(task, &tree)?;
+
+    let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
+    let left = numeric_condition_expression(
+        task,
+        comparison_axiom_id,
+        comparison_axiom.get_left_var_id(),
+        base_initial_numeric_values,
+        assignment_lookup,
+        helper_id_by_source_numeric_var,
+    )?;
+    let right = numeric_condition_expression(
+        task,
+        comparison_axiom_id,
+        comparison_axiom.get_right_var_id(),
+        base_initial_numeric_values,
+        assignment_lookup,
+        helper_id_by_source_numeric_var,
+    )?;
+
+    Ok(match (left, right) {
+        (NumericConditionExpr::Constant(_), NumericConditionExpr::Constant(_)) => None,
+        (NumericConditionExpr::Affine { raw_var_id, .. }, NumericConditionExpr::Constant(_)) => {
+            Some(raw_var_id)
+        }
+        (_, NumericConditionExpr::Affine { raw_var_id, .. }) => Some(raw_var_id),
+    })
+}
+
+fn numeric_condition_expression(
+    task: &dyn AbstractNumericTask,
+    comparison_axiom_id: usize,
+    numeric_var_id: usize,
+    base_initial_numeric_values: &[f64],
+    assignment_lookup: &[Option<usize>],
+    helper_id_by_source_numeric_var: &[Option<usize>],
+) -> Result<NumericConditionExpr, ProjectedTaskBuildError> {
+    match task.numeric_variables()[numeric_var_id].get_type() {
+        NumericType::Constant | NumericType::Cost => Ok(NumericConditionExpr::Constant(
+            base_initial_numeric_values[numeric_var_id],
+        )),
+        NumericType::Regular => Ok(NumericConditionExpr::Affine {
+            raw_var_id: numeric_var_id,
+            coefficient: 1.0,
+            constant: 0.0,
+        }),
+        NumericType::Derived => {
+            if let Some(helper_id) = helper_id_by_source_numeric_var[numeric_var_id] {
+                return Ok(NumericConditionExpr::Affine {
+                    raw_var_id: helper_id,
+                    coefficient: 1.0,
+                    constant: 0.0,
+                });
+            }
+
+            let Some(axiom_id) = assignment_lookup[numeric_var_id] else {
+                return Err(ProjectedTaskBuildError::MissingAssignmentAxiom { numeric_var_id });
+            };
+            let axiom = &task.assignment_axioms()[axiom_id];
+            ensure_supported_assignment_operator(axiom_id, numeric_var_id, axiom.get_operator())?;
+            let left = numeric_condition_expression(
+                task,
+                comparison_axiom_id,
+                axiom.get_left_var_id(),
+                base_initial_numeric_values,
+                assignment_lookup,
+                helper_id_by_source_numeric_var,
+            )?;
+            let right = numeric_condition_expression(
+                task,
+                comparison_axiom_id,
+                axiom.get_right_var_id(),
+                base_initial_numeric_values,
+                assignment_lookup,
+                helper_id_by_source_numeric_var,
+            )?;
+
+            combine_numeric_condition_expressions(
+                comparison_axiom_id,
+                axiom.get_operator(),
+                left,
+                right,
+            )
+        }
+    }
+}
+
+fn combine_numeric_condition_expressions(
+    comparison_axiom_id: usize,
+    operator: &CalOperator,
+    left: NumericConditionExpr,
+    right: NumericConditionExpr,
+) -> Result<NumericConditionExpr, ProjectedTaskBuildError> {
+    match (operator, left, right) {
+        (
+            CalOperator::Sum,
+            NumericConditionExpr::Constant(lhs),
+            NumericConditionExpr::Constant(rhs),
+        ) => Ok(NumericConditionExpr::Constant(lhs + rhs)),
+        (
+            CalOperator::Sum,
+            NumericConditionExpr::Affine {
+                raw_var_id,
+                coefficient,
+                constant,
+            },
+            NumericConditionExpr::Constant(rhs),
+        )
+        | (
+            CalOperator::Sum,
+            NumericConditionExpr::Constant(rhs),
+            NumericConditionExpr::Affine {
+                raw_var_id,
+                coefficient,
+                constant,
+            },
+        ) => Ok(NumericConditionExpr::Affine {
+            raw_var_id,
+            coefficient,
+            constant: constant + rhs,
+        }),
+        (
+            CalOperator::Difference,
+            NumericConditionExpr::Constant(lhs),
+            NumericConditionExpr::Constant(rhs),
+        ) => Ok(NumericConditionExpr::Constant(lhs - rhs)),
+        (
+            CalOperator::Difference,
+            NumericConditionExpr::Affine {
+                raw_var_id,
+                coefficient,
+                constant,
+            },
+            NumericConditionExpr::Constant(rhs),
+        ) => Ok(NumericConditionExpr::Affine {
+            raw_var_id,
+            coefficient,
+            constant: constant - rhs,
+        }),
+        (
+            CalOperator::Difference,
+            NumericConditionExpr::Constant(lhs),
+            NumericConditionExpr::Affine {
+                raw_var_id,
+                coefficient,
+                constant,
+            },
+        ) => Ok(NumericConditionExpr::Affine {
+            raw_var_id,
+            coefficient: -coefficient,
+            constant: lhs - constant,
+        }),
+        (
+            CalOperator::Product,
+            NumericConditionExpr::Constant(lhs),
+            NumericConditionExpr::Constant(rhs),
+        ) => Ok(NumericConditionExpr::Constant(lhs * rhs)),
+        (
+            CalOperator::Product,
+            NumericConditionExpr::Affine {
+                raw_var_id,
+                coefficient,
+                constant,
+            },
+            NumericConditionExpr::Constant(rhs),
+        )
+        | (
+            CalOperator::Product,
+            NumericConditionExpr::Constant(rhs),
+            NumericConditionExpr::Affine {
+                raw_var_id,
+                coefficient,
+                constant,
+            },
+        ) => Ok(NumericConditionExpr::Affine {
+            raw_var_id,
+            coefficient: coefficient * rhs,
+            constant: constant * rhs,
+        }),
+        (_, NumericConditionExpr::Affine { .. }, NumericConditionExpr::Affine { .. }) => {
+            Err(ProjectedTaskBuildError::UnsupportedComparisonTree {
+                comparison_axiom_id,
+                reason: "comparison side depends on multiple numeric variables",
+            })
+        }
+        (CalOperator::Division, _, _) => Err(ProjectedTaskBuildError::UnsupportedComparisonTree {
+            comparison_axiom_id,
+            reason: "comparison tree uses division",
+        }),
+    }
 }
 
 fn regular_numeric_dependencies(
@@ -2296,11 +3359,10 @@ fn project_propositional_axiom(
     var_map: &[Option<usize>],
 ) -> Option<PropositionalAxiom> {
     let mapped_var = var_map.get(axiom.var_id()).and_then(|mapped| *mapped)?;
-    let conditions: Vec<ExplicitFact> = axiom
-        .conditions()
-        .iter()
-        .filter_map(|fact| project_fact(fact, var_map))
-        .collect();
+    let mut conditions: Vec<ExplicitFact> = Vec::with_capacity(axiom.conditions().len());
+    for fact in axiom.conditions() {
+        conditions.push(project_fact(fact, var_map)?);
+    }
     Some(PropositionalAxiom::new(
         conditions,
         mapped_var,
@@ -2309,26 +3371,248 @@ fn project_propositional_axiom(
     ))
 }
 
+enum ProjectedComparisonOperands {
+    VarConst {
+        raw_var_id: usize,
+        constant: f64,
+        operator: ComparisonOperator,
+    },
+    Vars {
+        left_raw_var_id: usize,
+        right_raw_var_id: usize,
+        operator: ComparisonOperator,
+    },
+}
+
+#[allow(clippy::too_many_arguments)]
 fn project_comparison_axiom(
-    axiom: &ComparisonAxiom,
+    task: &dyn AbstractNumericTask,
+    comparison_axiom_id: usize,
+    base_initial_numeric_values: &[f64],
+    assignment_lookup: &[Option<usize>],
+    helper_id_by_source_numeric_var: &[Option<usize>],
+    auxiliary_numeric_vars: &[AuxiliaryNumericVar],
     var_map: &[Option<usize>],
     num_var_map: &[Option<usize>],
-) -> Option<ComparisonAxiom> {
+    projected_num_var_to_original: &mut Vec<Option<usize>>,
+    is_auxiliary_num_var: &mut Vec<bool>,
+    is_auxiliary_constant: &mut Vec<bool>,
+    auxiliary_exprs: &mut Vec<Option<ArithmeticExpr>>,
+    projected_aux_initial_values: &mut Vec<Option<f64>>,
+    numeric_variables: &mut Vec<NumericVariable>,
+    projected_numeric_values: &mut Vec<f64>,
+) -> Result<Option<ComparisonAxiom>, ProjectedTaskBuildError> {
+    let axiom = &task.comparison_axioms()[comparison_axiom_id];
     let affected = var_map
         .get(axiom.get_affected_var_id())
-        .and_then(|mapped| *mapped)?;
-    let left = num_var_map
-        .get(axiom.get_left_var_id())
-        .and_then(|mapped| *mapped)?;
-    let right = num_var_map
-        .get(axiom.get_right_var_id())
-        .and_then(|mapped| *mapped)?;
-    Some(ComparisonAxiom::new(
-        affected,
+        .and_then(|mapped| *mapped);
+    let Some(affected) = affected else {
+        return Ok(None);
+    };
+
+    let left = numeric_condition_expression(
+        task,
+        comparison_axiom_id,
+        axiom.get_left_var_id(),
+        base_initial_numeric_values,
+        assignment_lookup,
+        helper_id_by_source_numeric_var,
+    )?;
+    let right = numeric_condition_expression(
+        task,
+        comparison_axiom_id,
+        axiom.get_right_var_id(),
+        base_initial_numeric_values,
+        assignment_lookup,
+        helper_id_by_source_numeric_var,
+    )?;
+
+    let operands = normalize_projected_comparison_operands(
+        comparison_axiom_id,
         left,
         right,
-        axiom.get_operator().clone(),
-    ))
+        axiom.get_operator(),
+    )?;
+
+    let Some(operands) = operands else {
+        return Ok(None);
+    };
+
+    let projected_axiom = match operands {
+        ProjectedComparisonOperands::VarConst {
+            raw_var_id,
+            constant,
+            operator,
+        } => {
+            let left = projected_numeric_id_for_condition_var(
+                raw_var_id,
+                task.numeric_variables().len(),
+                auxiliary_numeric_vars,
+                num_var_map,
+            );
+            let Some(left) = left else {
+                return Ok(None);
+            };
+            let right = get_or_add_projected_constant(
+                constant,
+                projected_num_var_to_original,
+                is_auxiliary_num_var,
+                is_auxiliary_constant,
+                auxiliary_exprs,
+                projected_aux_initial_values,
+                numeric_variables,
+                projected_numeric_values,
+            );
+            ComparisonAxiom::new(affected, left, right, operator)
+        }
+        ProjectedComparisonOperands::Vars {
+            left_raw_var_id,
+            right_raw_var_id,
+            operator,
+        } => {
+            let left = projected_numeric_id_for_condition_var(
+                left_raw_var_id,
+                task.numeric_variables().len(),
+                auxiliary_numeric_vars,
+                num_var_map,
+            );
+            let right = projected_numeric_id_for_condition_var(
+                right_raw_var_id,
+                task.numeric_variables().len(),
+                auxiliary_numeric_vars,
+                num_var_map,
+            );
+            let (Some(left), Some(right)) = (left, right) else {
+                return Ok(None);
+            };
+            ComparisonAxiom::new(affected, left, right, operator)
+        }
+    };
+
+    Ok(Some(projected_axiom))
+}
+
+fn projected_numeric_id_for_condition_var(
+    raw_var_id: usize,
+    num_numeric_vars: usize,
+    auxiliary_numeric_vars: &[AuxiliaryNumericVar],
+    num_var_map: &[Option<usize>],
+) -> Option<usize> {
+    if raw_var_id < num_numeric_vars {
+        return num_var_map.get(raw_var_id).and_then(|mapped| *mapped);
+    }
+
+    auxiliary_numeric_vars
+        .get(raw_var_id - num_numeric_vars)
+        .and_then(|auxiliary_numeric_var| {
+            num_var_map
+                .get(auxiliary_numeric_var.source_numeric_var_id)
+                .and_then(|mapped| *mapped)
+        })
+}
+
+fn normalize_projected_comparison_operands(
+    comparison_axiom_id: usize,
+    left: NumericConditionExpr,
+    right: NumericConditionExpr,
+    operator: &ComparisonOperator,
+) -> Result<Option<ProjectedComparisonOperands>, ProjectedTaskBuildError> {
+    match (left, right) {
+        (NumericConditionExpr::Constant(_), NumericConditionExpr::Constant(_)) => Ok(None),
+        (expr @ NumericConditionExpr::Affine { .. }, NumericConditionExpr::Constant(rhs)) => {
+            normalize_affine_comparison(comparison_axiom_id, expr, rhs, operator.clone())
+        }
+        (NumericConditionExpr::Constant(lhs), expr @ NumericConditionExpr::Affine { .. }) => {
+            normalize_affine_comparison(
+                comparison_axiom_id,
+                expr,
+                lhs,
+                flip_comparison_operator(operator),
+            )
+        }
+        (
+            NumericConditionExpr::Affine {
+                raw_var_id: left_raw_var_id,
+                coefficient: left_coefficient,
+                constant: left_constant,
+            },
+            NumericConditionExpr::Affine {
+                raw_var_id: right_raw_var_id,
+                coefficient: right_coefficient,
+                constant: right_constant,
+            },
+        ) => {
+            if approx_eq(left_coefficient, 1.0)
+                && approx_eq(left_constant, 0.0)
+                && approx_eq(right_coefficient, 1.0)
+                && approx_eq(right_constant, 0.0)
+            {
+                Ok(Some(ProjectedComparisonOperands::Vars {
+                    left_raw_var_id,
+                    right_raw_var_id,
+                    operator: operator.clone(),
+                }))
+            } else {
+                Err(ProjectedTaskBuildError::UnsupportedComparisonTree {
+                    comparison_axiom_id,
+                    reason: "comparison requires intermediate numeric state",
+                })
+            }
+        }
+    }
+}
+
+fn normalize_affine_comparison(
+    comparison_axiom_id: usize,
+    expr: NumericConditionExpr,
+    rhs: f64,
+    mut operator: ComparisonOperator,
+) -> Result<Option<ProjectedComparisonOperands>, ProjectedTaskBuildError> {
+    let NumericConditionExpr::Affine {
+        raw_var_id,
+        coefficient,
+        constant,
+    } = expr
+    else {
+        return Ok(None);
+    };
+
+    if approx_eq(coefficient, 0.0) {
+        return Ok(None);
+    }
+
+    let threshold = (rhs - constant) / coefficient;
+    if coefficient < 0.0 {
+        operator = flip_comparison_operator(&operator);
+    }
+
+    if !threshold.is_finite() {
+        return Err(ProjectedTaskBuildError::UnsupportedComparisonTree {
+            comparison_axiom_id,
+            reason: "comparison normalizes to a non-finite threshold",
+        });
+    }
+
+    Ok(Some(ProjectedComparisonOperands::VarConst {
+        raw_var_id,
+        constant: threshold,
+        operator,
+    }))
+}
+
+fn flip_comparison_operator(operator: &ComparisonOperator) -> ComparisonOperator {
+    match operator {
+        ComparisonOperator::LessThan => ComparisonOperator::GreaterThan,
+        ComparisonOperator::LessThanOrEqual => ComparisonOperator::GreaterThanOrEqual,
+        ComparisonOperator::Equal => ComparisonOperator::Equal,
+        ComparisonOperator::UnEqual => ComparisonOperator::UnEqual,
+        ComparisonOperator::GreaterThanOrEqual => ComparisonOperator::LessThanOrEqual,
+        ComparisonOperator::GreaterThan => ComparisonOperator::LessThan,
+    }
+}
+
+fn approx_eq(lhs: f64, rhs: f64) -> bool {
+    (lhs - rhs).abs() < 1e-12
 }
 
 fn project_assignment_axiom(

@@ -88,15 +88,16 @@ fn projected_task_closes_over_relevant_numeric_and_goal_axiom_vars() {
 
     let projected = ProjectedTask::new(&task, &pattern).unwrap();
 
-    assert_eq!(projected.get_num_variables(), 3);
+    assert_eq!(projected.get_num_variables(), 2);
     assert_eq!(projected.numeric_variables().len(), 3);
     assert_eq!(projected.get_num_operators(), 1);
     assert_eq!(projected.get_num_cmp_axioms(), 1);
-    assert_eq!(projected.get_num_axioms(), 1);
+    assert_eq!(projected.get_num_axioms(), 0);
     assert_eq!(projected.get_num_goals(), 1);
+    assert!(projected.supports_direct_concrete_state_projection());
 
     let init_num = projected.get_initial_numeric_state_values();
-    assert_eq!(init_num.as_slice(), &[0.0, 10.0, 10.0]);
+    assert_eq!(init_num.as_slice(), &[0.0, 10.0, 0.0]);
 }
 
 #[test]
@@ -112,7 +113,7 @@ fn projected_task_accepts_subtraction_based_numeric_conditions() {
         Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
+        vec![ExplicitFact::new(1, 0)],
         vec![],
         vec![0, 1],
         vec![1.0, 2.0, 1.0],
@@ -138,8 +139,9 @@ fn projected_task_accepts_subtraction_based_numeric_conditions() {
     .unwrap();
 
     assert_eq!(projected.get_num_cmp_axioms(), 1);
+    assert!(projected.supports_direct_concrete_state_projection());
     let init_num = projected.get_initial_numeric_state_values();
-    assert_eq!(init_num.as_slice(), &[2.0, 1.0, 1.0]);
+    assert_eq!(init_num.as_slice(), &[2.0, 1.0, 2.0]);
 }
 
 #[test]
@@ -456,7 +458,7 @@ fn projected_task_retains_helper_backed_derived_var_when_only_leaves_selected() 
     .unwrap();
 
     assert_eq!(projected.pattern_numeric_projected_ids().len(), 2);
-    assert_eq!(projected.numeric_variables().len(), 4);
+    assert_eq!(projected.numeric_variables().len(), 3);
 
     let mut numeric_names: Vec<_> = projected
         .numeric_variables()
@@ -464,7 +466,7 @@ fn projected_task_retains_helper_backed_derived_var_when_only_leaves_selected() 
         .map(|var| var.name().to_string())
         .collect();
     numeric_names.sort();
-    assert_eq!(numeric_names, vec!["const3", "sum", "x", "y"]);
+    assert_eq!(numeric_names, vec!["const3", "x", "y"]);
 }
 
 #[test]

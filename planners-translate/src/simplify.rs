@@ -2,7 +2,7 @@
 /// Simplification of SAS+ tasks by removing unreachable propositions.
 use std::collections::{HashMap, HashSet};
 
-use log::{Level, debug, info, log_enabled};
+use tracing::{Level, debug, info};
 
 use super::sas_tasks::*;
 
@@ -597,7 +597,7 @@ fn build_renaming(dtgs: &[DomainTransitionGraph]) -> VarValueRenaming {
 /// Simplifies the task in-place. Returns Err(Impossible) or Err(TriviallySolvable)
 /// if the task is detected as unsolvable or trivially solvable.
 pub fn filter_unreachable_propositions(sas_task: &mut SASTask) -> Result<(), SimplifyError> {
-    if log_enabled!(Level::Debug) {
+    if tracing::enabled!(Level::DEBUG) {
         sas_task.validate();
     }
 
@@ -608,7 +608,7 @@ pub fn filter_unreachable_propositions(sas_task: &mut SASTask) -> Result<(), Sim
 
     info!("{} propositions removed", renaming.num_removed_values);
 
-    if log_enabled!(Level::Debug) {
+    if tracing::enabled!(Level::DEBUG) {
         sas_task.validate();
     }
 

@@ -3,7 +3,7 @@ mod tests;
 
 use std::fmt;
 
-use log::info;
+use tracing::info;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use serde::{Deserialize, Serialize};
 

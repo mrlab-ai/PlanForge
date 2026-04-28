@@ -1,4 +1,4 @@
-use log::{debug, info};
+use tracing::{debug, info};
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 
 use super::pattern_database::PatternDatabase;
@@ -9,7 +9,7 @@ pub(crate) fn print_projection_summary(
     pattern: &Pattern,
     projected_task: &ProjectedTask<'_>,
 ) {
-    info!("=== GREEDY NUMERIC PDB ===");
+    info!("=== NUMERIC PDB PROJECTION ===");
     info!(
         "  propositional vars: base={} pattern={} projected={}",
         base.variables().len(),

@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::Write;
 
-use log::debug;
+use tracing::debug;
 
 use crate::helper_functions::InputStream;
 use crate::helper_functions::check_magic;

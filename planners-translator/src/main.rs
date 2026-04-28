@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
-use log::info;
+use tracing::info;
 use planners_translate::normalize;
 use planners_translate::pddl_parser::PddlTask;
 use planners_translator::init_logger;
@@ -31,7 +31,7 @@ enum Commands {
         #[clap(short, long)]
         output: Option<PathBuf>,
         #[arg(long = "log-level")]
-        log_level: Option<log::LevelFilter>,
+        log_level: Option<tracing_subscriber::filter::LevelFilter>,
     },
     // /// Preprocess: read SAS+ from stdin and write a preprocessed search input (writes to stdout or file)
     // Preprocess {
@@ -52,8 +52,7 @@ fn main() -> anyhow::Result<()> {
             output,
             log_level,
         } => {
-            init_logger(log_level.unwrap_or(log::LevelFilter::Info))
-                .expect("Error initialising logging");
+            init_logger(log_level.unwrap_or(tracing_subscriber::filter::LevelFilter::INFO));
 
             let start = Instant::now();
             info!(

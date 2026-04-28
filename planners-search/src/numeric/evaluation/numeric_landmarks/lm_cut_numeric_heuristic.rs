@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::env;
 use std::fmt;
 
-use log::debug;
+use tracing::debug;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use planners_sas::numeric::state_registry::StateID;
 use serde::{Deserialize, Serialize};

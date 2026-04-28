@@ -1,4 +1,4 @@
-use log::debug;
+use tracing::debug;
 use ordered_float::OrderedFloat;
 /// Port of pddl/f_expression.py
 /// Functional expression hierarchy for numeric PDDL.

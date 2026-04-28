@@ -39,7 +39,10 @@ impl CanonicalDomainAbstractionHeuristic {
 
         let mut relevant_operators = Vec::with_capacity(heuristics.len());
         for heuristic in &heuristics {
-            relevant_operators.push(compute_relevant_operator_ids(task, heuristic.abstraction())?);
+            relevant_operators.push(compute_relevant_operator_ids(
+                task,
+                heuristic.abstraction(),
+            )?);
         }
 
         Ok(Self::with_explicit_subsets(
@@ -85,7 +88,10 @@ impl CanonicalDomainAbstractionHeuristic {
         cache[state_id] = Some(value);
     }
 
-    fn evaluate_subsets(&self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+    fn evaluate_subsets(
+        &self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
         if self.max_additive_subsets.is_empty() {
             return Ok(0.0);
         }
@@ -163,9 +169,7 @@ fn compute_relevant_operator_ids(
             )
         })?;
     let operators = generator.build_abstract_operators(task).map_err(|error| {
-        format!(
-            "failed to build abstract operators for canonical domain abstraction: {error:#}"
-        )
+        format!("failed to build abstract operators for canonical domain abstraction: {error:#}")
     })?;
 
     Ok(operators

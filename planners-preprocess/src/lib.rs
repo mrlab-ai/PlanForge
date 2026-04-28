@@ -14,7 +14,7 @@ pub mod variable;
 use std::fs::File;
 use std::io::Read;
 
-use log::{debug, info};
+use tracing::{debug, info};
 
 use crate::causal_graph::CausalGraph;
 use crate::domain_transition_graph::{are_dtgs_strongly_connected, build_dtgs};

@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::info;
+use tracing::info;
 use planners_preprocess::run_preprocess;
 use planners_preprocessor::{PlannersPreprocessorCli, init_logger};
 use planners_translator::translate_to_sas;
@@ -7,8 +7,7 @@ use planners_translator::translate_to_sas;
 fn main() -> std::io::Result<()> {
     let cli = PlannersPreprocessorCli::parse();
 
-    init_logger(cli.log_level.unwrap_or(log::LevelFilter::Info))
-        .expect("Error initialising logging");
+    init_logger(cli.log_level.unwrap_or(tracing_subscriber::filter::LevelFilter::INFO));
     if cli.inputs.len() == 1 {
         run_preprocess(&[cli.inputs[0].to_string(), "output.sas".to_string()]);
     } else if cli.inputs.len() == 2 {

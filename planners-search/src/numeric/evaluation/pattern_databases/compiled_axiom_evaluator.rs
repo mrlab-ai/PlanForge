@@ -68,7 +68,7 @@ impl CompiledAxiomEvaluatorData {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct CompiledAxiomEvaluatorScratch {
     queue: Vec<LiteralRef>,
     unsatisfied_conditions: Vec<usize>,

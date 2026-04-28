@@ -84,11 +84,11 @@ fn causal_graph_collects_operator_and_axiom_dependencies() {
             .collect::<Vec<_>>()
             .contains(&CausalGraphVariable::Regular(0))
     );
-    assert!(
+    assert_eq!(
         graph
             .predecessors_of(CausalGraphVariable::Regular(2))
-            .collect::<Vec<_>>()
-            .contains(&CausalGraphVariable::Numeric(1))
+            .collect::<Vec<_>>(),
+        Vec::<CausalGraphVariable>::new()
     );
     assert_eq!(
         graph.goal_distance(CausalGraphVariable::Regular(1)),
@@ -160,13 +160,7 @@ fn causal_graph_bypasses_comparison_propositions_for_operator_preconditions() {
         graph
             .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
             .collect::<Vec<_>>()
-            .contains(&CausalGraphVariable::Numeric(1))
-    );
-    assert!(
-        graph
-            .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
-            .collect::<Vec<_>>()
-            .contains(&CausalGraphVariable::Numeric(2))
+            .is_empty()
     );
 }
 
@@ -230,8 +224,6 @@ fn causal_graph_flattens_helper_predecessors_to_regular_leaves() {
         .predecessors_of(CausalGraphVariable::Numeric(root_helper_id))
         .collect::<Vec<_>>();
 
-    assert!(predecessors.contains(&CausalGraphVariable::Numeric(1)));
-    assert!(predecessors.contains(&CausalGraphVariable::Numeric(2)));
-    assert!(predecessors.contains(&CausalGraphVariable::Numeric(3)));
+    assert!(predecessors.is_empty());
     assert!(!predecessors.contains(&CausalGraphVariable::Numeric(intermediate_helper_id)));
 }

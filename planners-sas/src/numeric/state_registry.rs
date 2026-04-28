@@ -497,7 +497,7 @@ impl<'a> StateRegistry<'a> {
     /// Log initial state information in debug builds.
     #[cfg(debug_assertions)]
     fn log_initial_state_info(&self, cost_variables: &[f64]) {
-        use log::info;
+        use tracing::info;
 
         let initial_propositional_len = self.task.get_initial_propositional_state_values().len();
         let regular_count = self

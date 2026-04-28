@@ -3,7 +3,9 @@ mod tests;
 
 use std::collections::BTreeSet;
 
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, AssignmentOperation, Operator};
+use planners_sas::numeric::numeric_task::{
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, NumericType, Operator,
+};
 
 use super::numeric_support::NumericSupportContext;
 use super::pattern_collection::PatternCollection;
@@ -80,7 +82,7 @@ pub fn compute_additive_vars(task: &dyn AbstractNumericTask) -> NumericVariableA
             .map(|effect| effect.var_id())
             .collect();
         let numeric_targets =
-            affected_numeric_targets(&numeric_support, &helper_dependency_sets, operator);
+            affected_numeric_targets(task, &numeric_support, &helper_dependency_sets, operator);
 
         for &var1 in &propositional_targets {
             for &var2 in &propositional_targets {
@@ -103,6 +105,7 @@ pub fn compute_additive_vars(task: &dyn AbstractNumericTask) -> NumericVariableA
 }
 
 fn affected_numeric_targets(
+    task: &dyn AbstractNumericTask,
     numeric_support: &NumericSupportContext,
     helper_dependency_sets: &[BTreeSet<usize>],
     operator: &Operator,
@@ -111,6 +114,10 @@ fn affected_numeric_targets(
     let mut direct_targets = BTreeSet::new();
 
     for effect in operator.assignment_effects() {
+        if !assignment_effect_can_change_numeric_value(task, effect) {
+            continue;
+        }
+
         let affected_var_id = effect.affected_var_id();
         direct_targets.insert(affected_var_id);
         targets.insert(affected_var_id);
@@ -142,6 +149,30 @@ fn affected_numeric_targets(
     }
 
     targets
+}
+
+fn assignment_effect_can_change_numeric_value(
+    task: &dyn AbstractNumericTask,
+    effect: &AssignmentEffect,
+) -> bool {
+    match effect.operation() {
+        AssignmentOperation::Plus | AssignmentOperation::Minus => {
+            if task
+                .numeric_variables()
+                .get(effect.var_id())
+                .is_some_and(|numeric_var| numeric_var.get_type() == &NumericType::Constant)
+            {
+                let initial_numeric_values = task.get_initial_numeric_state_values();
+                return initial_numeric_values
+                    .get(effect.var_id())
+                    .is_none_or(|value| *value != 0.0);
+            }
+            true
+        }
+        AssignmentOperation::Assign | AssignmentOperation::Times | AssignmentOperation::Divide => {
+            true
+        }
+    }
 }
 
 pub fn compute_max_additive_subsets(

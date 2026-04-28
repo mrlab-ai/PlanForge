@@ -18,7 +18,12 @@ impl<'task> PdbCollection<'task> {
         patterns: PatternCollection,
         max_pdb_states: usize,
     ) -> Result<Self, String> {
-        Self::with_heuristic_config(task, patterns, max_pdb_states, PdbHeuristicConfig::default())
+        Self::with_heuristic_config(
+            task,
+            patterns,
+            max_pdb_states,
+            PdbHeuristicConfig::default(),
+        )
     }
 
     pub fn with_heuristic_config(
@@ -89,6 +94,12 @@ impl<'task> PdbCollection<'task> {
         self.pdbs
             .iter()
             .any(|pdb| pdb.requires_derived_numeric_values())
+    }
+
+    pub fn supports_direct_concrete_state_projection(&self) -> bool {
+        self.pdbs
+            .iter()
+            .all(|pdb| pdb.task.supports_direct_concrete_state_projection())
     }
 
     pub fn singleton_additive_subsets(&self) -> Vec<Vec<usize>> {

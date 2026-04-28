@@ -7,21 +7,23 @@
 mod tests;
 
 use crate::numeric::{
-    evaluation::g_evaluator::{GEvaluator, SumEvaluator},
     evaluation::heuristic::BlindHeuristic,
-    evaluation::{EvaluationError, EvaluationResult, EvaluationState, Evaluator, Heuristic},
-    open_lists::{OpenList, SearchNode, TieBreakingOpenList},
+    evaluation::{EvaluationError, EvaluationState, Heuristic},
     successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node},
 };
-use log::{debug, info};
+use tracing::{debug, info};
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, ExplicitFact, Operator, metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistry};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+use std::collections::VecDeque;
 use std::env;
 use std::time::{Duration, Instant};
+
+const MEMORY_CHECK_EXPANSION_INTERVAL: usize = 1024;
 
 pub fn compute_effective_operator_costs<'a>(
     task: &'a dyn AbstractNumericTask,
@@ -86,12 +88,104 @@ struct ProgressSnapshot {
 }
 
 /// Simple search node information for tracking parent relationships.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct SearchNodeInfo {
     parent_state: Option<StateID>,
     parent_operator_id: Option<usize>,
     g_value: f64,
     is_dead_end: bool,
+    is_closed: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SearchEvaluation {
+    h_value: f64,
+    f_value: f64,
+    g_value: f64,
+    is_dead_end: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TraceFlags {
+    expanded_states: bool,
+    initial_successors: bool,
+    improved_duplicates: bool,
+    generated_states: bool,
+    evaluated_successors: bool,
+}
+
+impl TraceFlags {
+    fn from_environment() -> Self {
+        Self {
+            expanded_states: env::var_os("TRACE_EXPANDED_STATES").is_some(),
+            initial_successors: env::var_os("TRACE_INITIAL_SUCCESSORS").is_some(),
+            improved_duplicates: env::var_os("TRACE_IMPROVED_DUPLICATES").is_some(),
+            generated_states: env::var_os("TRACE_GENERATED_STATES").is_some(),
+            evaluated_successors: env::var_os("TRACE_EVALUATED_SUCCESSORS").is_some(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OpenEntry {
+    f_value: OrderedFloat<f64>,
+    h_value: OrderedFloat<f64>,
+    g_value: f64,
+    state_id: StateID,
+    insertion_order: usize,
+}
+
+impl PartialEq for OpenEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.f_value == other.f_value
+            && self.h_value == other.h_value
+            && self.insertion_order == other.insertion_order
+    }
+}
+
+impl Eq for OpenEntry {}
+
+impl PartialOrd for OpenEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OpenEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .f_value
+            .cmp(&self.f_value)
+            .then_with(|| other.h_value.cmp(&self.h_value))
+            .then_with(|| other.insertion_order.cmp(&self.insertion_order))
+    }
+}
+
+#[derive(Debug, Default)]
+struct AStarOpenList {
+    heap: BinaryHeap<OpenEntry>,
+    next_insertion_order: usize,
+}
+
+impl AStarOpenList {
+    fn insert(&mut self, state_id: StateID, g_value: f64, h_value: f64, f_value: f64) {
+        self.heap.push(OpenEntry {
+            f_value: OrderedFloat(f_value),
+            h_value: OrderedFloat(h_value),
+            g_value,
+            state_id,
+            insertion_order: self.next_insertion_order,
+        });
+        self.next_insertion_order += 1;
+    }
+
+    fn pop(&mut self) -> Option<OpenEntry> {
+        self.heap.pop()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.heap.is_empty()
+    }
 }
 
 pub trait SearchEngine {
@@ -106,19 +200,19 @@ pub struct AStarSearch<'a> {
     operator_costs: Vec<f64>,
 
     // Search components.
-    open_list: TieBreakingOpenList,
-    closed_set: HashSet<StateID>,
-    search_nodes: HashMap<StateID, SearchNodeInfo>,
+    open_list: AStarOpenList,
+    search_nodes: Vec<Option<SearchNodeInfo>>,
 
     // Evaluators.
     heuristic: Box<dyn Heuristic + 'a>,
-    g_evaluator: GEvaluator,
-    f_evaluator: SumEvaluator,
+    heuristic_name: String,
 
     // Configuration.
     time_limit: Option<Duration>,
     max_memory_bytes: Option<u64>,
     initial_state: Option<ConcreteState>,
+    next_memory_check_expanded: usize,
+    trace_flags: TraceFlags,
 
     // Statistics.
     nodes_evaluated: usize,
@@ -180,30 +274,22 @@ impl<'a> AStarSearch<'a> {
         let heuristic = heuristic.unwrap_or_else(|| {
             Box::new(BlindHeuristic::with_min_action_cost(min_action_cost, None))
         });
-
-        // Create evaluators for A*.
-        let g_evaluator = GEvaluator::new(None);
-        let f_evaluator = SumEvaluator::f_evaluator(heuristic.name());
-
-        // Create open list with `f`-value primary, `h`-value secondary (tie-breaking).
-        let evaluator_names = vec![f_evaluator.name(), heuristic.name()];
-        let open_list = TieBreakingOpenList::new(evaluator_names, true)
-            .expect("A* tie-breaking open list must have at least one evaluator");
+        let heuristic_name = heuristic.name();
 
         Self {
             task,
             state_registry,
             successor_generator,
             operator_costs,
-            open_list,
-            closed_set: HashSet::new(),
-            search_nodes: HashMap::new(),
+            open_list: AStarOpenList::default(),
+            search_nodes: Vec::new(),
             heuristic,
-            g_evaluator,
-            f_evaluator,
+            heuristic_name,
             time_limit,
             max_memory_bytes,
             initial_state: Some(initial_state),
+            next_memory_check_expanded: 0,
+            trace_flags: TraceFlags::from_environment(),
             nodes_evaluated: 0,
             nodes_expanded: 0,
             nodes_reopened: 0,
@@ -219,7 +305,7 @@ impl<'a> AStarSearch<'a> {
         }
     }
 
-    fn resource_limit_status(&self, start_time: &Instant) -> Option<SearchStatus> {
+    fn resource_limit_status(&mut self, start_time: &Instant) -> Option<SearchStatus> {
         if let Some(time_limit) = self.time_limit
             && start_time.elapsed() > time_limit
         {
@@ -227,6 +313,10 @@ impl<'a> AStarSearch<'a> {
         }
 
         if let Some(max_memory_bytes) = self.max_memory_bytes {
+            if self.nodes_expanded < self.next_memory_check_expanded {
+                return None;
+            }
+            self.next_memory_check_expanded = self.nodes_expanded + MEMORY_CHECK_EXPANSION_INTERVAL;
             let current_memory_bytes = current_memory_kb().saturating_mul(1024);
             if current_memory_bytes >= max_memory_bytes {
                 return Some(SearchStatus::MemoryLimitReached);
@@ -234,6 +324,25 @@ impl<'a> AStarSearch<'a> {
         }
 
         None
+    }
+
+    fn ensure_search_node_capacity(&mut self, state_id: StateID) {
+        if state_id >= self.search_nodes.len() {
+            self.search_nodes.resize(state_id + 1, None);
+        }
+    }
+
+    fn search_node_info(&self, state_id: StateID) -> Option<&SearchNodeInfo> {
+        self.search_nodes.get(state_id).and_then(Option::as_ref)
+    }
+
+    fn search_node_info_mut(&mut self, state_id: StateID) -> Option<&mut SearchNodeInfo> {
+        self.search_nodes.get_mut(state_id).and_then(Option::as_mut)
+    }
+
+    fn set_search_node_info(&mut self, state_id: StateID, info: SearchNodeInfo) {
+        self.ensure_search_node_capacity(state_id);
+        self.search_nodes[state_id] = Some(info);
     }
 
     fn terminal_result(&self, status: SearchStatus, start_time: &Instant) -> SearchResult {
@@ -289,19 +398,16 @@ impl<'a> AStarSearch<'a> {
         );
     }
 
-    fn maybe_print_f_layer(&mut self, node: &SearchNode, start_time: &Instant) {
-        let f_value = node
-            .evaluation
-            .get_heuristic_value(&self.f_evaluator.name());
-        self.maybe_print_f_value(f_value, start_time);
+    fn maybe_print_f_layer(&mut self, entry: OpenEntry, start_time: &Instant) {
+        self.maybe_print_f_value(entry.f_value.into_inner(), start_time);
     }
 
     fn maybe_report_heuristic_progress(
         &mut self,
-        evaluation: &EvaluationResult,
+        evaluation: &SearchEvaluation,
         start_time: &Instant,
     ) -> ProgressSnapshot {
-        let h_value = OrderedFloat(evaluation.get_heuristic_value(&self.heuristic.name()));
+        let h_value = OrderedFloat(evaluation.h_value);
         if self
             .best_reported_heuristic_value
             .is_some_and(|best| h_value >= best)
@@ -312,7 +418,7 @@ impl<'a> AStarSearch<'a> {
         self.best_reported_heuristic_value = Some(h_value);
         info!(
             "New best heuristic value for {}: {}",
-            self.heuristic.name(),
+            self.heuristic_name,
             format_progress_value(h_value.into_inner()),
         );
         self.print_checkpoint_line(evaluation.g_value, start_time);
@@ -352,7 +458,7 @@ impl<'a> AStarSearch<'a> {
         let mut plan = Vec::new();
         let mut current_state = goal_state;
 
-        while let Some(node_info) = self.search_nodes.get(&current_state) {
+        while let Some(node_info) = self.search_node_info(current_state) {
             if let (Some(parent_state), Some(operator_id)) =
                 (node_info.parent_state, node_info.parent_operator_id)
             {
@@ -367,12 +473,12 @@ impl<'a> AStarSearch<'a> {
         plan
     }
 
-    /// Evaluate a state and creates evaluation result.
+    /// Evaluate a state for A* without materializing named evaluator results.
     fn evaluate_state(
         &self,
         state: &ConcreteState,
         g_value: f64,
-    ) -> Result<EvaluationResult, Box<dyn std::error::Error>> {
+    ) -> Result<SearchEvaluation, Box<dyn std::error::Error>> {
         let mut eval_state = EvaluationState::new_with_registry(
             state,
             g_value,
@@ -383,26 +489,33 @@ impl<'a> AStarSearch<'a> {
         let is_goal = self.is_goal_state(state);
         eval_state.set_is_goal(is_goal);
 
-        // Evaluate `g`-value.
-        self.g_evaluator.evaluate_state(&mut eval_state)?;
-
-        // Evaluate heuristic (can use goal flag).
-        match self.heuristic.evaluate_state(&mut eval_state) {
-            Ok(_) => {
-                // Evaluate `f`-value
-                self.f_evaluator.evaluate_state(&mut eval_state)?;
+        let evaluation = match self.heuristic.compute_heuristic(&eval_state) {
+            Ok(h_value) if h_value.is_infinite() && h_value.is_sign_positive() => {
+                SearchEvaluation {
+                    h_value,
+                    f_value: f64::INFINITY,
+                    g_value,
+                    is_dead_end: true,
+                }
             }
-            Err(EvaluationError::DeadEnd { .. }) => {
-                // Fast Downward still materializes dead-end evaluations so the
-                // caller can count and prune them consistently.
-                eval_state
-                    .result_mut()
-                    .set_heuristic_value(self.f_evaluator.name(), f64::INFINITY);
+            Ok(h_value) => SearchEvaluation {
+                h_value,
+                f_value: g_value + h_value,
+                g_value,
+                is_dead_end: false,
+            },
+            Err(EvaluationError::DeadEnd { reliable }) => {
+                let _ = reliable;
+                SearchEvaluation {
+                    h_value: f64::INFINITY,
+                    f_value: f64::INFINITY,
+                    g_value,
+                    is_dead_end: true,
+                }
             }
             Err(err) => return Err(Box::new(err)),
-        }
-
-        Ok(eval_state.into_result())
+        };
+        Ok(evaluation)
     }
 
     fn populate_applicable_operators(&mut self, state: &ConcreteState) {
@@ -421,65 +534,84 @@ impl<'a> AStarSearch<'a> {
         }
 
         // Get next node from open list
-        let node = match self.open_list.pop() {
-            Some(node) => node,
+        let entry = match self.open_list.pop() {
+            Some(entry) => entry,
             None => return SearchStatus::Failed,
         };
 
-        let state_id = node.state.get_id();
+        let state_id = entry.state_id;
+        let state = match self.state_registry.lookup_state(state_id) {
+            Ok(state) => state,
+            Err(_) => return SearchStatus::InProgress,
+        };
 
         // Check if already closed.
-        if self.closed_set.contains(&state_id) {
-            return SearchStatus::InProgress;
-        }
-
-        // Check if this node is stale (better path found since it was added to open list).
-        if let Some(current_info) = self.search_nodes.get(&state_id)
-            && current_info.g_value < node.g_value()
+        if self
+            .search_node_info(state_id)
+            .is_some_and(|info| info.is_closed)
         {
             return SearchStatus::InProgress;
         }
 
-        self.maybe_print_f_layer(&node, start_time);
+        // Check if this node is stale (better path found since it was added to open list).
+        if let Some(current_info) = self.search_node_info(state_id)
+            && current_info.g_value < entry.g_value
+        {
+            return SearchStatus::InProgress;
+        }
 
-        if env::var_os("TRACE_EXPANDED_STATES").is_some() {
+        self.maybe_print_f_layer(entry, start_time);
+
+        if self.trace_flags.expanded_states {
             debug!(
                 "TRACE expanded sid={} g={:.17} h={:.17} f={:.17}",
                 state_id,
-                node.g_value(),
-                node.h_value(&self.heuristic.name()),
-                node.evaluation
-                    .get_heuristic_value(&self.f_evaluator.name())
+                entry.g_value,
+                entry.h_value.into_inner(),
+                entry.f_value.into_inner()
             );
         }
 
-        self.closed_set.insert(state_id);
+        if let Some(info) = self.search_node_info_mut(state_id) {
+            info.is_closed = true;
+        } else {
+            self.set_search_node_info(
+                state_id,
+                SearchNodeInfo {
+                    parent_state: None,
+                    parent_operator_id: None,
+                    g_value: entry.g_value,
+                    is_dead_end: false,
+                    is_closed: true,
+                },
+            );
+        }
         self.nodes_expanded += 1;
 
-        if self.is_goal_state(&node.state) {
+        if self.is_goal_state(&state) {
             return SearchStatus::Solved(state_id);
         }
 
         // Get the current best `g`-value for this state.
-        let current_g = if let Some(info) = self.search_nodes.get(&state_id) {
+        let current_g = if let Some(info) = self.search_node_info(state_id) {
             info.g_value
         } else {
             0.0 // Initial state.
         };
 
-        self.populate_applicable_operators(&node.state);
+        self.populate_applicable_operators(&state);
         let mut applicable_operators = std::mem::take(&mut self.applicable_operators_buffer);
         let trace_initial_successors =
-            self.nodes_expanded == 1 && env::var_os("TRACE_INITIAL_SUCCESSORS").is_some();
-        let trace_improved_duplicates = env::var_os("TRACE_IMPROVED_DUPLICATES").is_some();
-        let trace_generated_states = env::var_os("TRACE_GENERATED_STATES").is_some();
-        let trace_evaluated_successors = env::var_os("TRACE_EVALUATED_SUCCESSORS").is_some();
+            self.nodes_expanded == 1 && self.trace_flags.initial_successors;
+        let trace_improved_duplicates = self.trace_flags.improved_duplicates;
+        let trace_generated_states = self.trace_flags.generated_states;
+        let trace_evaluated_successors = self.trace_flags.evaluated_successors;
 
         for (operator, operator_id) in applicable_operators.iter().copied() {
             let (succ_state, op_cost) = match self
                 .state_registry
                 .get_successor_state_with_buffers_and_cost(
-                    &node.state,
+                    &state,
                     operator,
                     &mut self.successor_numeric_values_buffer,
                     &mut self.successor_cost_values_buffer,
@@ -509,11 +641,12 @@ impl<'a> AStarSearch<'a> {
                     format_progress_value(new_g_value)
                 );
             }
-            let was_closed = self.closed_set.contains(&succ_state_id);
 
             // Check if we've seen this state before.
             let mut improved_duplicate = false;
-            if let Some(existing_info) = self.search_nodes.get(&succ_state_id) {
+            let mut was_closed = false;
+            let mut old_g = None;
+            if let Some(existing_info) = self.search_node_info(succ_state_id) {
                 if existing_info.is_dead_end {
                     continue;
                 }
@@ -522,10 +655,14 @@ impl<'a> AStarSearch<'a> {
                     continue;
                 }
                 improved_duplicate = true;
+                was_closed = existing_info.is_closed;
+                old_g = Some(existing_info.g_value);
             }
 
             if was_closed {
-                self.closed_set.remove(&succ_state_id);
+                if let Some(existing_info) = self.search_node_info_mut(succ_state_id) {
+                    existing_info.is_closed = false;
+                }
                 self.nodes_reopened += 1;
             }
 
@@ -542,8 +679,8 @@ impl<'a> AStarSearch<'a> {
                         succ_state_id,
                         operator.name(),
                         new_g_value,
-                        evaluation.get_heuristic_value(&self.heuristic.name()),
-                        evaluation.get_heuristic_value(&self.f_evaluator.name()),
+                        evaluation.h_value,
+                        evaluation.f_value,
                         evaluation.is_dead_end,
                     );
                 }
@@ -553,14 +690,11 @@ impl<'a> AStarSearch<'a> {
                         "TRACE improved-duplicate sid={} op={} old_g={} new_g={} h={} dead_end={}",
                         succ_state_id,
                         operator.name(),
-                        self.search_nodes
-                            .get(&succ_state_id)
-                            .map(|info| format_progress_value(info.g_value))
+                        old_g
+                            .map(format_progress_value)
                             .unwrap_or_else(|| "<missing>".to_string()),
                         format_progress_value(new_g_value),
-                        format_progress_value(
-                            evaluation.get_heuristic_value(&self.heuristic.name())
-                        ),
+                        format_progress_value(evaluation.h_value),
                         evaluation.is_dead_end,
                     );
                 }
@@ -570,37 +704,35 @@ impl<'a> AStarSearch<'a> {
                     parent_operator_id: Some(operator_id),
                     g_value: new_g_value,
                     is_dead_end: evaluation.is_dead_end,
+                    is_closed: false,
                 };
 
                 // Record/update best `g`-value, parent pointers, and dead-end status.
-                self.search_nodes.insert(succ_state_id, node_info);
+                self.set_search_node_info(succ_state_id, node_info);
 
                 if trace_initial_successors {
-                    let h_value = evaluation.get_heuristic_value(&self.heuristic.name());
-                    let f_value = evaluation.get_heuristic_value(&self.f_evaluator.name());
                     debug!(
                         "TRACE initial-successor op={} g={} h={} f={} dead_end={} state_id={}",
                         operator.name(),
                         format_progress_value(new_g_value),
-                        format_progress_value(h_value),
-                        format_progress_value(f_value),
+                        format_progress_value(evaluation.h_value),
+                        format_progress_value(evaluation.f_value),
                         evaluation.is_dead_end,
                         succ_state_id
                     );
                 }
                 if evaluation.is_dead_end {
                     self.dead_ends += 1;
-                    if !self.open_list.accepts_dead_ends() {
-                        continue;
-                    }
+                    continue;
                 }
 
-                if !evaluation.is_dead_end {
-                    let _ = self.maybe_report_heuristic_progress(&evaluation, start_time);
-                }
-
-                let search_node = SearchNode::root(succ_state, evaluation);
-                self.open_list.insert(search_node);
+                let _ = self.maybe_report_heuristic_progress(&evaluation, start_time);
+                self.open_list.insert(
+                    succ_state_id,
+                    new_g_value,
+                    evaluation.h_value,
+                    evaluation.f_value,
+                );
             }
         }
 
@@ -631,16 +763,17 @@ impl<'a> SearchEngine for AStarSearch<'a> {
                 let progress =
                     self.maybe_report_heuristic_progress(&initial_evaluation, &start_time);
                 if progress.improved {
-                    self.maybe_print_f_value(
-                        initial_evaluation.get_heuristic_value(&self.f_evaluator.name()),
-                        &start_time,
-                    );
+                    self.maybe_print_f_value(initial_evaluation.f_value, &start_time);
                 }
             }
 
-            let initial_node = SearchNode::root(initial_state.clone(), initial_evaluation);
-            if !initial_node.is_dead_end() || self.open_list.accepts_dead_ends() {
-                self.open_list.insert(initial_node);
+            if !initial_evaluation.is_dead_end {
+                self.open_list.insert(
+                    initial_state.get_id(),
+                    0.0,
+                    initial_evaluation.h_value,
+                    initial_evaluation.f_value,
+                );
             }
 
             self.print_initial_h_values();
@@ -652,9 +785,9 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             parent_operator_id: None,
             g_value: 0.0,
             is_dead_end: false,
+            is_closed: false,
         };
-        self.search_nodes
-            .insert(initial_state.get_id(), initial_info);
+        self.set_search_node_info(initial_state.get_id(), initial_info);
 
         // Main search loop.
         loop {
@@ -666,8 +799,7 @@ impl<'a> SearchEngine for AStarSearch<'a> {
                     // Use the goal state ID returned from step()
                     let plan = self.extract_plan(goal_state_id);
                     let solution_cost = self
-                        .search_nodes
-                        .get(&goal_state_id)
+                        .search_node_info(goal_state_id)
                         .map(|info| info.g_value);
 
                     return SearchResult {
@@ -707,8 +839,8 @@ impl<'a> SearchEngine for AStarSearch<'a> {
         if let Ok(evaluation) = self.evaluate_state(&initial_state, 0.0) {
             info!(
                 "Initial heuristic value for {}: {}",
-                self.heuristic.name(),
-                format_progress_value(evaluation.get_heuristic_value(&self.heuristic.name()))
+                self.heuristic_name,
+                format_progress_value(evaluation.h_value)
             );
         }
     }

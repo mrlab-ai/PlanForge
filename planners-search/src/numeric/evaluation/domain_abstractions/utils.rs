@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt::Write as _;
 
-use log::debug;
+use tracing::debug;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;

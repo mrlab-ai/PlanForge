@@ -8,4 +8,4 @@ license = "LGPL-3.0"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
-log = { version = "0.4", features = ["serde"] }
+tracing = "0.1"

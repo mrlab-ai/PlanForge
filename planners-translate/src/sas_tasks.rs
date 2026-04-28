@@ -2,7 +2,7 @@
 /// SAS+ task representation for the planner output format.
 use std::io::Write;
 
-use log::debug;
+use tracing::debug;
 
 pub const SAS_FILE_VERSION: i32 = 4;
 

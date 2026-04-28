@@ -2,7 +2,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use log::{debug, warn};
+use tracing::{debug, warn};
 
 use super::actions::Action;
 use super::axioms::{Axiom, NumericAxiom};

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 
-use log::info;
+use tracing::info;
 
 use super::axiom_rules;
 use super::fact_groups;

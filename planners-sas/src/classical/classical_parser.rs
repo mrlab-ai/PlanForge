@@ -1,5 +1,5 @@
 use crate::classical::classical_task::{Axiom, Effect, ExplicitVariable, Fact, Operator, RootTask};
-use log::info;
+use tracing::info;
 use nom::{
     IResult, Parser,
     bytes::complete::tag,
