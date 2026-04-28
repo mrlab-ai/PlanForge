@@ -309,7 +309,10 @@ fn goal_variable_values_expand_goal_axiom_preconditions() {
         ExplicitFact::new(0, 0),
     );
 
-    assert_eq!(goal_variable_values(&task), vec![(0, 1), (1, 1)]);
+    assert_eq!(
+        goal_variable_values(&task),
+        vec![ExplicitFact::new(0, 1), ExplicitFact::new(1, 1)]
+    );
 }
 
 #[test]
