@@ -209,6 +209,21 @@ fn has_cross_list_conflict(a: &[ExplicitFact], b: &[ExplicitFact]) -> bool {
     false
 }
 
+fn transition_vars_match(pre_pairs: &[ExplicitFact], eff_pairs: &[ExplicitFact]) -> bool {
+    pre_pairs.len() == eff_pairs.len()
+        && pre_pairs
+            .iter()
+            .zip(eff_pairs.iter())
+            .all(|(pre, eff)| pre.var == eff.var)
+}
+
+fn fact_value_for_var(facts: &[ExplicitFact], var_id: usize) -> Option<usize> {
+    facts
+        .binary_search_by_key(&var_id, |f| f.var)
+        .ok()
+        .map(|idx| facts[idx].value)
+}
+
 fn build_candidate_from_transition(
     skeleton: &AbstractOperatorSkeleton,
     trans: &TransitionInfo,
@@ -237,15 +252,21 @@ fn build_candidate_from_transition(
             (None, None) => unreachable!(),
         };
 
-        if skeleton.pre_pairs.binary_search_by_key(&var_id, |f| f.var).is_err() {
-            if let Some(src) = source
-                && src.var == var_id
-            {
+        if let Some(src) = source
+            && src.var == var_id
+        {
+            if let Some(existing) = fact_value_for_var(&skeleton.pre_pairs, var_id) {
+                if existing != src.value {
+                    return None;
+                }
+            } else {
                 extended_pre_pairs.push(src.clone());
             }
-            if let Some(tgt) = target
-                && tgt.var == var_id
-            {
+        }
+        if let Some(tgt) = target
+            && tgt.var == var_id
+        {
+            if fact_value_for_var(&skeleton.eff_pairs, var_id).is_none() {
                 extended_eff_pairs.push(tgt.clone());
             }
         }
@@ -279,6 +300,7 @@ fn build_candidate_from_transition(
         || has_in_list_conflict(&extended_prev_pairs)
         || has_cross_list_conflict(&extended_pre_pairs, &extended_prev_pairs)
         || has_cross_list_conflict(&extended_prev_pairs, &extended_eff_pairs)
+        || !transition_vars_match(&extended_pre_pairs, &extended_eff_pairs)
     {
         return None;
     }
@@ -934,6 +956,7 @@ fn multiply_out_propositional(
             || has_in_list_conflict(prev_pairs)
             || has_cross_list_conflict(pre_pairs, prev_pairs)
             || has_cross_list_conflict(prev_pairs, eff_pairs)
+            || !transition_vars_match(pre_pairs, eff_pairs)
         {
             return Ok(Vec::new());
         }

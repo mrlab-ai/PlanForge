@@ -22,7 +22,7 @@ use crate::numeric::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::Lan
 use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator};
 
 use super::projected_task::{PatternLookupProjection, ProjectedTask};
-use super::utils;
+//use super::utils;
 
 #[inline]
 fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
@@ -535,7 +535,7 @@ impl<'task> PatternDatabase<'task> {
             pdb.task.state_dependent_numeric_projected_ids();
         pdb.build(max_states)?;
         // NOTE: Uncomment to print summary of the built PDB.
-        utils::dump_distance_table(&pdb);
+        // utils::dump_distance_table(&pdb);
         Ok(pdb)
     }
 
