@@ -1239,3 +1239,262 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
             .contains("assignment effects require constant RHS")
     );
 }
+
+fn trivial_mapping(task: &dyn AbstractNumericTask) -> (DomainMapping, Vec<usize>) {
+    let mut domain_mapping = Vec::with_capacity(task.get_num_variables());
+    let mut domain_sizes = Vec::with_capacity(task.get_num_variables());
+    for var_id in 0..task.get_num_variables() {
+        let size = task.get_variable_domain_size(var_id).unwrap();
+        domain_mapping.push(vec![0; size]);
+        domain_sizes.push(1);
+    }
+    (domain_mapping, domain_sizes)
+}
+
+#[test]
+fn incremental_cache_matches_full_rebuild_after_propositional_refinement() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["0".into(), "1".into()],
+        None,
+        0,
+    )];
+    let op0 = Operator::new(
+        "set-a".into(),
+        vec![],
+        vec![Effect::new(vec![], 0, Some(0), 1)],
+        vec![],
+        1,
+    );
+    let op1 = Operator::new(
+        "set-b".into(),
+        vec![],
+        vec![Effect::new(vec![], 0, Some(0), 1)],
+        vec![],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0],
+        vec![],
+        vec![op0, op1],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let (domain_mapping, domain_sizes) = trivial_mapping(&task);
+    let partitions = NumericPartitions::trivial(&task);
+    let numeric_domain_sizes = Vec::new();
+    let mut warm_generator = AbstractOperatorGenerator::new(
+        &task,
+        domain_mapping.clone(),
+        domain_sizes.clone(),
+        partitions.clone(),
+        numeric_domain_sizes.clone(),
+        true,
+    )
+    .unwrap();
+    let mut cache = IncrementalAbstractOperatorCache::default();
+    let warm_ops = warm_generator
+        .build_abstract_operators_with_cache(&task, &mut cache)
+        .unwrap();
+    assert!(warm_ops.is_empty());
+
+    let mut refined_mapping = domain_mapping;
+    let mut refined_domain_sizes = domain_sizes;
+    refined_mapping[0][1] = 1;
+    refined_domain_sizes[0] = 2;
+
+    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
+    summary.refined_propositional_vars.insert(0);
+    cache.mark_refined(&summary);
+
+    let mut incremental_generator = AbstractOperatorGenerator::new(
+        &task,
+        refined_mapping.clone(),
+        refined_domain_sizes.clone(),
+        partitions.clone(),
+        numeric_domain_sizes.clone(),
+        true,
+    )
+    .unwrap();
+    let cached_ops = incremental_generator
+        .build_abstract_operators_with_cache(&task, &mut cache)
+        .unwrap();
+
+    let mut full_generator = AbstractOperatorGenerator::new(
+        &task,
+        refined_mapping,
+        refined_domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+        true,
+    )
+    .unwrap();
+    let full_ops = full_generator.build_abstract_operators(&task).unwrap();
+
+    assert_eq!(cached_ops, full_ops);
+    assert_eq!(cached_ops.len(), 1);
+    assert_eq!(cached_ops[0].concrete_op_ids, vec![0, 1]);
+}
+
+#[test]
+fn incremental_cache_matches_full_rebuild_after_numeric_refinement() {
+    let variables: Vec<ExplicitVariable> = vec![];
+    let numeric_variables = vec![
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
+    ];
+    let op = Operator::new(
+        "inc".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 1.0],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let mut cache = IncrementalAbstractOperatorCache::default();
+    let initial_partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::unbounded()],
+        vec![Interval::singleton(1.0)],
+    ]);
+    let mut warm_generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        initial_partitions,
+        vec![1, 1],
+        true,
+    )
+    .unwrap();
+    let _ = warm_generator
+        .build_abstract_operators_with_cache(&task, &mut cache)
+        .unwrap();
+
+    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
+    summary.refined_numeric_vars.insert(0);
+    cache.mark_refined(&summary);
+
+    let refined_partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::new(f64::NEG_INFINITY, 0.0, false, false),
+            Interval::new(0.0, f64::INFINITY, true, false),
+        ],
+        vec![Interval::singleton(1.0)],
+    ]);
+    let mut incremental_generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        refined_partitions.clone(),
+        vec![2, 1],
+        true,
+    )
+    .unwrap();
+    let cached_ops = incremental_generator
+        .build_abstract_operators_with_cache(&task, &mut cache)
+        .unwrap();
+
+    let mut full_generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        refined_partitions,
+        vec![2, 1],
+        true,
+    )
+    .unwrap();
+    let full_ops = full_generator.build_abstract_operators(&task).unwrap();
+
+    assert_eq!(cached_ops, full_ops);
+}
+
+#[test]
+fn minecraft_output_incremental_cache_matches_full_rebuild() {
+    let task_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("test_outputs/minecraft.output");
+    let task = NumericRootTask::from_file(&task_path);
+
+    let (domain_mapping, domain_sizes) = trivial_mapping(&task);
+    let partitions = NumericPartitions::trivial(&task);
+    let numeric_domain_sizes = vec![1; task.numeric_variables().len()];
+
+    let mut cache = IncrementalAbstractOperatorCache::default();
+    let mut warm_generator = AbstractOperatorGenerator::new(
+        &task,
+        domain_mapping.clone(),
+        domain_sizes.clone(),
+        partitions.clone(),
+        numeric_domain_sizes.clone(),
+        true,
+    )
+    .unwrap();
+    let _ = warm_generator
+        .build_abstract_operators_with_cache(&task, &mut cache)
+        .unwrap();
+
+    let refined_var = (0..task.get_num_variables())
+        .find(|&var_id| task.get_variable_domain_size(var_id).unwrap_or(0) > 1)
+        .expect("minecraft fixture should have a non-trivial propositional variable");
+    let refine_value = 1usize;
+
+    let mut refined_mapping = domain_mapping;
+    let mut refined_domain_sizes = domain_sizes;
+    refined_mapping[refined_var][refine_value] = 1;
+    refined_domain_sizes[refined_var] = 2;
+
+    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
+    summary.refined_propositional_vars.insert(refined_var);
+    cache.mark_refined(&summary);
+
+    let mut incremental_generator = AbstractOperatorGenerator::new(
+        &task,
+        refined_mapping.clone(),
+        refined_domain_sizes.clone(),
+        partitions.clone(),
+        numeric_domain_sizes.clone(),
+        true,
+    )
+    .unwrap();
+    let cached_ops = incremental_generator
+        .build_abstract_operators_with_cache(&task, &mut cache)
+        .unwrap();
+
+    let mut full_generator = AbstractOperatorGenerator::new(
+        &task,
+        refined_mapping,
+        refined_domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+        true,
+    )
+    .unwrap();
+    let full_ops = full_generator.build_abstract_operators(&task).unwrap();
+
+    assert_eq!(cached_ops, full_ops);
+}

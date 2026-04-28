@@ -257,7 +257,7 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
     )
     .unwrap();
 
-    assert!(!refined);
+    assert!(refined.is_empty());
     assert_eq!(domain_sizes, vec![1]);
     assert_eq!(domain_mapping, vec![vec![0, 0]]);
     assert!(blacklisted_prop_var_ids.contains(&0));
@@ -317,7 +317,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
     )
     .unwrap();
 
-    assert!(!refined);
+    assert!(refined.is_empty());
     assert_eq!(domain_sizes, vec![1]);
 }
 

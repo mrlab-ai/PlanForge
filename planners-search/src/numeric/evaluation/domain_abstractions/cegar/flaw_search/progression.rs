@@ -81,8 +81,10 @@ pub fn get_progression_flaws(
                 )?;
                 if !flawed {
                     collected_flaws.clear();
-                    prop_state = next_prop_state.take().unwrap();
-                    numeric_state = next_numeric_state.take().unwrap();
+                    if !execute_entire_plan {
+                        prop_state = next_prop_state.take().unwrap();
+                        numeric_state = next_numeric_state.take().unwrap();
+                    }
                     break;
                 }
             } else {
@@ -108,8 +110,14 @@ pub fn get_progression_flaws(
                 )?;
             }
 
-            prop_state = next_prop_state.take().unwrap();
-            numeric_state = next_numeric_state.take().unwrap();
+            let Some(next_prop) = next_prop_state.take() else {
+                break;
+            };
+            let Some(next_numeric) = next_numeric_state.take() else {
+                break;
+            };
+            prop_state = next_prop;
+            numeric_state = next_numeric;
         } else if !collected_flaws.is_empty() {
             break;
         }

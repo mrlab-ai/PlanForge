@@ -12,7 +12,7 @@ use rand::{SeedableRng, rngs::SmallRng};
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 
 use super::abstract_operator_generator::{
-    AbstractOperator, AbstractOperatorGenerator, DomainMapping,
+    AbstractOperator, AbstractOperatorGenerator, DomainMapping, IncrementalAbstractOperatorCache,
 };
 use super::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
@@ -428,11 +428,12 @@ impl DomainAbstractionFactory {
         use_wildcard_plans: bool,
     ) -> Result<Option<WildcardPlanResult>> {
         let mut local_rng = Some(SmallRng::seed_from_u64(current_time_seed()));
-        self.compute_plan_with_rng(
+        self.compute_plan_with_rng_and_cache(
             task,
             combine_labels,
             dump_distances,
             use_wildcard_plans,
+            None,
             local_rng.as_mut(),
         )
     }
@@ -445,8 +446,31 @@ impl DomainAbstractionFactory {
         use_wildcard_plans: bool,
         plan_step_rng: Option<&mut SmallRng>,
     ) -> Result<Option<WildcardPlanResult>> {
+        self.compute_plan_with_rng_and_cache(
+            task,
+            combine_labels,
+            dump_distances,
+            use_wildcard_plans,
+            None,
+            plan_step_rng,
+        )
+    }
+
+    pub(crate) fn compute_plan_with_rng_and_cache(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        dump_distances: bool,
+        use_wildcard_plans: bool,
+        operator_cache: Option<&mut IncrementalAbstractOperatorCache>,
+        plan_step_rng: Option<&mut SmallRng>,
+    ) -> Result<Option<WildcardPlanResult>> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
-        let operators = generator.build_abstract_operators(task)?;
+        let operators = if let Some(cache) = operator_cache {
+            generator.build_abstract_operators_with_cache(task, cache)?
+        } else {
+            generator.build_abstract_operators(task)?
+        };
         let table =
             self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)?;
 
