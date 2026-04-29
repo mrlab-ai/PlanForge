@@ -944,19 +944,22 @@ fn multiply_out_propositional(
             return Ok(Vec::new());
         }
 
-        pre_pairs.sort();
-        eff_pairs.sort();
-        prev_pairs.sort();
-        pre_pairs.dedup();
-        eff_pairs.dedup();
-        prev_pairs.dedup();
+        let mut normalized_pre_pairs = pre_pairs.clone();
+        let mut normalized_eff_pairs = eff_pairs.clone();
+        let mut normalized_prev_pairs = prev_pairs.clone();
+        normalized_pre_pairs.sort();
+        normalized_eff_pairs.sort();
+        normalized_prev_pairs.sort();
+        normalized_pre_pairs.dedup();
+        normalized_eff_pairs.dedup();
+        normalized_prev_pairs.dedup();
 
-        if has_in_list_conflict(pre_pairs)
-            || has_in_list_conflict(eff_pairs)
-            || has_in_list_conflict(prev_pairs)
-            || has_cross_list_conflict(pre_pairs, prev_pairs)
-            || has_cross_list_conflict(prev_pairs, eff_pairs)
-            || !transition_vars_match(pre_pairs, eff_pairs)
+        if has_in_list_conflict(&normalized_pre_pairs)
+            || has_in_list_conflict(&normalized_eff_pairs)
+            || has_in_list_conflict(&normalized_prev_pairs)
+            || has_cross_list_conflict(&normalized_pre_pairs, &normalized_prev_pairs)
+            || has_cross_list_conflict(&normalized_prev_pairs, &normalized_eff_pairs)
+            || !transition_vars_match(&normalized_pre_pairs, &normalized_eff_pairs)
         {
             return Ok(Vec::new());
         }
@@ -964,9 +967,9 @@ fn multiply_out_propositional(
         return Ok(vec![AbstractOperatorSkeleton {
             concrete_op_id,
             cost,
-            prev_pairs: prev_pairs.clone(),
-            pre_pairs: pre_pairs.clone(),
-            eff_pairs: eff_pairs.clone(),
+            prev_pairs: normalized_prev_pairs,
+            pre_pairs: normalized_pre_pairs,
+            eff_pairs: normalized_eff_pairs,
             ass_effects: ass_effects.to_vec(),
             op_preconditions: op_preconditions.to_vec(),
         }]);

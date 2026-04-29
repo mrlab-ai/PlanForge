@@ -12,6 +12,56 @@ use crate::numeric::evaluation::domain_abstractions::comparison_expression::Inte
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
 
 #[test]
+fn propositional_effect_without_precondition_preserves_sibling_branches() {
+    let variables = vec![
+        ExplicitVariable::new(2, "changed".into(), vec!["c0".into(), "c1".into()], None, 0),
+        ExplicitVariable::new(2, "prevail".into(), vec!["p0".into(), "p1".into()], None, 0),
+    ];
+    let op = Operator::new(
+        "set_changed".into(),
+        vec![ExplicitFact::new(1, 0)],
+        vec![planners_sas::numeric::numeric_task::Effect::new(
+            vec![],
+            0,
+            None,
+            0,
+        )],
+        vec![],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        vec![],
+        vec![ExplicitFact::new(0, 0)],
+        vec![],
+        vec![1, 0],
+        vec![],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let partitions = NumericPartitions::trivial(&task);
+    let mut generator =
+        AbstractOperatorGenerator::new_with_identity_mapping(&task, partitions, vec![], true)
+            .unwrap();
+
+    let operators = generator.build_abstract_operators(&task).unwrap();
+
+    assert!(
+        operators.iter().any(|op| {
+            op.preconditions == vec![ExplicitFact::new(0, 1), ExplicitFact::new(1, 0)]
+                && op.regression_preconditions
+                    == vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)]
+        }),
+        "expected the branch changing changed=1 to changed=0 to survive"
+    );
+}
+
+#[test]
 fn numeric_partition_transitions_and_comparison_filtering() {
     // Propositional var 0 is the derived comparison var for (x0 < c10).
     let variables = vec![ExplicitVariable::new(
