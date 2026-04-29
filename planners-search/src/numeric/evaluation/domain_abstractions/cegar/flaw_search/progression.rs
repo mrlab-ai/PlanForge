@@ -25,7 +25,6 @@ pub fn get_progression_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
     wildcard_plan: &WildcardPlanResult,
-    execute_entire_plan: bool,
 ) -> Result<Vec<Flaw>> {
     let comparison_index = ComparisonAxiomIndex::from_task(task)
         .map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
@@ -49,15 +48,10 @@ pub fn get_progression_flaws(
             "WildcardPlanResult abstract_numeric_states too short for step {step_num}"
         );
 
-        let mut chosen_op: Option<&Operator> = None;
-        let mut fallback_op: Option<&Operator> = None;
         for &op_id in equivalent_ops.iter() {
             let Some(op) = task.get_operators().get(op_id) else {
                 continue;
             };
-            if fallback_op.is_none() {
-                fallback_op = Some(op);
-            }
             let operator_flaws = get_progression_precondition_flaws(
                 task,
                 partitions,
@@ -68,7 +62,6 @@ pub fn get_progression_flaws(
                 &numeric_state,
             );
             if operator_flaws.is_empty() {
-                chosen_op = Some(op);
                 (next_prop_state, next_numeric_state, flawed) = progress_and_get_deviation_flaws(
                     &prop_state,
                     &numeric_state,
@@ -90,34 +83,14 @@ pub fn get_progression_flaws(
             }
         }
 
-        if execute_entire_plan {
-            // Progress and find flaws in the fallback operator only if it has
-            // not been done in any other operator.
-            if let Some(op) = fallback_op
-                && chosen_op.is_none()
-            {
-                (next_prop_state, next_numeric_state, flawed) = progress_and_get_deviation_flaws(
-                    &prop_state,
-                    &numeric_state,
-                    expected_abs_numeric_state,
-                    &state_packer,
-                    &axiom_evaluator,
-                    op,
-                    partitions,
-                    &mut collected_flaws,
-                )?;
-            }
-
-            prop_state = next_prop_state.take().unwrap();
-            numeric_state = next_numeric_state.take().unwrap();
-        } else if !collected_flaws.is_empty() {
+        if !collected_flaws.is_empty() {
             break;
         }
 
         step_num += 1;
     }
 
-    if !execute_entire_plan && !collected_flaws.is_empty() {
+    if !collected_flaws.is_empty() {
         return Ok(collected_flaws);
     }
 
@@ -129,17 +102,13 @@ pub fn get_progression_flaws(
         &prop_state,
         &numeric_state,
     );
-    if execute_entire_plan {
-        collected_flaws.extend(goal_flaws);
-        Ok(collected_flaws)
-    } else {
-        Ok(goal_flaws)
-    }
+
+    Ok(goal_flaws)
 }
 
 type OptionalPropAndNumStateAndFlawed = (Option<Vec<u64>>, Option<Vec<f64>>, bool);
 #[allow(clippy::too_many_arguments)]
-fn progress_and_get_deviation_flaws(
+pub(crate) fn progress_and_get_deviation_flaws(
     prop_state: &[u64],
     numeric_state: &[f64],
     expected_abs_numeric_state: &[usize],
@@ -276,7 +245,7 @@ pub fn get_progression_precondition_flaws(
     out
 }
 
-fn get_goal_flaws(
+pub fn get_goal_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
     comparison_index: &ComparisonAxiomIndex,

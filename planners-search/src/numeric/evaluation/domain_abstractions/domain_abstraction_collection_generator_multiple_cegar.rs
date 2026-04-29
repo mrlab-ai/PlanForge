@@ -4,7 +4,6 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use tracing::info;
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
 use planners_sas::numeric::numeric_task::{
@@ -14,11 +13,11 @@ use planners_sas::numeric::numeric_task::{
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::numeric::evaluation::domain_abstractions::cegar::FlawKind;
 
 use super::cegar::CegarConfig;
-pub use super::cegar::flaw_search::ExecEntirePlanMode;
 pub use super::cegar::flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::domain_abstraction_generator::DomainAbstractionGenerator;
@@ -96,7 +95,6 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub numeric_split_strategy: NumericSplitStrategy,
-    pub exec_entire_plan: ExecEntirePlanMode,
 }
 
 impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
@@ -120,7 +118,6 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,
-            exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
         }
     }
 }
@@ -155,7 +152,6 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
                 "numeric_split_strategy={}, ",
-                "exec_entire_plan={}, ",
             ),
             self.max_abstraction_size,
             self.max_collection_size,
@@ -174,7 +170,6 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.flaw_treatment,
             self.init_split_method,
             self.numeric_split_strategy,
-            self.exec_entire_plan,
         )
     }
 }
@@ -245,7 +240,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 InitSplitQuantity::None => InitSplitMethod::Identity,
                 InitSplitQuantity::Single | InitSplitQuantity::All => self.config.init_split_method,
             },
-            exec_entire_plan: self.config.exec_entire_plan,
             init_split_var_ids,
             blacklisted_prop_var_ids,
             blacklisted_numeric_var_ids,

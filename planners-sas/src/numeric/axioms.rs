@@ -57,10 +57,10 @@ pub enum CalOperator {
 }
 #[derive(Debug, Clone)]
 pub struct AssignmentAxiom {
-    affected_var_id: usize,
-    operator: CalOperator,
-    left_hand_side: usize,
-    right_hand_side: usize,
+    pub affected_var_id: usize,
+    pub operator: CalOperator,
+    pub left_hand_side: usize,
+    pub right_hand_side: usize,
 }
 
 impl AssignmentAxiom {
@@ -155,10 +155,10 @@ impl ComparisonOperator {
 
 #[derive(Debug, Clone)]
 pub struct ComparisonAxiom {
-    affected_var_id: usize,
-    left_hand_side: usize,
-    right_hand_side: usize,
-    operator: ComparisonOperator,
+    pub affected_var_id: usize,
+    pub left_hand_side: usize,
+    pub right_hand_side: usize,
+    pub operator: ComparisonOperator,
 }
 
 impl ComparisonAxiom {
@@ -360,7 +360,7 @@ fn build_compiled_axiom_evaluator_data(
 
 #[allow(unused)]
 pub struct AxiomEvaluator<'a> {
-    numeric_task: &'a dyn AbstractNumericTask,
+    pub numeric_task: &'a dyn AbstractNumericTask,
     state_packer: &'a IntDoublePacker,
     axiom_literals: Vec<Vec<AxiomLiteral>>,
     rules: Vec<AxiomRule>,
@@ -581,7 +581,7 @@ impl<'a> AxiomEvaluator<'a> {
         }
     }
 
-    fn has_axioms(&self) -> bool {
+    pub fn has_axioms(&self) -> bool {
         self.has_numeric_axioms() || self.has_propositional_axioms()
     }
 
@@ -590,7 +590,7 @@ impl<'a> AxiomEvaluator<'a> {
             || !self.numeric_task.comparison_axioms().is_empty()
     }
 
-    fn has_propositional_axioms(&self) -> bool {
+    pub fn has_propositional_axioms(&self) -> bool {
         !self.numeric_task.axioms().is_empty()
     }
 }

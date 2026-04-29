@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
+    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
 };
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
@@ -23,7 +23,6 @@ pub struct DomainAbstractionConfig {
     pub flaw_kind: FlawKind,
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
-    pub exec_entire_plan: ExecEntirePlanMode,
 }
 
 impl Default for DomainAbstractionConfig {
@@ -37,7 +36,6 @@ impl Default for DomainAbstractionConfig {
             flaw_kind: FlawKind::Progression,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
-            exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
         }
     }
 }
@@ -55,7 +53,6 @@ impl fmt::Display for DomainAbstractionConfig {
                 "flaw_kind={}, ",
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
-                "exec_entire_plan={}"
             ),
             self.max_abstraction_size,
             self.max_iterations,
@@ -65,7 +62,6 @@ impl fmt::Display for DomainAbstractionConfig {
             self.flaw_kind,
             self.flaw_treatment,
             self.init_split_method,
-            self.exec_entire_plan,
         )
     }
 }
@@ -593,6 +589,9 @@ fn parse_flaw_kind(value: &str) -> Result<FlawKind, String> {
     match value {
         "progression" => Ok(FlawKind::Progression),
         "regression" => Ok(FlawKind::Regression),
+        "sequence_progression" => Ok(FlawKind::SequenceProgression),
+        "sequence_regression" => Ok(FlawKind::SequenceRegression),
+        "sequence_bidirectional" => Ok(FlawKind::SequenceBidirectional),
         _ => Err(format!("invalid FlawKind `{value}`")),
     }
 }
@@ -627,14 +626,6 @@ fn parse_numeric_split_strategy(value: &str) -> Result<NumericSplitStrategy, Str
         "standard" => Ok(NumericSplitStrategy::Standard),
         "exclusion" => Ok(NumericSplitStrategy::Exclusion),
         _ => Err(format!("invalid NumericSplitStrategy `{value}`")),
-    }
-}
-
-fn parse_exec_entire_plan_mode(value: &str) -> Result<ExecEntirePlanMode, String> {
-    match value {
-        "stop_at_first_flaw" => Ok(ExecEntirePlanMode::StopAtFirstFlaw),
-        "execute_entire_plan" => Ok(ExecEntirePlanMode::ExecuteEntirePlan),
-        _ => Err(format!("invalid ExecEntirePlanMode `{value}`")),
     }
 }
 
@@ -722,14 +713,6 @@ fn domain_abstraction_fields() -> Vec<Field<DomainAbstractionConfig>> {
                 Ok(())
             },
             format: |config| config.init_split_method.to_string(),
-        },
-        Field {
-            name: "exec_entire_plan",
-            apply: |config, value| {
-                config.exec_entire_plan = parse_exec_entire_plan_mode(atom(value)?)?;
-                Ok(())
-            },
-            format: |config| config.exec_entire_plan.to_string(),
         },
     ]
 }
@@ -839,14 +822,6 @@ fn multi_domain_abstractions_fields()
                 Ok(())
             },
             format: |config| config.numeric_split_strategy.to_string(),
-        },
-        Field {
-            name: "exec_entire_plan",
-            apply: |config, value| {
-                config.exec_entire_plan = parse_exec_entire_plan_mode(atom(value)?)?;
-                Ok(())
-            },
-            format: |config| config.exec_entire_plan.to_string(),
         },
     ]
 }

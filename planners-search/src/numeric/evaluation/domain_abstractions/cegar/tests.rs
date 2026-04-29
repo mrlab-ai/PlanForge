@@ -88,7 +88,6 @@ fn cegar_default_config_matches_current_port_defaults() {
         FlawTreatmentVariants::RandomSingleAtom
     );
     assert_eq!(config.init_split_method, InitSplitMethod::InitValue);
-    assert_eq!(config.exec_entire_plan, ExecEntirePlanMode::StopAtFirstFlaw);
 }
 
 #[test]

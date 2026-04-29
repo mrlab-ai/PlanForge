@@ -62,7 +62,7 @@ fn regression_flaws_find_precondition_violation() {
 
     task.set_initial_propositional_state_values(vec![0]);
 
-    let flaws = get_regression_flaws(&task, &factory.domain_mapping, &plan, false).unwrap();
+    let flaws = get_regression_flaws(&task, &factory.domain_mapping, &plan).unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 1)),
@@ -123,7 +123,7 @@ fn regression_flaws_find_initial_state_violation() {
     // Make initial state violation.
     task.set_initial_propositional_state_values(vec![1]);
 
-    let flaws = get_regression_flaws(&task, &factory.domain_mapping, &plan, false).unwrap();
+    let flaws = get_regression_flaws(&task, &factory.domain_mapping, &plan).unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 1)),

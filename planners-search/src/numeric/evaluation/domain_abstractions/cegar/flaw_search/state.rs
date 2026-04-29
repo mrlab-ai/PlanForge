@@ -2,7 +2,11 @@ use std::collections::BTreeSet;
 
 use anyhow::Result;
 
+use planners_sas::numeric::axioms::{
+    AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
+};
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planners_sas::numeric::utils::errors::{AxiomEvalError, InvalidIndex};
 use planners_sas::numeric::{
     axioms::AxiomEvaluator, numeric_task::Operator, utils::int_packer::IntDoublePacker,
 };
@@ -11,9 +15,7 @@ use crate::numeric::evaluation::domain_abstractions::abstract_operator_generator
 use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
     Interval, UNBOUNDED_INTERVAL,
 };
-use crate::numeric::evaluation::domain_abstractions::utils::{
-    fact_is_hold, set_initial_prop_values,
-};
+use crate::numeric::evaluation::domain_abstractions::utils::{fact_is_hold, get_initial_state};
 
 /// States used during the search of flaws.
 /// Some variables may have a concrete value (`concrete_prop`), while
@@ -32,19 +34,19 @@ pub struct FlawSearchState<'a> {
 }
 
 impl<'a> FlawSearchState<'a> {
-    /// Transform a concrete state into a `FlawSearchState`.
-    pub fn from_state(
-        prop: Vec<u64>,
+    /// Transform a decoded concrete state into a `FlawSearchState`.
+    pub fn from_decoded_state(
+        prop: Vec<usize>,
         numeric: Vec<f64>,
         domain_mapping: &'a DomainMapping,
     ) -> FlawSearchState<'a> {
         let abstract_prop = prop
             .iter()
             .enumerate()
-            .map(|(i, v)| Some(domain_mapping[i][*v as usize]))
+            .map(|(i, v)| Some(domain_mapping[i][*v]))
             .collect();
         FlawSearchState {
-            concrete_prop: prop.into_iter().map(|v| Some(v as usize)).collect(),
+            concrete_prop: prop.into_iter().map(Some).collect(),
             abstract_prop,
             numeric: numeric
                 .into_iter()
@@ -61,8 +63,15 @@ impl<'a> FlawSearchState<'a> {
     ) -> FlawSearchState<'a> {
         let mut seen: BTreeSet<ExplicitFact> = BTreeSet::new();
         let mut derived_goal_vars: BTreeSet<usize> = BTreeSet::new();
-        let mut concrete_prop = vec![None; task.get_num_variables()];
-        let mut abstract_prop = vec![None; task.get_num_variables()];
+
+        let mut state = FlawSearchState {
+            concrete_prop: vec![None; task.get_num_variables()],
+            abstract_prop: vec![None; task.get_num_variables()],
+            numeric: vec![UNBOUNDED_INTERVAL; task.numeric_variables().len()],
+            domain_mapping,
+            unbounded: true,
+        };
+
         for goal_id in 0..task.get_num_goals() {
             let goal_fact = task.get_goal_fact(goal_id);
             let goal_var = goal_fact.var;
@@ -71,9 +80,7 @@ impl<'a> FlawSearchState<'a> {
                 derived_goal_vars.insert(goal_var);
                 continue;
             }
-            concrete_prop[goal_var] = Some(goal_fact.value);
-            abstract_prop[goal_var] =
-                Some(domain_mapping[goal_var][concrete_prop[goal_var].unwrap()]);
+            state.set_prop_value(goal_var, goal_fact.value);
         }
 
         // Reconstruct (potentially hidden) goal conditions from propositional goal axioms.
@@ -86,20 +93,21 @@ impl<'a> FlawSearchState<'a> {
             }
             for pre in ax.conditions().iter() {
                 if seen.insert(pre.clone()) {
-                    concrete_prop[pre.var] = Some(pre.value);
-                    abstract_prop[pre.var] =
-                        Some(domain_mapping[pre.var][concrete_prop[pre.var].unwrap()]);
+                    state.set_prop_value(pre.var, pre.value);
                 }
             }
         }
 
-        FlawSearchState {
-            concrete_prop,
-            abstract_prop,
-            numeric: vec![UNBOUNDED_INTERVAL; task.numeric_variables().len()],
-            domain_mapping,
-            unbounded: true,
-        }
+        state
+    }
+
+    pub fn set_prop_value(&mut self, var: usize, value: usize) {
+        self.concrete_prop[var] = Some(value);
+        self.abstract_prop[var] = Some(self.domain_mapping[var][self.concrete_prop[var].unwrap()]);
+    }
+
+    pub fn set_numeric_value(&mut self, var: usize, value: f64) {
+        self.numeric[var] = Interval::singleton(value);
     }
 
     pub fn num_concrete_variables(&self) -> usize {
@@ -142,6 +150,163 @@ impl<'a> FlawSearchState<'a> {
         Ok(())
     }
 
+    pub fn evaluate_axioms(
+        &mut self,
+        axiom_evaluator: &AxiomEvaluator,
+    ) -> Result<(), AxiomEvalError> {
+        if !axiom_evaluator.has_axioms() {
+            return Ok(());
+        }
+        if axiom_evaluator.has_numeric_axioms() {
+            self.evaluate_comparison_axioms(axiom_evaluator)?;
+        }
+        // Propositional axioms not supported.
+        // if axiom_evaluator.has_propositional_axioms() {
+        //     self.evaluate_propositional_axioms(axiom_evaluator)?;
+        // }
+        Ok(())
+    }
+
+    pub fn evaluate_comparison_axioms(
+        &mut self,
+        axiom_evaluator: &AxiomEvaluator,
+    ) -> Result<bool, AxiomEvalError> {
+        for axiom in axiom_evaluator.numeric_task.comparison_axioms() {
+            let is_hold = self.is_hold(axiom).map_err(|e| {
+                AxiomEvalError::InvalidIndex(InvalidIndex {
+                    length: self.numeric.len(),
+                    index: e.index,
+                })
+            })?;
+            self.set_prop_value(axiom.get_affected_var_id(), !is_hold as usize);
+        }
+
+        Ok(true)
+    }
+
+    pub fn is_hold(&self, axiom: &ComparisonAxiom) -> Result<bool, InvalidIndex> {
+        let left = axiom.left_hand_side;
+        let right = axiom.right_hand_side;
+        if left >= self.numeric.len() || right >= self.numeric.len() {
+            return Err(InvalidIndex {
+                length: self.numeric.len(),
+                index: left,
+            });
+        }
+        let comp_op = &axiom.operator;
+        let result = self.compare(comp_op, axiom.left_hand_side, axiom.right_hand_side);
+        Ok(result)
+    }
+
+    pub fn compare(&self, op: &ComparisonOperator, left: usize, right: usize) -> bool {
+        let (left, right) = (self.numeric[left], self.numeric[right]);
+        match op {
+            ComparisonOperator::LessThan => left.lower_is_lower(&right),
+            ComparisonOperator::LessThanOrEqual => left.lower_is_lower_or_equal(&right),
+            ComparisonOperator::Equal => left.intersects(&right),
+            ComparisonOperator::GreaterThanOrEqual => left.upper_is_higher_or_equal(&right),
+            ComparisonOperator::GreaterThan => left.upper_is_higher(&right),
+            ComparisonOperator::UnEqual => !left.intersects(&right),
+        }
+    }
+
+    pub fn evaluate_arithmetic_axioms(
+        &mut self,
+        axiom_evaluator: &AxiomEvaluator,
+    ) -> Result<(), InvalidIndex> {
+        for axiom in axiom_evaluator.numeric_task.assignment_axioms() {
+            self.update_assignment_axiom_values(axiom)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn update_assignment_axiom_values(
+        &mut self,
+        axiom: &AssignmentAxiom,
+    ) -> Result<(), InvalidIndex> {
+        let left = axiom.left_hand_side;
+        let right = axiom.right_hand_side;
+        if left >= self.numeric.len() || right >= self.numeric.len() {
+            return Err(InvalidIndex {
+                length: self.numeric.len(),
+                index: left,
+            });
+        }
+        let affected = axiom.affected_var_id;
+        if affected >= self.numeric.len() {
+            return Err(InvalidIndex {
+                length: self.numeric.len(),
+                index: affected,
+            });
+        }
+        self.numeric[affected] = match axiom.operator {
+            CalOperator::Sum => self.numeric[left] + self.numeric[right],
+            CalOperator::Difference => self.numeric[left] - self.numeric[right],
+            CalOperator::Product => self.numeric[left] * self.numeric[right],
+            CalOperator::Division => {
+                if self.numeric[right].any_bound_is_zero() {
+                    return Err(InvalidIndex {
+                        length: self.numeric.len(),
+                        index: right,
+                    });
+                }
+                self.numeric[left] / self.numeric[right]
+            }
+        };
+
+        Ok(())
+    }
+
+    pub fn progress(&mut self, op: &Operator, axiom_evaluator: &AxiomEvaluator) -> Result<()> {
+        // Propositional effects (respect conditions).
+        for eff in op.effects().iter() {
+            let mut ok = true;
+            for cond in eff.conditions().iter() {
+                if !self.fact_is_hold(cond) {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                self.set_prop_value(eff.var_id(), eff.value());
+            }
+        }
+
+        // Numeric assignment effects.
+        for eff in op.assignment_effects().iter() {
+            if eff.is_conditional() {
+                let mut ok = true;
+                for cond in eff.conditions().iter() {
+                    if !self.fact_is_hold(cond) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if !ok {
+                    continue;
+                }
+            }
+
+            let assignment_var_id = eff.var_id();
+            let affected_var_id = eff.affected_var_id();
+            if assignment_var_id >= self.numeric.len() || affected_var_id >= self.numeric.len() {
+                continue;
+            }
+            let operand = self.numeric[assignment_var_id];
+            self.numeric[affected_var_id].apply_op(eff.operation(), &operand);
+        }
+
+        self.evaluate_arithmetic_axioms(axiom_evaluator)
+            .map_err(|e| {
+                anyhow::anyhow!("failed to evaluate arithmetic axioms after operator: {e:?}")
+            })?;
+        self.evaluate_axioms(axiom_evaluator)
+            .map_err(|e| anyhow::anyhow!("failed to evaluate axioms after operator: {e:?}"))?;
+
+        Ok(())
+    }
+
     pub fn regress(&mut self, op: &Operator, axiom_evaluator: &AxiomEvaluator) -> Result<()> {
         // Variables affected by axioms set to `undefined`.
         self.revert_axioms(axiom_evaluator)?;
@@ -177,21 +342,15 @@ pub fn get_initial_flaw_search_state<'a>(
     axiom_evaluator: &AxiomEvaluator,
     domain_mapping: &'a DomainMapping,
 ) -> Result<FlawSearchState<'a>> {
-    let mut buffer = vec![0u64; state_packer.num_bins()];
-    set_initial_prop_values(task, state_packer, &mut buffer);
-    let mut numeric_state: Vec<f64> = task.get_initial_numeric_state_values().to_vec();
+    let (buffer, numeric_state) = get_initial_state(task, state_packer, axiom_evaluator)?;
+    let prop_state = domain_mapping
+        .iter()
+        .enumerate()
+        .map(|(var, _)| state_packer.get(&buffer, var) as usize)
+        .collect();
 
-    axiom_evaluator
-        .evaluate_arithmetic_axioms(&mut numeric_state)
-        .map_err(|e| {
-            anyhow::anyhow!("failed to evaluate arithmetic axioms for initial state: {e:?}")
-        })?;
-    axiom_evaluator
-        .evaluate(&mut buffer, &mut numeric_state)
-        .map_err(|e| anyhow::anyhow!("failed to evaluate axioms for initial state: {e:?}"))?;
-
-    Ok(FlawSearchState::from_state(
-        buffer,
+    Ok(FlawSearchState::from_decoded_state(
+        prop_state,
         numeric_state,
         domain_mapping,
     ))
