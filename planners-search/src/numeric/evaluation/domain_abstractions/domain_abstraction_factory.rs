@@ -21,7 +21,7 @@ use super::numeric_context::{
     prepare_comparison_tree_inputs_from_abstract_state,
 };
 use super::transition_cost_partitioning::{
-    AbstractTransition, AbstractTransitionCostFunction, AbstractTransitionSystem,
+    AbstractTransition, AbstractTransitionCostFunction, AbstractTransitionSystem, StateRegion,
     TransitionResidualCosts,
 };
 use super::utils;
@@ -433,10 +433,23 @@ impl DomainAbstractionFactory {
         AbstractTransitionCostFunction,
         AbstractTransitionSystem,
     )> {
-        let mut generator = self.make_operator_generator(task, combine_labels)?;
-        let operators = generator.build_abstract_operators(task)?;
-        let transition_system =
-            self.build_transition_system_with_operators(task, &generator, &operators)?;
+        let transition_system = self.build_abstract_transition_system(task, combine_labels)?;
+        let (table, tcf) = self.build_transition_cost_partitioned_distance_table_from_system(
+            &transition_system,
+            residual_costs,
+            abstraction_id,
+            cap_state_id,
+        )?;
+        Ok((table, tcf, transition_system))
+    }
+
+    pub fn build_transition_cost_partitioned_distance_table_from_system(
+        &self,
+        transition_system: &AbstractTransitionSystem,
+        residual_costs: &TransitionResidualCosts,
+        abstraction_id: usize,
+        cap_state_id: Option<usize>,
+    ) -> Result<(AbstractDistanceTable, AbstractTransitionCostFunction)> {
         let transition_costs = transition_system
             .transitions
             .iter()
@@ -451,6 +464,8 @@ impl DomainAbstractionFactory {
                             transition.source_hash,
                             transition.abstract_op_id,
                             transition.target_hash,
+                            &transition_system.state_regions[transition.source_hash],
+                            &transition_system.state_regions[transition.target_hash],
                         )
                     })
                     .fold(f64::INFINITY, f64::min)
@@ -459,8 +474,8 @@ impl DomainAbstractionFactory {
         let mut table = self.build_distance_table_with_transition_costs(
             &transition_system,
             &transition_costs,
-            generator.hash_multipliers(),
-            generator.numeric_domain_sizes(),
+            &transition_system.hash_multipliers,
+            &transition_system.numeric_domain_sizes,
         )?;
 
         if let Some(state_id) = cap_state_id {
@@ -477,7 +492,7 @@ impl DomainAbstractionFactory {
 
         let tcf =
             self.compute_saturated_transition_costs(&transition_system, &transition_costs, &table)?;
-        Ok((table, tcf, transition_system))
+        Ok((table, tcf))
     }
 
     /// Computes an abstract wildcard plan (sequence of per-step concrete-op-ID sets) by:
@@ -657,6 +672,14 @@ impl DomainAbstractionFactory {
         let mut transitions: Vec<AbstractTransition> = Vec::new();
         let mut backward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
         let mut forward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
+        let mut state_regions = Vec::with_capacity(num_states);
+        for state_hash in 0..num_states {
+            state_regions.push(self.state_region_from_hash(
+                state_hash,
+                numeric_domain_sizes,
+                hash_multipliers,
+            )?);
+        }
         let mut seen: HashSet<(usize, usize, usize)> = HashSet::new();
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
 
@@ -737,7 +760,88 @@ impl DomainAbstractionFactory {
             goal_facts,
             goal_state_hashes,
             initial_state_hash: init_hash,
+            hash_multipliers: hash_multipliers.to_vec(),
+            numeric_domain_sizes: numeric_domain_sizes.to_vec(),
+            state_regions,
         })
+    }
+
+    fn state_region_from_hash(
+        &self,
+        state_hash: usize,
+        numeric_domain_sizes: &[usize],
+        hash_multipliers: &[usize],
+    ) -> Result<StateRegion> {
+        Ok(StateRegion {
+            propositions: self.propositional_region_from_hash(state_hash, hash_multipliers)?,
+            numeric: self.numeric_region_from_hash(
+                state_hash,
+                numeric_domain_sizes,
+                hash_multipliers,
+            )?,
+        })
+    }
+
+    fn propositional_region_from_hash(
+        &self,
+        state_hash: usize,
+        hash_multipliers: &[usize],
+    ) -> Result<Vec<Vec<usize>>> {
+        let mut region = Vec::with_capacity(self.domain_sizes.len());
+        for (var_id, &domain_size) in self.domain_sizes.iter().enumerate() {
+            ensure!(domain_size > 0, "domain size must be > 0 for var {var_id}");
+            let multiplier = *hash_multipliers
+                .get(var_id)
+                .with_context(|| format!("missing hash multiplier for var {var_id}"))?;
+            let abstract_value = (state_hash / multiplier) % domain_size;
+            let values = self
+                .domain_mapping
+                .get(var_id)
+                .with_context(|| format!("missing domain mapping for var {var_id}"))?
+                .iter()
+                .enumerate()
+                .filter_map(|(concrete_value, &mapped_value)| {
+                    (mapped_value == abstract_value).then_some(concrete_value)
+                })
+                .collect::<Vec<_>>();
+            ensure!(
+                !values.is_empty(),
+                "empty concrete value set for var {var_id} abstract value {abstract_value}"
+            );
+            region.push(values);
+        }
+        Ok(region)
+    }
+
+    fn numeric_region_from_hash(
+        &self,
+        state_hash: usize,
+        numeric_domain_sizes: &[usize],
+        hash_multipliers: &[usize],
+    ) -> Result<Vec<Interval>> {
+        let num_props = self.domain_sizes.len();
+        let mut region = Vec::with_capacity(numeric_domain_sizes.len());
+        for (numeric_var_id, &domain_size) in numeric_domain_sizes.iter().enumerate() {
+            ensure!(
+                domain_size > 0,
+                "numeric domain size must be > 0 for var {numeric_var_id}"
+            );
+            let abs_var_id = num_props + numeric_var_id;
+            let multiplier = *hash_multipliers.get(abs_var_id).with_context(|| {
+                format!("missing hash multiplier for numeric var {numeric_var_id}")
+            })?;
+            let partition_id = (state_hash / multiplier) % domain_size;
+            let interval = self
+                .partitions
+                .partition_interval(numeric_var_id, partition_id)
+                .with_context(|| {
+                    format!(
+                        "missing interval for numeric var {numeric_var_id} partition {partition_id}"
+                    )
+                })?;
+            region.push(interval);
+        }
+        Ok(region)
     }
 
     fn build_distance_table_with_transition_costs(

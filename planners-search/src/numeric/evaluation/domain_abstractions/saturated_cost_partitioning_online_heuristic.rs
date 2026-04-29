@@ -19,7 +19,7 @@ use super::domain_abstraction_collection_generator_multiple_cegar::DomainAbstrac
 use super::domain_abstraction_factory::AbstractDistanceTable;
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::domain_abstraction_heuristic::DomainAbstractionHeuristic;
-use super::transition_cost_partitioning::TransitionResidualCosts;
+use super::transition_cost_partitioning::{AbstractTransitionSystem, TransitionResidualCosts};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -208,6 +208,7 @@ pub struct SaturatedCostPartitioningOnlineHeuristic<'task> {
     pdbs: Vec<PatternDatabase<'task>>,
     config: ScpOnlineConfig,
     state: RefCell<ScpOnlineState>,
+    transition_system_cache: RefCell<Vec<Option<AbstractTransitionSystem>>>,
 }
 
 impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
@@ -302,6 +303,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             pdbs,
             config,
             state: RefCell::new(st),
+            transition_system_cache: RefCell::new(vec![None; num_abstractions]),
         })
     }
 
@@ -481,6 +483,45 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(Some(cp))
     }
 
+    fn with_transition_system<R>(
+        &self,
+        task: &dyn AbstractNumericTask,
+        abstraction: &DomainAbstraction,
+        abstraction_id: usize,
+        f: impl FnOnce(&AbstractTransitionSystem) -> Result<R, EvaluationError>,
+    ) -> Result<R, EvaluationError> {
+        {
+            let mut cache = self.transition_system_cache.borrow_mut();
+            if abstraction_id >= cache.len() {
+                return Err(EvaluationError::ComputationFailed(format!(
+                    "transition-system cache missing abstraction {abstraction_id}"
+                )));
+            }
+            if cache[abstraction_id].is_none() {
+                let transition_system = abstraction
+                    .factory
+                    .build_abstract_transition_system(task, self.config.combine_labels)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to build transition system for abstraction {abstraction_id}: {error:#}"
+                        ))
+                    })?;
+                cache[abstraction_id] = Some(transition_system);
+            }
+        }
+
+        let cache = self.transition_system_cache.borrow();
+        let transition_system = cache
+            .get(abstraction_id)
+            .and_then(|entry| entry.as_ref())
+            .ok_or_else(|| {
+                EvaluationError::ComputationFailed(format!(
+                    "transition-system cache missing abstraction {abstraction_id}"
+                ))
+            })?;
+        f(transition_system)
+    }
+
     fn build_transition_cp(
         &self,
         task: &dyn AbstractNumericTask,
@@ -498,101 +539,106 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 let abstraction = &abstractions[pos];
                 match self.config.saturator {
                     Saturator::All => {
-                        let (table, tcf, transition_system) = abstraction
-                            .factory
-                            .build_transition_cost_partitioned_distance_table(
-                                task,
-                                self.config.combine_labels,
-                                &remaining_costs,
-                                pos,
-                                None,
-                            )
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to compute transition SCP table: {error:#}"
-                                ))
-                            })?;
-                        cp.add_h_values(pos, table.distances);
-                        remaining_costs
-                            .reduce_by_tcf(pos, &transition_system, &tcf)
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to reduce transition residual costs: {error:#}"
-                                ))
-                            })?;
+                        self.with_transition_system(task, abstraction, pos, |transition_system| {
+                            let (table, tcf) = abstraction
+                                .factory
+                                .build_transition_cost_partitioned_distance_table_from_system(
+                                    transition_system,
+                                    &remaining_costs,
+                                    pos,
+                                    None,
+                                )
+                                .map_err(|error| {
+                                    EvaluationError::ComputationFailed(format!(
+                                        "failed to compute transition SCP table: {error:#}"
+                                    ))
+                                })?;
+                            cp.add_h_values(pos, table.distances);
+                            remaining_costs
+                                .reduce_by_tcf(pos, transition_system, &tcf)
+                                .map_err(|error| {
+                                    EvaluationError::ComputationFailed(format!(
+                                        "failed to reduce transition residual costs: {error:#}"
+                                    ))
+                                })?;
+                            Ok(())
+                        })?;
                     }
                     Saturator::Perim => {
                         let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                        let (table, tcf, transition_system) = abstraction
-                            .factory
-                            .build_transition_cost_partitioned_distance_table(
-                                task,
-                                self.config.combine_labels,
-                                &remaining_costs,
-                                pos,
-                                cap_state_id,
-                            )
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to compute transition PERIM table: {error:#}"
-                                ))
-                            })?;
-                        cp.add_h_values(pos, table.distances);
-                        remaining_costs
-                            .reduce_by_tcf(pos, &transition_system, &tcf)
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to reduce transition PERIM residual costs: {error:#}"
-                                ))
-                            })?;
+                        self.with_transition_system(task, abstraction, pos, |transition_system| {
+                            let (table, tcf) = abstraction
+                                .factory
+                                .build_transition_cost_partitioned_distance_table_from_system(
+                                    transition_system,
+                                    &remaining_costs,
+                                    pos,
+                                    cap_state_id,
+                                )
+                                .map_err(|error| {
+                                    EvaluationError::ComputationFailed(format!(
+                                        "failed to compute transition PERIM table: {error:#}"
+                                    ))
+                                })?;
+                            cp.add_h_values(pos, table.distances);
+                            remaining_costs
+                                .reduce_by_tcf(pos, transition_system, &tcf)
+                                .map_err(|error| {
+                                    EvaluationError::ComputationFailed(format!(
+                                        "failed to reduce transition PERIM residual costs: {error:#}"
+                                    ))
+                                })?;
+                            Ok(())
+                        })?;
                     }
                     Saturator::Perimstar => {
                         let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                        let (perim_table, perim_tcf, perim_transition_system) = abstraction
-                            .factory
-                            .build_transition_cost_partitioned_distance_table(
-                                task,
-                                self.config.combine_labels,
-                                &remaining_costs,
-                                pos,
-                                cap_state_id,
-                            )
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to compute transition Perim step for Perimstar: {error:#}"
-                                ))
-                            })?;
-                        cp.add_h_values(pos, perim_table.distances);
-                        remaining_costs
-                            .reduce_by_tcf(pos, &perim_transition_system, &perim_tcf)
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to reduce transition Perim residual costs: {error:#}"
-                                ))
-                            })?;
+                        self.with_transition_system(task, abstraction, pos, |transition_system| {
+                            let (perim_table, perim_tcf) = abstraction
+                                .factory
+                                .build_transition_cost_partitioned_distance_table_from_system(
+                                    transition_system,
+                                    &remaining_costs,
+                                    pos,
+                                    cap_state_id,
+                                )
+                                .map_err(|error| {
+                                    EvaluationError::ComputationFailed(format!(
+                                        "failed to compute transition Perim step for Perimstar: {error:#}"
+                                    ))
+                                })?;
+                            cp.add_h_values(pos, perim_table.distances);
+                            remaining_costs
+                                .reduce_by_tcf(pos, transition_system, &perim_tcf)
+                                .map_err(|error| {
+                                    EvaluationError::ComputationFailed(format!(
+                                        "failed to reduce transition Perim residual costs: {error:#}"
+                                    ))
+                                })?;
 
-                        let (all_table, all_tcf, all_transition_system) = abstraction
-                            .factory
-                            .build_transition_cost_partitioned_distance_table(
-                                task,
-                                self.config.combine_labels,
-                                &remaining_costs,
-                                pos,
-                                None,
-                            )
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to compute transition All step for Perimstar: {error:#}"
-                                ))
-                            })?;
-                        cp.add_h_values(pos, all_table.distances);
-                        remaining_costs
-                            .reduce_by_tcf(pos, &all_transition_system, &all_tcf)
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to reduce transition All residual costs: {error:#}"
-                                ))
-                            })?;
+                            let (all_table, all_tcf) = abstraction
+                                .factory
+                                .build_transition_cost_partitioned_distance_table_from_system(
+                                    transition_system,
+                                    &remaining_costs,
+                                    pos,
+                                    None,
+                                )
+                                .map_err(|error| {
+                                    EvaluationError::ComputationFailed(format!(
+                                        "failed to compute transition All step for Perimstar: {error:#}"
+                                    ))
+                                })?;
+                            cp.add_h_values(pos, all_table.distances);
+                            remaining_costs
+                                .reduce_by_tcf(pos, transition_system, &all_tcf)
+                                .map_err(|error| {
+                                    EvaluationError::ComputationFailed(format!(
+                                        "failed to reduce transition All residual costs: {error:#}"
+                                    ))
+                                })?;
+                            Ok(())
+                        })?;
                     }
                 }
             } else {
