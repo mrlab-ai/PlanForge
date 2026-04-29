@@ -298,6 +298,70 @@ fn projected_task_relayers_helper_backed_comparison_chain() {
 }
 
 #[test]
+fn projected_task_keeps_only_pattern_regular_goals() {
+    let variables = vec![
+        ExplicitVariable::new(
+            3,
+            "cmp-a".to_string(),
+            vec![
+                "cmp-a-true".to_string(),
+                "cmp-a-false".to_string(),
+                "cmp-a-unk".to_string(),
+            ],
+            Some(0),
+            2,
+        ),
+        ExplicitVariable::new(
+            3,
+            "cmp-b".to_string(),
+            vec![
+                "cmp-b-true".to_string(),
+                "cmp-b-false".to_string(),
+                "cmp-b-unk".to_string(),
+            ],
+            Some(0),
+            2,
+        ),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("zero".to_string(), NumericType::Constant, None),
+        NumericVariable::new("x".to_string(), NumericType::Regular, None),
+        NumericVariable::new("y".to_string(), NumericType::Regular, None),
+    ];
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)],
+        vec![],
+        vec![2, 2],
+        vec![0.0, 1.0, 1.0],
+        vec![],
+        vec![],
+        vec![
+            ComparisonAxiom::new(0, 1, 0, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(1, 2, 0, ComparisonOperator::GreaterThanOrEqual),
+        ],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let projected = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![0],
+            numeric: vec![],
+        },
+    )
+    .unwrap();
+
+    assert_eq!(projected.get_num_variables(), 1);
+    assert_eq!(projected.get_num_goals(), 1);
+    assert_eq!(*projected.get_goal_fact(0), ExplicitFact::new(0, 0));
+}
+
+#[test]
 fn projected_task_keeps_regular_dependency_when_helper_selected() {
     let variables = vec![simple_var("goal", None)];
     let numeric_variables = vec![

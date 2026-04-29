@@ -11,7 +11,7 @@ use crate::pddl::conditions::*;
 use crate::pddl::effects::*;
 use crate::pddl::f_expression::*;
 use crate::pddl::functions::Function;
-use crate::pddl::pddl_types::{Type, TypedObject, get_type_predicate_name};
+use crate::pddl::pddl_types::{Type, TypedObject};
 use crate::pddl::predicates::Predicate;
 use crate::pddl::tasks::{Requirements, Task};
 
@@ -432,16 +432,13 @@ fn parse_effect(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) -> Effe
 pub fn parse_action(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -> Action {
     // alist is the contents of (:action ...)
     // Expected: name :parameters (...) :precondition (...) :effect (...)
-    let mut name = String::new();
+    let name = alist[0].as_atom().to_string();
     let mut parameters = vec![];
     let mut precondition = Condition::Truth;
     let mut effect_type: Option<EffectType> = None;
     let mut cost: Option<FunctionAssignment> = None;
 
-    let mut i = 0;
-    // First item is the action name
-    name = alist[0].as_atom().to_string();
-    i = 1;
+    let mut i = 1;
 
     while i < alist.len() {
         let key = alist[i].as_atom();
@@ -472,32 +469,7 @@ pub fn parse_action(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -
 
     let num_external = parameters.len();
 
-    // Normalize effects
-    let effects = if let Some(ref eff) = effect_type {
-        let normalized = eff.normalize();
-        normalized
-            .into_iter()
-            .map(|(params, condition, kind)| {
-                match kind {
-                    EffectKind::Literal(lit) => Effect::new(params, condition, lit),
-                    EffectKind::Numeric(assign) => {
-                        // Numeric effects stored separately
-                        // For now, store as Effect with a special marker
-                        Effect::new(params, condition, Condition::Truth) // placeholder
-                    }
-                }
-            })
-            .collect()
-    } else {
-        vec![]
-    };
-
-    // Also collect numeric effects
     let mut action = Action::new(name, parameters, num_external, precondition, vec![], cost);
-
-    if let Some(eff) = effect_type.as_ref() {
-        // Re-normalize to properly separate literal and numeric effects
-    }
 
     // Re-do effect normalization properly
     let mut literal_effects = vec![];
@@ -904,7 +876,7 @@ pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
 pub fn get_predicate_id_and_arity(
     text: &str,
     predicate_dict: &HashMap<String, (usize, usize)>,
-    n_predicates: usize,
+    _n_predicates: usize,
 ) -> (usize, usize) {
     if let Some(&(id, arity)) = predicate_dict.get(text) {
         (id, arity)

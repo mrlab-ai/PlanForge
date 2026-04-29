@@ -30,7 +30,7 @@ use crate::numeric::evaluation::domain_abstractions::utils::{
     fact_is_hold, get_initial_state, make_prop_state_packer,
 };
 
-use super::abstract_operator_generator::DomainMapping;
+use super::abstract_operator_generator::{DomainMapping, IncrementalAbstractOperatorCache};
 use super::comparison_expression::Interval;
 use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
@@ -107,6 +107,32 @@ pub struct CegarOutcome {
     pub last_step: CegarStep,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RefinementSummary {
+    pub refined_propositional_vars: HashSet<usize>,
+    pub refined_numeric_vars: HashSet<usize>,
+}
+
+impl RefinementSummary {
+    pub fn is_empty(&self) -> bool {
+        self.refined_propositional_vars.is_empty() && self.refined_numeric_vars.is_empty()
+    }
+
+    fn mark_propositional(&mut self, var_id: usize) {
+        self.refined_propositional_vars.insert(var_id);
+    }
+
+    fn mark_numeric(&mut self, var_id: usize) {
+        self.refined_numeric_vars.insert(var_id);
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.refined_propositional_vars
+            .extend(other.refined_propositional_vars);
+        self.refined_numeric_vars.extend(other.refined_numeric_vars);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Cegar {
     config: CegarConfig,
@@ -169,6 +195,7 @@ impl Cegar {
         .with_context(|| {
             format!("failed to construct DomainAbstractionFactory (iteration {iteration})")
         })?;
+        let mut operator_cache = IncrementalAbstractOperatorCache::default();
         let mut wildcard_plan = None;
 
         while iteration <= config.max_iterations {
@@ -187,16 +214,13 @@ impl Cegar {
             }
 
             wildcard_plan = factory
-                .compute_plan_with_rng(
+                .compute_plan_with_rng_and_cache(
                     task,
                     config.combine_labels,
                     config.debug,
                     config.use_wildcard_plans,
-                    if config.use_wildcard_plans {
-                        None
-                    } else {
-                        Some(&mut rng)
-                    },
+                    Some(&mut operator_cache),
+                    Some(&mut rng),
                 )
                 .with_context(|| {
                     format!("failed to compute abstract plan (iteration {iteration})")
@@ -255,6 +279,7 @@ impl Cegar {
                 &mut blacklisted_numeric_var_ids,
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
+            operator_cache.mark_refined(&refined);
             if config.debug {
                 let after_size = compute_abstraction_size_u128(
                     &factory.domain_sizes,
@@ -265,10 +290,10 @@ impl Cegar {
                     after_size,
                     &factory.domain_sizes,
                     &factory.numeric_domain_sizes,
-                    refined,
+                    !refined.is_empty(),
                 );
             }
-            if !refined {
+            if refined.is_empty() {
                 break;
             }
 
@@ -492,7 +517,7 @@ fn can_refine_numeric_variable_with_blacklist(
 
 /// Port of numeric-FD's refinement step (`fix_flaws`).
 ///
-/// Return `true` if any refinement was applied.
+/// Return the refined variable IDs.
 #[allow(clippy::too_many_arguments)]
 pub fn fix_flaws(
     config: &CegarConfig,
@@ -505,7 +530,7 @@ pub fn fix_flaws(
     rng: &mut SmallRng,
     blacklisted_prop_var_ids: &mut HashSet<usize>,
     blacklisted_numeric_var_ids: &mut HashSet<usize>,
-) -> Result<bool> {
+) -> Result<RefinementSummary> {
     let comparison_var_ids: HashSet<usize> = task
         .comparison_axioms()
         .iter()
@@ -526,7 +551,7 @@ pub fn fix_flaws(
         numeric_domain_sizes,
     );
 
-    let mut any_refined = false;
+    let mut refined_summary = RefinementSummary::default();
     let mut last_refined = None;
     for cand in chosen_flaws {
         let mut chosen = flaws[cand.idx].clone();
@@ -534,7 +559,7 @@ pub fn fix_flaws(
             pf.dependent_numeric_flaws = restricted;
         }
 
-        if !any_refined
+        if refined_summary.is_empty()
             || config
                 .flaw_treatment
                 .should_be_refined(&chosen, last_refined.unwrap())
@@ -553,17 +578,17 @@ pub fn fix_flaws(
                 DependentNumericRefinement::One,
             )?;
 
-            any_refined = any_refined || flaw_refined;
-            if flaw_refined {
+            if let Some(flaw_refined) = flaw_refined {
+                refined_summary.merge(flaw_refined);
                 if !config.flaw_treatment.refine_all() {
-                    return Ok(true);
+                    return Ok(refined_summary);
                 }
                 last_refined = Some(&flaws[cand.idx]);
             }
         }
     }
 
-    Ok(any_refined)
+    Ok(refined_summary)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -579,7 +604,7 @@ fn try_refine_from_flaw(
     partitions: &mut NumericPartitions,
     numeric_domain_sizes: &mut [usize],
     dependent_numeric_refinement: DependentNumericRefinement,
-) -> Result<bool> {
+) -> Result<Option<RefinementSummary>> {
     match flaw {
         Flaw::Numeric(nf) => {
             let var_id = nf.numeric_var_id;
@@ -590,7 +615,7 @@ fn try_refine_from_flaw(
                 config.max_abstraction_size,
                 blacklisted_numeric_var_ids,
             ) {
-                return Ok(false);
+                return Ok(None);
             }
             if partitions.split_at(var_id, nf.value, nf.include_in_lower) {
                 if let Some(parts) = partitions.partitions(var_id)
@@ -598,9 +623,11 @@ fn try_refine_from_flaw(
                 {
                     *slot = parts.len();
                 }
-                return Ok(true);
+                let mut refined = RefinementSummary::default();
+                refined.mark_numeric(var_id);
+                return Ok(Some(refined));
             }
-            Ok(false)
+            Ok(None)
         }
         Flaw::Propositional(pf) => {
             let var_id = pf.fact.var;
@@ -616,7 +643,7 @@ fn try_refine_from_flaw(
                     domain_mapping.len(),
                     domain_sizes.len()
                 );
-                return Ok(false);
+                return Ok(None);
             }
 
             let concrete_size = match task.get_variable_domain_size(var_id) {
@@ -627,7 +654,7 @@ fn try_refine_from_flaw(
                         "try_refine_from_flaw: get_variable_domain_size({}) failed: {}",
                         var_id, e
                     );
-                    return Ok(false);
+                    return Ok(None);
                 }
             };
 
@@ -637,7 +664,7 @@ fn try_refine_from_flaw(
                     "try_refine_from_flaw: fact value {} out of range (concrete size {}) for var {}",
                     value, concrete_size, var_id
                 );
-                return Ok(false);
+                return Ok(None);
             }
 
             let mut changed = false;
@@ -652,7 +679,7 @@ fn try_refine_from_flaw(
                     comparison_var_ids,
                     blacklisted_prop_var_ids,
                 ) {
-                    return Ok(false);
+                    return Ok(None);
                 }
                 // Comparison axiom vars: split into {false/unknown} vs {true} like numeric-fd.
                 let old_size = domain_sizes[var_id];
@@ -678,11 +705,11 @@ fn try_refine_from_flaw(
                 let abs_size = domain_sizes[var_id];
                 // If we've already fully refined this variable, nothing to do.
                 if abs_size >= concrete_size {
-                    return Ok(false);
+                    return Ok(None);
                 }
                 // Only refine if the value is still mapped to the default class (0).
                 if domain_mapping[var_id].get(value).copied().unwrap_or(0) != 0 {
-                    return Ok(false);
+                    return Ok(None);
                 }
                 if !can_refine_propositional_variable_with_blacklist(
                     domain_sizes,
@@ -693,7 +720,7 @@ fn try_refine_from_flaw(
                     comparison_var_ids,
                     blacklisted_prop_var_ids,
                 ) {
-                    return Ok(false);
+                    return Ok(None);
                 }
 
                 domain_mapping[var_id][value] = abs_size;
@@ -706,6 +733,10 @@ fn try_refine_from_flaw(
                 && !pf.dependent_numeric_flaws.is_empty()
             {
                 let mut any_numeric_changed = false;
+                let mut refined = RefinementSummary::default();
+                if changed {
+                    refined.mark_propositional(var_id);
+                }
                 let iter: Box<dyn Iterator<Item = &NumericFlaw>> =
                     match dependent_numeric_refinement {
                         DependentNumericRefinement::None => Box::new(std::iter::empty()),
@@ -737,15 +768,22 @@ fn try_refine_from_flaw(
                             *slot = parts.len();
                         }
                         any_numeric_changed = true;
+                        refined.mark_numeric(num_id);
                         if dependent_numeric_refinement == DependentNumericRefinement::One {
                             break;
                         }
                     }
                 }
-                return Ok(any_numeric_changed || changed);
+                return Ok((any_numeric_changed || changed).then_some(refined));
             }
 
-            Ok(changed)
+            if changed {
+                let mut refined = RefinementSummary::default();
+                refined.mark_propositional(var_id);
+                Ok(Some(refined))
+            } else {
+                Ok(None)
+            }
         }
     }
 }
@@ -963,6 +1001,9 @@ fn apply_initial_goal_splits(
     }
 }
 
+pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<CegarOutcome> {
+    Cegar::new(config)?.build_abstraction(task)
+}
 fn trivial_domain_mapping_and_sizes(
     task: &dyn AbstractNumericTask,
 ) -> Result<(DomainMapping, Vec<usize>)> {

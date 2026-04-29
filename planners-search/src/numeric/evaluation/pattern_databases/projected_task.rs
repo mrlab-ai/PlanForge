@@ -312,6 +312,7 @@ pub struct ProjectedTask<'task> {
     metric: Metric,
     operators: Vec<Operator>,
     operator_costs: Vec<f64>,
+    base_operator_ids: Vec<usize>,
     propositional_packer: IntDoublePacker,
     initial_packed_propositional: Vec<u64>,
     compiled_axiom_evaluator_data: CompiledAxiomEvaluatorData,
@@ -905,7 +906,8 @@ impl<'task> ProjectedTask<'task> {
 
         let mut operators: Vec<Operator> = Vec::new();
         let mut operator_costs: Vec<f64> = Vec::new();
-        for operator in base.get_operators().iter() {
+        let mut base_operator_ids: Vec<usize> = Vec::new();
+        for (base_operator_id, operator) in base.get_operators().iter().enumerate() {
             let operator_cost = metric_operator_cost_from_initial_values(base, operator);
             if let Some(projected_operator) = project_operator(
                 base,
@@ -924,6 +926,7 @@ impl<'task> ProjectedTask<'task> {
             )? {
                 operators.push(projected_operator);
                 operator_costs.push(operator_cost);
+                base_operator_ids.push(base_operator_id);
             }
         }
 
@@ -1054,6 +1057,7 @@ impl<'task> ProjectedTask<'task> {
             metric: Metric::new(base.metric().is_min(), metric_var_id),
             operators,
             operator_costs,
+            base_operator_ids,
             propositional_packer,
             initial_packed_propositional,
             compiled_axiom_evaluator_data,
@@ -1560,6 +1564,10 @@ impl<'task> ProjectedTask<'task> {
         } else {
             0.0
         }
+    }
+
+    pub fn base_operator_id(&self, projected_operator_id: usize) -> Option<usize> {
+        self.base_operator_ids.get(projected_operator_id).copied()
     }
 
     pub fn pattern_numeric_projected_ids(&self) -> &[usize] {
@@ -2605,6 +2613,7 @@ fn collect_cpp_like_projected_goals(
     projected_var_to_original: &mut Vec<usize>,
     original_var_to_projected: &mut [Option<usize>],
 ) -> Result<Vec<ExplicitFact>, ProjectedTaskBuildError> {
+    let pattern_regular: BTreeSet<usize> = pattern.regular.iter().copied().collect();
     let pattern_numeric: BTreeSet<usize> = pattern.numeric.iter().copied().collect();
     let mut goals = Vec::new();
     let mut visited_vars = HashSet::new();
@@ -2614,6 +2623,7 @@ fn collect_cpp_like_projected_goals(
         collect_cpp_like_projected_goal_fact(
             task,
             goal,
+            &pattern_regular,
             &pattern_numeric,
             base_initial_numeric_values,
             assignment_lookup,
@@ -2636,6 +2646,7 @@ fn collect_cpp_like_projected_goals(
 fn collect_cpp_like_projected_goal_fact(
     task: &dyn AbstractNumericTask,
     fact: &ExplicitFact,
+    pattern_regular: &BTreeSet<usize>,
     pattern_numeric: &BTreeSet<usize>,
     base_initial_numeric_values: &[f64],
     assignment_lookup: &[Option<usize>],
@@ -2655,14 +2666,16 @@ fn collect_cpp_like_projected_goal_fact(
         .get(fact.var)
         .and_then(|comparison_axiom_id| *comparison_axiom_id)
     {
-        if comparison_condition_var_id(
+        let comparison_is_in_pattern = pattern_regular.contains(&fact.var);
+        let numeric_goal_is_in_pattern = comparison_condition_var_id(
             task,
             comparison_axiom_id,
             base_initial_numeric_values,
             assignment_lookup,
             helper_id_by_source_numeric_var,
         )?
-        .is_some_and(|numeric_var_id| pattern_numeric.contains(&numeric_var_id))
+        .is_some_and(|numeric_var_id| pattern_numeric.contains(&numeric_var_id));
+        if comparison_is_in_pattern || numeric_goal_is_in_pattern
         {
             push_unique_mapping(
                 fact.var,
@@ -2678,19 +2691,25 @@ fn collect_cpp_like_projected_goal_fact(
         .get(fact.var)
         .and_then(|axiom_id| *axiom_id)
     {
-        let axiom = &task.axioms()[axiom_id];
-        if axiom.conditions().is_empty() {
+        let fact_is_in_pattern = pattern_regular.contains(&fact.var);
+        if fact_is_in_pattern {
             push_unique_mapping(
                 fact.var,
                 projected_var_to_original,
                 original_var_to_projected,
             );
             goals.push(fact.clone());
+        }
+
+        let axiom = &task.axioms()[axiom_id];
+        if axiom.conditions().is_empty() {
+            return Ok(());
         } else {
             for condition in axiom.conditions() {
                 collect_cpp_like_projected_goal_fact(
                     task,
                     condition,
+                    pattern_regular,
                     pattern_numeric,
                     base_initial_numeric_values,
                     assignment_lookup,
@@ -2707,12 +2726,14 @@ fn collect_cpp_like_projected_goal_fact(
         return Ok(());
     }
 
-    push_unique_mapping(
-        fact.var,
-        projected_var_to_original,
-        original_var_to_projected,
-    );
-    goals.push(fact.clone());
+    if pattern_regular.contains(&fact.var) {
+        push_unique_mapping(
+            fact.var,
+            projected_var_to_original,
+            original_var_to_projected,
+        );
+        goals.push(fact.clone());
+    }
     Ok(())
 }
 

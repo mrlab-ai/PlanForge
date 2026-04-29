@@ -1,7 +1,6 @@
 /// Port of translate.py
 /// Main translation from STRIPS/PDDL ground representation to SAS+ finite-domain representation.
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::Write;
 
 use tracing::info;
 
@@ -14,11 +13,8 @@ use super::pddl::actions::PropositionalAction;
 use super::pddl::axioms::{InstantiatedNumericAxiom, PropositionalAxiom};
 use super::pddl::conditions::*;
 use super::pddl::f_expression::*;
-use super::pddl::tasks::Task;
 use super::sas_tasks::*;
 use super::simplify;
-
-const DEBUG: bool = true;
 
 // ============================================================
 // strips_to_sas_dictionary
@@ -256,7 +252,7 @@ fn translate_strips_conditions_aux(
                         if let Some(existing) = condition.get(&var) {
                             // Constrain existing condition
                             done = true;
-                            let mut intersection: HashSet<usize> =
+                            let intersection: HashSet<usize> =
                                 existing.intersection(&poss_vals).cloned().collect();
                             if intersection.is_empty() {
                                 return None; // conflicting
@@ -504,7 +500,7 @@ fn translate_strips_operator_aux(
     condition: &HashMap<usize, usize>,
     comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
     sas_comp_axioms: &mut Vec<SASCompareAxiom>,
-    num_vals: &[f64],
+    _num_vals: &[f64],
     relevant_numeric: &[usize],
 ) -> Option<SASOperator> {
     // Collect all add effects

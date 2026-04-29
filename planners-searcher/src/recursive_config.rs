@@ -8,6 +8,7 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
 };
+use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig;
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use planners_search::numeric::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
@@ -82,6 +83,8 @@ pub enum HeuristicSpec {
     Lmcutnumeric(LmCutNumericConfig),
     #[serde(rename = "multi_domain_abstractions")]
     MultiDomainAbstractions(DomainAbstractionCollectionGeneratorMultipleCegarConfig),
+    #[serde(rename = "scp_online")]
+    ScpOnline(ScpOnlineConfig),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -123,6 +126,9 @@ impl fmt::Display for HeuristicSpec {
                     "multi_domain_abstractions({})",
                     config.format_config_args()
                 )
+            }
+            HeuristicSpec::ScpOnline(config) => {
+                write!(f, "{}", config.format_config_call("scp_online"))
             }
         }
     }
@@ -561,6 +567,7 @@ fn parse_greedy_variable_order_type(value: &str) -> Result<GreedyVariableOrderTy
 
 fn parse_pdb_internal_heuristic(value: &str) -> Result<PdbInternalHeuristic, String> {
     match value {
+        "zero" => Ok(PdbInternalHeuristic::Zero),
         "blind" => Ok(PdbInternalHeuristic::Blind),
         "lmcut" => Ok(PdbInternalHeuristic::Lmcut),
         _ => Err(format!("invalid PdbInternalHeuristic `{value}`")),
@@ -785,6 +792,11 @@ fn multi_domain_abstractions_fields()
             random_seed
         ),
         field_bool!(
+            "debug",
+            DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+            debug
+        ),
+        field_bool!(
             "use_wildcard_plans",
             DomainAbstractionCollectionGeneratorMultipleCegarConfig,
             use_wildcard_plans
@@ -822,6 +834,206 @@ fn multi_domain_abstractions_fields()
                 Ok(())
             },
             format: |config| config.numeric_split_strategy.to_string(),
+        },
+    ]
+}
+
+fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
+    vec![
+        field_f64!("max_time", ScpOnlineConfig, max_time),
+        field_usize!("max_size", ScpOnlineConfig, max_size),
+        field_usize!("interval", ScpOnlineConfig, interval),
+        field_bool!("use_numeric_pdbs", ScpOnlineConfig, use_numeric_pdbs),
+        field_usize!("max_pdb_states", ScpOnlineConfig, max_pdb_states),
+        field_usize!("max_pattern_size", ScpOnlineConfig, max_pattern_size),
+        field_bool!(
+            "only_interesting_patterns",
+            ScpOnlineConfig,
+            only_interesting_patterns
+        ),
+        Field {
+            name: "pdb_exploration_heuristic",
+            apply: |config, value| {
+                config.pdb_exploration_heuristic = parse_pdb_internal_heuristic(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.pdb_exploration_heuristic.to_string(),
+        },
+        Field {
+            name: "pdb_frontier_heuristic",
+            apply: |config, value| {
+                config.pdb_frontier_heuristic = parse_pdb_internal_heuristic(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.pdb_frontier_heuristic.to_string(),
+        },
+        Field {
+            name: "pdb_failed_lookup_heuristic",
+            apply: |config, value| {
+                config.pdb_failed_lookup_heuristic = parse_pdb_internal_heuristic(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.pdb_failed_lookup_heuristic.to_string(),
+        },
+        Field {
+            name: "max_abstraction_size",
+            apply: |config, value| {
+                config.collection_config.max_abstraction_size = parse_usize(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.max_abstraction_size.to_string(),
+        },
+        Field {
+            name: "max_collection_size",
+            apply: |config, value| {
+                config.collection_config.max_collection_size = parse_usize(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.max_collection_size.to_string(),
+        },
+        Field {
+            name: "abstraction_generation_max_time",
+            apply: |config, value| {
+                config.collection_config.abstraction_generation_max_time =
+                    parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                format_f64_or_infinity(config.collection_config.abstraction_generation_max_time)
+            },
+        },
+        Field {
+            name: "total_max_time",
+            apply: |config, value| {
+                config.collection_config.total_max_time = parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_f64_or_infinity(config.collection_config.total_max_time),
+        },
+        Field {
+            name: "stagnation_limit",
+            apply: |config, value| {
+                config.collection_config.stagnation_limit = parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_f64_or_infinity(config.collection_config.stagnation_limit),
+        },
+        Field {
+            name: "blacklist_trigger_percentage",
+            apply: |config, value| {
+                config.collection_config.blacklist_trigger_percentage =
+                    parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                format_f64_or_infinity(config.collection_config.blacklist_trigger_percentage)
+            },
+        },
+        Field {
+            name: "enable_blacklist_on_stagnation",
+            apply: |config, value| {
+                config.collection_config.enable_blacklist_on_stagnation = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                config
+                    .collection_config
+                    .enable_blacklist_on_stagnation
+                    .to_string()
+            },
+        },
+        Field {
+            name: "blacklist_option",
+            apply: |config, value| {
+                config.collection_config.blacklist_option = parse_variable_subset(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.blacklist_option.to_string(),
+        },
+        Field {
+            name: "init_split_candidates",
+            apply: |config, value| {
+                config.collection_config.init_split_candidates =
+                    parse_variable_subset(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.init_split_candidates.to_string(),
+        },
+        Field {
+            name: "init_split_quantity",
+            apply: |config, value| {
+                config.collection_config.init_split_quantity =
+                    parse_init_split_quantity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.init_split_quantity.to_string(),
+        },
+        Field {
+            name: "random_seed",
+            apply: |config, value| {
+                config.collection_config.random_seed = parse_i32(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.random_seed.to_string(),
+        },
+        Field {
+            name: "debug",
+            apply: |config, value| {
+                config.collection_config.debug = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.debug.to_string(),
+        },
+        Field {
+            name: "use_wildcard_plans",
+            apply: |config, value| {
+                config.collection_config.use_wildcard_plans = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.use_wildcard_plans.to_string(),
+        },
+        Field {
+            name: "combine_labels",
+            apply: |config, value| {
+                let combine_labels = parse_bool(atom(value)?)?;
+                config.combine_labels = combine_labels;
+                config.collection_config.combine_labels = combine_labels;
+                Ok(())
+            },
+            format: |config| config.combine_labels.to_string(),
+        },
+        Field {
+            name: "deviation_flaws",
+            apply: |config, value| {
+                config.collection_config.deviation_flaws = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.deviation_flaws.to_string(),
+        },
+        Field {
+            name: "flaw_treatment",
+            apply: |config, value| {
+                config.collection_config.flaw_treatment = parse_flaw_treatment(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.flaw_treatment.to_string(),
+        },
+        Field {
+            name: "init_split_method",
+            apply: |config, value| {
+                config.collection_config.init_split_method = parse_init_split_method(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.init_split_method.to_string(),
+        },
+        Field {
+            name: "numeric_split_strategy",
+            apply: |config, value| {
+                config.collection_config.numeric_split_strategy =
+                    parse_numeric_split_strategy(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.numeric_split_strategy.to_string(),
         },
     ]
 }
@@ -962,6 +1174,12 @@ impl FromConfig for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     }
 }
 
+impl FromConfig for ScpOnlineConfig {
+    fn config_fields() -> Vec<Field<Self>> {
+        scp_online_fields()
+    }
+}
+
 impl FromConfig for GreedyPatternGeneratorConfig {
     fn config_fields() -> Vec<Field<Self>> {
         greedy_numeric_pdb_fields()
@@ -1021,6 +1239,14 @@ fn heuristic_registry() -> Vec<HeuristicPlugin> {
                 Ok(HeuristicSpec::MultiDomainAbstractions(
                     DomainAbstractionCollectionGeneratorMultipleCegarConfig::from_config(call)?,
                 ))
+            },
+        },
+        HeuristicPlugin {
+            name: "scp_online",
+            build: |call| {
+                Ok(HeuristicSpec::ScpOnline(ScpOnlineConfig::from_config(
+                    call,
+                )?))
             },
         },
         HeuristicPlugin {

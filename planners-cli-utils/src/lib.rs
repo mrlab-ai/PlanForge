@@ -23,31 +23,31 @@ pub static GLOBAL_ALLOCATOR: ReportingAllocator = ReportingAllocator;
 #[cfg(unix)]
 unsafe impl GlobalAlloc for ReportingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ptr = System.alloc(layout);
+        let ptr = unsafe { System.alloc(layout) };
         if ptr.is_null() {
-            report_out_of_memory_and_exit();
+            unsafe { report_out_of_memory_and_exit() };
         }
         ptr
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let ptr = System.alloc_zeroed(layout);
+        let ptr = unsafe { System.alloc_zeroed(layout) };
         if ptr.is_null() {
-            report_out_of_memory_and_exit();
+            unsafe { report_out_of_memory_and_exit() };
         }
         ptr
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let new_ptr = System.realloc(ptr, layout, new_size);
+        let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
         if new_ptr.is_null() {
-            report_out_of_memory_and_exit();
+            unsafe { report_out_of_memory_and_exit() };
         }
         new_ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        System.dealloc(ptr, layout)
+        unsafe { System.dealloc(ptr, layout) }
     }
 }
 
@@ -185,13 +185,13 @@ pub extern "C" fn signal_handler(signal_number: libc::c_int) {
 #[cfg(unix)]
 pub unsafe fn report_out_of_memory_and_exit() -> ! {
     if OOM_REPORTED.swap(true, Ordering::SeqCst) {
-        libc::_exit(6);
+        unsafe { libc::_exit(6) };
     }
 
-    write_fd(libc::STDOUT_FILENO, b"Failed to allocate memory.\n");
-    write_fd(libc::STDOUT_FILENO, b"Memory limit has been reached.\n");
-    print_peak_memory_reentrant(libc::STDOUT_FILENO);
-    libc::_exit(6)
+    unsafe { write_fd(libc::STDOUT_FILENO, b"Failed to allocate memory.\n") };
+    unsafe { write_fd(libc::STDOUT_FILENO, b"Memory limit has been reached.\n") };
+    unsafe { print_peak_memory_reentrant(libc::STDOUT_FILENO) };
+    unsafe { libc::_exit(6) }
 }
 
 /// Print peak memory reentrant.
@@ -200,7 +200,7 @@ pub unsafe fn report_out_of_memory_and_exit() -> ! {
 /// This uses `libc`.
 #[cfg(target_os = "linux")]
 pub unsafe fn print_peak_memory_reentrant(fd: libc::c_int) {
-    let proc_fd = libc::open(c"/proc/self/status".as_ptr(), libc::O_RDONLY);
+    let proc_fd = unsafe { libc::open(c"/proc/self/status".as_ptr(), libc::O_RDONLY) };
     if proc_fd < 0 {
         return;
     }
@@ -212,7 +212,7 @@ pub unsafe fn print_peak_memory_reentrant(fd: libc::c_int) {
     let mut buffer = [0u8; 4096];
 
     loop {
-        let bytes_read = libc::read(proc_fd, buffer.as_mut_ptr().cast(), buffer.len());
+        let bytes_read = unsafe { libc::read(proc_fd, buffer.as_mut_ptr().cast(), buffer.len()) };
         if bytes_read <= 0 {
             break;
         }
@@ -232,19 +232,19 @@ pub unsafe fn print_peak_memory_reentrant(fd: libc::c_int) {
 
             if byte.is_ascii_digit() {
                 if !wrote_prefix {
-                    write_fd(fd, b"Peak memory: ");
+                    unsafe { write_fd(fd, b"Peak memory: ") };
                     wrote_prefix = true;
                 }
-                write_fd(fd, std::slice::from_ref(&byte));
+                unsafe { write_fd(fd, std::slice::from_ref(&byte)) };
             } else if wrote_prefix {
-                write_fd(fd, b" KB\n");
-                let _ = libc::close(proc_fd);
+                unsafe { write_fd(fd, b" KB\n") };
+                let _ = unsafe { libc::close(proc_fd) };
                 return;
             }
         }
     }
 
-    let _ = libc::close(proc_fd);
+    let _ = unsafe { libc::close(proc_fd) };
 }
 
 /// Print peak memory reentrant.
@@ -261,7 +261,7 @@ pub unsafe fn print_peak_memory_reentrant(_fd: libc::c_int) {}
 #[cfg(unix)]
 pub unsafe fn write_fd(fd: libc::c_int, mut bytes: &[u8]) {
     while !bytes.is_empty() {
-        let written = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+        let written = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
         if written <= 0 {
             break;
         }
@@ -280,7 +280,7 @@ pub unsafe fn write_number_fd(fd: libc::c_int, value: u64) {
     let mut current = value;
 
     if current == 0 {
-        write_fd(fd, b"0");
+        unsafe { write_fd(fd, b"0") };
         return;
     }
 
@@ -290,7 +290,7 @@ pub unsafe fn write_number_fd(fd: libc::c_int, value: u64) {
         current /= 10;
     }
 
-    write_fd(fd, &buffer[index..]);
+    unsafe { write_fd(fd, &buffer[index..]) };
 }
 
 #[cfg(unix)]

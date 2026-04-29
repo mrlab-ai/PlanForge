@@ -1,17 +1,12 @@
 /// Port of pddl/tasks.py
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 
 use tracing::{debug, warn};
 
 use super::actions::Action;
 use super::axioms::{Axiom, NumericAxiom};
-use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
-use super::effects::Effect;
-use super::f_expression::{
-    ArithmeticExpression, FunctionAssignment, FunctionalExpression, NumericConstant,
-    PrimitiveNumericExpression,
-};
+use super::conditions::{Atom, Condition, Conjunction};
+use super::f_expression::{FunctionAssignment, FunctionalExpression, NumericConstant, PrimitiveNumericExpression};
 use super::functions::Function;
 use super::pddl_types::{Type, TypedObject};
 use super::predicates::Predicate;
@@ -175,7 +170,7 @@ impl Task {
 #[derive(Debug, Clone)]
 pub struct DerivedFunctionAdministrator {
     pub function_symbols: HashSet<String>,
-    pub derived_functions: HashMap<DerivedFunctionKey, NumericAxiom>,
+    derived_functions: HashMap<DerivedFunctionKey, NumericAxiom>,
     pub axioms: Vec<NumericAxiom>,
 }
 
@@ -361,7 +356,7 @@ impl DerivedFunctionAdministrator {
 /// Python: def check_atom_consistency(atom, same_truth_value, other_truth_value, atom_is_true)
 pub fn check_atom_consistency(
     atom: &Atom,
-    same_truth_value: &HashSet<Atom>,
+    _same_truth_value: &HashSet<Atom>,
     other_truth_value: &HashSet<Atom>,
     _atom_is_true: bool,
 ) -> bool {

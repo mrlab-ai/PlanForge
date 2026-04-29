@@ -12,7 +12,7 @@ use rand::{SeedableRng, rngs::SmallRng};
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 
 use super::abstract_operator_generator::{
-    AbstractOperator, AbstractOperatorGenerator, DomainMapping,
+    AbstractOperator, AbstractOperatorGenerator, DomainMapping, IncrementalAbstractOperatorCache,
 };
 use super::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
@@ -361,6 +361,52 @@ impl DomainAbstractionFactory {
         self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)
     }
 
+    /// Builds an abstract distance table using the supplied per-concrete-operator costs and
+    /// returns the saturated costs induced by the resulting distances.
+    pub fn build_cost_partitioned_distance_table(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operator_costs: &[f64],
+        dump_distances: bool,
+    ) -> Result<(AbstractDistanceTable, Vec<f64>)> {
+        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let mut operators = generator.build_abstract_operators(task)?;
+        apply_operator_costs(&mut operators, operator_costs)?;
+        let table =
+            self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)?;
+        let saturated_costs = self.compute_saturated_costs(task, &generator, &operators, &table)?;
+        Ok((table, saturated_costs))
+    }
+
+    /// Builds goal distances using the supplied operator costs, without computing
+    /// saturated costs. Used by the order generator during diversification.
+    pub fn build_goal_distances(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operator_costs: &[f64],
+    ) -> Result<AbstractDistanceTable> {
+        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let mut operators = generator.build_abstract_operators(task)?;
+        apply_operator_costs(&mut operators, operator_costs)?;
+        self.build_distance_table_with_operators(task, &generator, &operators, false)
+    }
+
+    /// Computes saturated costs for the *already-built* distance table and
+    /// abstract operators.  This is public so the online SCP heuristic can
+    /// cap h-values for PERIM saturation before computing saturated costs.
+    pub fn saturated_costs_for_table(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operators: &[AbstractOperator],
+        table: &AbstractDistanceTable,
+    ) -> Result<Vec<f64>> {
+        let generator = self.make_operator_generator(task, combine_labels)?;
+        self.compute_saturated_costs(task, &generator, operators, table)
+    }
+
     /// Computes an abstract wildcard plan (sequence of per-step concrete-op-ID sets) by:
     /// 1) Computing abstract goal distances with implicit regression Dijkstra.
     /// 2) Extracting a shortest-path abstract plan from the initial abstract state.
@@ -381,27 +427,32 @@ impl DomainAbstractionFactory {
         dump_distances: bool,
         use_wildcard_plans: bool,
     ) -> Result<Option<WildcardPlanResult>> {
-        let mut local_rng =
-            (!use_wildcard_plans).then(|| SmallRng::seed_from_u64(current_time_seed()));
-        self.compute_plan_with_rng(
+        let mut local_rng = Some(SmallRng::seed_from_u64(current_time_seed()));
+        self.compute_plan_with_rng_and_cache(
             task,
             combine_labels,
             dump_distances,
             use_wildcard_plans,
+            None,
             local_rng.as_mut(),
         )
     }
 
-    pub(crate) fn compute_plan_with_rng(
+    pub(crate) fn compute_plan_with_rng_and_cache(
         &self,
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
         dump_distances: bool,
         use_wildcard_plans: bool,
-        singleton_step_rng: Option<&mut SmallRng>,
+        operator_cache: Option<&mut IncrementalAbstractOperatorCache>,
+        plan_step_rng: Option<&mut SmallRng>,
     ) -> Result<Option<WildcardPlanResult>> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
-        let operators = generator.build_abstract_operators(task)?;
+        let operators = if let Some(cache) = operator_cache {
+            generator.build_abstract_operators_with_cache(task, cache)?
+        } else {
+            generator.build_abstract_operators(task)?
+        };
         let table =
             self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)?;
 
@@ -422,7 +473,7 @@ impl DomainAbstractionFactory {
             &comparison_var_ids,
             &match_tree,
             use_wildcard_plans,
-            singleton_step_rng,
+            plan_step_rng,
         )
     }
 
@@ -484,6 +535,83 @@ impl DomainAbstractionFactory {
         }
 
         Ok(table)
+    }
+
+    fn compute_saturated_costs(
+        &self,
+        task: &dyn AbstractNumericTask,
+        generator: &AbstractOperatorGenerator,
+        operators: &[AbstractOperator],
+        table: &AbstractDistanceTable,
+    ) -> Result<Vec<f64>> {
+        let num_operators = task.get_operators().len();
+        let num_states = table.distances.len();
+        let mut saturated_costs = vec![f64::NEG_INFINITY; num_operators];
+
+        let comparison_var_ids = self.comparison_var_ids();
+        let match_tree = MatchTree::build(
+            generator.domain_sizes(),
+            generator.numeric_domain_sizes(),
+            generator.hash_multipliers(),
+            operators,
+            &comparison_var_ids,
+        );
+
+        let mut applicable_operator_ids = Vec::new();
+        for target_hash in 0..num_states {
+            let target_h = table.distances[target_hash];
+            if !target_h.is_finite() {
+                continue;
+            }
+
+            let base_state = self.reset_comparison_vars_to_unknown_except(
+                target_hash,
+                generator.hash_multipliers(),
+                &comparison_var_ids,
+                &[],
+            )?;
+
+            match_tree.get_applicable_operator_ids(base_state, &mut applicable_operator_ids);
+            for &abstract_op_id in &applicable_operator_ids {
+                let op = &operators[abstract_op_id];
+                let predecessor_base = (base_state as i32 + op.hash_effect) as usize;
+                if predecessor_base >= num_states {
+                    continue;
+                }
+                let fixed_comparisons = get_comparison_preconditions(op, &comparison_var_ids);
+                let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
+                    predecessor_base,
+                    task,
+                    generator.numeric_domain_sizes(),
+                    generator.hash_multipliers(),
+                    &comparison_var_ids,
+                    &fixed_comparisons,
+                )?;
+
+                for pred in possible_predecessors {
+                    let Some(&src_h) = table.distances.get(pred) else {
+                        continue;
+                    };
+                    if !src_h.is_finite() {
+                        continue;
+                    }
+                    let needed = src_h - target_h;
+                    for &op_id in &op.concrete_op_ids {
+                        if let Some(slot) = saturated_costs.get_mut(op_id) {
+                            *slot = slot.max(needed);
+                        }
+                    }
+                }
+            }
+        }
+
+        for cost in &mut saturated_costs {
+            if *cost == f64::NEG_INFINITY {
+                *cost = 0.0;
+            }
+        }
+
+        Ok(saturated_costs)
     }
 
     /// Prints a numeric-fd style table of core variables for all reachable abstract states.
@@ -682,7 +810,18 @@ impl DomainAbstractionFactory {
             let unknown_abs = *self.domain_mapping[var_id]
                 .get(COMPARISON_UNKNOWN_VAL)
                 .with_context(|| format!("missing UNKNOWN mapping for comparison var {var_id}"))?;
-            out += (unknown_abs - cur) * mult;
+            let cur_offset = cur
+                .checked_mul(mult)
+                .context("comparison current digit offset overflow")?;
+            let unknown_offset = unknown_abs
+                .checked_mul(mult)
+                .context("comparison UNKNOWN digit offset overflow")?;
+            out = out
+                .checked_sub(cur_offset)
+                .context("comparison reset encountered an invalid state hash")?;
+            out = out
+                .checked_add(unknown_offset)
+                .context("comparison reset hash overflow")?;
         }
         Ok(out)
     }
@@ -804,7 +943,7 @@ impl DomainAbstractionFactory {
         comparison_var_ids: &[usize],
         match_tree: &MatchTree,
         use_wildcard_plans: bool,
-        mut singleton_step_rng: Option<&mut SmallRng>,
+        mut plan_step_rng: Option<&mut SmallRng>,
     ) -> Result<Option<WildcardPlanResult>> {
         let domain_sizes = generator.domain_sizes();
         let hash_multipliers = generator.hash_multipliers();
@@ -942,8 +1081,12 @@ impl DomainAbstractionFactory {
                     step = cand_op.concrete_op_ids.clone();
                     step.sort_unstable();
                     step.dedup();
-                    if !use_wildcard_plans {
-                        let selected_op = match singleton_step_rng.as_deref_mut() {
+                    if use_wildcard_plans {
+                        if let Some(rng) = plan_step_rng.as_deref_mut() {
+                            step.shuffle(rng);
+                        }
+                    } else {
+                        let selected_op = match plan_step_rng.as_deref_mut() {
                             Some(rng) => step.choose(rng).copied(),
                             None => step.first().copied(),
                         }
@@ -1126,6 +1269,28 @@ fn compute_num_states(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) ->
             .context("abstract state space too large (overflow)")?;
     }
     Ok(num)
+}
+
+fn apply_operator_costs(operators: &mut [AbstractOperator], operator_costs: &[f64]) -> Result<()> {
+    for op in operators {
+        ensure!(
+            !op.concrete_op_ids.is_empty(),
+            "abstract operator without concrete labels"
+        );
+        let mut cost = f64::INFINITY;
+        for &concrete_op_id in &op.concrete_op_ids {
+            let concrete_cost = *operator_costs.get(concrete_op_id).with_context(|| {
+                format!("missing residual cost for concrete operator {concrete_op_id}")
+            })?;
+            ensure!(
+                concrete_cost.is_finite(),
+                "residual cost for concrete operator {concrete_op_id} must be finite"
+            );
+            cost = cost.min(concrete_cost);
+        }
+        op.cost = cost;
+    }
+    Ok(())
 }
 
 fn get_comparison_preconditions(

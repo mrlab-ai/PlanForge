@@ -5,12 +5,10 @@ use tracing::info;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
-use super::constraints::NegativeClause;
 use super::invariants::{BalanceChecker, Invariant, InvariantPart};
 use super::options;
 use super::pddl::actions::Action;
 use super::pddl::conditions::*;
-use super::pddl::pddl_types::TypedObject;
 use super::pddl::tasks::Task;
 
 /// Python: class BalanceChecker.__init__(self, task, reachable_action_params)

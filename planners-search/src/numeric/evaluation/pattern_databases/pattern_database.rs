@@ -22,7 +22,7 @@ use crate::numeric::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::Lan
 use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator};
 
 use super::projected_task::{PatternLookupProjection, ProjectedTask};
-use super::utils;
+//use super::utils;
 
 #[inline]
 fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
@@ -302,6 +302,7 @@ pub(super) struct PdbState {
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PdbInternalHeuristic {
+    Zero,
     #[default]
     Blind,
     Lmcut,
@@ -310,6 +311,7 @@ pub enum PdbInternalHeuristic {
 impl fmt::Display for PdbInternalHeuristic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Zero => write!(f, "zero"),
             Self::Blind => write!(f, "blind"),
             Self::Lmcut => write!(f, "lmcut"),
         }
@@ -439,6 +441,8 @@ pub struct PatternDatabase<'task> {
     packed_pattern_registry: FrozenPackedDistanceRegistry,
     full_prop_index: HashMap<usize, Vec<usize>>,
     pub(super) distances: Vec<f64>,
+    goal_state_ids: Vec<usize>,
+    transition_predecessors: Vec<Vec<(usize, usize)>>,
     pub(super) min_operator_cost: f64,
     pub(super) reached_goal_states: usize,
     pub(super) truncated: bool,
@@ -496,6 +500,8 @@ impl<'task> PatternDatabase<'task> {
             ),
             full_prop_index: HashMap::with_capacity_and_hasher(max_states, FxBuildHasher),
             distances: Vec::new(),
+            goal_state_ids: Vec::new(),
+            transition_predecessors: Vec::new(),
             min_operator_cost,
             reached_goal_states: 0,
             truncated: false,
@@ -529,7 +535,7 @@ impl<'task> PatternDatabase<'task> {
             pdb.task.state_dependent_numeric_projected_ids();
         pdb.build(max_states)?;
         // NOTE: Uncomment to print summary of the built PDB.
-        utils::dump_distance_table(&pdb);
+        // utils::dump_distance_table(&pdb);
         Ok(pdb)
     }
 
@@ -941,6 +947,7 @@ impl<'task> PatternDatabase<'task> {
 
     fn evaluate_failed_lookup(&self, propositional: &[usize], numeric: &[f64]) -> f64 {
         if self.exhausted_abstract_state_space {
+            // TODO: Supposed to be an error. Can never happen. 
             return f64::INFINITY;
         }
         if self.is_goal_state(propositional) {
@@ -949,6 +956,7 @@ impl<'task> PatternDatabase<'task> {
 
         match self.heuristic_config.failed_lookup_heuristic {
             PdbInternalHeuristic::Blind => self.min_operator_cost(),
+            PdbInternalHeuristic::Zero => 0.0,
             PdbInternalHeuristic::Lmcut => {
                 let lookup_key = hash_state_components(propositional, numeric);
                 if let Some(distance) = self.failed_lookup_cache.borrow().get(&lookup_key).copied()
@@ -1013,6 +1021,262 @@ impl<'task> PatternDatabase<'task> {
 
     pub fn min_operator_cost(&self) -> f64 {
         self.min_operator_cost
+    }
+
+    fn lookup_exact_state_id(&self, propositional: &[usize], numeric: &[f64]) -> Option<usize> {
+        let lookup_key = hash_state_components(propositional, numeric);
+        self.state_index
+            .get(&lookup_key)?
+            .iter()
+            .copied()
+            .find(|&state_id| {
+                let state = &self.states[state_id];
+                state.propositional == propositional
+                    && state.numeric.len() == numeric.len()
+                    && state
+                        .numeric
+                        .iter()
+                        .zip(numeric.iter())
+                        .all(|(lhs, rhs)| lhs.to_bits() == rhs.to_bits())
+            })
+    }
+
+    pub fn abstract_state_id_from_expanded_state_values(
+        &self,
+        propositional: &[usize],
+        expanded_numeric: &[f64],
+    ) -> Result<Option<usize>, String> {
+        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
+        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
+        self.lookup_projection
+            .project_state_values_from_expanded_numeric_into(
+                propositional,
+                expanded_numeric,
+                &mut projected_prop,
+                &mut projected_num,
+            )?;
+        Ok(self.lookup_exact_state_id(&projected_prop, &projected_num))
+    }
+
+    pub fn build_cost_partitioned_distance_table(
+        &self,
+        operator_costs: &[f64],
+    ) -> Result<(Vec<f64>, Vec<f64>), String> {
+        let mut distances = vec![f64::INFINITY; self.states.len()];
+        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+
+        for &goal_state_id in &self.goal_state_ids {
+            if goal_state_id < distances.len() {
+                distances[goal_state_id] = 0.0;
+                heap.push((
+                    Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
+                    goal_state_id,
+                ));
+            }
+        }
+        if self.truncated {
+            for &frontier_state_id in &self.frontier_states {
+                if frontier_state_id < distances.len() && distances[frontier_state_id] > 0.0 {
+                    distances[frontier_state_id] = 0.0;
+                    heap.push((
+                        Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
+                        frontier_state_id,
+                    ));
+                }
+            }
+        }
+
+        while let Some((Reverse(distance), state_id)) = heap.pop() {
+            let distance = distance.into_inner();
+            if distance > distances[state_id] + 1e-12 {
+                continue;
+            }
+            for &(parent_id, projected_operator_id) in &self.transition_predecessors[state_id] {
+                let base_operator_id = self
+                    .task
+                    .base_operator_id(projected_operator_id)
+                    .ok_or_else(|| format!("missing base operator id for projected operator {projected_operator_id}"))?;
+                let operator_cost = *operator_costs.get(base_operator_id).ok_or_else(|| {
+                    format!("missing residual cost for operator {base_operator_id}")
+                })?;
+                let alternative = distance + operator_cost;
+                if alternative + 1e-12 < distances[parent_id] {
+                    distances[parent_id] = alternative;
+                    heap.push((
+                        Reverse(NotNan::new(alternative).map_err(|err| err.to_string())?),
+                        parent_id,
+                    ));
+                }
+            }
+        }
+
+        let mut saturated_costs = vec![f64::NEG_INFINITY; operator_costs.len()];
+        for (target_id, predecessors) in self.transition_predecessors.iter().enumerate() {
+            let target_h = distances[target_id];
+            if !target_h.is_finite() {
+                continue;
+            }
+            for &(parent_id, projected_operator_id) in predecessors {
+                let parent_h = distances[parent_id];
+                if !parent_h.is_finite() {
+                    continue;
+                }
+                let Some(base_operator_id) = self.task.base_operator_id(projected_operator_id)
+                else {
+                    continue;
+                };
+                if let Some(slot) = saturated_costs.get_mut(base_operator_id) {
+                    *slot = slot.max(parent_h - target_h);
+                }
+            }
+        }
+
+        Ok((distances, saturated_costs))
+    }
+
+    /// Builds goal distances using the supplied operator costs without computing
+    /// saturated costs.  Used by the SCP online order generator.
+    pub fn build_goal_distances(
+        &self,
+        operator_costs: &[f64],
+    ) -> Result<Vec<f64>, String> {
+        let mut distances = vec![f64::INFINITY; self.states.len()];
+        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+
+        for &goal_state_id in &self.goal_state_ids {
+            if goal_state_id < distances.len() {
+                distances[goal_state_id] = 0.0;
+                heap.push((
+                    Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
+                    goal_state_id,
+                ));
+            }
+        }
+        if self.truncated {
+            for &frontier_state_id in &self.frontier_states {
+                if frontier_state_id < distances.len() && distances[frontier_state_id] > 0.0 {
+                    distances[frontier_state_id] = 0.0;
+                    heap.push((
+                        Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
+                        frontier_state_id,
+                    ));
+                }
+            }
+        }
+
+        while let Some((Reverse(distance), state_id)) = heap.pop() {
+            let distance = distance.into_inner();
+            if distance > distances[state_id] + 1e-12 {
+                continue;
+            }
+            for &(parent_id, projected_operator_id) in &self.transition_predecessors[state_id] {
+                let base_operator_id = self
+                    .task
+                    .base_operator_id(projected_operator_id)
+                    .ok_or_else(|| format!("missing base operator id for projected operator {projected_operator_id}"))?;
+                let operator_cost = *operator_costs.get(base_operator_id).ok_or_else(|| {
+                    format!("missing residual cost for operator {base_operator_id}")
+                })?;
+                let alternative = distance + operator_cost;
+                if alternative + 1e-12 < distances[parent_id] {
+                    distances[parent_id] = alternative;
+                    heap.push((
+                        Reverse(NotNan::new(alternative).map_err(|err| err.to_string())?),
+                        parent_id,
+                    ));
+                }
+            }
+        }
+
+        Ok(distances)
+    }
+
+    /// Builds a cost-partitioned distance table, capping every heuristic value
+    /// at `h_cap` (PERIM saturation).  Returns (capped_distances, saturated_costs).
+    pub fn build_cost_partitioned_distance_table_capped(
+        &self,
+        operator_costs: &[f64],
+        h_cap: f64,
+    ) -> Result<(Vec<f64>, Vec<f64>), String> {
+        let mut distances = vec![f64::INFINITY; self.states.len()];
+        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+
+        for &goal_state_id in &self.goal_state_ids {
+            if goal_state_id < distances.len() {
+                distances[goal_state_id] = 0.0;
+                heap.push((
+                    Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
+                    goal_state_id,
+                ));
+            }
+        }
+        if self.truncated {
+            for &frontier_state_id in &self.frontier_states {
+                if frontier_state_id < distances.len() && distances[frontier_state_id] > 0.0 {
+                    distances[frontier_state_id] = 0.0;
+                    heap.push((
+                        Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
+                        frontier_state_id,
+                    ));
+                }
+            }
+        }
+
+        while let Some((Reverse(distance), state_id)) = heap.pop() {
+            let distance = distance.into_inner();
+            if distance > distances[state_id] + 1e-12 {
+                continue;
+            }
+            for &(parent_id, projected_operator_id) in &self.transition_predecessors[state_id] {
+                let base_operator_id = self
+                    .task
+                    .base_operator_id(projected_operator_id)
+                    .ok_or_else(|| format!("missing base operator id for projected operator {projected_operator_id}"))?;
+                let operator_cost = *operator_costs.get(base_operator_id).ok_or_else(|| {
+                    format!("missing residual cost for operator {base_operator_id}")
+                })?;
+                let alternative = distance + operator_cost;
+                if alternative + 1e-12 < distances[parent_id] {
+                    distances[parent_id] = alternative;
+                    heap.push((
+                        Reverse(NotNan::new(alternative).map_err(|err| err.to_string())?),
+                        parent_id,
+                    ));
+                }
+            }
+        }
+
+        // Cap h-values at h_cap (finite only).
+        if h_cap.is_finite() {
+            for h in &mut distances {
+                if h.is_finite() && *h > h_cap {
+                    *h = h_cap;
+                }
+            }
+        }
+
+        let mut saturated_costs = vec![f64::NEG_INFINITY; operator_costs.len()];
+        for (target_id, predecessors) in self.transition_predecessors.iter().enumerate() {
+            let target_h = distances[target_id];
+            if !target_h.is_finite() {
+                continue;
+            }
+            for &(parent_id, projected_operator_id) in predecessors {
+                let parent_h = distances[parent_id];
+                if !parent_h.is_finite() {
+                    continue;
+                }
+                let Some(base_operator_id) = self.task.base_operator_id(projected_operator_id)
+                else {
+                    continue;
+                };
+                if let Some(slot) = saturated_costs.get_mut(base_operator_id) {
+                    *slot = slot.max(parent_h - target_h);
+                }
+            }
+        }
+
+        Ok((distances, saturated_costs))
     }
 
     pub fn requires_derived_numeric_values(&self) -> bool {
@@ -1280,11 +1544,13 @@ impl<'task> PatternDatabase<'task> {
             built_states,
             distances,
             reached_goal_states,
+            goal_state_ids,
             frontier_states,
+            transition_predecessors,
             truncated,
             exhausted_abstract_state_space,
         ) = {
-            let mut predecessors: Vec<Vec<(usize, f64)>> = Vec::with_capacity(max_states);
+            let mut predecessors: Vec<Vec<(usize, usize)>> = Vec::with_capacity(max_states);
             let successor_generator =
                 GroundedSuccessorGenerator::construct_node_from_task(&self.task);
             let state_packer = IntDoublePacker::from_abstract_task(&self.task);
@@ -1327,6 +1593,10 @@ impl<'task> PatternDatabase<'task> {
                                        registry: &StateRegistry<'_>|
              -> Result<InnerHeuristicResult, String> {
                 match heuristic {
+                    PdbInternalHeuristic::Zero => Ok(InnerHeuristicResult {
+                        dead_end: false,
+                        value: 0.0,
+                    }),
                     PdbInternalHeuristic::Blind => Ok(InnerHeuristicResult {
                         dead_end: false,
                         value: 0.0,
@@ -1417,7 +1687,7 @@ impl<'task> PatternDatabase<'task> {
                         }
                     }
 
-                    predecessors[next_id].push((state_id, operator_cost));
+                    predecessors[next_id].push((state_id, operator_id));
 
                     if !seen_or_closed[next_id] {
                         seen_or_closed[next_id] = true;
@@ -1433,7 +1703,7 @@ impl<'task> PatternDatabase<'task> {
                             let g = entry.g.into_inner() + operator_cost;
                             let h = if matches!(
                                 self.heuristic_config.exploration_heuristic,
-                                PdbInternalHeuristic::Blind
+                                PdbInternalHeuristic::Blind | PdbInternalHeuristic::Zero
                             ) {
                                 0.0
                             } else {
@@ -1467,7 +1737,7 @@ impl<'task> PatternDatabase<'task> {
             let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
 
             let mut reached_goal_states = 0usize;
-            for goal_state_id in goal_states {
+            for &goal_state_id in &goal_states {
                 reached_goal_states += 1;
                 distances[goal_state_id] = 0.0;
                 heap.push((Reverse(NotNan::new(0.0).unwrap()), goal_state_id));
@@ -1516,7 +1786,8 @@ impl<'task> PatternDatabase<'task> {
                     continue;
                 }
 
-                for &(parent_id, operator_cost) in &predecessors[state_id] {
+                for &(parent_id, operator_id) in &predecessors[state_id] {
+                    let operator_cost = self.task.abstract_operator_cost(operator_id);
                     let alternative = distance + operator_cost;
                     if alternative + 1e-12 < distances[parent_id] {
                         distances[parent_id] = alternative;
@@ -1529,7 +1800,9 @@ impl<'task> PatternDatabase<'task> {
                 built_states,
                 distances,
                 reached_goal_states,
+                goal_states,
                 frontier_states,
+                predecessors,
                 truncated,
                 exhausted_abstract_state_space,
             )
@@ -1539,6 +1812,8 @@ impl<'task> PatternDatabase<'task> {
         self.exhausted_abstract_state_space = exhausted_abstract_state_space;
         self.states = built_states;
         self.distances = distances;
+        self.goal_state_ids = goal_state_ids;
+        self.transition_predecessors = transition_predecessors;
         self.reached_goal_states = reached_goal_states;
         self.frontier_states = frontier_states;
         self.rebuild_lookup_indexes();

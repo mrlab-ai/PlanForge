@@ -24,6 +24,72 @@ const COMPARISON_UNKNOWN_VAL: usize = 2;
 
 pub type DomainMapping = Vec<Vec<usize>>;
 
+#[derive(Debug, Clone, Default)]
+pub struct IncrementalAbstractOperatorCache {
+    per_operator: Vec<CachedConcreteOperatorBuild>,
+    dirty_propositional_vars: HashSet<usize>,
+    dirty_numeric: bool,
+}
+
+impl IncrementalAbstractOperatorCache {
+    pub fn mark_refined(
+        &mut self,
+        summary: &crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary,
+    ) {
+        if !summary.refined_numeric_vars.is_empty() {
+            self.dirty_numeric = true;
+        }
+        self.dirty_propositional_vars
+            .extend(summary.refined_propositional_vars.iter().copied());
+    }
+
+    fn take_dirty_state(&mut self) -> (HashSet<usize>, bool) {
+        (
+            std::mem::take(&mut self.dirty_propositional_vars),
+            std::mem::take(&mut self.dirty_numeric),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct CachedConcreteOperatorBuild {
+    dependencies: OperatorDependencies,
+    skeletons: Vec<AbstractOperatorSkeleton>,
+    candidates: Vec<AbstractOperatorCandidate>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct OperatorDependencies {
+    propositional_vars: HashSet<usize>,
+}
+
+impl OperatorDependencies {
+    fn intersects_propositional(&self, dirty_vars: &HashSet<usize>) -> bool {
+        !dirty_vars.is_disjoint(&self.propositional_vars)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AbstractOperatorCandidate {
+    concrete_op_id: usize,
+    cost: f64,
+    prev_pairs: Vec<ExplicitFact>,
+    pre_pairs: Vec<ExplicitFact>,
+    eff_pairs: Vec<ExplicitFact>,
+    changed_numeric_vars: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct AbstractOperatorSkeleton {
+    concrete_op_id: usize,
+    cost: f64,
+    prev_pairs: Vec<ExplicitFact>,
+    pre_pairs: Vec<ExplicitFact>,
+    eff_pairs: Vec<ExplicitFact>,
+    ass_effects: Vec<AssignmentEffect>,
+    op_preconditions: Vec<ExplicitFact>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractOperator {
     pub concrete_op_ids: Vec<usize>,
@@ -103,6 +169,178 @@ struct OperatorSignature {
     pre_pairs: Vec<(usize, usize)>,
     eff_pairs: Vec<(usize, usize)>,
     cost_bits: u64,
+}
+
+impl AbstractOperatorCandidate {
+    fn signature(&self) -> OperatorSignature {
+        OperatorSignature {
+            prev_pairs: self.prev_pairs.iter().map(|f| (f.var, f.value)).collect(),
+            pre_pairs: self.pre_pairs.iter().map(|f| (f.var, f.value)).collect(),
+            eff_pairs: self.eff_pairs.iter().map(|f| (f.var, f.value)).collect(),
+            cost_bits: self.cost.to_bits(),
+        }
+    }
+}
+
+fn has_in_list_conflict(facts: &[ExplicitFact]) -> bool {
+    facts
+        .windows(2)
+        .any(|w| w[0].var == w[1].var && w[0].value != w[1].value)
+}
+
+fn has_cross_list_conflict(a: &[ExplicitFact], b: &[ExplicitFact]) -> bool {
+    let mut i = 0;
+    let mut j = 0;
+    while i < a.len() && j < b.len() {
+        let va = a[i].var;
+        let vb = b[j].var;
+        if va < vb {
+            i += 1;
+        } else if vb < va {
+            j += 1;
+        } else {
+            if a[i].value != b[j].value {
+                return true;
+            }
+            i += 1;
+            j += 1;
+        }
+    }
+    false
+}
+
+fn transition_vars_match(pre_pairs: &[ExplicitFact], eff_pairs: &[ExplicitFact]) -> bool {
+    pre_pairs.len() == eff_pairs.len()
+        && pre_pairs
+            .iter()
+            .zip(eff_pairs.iter())
+            .all(|(pre, eff)| pre.var == eff.var)
+}
+
+fn fact_value_for_var(facts: &[ExplicitFact], var_id: usize) -> Option<usize> {
+    facts
+        .binary_search_by_key(&var_id, |f| f.var)
+        .ok()
+        .map(|idx| facts[idx].value)
+}
+
+fn build_candidate_from_transition(
+    skeleton: &AbstractOperatorSkeleton,
+    trans: &TransitionInfo,
+) -> Option<AbstractOperatorCandidate> {
+    let mut extended_pre_pairs =
+        Vec::with_capacity(skeleton.pre_pairs.len() + trans.source_partition_facts.len());
+    extended_pre_pairs.extend_from_slice(&skeleton.pre_pairs);
+    let mut extended_eff_pairs =
+        Vec::with_capacity(skeleton.eff_pairs.len() + trans.target_partition_facts.len());
+    extended_eff_pairs.extend_from_slice(&skeleton.eff_pairs);
+    let mut extended_prev_pairs =
+        Vec::with_capacity(skeleton.prev_pairs.len() + trans.prevail_facts.len());
+    extended_prev_pairs.extend_from_slice(&skeleton.prev_pairs);
+
+    let mut source_pos = 0;
+    let mut target_pos = 0;
+    while source_pos < trans.source_partition_facts.len()
+        || target_pos < trans.target_partition_facts.len()
+    {
+        let source = trans.source_partition_facts.get(source_pos);
+        let target = trans.target_partition_facts.get(target_pos);
+        let var_id = match (source, target) {
+            (Some(src), Some(tgt)) => src.var.min(tgt.var),
+            (Some(src), None) => src.var,
+            (None, Some(tgt)) => tgt.var,
+            (None, None) => unreachable!(),
+        };
+
+        if let Some(src) = source
+            && src.var == var_id
+        {
+            if let Some(existing) = fact_value_for_var(&skeleton.pre_pairs, var_id) {
+                if existing != src.value {
+                    return None;
+                }
+            } else {
+                extended_pre_pairs.push(src.clone());
+            }
+        }
+        if let Some(tgt) = target
+            && tgt.var == var_id
+            && fact_value_for_var(&skeleton.eff_pairs, var_id).is_none()
+        {
+            extended_eff_pairs.push(tgt.clone());
+        }
+
+        while trans
+            .source_partition_facts
+            .get(source_pos)
+            .is_some_and(|f| f.var == var_id)
+        {
+            source_pos += 1;
+        }
+        while trans
+            .target_partition_facts
+            .get(target_pos)
+            .is_some_and(|f| f.var == var_id)
+        {
+            target_pos += 1;
+        }
+    }
+    extended_prev_pairs.extend_from_slice(&trans.prevail_facts);
+
+    extended_pre_pairs.sort();
+    extended_eff_pairs.sort();
+    extended_prev_pairs.sort();
+    extended_pre_pairs.dedup();
+    extended_eff_pairs.dedup();
+    extended_prev_pairs.dedup();
+
+    if has_in_list_conflict(&extended_pre_pairs)
+        || has_in_list_conflict(&extended_eff_pairs)
+        || has_in_list_conflict(&extended_prev_pairs)
+        || has_cross_list_conflict(&extended_pre_pairs, &extended_prev_pairs)
+        || has_cross_list_conflict(&extended_prev_pairs, &extended_eff_pairs)
+        || !transition_vars_match(&extended_pre_pairs, &extended_eff_pairs)
+    {
+        return None;
+    }
+
+    Some(AbstractOperatorCandidate {
+        concrete_op_id: skeleton.concrete_op_id,
+        cost: skeleton.cost,
+        prev_pairs: extended_prev_pairs,
+        pre_pairs: extended_pre_pairs,
+        eff_pairs: extended_eff_pairs,
+        changed_numeric_vars: trans.changed_numeric_vars.clone(),
+    })
+}
+
+fn materialize_skeletons(
+    task: &dyn AbstractNumericTask,
+    generator: &mut AbstractOperatorGenerator,
+    skeletons: &[AbstractOperatorSkeleton],
+) -> Result<Vec<AbstractOperatorCandidate>> {
+    let Some(first) = skeletons.first() else {
+        return Ok(Vec::new());
+    };
+    let transitions = compute_hash_effects_with_preconditions(
+        task,
+        generator,
+        &first.op_preconditions,
+        &first.ass_effects,
+    )?;
+
+    let mut out: Vec<AbstractOperatorCandidate> =
+        Vec::with_capacity(skeletons.len().saturating_mul(transitions.len()));
+    for skeleton in skeletons {
+        debug_assert_eq!(skeleton.ass_effects, first.ass_effects);
+        debug_assert_eq!(skeleton.op_preconditions, first.op_preconditions);
+        for trans in &transitions {
+            if let Some(candidate) = build_candidate_from_transition(skeleton, trans) {
+                out.push(candidate);
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[allow(unused)]
@@ -300,14 +538,63 @@ impl AbstractOperatorGenerator {
         &mut self,
         task: &dyn AbstractNumericTask,
     ) -> Result<Vec<AbstractOperator>> {
-        let mut out: Vec<AbstractOperator> = Vec::new();
-        let mut grouping: HashMap<OperatorSignature, usize> = HashMap::new();
-
+        let mut candidates: Vec<AbstractOperatorCandidate> = Vec::new();
         for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
-            self.build_for_concrete_operator(task, op, concrete_op_id, &mut out, &mut grouping)?;
+            let skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
+            candidates.extend(materialize_skeletons(task, self, &skeletons)?);
         }
 
-        Ok(out)
+        Ok(self.finalize_candidates(candidates))
+    }
+
+    pub fn build_abstract_operators_with_cache(
+        &mut self,
+        task: &dyn AbstractNumericTask,
+        cache: &mut IncrementalAbstractOperatorCache,
+    ) -> Result<Vec<AbstractOperator>> {
+        if cache.per_operator.len() != task.get_operators().len() {
+            cache.per_operator.clear();
+            cache.per_operator.reserve(task.get_operators().len());
+            for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
+                let skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
+                let candidates = materialize_skeletons(task, self, &skeletons)?;
+                cache.per_operator.push(CachedConcreteOperatorBuild {
+                    dependencies: self.compute_operator_dependencies(op),
+                    skeletons,
+                    candidates,
+                });
+            }
+            return Ok(self.finalize_candidate_refs(
+                cache
+                    .per_operator
+                    .iter()
+                    .flat_map(|entry| entry.candidates.iter()),
+            ));
+        }
+
+        let (dirty_propositional_vars, dirty_numeric) = cache.take_dirty_state();
+        if dirty_numeric || !dirty_propositional_vars.is_empty() {
+            for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
+                let entry = &mut cache.per_operator[concrete_op_id];
+                let prop_dirty = entry
+                    .dependencies
+                    .intersects_propositional(&dirty_propositional_vars);
+                if prop_dirty {
+                    entry.dependencies = self.compute_operator_dependencies(op);
+                    entry.skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
+                }
+                if dirty_numeric || prop_dirty {
+                    entry.candidates = materialize_skeletons(task, self, &entry.skeletons)?;
+                }
+            }
+        }
+
+        Ok(self.finalize_candidate_refs(
+            cache
+                .per_operator
+                .iter()
+                .flat_map(|entry| entry.candidates.iter()),
+        ))
     }
 
     fn build_for_concrete_operator(
@@ -315,9 +602,7 @@ impl AbstractOperatorGenerator {
         task: &dyn AbstractNumericTask,
         op: &Operator,
         concrete_op_id: usize,
-        out: &mut Vec<AbstractOperator>,
-        grouping: &mut HashMap<OperatorSignature, usize>,
-    ) -> Result<()> {
+    ) -> Result<Vec<AbstractOperatorSkeleton>> {
         let (unconditional_effects, conditional_effects): (Vec<&Effect>, Vec<&Effect>) =
             op.effects().iter().partition(|e| e.conditions().is_empty());
 
@@ -359,11 +644,67 @@ impl AbstractOperatorGenerator {
             op.preconditions(),
             concrete_op_id,
             self,
-            out,
-            grouping,
-        )?;
+        )
+    }
 
-        Ok(())
+    fn compute_operator_dependencies(&self, op: &Operator) -> OperatorDependencies {
+        let mut dependencies = OperatorDependencies::default();
+        for pre in op.preconditions() {
+            dependencies.propositional_vars.insert(pre.var);
+        }
+        for eff in op.effects() {
+            dependencies.propositional_vars.insert(eff.var_id());
+            for cond in eff.conditions() {
+                dependencies.propositional_vars.insert(cond.var);
+            }
+        }
+        for eff in op.assignment_effects() {
+            for cond in eff.conditions() {
+                dependencies.propositional_vars.insert(cond.var);
+            }
+        }
+        dependencies
+    }
+
+    fn finalize_candidates(
+        &self,
+        candidates: Vec<AbstractOperatorCandidate>,
+    ) -> Vec<AbstractOperator> {
+        self.finalize_candidate_refs(candidates.iter())
+    }
+
+    fn finalize_candidate_refs<'a>(
+        &self,
+        candidates: impl IntoIterator<Item = &'a AbstractOperatorCandidate>,
+    ) -> Vec<AbstractOperator> {
+        let mut out: Vec<AbstractOperator> = Vec::new();
+        let mut grouping: HashMap<OperatorSignature, usize> = HashMap::new();
+
+        for candidate in candidates {
+            let signature = candidate.signature();
+            if self.combine_labels
+                && let Some(&idx) = grouping.get(&signature)
+            {
+                out[idx].concrete_op_ids.push(candidate.concrete_op_id);
+                continue;
+            }
+
+            let idx = out.len();
+            out.push(AbstractOperator::new(
+                &candidate.prev_pairs,
+                &candidate.pre_pairs,
+                &candidate.eff_pairs,
+                candidate.cost,
+                &self.hash_multipliers,
+                vec![candidate.concrete_op_id],
+                candidate.changed_numeric_vars.clone(),
+            ));
+            if self.combine_labels {
+                grouping.insert(signature, idx);
+            }
+        }
+
+        out
     }
 
     #[inline]
@@ -470,9 +811,7 @@ fn build_branch_for_operator(
     merged_preconditions: &[ExplicitFact],
     concrete_op_id: usize,
     generator: &mut AbstractOperatorGenerator,
-    out: &mut Vec<AbstractOperator>,
-    grouping: &mut HashMap<OperatorSignature, usize>,
-) -> Result<()> {
+) -> Result<Vec<AbstractOperatorSkeleton>> {
     let abstract_cost = abstract_operator_cost(task, op);
     let num_variables = task.get_num_variables();
     let mut precondition_on_var: Vec<Option<usize>> = vec![None; num_variables];
@@ -551,18 +890,14 @@ fn build_branch_for_operator(
         concrete_op_id,
         task,
         generator,
-        out,
-        grouping,
-    )?;
-
-    Ok(())
+    )
 }
 
 fn abstract_operator_cost(task: &dyn AbstractNumericTask, op: &Operator) -> f64 {
     metric_operator_cost_from_initial_values(task, op)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
 fn multiply_out_propositional(
     pos: usize,
     cost: f64,
@@ -575,9 +910,7 @@ fn multiply_out_propositional(
     concrete_op_id: usize,
     task: &dyn AbstractNumericTask,
     generator: &mut AbstractOperatorGenerator,
-    out: &mut Vec<AbstractOperator>,
-    grouping: &mut HashMap<OperatorSignature, usize>,
-) -> Result<()> {
+) -> Result<Vec<AbstractOperatorSkeleton>> {
     fn has_in_list_conflict(facts: &[ExplicitFact]) -> bool {
         facts
             .windows(2)
@@ -607,126 +940,44 @@ fn multiply_out_propositional(
 
     if pos == effects_without_pre.len() {
         if eff_pairs.is_empty() && ass_effects.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
-        let transitions = compute_hash_effects_with_preconditions(
-            task,
-            generator,
-            op_preconditions,
-            ass_effects,
-        )?;
-        for trans in transitions {
-            let mut extended_pre_pairs = pre_pairs.clone();
-            let mut extended_eff_pairs = eff_pairs.clone();
-            let mut extended_prev_pairs = prev_pairs.clone();
+        let mut normalized_pre_pairs = pre_pairs.clone();
+        let mut normalized_eff_pairs = eff_pairs.clone();
+        let mut normalized_prev_pairs = prev_pairs.clone();
+        normalized_pre_pairs.sort();
+        normalized_eff_pairs.sort();
+        normalized_prev_pairs.sort();
+        normalized_pre_pairs.dedup();
+        normalized_eff_pairs.dedup();
+        normalized_prev_pairs.dedup();
 
-            // Avoid duplicating variables that already appear in pre_pairs.
-            let mut vars_in_pre: HashSet<usize> = pre_pairs.iter().map(|f| f.var).collect();
-
-            let source_by_var: HashMap<usize, ExplicitFact> = trans
-                .source_partition_facts
-                .iter()
-                .cloned()
-                .map(|f| (f.var, f))
-                .collect();
-            let target_by_var: HashMap<usize, ExplicitFact> = trans
-                .target_partition_facts
-                .iter()
-                .cloned()
-                .map(|f| (f.var, f))
-                .collect();
-
-            let mut transition_vars: Vec<usize> = source_by_var
-                .keys()
-                .chain(target_by_var.keys())
-                .copied()
-                .collect();
-            transition_vars.sort_unstable();
-            transition_vars.dedup();
-
-            for var_id in transition_vars {
-                let source_fact = source_by_var.get(&var_id);
-                let target_fact = target_by_var.get(&var_id);
-
-                if !vars_in_pre.insert(var_id) {
-                    continue;
-                }
-
-                if let Some(src) = source_fact {
-                    extended_pre_pairs.push(src.clone());
-                }
-                if let Some(tgt) = target_fact {
-                    extended_eff_pairs.push(tgt.clone());
-                }
-            }
-            extended_prev_pairs.extend(trans.prevail_facts.iter().cloned());
-
-            // Sorting is required by numeric-fd's invariants (unique vars per list).
-            extended_pre_pairs.sort();
-            extended_eff_pairs.sort();
-            extended_prev_pairs.sort();
-
-            // Remove exact duplicates and drop inconsistent operators early.
-            extended_pre_pairs.dedup();
-            extended_eff_pairs.dedup();
-            extended_prev_pairs.dedup();
-
-            if has_in_list_conflict(&extended_pre_pairs)
-                || has_in_list_conflict(&extended_eff_pairs)
-                || has_in_list_conflict(&extended_prev_pairs)
-                || has_cross_list_conflict(&extended_pre_pairs, &extended_prev_pairs)
-                || has_cross_list_conflict(&extended_prev_pairs, &extended_eff_pairs)
-            {
-                continue;
-            }
-
-            let signature = OperatorSignature {
-                prev_pairs: extended_prev_pairs
-                    .iter()
-                    .map(|f| (f.var, f.value))
-                    .collect(),
-                pre_pairs: extended_pre_pairs
-                    .iter()
-                    .map(|f| (f.var, f.value))
-                    .collect(),
-                eff_pairs: extended_eff_pairs
-                    .iter()
-                    .map(|f| (f.var, f.value))
-                    .collect(),
-                cost_bits: cost.to_bits(),
-            };
-
-            if generator.combine_labels
-                && let Some(&idx) = grouping.get(&signature)
-            {
-                out[idx].concrete_op_ids.push(concrete_op_id);
-                continue;
-            }
-
-            let op = AbstractOperator::new(
-                &extended_prev_pairs,
-                &extended_pre_pairs,
-                &extended_eff_pairs,
-                cost,
-                &generator.hash_multipliers,
-                vec![concrete_op_id],
-                trans.changed_numeric_vars,
-            );
-
-            let idx = out.len();
-            out.push(op);
-            if generator.combine_labels {
-                grouping.insert(signature, idx);
-            }
+        if has_in_list_conflict(&normalized_pre_pairs)
+            || has_in_list_conflict(&normalized_eff_pairs)
+            || has_in_list_conflict(&normalized_prev_pairs)
+            || has_cross_list_conflict(&normalized_pre_pairs, &normalized_prev_pairs)
+            || has_cross_list_conflict(&normalized_prev_pairs, &normalized_eff_pairs)
+            || !transition_vars_match(&normalized_pre_pairs, &normalized_eff_pairs)
+        {
+            return Ok(Vec::new());
         }
 
-        return Ok(());
+        return Ok(vec![AbstractOperatorSkeleton {
+            concrete_op_id,
+            cost,
+            prev_pairs: normalized_prev_pairs,
+            pre_pairs: normalized_pre_pairs,
+            eff_pairs: normalized_eff_pairs,
+            ass_effects: ass_effects.to_vec(),
+            op_preconditions: op_preconditions.to_vec(),
+        }]);
     }
 
     let var_id = effects_without_pre[pos].var;
     let eff = effects_without_pre[pos].value;
     let domain_size = generator.domain_sizes[var_id];
+    let mut out: Vec<AbstractOperatorSkeleton> = Vec::new();
     for i in 0..domain_size {
         if i != eff {
             pre_pairs.push(ExplicitFact::new(var_id, i));
@@ -735,7 +986,7 @@ fn multiply_out_propositional(
             prev_pairs.push(ExplicitFact::new(var_id, i));
         }
 
-        multiply_out_propositional(
+        out.extend(multiply_out_propositional(
             pos + 1,
             cost,
             prev_pairs,
@@ -747,9 +998,7 @@ fn multiply_out_propositional(
             concrete_op_id,
             task,
             generator,
-            out,
-            grouping,
-        )?;
+        )?);
 
         if i != eff {
             pre_pairs.pop();
@@ -759,7 +1008,7 @@ fn multiply_out_propositional(
         }
     }
 
-    Ok(())
+    Ok(out)
 }
 
 #[allow(clippy::needless_range_loop)]
@@ -908,8 +1157,15 @@ fn compute_hash_effects_with_preconditions(
         }
 
         if !changed_numeric_vars.is_empty() {
+            let target_numeric_intervals =
+                prepare_comparison_tree_inputs_for_combo(task, generator, &combo, true)?;
             let (source_comparison_facts, target_comparison_facts) =
-                compute_comparison_tree_cascades(task, generator, &combo)?;
+                compute_comparison_tree_cascades(
+                    generator,
+                    &combo,
+                    &source_numeric_intervals,
+                    &target_numeric_intervals,
+                )?;
             source_partition_facts.extend(source_comparison_facts);
             target_partition_facts.extend(target_comparison_facts);
         }
@@ -996,13 +1252,11 @@ fn tri_value_for_comparison(
 }
 
 fn compute_comparison_tree_cascades(
-    task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
     combo: &[(usize, usize, usize)],
+    source_inputs: &[Interval],
+    target_inputs: &[Interval],
 ) -> Result<(Vec<ExplicitFact>, Vec<ExplicitFact>)> {
-    let source_inputs = prepare_comparison_tree_inputs_for_combo(task, generator, combo, false)?;
-    let target_inputs = prepare_comparison_tree_inputs_for_combo(task, generator, combo, true)?;
-
     let mut affected_tree_ids: Vec<usize> = Vec::new();
     let mut seen_tree_ids: HashSet<usize> = HashSet::new();
     for (var_id, source_partition, target_partition) in combo {
@@ -1038,13 +1292,13 @@ fn compute_comparison_tree_cascades(
 
         let source_value = tri_value_for_comparison(
             tree,
-            &source_inputs,
+            source_inputs,
             tree.affected_var_id,
             &generator.domain_mapping,
         );
         let target_value = tri_value_for_comparison(
             tree,
-            &target_inputs,
+            target_inputs,
             tree.affected_var_id,
             &generator.domain_mapping,
         );
