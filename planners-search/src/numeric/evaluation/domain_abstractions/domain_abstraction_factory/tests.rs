@@ -382,7 +382,9 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
         .unwrap()
         .expect("plan exists");
     assert_eq!(result.wildcard_plan.len(), 1);
-    assert_eq!(result.wildcard_plan[0], vec![0, 1]);
+    let mut step = result.wildcard_plan[0].clone();
+    step.sort_unstable();
+    assert_eq!(step, vec![0, 1]);
 }
 
 #[test]

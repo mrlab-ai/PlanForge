@@ -69,6 +69,10 @@ impl<'task> PdbCollection<'task> {
         &self.pdbs
     }
 
+    pub fn into_pdbs(self) -> Vec<PatternDatabase<'task>> {
+        self.pdbs
+    }
+
     pub fn pdb(&self, index: usize) -> Option<&PatternDatabase<'task>> {
         self.pdbs.get(index)
     }

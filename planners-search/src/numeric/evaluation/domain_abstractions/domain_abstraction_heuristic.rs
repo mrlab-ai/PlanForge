@@ -41,6 +41,14 @@ impl DomainAbstractionHeuristic {
         &self.abstraction
     }
 
+    pub fn abstract_state_hash(
+        &self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<usize, EvaluationError> {
+        let (_, registry) = Self::require_task_and_registry(eval_state)?;
+        self.compute_abstract_hash(eval_state.state(), registry)
+    }
+
     fn require_task_and_registry<'s, 't>(
         eval_state: &'s EvaluationState<'s, 't>,
     ) -> Result<

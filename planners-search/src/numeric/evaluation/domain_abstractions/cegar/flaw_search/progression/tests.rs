@@ -133,6 +133,50 @@ fn progression_flaws_find_goal_violation() {
 }
 
 #[test]
+fn progression_execute_entire_plan_advances_chosen_operator_once() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        None,
+        0,
+    )];
+    let op = Operator::new(
+        "set".into(),
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(vec![], 0, Some(0), 1)],
+        vec![],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let partitions = NumericPartitions::trivial(&task);
+    let plan = WildcardPlanResult {
+        wildcard_plan: vec![vec![0]],
+        abstract_state_hashes: vec![],
+        abstract_prop_states: vec![],
+        abstract_numeric_states: vec![vec![], vec![]],
+    };
+
+    let flaws = get_progression_flaws(&task, &partitions, &plan, true).unwrap();
+
+    assert!(flaws.is_empty());
+}
+
+#[test]
 fn progression_flaws_find_numeric_deviation_flaw() {
     // Propositional vars: gt (comparison result), g (goal flag).
     let variables = vec![
