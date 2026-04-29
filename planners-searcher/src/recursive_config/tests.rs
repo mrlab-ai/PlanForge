@@ -1,6 +1,6 @@
 use super::*;
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig, ExecEntirePlanMode,
+    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     InitSplitQuantity, VariableSubset,
 };
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
@@ -40,7 +40,7 @@ fn parses_astar_domain_abstraction_with_or_without_unit_parens() {
 #[test]
 fn parses_astar_domain_abstraction_with_named_options() {
     let spec = parse_search_spec(
-        "astar(domain_abstraction(max_abstraction_size=10000, use_wildcard_plans=false, combine_labels=true, random_seed=7, exec_entire_plan=execute_entire_plan))",
+        "astar(domain_abstraction(max_abstraction_size=10000, use_wildcard_plans=false, combine_labels=true, random_seed=7))",
     )
     .unwrap();
 
@@ -52,10 +52,6 @@ fn parses_astar_domain_abstraction_with_named_options() {
     assert!(!config.use_wildcard_plans);
     assert!(config.combine_labels);
     assert_eq!(config.random_seed, 7);
-    assert_eq!(
-        config.exec_entire_plan,
-        ExecEntirePlanMode::ExecuteEntirePlan
-    );
 }
 
 #[test]
@@ -77,7 +73,7 @@ fn parses_astar_canonical_domain_abstractions_with_or_without_parens() {
 #[test]
 fn parses_astar_canonical_domain_abstractions_with_named_options() {
     let spec = parse_search_spec(
-        "astar(canonical_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, exec_entire_plan=execute_entire_plan, use_wildcard_plans=false, combine_labels=true, random_seed=7))",
+        "astar(canonical_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, random_seed=7))",
     )
     .unwrap();
 
@@ -89,10 +85,6 @@ fn parses_astar_canonical_domain_abstractions_with_named_options() {
     assert_eq!(config.total_max_time, 4.5);
     assert_eq!(config.blacklist_option, VariableSubset::NonGoals);
     assert_eq!(config.init_split_quantity, InitSplitQuantity::All);
-    assert_eq!(
-        config.exec_entire_plan,
-        ExecEntirePlanMode::ExecuteEntirePlan
-    );
     assert!(!config.use_wildcard_plans);
     assert!(config.combine_labels);
     assert_eq!(config.random_seed, 7);
@@ -113,7 +105,7 @@ fn parses_astar_scp_online_with_or_without_unit_parens() {
 #[test]
 fn parses_astar_scp_online_with_named_options() {
     let spec = parse_search_spec(
-        "astar(scp_online(max_time=12.5, max_size=2048, interval=3, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, exec_entire_plan=execute_entire_plan, use_wildcard_plans=false, combine_labels=true, random_seed=7, debug=true))",
+        "astar(scp_online(max_time=12.5, max_size=2048, interval=3, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, random_seed=7, debug=true))",
     )
     .unwrap();
 
@@ -134,10 +126,6 @@ fn parses_astar_scp_online_with_named_options() {
     assert_eq!(
         config.collection_config.init_split_quantity,
         InitSplitQuantity::All
-    );
-    assert_eq!(
-        config.collection_config.exec_entire_plan,
-        ExecEntirePlanMode::ExecuteEntirePlan
     );
     assert!(!config.collection_config.use_wildcard_plans);
     assert!(config.collection_config.combine_labels);
@@ -359,7 +347,7 @@ fn parses_astar_multi_domain_abstractions_with_or_without_parens() {
 #[test]
 fn parses_astar_multi_domain_abstractions_with_named_options() {
     let spec = parse_search_spec(
-        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, exec_entire_plan=execute_entire_plan, use_wildcard_plans=false, combine_labels=true, random_seed=7, debug=true))",
+        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, random_seed=7, debug=true))",
     )
     .unwrap();
 
@@ -371,10 +359,6 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
     assert_eq!(config.total_max_time, 4.5);
     assert_eq!(config.blacklist_option, VariableSubset::NonGoals);
     assert_eq!(config.init_split_quantity, InitSplitQuantity::All);
-    assert_eq!(
-        config.exec_entire_plan,
-        ExecEntirePlanMode::ExecuteEntirePlan
-    );
     assert!(!config.use_wildcard_plans);
     assert!(config.combine_labels);
     assert_eq!(config.random_seed, 7);
@@ -383,17 +367,14 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
 
 #[test]
 fn parses_astar_multi_domain_abstractions_with_trailing_comma() {
-    let spec = parse_search_spec(
-        "astar(multi_domain_abstractions(max_collection_size=123, exec_entire_plan=stop_at_first_flaw,))",
-    )
-    .unwrap();
+    let spec =
+        parse_search_spec("astar(multi_domain_abstractions(max_collection_size=123,))").unwrap();
 
     let SearchSpec::Astar(HeuristicSpec::MultiDomainAbstractions(config)) = spec else {
         panic!("expected multi_domain_abstractions config");
     };
 
     assert_eq!(config.max_collection_size, 123);
-    assert_eq!(config.exec_entire_plan, ExecEntirePlanMode::StopAtFirstFlaw);
 }
 
 #[test]

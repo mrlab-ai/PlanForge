@@ -20,8 +20,8 @@ use planners_sas::numeric::numeric_task::{
 
 use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw, get_flaws};
 
+pub use flaw_search::FlawKind;
 pub use flaw_search::flaw_selection::{FlawTreatment, FlawTreatmentVariants, InitSplitMethod};
-pub use flaw_search::{ExecEntirePlanMode, FlawKind};
 
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::{
     FlawSearchState, progress,
@@ -51,7 +51,6 @@ pub struct CegarConfig {
     pub flaw_kind: FlawKind,
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
-    pub exec_entire_plan: ExecEntirePlanMode,
     pub init_split_var_ids: Option<HashSet<usize>>,
     pub blacklisted_prop_var_ids: HashSet<usize>,
     pub blacklisted_numeric_var_ids: HashSet<usize>,
@@ -70,7 +69,6 @@ impl Default for CegarConfig {
             flaw_kind: FlawKind::Progression,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
-            exec_entire_plan: ExecEntirePlanMode::StopAtFirstFlaw,
             init_split_var_ids: None,
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
@@ -172,10 +170,6 @@ impl Cegar {
         let mut numeric_domain_sizes: Vec<usize> = vec![1; task.numeric_variables().len()];
         let mut blacklisted_prop_var_ids = config.blacklisted_prop_var_ids.clone();
         let mut blacklisted_numeric_var_ids = config.blacklisted_numeric_var_ids.clone();
-        let execute_entire_plan = match config.exec_entire_plan {
-            ExecEntirePlanMode::StopAtFirstFlaw => false,
-            ExecEntirePlanMode::ExecuteEntirePlan => true,
-        };
 
         apply_initial_goal_splits(
             task,
@@ -257,7 +251,6 @@ impl Cegar {
                 &factory.partitions,
                 &factory.domain_mapping,
                 plan,
-                execute_entire_plan,
                 self.config.flaw_kind,
             )
             .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;

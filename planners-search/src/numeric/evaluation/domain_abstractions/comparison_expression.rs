@@ -153,10 +153,40 @@ impl Interval {
 
     #[inline]
     #[allow(clippy::if_same_then_else)]
-    pub fn higher_is_higher(&self, other: &Self) -> bool {
+    pub fn lower_is_lower_or_equal(&self, other: &Self) -> bool {
+        if self.lower < other.lower {
+            return true;
+        } else if self.lower == other.lower
+            && ((self.lower_closed && !other.lower_closed)
+                || self.lower_closed == other.lower_closed)
+        {
+            return true;
+        }
+
+        false
+    }
+
+    #[inline]
+    #[allow(clippy::if_same_then_else)]
+    pub fn upper_is_higher(&self, other: &Self) -> bool {
         if self.upper > other.upper {
             return true;
         } else if self.upper == other.upper && self.upper_closed && !other.upper_closed {
+            return true;
+        }
+
+        false
+    }
+
+    #[inline]
+    #[allow(clippy::if_same_then_else)]
+    pub fn upper_is_higher_or_equal(&self, other: &Self) -> bool {
+        if self.upper > other.upper {
+            return true;
+        } else if self.upper == other.upper
+            && ((self.upper_closed && !other.upper_closed)
+                || self.upper_closed == other.upper_closed)
+        {
             return true;
         }
 
@@ -213,6 +243,23 @@ impl Interval {
     #[inline]
     fn contains_zero(&self) -> bool {
         self.contains(0.0)
+    }
+
+    pub fn apply_op(&mut self, op: &AssignmentOperation, operand: &Interval) {
+        match op {
+            // Unknown previous value.
+            AssignmentOperation::Assign => *self = *operand,
+            AssignmentOperation::Plus => *self = *self + *operand,
+            AssignmentOperation::Minus => *self = *self - *operand,
+            AssignmentOperation::Times => *self = *self * *operand,
+            AssignmentOperation::Divide => {
+                if operand.any_bound_is_zero() {
+                    panic!("Division by zero is not allowed");
+                } else {
+                    *self = *self / *operand
+                }
+            }
+        };
     }
 
     pub fn apply_reverse_op(&mut self, op: &AssignmentOperation, operand: &Interval) {

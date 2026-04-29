@@ -194,7 +194,6 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                     config.flaw_kind = domain_config.flaw_kind;
                     config.flaw_treatment = domain_config.flaw_treatment;
                     config.init_split_method = domain_config.init_split_method;
-                    config.exec_entire_plan = domain_config.exec_entire_plan;
 
                     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
                         std::io::Error::other(format!(

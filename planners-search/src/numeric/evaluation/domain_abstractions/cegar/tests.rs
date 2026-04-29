@@ -159,7 +159,6 @@ fn get_flaws_reports_numeric_deviation_flaw() {
         &partitions,
         &domain_mapping,
         &plan,
-        false,
         FlawKind::Progression,
     )
     .unwrap();
@@ -183,7 +182,6 @@ fn cegar_default_config_matches_current_port_defaults() {
         FlawTreatmentVariants::RandomSingleAtom
     );
     assert_eq!(config.init_split_method, InitSplitMethod::InitValue);
-    assert_eq!(config.exec_entire_plan, ExecEntirePlanMode::StopAtFirstFlaw);
 }
 
 #[test]

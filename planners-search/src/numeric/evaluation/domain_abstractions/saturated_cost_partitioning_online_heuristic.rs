@@ -61,9 +61,10 @@ pub struct ScpOnlineConfig {
 
 impl Default for ScpOnlineConfig {
     fn default() -> Self {
-        let mut collection_config =
-            DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-        collection_config.combine_labels = false;
+        let collection_config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+            combine_labels: false,
+            ..Default::default()
+        };
         Self {
             max_time: 200.0,
             max_size: usize::MAX,
@@ -264,13 +265,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
 
         for pdb in &pdbs {
-            let distances = pdb
-                .build_goal_distances(&original_costs)
-                .map_err(|error| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to compute PDB goal distances for order generator: {error}"
-                    ))
-                })?;
+            let distances = pdb.build_goal_distances(&original_costs).map_err(|error| {
+                EvaluationError::ComputationFailed(format!(
+                    "failed to compute PDB goal distances for order generator: {error}"
+                ))
+            })?;
             let (_, saturated) = pdb
                 .build_cost_partitioned_distance_table(&original_costs)
                 .map_err(|error| {
@@ -450,13 +449,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     "failed to create operator generator for PERIM: {error:#}"
                 ))
             })?;
-        let mut operators = generator
-            .build_abstract_operators(task)
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to build abstract operators for PERIM: {error:#}"
-                ))
-            })?;
+        let mut operators = generator.build_abstract_operators(task).map_err(|error| {
+            EvaluationError::ComputationFailed(format!(
+                "failed to build abstract operators for PERIM: {error:#}"
+            ))
+        })?;
         apply_operator_costs_from_slice(&mut operators, remaining_costs)?;
         let capped_table = AbstractDistanceTable {
             distances: capped.clone(),
@@ -513,7 +510,7 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
             }
         }
 
-        if state.improve_heuristic && state.evaluated_states % self.config.interval == 0 {
+        if state.improve_heuristic && state.evaluated_states.is_multiple_of(self.config.interval) {
             let original_costs: Vec<f64> = task
                 .get_operators()
                 .iter()
@@ -567,14 +564,13 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
                                             .and_then(|t| t.distances.get(sid).copied())
                                     })
                                     .unwrap_or(f64::INFINITY);
-                                let (distances, saturated) =
-                                    Self::compute_domain_perim_entry(
-                                        abstraction,
-                                        task,
-                                        self.config.combine_labels,
-                                        &remaining_costs,
-                                        h_cap,
-                                    )?;
+                                let (distances, saturated) = Self::compute_domain_perim_entry(
+                                    abstraction,
+                                    task,
+                                    self.config.combine_labels,
+                                    &remaining_costs,
+                                    h_cap,
+                                )?;
                                 cp.add_h_values(pos, distances);
                                 reduce_costs(&mut remaining_costs, &saturated)?;
                             }
@@ -710,11 +706,7 @@ fn compute_costs_stolen_by_heuristic(saturated: &[f64], surplus: &[f64]) -> f64 
         .sum()
 }
 
-fn compute_surplus_cost(
-    saturated_by_abs: &[Vec<f64>],
-    op_id: usize,
-    remaining_cost: f64,
-) -> f64 {
+fn compute_surplus_cost(saturated_by_abs: &[Vec<f64>], op_id: usize, remaining_cost: f64) -> f64 {
     let sum: f64 = saturated_by_abs
         .iter()
         .map(|costs| costs.get(op_id).copied().unwrap_or(f64::NEG_INFINITY))
@@ -783,3 +775,4 @@ fn reduce_costs(
     }
     Ok(())
 }
+

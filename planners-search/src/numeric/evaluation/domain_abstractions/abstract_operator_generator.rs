@@ -265,10 +265,9 @@ fn build_candidate_from_transition(
         }
         if let Some(tgt) = target
             && tgt.var == var_id
+            && fact_value_for_var(&skeleton.eff_pairs, var_id).is_none()
         {
-            if fact_value_for_var(&skeleton.eff_pairs, var_id).is_none() {
-                extended_eff_pairs.push(tgt.clone());
-            }
+            extended_eff_pairs.push(tgt.clone());
         }
 
         while trans
@@ -898,7 +897,7 @@ fn abstract_operator_cost(task: &dyn AbstractNumericTask, op: &Operator) -> f64 
     metric_operator_cost_from_initial_values(task, op)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
 fn multiply_out_propositional(
     pos: usize,
     cost: f64,
@@ -1293,13 +1292,13 @@ fn compute_comparison_tree_cascades(
 
         let source_value = tri_value_for_comparison(
             tree,
-            &source_inputs,
+            source_inputs,
             tree.affected_var_id,
             &generator.domain_mapping,
         );
         let target_value = tri_value_for_comparison(
             tree,
-            &target_inputs,
+            target_inputs,
             tree.affected_var_id,
             &generator.domain_mapping,
         );

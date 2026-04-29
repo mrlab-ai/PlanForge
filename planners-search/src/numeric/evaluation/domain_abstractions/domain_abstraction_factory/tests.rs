@@ -531,7 +531,7 @@ fn singleton_plan_selection_uses_seeded_rng() {
     let factory = factory_identity_cutpoints(&task).unwrap();
     let mut rng = SmallRng::seed_from_u64(7);
     let result = factory
-        .compute_plan_with_rng(&task, true, false, false, Some(&mut rng))
+        .compute_plan_with_rng_and_cache(&task, true, false, false, None, Some(&mut rng))
         .unwrap()
         .expect("plan exists");
     assert_eq!(result.wildcard_plan.len(), 1);

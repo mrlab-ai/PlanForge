@@ -75,7 +75,6 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         factory.partitions(),
         &factory.domain_mapping,
         &plan,
-        false,
         FlawKind::Progression,
     )
     .unwrap();
@@ -86,7 +85,6 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         factory.partitions(),
         &factory.domain_mapping,
         &plan,
-        false,
         FlawKind::Regression,
     )
     .unwrap();
