@@ -128,10 +128,20 @@ impl TransitionResidualCosts {
         self.operator_buckets
             .iter()
             .map(|buckets| {
-                buckets
+                let base_cost = buckets
                     .iter()
+                    .filter(|bucket| bucket.condition == TransitionCondition::Any)
                     .map(|bucket| bucket.cost)
-                    .fold(f64::INFINITY, f64::min)
+                    .fold(f64::INFINITY, f64::min);
+                if !base_cost.is_finite() {
+                    return f64::INFINITY;
+                }
+                let reduction_sum = buckets
+                    .iter()
+                    .filter(|bucket| bucket.condition != TransitionCondition::Any)
+                    .map(|bucket| (base_cost - bucket.cost).max(0.0))
+                    .sum::<f64>();
+                (base_cost - reduction_sum).max(0.0)
             })
             .collect()
     }
@@ -149,12 +159,19 @@ impl TransitionResidualCosts {
         let Some(buckets) = self.operator_buckets.get(concrete_op_id) else {
             return f64::INFINITY;
         };
-        let mut best = f64::INFINITY;
+        let base_cost = buckets
+            .iter()
+            .filter(|bucket| bucket.condition == TransitionCondition::Any)
+            .map(|bucket| bucket.cost)
+            .fold(f64::INFINITY, f64::min);
+        if !base_cost.is_finite() {
+            return f64::INFINITY;
+        }
+
+        let mut reduction_sum = 0.0;
         for bucket in buckets {
             match &bucket.condition {
-                TransitionCondition::Any => {
-                    best = best.min(bucket.cost);
-                }
+                TransitionCondition::Any => {}
                 TransitionCondition::AbstractTransition {
                     abstraction_id,
                     source_hash: bucket_source_hash,
@@ -168,12 +185,12 @@ impl TransitionResidualCosts {
                         && *bucket_abstract_op_id == abstract_op_id
                         && *bucket_target_hash == target_hash;
                     if same_transition || region.overlaps_parts(source_region, target_region) {
-                        best = best.min(bucket.cost);
+                        reduction_sum += (base_cost - bucket.cost).max(0.0);
                     }
                 }
             }
         }
-        best
+        (base_cost - reduction_sum).max(0.0)
     }
 
     pub fn reduce_by_tcf(
@@ -513,5 +530,67 @@ mod tests {
             residuals.cost_for_transition(0, 1, 9, 7, 4, &overlapping.source, &overlapping.target),
             3.0
         );
+    }
+
+    #[test]
+    fn overlapping_transition_reductions_accumulate_conservatively() {
+        let first_region = region(0, 1);
+        let second_region = region(0, 1);
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
+        let transition_system = AbstractTransitionSystem {
+            transitions: vec![
+                AbstractTransition {
+                    transition_id: 0,
+                    abstract_op_id: 0,
+                    concrete_op_ids: vec![0],
+                    source_hash: 0,
+                    target_hash: 1,
+                },
+                AbstractTransition {
+                    transition_id: 1,
+                    abstract_op_id: 1,
+                    concrete_op_ids: vec![0],
+                    source_hash: 2,
+                    target_hash: 3,
+                },
+            ],
+            backward: vec![vec![], vec![0], vec![], vec![1]],
+            forward: vec![vec![0], vec![], vec![1], vec![]],
+            goal_facts: vec![],
+            goal_state_hashes: vec![],
+            initial_state_hash: 0,
+            hash_multipliers: vec![],
+            numeric_domain_sizes: vec![],
+            state_regions: vec![
+                first_region.source.clone(),
+                first_region.target.clone(),
+                second_region.source.clone(),
+                second_region.target.clone(),
+            ],
+        };
+        residuals
+            .reduce_by_tcf(
+                0,
+                &transition_system,
+                &AbstractTransitionCostFunction {
+                    transition_costs: vec![3.0, 4.0],
+                },
+            )
+            .unwrap();
+
+        let overlapping = region(0, 1);
+        assert_eq!(
+            residuals.cost_for_transition(
+                0,
+                1,
+                99,
+                99,
+                100,
+                &overlapping.source,
+                &overlapping.target
+            ),
+            3.0
+        );
+        assert_eq!(residuals.operator_costs_for_label_cp(), vec![3.0]);
     }
 }
