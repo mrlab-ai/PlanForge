@@ -20,6 +20,10 @@ use super::numeric_context::{
     evaluate_comparison_tree_from_abstract_state, evaluate_comparison_tree_from_initial_state,
     prepare_comparison_tree_inputs_from_abstract_state,
 };
+use super::transition_cost_partitioning::{
+    AbstractTransition, AbstractTransitionCostFunction, AbstractTransitionSystem,
+    TransitionResidualCosts,
+};
 use super::utils;
 
 const COMPARISON_TRUE_VAL: usize = 0;
@@ -407,6 +411,75 @@ impl DomainAbstractionFactory {
         self.compute_saturated_costs(task, &generator, operators, table)
     }
 
+    pub fn build_abstract_transition_system(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+    ) -> Result<AbstractTransitionSystem> {
+        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let operators = generator.build_abstract_operators(task)?;
+        self.build_transition_system_with_operators(task, &generator, &operators)
+    }
+
+    pub fn build_transition_cost_partitioned_distance_table(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        residual_costs: &TransitionResidualCosts,
+        abstraction_id: usize,
+        cap_state_id: Option<usize>,
+    ) -> Result<(
+        AbstractDistanceTable,
+        AbstractTransitionCostFunction,
+        AbstractTransitionSystem,
+    )> {
+        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let operators = generator.build_abstract_operators(task)?;
+        let transition_system =
+            self.build_transition_system_with_operators(task, &generator, &operators)?;
+        let transition_costs = transition_system
+            .transitions
+            .iter()
+            .map(|transition| {
+                transition
+                    .concrete_op_ids
+                    .iter()
+                    .map(|&concrete_op_id| {
+                        residual_costs.cost_for_transition(
+                            concrete_op_id,
+                            abstraction_id,
+                            transition.source_hash,
+                            transition.abstract_op_id,
+                            transition.target_hash,
+                        )
+                    })
+                    .fold(f64::INFINITY, f64::min)
+            })
+            .collect::<Vec<_>>();
+        let mut table = self.build_distance_table_with_transition_costs(
+            &transition_system,
+            &transition_costs,
+            generator.hash_multipliers(),
+            generator.numeric_domain_sizes(),
+        )?;
+
+        if let Some(state_id) = cap_state_id {
+            if let Some(&h_cap) = table.distances.get(state_id) {
+                if h_cap.is_finite() {
+                    for h in &mut table.distances {
+                        if h.is_finite() && *h > h_cap {
+                            *h = h_cap;
+                        }
+                    }
+                }
+            }
+        }
+
+        let tcf =
+            self.compute_saturated_transition_costs(&transition_system, &transition_costs, &table)?;
+        Ok((table, tcf, transition_system))
+    }
+
     /// Computes an abstract wildcard plan (sequence of per-step concrete-op-ID sets) by:
     /// 1) Computing abstract goal distances with implicit regression Dijkstra.
     /// 2) Extracting a shortest-path abstract plan from the initial abstract state.
@@ -435,6 +508,25 @@ impl DomainAbstractionFactory {
             use_wildcard_plans,
             None,
             local_rng.as_mut(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compute_plan_with_rng(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        dump_distances: bool,
+        use_wildcard_plans: bool,
+        plan_step_rng: Option<&mut SmallRng>,
+    ) -> Result<Option<WildcardPlanResult>> {
+        self.compute_plan_with_rng_and_cache(
+            task,
+            combine_labels,
+            dump_distances,
+            use_wildcard_plans,
+            None,
+            plan_step_rng,
         )
     }
 
@@ -535,6 +627,222 @@ impl DomainAbstractionFactory {
         }
 
         Ok(table)
+    }
+
+    fn build_transition_system_with_operators(
+        &self,
+        task: &dyn AbstractNumericTask,
+        generator: &AbstractOperatorGenerator,
+        operators: &[AbstractOperator],
+    ) -> Result<AbstractTransitionSystem> {
+        let hash_multipliers = generator.hash_multipliers();
+        let numeric_domain_sizes = generator.numeric_domain_sizes();
+        let comparison_var_ids = self.comparison_var_ids();
+        let goal_facts = self.compute_abstract_goals(task);
+        let init_hash = self.compute_initial_state_hash_determined(
+            task,
+            numeric_domain_sizes,
+            hash_multipliers,
+            &comparison_var_ids,
+        )?;
+        let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
+        let match_tree = MatchTree::build(
+            &self.domain_sizes,
+            numeric_domain_sizes,
+            hash_multipliers,
+            operators,
+            &comparison_var_ids,
+        );
+
+        let mut transitions: Vec<AbstractTransition> = Vec::new();
+        let mut backward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
+        let mut forward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
+        let mut seen: HashSet<(usize, usize, usize)> = HashSet::new();
+        let mut applicable_operator_ids: Vec<usize> = Vec::new();
+
+        for target_hash in 0..num_states {
+            let base_state = self.reset_comparison_vars_to_unknown_except(
+                target_hash,
+                hash_multipliers,
+                &comparison_var_ids,
+                &[],
+            )?;
+
+            match_tree.get_applicable_operator_ids(base_state, &mut applicable_operator_ids);
+            for &abstract_op_id in &applicable_operator_ids {
+                let op = &operators[abstract_op_id];
+                let predecessor_base_i64 = base_state as i64 + op.hash_effect as i64;
+                if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
+                    continue;
+                }
+                let predecessor_base = predecessor_base_i64 as usize;
+                let fixed_comparisons = get_comparison_preconditions(op, &comparison_var_ids);
+                let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
+                    predecessor_base,
+                    task,
+                    numeric_domain_sizes,
+                    hash_multipliers,
+                    &comparison_var_ids,
+                    &fixed_comparisons,
+                )?;
+
+                for source_hash in possible_predecessors {
+                    if source_hash >= num_states || source_hash == target_hash {
+                        continue;
+                    }
+                    if !seen.insert((source_hash, abstract_op_id, target_hash)) {
+                        continue;
+                    }
+                    let transition_id = transitions.len();
+                    transitions.push(AbstractTransition {
+                        transition_id,
+                        abstract_op_id,
+                        concrete_op_ids: op.concrete_op_ids.clone(),
+                        source_hash,
+                        target_hash,
+                    });
+                    backward[target_hash].push(transition_id);
+                    forward[source_hash].push(transition_id);
+                }
+            }
+        }
+
+        let mut goal_state_hashes = Vec::new();
+        for state_hash in 0..num_states {
+            if !self.is_goal_state(
+                state_hash,
+                &goal_facts,
+                numeric_domain_sizes,
+                hash_multipliers,
+            ) {
+                continue;
+            }
+            let alts = self.enumerate_states_with_evaluated_comparisons(
+                state_hash,
+                task,
+                numeric_domain_sizes,
+                hash_multipliers,
+                &comparison_var_ids,
+                &[],
+            )?;
+            if alts.contains(&state_hash) {
+                goal_state_hashes.push(state_hash);
+            }
+        }
+
+        Ok(AbstractTransitionSystem {
+            transitions,
+            backward,
+            forward,
+            goal_facts,
+            goal_state_hashes,
+            initial_state_hash: init_hash,
+        })
+    }
+
+    fn build_distance_table_with_transition_costs(
+        &self,
+        transition_system: &AbstractTransitionSystem,
+        transition_costs: &[f64],
+        hash_multipliers: &[usize],
+        numeric_domain_sizes: &[usize],
+    ) -> Result<AbstractDistanceTable> {
+        ensure!(
+            transition_system.transitions.len() == transition_costs.len(),
+            "transition system/cost vector size mismatch: {} vs {}",
+            transition_system.transitions.len(),
+            transition_costs.len()
+        );
+
+        let num_states = transition_system.backward.len();
+        let mut distances = vec![f64::INFINITY; num_states];
+        let mut generating_op_ids = vec![None; num_states];
+        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+
+        for &state_hash in &transition_system.goal_state_hashes {
+            ensure!(
+                state_hash < num_states,
+                "goal state hash out of range: {state_hash} >= {num_states}"
+            );
+            distances[state_hash] = 0.0;
+            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
+        }
+
+        while let Some((Reverse(d), target_hash)) = heap.pop() {
+            let d = d.into_inner();
+            if d > distances[target_hash] + 1e-12 {
+                continue;
+            }
+            for &transition_id in &transition_system.backward[target_hash] {
+                let transition = &transition_system.transitions[transition_id];
+                let transition_cost = transition_costs[transition_id];
+                if !transition_cost.is_finite() {
+                    continue;
+                }
+                ensure!(
+                    transition_cost >= -1e-9,
+                    "transition costs must be nonnegative, got {transition_cost}"
+                );
+                let transition_cost = transition_cost.max(0.0);
+                let alternative_cost = d + transition_cost;
+                if alternative_cost + 1e-12 < distances[transition.source_hash] {
+                    distances[transition.source_hash] = alternative_cost;
+                    generating_op_ids[transition.source_hash] = Some(transition.abstract_op_id);
+                    heap.push((
+                        Reverse(NotNan::new(alternative_cost).context("alternative cost is NaN")?),
+                        transition.source_hash,
+                    ));
+                }
+            }
+        }
+
+        Ok(AbstractDistanceTable {
+            distances,
+            generating_op_ids,
+            initial_state_hash: transition_system.initial_state_hash,
+            goal_facts: transition_system.goal_facts.clone(),
+            hash_multipliers: hash_multipliers.to_vec(),
+            numeric_domain_sizes: numeric_domain_sizes.to_vec(),
+        })
+    }
+
+    fn compute_saturated_transition_costs(
+        &self,
+        transition_system: &AbstractTransitionSystem,
+        transition_costs: &[f64],
+        table: &AbstractDistanceTable,
+    ) -> Result<AbstractTransitionCostFunction> {
+        ensure!(
+            transition_system.transitions.len() == transition_costs.len(),
+            "transition system/cost vector size mismatch: {} vs {}",
+            transition_system.transitions.len(),
+            transition_costs.len()
+        );
+        let mut saturated = vec![0.0; transition_system.transitions.len()];
+        for transition in &transition_system.transitions {
+            let source_h = table.distances[transition.source_hash];
+            let target_h = table.distances[transition.target_hash];
+            if !source_h.is_finite() || !target_h.is_finite() {
+                continue;
+            }
+            let mut needed = source_h - target_h;
+            if needed < 0.0 && needed > -1e-9 {
+                needed = 0.0;
+            }
+            if needed < 0.0 {
+                needed = 0.0;
+            }
+            ensure!(
+                needed <= transition_costs[transition.transition_id] + 1e-7,
+                "saturated transition cost exceeds residual transition cost: {} > {}",
+                needed,
+                transition_costs[transition.transition_id]
+            );
+            saturated[transition.transition_id] = needed;
+        }
+        Ok(AbstractTransitionCostFunction {
+            transition_costs: saturated,
+        })
     }
 
     fn compute_saturated_costs(

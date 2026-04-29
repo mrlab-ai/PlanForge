@@ -19,6 +19,7 @@ use super::domain_abstraction_collection_generator_multiple_cegar::DomainAbstrac
 use super::domain_abstraction_factory::AbstractDistanceTable;
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::domain_abstraction_heuristic::DomainAbstractionHeuristic;
+use super::transition_cost_partitioning::TransitionResidualCosts;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -57,6 +58,7 @@ pub struct ScpOnlineConfig {
     pub scoring_function: ScoringFunction,
     pub saturator: Saturator,
     pub random_seed: i32,
+    pub use_transition_cost_partitioning: bool,
 }
 
 impl Default for ScpOnlineConfig {
@@ -81,6 +83,7 @@ impl Default for ScpOnlineConfig {
             scoring_function: ScoringFunction::MaxHeuristicPerStolenCosts,
             saturator: Saturator::All,
             random_seed: 0,
+            use_transition_cost_partitioning: false,
         }
     }
 }
@@ -399,6 +402,487 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .fold(0.0, f64::max)
     }
 
+    fn operator_costs(task: &dyn AbstractNumericTask) -> Vec<f64> {
+        task.get_operators()
+            .iter()
+            .map(|op| metric_operator_cost_from_initial_values(task, op))
+            .collect()
+    }
+
+    fn update_improvement_status(&self, state: &mut ScpOnlineState) {
+        let time_limit_reached = self.config.max_time.is_finite()
+            && state.start_time.elapsed() >= Duration::from_secs_f64(self.config.max_time);
+
+        if state.improve_heuristic && (time_limit_reached || state.size_kb >= self.config.max_size)
+        {
+            state.improve_heuristic = false;
+        }
+    }
+
+    fn release_abstractions_if_finished(&self, state: &mut ScpOnlineState) {
+        if !state.improve_heuristic && !state.improvement_ended {
+            let mut abs_guard = self.abstractions.borrow_mut();
+            if abs_guard.is_some() {
+                abs_guard.take();
+                state.improvement_ended = true;
+            }
+        }
+    }
+
+    fn should_build_cp(&self, state: &ScpOnlineState) -> bool {
+        state.improve_heuristic && state.evaluated_states % self.config.interval == 0
+    }
+
+    fn maybe_build_cp(
+        &self,
+        task: &dyn AbstractNumericTask,
+        state: &mut ScpOnlineState,
+        abstract_state_ids: &[Option<usize>],
+        num_domain_abstractions: usize,
+    ) -> Result<Option<CostPartitioningHeuristic>, EvaluationError> {
+        if !self.should_build_cp(state) {
+            return Ok(None);
+        }
+
+        let original_costs = Self::operator_costs(task);
+        let order =
+            Self::compute_order_for_state(state, abstract_state_ids, self.config.scoring_function);
+
+        let abstractions_guard = self.abstractions.borrow();
+        let abstractions: &[DomainAbstraction] = match &*abstractions_guard {
+            Some(abs) => abs.as_slice(),
+            None => &[],
+        };
+
+        if abstractions.is_empty() && self.pdbs.is_empty() {
+            return Ok(None);
+        }
+
+        let cp = if self.config.use_transition_cost_partitioning {
+            self.build_transition_cp(
+                task,
+                abstractions,
+                &order,
+                abstract_state_ids,
+                num_domain_abstractions,
+                &original_costs,
+            )?
+        } else {
+            self.build_label_cp(
+                task,
+                abstractions,
+                &order,
+                abstract_state_ids,
+                num_domain_abstractions,
+                &original_costs,
+            )?
+        };
+
+        Ok(Some(cp))
+    }
+
+    fn build_transition_cp(
+        &self,
+        task: &dyn AbstractNumericTask,
+        abstractions: &[DomainAbstraction],
+        order: &[usize],
+        abstract_state_ids: &[Option<usize>],
+        num_domain_abstractions: usize,
+        original_costs: &[f64],
+    ) -> Result<CostPartitioningHeuristic, EvaluationError> {
+        let mut cp = CostPartitioningHeuristic::default();
+        let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
+
+        for &pos in order {
+            if pos < num_domain_abstractions {
+                let abstraction = &abstractions[pos];
+                match self.config.saturator {
+                    Saturator::All => {
+                        let (table, tcf, transition_system) = abstraction
+                            .factory
+                            .build_transition_cost_partitioned_distance_table(
+                                task,
+                                self.config.combine_labels,
+                                &remaining_costs,
+                                pos,
+                                None,
+                            )
+                            .map_err(|error| {
+                                EvaluationError::ComputationFailed(format!(
+                                    "failed to compute transition SCP table: {error:#}"
+                                ))
+                            })?;
+                        cp.add_h_values(pos, table.distances);
+                        remaining_costs
+                            .reduce_by_tcf(pos, &transition_system, &tcf)
+                            .map_err(|error| {
+                                EvaluationError::ComputationFailed(format!(
+                                    "failed to reduce transition residual costs: {error:#}"
+                                ))
+                            })?;
+                    }
+                    Saturator::Perim => {
+                        let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
+                        let (table, tcf, transition_system) = abstraction
+                            .factory
+                            .build_transition_cost_partitioned_distance_table(
+                                task,
+                                self.config.combine_labels,
+                                &remaining_costs,
+                                pos,
+                                cap_state_id,
+                            )
+                            .map_err(|error| {
+                                EvaluationError::ComputationFailed(format!(
+                                    "failed to compute transition PERIM table: {error:#}"
+                                ))
+                            })?;
+                        cp.add_h_values(pos, table.distances);
+                        remaining_costs
+                            .reduce_by_tcf(pos, &transition_system, &tcf)
+                            .map_err(|error| {
+                                EvaluationError::ComputationFailed(format!(
+                                    "failed to reduce transition PERIM residual costs: {error:#}"
+                                ))
+                            })?;
+                    }
+                    Saturator::Perimstar => {
+                        let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
+                        let (perim_table, perim_tcf, perim_transition_system) = abstraction
+                            .factory
+                            .build_transition_cost_partitioned_distance_table(
+                                task,
+                                self.config.combine_labels,
+                                &remaining_costs,
+                                pos,
+                                cap_state_id,
+                            )
+                            .map_err(|error| {
+                                EvaluationError::ComputationFailed(format!(
+                                    "failed to compute transition Perim step for Perimstar: {error:#}"
+                                ))
+                            })?;
+                        cp.add_h_values(pos, perim_table.distances);
+                        remaining_costs
+                            .reduce_by_tcf(pos, &perim_transition_system, &perim_tcf)
+                            .map_err(|error| {
+                                EvaluationError::ComputationFailed(format!(
+                                    "failed to reduce transition Perim residual costs: {error:#}"
+                                ))
+                            })?;
+
+                        let (all_table, all_tcf, all_transition_system) = abstraction
+                            .factory
+                            .build_transition_cost_partitioned_distance_table(
+                                task,
+                                self.config.combine_labels,
+                                &remaining_costs,
+                                pos,
+                                None,
+                            )
+                            .map_err(|error| {
+                                EvaluationError::ComputationFailed(format!(
+                                    "failed to compute transition All step for Perimstar: {error:#}"
+                                ))
+                            })?;
+                        cp.add_h_values(pos, all_table.distances);
+                        remaining_costs
+                            .reduce_by_tcf(pos, &all_transition_system, &all_tcf)
+                            .map_err(|error| {
+                                EvaluationError::ComputationFailed(format!(
+                                    "failed to reduce transition All residual costs: {error:#}"
+                                ))
+                            })?;
+                    }
+                }
+            } else {
+                self.add_transition_pdb_step(
+                    &mut cp,
+                    &mut remaining_costs,
+                    pos,
+                    order,
+                    abstract_state_ids,
+                    num_domain_abstractions,
+                )?;
+            }
+        }
+
+        Ok(cp)
+    }
+
+    fn add_transition_pdb_step(
+        &self,
+        cp: &mut CostPartitioningHeuristic,
+        remaining_costs: &mut TransitionResidualCosts,
+        pos: usize,
+        _order: &[usize],
+        abstract_state_ids: &[Option<usize>],
+        num_domain_abstractions: usize,
+    ) -> Result<(), EvaluationError> {
+        let pdb_id = pos - num_domain_abstractions;
+        let Some(pdb) = self.pdbs.get(pdb_id) else {
+            return Ok(());
+        };
+
+        let mut remaining_operator_costs = remaining_costs.operator_costs_for_label_cp();
+        match self.config.saturator {
+            Saturator::All => {
+                let (distances, saturated) = pdb
+                    .build_cost_partitioned_distance_table(&remaining_operator_costs)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute PDB SCP table {pdb_id}: {error}"
+                        ))
+                    })?;
+                cp.add_pdb_h_values(pos, distances);
+                remaining_costs
+                    .reduce_operator_costs_uniform(&saturated)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to reduce PDB residual costs: {error:#}"
+                        ))
+                    })?;
+            }
+            Saturator::Perim => {
+                let h_cap = abstract_state_ids
+                    .get(pos)
+                    .copied()
+                    .flatten()
+                    .and_then(|sid| {
+                        pdb.build_goal_distances(&remaining_operator_costs)
+                            .ok()
+                            .and_then(|dists| dists.get(sid).copied())
+                    })
+                    .unwrap_or(f64::INFINITY);
+                let (distances, saturated) = pdb
+                    .build_cost_partitioned_distance_table_capped(&remaining_operator_costs, h_cap)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute PDB PERIM table {pdb_id}: {error}"
+                        ))
+                    })?;
+                cp.add_pdb_h_values(pos, distances);
+                remaining_costs
+                    .reduce_operator_costs_uniform(&saturated)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to reduce PDB PERIM residual costs: {error:#}"
+                        ))
+                    })?;
+            }
+            Saturator::Perimstar => {
+                let h_cap = abstract_state_ids
+                    .get(pos)
+                    .copied()
+                    .flatten()
+                    .and_then(|sid| {
+                        pdb.build_goal_distances(&remaining_operator_costs)
+                            .ok()
+                            .and_then(|dists| dists.get(sid).copied())
+                    })
+                    .unwrap_or(f64::INFINITY);
+                let (perim_dists, perim_sat) = pdb
+                    .build_cost_partitioned_distance_table_capped(&remaining_operator_costs, h_cap)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute PDB Perim step for Perimstar {pdb_id}: {error}"
+                        ))
+                    })?;
+                cp.add_pdb_h_values(pos, perim_dists);
+                remaining_costs
+                    .reduce_operator_costs_uniform(&perim_sat)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to reduce PDB Perim residual costs: {error:#}"
+                        ))
+                    })?;
+
+                remaining_operator_costs = remaining_costs.operator_costs_for_label_cp();
+                let (all_dists, all_sat) = pdb
+                    .build_cost_partitioned_distance_table(&remaining_operator_costs)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute PDB All step for Perimstar {pdb_id}: {error}"
+                        ))
+                    })?;
+                cp.add_pdb_h_values(pos, all_dists);
+                remaining_costs
+                    .reduce_operator_costs_uniform(&all_sat)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to reduce PDB All residual costs: {error:#}"
+                        ))
+                    })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn build_label_cp(
+        &self,
+        task: &dyn AbstractNumericTask,
+        abstractions: &[DomainAbstraction],
+        order: &[usize],
+        abstract_state_ids: &[Option<usize>],
+        num_domain_abstractions: usize,
+        original_costs: &[f64],
+    ) -> Result<CostPartitioningHeuristic, EvaluationError> {
+        let mut cp = CostPartitioningHeuristic::default();
+        let mut remaining_costs: Vec<f64> = original_costs.to_vec();
+
+        for &pos in order {
+            if pos < num_domain_abstractions {
+                let abstraction = &abstractions[pos];
+                match self.config.saturator {
+                    Saturator::All | Saturator::Perimstar => {
+                        let (distances, saturated) = Self::compute_domain_cp_entry(
+                            abstraction,
+                            task,
+                            self.config.combine_labels,
+                            &remaining_costs,
+                        )?;
+                        cp.add_h_values(pos, distances);
+                        reduce_costs(&mut remaining_costs, &saturated)?;
+                    }
+                    Saturator::Perim => {
+                        let h_cap = abstract_state_ids
+                            .get(pos)
+                            .copied()
+                            .flatten()
+                            .and_then(|sid| {
+                                abstraction
+                                    .factory
+                                    .build_goal_distances(
+                                        task,
+                                        self.config.combine_labels,
+                                        &remaining_costs,
+                                    )
+                                    .ok()
+                                    .and_then(|t| t.distances.get(sid).copied())
+                            })
+                            .unwrap_or(f64::INFINITY);
+                        let (distances, saturated) = Self::compute_domain_perim_entry(
+                            abstraction,
+                            task,
+                            self.config.combine_labels,
+                            &remaining_costs,
+                            h_cap,
+                        )?;
+                        cp.add_h_values(pos, distances);
+                        reduce_costs(&mut remaining_costs, &saturated)?;
+                    }
+                }
+            } else {
+                self.add_label_pdb_step(
+                    &mut cp,
+                    &mut remaining_costs,
+                    pos,
+                    abstract_state_ids,
+                    num_domain_abstractions,
+                )?;
+            }
+        }
+
+        Ok(cp)
+    }
+
+    fn add_label_pdb_step(
+        &self,
+        cp: &mut CostPartitioningHeuristic,
+        remaining_costs: &mut Vec<f64>,
+        pos: usize,
+        abstract_state_ids: &[Option<usize>],
+        num_domain_abstractions: usize,
+    ) -> Result<(), EvaluationError> {
+        let pdb_id = pos - num_domain_abstractions;
+        let Some(pdb) = self.pdbs.get(pdb_id) else {
+            return Ok(());
+        };
+
+        match self.config.saturator {
+            Saturator::All => {
+                let (distances, saturated) = pdb
+                    .build_cost_partitioned_distance_table(remaining_costs)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute PDB SCP table {pdb_id}: {error}"
+                        ))
+                    })?;
+                cp.add_pdb_h_values(pos, distances);
+                reduce_costs(remaining_costs, &saturated)?;
+            }
+            Saturator::Perim => {
+                let h_cap = abstract_state_ids
+                    .get(pos)
+                    .copied()
+                    .flatten()
+                    .and_then(|sid| {
+                        pdb.build_goal_distances(remaining_costs)
+                            .ok()
+                            .and_then(|dists| dists.get(sid).copied())
+                    })
+                    .unwrap_or(f64::INFINITY);
+                let (distances, saturated) = pdb
+                    .build_cost_partitioned_distance_table_capped(remaining_costs, h_cap)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute PDB PERIM table {pdb_id}: {error}"
+                        ))
+                    })?;
+                cp.add_pdb_h_values(pos, distances);
+                reduce_costs(remaining_costs, &saturated)?;
+            }
+            Saturator::Perimstar => {
+                let h_cap = abstract_state_ids
+                    .get(pos)
+                    .copied()
+                    .flatten()
+                    .and_then(|sid| {
+                        pdb.build_goal_distances(remaining_costs)
+                            .ok()
+                            .and_then(|dists| dists.get(sid).copied())
+                    })
+                    .unwrap_or(f64::INFINITY);
+                let (perim_dists, perim_sat) = pdb
+                    .build_cost_partitioned_distance_table_capped(remaining_costs, h_cap)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute PDB Perim step for Perimstar {pdb_id}: {error}"
+                        ))
+                    })?;
+                cp.add_pdb_h_values(pos, perim_dists);
+                reduce_costs(remaining_costs, &perim_sat)?;
+
+                let (all_dists, all_sat) = pdb
+                    .build_cost_partitioned_distance_table(remaining_costs)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute PDB All step for Perimstar {pdb_id}: {error}"
+                        ))
+                    })?;
+                cp.add_pdb_h_values(pos, all_dists);
+                reduce_costs(remaining_costs, &all_sat)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn accept_improved_cp(
+        state: &mut ScpOnlineState,
+        cp: CostPartitioningHeuristic,
+        abstract_state_ids: &[Option<usize>],
+        max_h: &mut f64,
+    ) {
+        let new_h = cp.compute_heuristic(abstract_state_ids);
+        if new_h > *max_h {
+            state.size_kb = state.size_kb.saturating_add(cp.estimate_size_in_kb());
+            state.cp_heuristics.push(cp);
+            *max_h = new_h;
+        }
+    }
+
     /// Build a single SCP for one domain abstraction using its own factory.
     fn compute_domain_cp_entry(
         abstraction: &DomainAbstraction,
@@ -494,175 +978,16 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
             return Ok(max_h);
         }
 
-        let time_limit_reached = self.config.max_time.is_finite()
-            && state.start_time.elapsed() >= Duration::from_secs_f64(self.config.max_time);
+        self.update_improvement_status(&mut state);
+        self.release_abstractions_if_finished(&mut state);
 
-        if state.improve_heuristic && (time_limit_reached || state.size_kb >= self.config.max_size)
-        {
-            state.improve_heuristic = false;
-        }
-
-        if !state.improve_heuristic && !state.improvement_ended {
-            let mut abs_guard = self.abstractions.borrow_mut();
-            if abs_guard.is_some() {
-                abs_guard.take();
-                state.improvement_ended = true;
-            }
-        }
-
-        if state.improve_heuristic && state.evaluated_states.is_multiple_of(self.config.interval) {
-            let original_costs: Vec<f64> = task
-                .get_operators()
-                .iter()
-                .map(|op| metric_operator_cost_from_initial_values(task, op))
-                .collect();
-
-            let order = Self::compute_order_for_state(
-                &mut state,
-                &abstract_state_ids,
-                self.config.scoring_function,
-            );
-
-            let abstractions_guard = self.abstractions.borrow();
-            let abstractions: &[DomainAbstraction] = match &*abstractions_guard {
-                Some(abs) => abs.as_slice(),
-                None => &[],
-            };
-
-            if !abstractions.is_empty() || !self.pdbs.is_empty() {
-                let mut remaining_costs: Vec<f64> = original_costs.clone();
-                let mut cp = CostPartitioningHeuristic::default();
-
-                for &pos in &order {
-                    if pos < num_domain_abstractions {
-                        let abstraction = &abstractions[pos];
-                        match self.config.saturator {
-                            Saturator::All | Saturator::Perimstar => {
-                                let (distances, saturated) = Self::compute_domain_cp_entry(
-                                    abstraction,
-                                    task,
-                                    self.config.combine_labels,
-                                    &remaining_costs,
-                                )?;
-                                cp.add_h_values(pos, distances);
-                                reduce_costs(&mut remaining_costs, &saturated)?;
-                            }
-                            Saturator::Perim => {
-                                let h_cap = abstract_state_ids
-                                    .get(pos)
-                                    .copied()
-                                    .flatten()
-                                    .and_then(|sid| {
-                                        abstraction
-                                            .factory
-                                            .build_goal_distances(
-                                                task,
-                                                self.config.combine_labels,
-                                                &remaining_costs,
-                                            )
-                                            .ok()
-                                            .and_then(|t| t.distances.get(sid).copied())
-                                    })
-                                    .unwrap_or(f64::INFINITY);
-                                let (distances, saturated) = Self::compute_domain_perim_entry(
-                                    abstraction,
-                                    task,
-                                    self.config.combine_labels,
-                                    &remaining_costs,
-                                    h_cap,
-                                )?;
-                                cp.add_h_values(pos, distances);
-                                reduce_costs(&mut remaining_costs, &saturated)?;
-                            }
-                        }
-                    } else {
-                        let pdb_id = pos - num_domain_abstractions;
-                        if let Some(pdb) = self.pdbs.get(pdb_id) {
-                            match self.config.saturator {
-                                Saturator::All => {
-                                    let (distances, saturated) = pdb
-                                        .build_cost_partitioned_distance_table(&remaining_costs)
-                                        .map_err(|error| {
-                                            EvaluationError::ComputationFailed(format!(
-                                                "failed to compute PDB SCP table {pdb_id}: {error}"
-                                            ))
-                                        })?;
-                                    cp.add_pdb_h_values(pos, distances);
-                                    reduce_costs(&mut remaining_costs, &saturated)?;
-                                }
-                                Saturator::Perim => {
-                                    let h_cap = abstract_state_ids
-                                        .get(pos)
-                                        .copied()
-                                        .flatten()
-                                        .and_then(|sid| {
-                                            pdb.build_goal_distances(&remaining_costs)
-                                                .ok()
-                                                .and_then(|dists| dists.get(sid).copied())
-                                        })
-                                        .unwrap_or(f64::INFINITY);
-                                    let (distances, saturated) = pdb
-                                        .build_cost_partitioned_distance_table_capped(
-                                            &remaining_costs,
-                                            h_cap,
-                                        )
-                                        .map_err(|error| {
-                                            EvaluationError::ComputationFailed(format!(
-                                                "failed to compute PDB PERIM table {pdb_id}: {error}"
-                                            ))
-                                        })?;
-                                    cp.add_pdb_h_values(pos, distances);
-                                    reduce_costs(&mut remaining_costs, &saturated)?;
-                                }
-                                Saturator::Perimstar => {
-                                    // Perimstar: first Perim, then All with
-                                    // remaining costs.  Both steps done inline.
-                                    // Step 1: Perim
-                                    let h_cap = abstract_state_ids
-                                        .get(pos)
-                                        .copied()
-                                        .flatten()
-                                        .and_then(|sid| {
-                                            pdb.build_goal_distances(&remaining_costs)
-                                                .ok()
-                                                .and_then(|dists| dists.get(sid).copied())
-                                        })
-                                        .unwrap_or(f64::INFINITY);
-                                    let (perim_dists, perim_sat) = pdb
-                                        .build_cost_partitioned_distance_table_capped(
-                                            &remaining_costs,
-                                            h_cap,
-                                        )
-                                        .map_err(|error| {
-                                            EvaluationError::ComputationFailed(format!(
-                                                "failed to compute PDB Perim step for Perimstar {pdb_id}: {error}"
-                                            ))
-                                        })?;
-                                    cp.add_pdb_h_values(pos, perim_dists);
-                                    reduce_costs(&mut remaining_costs, &perim_sat)?;
-                                    // Step 2: All on residual costs
-                                    let (all_dists, all_sat) = pdb
-                                        .build_cost_partitioned_distance_table(&remaining_costs)
-                                        .map_err(|error| {
-                                            EvaluationError::ComputationFailed(format!(
-                                                "failed to compute PDB All step for Perimstar {pdb_id}: {error}"
-                                            ))
-                                        })?;
-                                    cp.add_pdb_h_values(pos, all_dists);
-                                    reduce_costs(&mut remaining_costs, &all_sat)?;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let new_h = cp.compute_heuristic(&abstract_state_ids);
-                if new_h > max_h {
-                    state.size_kb = state.size_kb.saturating_add(cp.estimate_size_in_kb());
-                    state.cp_heuristics.push(cp);
-                    max_h = new_h;
-                }
-            }
+        if let Some(cp) = self.maybe_build_cp(
+            task,
+            &mut state,
+            &abstract_state_ids,
+            num_domain_abstractions,
+        )? {
+            Self::accept_improved_cp(&mut state, cp, &abstract_state_ids, &mut max_h);
         }
 
         state.evaluated_states = state.evaluated_states.saturating_add(1);
@@ -775,4 +1100,3 @@ fn reduce_costs(
     }
     Ok(())
 }
-

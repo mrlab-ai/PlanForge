@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use rand::{SeedableRng, rngs::SmallRng};
 
+use crate::numeric::evaluation::domain_abstractions::transition_cost_partitioning::TransitionResidualCosts;
 use crate::numeric::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 use planners_sas::numeric::axioms::PropositionalAxiom;
 use planners_sas::numeric::axioms::{
@@ -138,6 +139,49 @@ fn factory_identity_cutpoints(task: &dyn AbstractNumericTask) -> Result<DomainAb
         partitions,
         numeric_domain_sizes,
     )
+}
+
+#[test]
+fn transition_cost_partitioned_table_uses_abstract_transitions() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "p".into(),
+        vec!["p0".into(), "p1".into()],
+        None,
+        0,
+    )];
+    let op = Operator::new(
+        "move".into(),
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(vec![], 0, None, 1)],
+        vec![],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 1),
+    );
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
+
+    let (table, tcf, transition_system) = factory
+        .build_transition_cost_partitioned_distance_table(&task, false, &residuals, 0, None)
+        .unwrap();
+
+    assert_eq!(transition_system.transitions.len(), 1);
+    assert_eq!(table.distances[table.initial_state_hash], 1.0);
+    assert_eq!(tcf.transition_costs, vec![1.0]);
 }
 
 #[test]
