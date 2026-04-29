@@ -3,6 +3,7 @@ mod tests;
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use ordered_float::NotNan;
@@ -37,6 +38,14 @@ fn current_time_seed() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos() as u64)
         .unwrap_or(0x9e37_79b9_7f4a_7c15)
+}
+
+fn ensure_online_scp_deadline(deadline: Option<Instant>) -> Result<()> {
+    ensure!(
+        deadline.is_none_or(|deadline| Instant::now() < deadline),
+        "online SCP deadline exceeded"
+    );
+    Ok(())
 }
 
 #[derive(Debug, Clone, Default)]
@@ -416,9 +425,18 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
     ) -> Result<AbstractTransitionSystem> {
+        self.build_abstract_transition_system_with_deadline(task, combine_labels, None)
+    }
+
+    pub fn build_abstract_transition_system_with_deadline(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        deadline: Option<Instant>,
+    ) -> Result<AbstractTransitionSystem> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let operators = generator.build_abstract_operators(task)?;
-        self.build_transition_system_with_operators(task, &generator, &operators)
+        self.build_transition_system_with_operators(task, &generator, &operators, deadline)
     }
 
     pub fn build_transition_cost_partitioned_distance_table(
@@ -450,11 +468,33 @@ impl DomainAbstractionFactory {
         abstraction_id: usize,
         cap_state_id: Option<usize>,
     ) -> Result<(AbstractDistanceTable, AbstractTransitionCostFunction)> {
+        self.build_transition_cost_partitioned_distance_table_from_system_with_deadline(
+            transition_system,
+            residual_costs,
+            abstraction_id,
+            cap_state_id,
+            None,
+        )
+    }
+
+    pub fn build_transition_cost_partitioned_distance_table_from_system_with_deadline(
+        &self,
+        transition_system: &AbstractTransitionSystem,
+        residual_costs: &TransitionResidualCosts,
+        abstraction_id: usize,
+        cap_state_id: Option<usize>,
+        deadline: Option<Instant>,
+    ) -> Result<(AbstractDistanceTable, AbstractTransitionCostFunction)> {
+        ensure_online_scp_deadline(deadline)?;
         let transition_costs = transition_system
             .transitions
             .iter()
-            .map(|transition| {
-                transition
+            .enumerate()
+            .map(|(index, transition)| {
+                if index % 1024 == 0 {
+                    ensure_online_scp_deadline(deadline)?;
+                }
+                Ok(transition
                     .concrete_op_ids
                     .iter()
                     .map(|&concrete_op_id| {
@@ -468,9 +508,9 @@ impl DomainAbstractionFactory {
                             &transition_system.state_regions[transition.target_hash],
                         )
                     })
-                    .fold(f64::INFINITY, f64::min)
+                    .fold(f64::INFINITY, f64::min))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>>>()?;
         let mut table = self.build_distance_table_with_transition_costs(
             &transition_system,
             &transition_costs,
@@ -649,7 +689,9 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
+        deadline: Option<Instant>,
     ) -> Result<AbstractTransitionSystem> {
+        ensure_online_scp_deadline(deadline)?;
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
         let comparison_var_ids = self.comparison_var_ids();
@@ -684,6 +726,9 @@ impl DomainAbstractionFactory {
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
 
         for target_hash in 0..num_states {
+            if target_hash % 64 == 0 {
+                ensure_online_scp_deadline(deadline)?;
+            }
             let base_state = self.reset_comparison_vars_to_unknown_except(
                 target_hash,
                 hash_multipliers,

@@ -115,6 +115,10 @@ struct CostPartitioningHeuristic {
 }
 
 impl CostPartitioningHeuristic {
+    fn is_empty(&self) -> bool {
+        self.lookup_tables.is_empty()
+    }
+
     fn add_h_values(&mut self, abstraction_id: usize, distances: Vec<f64>) {
         if distances.iter().any(|value| *value > 0.0) {
             self.lookup_tables.push(LookupTable {
@@ -411,6 +415,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .collect()
     }
 
+    fn is_online_deadline_error(error: &anyhow::Error) -> bool {
+        error.to_string().contains("online SCP deadline exceeded")
+    }
+
     fn update_improvement_status(&self, state: &mut ScpOnlineState) {
         let time_limit_reached = self.config.max_time.is_finite()
             && state.start_time.elapsed() >= Duration::from_secs_f64(self.config.max_time);
@@ -460,6 +468,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             return Ok(None);
         }
 
+        let deadline = (self.config.max_time.is_finite())
+            .then(|| state.start_time + Duration::from_secs_f64(self.config.max_time));
+
         let cp = if self.config.use_transition_cost_partitioning {
             self.build_transition_cp(
                 task,
@@ -468,6 +479,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 abstract_state_ids,
                 num_domain_abstractions,
                 &original_costs,
+                deadline,
             )?
         } else {
             self.build_label_cp(
@@ -477,10 +489,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 abstract_state_ids,
                 num_domain_abstractions,
                 &original_costs,
+                deadline,
             )?
         };
 
-        Ok(Some(cp))
+        Ok((!cp.is_empty()).then_some(cp))
     }
 
     fn with_transition_system<R>(
@@ -488,8 +501,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         task: &dyn AbstractNumericTask,
         abstraction: &DomainAbstraction,
         abstraction_id: usize,
+        deadline: Option<Instant>,
         f: impl FnOnce(&AbstractTransitionSystem) -> Result<R, EvaluationError>,
-    ) -> Result<R, EvaluationError> {
+    ) -> Result<Option<R>, EvaluationError> {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Ok(None);
+        }
         {
             let mut cache = self.transition_system_cache.borrow_mut();
             if abstraction_id >= cache.len() {
@@ -498,14 +515,23 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 )));
             }
             if cache[abstraction_id].is_none() {
-                let transition_system = abstraction
+                let transition_system = match abstraction
                     .factory
-                    .build_abstract_transition_system(task, self.config.combine_labels)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
+                    .build_abstract_transition_system_with_deadline(
+                        task,
+                        self.config.combine_labels,
+                        deadline,
+                    ) {
+                    Ok(transition_system) => transition_system,
+                    Err(error) => {
+                        if error.to_string().contains("online SCP deadline exceeded") {
+                            return Ok(None);
+                        }
+                        return Err(EvaluationError::ComputationFailed(format!(
                             "failed to build transition system for abstraction {abstraction_id}: {error:#}"
-                        ))
-                    })?;
+                        )));
+                    }
+                };
                 cache[abstraction_id] = Some(transition_system);
             }
         }
@@ -519,7 +545,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     "transition-system cache missing abstraction {abstraction_id}"
                 ))
             })?;
-        f(transition_system)
+        f(transition_system).map(Some)
     }
 
     fn build_transition_cp(
@@ -530,115 +556,170 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         abstract_state_ids: &[Option<usize>],
         num_domain_abstractions: usize,
         original_costs: &[f64],
+        deadline: Option<Instant>,
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
 
         for &pos in order {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                break;
+            }
             if pos < num_domain_abstractions {
                 let abstraction = &abstractions[pos];
                 match self.config.saturator {
                     Saturator::All => {
-                        self.with_transition_system(task, abstraction, pos, |transition_system| {
-                            let (table, tcf) = abstraction
+                        let completed = self.with_transition_system(
+                            task,
+                            abstraction,
+                            pos,
+                            deadline,
+                            |transition_system| {
+                                let (table, tcf) = match abstraction
                                 .factory
-                                .build_transition_cost_partitioned_distance_table_from_system(
+                                .build_transition_cost_partitioned_distance_table_from_system_with_deadline(
                                     transition_system,
                                     &remaining_costs,
                                     pos,
                                     None,
-                                )
-                                .map_err(|error| {
-                                    EvaluationError::ComputationFailed(format!(
+                                    deadline,
+                                ) {
+                                    Ok(result) => result,
+                                    Err(error) if Self::is_online_deadline_error(&error) => {
+                                        return Ok(());
+                                    }
+                                    Err(error) => {
+                                        return Err(EvaluationError::ComputationFailed(format!(
                                         "failed to compute transition SCP table: {error:#}"
-                                    ))
-                                })?;
-                            cp.add_h_values(pos, table.distances);
-                            remaining_costs
-                                .reduce_by_tcf(pos, transition_system, &tcf)
-                                .map_err(|error| {
-                                    EvaluationError::ComputationFailed(format!(
-                                        "failed to reduce transition residual costs: {error:#}"
-                                    ))
-                                })?;
-                            Ok(())
-                        })?;
+                                    )));
+                                    }
+                                };
+                                cp.add_h_values(pos, table.distances);
+                                remaining_costs
+                                    .reduce_by_tcf(pos, transition_system, &tcf)
+                                    .map_err(|error| {
+                                        EvaluationError::ComputationFailed(format!(
+                                            "failed to reduce transition residual costs: {error:#}"
+                                        ))
+                                    })?;
+                                Ok(())
+                            },
+                        )?;
+                        if completed.is_none() {
+                            break;
+                        }
                     }
                     Saturator::Perim => {
                         let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                        self.with_transition_system(task, abstraction, pos, |transition_system| {
-                            let (table, tcf) = abstraction
+                        let completed = self.with_transition_system(
+                            task,
+                            abstraction,
+                            pos,
+                            deadline,
+                            |transition_system| {
+                                let (table, tcf) = match abstraction
                                 .factory
-                                .build_transition_cost_partitioned_distance_table_from_system(
+                                .build_transition_cost_partitioned_distance_table_from_system_with_deadline(
                                     transition_system,
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
-                                )
-                                .map_err(|error| {
-                                    EvaluationError::ComputationFailed(format!(
+                                    deadline,
+                                ) {
+                                    Ok(result) => result,
+                                    Err(error) if Self::is_online_deadline_error(&error) => {
+                                        return Ok(());
+                                    }
+                                    Err(error) => {
+                                        return Err(EvaluationError::ComputationFailed(format!(
                                         "failed to compute transition PERIM table: {error:#}"
-                                    ))
-                                })?;
-                            cp.add_h_values(pos, table.distances);
-                            remaining_costs
-                                .reduce_by_tcf(pos, transition_system, &tcf)
-                                .map_err(|error| {
-                                    EvaluationError::ComputationFailed(format!(
-                                        "failed to reduce transition PERIM residual costs: {error:#}"
-                                    ))
-                                })?;
-                            Ok(())
-                        })?;
+                                    )));
+                                    }
+                                };
+                                cp.add_h_values(pos, table.distances);
+                                remaining_costs
+                                    .reduce_by_tcf(pos, transition_system, &tcf)
+                                    .map_err(|error| {
+                                        EvaluationError::ComputationFailed(format!(
+                                            "failed to reduce transition PERIM residual costs: {error:#}"
+                                        ))
+                                    })?;
+                                Ok(())
+                            },
+                        )?;
+                        if completed.is_none() {
+                            break;
+                        }
                     }
                     Saturator::Perimstar => {
                         let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                        self.with_transition_system(task, abstraction, pos, |transition_system| {
-                            let (perim_table, perim_tcf) = abstraction
+                        let completed = self.with_transition_system(
+                            task,
+                            abstraction,
+                            pos,
+                            deadline,
+                            |transition_system| {
+                                let (perim_table, perim_tcf) = match abstraction
                                 .factory
-                                .build_transition_cost_partitioned_distance_table_from_system(
+                                .build_transition_cost_partitioned_distance_table_from_system_with_deadline(
                                     transition_system,
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
-                                )
-                                .map_err(|error| {
-                                    EvaluationError::ComputationFailed(format!(
+                                    deadline,
+                                ) {
+                                    Ok(result) => result,
+                                    Err(error) if Self::is_online_deadline_error(&error) => {
+                                        return Ok(());
+                                    }
+                                    Err(error) => {
+                                        return Err(EvaluationError::ComputationFailed(format!(
                                         "failed to compute transition Perim step for Perimstar: {error:#}"
-                                    ))
-                                })?;
-                            cp.add_h_values(pos, perim_table.distances);
-                            remaining_costs
-                                .reduce_by_tcf(pos, transition_system, &perim_tcf)
-                                .map_err(|error| {
-                                    EvaluationError::ComputationFailed(format!(
-                                        "failed to reduce transition Perim residual costs: {error:#}"
-                                    ))
-                                })?;
+                                    )));
+                                    }
+                                };
+                                cp.add_h_values(pos, perim_table.distances);
+                                remaining_costs
+                                    .reduce_by_tcf(pos, transition_system, &perim_tcf)
+                                    .map_err(|error| {
+                                        EvaluationError::ComputationFailed(format!(
+                                            "failed to reduce transition Perim residual costs: {error:#}"
+                                        ))
+                                    })?;
 
-                            let (all_table, all_tcf) = abstraction
+                                let (all_table, all_tcf) = match abstraction
                                 .factory
-                                .build_transition_cost_partitioned_distance_table_from_system(
+                                .build_transition_cost_partitioned_distance_table_from_system_with_deadline(
                                     transition_system,
                                     &remaining_costs,
                                     pos,
                                     None,
-                                )
-                                .map_err(|error| {
-                                    EvaluationError::ComputationFailed(format!(
+                                    deadline,
+                                ) {
+                                    Ok(result) => result,
+                                    Err(error) if Self::is_online_deadline_error(&error) => {
+                                        return Ok(());
+                                    }
+                                    Err(error) => {
+                                        return Err(EvaluationError::ComputationFailed(format!(
                                         "failed to compute transition All step for Perimstar: {error:#}"
-                                    ))
-                                })?;
-                            cp.add_h_values(pos, all_table.distances);
-                            remaining_costs
-                                .reduce_by_tcf(pos, transition_system, &all_tcf)
-                                .map_err(|error| {
-                                    EvaluationError::ComputationFailed(format!(
-                                        "failed to reduce transition All residual costs: {error:#}"
-                                    ))
-                                })?;
-                            Ok(())
-                        })?;
+                                    )));
+                                    }
+                                };
+                                cp.add_h_values(pos, all_table.distances);
+                                remaining_costs
+                                    .reduce_by_tcf(pos, transition_system, &all_tcf)
+                                    .map_err(|error| {
+                                        EvaluationError::ComputationFailed(format!(
+                                            "failed to reduce transition All residual costs: {error:#}"
+                                        ))
+                                    })?;
+                                Ok(())
+                            },
+                        )?;
+                        if completed.is_none() {
+                            break;
+                        }
                     }
                 }
             } else {
@@ -773,11 +854,15 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         abstract_state_ids: &[Option<usize>],
         num_domain_abstractions: usize,
         original_costs: &[f64],
+        deadline: Option<Instant>,
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs: Vec<f64> = original_costs.to_vec();
 
         for &pos in order {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                break;
+            }
             if pos < num_domain_abstractions {
                 let abstraction = &abstractions[pos];
                 match self.config.saturator {
