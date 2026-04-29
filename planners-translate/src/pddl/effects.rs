@@ -1,12 +1,11 @@
 /// Port of pddl/effects.py
 /// Effect types for PDDL actions.
-use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use tracing::debug;
 
-use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
-use super::f_expression::{FunctionAssignment, FunctionalExpression, PrimitiveNumericExpression};
+use super::conditions::{Condition, Conjunction};
+use super::f_expression::FunctionAssignment;
 use super::pddl_types::TypedObject;
 
 /// Python: class Effect(object)

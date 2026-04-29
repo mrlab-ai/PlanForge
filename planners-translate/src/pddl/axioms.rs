@@ -4,7 +4,7 @@ use std::fmt;
 
 use tracing::debug;
 
-use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
+use super::conditions::{Atom, Condition};
 use super::f_expression::{
     FunctionalExpression, PrimitiveNumericExpression, instantiate_expression,
 };

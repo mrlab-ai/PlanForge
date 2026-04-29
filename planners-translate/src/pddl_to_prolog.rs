@@ -63,7 +63,7 @@ impl Rule {
         extra_conditions: &mut Vec<(String, String)>,
     ) {
         let mut used_variables: HashSet<String> = HashSet::new();
-        for (index, arg) in atom[1..].iter_mut().enumerate() {
+        for arg in &mut atom[1..] {
             if arg.starts_with('?') {
                 if used_variables.contains(arg) {
                     let new_name = format!("{}@{}", arg, extra_conditions.len());
@@ -295,7 +295,7 @@ fn condition_to_atoms(cond: &Condition) -> Vec<Vec<String>> {
             result.extend(atom.args.clone());
             vec![result]
         }
-        Condition::NegatedAtom(natom) => {
+        Condition::NegatedAtom(_natom) => {
             // Negated atoms are generally ignored in exploration (relaxation)
             vec![]
         }

@@ -45,7 +45,6 @@ fn instantiate_groups(
 struct GroupCoverQueue {
     max_size: usize,
     groups_by_size: Vec<Vec<HashSet<Atom>>>,
-    groups_by_fact: HashMap<Atom, Vec<usize>>, // indices into a flat list
     top: Option<HashSet<Atom>>,
     all_groups: Vec<HashSet<Atom>>,
 }
@@ -56,7 +55,6 @@ impl GroupCoverQueue {
             return GroupCoverQueue {
                 max_size: 0,
                 groups_by_size: vec![],
-                groups_by_fact: HashMap::new(),
                 top: None,
                 all_groups: vec![],
             };
@@ -64,23 +62,17 @@ impl GroupCoverQueue {
 
         let max_size = groups.iter().map(|g| g.len()).max().unwrap_or(0);
         let mut groups_by_size: Vec<Vec<HashSet<Atom>>> = vec![vec![]; max_size + 1];
-        let mut groups_by_fact: HashMap<Atom, Vec<usize>> = HashMap::new();
         let mut all_groups: Vec<HashSet<Atom>> = vec![];
 
         for group in groups {
             let group_set: HashSet<Atom> = group.iter().cloned().collect();
-            let idx = all_groups.len();
             groups_by_size[group_set.len()].push(group_set.clone());
-            for fact in &group_set {
-                groups_by_fact.entry(fact.clone()).or_default().push(idx);
-            }
             all_groups.push(group_set);
         }
 
         let mut q = GroupCoverQueue {
             max_size,
             groups_by_size,
-            groups_by_fact,
             top: None,
             all_groups,
         };

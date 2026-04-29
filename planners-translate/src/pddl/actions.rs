@@ -1,11 +1,10 @@
 /// Port of pddl/actions.py
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 
 use tracing::debug;
 
-use super::conditions::{Atom, Condition, Conjunction, NegatedAtom};
-use super::effects::{Effect, EffectKind, EffectType};
+use super::conditions::{Atom, Condition, NegatedAtom};
+use super::effects::Effect;
 use super::f_expression::{
     FunctionAssignment, FunctionalExpression, NumericConstant, PrimitiveNumericExpression,
 };

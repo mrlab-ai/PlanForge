@@ -2,10 +2,9 @@
 /// Normalization of PDDL tasks before grounding.
 use std::collections::{HashMap, HashSet};
 
-use super::pddl::actions::Action;
 use super::pddl::axioms::Axiom;
 use super::pddl::conditions::*;
-use super::pddl::effects::{Effect, EffectKind, EffectType};
+use super::pddl::effects::Effect;
 use super::pddl::f_expression::*;
 use super::pddl::pddl_types::TypedObject;
 use super::pddl::tasks::Task;
@@ -51,7 +50,7 @@ pub fn normalize(task: &mut NormalizableTask) -> Result<(), String> {
 
     // Step 2: Convert types to predicates (untype)
     // type predicates for typed objects
-    let type_predicates = convert_types_to_predicates(t);
+    convert_types_to_predicates(t);
 
     // Step 3: Remove universal quantifiers from conditions
     remove_universal_quantifiers(t);
@@ -196,7 +195,7 @@ fn substitute_complicated_goal(task: &mut Task) {
 }
 
 /// Python: def build_DNF(task)
-fn build_dnf(task: &mut Task) {
+fn build_dnf(_task: &mut Task) {
     // For each action, if precondition has disjunctions, convert to DNF
     // This is handled during split_disjunctions
 }
@@ -733,15 +732,6 @@ pub struct ExplorationRule {
     pub conditions: Vec<Condition>,
     pub effect: Condition,
     pub parameters: Vec<TypedObject>,
-}
-
-/// Extract all atomic conditions from a condition tree
-fn all_conditions(cond: &Condition) -> Vec<Condition> {
-    match cond {
-        Condition::Conjunction(conj) => conj.parts.iter().flat_map(|p| all_conditions(p)).collect(),
-        Condition::Truth => vec![],
-        other => vec![other.clone()],
-    }
 }
 
 // ==================== Helper predicates ====================
