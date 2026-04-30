@@ -146,6 +146,7 @@ impl TransitionResidualCosts {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn cost_for_transition(
         &self,
         concrete_op_id: usize,
@@ -252,6 +253,7 @@ impl TransitionResidualCosts {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn reduce_exact_transition(
         &mut self,
         concrete_op_id: usize,
