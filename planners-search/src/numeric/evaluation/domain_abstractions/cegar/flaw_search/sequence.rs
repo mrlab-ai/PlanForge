@@ -94,14 +94,14 @@ fn get_sequence_progression_flaws(
     let mut next_state = None;
 
     let mut flawed = false;
-    let mut step_num: usize = 1;
+    let mut step: usize = 1;
 
     for equivalent_ops in wildcard_plan.wildcard_plan.iter() {
         let mut step_flaws = Vec::new();
-        let expected_abs_numeric_state = &wildcard_plan.abstract_numeric_states[step_num];
+        let expected_abs_numeric_state = &wildcard_plan.abstract_numeric_states[step];
         ensure!(
-            step_num < wildcard_plan.abstract_numeric_states.len(),
-            "WildcardPlanResult abstract_numeric_states too short for step {step_num}"
+            step < wildcard_plan.abstract_numeric_states.len(),
+            "WildcardPlanResult abstract_numeric_states too short for step {step}"
         );
 
         let mut chosen_op: Option<&Operator> = None;
@@ -119,6 +119,7 @@ fn get_sequence_progression_flaws(
                 &comparison_index,
                 op,
                 &state,
+                step,
             );
             if operator_flaws.is_empty() {
                 chosen_op = Some(op);
@@ -129,6 +130,7 @@ fn get_sequence_progression_flaws(
                     op,
                     partitions,
                     &mut step_flaws,
+                    step,
                 )?;
                 if !flawed {
                     step_flaws.clear();
@@ -152,6 +154,7 @@ fn get_sequence_progression_flaws(
                 op,
                 partitions,
                 &mut step_flaws,
+                step,
             )?;
 
             state = next_state.take().unwrap();
@@ -173,7 +176,7 @@ fn get_sequence_progression_flaws(
 
         collected_flaws.extend(step_flaws);
 
-        step_num += 1;
+        step += 1;
     }
 
     collected_flaws.extend(get_goal_sequence_flaws(
@@ -181,6 +184,7 @@ fn get_sequence_progression_flaws(
         partitions,
         &comparison_index,
         &state,
+        step,
     ));
 
     Ok(())
@@ -197,6 +201,8 @@ fn get_sequence_regression_flaws(
 
     let mut state = FlawSearchState::goals_partial_state(task, domain_mapping);
 
+    let mut step: usize = wildcard_plan.wildcard_plan.len();
+
     // Deviation flaws are not possible because numeric variables are always
     // unbounded.
     for equivalent_ops in wildcard_plan.wildcard_plan.iter().rev() {
@@ -210,7 +216,7 @@ fn get_sequence_regression_flaws(
             if fallback_op.is_none() {
                 fallback_op = Some(op);
             }
-            let operator_flaws = get_regression_precondition_flaws(op, &state);
+            let operator_flaws = get_regression_precondition_flaws(op, &state, step);
             if operator_flaws.is_empty() {
                 chosen_op = Some(op);
                 step_flaws.clear();
@@ -230,6 +236,8 @@ fn get_sequence_regression_flaws(
         }
 
         collected_flaws.extend(step_flaws);
+
+        step -= 1;
     }
 
     state.revert_axioms(&axiom_evaluator)?;
@@ -248,6 +256,7 @@ pub(crate) fn progress_and_get_sequence_deviation_flaws<'a>(
     op: &Operator,
     partitions: &NumericPartitions,
     collected_flaws: &mut Vec<Flaw>,
+    step: usize,
 ) -> Result<CurrentNextAndFlawed<'a>> {
     let mut next_state = state.clone();
     let mut flawed = false;
@@ -259,6 +268,7 @@ pub(crate) fn progress_and_get_sequence_deviation_flaws<'a>(
         &next_state,
         expected_abs_numeric_state,
         partitions,
+        step,
     );
     if !deviation_flaws.is_empty() {
         collected_flaws.extend(deviation_flaws);
@@ -275,6 +285,7 @@ pub fn get_progression_numeric_sequence_deviation_flaws(
     successor_state: &FlawSearchState,
     abstract_numeric_successor_state: &[usize],
     partitions: &NumericPartitions,
+    step: usize,
 ) -> Vec<Flaw> {
     let mut flaws: Vec<Flaw> = Vec::new();
 
@@ -327,6 +338,7 @@ pub fn get_progression_numeric_sequence_deviation_flaws(
                 numeric_var_id: var_id,
                 value: interval_current_value.upper,
                 include_in_lower,
+                step,
             }));
         } else {
             include_in_lower = !include_in_lower;
@@ -340,6 +352,7 @@ pub fn get_progression_numeric_sequence_deviation_flaws(
                     numeric_var_id: var_id,
                     value: interval_current_value.lower,
                     include_in_lower,
+                    step,
                 }));
             }
         }
@@ -354,6 +367,7 @@ pub fn get_progression_sequence_precondition_flaws(
     comparison_index: &ComparisonAxiomIndex,
     op: &Operator,
     state: &FlawSearchState,
+    step: usize,
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for pre in op.preconditions().iter() {
@@ -367,6 +381,7 @@ pub fn get_progression_sequence_precondition_flaws(
                         comparison_index,
                         prop_var_id,
                         state,
+                        step,
                     )
                 } else {
                     vec![]
@@ -374,6 +389,7 @@ pub fn get_progression_sequence_precondition_flaws(
             out.push(Flaw::Propositional(PropFlaw {
                 fact: pre.clone(),
                 dependent_numeric_flaws,
+                step,
             }));
         }
     }
@@ -385,6 +401,7 @@ pub fn get_goal_sequence_flaws(
     partitions: &NumericPartitions,
     comparison_index: &ComparisonAxiomIndex,
     state: &FlawSearchState,
+    step: usize,
 ) -> Vec<Flaw> {
     let num_goals = task.get_num_goals();
     let mut out: Vec<Flaw> = Vec::new();
@@ -408,6 +425,7 @@ pub fn get_goal_sequence_flaws(
                         comparison_index,
                         prop_var_id,
                         state,
+                        step,
                     )
                 } else {
                     vec![]
@@ -415,6 +433,7 @@ pub fn get_goal_sequence_flaws(
             out.push(Flaw::Propositional(PropFlaw {
                 fact: goal_fact.clone(),
                 dependent_numeric_flaws,
+                step,
             }));
         }
     }
@@ -438,6 +457,7 @@ pub fn get_goal_sequence_flaws(
                             comparison_index,
                             prop_var_id,
                             state,
+                            step,
                         )
                     } else {
                         vec![]
@@ -445,6 +465,7 @@ pub fn get_goal_sequence_flaws(
                 out.push(Flaw::Propositional(PropFlaw {
                     fact: pre.clone(),
                     dependent_numeric_flaws,
+                    step,
                 }));
             }
         }
