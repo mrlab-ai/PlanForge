@@ -76,6 +76,56 @@ fn build_abstraction_produces_singleton_plan_without_wildcards() {
 }
 
 #[test]
+fn empty_wildcard_plan_is_real_exactly_when_initial_state_is_goal() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        None,
+        0,
+    )];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables.clone(),
+        vec![],
+        vec![ExplicitFact::new(0, 0)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let empty_plan = WildcardPlanResult {
+        wildcard_plan: vec![],
+        abstract_state_hashes: vec![0],
+        abstract_prop_states: vec![vec![0]],
+        abstract_numeric_states: vec![vec![]],
+    };
+    assert!(wildcard_plan_is_real(&task, &empty_plan).unwrap());
+
+    let non_goal_task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 1),
+    );
+    assert!(!wildcard_plan_is_real(&non_goal_task, &empty_plan).unwrap());
+}
+
+#[test]
 fn get_flaws_reports_numeric_deviation_flaw() {
     use crate::numeric::evaluation::domain_abstractions::comparison_expression::Interval;
     use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};

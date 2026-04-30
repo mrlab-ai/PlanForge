@@ -844,6 +844,11 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
         field_usize!("max_size", ScpOnlineConfig, max_size),
         field_usize!("interval", ScpOnlineConfig, interval),
         field_bool!("use_numeric_pdbs", ScpOnlineConfig, use_numeric_pdbs),
+        field_bool!(
+            "use_transition_cost_partitioning",
+            ScpOnlineConfig,
+            use_transition_cost_partitioning
+        ),
         field_usize!("max_pdb_states", ScpOnlineConfig, max_pdb_states),
         field_usize!("max_pattern_size", ScpOnlineConfig, max_pattern_size),
         field_bool!(
