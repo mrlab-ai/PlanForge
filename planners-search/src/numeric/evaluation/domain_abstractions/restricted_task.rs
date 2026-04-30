@@ -18,6 +18,9 @@ pub enum RestrictedTaskBuildError {
         provided: usize,
         expected: usize,
     },
+    CyclicAssignmentAxiomDependency {
+        numeric_var_id: usize,
+    },
     ConditionalNumericEffect {
         operator_id: usize,
         numeric_var_id: usize,
@@ -49,6 +52,10 @@ impl fmt::Display for RestrictedTaskBuildError {
                     "numeric domain size length mismatch for restricted task: {provided} != {expected}"
                 )
             }
+            Self::CyclicAssignmentAxiomDependency { numeric_var_id } => write!(
+                f,
+                "restricted task found a cyclic assignment-axiom dependency while computing n{numeric_var_id}"
+            ),
             Self::ConditionalNumericEffect {
                 operator_id,
                 numeric_var_id,
@@ -172,12 +179,23 @@ impl<'task> RestrictedTask<'task> {
         &self.promoted_numeric_roots
     }
 
+    pub fn is_promoted_root(&self, numeric_var_id: usize) -> bool {
+        self.promoted_numeric_roots
+            .get(numeric_var_id)
+            .copied()
+            .unwrap_or(false)
+    }
+
     pub fn base_numeric_var_count(&self) -> usize {
         self.base_numeric_var_count
     }
 
     pub fn synthetic_constant_values(&self) -> &[f64] {
         &self.synthetic_constant_values
+    }
+
+    pub fn source_base_task(&self) -> &dyn AbstractNumericTask {
+        self.base
     }
 }
 
@@ -328,7 +346,9 @@ fn constant_delta_for_var_rec(
         }
         NumericType::Derived => {
             if visiting[numeric_var_id] {
-                return Ok(0.0);
+                return Err(RestrictedTaskBuildError::CyclicAssignmentAxiomDependency {
+                    numeric_var_id,
+                });
             }
             visiting[numeric_var_id] = true;
             let axiom = task
@@ -336,27 +356,30 @@ fn constant_delta_for_var_rec(
                 .iter()
                 .find(|axiom| axiom.get_affected_var_id() == numeric_var_id)
                 .ok_or(RestrictedTaskBuildError::MissingAssignmentAxiom { numeric_var_id })?;
-            let lhs = constant_delta_for_var_rec(
-                task,
-                effects_by_var,
-                axiom.get_left_var_id(),
-                visiting,
-            )?;
-            let rhs = constant_delta_for_var_rec(
-                task,
-                effects_by_var,
-                axiom.get_right_var_id(),
-                visiting,
-            )?;
+            let result = (|| {
+                let lhs = constant_delta_for_var_rec(
+                    task,
+                    effects_by_var,
+                    axiom.get_left_var_id(),
+                    visiting,
+                )?;
+                let rhs = constant_delta_for_var_rec(
+                    task,
+                    effects_by_var,
+                    axiom.get_right_var_id(),
+                    visiting,
+                )?;
+                match axiom.get_operator() {
+                    CalOperator::Sum => Ok(lhs + rhs),
+                    CalOperator::Difference => Ok(lhs - rhs),
+                    other => Err(RestrictedTaskBuildError::UnsupportedDerivedRootAxiom {
+                        numeric_var_id,
+                        operator: other.clone(),
+                    }),
+                }
+            })();
             visiting[numeric_var_id] = false;
-            match axiom.get_operator() {
-                CalOperator::Sum => Ok(lhs + rhs),
-                CalOperator::Difference => Ok(lhs - rhs),
-                other => Err(RestrictedTaskBuildError::UnsupportedDerivedRootAxiom {
-                    numeric_var_id,
-                    operator: other.clone(),
-                }),
-            }
+            result
         }
     }
 }
@@ -614,5 +637,357 @@ impl AbstractNumericTask for RestrictedTask<'_> {
 
     fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
         self.base.evaluated_initial_abstract_state_values()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use planners_sas::numeric::axioms::CalOperator;
+    use planners_sas::numeric::numeric_task::{Metric, NumericRootTask};
+
+    fn make_task(
+        numeric_variables: Vec<NumericVariable>,
+        numeric_state: Vec<f64>,
+        operators: Vec<Operator>,
+        assignment_axioms: Vec<AssignmentAxiom>,
+    ) -> NumericRootTask {
+        NumericRootTask::new(
+            4,
+            Metric::new(true, None),
+            vec![],
+            numeric_variables,
+            vec![],
+            vec![],
+            vec![],
+            numeric_state,
+            operators,
+            vec![],
+            vec![],
+            assignment_axioms,
+            ExplicitFact::new(0, 0),
+        )
+    }
+
+    fn plus_effect(target: usize, rhs: usize) -> AssignmentEffect {
+        AssignmentEffect::new(target, AssignmentOperation::Plus, rhs, false, vec![])
+    }
+
+    fn minus_effect(target: usize, rhs: usize) -> AssignmentEffect {
+        AssignmentEffect::new(target, AssignmentOperation::Minus, rhs, false, vec![])
+    }
+
+    #[test]
+    fn restricted_task_promotes_sum_root_with_matching_delta() {
+        let task = make_task(
+            vec![
+                NumericVariable::new("x".into(), NumericType::Regular, None),
+                NumericVariable::new("y".into(), NumericType::Regular, None),
+                NumericVariable::new("c3".into(), NumericType::Constant, None),
+                NumericVariable::new("u".into(), NumericType::Derived, None),
+            ],
+            vec![0.0, 0.0, 3.0, 0.0],
+            vec![Operator::new(
+                "advance".into(),
+                vec![],
+                vec![],
+                vec![plus_effect(0, 2)],
+                1,
+            )],
+            vec![AssignmentAxiom::new(3, CalOperator::Sum, 0, 1)],
+        );
+
+        let restricted = RestrictedTask::new(&task, &[1, 1, 1, 2]).unwrap();
+
+        assert!(restricted.is_promoted_root(3));
+        assert_eq!(restricted.base_numeric_var_count(), 4);
+        assert_eq!(restricted.synthetic_constant_values(), &[] as &[f64]);
+        assert_eq!(restricted.source_base_task().numeric_variables().len(), 4);
+        assert_eq!(restricted.numeric_variables()[3].get_type(), &NumericType::Regular);
+
+        let effect = restricted.get_operators()[0]
+            .assignment_effects()
+            .last()
+            .unwrap();
+        assert_eq!(effect.affected_var_id(), 3);
+        assert_eq!(effect.operation(), &AssignmentOperation::Plus);
+        assert_eq!(effect.var_id(), 2);
+    }
+
+    #[test]
+    fn restricted_task_promotes_difference_root_with_matching_delta() {
+        let task = make_task(
+            vec![
+                NumericVariable::new("x".into(), NumericType::Regular, None),
+                NumericVariable::new("y".into(), NumericType::Regular, None),
+                NumericVariable::new("c3".into(), NumericType::Constant, None),
+                NumericVariable::new("v".into(), NumericType::Derived, None),
+            ],
+            vec![0.0, 0.0, 3.0, 0.0],
+            vec![Operator::new(
+                "advance".into(),
+                vec![],
+                vec![],
+                vec![plus_effect(0, 2)],
+                1,
+            )],
+            vec![AssignmentAxiom::new(3, CalOperator::Difference, 1, 0)],
+        );
+
+        let restricted = RestrictedTask::new(&task, &[1, 1, 1, 2]).unwrap();
+
+        let effect = restricted.get_operators()[0]
+            .assignment_effects()
+            .last()
+            .unwrap();
+        assert_eq!(effect.affected_var_id(), 3);
+        assert_eq!(effect.operation(), &AssignmentOperation::Minus);
+        assert_eq!(effect.var_id(), 2);
+    }
+
+    #[test]
+    fn restricted_task_skips_zero_delta_root_effect() {
+        let task = make_task(
+            vec![
+                NumericVariable::new("x".into(), NumericType::Regular, None),
+                NumericVariable::new("y".into(), NumericType::Regular, None),
+                NumericVariable::new("c3".into(), NumericType::Constant, None),
+                NumericVariable::new("u".into(), NumericType::Derived, None),
+            ],
+            vec![0.0, 0.0, 3.0, 0.0],
+            vec![Operator::new(
+                "balance".into(),
+                vec![],
+                vec![],
+                vec![plus_effect(0, 2), minus_effect(1, 2)],
+                1,
+            )],
+            vec![AssignmentAxiom::new(3, CalOperator::Sum, 0, 1)],
+        );
+
+        let restricted = RestrictedTask::new(&task, &[1, 1, 1, 2]).unwrap();
+
+        assert_eq!(restricted.get_operators()[0].assignment_effects().len(), 2);
+    }
+
+    #[test]
+    fn restricted_task_rejects_conditional_effects() {
+        let task = make_task(
+            vec![
+                NumericVariable::new("x".into(), NumericType::Regular, None),
+                NumericVariable::new("c3".into(), NumericType::Constant, None),
+            ],
+            vec![0.0, 3.0],
+            vec![Operator::new(
+                "conditional".into(),
+                vec![],
+                vec![],
+                vec![AssignmentEffect::new(0, AssignmentOperation::Plus, 1, true, vec![])],
+                1,
+            )],
+            vec![],
+        );
+
+        let error = match RestrictedTask::new(&task, &[1, 1]) {
+            Ok(_) => panic!("expected conditional effect to be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            RestrictedTaskBuildError::ConditionalNumericEffect {
+                operator_id: 0,
+                numeric_var_id: 0
+            }
+        ));
+    }
+
+    #[test]
+    fn restricted_task_rejects_non_constant_rhs_effects() {
+        let task = make_task(
+            vec![
+                NumericVariable::new("x".into(), NumericType::Regular, None),
+                NumericVariable::new("y".into(), NumericType::Regular, None),
+            ],
+            vec![0.0, 0.0],
+            vec![Operator::new(
+                "non_constant".into(),
+                vec![],
+                vec![],
+                vec![plus_effect(0, 1)],
+                1,
+            )],
+            vec![],
+        );
+
+        let error = match RestrictedTask::new(&task, &[1, 1]) {
+            Ok(_) => panic!("expected non-constant RHS effect to be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            RestrictedTaskBuildError::NonConstantNumericEffectRhs {
+                operator_id: 0,
+                rhs_var_id: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn restricted_task_rejects_unsupported_numeric_effect_operations() {
+        let task = make_task(
+            vec![
+                NumericVariable::new("x".into(), NumericType::Regular, None),
+                NumericVariable::new("c3".into(), NumericType::Constant, None),
+            ],
+            vec![0.0, 3.0],
+            vec![Operator::new(
+                "assign".into(),
+                vec![],
+                vec![],
+                vec![AssignmentEffect::new(
+                    0,
+                    AssignmentOperation::Assign,
+                    1,
+                    false,
+                    vec![],
+                )],
+                1,
+            )],
+            vec![],
+        );
+
+        let error = match RestrictedTask::new(&task, &[1, 1]) {
+            Ok(_) => panic!("expected unsupported numeric effect operation to be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            RestrictedTaskBuildError::UnsupportedNumericEffectOperation {
+                operator_id: 0,
+                numeric_var_id: 0,
+                operation: AssignmentOperation::Assign,
+            }
+        ));
+    }
+
+    #[test]
+    fn restricted_task_rejects_multiplicative_root_axioms() {
+        let task = make_task(
+            vec![
+                NumericVariable::new("x".into(), NumericType::Regular, None),
+                NumericVariable::new("c3".into(), NumericType::Constant, None),
+                NumericVariable::new("p".into(), NumericType::Derived, None),
+            ],
+            vec![0.0, 3.0, 0.0],
+            vec![Operator::new(
+                "advance".into(),
+                vec![],
+                vec![],
+                vec![plus_effect(0, 1)],
+                1,
+            )],
+            vec![AssignmentAxiom::new(2, CalOperator::Product, 0, 1)],
+        );
+
+        let error = match RestrictedTask::new(&task, &[1, 1, 2]) {
+            Ok(_) => panic!("expected multiplicative derived root to be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            RestrictedTaskBuildError::UnsupportedDerivedRootAxiom {
+                numeric_var_id: 2,
+                operator: CalOperator::Product
+            }
+        ));
+    }
+
+    #[test]
+    fn restricted_task_rejects_division_root_axioms() {
+        let task = make_task(
+            vec![
+                NumericVariable::new("x".into(), NumericType::Regular, None),
+                NumericVariable::new("c3".into(), NumericType::Constant, None),
+                NumericVariable::new("q".into(), NumericType::Derived, None),
+            ],
+            vec![0.0, 3.0, 0.0],
+            vec![Operator::new(
+                "advance".into(),
+                vec![],
+                vec![],
+                vec![plus_effect(0, 1)],
+                1,
+            )],
+            vec![AssignmentAxiom::new(2, CalOperator::Division, 0, 1)],
+        );
+
+        let error = match RestrictedTask::new(&task, &[1, 1, 2]) {
+            Ok(_) => panic!("expected division derived root to be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            RestrictedTaskBuildError::UnsupportedDerivedRootAxiom {
+                numeric_var_id: 2,
+                operator: CalOperator::Division
+            }
+        ));
+    }
+
+    #[test]
+    fn restricted_task_rejects_missing_assignment_axiom_for_promoted_root() {
+        let task = make_task(
+            vec![
+                NumericVariable::new("x".into(), NumericType::Regular, None),
+                NumericVariable::new("dangling".into(), NumericType::Derived, None),
+            ],
+            vec![0.0, 0.0],
+            vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
+            vec![],
+        );
+
+        let error = match RestrictedTask::new(&task, &[1, 2]) {
+            Ok(_) => panic!("expected missing assignment axiom to be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            RestrictedTaskBuildError::MissingAssignmentAxiom { numeric_var_id: 1 }
+        ));
+    }
+
+    #[test]
+    fn restricted_task_rejects_cyclic_assignment_axioms() {
+        let task = make_task(
+            vec![
+                NumericVariable::new("x".into(), NumericType::Regular, None),
+                NumericVariable::new("c1".into(), NumericType::Constant, None),
+                NumericVariable::new("a".into(), NumericType::Derived, None),
+                NumericVariable::new("b".into(), NumericType::Derived, None),
+            ],
+            vec![0.0, 1.0, 0.0, 0.0],
+            vec![Operator::new(
+                "advance".into(),
+                vec![],
+                vec![],
+                vec![plus_effect(0, 1)],
+                1,
+            )],
+            vec![
+                AssignmentAxiom::new(2, CalOperator::Sum, 0, 3),
+                AssignmentAxiom::new(3, CalOperator::Sum, 1, 2),
+            ],
+        );
+
+        let error = match RestrictedTask::new(&task, &[1, 1, 2, 1]) {
+            Ok(_) => panic!("expected cyclic assignment axioms to be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            RestrictedTaskBuildError::CyclicAssignmentAxiomDependency { numeric_var_id: 2 }
+                | RestrictedTaskBuildError::CyclicAssignmentAxiomDependency { numeric_var_id: 3 }
+        ));
     }
 }

@@ -513,3 +513,120 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
     assert_eq!(parts.len(), 2);
     assert!(parts[0].contains(3.5) || parts[1].contains(3.5));
 }
+
+#[test]
+fn numeric_threshold_split_is_applied_for_regular_vs_constant_comparison() {
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c5".into(), NumericType::Constant, None),
+    ];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        0,
+        0,
+        1,
+        ComparisonOperator::LessThanOrEqual,
+    )];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        vec![],
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 5.0],
+        vec![],
+        vec![],
+        comparison_axioms,
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let config = CegarConfig::default();
+    let mut partitions = NumericPartitions::trivial(&task);
+    let mut numeric_domain_sizes = vec![1, 1];
+
+    apply_initial_numeric_threshold_splits(
+        &task,
+        &config,
+        &HashSet::new(),
+        &mut partitions,
+        &mut numeric_domain_sizes,
+        &[],
+    );
+
+    assert_eq!(numeric_domain_sizes, vec![2, 1]);
+    let parts = partitions.partitions(0).unwrap();
+    assert_eq!(parts.len(), 2);
+    assert!(parts[0].contains(5.0));
+}
+
+#[test]
+fn numeric_progress_splits_follow_constant_deltas_toward_threshold() {
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c2".into(), NumericType::Constant, None),
+        NumericVariable::new("c6".into(), NumericType::Constant, None),
+    ];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        0,
+        0,
+        2,
+        ComparisonOperator::LessThanOrEqual,
+    )];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        vec![],
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 2.0, 6.0],
+        vec![Operator::new(
+            "inc".into(),
+            vec![],
+            vec![],
+            vec![planners_sas::numeric::numeric_task::AssignmentEffect::new(
+                0,
+                planners_sas::numeric::numeric_task::AssignmentOperation::Plus,
+                1,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![],
+        comparison_axioms,
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let config = CegarConfig::default();
+    let mut partitions = NumericPartitions::trivial(&task);
+    let mut numeric_domain_sizes = vec![1, 1, 1];
+
+    apply_initial_numeric_threshold_splits(
+        &task,
+        &config,
+        &HashSet::new(),
+        &mut partitions,
+        &mut numeric_domain_sizes,
+        &[],
+    );
+    apply_initial_numeric_progress_splits(
+        &task,
+        &config,
+        &HashSet::new(),
+        &mut partitions,
+        &mut numeric_domain_sizes,
+        &[],
+    );
+
+    assert_eq!(numeric_domain_sizes, vec![4, 1, 1]);
+    let parts = partitions.partitions(0).unwrap();
+    assert_eq!(parts.len(), 4);
+    assert!(parts.iter().any(|part| part.contains(2.0)));
+    assert!(parts.iter().any(|part| part.contains(4.0)));
+    assert!(parts.iter().any(|part| part.contains(6.0)));
+}

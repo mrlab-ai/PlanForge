@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 use planners_sas::numeric::axioms::AxiomEvaluator;
+use planners_sas::numeric::axioms::ComparisonOperator;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use rand::Rng;
 use rand::seq::SliceRandom;
@@ -15,7 +16,7 @@ use rand::{SeedableRng, rngs::SmallRng};
 use tracing::debug;
 
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, ExplicitFact, NumericType, Operator,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType, Operator,
 };
 
 use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw, get_flaws};
@@ -38,6 +39,13 @@ use super::domain_abstraction_heuristic::{
     COMPARISON_FALSE_VAL, COMPARISON_TRUE_VAL, COMPARISON_UNKNOWN_VAL,
 };
 use super::utils::{compute_abstraction_size_u128, debug_print_refinement_summary};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct NumericThresholdSplitCandidate {
+    numeric_var_id: usize,
+    threshold: f64,
+    include_in_lower: bool,
+}
 
 #[derive(Debug, Clone)]
 pub struct CegarConfig {
@@ -181,6 +189,22 @@ impl Cegar {
             &mut domain_sizes,
             &mut partitions,
             &mut numeric_domain_sizes,
+        );
+        apply_initial_numeric_threshold_splits(
+            task,
+            config,
+            &blacklisted_numeric_var_ids,
+            &mut partitions,
+            &mut numeric_domain_sizes,
+            &domain_sizes,
+        );
+        apply_initial_numeric_progress_splits(
+            task,
+            config,
+            &blacklisted_numeric_var_ids,
+            &mut partitions,
+            &mut numeric_domain_sizes,
+            &domain_sizes,
         );
 
         let mut iteration: usize = 1;
@@ -1000,6 +1024,206 @@ fn apply_initial_goal_splits(
         }
         if let Some(slot) = domain_sizes.get_mut(var_id) {
             *slot = new_domain_size;
+        }
+    }
+}
+
+fn threshold_split_include_in_lower(
+    operator: &ComparisonOperator,
+    variable_on_left: bool,
+) -> Option<bool> {
+    match (operator, variable_on_left) {
+        (ComparisonOperator::LessThan, true) => Some(false),
+        (ComparisonOperator::LessThan, false) => Some(true),
+        (ComparisonOperator::LessThanOrEqual, true) => Some(true),
+        (ComparisonOperator::LessThanOrEqual, false) => Some(false),
+        (ComparisonOperator::GreaterThan, true) => Some(true),
+        (ComparisonOperator::GreaterThan, false) => Some(false),
+        (ComparisonOperator::GreaterThanOrEqual, true) => Some(false),
+        (ComparisonOperator::GreaterThanOrEqual, false) => Some(true),
+        (ComparisonOperator::Equal | ComparisonOperator::UnEqual, _) => None,
+    }
+}
+
+fn numeric_threshold_split_candidates(
+    task: &dyn AbstractNumericTask,
+    blacklisted_numeric_var_ids: &HashSet<usize>,
+) -> Vec<NumericThresholdSplitCandidate> {
+    let initial_numeric_values = task.get_initial_numeric_state_values();
+    let mut seen_candidates: HashSet<(usize, u64, bool)> = HashSet::new();
+    let mut candidates = Vec::new();
+
+    for comparison_axiom in task.comparison_axioms() {
+        let left_var_id = comparison_axiom.get_left_var_id();
+        let right_var_id = comparison_axiom.get_right_var_id();
+        let Some(left_var) = task.numeric_variables().get(left_var_id) else {
+            continue;
+        };
+        let Some(right_var) = task.numeric_variables().get(right_var_id) else {
+            continue;
+        };
+
+        let candidate = match (left_var.get_type(), right_var.get_type()) {
+            (NumericType::Regular, NumericType::Constant) => {
+                let Some(include_in_lower) = threshold_split_include_in_lower(
+                    comparison_axiom.get_operator(),
+                    true,
+                ) else {
+                    continue;
+                };
+                initial_numeric_values.get(right_var_id).copied().map(|threshold| {
+                    NumericThresholdSplitCandidate {
+                        numeric_var_id: left_var_id,
+                        threshold,
+                        include_in_lower,
+                    }
+                })
+            }
+            (NumericType::Constant, NumericType::Regular) => {
+                let Some(include_in_lower) = threshold_split_include_in_lower(
+                    comparison_axiom.get_operator(),
+                    false,
+                ) else {
+                    continue;
+                };
+                initial_numeric_values.get(left_var_id).copied().map(|threshold| {
+                    NumericThresholdSplitCandidate {
+                        numeric_var_id: right_var_id,
+                        threshold,
+                        include_in_lower,
+                    }
+                })
+            }
+            _ => None,
+        };
+
+        let Some(candidate) = candidate else {
+            continue;
+        };
+        if !candidate.threshold.is_finite() || candidate.threshold.is_nan() {
+            continue;
+        }
+        if blacklisted_numeric_var_ids.contains(&candidate.numeric_var_id) {
+            continue;
+        }
+        if !seen_candidates.insert((
+            candidate.numeric_var_id,
+            candidate.threshold.to_bits(),
+            candidate.include_in_lower,
+        )) {
+            continue;
+        }
+        candidates.push(candidate);
+    }
+
+    candidates
+}
+
+fn direct_progress_deltas(task: &dyn AbstractNumericTask, numeric_var_id: usize) -> Vec<f64> {
+    let initial_numeric_values = task.get_initial_numeric_state_values();
+    let mut deltas: Vec<f64> = task
+        .get_operators()
+        .iter()
+        .flat_map(|operator| operator.assignment_effects())
+        .filter(|effect| {
+            effect.affected_var_id() == numeric_var_id
+                && matches!(
+                    effect.operation(),
+                    AssignmentOperation::Plus | AssignmentOperation::Minus
+                )
+        })
+        .filter_map(|effect| {
+            let rhs_var_id = effect.var_id();
+            let rhs_var = task.numeric_variables().get(rhs_var_id)?;
+            if rhs_var.get_type() != &NumericType::Constant {
+                return None;
+            }
+            let delta = initial_numeric_values.get(rhs_var_id)?.abs();
+            (delta.is_finite() && !delta.is_nan() && delta > 0.0).then_some(delta)
+        })
+        .collect();
+    deltas.sort_by(|left, right| left.partial_cmp(right).unwrap());
+    deltas.dedup_by(|left, right| left.to_bits() == right.to_bits());
+    deltas
+}
+
+fn apply_initial_numeric_threshold_splits(
+    task: &dyn AbstractNumericTask,
+    config: &CegarConfig,
+    blacklisted_numeric_var_ids: &HashSet<usize>,
+    partitions: &mut NumericPartitions,
+    numeric_domain_sizes: &mut [usize],
+    domain_sizes: &[usize],
+) {
+    for candidate in numeric_threshold_split_candidates(task, blacklisted_numeric_var_ids) {
+        if !can_refine_numeric_variable(
+            domain_sizes,
+            numeric_domain_sizes,
+            candidate.numeric_var_id,
+            config.max_abstraction_size,
+        ) {
+            continue;
+        }
+        if partitions.split_at(
+            candidate.numeric_var_id,
+            candidate.threshold,
+            candidate.include_in_lower,
+        ) && let Some(parts) = partitions.partitions(candidate.numeric_var_id)
+            && let Some(slot) = numeric_domain_sizes.get_mut(candidate.numeric_var_id)
+        {
+            *slot = parts.len();
+        }
+    }
+}
+
+fn apply_initial_numeric_progress_splits(
+    task: &dyn AbstractNumericTask,
+    config: &CegarConfig,
+    blacklisted_numeric_var_ids: &HashSet<usize>,
+    partitions: &mut NumericPartitions,
+    numeric_domain_sizes: &mut [usize],
+    domain_sizes: &[usize],
+) {
+    let initial_numeric_values = task.get_initial_numeric_state_values();
+
+    for candidate in numeric_threshold_split_candidates(task, blacklisted_numeric_var_ids) {
+        let Some(&initial_value) = initial_numeric_values.get(candidate.numeric_var_id) else {
+            continue;
+        };
+        if !initial_value.is_finite() || initial_value.is_nan() {
+            continue;
+        }
+        let direction = if initial_value < candidate.threshold {
+            1.0
+        } else if initial_value > candidate.threshold {
+            -1.0
+        } else {
+            continue;
+        };
+        for delta in direct_progress_deltas(task, candidate.numeric_var_id) {
+            let mut next_cut = initial_value + direction * delta;
+            while (direction > 0.0 && next_cut < candidate.threshold)
+                || (direction < 0.0 && next_cut > candidate.threshold)
+            {
+                if !can_refine_numeric_variable(
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    candidate.numeric_var_id,
+                    config.max_abstraction_size,
+                ) {
+                    break;
+                }
+                if partitions.split_at(
+                    candidate.numeric_var_id,
+                    next_cut,
+                    candidate.include_in_lower,
+                ) && let Some(parts) = partitions.partitions(candidate.numeric_var_id)
+                    && let Some(slot) = numeric_domain_sizes.get_mut(candidate.numeric_var_id)
+                {
+                    *slot = parts.len();
+                }
+                next_cut += direction * delta;
+            }
         }
     }
 }

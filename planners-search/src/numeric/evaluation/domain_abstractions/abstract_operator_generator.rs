@@ -658,6 +658,10 @@ impl AbstractOperatorGenerator {
         &self.numeric_domain_sizes
     }
 
+    pub fn partitions(&self) -> &NumericPartitions {
+        &self.partitions
+    }
+
     pub fn build_abstract_operators(
         &mut self,
         task: &dyn AbstractNumericTask,

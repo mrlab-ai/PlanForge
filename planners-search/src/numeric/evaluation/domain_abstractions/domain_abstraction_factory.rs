@@ -376,6 +376,7 @@ impl DomainAbstractionFactory {
         combine_labels: bool,
     ) -> Result<AbstractOperatorGenerator> {
         let mut partitions = Vec::with_capacity(task.numeric_variables().len());
+        let mut numeric_domain_sizes = self.numeric_domain_sizes.clone();
         for numeric_var_id in 0..task.base_numeric_var_count() {
             let parts = self
                 .partitions
@@ -385,11 +386,18 @@ impl DomainAbstractionFactory {
         }
         for &value in task.synthetic_constant_values() {
             partitions.push(vec![Interval::singleton(value)]);
+            numeric_domain_sizes.push(1);
         }
         ensure!(
             partitions.len() == task.numeric_variables().len(),
             "restricted partitions length mismatch: {} != {}",
             partitions.len(),
+            task.numeric_variables().len()
+        );
+        ensure!(
+            numeric_domain_sizes.len() == task.numeric_variables().len(),
+            "restricted numeric domain size length mismatch: {} != {}",
+            numeric_domain_sizes.len(),
             task.numeric_variables().len()
         );
 
@@ -398,7 +406,7 @@ impl DomainAbstractionFactory {
             self.domain_mapping.clone(),
             self.domain_sizes.clone(),
             NumericPartitions::with_partitions(partitions),
-            self.numeric_domain_sizes.clone(),
+            numeric_domain_sizes,
             combine_labels,
         )
     }
@@ -713,6 +721,7 @@ impl DomainAbstractionFactory {
         // concrete initial state (comparisons are evaluated, not enumerated).
         let init_hash = self.compute_initial_state_hash_determined(
             task,
+            generator.partitions(),
             numeric_domain_sizes,
             hash_multipliers,
             &comparison_var_ids,
@@ -734,6 +743,7 @@ impl DomainAbstractionFactory {
             &match_tree,
             &goal_facts,
             init_hash,
+            generator.partitions(),
             numeric_domain_sizes,
             hash_multipliers,
             &comparison_var_ids,
@@ -770,6 +780,7 @@ impl DomainAbstractionFactory {
         let goal_facts = self.compute_abstract_goals(task);
         let init_hash = self.compute_initial_state_hash_determined(
             task,
+            generator.partitions(),
             numeric_domain_sizes,
             hash_multipliers,
             &comparison_var_ids,
@@ -790,6 +801,7 @@ impl DomainAbstractionFactory {
         for state_hash in 0..num_states {
             state_regions.push(self.state_region_from_hash(
                 state_hash,
+                generator.partitions(),
                 numeric_domain_sizes,
                 hash_multipliers,
             )?);
@@ -820,6 +832,7 @@ impl DomainAbstractionFactory {
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
                     predecessor_base,
                     task,
+                    generator.partitions(),
                     numeric_domain_sizes,
                     hash_multipliers,
                     &comparison_var_ids,
@@ -860,6 +873,7 @@ impl DomainAbstractionFactory {
             let alts = self.enumerate_states_with_evaluated_comparisons(
                 state_hash,
                 task,
+                generator.partitions(),
                 numeric_domain_sizes,
                 hash_multipliers,
                 &comparison_var_ids,
@@ -886,6 +900,7 @@ impl DomainAbstractionFactory {
     fn state_region_from_hash(
         &self,
         state_hash: usize,
+        partitions: &NumericPartitions,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
     ) -> Result<StateRegion> {
@@ -893,6 +908,7 @@ impl DomainAbstractionFactory {
             propositions: self.propositional_region_from_hash(state_hash, hash_multipliers)?,
             numeric: self.numeric_region_from_hash(
                 state_hash,
+                partitions,
                 numeric_domain_sizes,
                 hash_multipliers,
             )?,
@@ -933,6 +949,7 @@ impl DomainAbstractionFactory {
     fn numeric_region_from_hash(
         &self,
         state_hash: usize,
+        partitions: &NumericPartitions,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
     ) -> Result<Vec<Interval>> {
@@ -948,8 +965,7 @@ impl DomainAbstractionFactory {
                 format!("missing hash multiplier for numeric var {numeric_var_id}")
             })?;
             let partition_id = (state_hash / multiplier) % domain_size;
-            let interval = self
-                .partitions
+            let interval = partitions
                 .partition_interval(numeric_var_id, partition_id)
                 .with_context(|| {
                     format!(
@@ -1111,6 +1127,7 @@ impl DomainAbstractionFactory {
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
                     predecessor_base,
                     task,
+                    generator.partitions(),
                     generator.numeric_domain_sizes(),
                     generator.hash_multipliers(),
                     &comparison_var_ids,
@@ -1235,6 +1252,7 @@ impl DomainAbstractionFactory {
     fn compute_initial_state_hash_determined(
         &self,
         task: &dyn AbstractNumericTask,
+        partitions: &NumericPartitions,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
         comparison_var_ids: &[usize],
@@ -1293,8 +1311,7 @@ impl DomainAbstractionFactory {
                 val.is_finite() && !val.is_nan(),
                 "initial numeric value for var {num_var_id} must be finite, got {val}"
             );
-            let parts = self
-                .partitions
+            let parts = partitions
                 .partitions(num_var_id)
                 .with_context(|| format!("missing partitions for numeric var {num_var_id}"))?;
             let part = utils::partition_for_value(parts, val).with_context(|| {
@@ -1359,6 +1376,7 @@ impl DomainAbstractionFactory {
     fn build_numeric_intervals(
         &self,
         state_hash: usize,
+        partitions: &NumericPartitions,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
         task: &dyn AbstractNumericTask,
@@ -1366,7 +1384,7 @@ impl DomainAbstractionFactory {
         prepare_comparison_tree_inputs_from_abstract_state(
             task,
             &self.comparison_trees,
-            &self.partitions,
+            partitions,
             state_hash,
             self.domain_sizes.len(),
             numeric_domain_sizes,
@@ -1378,6 +1396,7 @@ impl DomainAbstractionFactory {
         &self,
         base_state_hash: usize,
         task: &dyn AbstractNumericTask,
+        partitions: &NumericPartitions,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
         comparison_var_ids: &[usize],
@@ -1433,7 +1452,7 @@ impl DomainAbstractionFactory {
             match evaluate_comparison_tree_from_abstract_state(
                 task,
                 tree,
-                &self.partitions,
+                partitions,
                 base_state_hash,
                 num_props,
                 numeric_domain_sizes,
@@ -1537,6 +1556,7 @@ impl DomainAbstractionFactory {
             let possible_successors = self.enumerate_states_with_evaluated_comparisons(
                 base_successor,
                 task,
+                generator.partitions(),
                 numeric_domain_sizes,
                 hash_multipliers,
                 comparison_var_ids,
@@ -1601,6 +1621,7 @@ impl DomainAbstractionFactory {
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
                     base_predecessor,
                     task,
+                    generator.partitions(),
                     numeric_domain_sizes,
                     hash_multipliers,
                     comparison_var_ids,
@@ -1666,6 +1687,7 @@ impl DomainAbstractionFactory {
         match_tree: &MatchTree,
         goal_facts: &[ExplicitFact],
         initial_state_hash: usize,
+        partitions: &NumericPartitions,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
         comparison_var_ids: &[usize],
@@ -1704,6 +1726,7 @@ impl DomainAbstractionFactory {
             let alts = self.enumerate_states_with_evaluated_comparisons(
                 state_hash,
                 task,
+                partitions,
                 numeric_domain_sizes,
                 hash_multipliers,
                 comparison_var_ids,
@@ -1752,6 +1775,7 @@ impl DomainAbstractionFactory {
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
                     predecessor_base,
                     task,
+                    partitions,
                     numeric_domain_sizes,
                     hash_multipliers,
                     comparison_var_ids,

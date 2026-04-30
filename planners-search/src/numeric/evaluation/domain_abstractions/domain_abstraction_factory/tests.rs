@@ -284,6 +284,7 @@ fn enumerate_states_branches_on_undecidable_comparison() {
     let init_hash = factory
         .compute_initial_state_hash_determined(
             &task,
+            generator.partitions(),
             generator.numeric_domain_sizes(),
             &hash_multipliers,
             &[0],
@@ -299,6 +300,7 @@ fn enumerate_states_branches_on_undecidable_comparison() {
         .enumerate_states_with_evaluated_comparisons(
             base,
             &task,
+            generator.partitions(),
             generator.numeric_domain_sizes(),
             &hash_multipliers,
             &[0],
@@ -351,6 +353,7 @@ fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
     let init_hash = factory
         .compute_initial_state_hash_determined(
             &task,
+            generator.partitions(),
             generator.numeric_domain_sizes(),
             &hash_multipliers,
             &[0],
@@ -767,6 +770,7 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
         .enumerate_states_with_evaluated_comparisons(
             unsorted_goal_hash,
             &task,
+            generator.partitions(),
             generator.numeric_domain_sizes(),
             &hash_multipliers,
             &comparison_var_ids,
@@ -850,6 +854,7 @@ fn factory_numeric_context_recomputes_tree_reachable_derived_intervals_from_regu
     let numeric_intervals = factory
         .build_numeric_intervals(
             state_hash,
+            generator.partitions(),
             generator.numeric_domain_sizes(),
             &hash_multipliers,
             &task,
@@ -859,4 +864,146 @@ fn factory_numeric_context_recomputes_tree_reachable_derived_intervals_from_regu
     assert_eq!(numeric_intervals[0], Interval::singleton(0.0));
     assert_eq!(numeric_intervals[1], Interval::singleton(2.0));
     assert_eq!(numeric_intervals[2], Interval::singleton(2.0));
+}
+
+#[test]
+fn restricted_generator_appends_singleton_domain_for_synthetic_root_constant() {
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("c3".into(), NumericType::Constant, None),
+        NumericVariable::new("c2".into(), NumericType::Constant, None),
+        NumericVariable::new("u".into(), NumericType::Derived, None),
+    ];
+    let assignment_axioms = vec![AssignmentAxiom::new(4, CalOperator::Sum, 0, 1)];
+    let operators = vec![Operator::new(
+        "advance".into(),
+        vec![],
+        vec![],
+        vec![
+            planners_sas::numeric::numeric_task::AssignmentEffect::new(
+                0,
+                planners_sas::numeric::numeric_task::AssignmentOperation::Plus,
+                2,
+                false,
+                vec![],
+            ),
+            planners_sas::numeric::numeric_task::AssignmentEffect::new(
+                1,
+                planners_sas::numeric::numeric_task::AssignmentOperation::Plus,
+                3,
+                false,
+                vec![],
+            ),
+        ],
+        1,
+    )];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        vec![],
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 0.0, 3.0, 2.0, 0.0],
+        operators,
+        vec![],
+        vec![],
+        assignment_axioms,
+        ExplicitFact::new(0, 0),
+    );
+
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        vec![],
+        vec![],
+        NumericPartitions::with_partitions(vec![
+            vec![Interval::singleton(0.0)],
+            vec![Interval::singleton(0.0)],
+            vec![Interval::singleton(3.0)],
+            vec![Interval::singleton(2.0)],
+            vec![Interval::singleton(0.0), Interval::singleton(1.0)],
+        ]),
+        vec![1, 1, 1, 1, 2],
+    )
+    .unwrap();
+
+    let restricted_task = factory.make_restricted_task(&task).unwrap();
+    assert_eq!(restricted_task.base_numeric_var_count(), 5);
+    assert_eq!(restricted_task.synthetic_constant_values(), &[5.0]);
+    assert_eq!(restricted_task.numeric_variables().len(), 6);
+
+    let generator = factory
+        .make_restricted_operator_generator(&restricted_task, true)
+        .unwrap();
+    assert_eq!(generator.numeric_domain_sizes(), &[1, 1, 1, 1, 2, 1]);
+}
+
+#[test]
+fn restricted_distance_table_uses_synthetic_constant_partitions() {
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("c3".into(), NumericType::Constant, None),
+        NumericVariable::new("c2".into(), NumericType::Constant, None),
+        NumericVariable::new("u".into(), NumericType::Derived, None),
+    ];
+    let assignment_axioms = vec![AssignmentAxiom::new(4, CalOperator::Sum, 0, 1)];
+    let operators = vec![Operator::new(
+        "advance".into(),
+        vec![],
+        vec![],
+        vec![
+            planners_sas::numeric::numeric_task::AssignmentEffect::new(
+                0,
+                planners_sas::numeric::numeric_task::AssignmentOperation::Plus,
+                2,
+                false,
+                vec![],
+            ),
+            planners_sas::numeric::numeric_task::AssignmentEffect::new(
+                1,
+                planners_sas::numeric::numeric_task::AssignmentOperation::Plus,
+                3,
+                false,
+                vec![],
+            ),
+        ],
+        1,
+    )];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        vec![],
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 0.0, 3.0, 2.0, 0.0],
+        operators,
+        vec![],
+        vec![],
+        assignment_axioms,
+        ExplicitFact::new(0, 0),
+    );
+
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        vec![],
+        vec![],
+        NumericPartitions::with_partitions(vec![
+            vec![Interval::singleton(0.0)],
+            vec![Interval::singleton(0.0)],
+            vec![Interval::singleton(3.0)],
+            vec![Interval::singleton(2.0)],
+            vec![Interval::singleton(0.0), Interval::singleton(1.0)],
+        ]),
+        vec![1, 1, 1, 1, 2],
+    )
+    .unwrap();
+
+    let table = factory.build_abstract_distance_table(&task, true, false).unwrap();
+    assert!(table.initial_state_hash < table.distances.len());
+    assert_eq!(table.numeric_domain_sizes, vec![1, 1, 1, 1, 2, 1]);
 }
