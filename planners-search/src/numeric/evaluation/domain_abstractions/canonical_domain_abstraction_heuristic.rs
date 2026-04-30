@@ -160,17 +160,14 @@ fn compute_relevant_operator_ids(
     task: &dyn AbstractNumericTask,
     abstraction: &DomainAbstraction,
 ) -> Result<BTreeSet<usize>, String> {
-    let mut generator = abstraction
+    let operators = abstraction
         .factory
-        .make_operator_generator(task, abstraction.combine_labels)
+        .build_restricted_abstract_operators(task, abstraction.combine_labels)
         .map_err(|error| {
             format!(
-                "failed to build operator generator for canonical domain abstraction: {error:#}"
+                "failed to build abstract operators for canonical domain abstraction: {error:#}"
             )
         })?;
-    let operators = generator.build_abstract_operators(task).map_err(|error| {
-        format!("failed to build abstract operators for canonical domain abstraction: {error:#}")
-    })?;
 
     Ok(operators
         .into_iter()

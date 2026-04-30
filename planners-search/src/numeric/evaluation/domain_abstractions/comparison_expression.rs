@@ -1119,7 +1119,9 @@ fn build_numeric_tree_node(
     }
     visiting[numeric_var_id] = true;
 
-    let node_id = if let Some(assignment_axiom_id) = affected_to_assignment_axiom[numeric_var_id] {
+    let node_id = if task.numeric_variables()[numeric_var_id].get_type() == &NumericType::Derived
+        && let Some(assignment_axiom_id) = affected_to_assignment_axiom[numeric_var_id]
+    {
         let ax = &task.assignment_axioms()[assignment_axiom_id];
         let op = arith_op_from_axiom(ax.get_operator());
         let left_numeric_var_id = ax.get_left_var_id();

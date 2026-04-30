@@ -771,7 +771,7 @@ fn assignment_axiom_chain_can_propagate_through_changed_var_and_constant() {
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("c1".into(), NumericType::Constant, None),
-        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Derived, None),
         NumericVariable::new("c2".into(), NumericType::Constant, None),
     ];
 

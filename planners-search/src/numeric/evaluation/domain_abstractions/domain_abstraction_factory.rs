@@ -21,6 +21,7 @@ use super::numeric_context::{
     evaluate_comparison_tree_from_abstract_state, evaluate_comparison_tree_from_initial_state,
     prepare_comparison_tree_inputs_from_abstract_state,
 };
+use super::restricted_task::RestrictedTask;
 use super::transition_cost_partitioning::{
     AbstractTransition, AbstractTransitionCostFunction, AbstractTransitionSystem, StateRegion,
     TransitionResidualCosts,
@@ -361,6 +362,59 @@ impl DomainAbstractionFactory {
         )
     }
 
+    fn make_restricted_task<'task>(
+        &self,
+        task: &'task dyn AbstractNumericTask,
+    ) -> Result<RestrictedTask<'task>> {
+        RestrictedTask::new(task, &self.numeric_domain_sizes)
+            .map_err(|error| anyhow!("failed to build restricted task: {error}"))
+    }
+
+    fn make_restricted_operator_generator(
+        &self,
+        task: &RestrictedTask<'_>,
+        combine_labels: bool,
+    ) -> Result<AbstractOperatorGenerator> {
+        let mut partitions = Vec::with_capacity(task.numeric_variables().len());
+        for numeric_var_id in 0..task.base_numeric_var_count() {
+            let parts = self
+                .partitions
+                .partitions(numeric_var_id)
+                .with_context(|| format!("missing partitions for numeric var {numeric_var_id}"))?;
+            partitions.push(parts.to_vec());
+        }
+        for &value in task.synthetic_constant_values() {
+            partitions.push(vec![Interval::singleton(value)]);
+        }
+        ensure!(
+            partitions.len() == task.numeric_variables().len(),
+            "restricted partitions length mismatch: {} != {}",
+            partitions.len(),
+            task.numeric_variables().len()
+        );
+
+        AbstractOperatorGenerator::new(
+            task,
+            self.domain_mapping.clone(),
+            self.domain_sizes.clone(),
+            NumericPartitions::with_partitions(partitions),
+            self.numeric_domain_sizes.clone(),
+            combine_labels,
+        )
+    }
+
+    pub fn build_restricted_abstract_operators(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+    ) -> Result<Vec<AbstractOperator>> {
+        let restricted_task = self.make_restricted_task(task)?;
+        let task = &restricted_task as &dyn AbstractNumericTask;
+        let mut generator =
+            self.make_restricted_operator_generator(&restricted_task, combine_labels)?;
+        generator.build_abstract_operators(task)
+    }
+
     /// Runs numeric-fd style implicit regression Dijkstra and returns distances-to-goal for
     /// all abstract states plus the generating operator per state.
     pub fn build_abstract_distance_table(
@@ -369,7 +423,10 @@ impl DomainAbstractionFactory {
         combine_labels: bool,
         dump_distances: bool,
     ) -> Result<AbstractDistanceTable> {
-        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let restricted_task = self.make_restricted_task(task)?;
+        let task = &restricted_task as &dyn AbstractNumericTask;
+        let mut generator =
+            self.make_restricted_operator_generator(&restricted_task, combine_labels)?;
         let operators = generator.build_abstract_operators(task)?;
         self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)
     }
@@ -383,7 +440,10 @@ impl DomainAbstractionFactory {
         operator_costs: &[f64],
         dump_distances: bool,
     ) -> Result<(AbstractDistanceTable, Vec<f64>)> {
-        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let restricted_task = self.make_restricted_task(task)?;
+        let task = &restricted_task as &dyn AbstractNumericTask;
+        let mut generator =
+            self.make_restricted_operator_generator(&restricted_task, combine_labels)?;
         let mut operators = generator.build_abstract_operators(task)?;
         apply_operator_costs(&mut operators, operator_costs)?;
         let table =
@@ -400,7 +460,10 @@ impl DomainAbstractionFactory {
         combine_labels: bool,
         operator_costs: &[f64],
     ) -> Result<AbstractDistanceTable> {
-        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let restricted_task = self.make_restricted_task(task)?;
+        let task = &restricted_task as &dyn AbstractNumericTask;
+        let mut generator =
+            self.make_restricted_operator_generator(&restricted_task, combine_labels)?;
         let mut operators = generator.build_abstract_operators(task)?;
         apply_operator_costs(&mut operators, operator_costs)?;
         self.build_distance_table_with_operators(task, &generator, &operators, false)
@@ -416,7 +479,10 @@ impl DomainAbstractionFactory {
         operators: &[AbstractOperator],
         table: &AbstractDistanceTable,
     ) -> Result<Vec<f64>> {
-        let generator = self.make_operator_generator(task, combine_labels)?;
+        let restricted_task = self.make_restricted_task(task)?;
+        let task = &restricted_task as &dyn AbstractNumericTask;
+        let generator =
+            self.make_restricted_operator_generator(&restricted_task, combine_labels)?;
         self.compute_saturated_costs(task, &generator, operators, table)
     }
 
@@ -434,7 +500,10 @@ impl DomainAbstractionFactory {
         combine_labels: bool,
         deadline: Option<Instant>,
     ) -> Result<AbstractTransitionSystem> {
-        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let restricted_task = self.make_restricted_task(task)?;
+        let task = &restricted_task as &dyn AbstractNumericTask;
+        let mut generator =
+            self.make_restricted_operator_generator(&restricted_task, combine_labels)?;
         let operators = generator.build_abstract_operators(task)?;
         self.build_transition_system_with_operators(task, &generator, &operators, deadline)
     }
@@ -594,7 +663,10 @@ impl DomainAbstractionFactory {
         operator_cache: Option<&mut IncrementalAbstractOperatorCache>,
         plan_step_rng: Option<&mut SmallRng>,
     ) -> Result<Option<WildcardPlanResult>> {
-        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let restricted_task = self.make_restricted_task(task)?;
+        let task = &restricted_task as &dyn AbstractNumericTask;
+        let mut generator =
+            self.make_restricted_operator_generator(&restricted_task, combine_labels)?;
         let operators = if let Some(cache) = operator_cache {
             generator.build_abstract_operators_with_cache(task, cache)?
         } else {

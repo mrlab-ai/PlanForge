@@ -1056,19 +1056,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 }
             }
         }
-        let mut generator = abstraction
+        let mut operators = abstraction
             .factory
-            .make_operator_generator(task, combine_labels)
+            .build_restricted_abstract_operators(task, combine_labels)
             .map_err(|error| {
                 EvaluationError::ComputationFailed(format!(
-                    "failed to create operator generator for PERIM: {error:#}"
+                    "failed to build abstract operators for PERIM: {error:#}"
                 ))
             })?;
-        let mut operators = generator.build_abstract_operators(task).map_err(|error| {
-            EvaluationError::ComputationFailed(format!(
-                "failed to build abstract operators for PERIM: {error:#}"
-            ))
-        })?;
         apply_operator_costs_from_slice(&mut operators, remaining_costs)?;
         let capped_table = AbstractDistanceTable {
             distances: capped.clone(),

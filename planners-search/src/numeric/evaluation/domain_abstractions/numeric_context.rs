@@ -116,8 +116,8 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state(
 ) -> Result<Vec<Interval>> {
     let num_numeric_vars = task.numeric_variables().len();
     ensure!(
-        numeric_domain_sizes.len() == num_numeric_vars,
-        "numeric_domain_sizes length mismatch: {} != {num_numeric_vars}",
+        numeric_domain_sizes.len() <= num_numeric_vars,
+        "numeric_domain_sizes length mismatch: {} > {num_numeric_vars}",
         numeric_domain_sizes.len()
     );
 
@@ -135,7 +135,12 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state(
                 numeric_intervals[numeric_var_id] = Interval::singleton(value);
             }
             NumericType::Derived => {
-                if numeric_domain_sizes[numeric_var_id] > 1 {
+                if numeric_domain_sizes
+                    .get(numeric_var_id)
+                    .copied()
+                    .unwrap_or(1)
+                    > 1
+                {
                     let abs_var = num_props + numeric_var_id;
                     ensure!(
                         abs_var < hash_multipliers.len(),
@@ -166,7 +171,10 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state(
                     "missing hash multiplier for abstract numeric var {abs_var}"
                 );
                 let mult = hash_multipliers[abs_var] as i64;
-                let dom = numeric_domain_sizes[numeric_var_id] as i64;
+                let dom = numeric_domain_sizes
+                    .get(numeric_var_id)
+                    .copied()
+                    .unwrap_or(1) as i64;
                 ensure!(
                     dom > 0,
                     "numeric domain size must be > 0 for var {numeric_var_id}"
