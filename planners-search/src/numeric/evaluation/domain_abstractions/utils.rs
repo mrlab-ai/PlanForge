@@ -2,10 +2,10 @@ use anyhow::{Context, Result, anyhow};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt::Write as _;
 
-use tracing::debug;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
+use tracing::debug;
 
 use super::cegar::flaw_search::Flaw;
 use super::comparison_expression::Interval;
@@ -418,6 +418,7 @@ fn debug_print_concrete_trace(
                     &state_packer,
                     &buffer,
                     &numeric_state,
+                    step,
                 )
                 .is_empty()
             } else {
@@ -446,6 +447,7 @@ fn debug_print_concrete_trace(
                 &cand_numeric,
                 expected_abs_numeric_succ,
                 partitions,
+                step,
             );
 
             if deviation_flaws.is_empty() {

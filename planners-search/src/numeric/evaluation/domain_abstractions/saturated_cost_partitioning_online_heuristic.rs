@@ -440,7 +440,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     }
 
     fn should_build_cp(&self, state: &ScpOnlineState) -> bool {
-        state.improve_heuristic && state.evaluated_states % self.config.interval == 0
+        state.improve_heuristic && state.evaluated_states.is_multiple_of(self.config.interval)
     }
 
     fn maybe_build_cp(
@@ -548,6 +548,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         f(transition_system).map(Some)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_transition_cp(
         &self,
         task: &dyn AbstractNumericTask,
@@ -846,6 +847,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_label_cp(
         &self,
         task: &dyn AbstractNumericTask,
@@ -921,7 +923,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     fn add_label_pdb_step(
         &self,
         cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut Vec<f64>,
+        remaining_costs: &mut [f64],
         pos: usize,
         abstract_state_ids: &[Option<usize>],
         num_domain_abstractions: usize,

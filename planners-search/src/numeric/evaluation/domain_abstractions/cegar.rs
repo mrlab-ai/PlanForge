@@ -277,6 +277,7 @@ impl Cegar {
                 &mut rng,
                 &mut blacklisted_prop_var_ids,
                 &mut blacklisted_numeric_var_ids,
+                plan.wildcard_plan.len(),
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
             operator_cache.mark_refined(&refined);
@@ -533,6 +534,7 @@ pub fn fix_flaws(
     rng: &mut SmallRng,
     blacklisted_prop_var_ids: &mut HashSet<usize>,
     blacklisted_numeric_var_ids: &mut HashSet<usize>,
+    plan_length: usize,
 ) -> Result<RefinementSummary> {
     let comparison_var_ids: HashSet<usize> = task
         .comparison_axioms()
@@ -552,6 +554,7 @@ pub fn fix_flaws(
         domain_sizes,
         partitions,
         numeric_domain_sizes,
+        plan_length,
     );
 
     let mut refined_summary = RefinementSummary::default();

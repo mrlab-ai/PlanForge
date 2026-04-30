@@ -25,6 +25,7 @@ pub fn get_regression_flaws(
     let mut state = FlawSearchState::goals_partial_state(task, domain_mapping);
 
     let mut collected_flaws: Vec<Flaw> = Vec::new();
+    let mut step: usize = wildcard_plan.wildcard_plan.len();
 
     // Deviation flaws are not possible because numeric variables are always
     // unbounded.
@@ -33,7 +34,7 @@ pub fn get_regression_flaws(
             let Some(op) = task.get_operators().get(op_id) else {
                 continue;
             };
-            let operator_flaws = get_regression_precondition_flaws(op, &state);
+            let operator_flaws = get_regression_precondition_flaws(op, &state, step);
             if operator_flaws.is_empty() {
                 state.regress(op, &axiom_evaluator)?;
                 collected_flaws.clear();
@@ -46,6 +47,8 @@ pub fn get_regression_flaws(
         if !collected_flaws.is_empty() {
             break;
         }
+
+        step -= 1;
     }
 
     if !collected_flaws.is_empty() {
@@ -58,7 +61,11 @@ pub fn get_regression_flaws(
     Ok(init_flaws)
 }
 
-pub fn get_regression_precondition_flaws(op: &Operator, state: &FlawSearchState) -> Vec<Flaw> {
+pub fn get_regression_precondition_flaws(
+    op: &Operator,
+    state: &FlawSearchState,
+    step: usize,
+) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for eff in op.effects().iter() {
         if !state.value_is_hold_for_var(eff.var_id(), eff.value()) {
@@ -66,6 +73,7 @@ pub fn get_regression_precondition_flaws(op: &Operator, state: &FlawSearchState)
             out.push(Flaw::Propositional(PropFlaw {
                 fact: ExplicitFact::new(eff_var_id, eff.value()),
                 dependent_numeric_flaws: vec![],
+                step,
             }));
         }
     }
@@ -80,6 +88,7 @@ pub fn get_init_state_flaws(task: &dyn AbstractNumericTask, state: &FlawSearchSt
             flaws.push(Flaw::Propositional(PropFlaw {
                 fact: ExplicitFact::new(var, *value),
                 dependent_numeric_flaws: vec![],
+                step: 0,
             }));
         }
     }

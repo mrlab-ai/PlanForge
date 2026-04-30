@@ -512,26 +512,25 @@ impl DomainAbstractionFactory {
             })
             .collect::<Result<Vec<_>>>()?;
         let mut table = self.build_distance_table_with_transition_costs(
-            &transition_system,
+            transition_system,
             &transition_costs,
             &transition_system.hash_multipliers,
             &transition_system.numeric_domain_sizes,
         )?;
 
-        if let Some(state_id) = cap_state_id {
-            if let Some(&h_cap) = table.distances.get(state_id) {
-                if h_cap.is_finite() {
-                    for h in &mut table.distances {
-                        if h.is_finite() && *h > h_cap {
-                            *h = h_cap;
-                        }
-                    }
+        if let Some(state_id) = cap_state_id
+            && let Some(&h_cap) = table.distances.get(state_id)
+            && h_cap.is_finite()
+        {
+            for h in &mut table.distances {
+                if h.is_finite() && *h > h_cap {
+                    *h = h_cap;
                 }
             }
         }
 
         let tcf =
-            self.compute_saturated_transition_costs(&transition_system, &transition_costs, &table)?;
+            self.compute_saturated_transition_costs(transition_system, &transition_costs, &table)?;
         Ok((table, tcf))
     }
 
@@ -563,25 +562,6 @@ impl DomainAbstractionFactory {
             use_wildcard_plans,
             None,
             local_rng.as_mut(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn compute_plan_with_rng(
-        &self,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        dump_distances: bool,
-        use_wildcard_plans: bool,
-        plan_step_rng: Option<&mut SmallRng>,
-    ) -> Result<Option<WildcardPlanResult>> {
-        self.compute_plan_with_rng_and_cache(
-            task,
-            combine_labels,
-            dump_distances,
-            use_wildcard_plans,
-            None,
-            plan_step_rng,
         )
     }
 
@@ -684,6 +664,7 @@ impl DomainAbstractionFactory {
         Ok(table)
     }
 
+    #[allow(clippy::needless_range_loop)]
     fn build_transition_system_with_operators(
         &self,
         task: &dyn AbstractNumericTask,

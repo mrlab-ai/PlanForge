@@ -58,6 +58,7 @@ pub trait FlawTreatment {
         domain_sizes: &mut [usize],
         partitions: &mut NumericPartitions,
         numeric_domain_sizes: &mut [usize],
+        plan_length: usize,
     ) -> ChosenFlaws;
 
     /// Specify if all flaws should be refined or only one instead.
@@ -102,6 +103,10 @@ pub enum FlawTreatmentVariants {
     OneSplitPerAtom,
     OneSplitPerVariable,
     MaxRefinedSingleAtom,
+    MaxRefinedPreferringProp,
+    ClosestToGoal,
+    BalanceMaxRefinedAndClosestToGoal,
+    BalanceMaxRefinedPreferringPropAndClosestToGoal,
 }
 
 impl fmt::Display for FlawTreatmentVariants {
@@ -111,6 +116,14 @@ impl fmt::Display for FlawTreatmentVariants {
             Self::OneSplitPerAtom => write!(f, "one_split_per_atom"),
             Self::OneSplitPerVariable => write!(f, "one_split_per_variable"),
             Self::MaxRefinedSingleAtom => write!(f, "max_refined_single_atom"),
+            Self::MaxRefinedPreferringProp => write!(f, "max_refined_preferring_prop"),
+            Self::ClosestToGoal => write!(f, "closest_to_goal"),
+            Self::BalanceMaxRefinedAndClosestToGoal => {
+                write!(f, "balance_max_refined_and_closest_to_goal")
+            }
+            Self::BalanceMaxRefinedPreferringPropAndClosestToGoal => {
+                write!(f, "balance_max_refined_preferring_prop_and_closest_to_goal")
+            }
         }
     }
 }
@@ -130,6 +143,7 @@ impl FlawTreatment for FlawTreatmentVariants {
         domain_sizes: &mut [usize],
         _partitions: &mut NumericPartitions,
         numeric_domain_sizes: &mut [usize],
+        plan_length: usize,
     ) -> ChosenFlaws {
         match self {
             FlawTreatmentVariants::RandomSingleAtom => choose_single_random_flaw(flaws, rng),
@@ -140,7 +154,34 @@ impl FlawTreatment for FlawTreatmentVariants {
                 comparison_var_ids,
                 domain_sizes,
                 numeric_domain_sizes,
+                1,
             ),
+            Self::MaxRefinedPreferringProp => fix_single_flaw_max_refined(
+                flaws,
+                comparison_var_ids,
+                domain_sizes,
+                numeric_domain_sizes,
+                100,
+            ),
+            FlawTreatmentVariants::ClosestToGoal => fix_closest_to_goal(flaws),
+            Self::BalanceMaxRefinedAndClosestToGoal => fix_balance_max_refined_closest_to_goal(
+                flaws,
+                comparison_var_ids,
+                domain_sizes,
+                numeric_domain_sizes,
+                plan_length,
+                1,
+            ),
+            Self::BalanceMaxRefinedPreferringPropAndClosestToGoal => {
+                fix_balance_max_refined_closest_to_goal(
+                    flaws,
+                    comparison_var_ids,
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    plan_length,
+                    100,
+                )
+            }
         }
     }
 
@@ -150,6 +191,10 @@ impl FlawTreatment for FlawTreatmentVariants {
             FlawTreatmentVariants::OneSplitPerAtom => true,
             FlawTreatmentVariants::OneSplitPerVariable => true,
             FlawTreatmentVariants::MaxRefinedSingleAtom => false,
+            FlawTreatmentVariants::MaxRefinedPreferringProp => false,
+            FlawTreatmentVariants::ClosestToGoal => false,
+            &FlawTreatmentVariants::BalanceMaxRefinedAndClosestToGoal => false,
+            &FlawTreatmentVariants::BalanceMaxRefinedPreferringPropAndClosestToGoal => false,
         }
     }
 
@@ -168,6 +213,10 @@ impl FlawTreatment for FlawTreatmentVariants {
                 flaw_variable_key(flaw) == flaw_variable_key(last_refined)
             }
             FlawTreatmentVariants::MaxRefinedSingleAtom => false,
+            FlawTreatmentVariants::MaxRefinedPreferringProp => false,
+            FlawTreatmentVariants::ClosestToGoal => false,
+            FlawTreatmentVariants::BalanceMaxRefinedAndClosestToGoal => false,
+            &FlawTreatmentVariants::BalanceMaxRefinedPreferringPropAndClosestToGoal => false,
         }
     }
 }
@@ -215,16 +264,14 @@ pub(super) fn fix_flaws_per_variable(flaws: &[Flaw]) -> ChosenFlaws {
     candidates
 }
 
-pub(super) fn fix_single_flaw_max_refined(
+fn compute_max_refined(
     flaws: &[Flaw],
     comparison_var_ids: &HashSet<usize>,
     domain_sizes: &mut [usize],
     numeric_domain_sizes: &mut [usize],
-) -> ChosenFlaws {
-    if flaws.is_empty() {
-        return vec![];
-    }
-
+    prop_multiplier: usize,
+) -> (ChosenFlaws, usize) {
+    let mut max_score = 0;
     let mut candidates: ChosenFlaws = Vec::with_capacity(flaws.len());
     for (idx, flaw) in flaws.iter().enumerate() {
         let mut restricted_dep: Option<Vec<NumericFlaw>> = None;
@@ -235,7 +282,7 @@ pub(super) fn fix_single_flaw_max_refined(
                 .unwrap_or(0),
             Flaw::Propositional(pf) => {
                 let var_id = pf.fact.var;
-                let base: usize = domain_sizes.get(var_id).copied().unwrap_or(0);
+                let base: usize = domain_sizes.get(var_id).copied().unwrap_or(0) * prop_multiplier;
                 if comparison_var_ids.contains(&var_id) && !pf.dependent_numeric_flaws.is_empty() {
                     let mut best: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
                     for nf in pf.dependent_numeric_flaws.iter().cloned() {
@@ -261,13 +308,81 @@ pub(super) fn fix_single_flaw_max_refined(
             score,
             restricted_dep,
         });
+        if score > max_score {
+            max_score = score;
+        }
     }
 
+    (candidates, max_score)
+}
+
+pub(super) fn fix_single_flaw_max_refined(
+    flaws: &[Flaw],
+    comparison_var_ids: &HashSet<usize>,
+    domain_sizes: &mut [usize],
+    numeric_domain_sizes: &mut [usize],
+    prop_multiplier: usize,
+) -> ChosenFlaws {
+    if flaws.is_empty() {
+        return vec![];
+    }
+
+    let (mut candidates, _max_score) = compute_max_refined(
+        flaws,
+        comparison_var_ids,
+        domain_sizes,
+        numeric_domain_sizes,
+        prop_multiplier,
+    );
     // Highest score first; tie-break by stable atom key for determinism.
     candidates.sort_by(|a, b| {
         b.score
             .cmp(&a.score)
             .then_with(|| flaw_atom_key(&flaws[a.idx]).cmp(&flaw_atom_key(&flaws[b.idx])))
+    });
+
+    candidates
+}
+
+pub(super) fn fix_closest_to_goal(flaws: &[Flaw]) -> ChosenFlaws {
+    let mut candidates: Vec<FlawCandidate> = (0..flaws.len())
+        .map(|i| FlawCandidate {
+            idx: i,
+            score: flaws[i].step(),
+            restricted_dep: None,
+        })
+        .collect();
+    // `b.cmp` is used instead of `a.cmp` to order them by step at reverse order.
+    candidates.sort_unstable_by(|a, b| b.score.cmp(&a.score));
+
+    candidates
+}
+
+pub(super) fn fix_balance_max_refined_closest_to_goal(
+    flaws: &[Flaw],
+    comparison_var_ids: &HashSet<usize>,
+    domain_sizes: &mut [usize],
+    numeric_domain_sizes: &mut [usize],
+    plan_length: usize,
+    prop_multiplier: usize,
+) -> ChosenFlaws {
+    let (mut candidates, max_score) = compute_max_refined(
+        flaws,
+        comparison_var_ids,
+        domain_sizes,
+        numeric_domain_sizes,
+        prop_multiplier,
+    );
+    let max_score = max_score as f64;
+    let max_length = if plan_length > 0 {
+        plan_length as f64
+    } else {
+        1.0
+    };
+    candidates.sort_unstable_by(|a, b| {
+        (b.score as f64 / max_score - flaws[b.idx].step() as f64 / max_length)
+            .partial_cmp(&(a.score as f64 / max_score - flaws[a.idx].step() as f64 / max_length))
+            .unwrap()
     });
 
     candidates

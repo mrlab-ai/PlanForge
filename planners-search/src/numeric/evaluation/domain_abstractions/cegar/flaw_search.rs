@@ -34,6 +34,7 @@ pub struct NumericFlaw {
     pub numeric_var_id: usize,
     pub value: f64,
     pub include_in_lower: bool,
+    pub step: usize,
 }
 
 /// Mirrors numeric-FD's `PropFlaw = pair<Fact, vector<NumericFlaw>>`.
@@ -41,6 +42,7 @@ pub struct NumericFlaw {
 pub struct PropFlaw {
     pub fact: ExplicitFact,
     pub dependent_numeric_flaws: Vec<NumericFlaw>,
+    pub step: usize,
 }
 
 /// Mirrors numeric-FD's `Flaw = variant<PropFlaw, NumericFlaw>`.
@@ -48,6 +50,14 @@ pub struct PropFlaw {
 pub enum Flaw {
     Propositional(PropFlaw),
     Numeric(NumericFlaw),
+}
+impl Flaw {
+    pub fn step(&self) -> usize {
+        match self {
+            Self::Propositional(prop) => prop.step,
+            Self::Numeric(num) => num.step,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -169,6 +179,7 @@ fn dependent_numeric_flaws_for_comparison_prop_var(
     comparison_index: &ComparisonAxiomIndex,
     prop_var_id: usize,
     numeric_state: &[f64],
+    step: usize,
 ) -> Vec<NumericFlaw> {
     let Some(tree) = comparison_index.comparison_tree(prop_var_id) else {
         return vec![];
@@ -187,12 +198,14 @@ fn dependent_numeric_flaws_for_comparison_prop_var(
                 numeric_var_id: dep_var_id,
                 value: concrete_value,
                 include_in_lower,
+                step,
             });
         } else if can_split_numeric_var(partitions, dep_var_id, concrete_value, !include_in_lower) {
             out.push(NumericFlaw {
                 numeric_var_id: dep_var_id,
                 value: concrete_value,
                 include_in_lower: !include_in_lower,
+                step,
             });
         }
     }
@@ -205,6 +218,7 @@ fn dependent_numeric_flaws_in_interval_for_comparison_prop_var(
     comparison_index: &ComparisonAxiomIndex,
     prop_var_id: usize,
     state: &FlawSearchState,
+    step: usize,
 ) -> Vec<NumericFlaw> {
     let Some(tree) = comparison_index.comparison_tree(prop_var_id) else {
         return vec![];
@@ -224,6 +238,7 @@ fn dependent_numeric_flaws_in_interval_for_comparison_prop_var(
                 numeric_var_id: dep_var_id,
                 value: state.numeric[dep_var_id].upper,
                 include_in_lower,
+                step,
             });
         } else if can_split_numeric_var(
             partitions,
@@ -235,6 +250,7 @@ fn dependent_numeric_flaws_in_interval_for_comparison_prop_var(
                 numeric_var_id: dep_var_id,
                 value: state.numeric[dep_var_id].lower,
                 include_in_lower: !include_in_lower,
+                step,
             });
         }
     }

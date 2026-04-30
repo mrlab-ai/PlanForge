@@ -39,13 +39,13 @@ pub fn get_progression_flaws(
 
     let mut collected_flaws: Vec<Flaw> = Vec::new();
     let mut flawed = false;
-    let mut step_num: usize = 1;
+    let mut step: usize = 1;
 
     for equivalent_ops in wildcard_plan.wildcard_plan.iter() {
-        let expected_abs_numeric_state = &wildcard_plan.abstract_numeric_states[step_num];
+        let expected_abs_numeric_state = &wildcard_plan.abstract_numeric_states[step];
         ensure!(
-            step_num < wildcard_plan.abstract_numeric_states.len(),
-            "WildcardPlanResult abstract_numeric_states too short for step {step_num}"
+            step < wildcard_plan.abstract_numeric_states.len(),
+            "WildcardPlanResult abstract_numeric_states too short for step {step}"
         );
 
         for &op_id in equivalent_ops.iter() {
@@ -60,6 +60,7 @@ pub fn get_progression_flaws(
                 &state_packer,
                 &prop_state,
                 &numeric_state,
+                step,
             );
             if operator_flaws.is_empty() {
                 (next_prop_state, next_numeric_state, flawed) = progress_and_get_deviation_flaws(
@@ -71,6 +72,7 @@ pub fn get_progression_flaws(
                     op,
                     partitions,
                     &mut collected_flaws,
+                    step,
                 )?;
                 if !flawed {
                     collected_flaws.clear();
@@ -87,7 +89,7 @@ pub fn get_progression_flaws(
             break;
         }
 
-        step_num += 1;
+        step += 1;
     }
 
     if !collected_flaws.is_empty() {
@@ -101,6 +103,7 @@ pub fn get_progression_flaws(
         &state_packer,
         &prop_state,
         &numeric_state,
+        step,
     );
 
     Ok(goal_flaws)
@@ -117,6 +120,7 @@ pub(crate) fn progress_and_get_deviation_flaws(
     op: &Operator,
     partitions: &NumericPartitions,
     collected_flaws: &mut Vec<Flaw>,
+    step: usize,
 ) -> Result<OptionalPropAndNumStateAndFlawed> {
     let mut next_prop_state = prop_state.to_vec();
     let mut next_numeric_state = numeric_state.to_vec();
@@ -135,6 +139,7 @@ pub(crate) fn progress_and_get_deviation_flaws(
         &next_numeric_state,
         expected_abs_numeric_state,
         partitions,
+        step,
     );
     if !deviation_flaws.is_empty() {
         collected_flaws.extend(deviation_flaws);
@@ -150,6 +155,7 @@ pub fn get_progression_numeric_deviation_flaws(
     numeric_successor_state: &[f64],
     abstract_numeric_successor_state: &[usize],
     partitions: &NumericPartitions,
+    step: usize,
 ) -> Vec<Flaw> {
     let mut flaws: Vec<Flaw> = Vec::new();
 
@@ -195,6 +201,7 @@ pub fn get_progression_numeric_deviation_flaws(
                 numeric_var_id: var_id,
                 value: concrete_current_value,
                 include_in_lower,
+                step,
             }));
         } else {
             include_in_lower = !include_in_lower;
@@ -203,6 +210,7 @@ pub fn get_progression_numeric_deviation_flaws(
                     numeric_var_id: var_id,
                     value: concrete_current_value,
                     include_in_lower,
+                    step,
                 }));
             }
         }
@@ -211,6 +219,7 @@ pub fn get_progression_numeric_deviation_flaws(
     flaws
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn get_progression_precondition_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
@@ -219,6 +228,7 @@ pub fn get_progression_precondition_flaws(
     packer: &IntDoublePacker,
     buffer: &[u64],
     numeric_state: &[f64],
+    step: usize,
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for pre in op.preconditions().iter() {
@@ -232,6 +242,7 @@ pub fn get_progression_precondition_flaws(
                         comparison_index,
                         prop_var_id,
                         numeric_state,
+                        step,
                     )
                 } else {
                     vec![]
@@ -239,6 +250,7 @@ pub fn get_progression_precondition_flaws(
             out.push(Flaw::Propositional(PropFlaw {
                 fact: pre.clone(),
                 dependent_numeric_flaws,
+                step,
             }));
         }
     }
@@ -252,6 +264,7 @@ pub fn get_goal_flaws(
     packer: &IntDoublePacker,
     buffer: &[u64],
     numeric_state: &[f64],
+    step: usize,
 ) -> Vec<Flaw> {
     let num_goals = task.get_num_goals();
     let mut out: Vec<Flaw> = Vec::new();
@@ -275,6 +288,7 @@ pub fn get_goal_flaws(
                         comparison_index,
                         prop_var_id,
                         numeric_state,
+                        step,
                     )
                 } else {
                     vec![]
@@ -282,6 +296,7 @@ pub fn get_goal_flaws(
             out.push(Flaw::Propositional(PropFlaw {
                 fact: goal_fact.clone(),
                 dependent_numeric_flaws,
+                step,
             }));
         }
     }
@@ -305,6 +320,7 @@ pub fn get_goal_flaws(
                             comparison_index,
                             prop_var_id,
                             numeric_state,
+                            step,
                         )
                     } else {
                         vec![]
@@ -312,6 +328,7 @@ pub fn get_goal_flaws(
                 out.push(Flaw::Propositional(PropFlaw {
                     fact: pre.clone(),
                     dependent_numeric_flaws,
+                    step,
                 }));
             }
         }

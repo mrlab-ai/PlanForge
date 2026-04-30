@@ -289,6 +289,7 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
     let flaws = vec![Flaw::Propositional(PropFlaw {
         fact: ExplicitFact::new(0, 1),
         dependent_numeric_flaws: vec![],
+        step: 0,
     })];
 
     let refined = fix_flaws(
@@ -302,6 +303,7 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
         &mut rng,
         &mut blacklisted_prop_var_ids,
         &mut blacklisted_numeric_var_ids,
+        0,
     )
     .unwrap();
 
@@ -349,6 +351,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
     let flaws = vec![Flaw::Propositional(PropFlaw {
         fact: ExplicitFact::new(0, 1),
         dependent_numeric_flaws: vec![],
+        step: 0,
     })];
 
     let refined = fix_flaws(
@@ -362,6 +365,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
         &mut rng,
         &mut blacklisted_prop_var_ids,
         &mut blacklisted_numeric_var_ids,
+        0,
     )
     .unwrap();
 
