@@ -9,13 +9,15 @@ use anyhow::{Context, Result, anyhow, ensure};
 use planners_sas::numeric::axioms::CalOperator;
 
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, NumericType, Operator,
-    metric_operator_cost_from_initial_values,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, NumericType,
+    Operator, metric_operator_cost_from_initial_values,
 };
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
-use super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees;
+use super::numeric_context::{
+    fill_derived_numeric_intervals_from_comparison_trees, should_preserve_refined_derived_root,
+};
 use super::utils;
 
 const COMPARISON_TRUE_VAL: usize = 0;
@@ -343,6 +345,128 @@ fn materialize_skeletons(
     Ok(out)
 }
 
+fn constant_numeric_delta_for_effect(
+    task: &dyn AbstractNumericTask,
+    effect: &AssignmentEffect,
+) -> Option<f64> {
+    if effect.is_conditional() {
+        return None;
+    }
+
+    let rhs = effect.var_id();
+    if task.numeric_variables().get(rhs)?.get_type() != &NumericType::Constant {
+        return None;
+    }
+    let rhs_value = *task.get_initial_numeric_state_values().get(rhs)?;
+    if !rhs_value.is_finite() || rhs_value.is_nan() {
+        return None;
+    }
+
+    match effect.operation() {
+        AssignmentOperation::Plus => Some(rhs_value),
+        AssignmentOperation::Minus => Some(-rhs_value),
+        AssignmentOperation::Assign | AssignmentOperation::Times | AssignmentOperation::Divide => {
+            None
+        }
+    }
+}
+
+fn constant_numeric_delta_for_var(
+    task: &dyn AbstractNumericTask,
+    effects_by_var: &[Vec<&AssignmentEffect>],
+    var_id: usize,
+    visiting: &mut [bool],
+) -> Option<f64> {
+    let numeric_var = task.numeric_variables().get(var_id)?;
+    match numeric_var.get_type() {
+        NumericType::Constant => Some(0.0),
+        NumericType::Regular | NumericType::Cost => {
+            let mut delta = 0.0;
+            for effect in effects_by_var.get(var_id)? {
+                delta += constant_numeric_delta_for_effect(task, effect)?;
+            }
+            Some(delta)
+        }
+        NumericType::Derived => {
+            if *visiting.get(var_id)? {
+                return None;
+            }
+            visiting[var_id] = true;
+
+            let axiom = task
+                .assignment_axioms()
+                .iter()
+                .find(|axiom| axiom.get_affected_var_id() == var_id)?;
+            let left_delta = constant_numeric_delta_for_var(
+                task,
+                effects_by_var,
+                axiom.get_left_var_id(),
+                visiting,
+            );
+            let right_delta = constant_numeric_delta_for_var(
+                task,
+                effects_by_var,
+                axiom.get_right_var_id(),
+                visiting,
+            );
+
+            visiting[var_id] = false;
+
+            match axiom.get_operator() {
+                CalOperator::Sum => Some(left_delta? + right_delta?),
+                CalOperator::Difference => Some(left_delta? - right_delta?),
+                CalOperator::Product | CalOperator::Division => {
+                    let left = left_delta?;
+                    let right = right_delta?;
+                    if left == 0.0 && right == 0.0 {
+                        Some(0.0)
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn numeric_var_may_change(
+    task: &dyn AbstractNumericTask,
+    effects_by_var: &[Vec<&AssignmentEffect>],
+    var_id: usize,
+    visiting: &mut [bool],
+) -> bool {
+    let Some(numeric_var) = task.numeric_variables().get(var_id) else {
+        return false;
+    };
+    match numeric_var.get_type() {
+        NumericType::Constant => false,
+        NumericType::Regular | NumericType::Cost => effects_by_var
+            .get(var_id)
+            .is_some_and(|effects| !effects.is_empty()),
+        NumericType::Derived => {
+            if *visiting.get(var_id).unwrap_or(&false) {
+                return false;
+            }
+            visiting[var_id] = true;
+            let may_change = task
+                .assignment_axioms()
+                .iter()
+                .find(|axiom| axiom.get_affected_var_id() == var_id)
+                .is_some_and(|axiom| {
+                    numeric_var_may_change(task, effects_by_var, axiom.get_left_var_id(), visiting)
+                        || numeric_var_may_change(
+                            task,
+                            effects_by_var,
+                            axiom.get_right_var_id(),
+                            visiting,
+                        )
+                });
+            visiting[var_id] = false;
+            may_change
+        }
+    }
+}
+
 #[allow(unused)]
 fn arith_op_from_axiom(operator: &CalOperator) -> ArithOp {
     match operator {
@@ -441,7 +565,7 @@ impl AbstractOperatorGenerator {
         let mut comparisons_by_numeric_dep: Vec<Vec<usize>> =
             vec![Vec::new(); task.numeric_variables().len()];
         for (tree_idx, tree) in comparison_trees.iter().enumerate() {
-            for dep in tree.regular_numeric_var_dependencies(task) {
+            for dep in tree.numeric_var_dependencies() {
                 ensure!(
                     dep < comparisons_by_numeric_dep.len(),
                     "comparison tree depends on numeric var {dep}, but only {} numeric vars exist",
@@ -1049,52 +1173,123 @@ fn compute_hash_effects_with_preconditions(
         effects_by_var[v].push(eff);
     }
 
+    let mut precondition_numeric_vars: HashSet<usize> = HashSet::new();
+    for pre in op_preconditions {
+        for tree in &generator.comparison_trees {
+            if tree.affected_var_id != pre.var {
+                continue;
+            }
+            for dep in tree.numeric_var_dependencies() {
+                if generator
+                    .numeric_domain_sizes
+                    .get(dep)
+                    .copied()
+                    .unwrap_or(0)
+                    > 1
+                {
+                    precondition_numeric_vars.insert(dep);
+                }
+            }
+        }
+    }
+
     let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
     let mut affected_numeric_vars: HashSet<usize> = HashSet::new();
     for v in 0..num_numeric_vars {
-        if task.numeric_variables()[v].get_type() == &NumericType::Derived {
-            continue;
-        }
         let num_parts = generator.numeric_domain_sizes[v];
         if num_parts <= 1 {
             continue;
         }
+        let needed_for_precondition = precondition_numeric_vars.contains(&v);
 
-        let effs = &effects_by_var[v];
-        if let Some(eff) = effs.first() {
+        if task.numeric_variables()[v].get_type() == &NumericType::Derived {
+            let mut visiting = vec![false; num_numeric_vars];
+            let delta = constant_numeric_delta_for_var(task, &effects_by_var, v, &mut visiting);
+
+            let Some(delta) = delta else {
+                let mut visiting = vec![false; num_numeric_vars];
+                if numeric_var_may_change(task, &effects_by_var, v, &mut visiting) {
+                    let mut transitions: Vec<(usize, usize)> =
+                        Vec::with_capacity(num_parts.saturating_mul(num_parts));
+                    for src in 0..num_parts {
+                        for tgt in 0..num_parts {
+                            transitions.push((src, tgt));
+                        }
+                    }
+                    affected_numeric_vars.insert(v);
+                    per_var.push((v, transitions));
+                } else if needed_for_precondition {
+                    let transitions: Vec<(usize, usize)> = (0..num_parts).map(|p| (p, p)).collect();
+                    per_var.push((v, transitions));
+                }
+                continue;
+            };
+
+            if delta == 0.0 {
+                if needed_for_precondition {
+                    let transitions: Vec<(usize, usize)> = (0..num_parts).map(|p| (p, p)).collect();
+                    per_var.push((v, transitions));
+                }
+                continue;
+            };
+
             affected_numeric_vars.insert(v);
-            let rhs = eff.var_id();
-            let rhs_parts = generator
-                .partitions
-                .partitions(rhs)
-                .map(|s| s.len())
-                .ok_or_else(|| anyhow!("missing partitions for rhs numeric var {rhs}"))?;
-
+            let delta_interval = Interval::singleton(delta);
             let mut pairs: HashSet<(usize, usize)> = HashSet::new();
             for src in 0..num_parts {
-                for rhs_part in 0..rhs_parts {
-                    let rhs_iv = generator
-                        .partitions
-                        .partition_interval(rhs, rhs_part)
-                        .with_context(|| {
-                            format!("missing partition interval for rhs var {rhs} part {rhs_part}")
-                        })?;
-                    let targets =
-                        generator
-                            .partitions
-                            .reachable_partitions(v, src, eff.operation(), rhs_iv);
-                    for tgt in targets {
-                        pairs.insert((src, tgt));
-                    }
+                let targets = generator.partitions.reachable_partitions(
+                    v,
+                    src,
+                    &AssignmentOperation::Plus,
+                    delta_interval,
+                );
+                for tgt in targets {
+                    pairs.insert((src, tgt));
                 }
             }
             let mut transitions: Vec<(usize, usize)> = pairs.into_iter().collect();
             transitions.sort_unstable();
             per_var.push((v, transitions));
         } else {
-            // Unaffected refined numeric var: enumerate identity transitions `p` -> `p`.
-            let transitions: Vec<(usize, usize)> = (0..num_parts).map(|p| (p, p)).collect();
-            per_var.push((v, transitions));
+            let effs = &effects_by_var[v];
+            if let Some(eff) = effs.first() {
+                affected_numeric_vars.insert(v);
+                let rhs = eff.var_id();
+                let rhs_parts = generator
+                    .partitions
+                    .partitions(rhs)
+                    .map(|s| s.len())
+                    .ok_or_else(|| anyhow!("missing partitions for rhs numeric var {rhs}"))?;
+
+                let mut pairs: HashSet<(usize, usize)> = HashSet::new();
+                for src in 0..num_parts {
+                    for rhs_part in 0..rhs_parts {
+                        let rhs_iv = generator
+                            .partitions
+                            .partition_interval(rhs, rhs_part)
+                            .with_context(|| {
+                                format!(
+                                    "missing partition interval for rhs var {rhs} part {rhs_part}"
+                                )
+                            })?;
+                        let targets = generator.partitions.reachable_partitions(
+                            v,
+                            src,
+                            eff.operation(),
+                            rhs_iv,
+                        );
+                        for tgt in targets {
+                            pairs.insert((src, tgt));
+                        }
+                    }
+                }
+                let mut transitions: Vec<(usize, usize)> = pairs.into_iter().collect();
+                transitions.sort_unstable();
+                per_var.push((v, transitions));
+            } else if needed_for_precondition {
+                let transitions: Vec<(usize, usize)> = (0..num_parts).map(|p| (p, p)).collect();
+                per_var.push((v, transitions));
+            }
         }
     }
 
@@ -1148,10 +1343,19 @@ fn compute_hash_effects_with_preconditions(
         // Optimistic filtering for comparison preconditions based on *source* intervals.
         let source_numeric_intervals =
             prepare_comparison_tree_inputs_for_combo(task, generator, &combo, false)?;
+        let refined_numeric_roots: Vec<bool> = generator
+            .numeric_domain_sizes
+            .iter()
+            .map(|&size| size > 1)
+            .collect();
         if let Some(index) = &generator.comparison_index
-            && op_preconditions
-                .iter()
-                .any(|pre| index.precondition_is_contradicted(pre, &source_numeric_intervals))
+            && op_preconditions.iter().any(|pre| {
+                index.precondition_is_contradicted(
+                    pre,
+                    &source_numeric_intervals,
+                    &refined_numeric_roots,
+                )
+            })
         {
             continue;
         }
@@ -1213,6 +1417,7 @@ fn prepare_comparison_tree_inputs_for_combo(
         }
     }
 
+    let mut refined_derived_intervals: Vec<(usize, Interval)> = Vec::new();
     for (var_id, src, tgt) in combo {
         let partition_id = if use_target_partitions { *tgt } else { *src };
         let iv = generator
@@ -1222,12 +1427,20 @@ fn prepare_comparison_tree_inputs_for_combo(
                 format!("missing partition interval for var {var_id} part {partition_id}")
             })?;
         numeric_intervals[*var_id] = iv;
+        if task.numeric_variables()[*var_id].get_type() == &NumericType::Derived {
+            refined_derived_intervals.push((*var_id, iv));
+        }
     }
 
     fill_derived_numeric_intervals_from_comparison_trees(
         &generator.comparison_trees,
         &mut numeric_intervals,
     );
+    for (var_id, interval) in refined_derived_intervals {
+        if should_preserve_refined_derived_root(task, &generator.numeric_domain_sizes, var_id) {
+            numeric_intervals[var_id] = interval;
+        }
+    }
 
     for interval in &mut numeric_intervals {
         if interval.is_empty() {
@@ -1243,8 +1456,9 @@ fn tri_value_for_comparison(
     inputs: &[Interval],
     affected_var_id: usize,
     domain_mapping: &DomainMapping,
+    refined_numeric_roots: &[bool],
 ) -> usize {
-    match tree.evaluate_interval(inputs) {
+    match tree.evaluate_interval_with_refined_roots(inputs, refined_numeric_roots) {
         Some(true) => domain_mapping[affected_var_id][COMPARISON_TRUE_VAL],
         Some(false) => domain_mapping[affected_var_id][COMPARISON_FALSE_VAL],
         None => domain_mapping[affected_var_id][COMPARISON_UNKNOWN_VAL],
@@ -1278,6 +1492,11 @@ fn compute_comparison_tree_cascades(
 
     let mut source_facts: Vec<ExplicitFact> = Vec::new();
     let mut target_facts: Vec<ExplicitFact> = Vec::new();
+    let refined_numeric_roots: Vec<bool> = generator
+        .numeric_domain_sizes
+        .iter()
+        .map(|&size| size > 1)
+        .collect();
     for tree_id in affected_tree_ids {
         let tree = generator
             .comparison_trees
@@ -1295,12 +1514,14 @@ fn compute_comparison_tree_cascades(
             source_inputs,
             tree.affected_var_id,
             &generator.domain_mapping,
+            &refined_numeric_roots,
         );
         let target_value = tri_value_for_comparison(
             tree,
             target_inputs,
             tree.affected_var_id,
             &generator.domain_mapping,
+            &refined_numeric_roots,
         );
 
         let unknown_value = generator.domain_mapping[tree.affected_var_id][COMPARISON_UNKNOWN_VAL];

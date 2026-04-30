@@ -182,6 +182,7 @@ impl ComparisonAxiomIndex {
         &self,
         pre: &ExplicitFact,
         numeric_intervals: &[Interval],
+        refined_numeric_roots: &[bool],
     ) -> bool {
         let var_id = pre.var;
         let Some(tree) = self.comparison_tree(var_id) else {
@@ -193,7 +194,7 @@ impl ComparisonAxiomIndex {
             1 => Some(false),
             _ => None,
         };
-        match tree.evaluate_interval(numeric_intervals) {
+        match tree.evaluate_interval_with_refined_roots(numeric_intervals, refined_numeric_roots) {
             Some(actual_truth) => required_truth.is_some_and(|truth| actual_truth != truth),
             None => false,
         }

@@ -921,6 +921,54 @@ impl ComparisonTree {
         out
     }
 
+    pub fn numeric_var_dependencies(&self) -> Vec<usize> {
+        let mut out: Vec<usize> = vec![self.left_numeric_var_id, self.right_numeric_var_id];
+
+        for node in &self.nodes {
+            match node {
+                ComparisonTreeNode::Leaf { numeric_var_id } => out.push(*numeric_var_id),
+                ComparisonTreeNode::Arith {
+                    result_numeric_var_id,
+                    left_numeric_var_id,
+                    right_numeric_var_id,
+                    ..
+                } => {
+                    out.push(*result_numeric_var_id);
+                    out.push(*left_numeric_var_id);
+                    out.push(*right_numeric_var_id);
+                }
+            }
+        }
+
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    pub fn evaluate_direct_interval(&self, inputs: &[Interval]) -> Option<bool> {
+        let lhs = inputs[self.left_numeric_var_id];
+        let rhs = inputs[self.right_numeric_var_id];
+        self.op.apply_interval(lhs, rhs)
+    }
+
+    pub fn evaluate_interval_with_refined_roots(
+        &self,
+        inputs: &[Interval],
+        refined_numeric_roots: &[bool],
+    ) -> Option<bool> {
+        let lhs = self.eval_node_interval_with_refined_roots(
+            self.left_root,
+            inputs,
+            refined_numeric_roots,
+        );
+        let rhs = self.eval_node_interval_with_refined_roots(
+            self.right_root,
+            inputs,
+            refined_numeric_roots,
+        );
+        self.op.apply_interval(lhs, rhs)
+    }
+
     pub fn evaluate_interval(&self, inputs: &[Interval]) -> Option<bool> {
         let lhs = self.eval_node_interval(self.left_root, inputs);
         let rhs = self.eval_node_interval(self.right_root, inputs);
@@ -947,6 +995,44 @@ impl ComparisonTree {
             } => {
                 let lhs = self.eval_node_interval(*left, inputs);
                 let rhs = self.eval_node_interval(*right, inputs);
+                op.apply_interval(lhs, rhs)
+            }
+        }
+    }
+
+    fn eval_node_interval_with_refined_roots(
+        &self,
+        node_id: ComparisonTreeNodeId,
+        inputs: &[Interval],
+        refined_numeric_roots: &[bool],
+    ) -> Interval {
+        match &self.nodes[node_id] {
+            ComparisonTreeNode::Leaf { numeric_var_id } => inputs[*numeric_var_id],
+            ComparisonTreeNode::Arith {
+                op,
+                left,
+                right,
+                result_numeric_var_id,
+                ..
+            } => {
+                if refined_numeric_roots
+                    .get(*result_numeric_var_id)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    return inputs[*result_numeric_var_id];
+                }
+
+                let lhs = self.eval_node_interval_with_refined_roots(
+                    *left,
+                    inputs,
+                    refined_numeric_roots,
+                );
+                let rhs = self.eval_node_interval_with_refined_roots(
+                    *right,
+                    inputs,
+                    refined_numeric_roots,
+                );
                 op.apply_interval(lhs, rhs)
             }
         }

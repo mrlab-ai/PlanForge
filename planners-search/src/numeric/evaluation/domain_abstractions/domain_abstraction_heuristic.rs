@@ -189,7 +189,8 @@ fn evaluate_comparison_tree_on_concrete_numeric_state(
         .iter()
         .map(|&value| Interval::singleton(value))
         .collect();
-    Ok(tree.evaluate_interval_and_fill(&mut intervals))
+    let _ = tree.evaluate_interval_and_fill(&mut intervals);
+    Ok(tree.evaluate_interval_with_refined_roots(&intervals, &[]))
 }
 
 fn comparison_tree_numeric_len(tree: &ComparisonTree) -> usize {

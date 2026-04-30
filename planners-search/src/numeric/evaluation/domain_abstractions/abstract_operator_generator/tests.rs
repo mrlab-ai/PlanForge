@@ -483,7 +483,7 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
 }
 
 #[test]
-fn derived_numeric_partitions_are_not_materialized_in_transitions() {
+fn derived_numeric_partitions_with_constant_delta_are_materialized_in_transitions() {
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("c1".into(), NumericType::Constant, None),
@@ -559,11 +559,21 @@ fn derived_numeric_partitions_are_not_materialized_in_transitions() {
                 .target_partition_facts
                 .contains(&ExplicitFact::new(0, 1))
     }));
-    assert!(transitions.iter().all(|trans| {
-        trans.source_partition_facts.iter().all(|fact| fact.var < 3)
-            && trans.target_partition_facts.iter().all(|fact| fact.var < 3)
-            && !trans.changed_numeric_vars.contains(&3)
-            && !trans.changed_numeric_vars.contains(&4)
+    assert!(transitions.iter().any(|trans| {
+        trans
+            .source_partition_facts
+            .contains(&ExplicitFact::new(3, 0))
+            && trans
+                .target_partition_facts
+                .contains(&ExplicitFact::new(3, 1))
+            && trans
+                .source_partition_facts
+                .contains(&ExplicitFact::new(4, 0))
+            && trans
+                .target_partition_facts
+                .contains(&ExplicitFact::new(4, 1))
+            && trans.changed_numeric_vars.contains(&3)
+            && trans.changed_numeric_vars.contains(&4)
     }));
 }
 
@@ -1364,7 +1374,8 @@ fn incremental_cache_matches_full_rebuild_after_propositional_refinement() {
     refined_mapping[0][1] = 1;
     refined_domain_sizes[0] = 2;
 
-    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
+    let mut summary =
+        crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
     summary.refined_propositional_vars.insert(0);
     cache.mark_refined(&summary);
 
@@ -1449,7 +1460,8 @@ fn incremental_cache_matches_full_rebuild_after_numeric_refinement() {
         .build_abstract_operators_with_cache(&task, &mut cache)
         .unwrap();
 
-    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
+    let mut summary =
+        crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
     summary.refined_numeric_vars.insert(0);
     cache.mark_refined(&summary);
 
@@ -1518,7 +1530,8 @@ fn minecraft_output_incremental_cache_matches_full_rebuild() {
     refined_mapping[refined_var][refine_value] = 1;
     refined_domain_sizes[refined_var] = 2;
 
-    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
+    let mut summary =
+        crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
     summary.refined_propositional_vars.insert(refined_var);
     cache.mark_refined(&summary);
 

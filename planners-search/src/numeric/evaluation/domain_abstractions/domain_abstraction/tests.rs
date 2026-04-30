@@ -40,14 +40,14 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
     let intervals = [Interval::closed(0.0, 5.0), Interval::singleton(10.0)];
 
     // precondition var0==0 means comparison is true (we store !result)
-    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 0), &intervals));
-    assert!(index.precondition_is_contradicted(&ExplicitFact::new(0, 1), &intervals),);
+    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 0), &intervals, &[]));
+    assert!(index.precondition_is_contradicted(&ExplicitFact::new(0, 1), &intervals, &[]),);
 
     // Unknown case: x0 in [0, 20]
     let intervals = [Interval::closed(0.0, 20.0), Interval::singleton(10.0)];
-    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 0), &intervals),);
-    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 1), &intervals),);
-    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 2), &intervals),);
+    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 0), &intervals, &[]),);
+    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 1), &intervals, &[]),);
+    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 2), &intervals, &[]),);
 }
 
 #[test]
