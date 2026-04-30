@@ -319,6 +319,9 @@ fn wildcard_plan_is_real(
     let plan_length = wildcard_plan.wildcard_plan.len();
     let (mut prop_state, mut numeric_state) =
         get_initial_state(task, &state_packer, &axiom_evaluator)?;
+    if plan_length == 0 {
+        return Ok(is_goal(task, &prop_state, &state_packer));
+    }
     let mut last_state_per_layer = vec![None; plan_length];
     last_state_per_layer[0] = Some((prop_state.clone(), numeric_state.clone()));
 
