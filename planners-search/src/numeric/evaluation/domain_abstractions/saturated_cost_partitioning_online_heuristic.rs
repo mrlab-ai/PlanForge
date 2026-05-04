@@ -435,6 +435,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             let mut abs_guard = self.abstractions.borrow_mut();
             if abs_guard.is_some() {
                 abs_guard.take();
+                self.transition_system_cache.borrow_mut().clear();
                 state.improvement_ended = true;
             }
         }
@@ -870,7 +871,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             if pos < num_domain_abstractions {
                 let abstraction = &abstractions[pos];
                 match self.config.saturator {
-                    Saturator::All | Saturator::Perimstar => {
+                    Saturator::All => {
                         let abstraction_task = abstraction.task_for_factory(task);
                         let (distances, saturated) = Self::compute_domain_cp_entry(
                             abstraction,
@@ -909,6 +910,44 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         )?;
                         cp.add_h_values(pos, distances);
                         reduce_costs(&mut remaining_costs, &saturated)?;
+                    }
+                    Saturator::Perimstar => {
+                        let h_cap = abstract_state_ids
+                            .get(pos)
+                            .copied()
+                            .flatten()
+                            .and_then(|sid| {
+                                let abstraction_task = abstraction.task_for_factory(task);
+                                abstraction
+                                    .factory
+                                    .build_goal_distances(
+                                        abstraction_task,
+                                        self.config.combine_labels,
+                                        &remaining_costs,
+                                    )
+                                    .ok()
+                                    .and_then(|t| t.distances.get(sid).copied())
+                            })
+                            .unwrap_or(f64::INFINITY);
+                        let abstraction_task = abstraction.task_for_factory(task);
+                        let (perim_distances, perim_saturated) = Self::compute_domain_perim_entry(
+                            abstraction,
+                            abstraction_task,
+                            self.config.combine_labels,
+                            &remaining_costs,
+                            h_cap,
+                        )?;
+                        cp.add_h_values(pos, perim_distances);
+                        reduce_costs(&mut remaining_costs, &perim_saturated)?;
+
+                        let (all_distances, all_saturated) = Self::compute_domain_cp_entry(
+                            abstraction,
+                            abstraction_task,
+                            self.config.combine_labels,
+                            &remaining_costs,
+                        )?;
+                        cp.add_h_values(pos, all_distances);
+                        reduce_costs(&mut remaining_costs, &all_saturated)?;
                     }
                 }
             } else {
@@ -1039,7 +1078,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok((table.distances, saturated))
     }
 
-    /// Build a PERIM domain CP entry (cap then recompute saturated costs).
+    /// Build a PERIM domain CP entry.
+    ///
+    /// Saturated costs are computed from a table where states outside the
+    /// perimeter are inactive. The returned lookup table is then recomputed
+    /// globally from those saturated costs, so stored online CPs remain valid
+    /// for later states outside the original perimeter.
     fn compute_domain_perim_entry(
         abstraction: &DomainAbstraction,
         task: &dyn AbstractNumericTask,
@@ -1055,11 +1099,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     "failed to compute SCP table for PERIM: {error:#}"
                 ))
             })?;
-        let mut capped = table.distances;
+        let mut perim_distances = table.distances;
         if h_cap.is_finite() {
-            for h in &mut capped {
-                if h.is_finite() && *h > h_cap {
-                    *h = h_cap;
+            for h in &mut perim_distances {
+                if !h.is_finite() || *h > h_cap {
+                    *h = f64::NEG_INFINITY;
                 }
             }
         }
@@ -1077,8 +1121,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             ))
         })?;
         apply_operator_costs_from_slice(&mut operators, remaining_costs)?;
-        let capped_table = AbstractDistanceTable {
-            distances: capped.clone(),
+        let perim_table = AbstractDistanceTable {
+            distances: perim_distances,
             generating_op_ids: table.generating_op_ids,
             initial_state_hash: table.initial_state_hash,
             goal_facts: table.goal_facts,
@@ -1087,13 +1131,21 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         };
         let saturated = abstraction
             .factory
-            .saturated_costs_for_table(task, combine_labels, &operators, &capped_table)
+            .saturated_costs_for_table(task, combine_labels, &operators, &perim_table)
             .map_err(|error| {
                 EvaluationError::ComputationFailed(format!(
                     "failed to compute PERIM saturated costs: {error:#}"
                 ))
             })?;
-        Ok((capped, saturated))
+        let global_table = abstraction
+            .factory
+            .build_goal_distances(task, combine_labels, &saturated)
+            .map_err(|error| {
+                EvaluationError::ComputationFailed(format!(
+                    "failed to compute global PERIM lookup table: {error:#}"
+                ))
+            })?;
+        Ok((global_table.distances, saturated))
     }
 }
 
@@ -1227,14 +1279,47 @@ fn reduce_costs(
             saturated_costs.len()
         )));
     }
-    for (r, s) in remaining_costs.iter_mut().zip(saturated_costs.iter()) {
+    for (op_id, (r, s)) in remaining_costs
+        .iter_mut()
+        .zip(saturated_costs.iter())
+        .enumerate()
+    {
         if !s.is_finite() {
             continue;
         }
-        *r -= s;
-        if *r < 0.0 && *r > -1e-9 {
-            *r = 0.0;
+        if *s <= 1e-9 {
+            continue;
         }
+        let new_remaining = *r - *s;
+        if new_remaining < -1e-9 {
+            return Err(EvaluationError::ComputationFailed(format!(
+                "label residual cost underflow for operator {op_id}: remaining={r}, saturated={s}, result={new_remaining}"
+            )));
+        }
+        *r = new_remaining.max(0.0);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reduce_costs_rejects_significant_underflow() {
+        let mut remaining = vec![1.0];
+        let saturated = vec![1.5];
+
+        let err = reduce_costs(&mut remaining, &saturated).unwrap_err();
+        assert!(format!("{err}").contains("underflow"));
+    }
+
+    #[test]
+    fn reduce_costs_clamps_tiny_negative_roundoff() {
+        let mut remaining = vec![1.0];
+        let saturated = vec![1.0 + 1e-12];
+
+        reduce_costs(&mut remaining, &saturated).unwrap();
+        assert_eq!(remaining, vec![0.0]);
+    }
 }

@@ -6,7 +6,6 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 use std::fmt;
 
-use tracing::info;
 use ordered_float::NotNan;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
@@ -14,6 +13,7 @@ use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 
@@ -947,7 +947,7 @@ impl<'task> PatternDatabase<'task> {
 
     fn evaluate_failed_lookup(&self, propositional: &[usize], numeric: &[f64]) -> f64 {
         if self.exhausted_abstract_state_space {
-            // TODO: Supposed to be an error. Can never happen. 
+            // TODO: Supposed to be an error. Can never happen.
             return f64::INFINITY;
         }
         if self.is_goal_state(propositional) {
@@ -1126,8 +1126,14 @@ impl<'task> PatternDatabase<'task> {
                     continue;
                 };
                 if let Some(slot) = saturated_costs.get_mut(base_operator_id) {
-                    *slot = slot.max(parent_h - target_h);
+                    *slot = slot.max((parent_h - target_h).max(0.0));
                 }
+            }
+        }
+
+        for cost in &mut saturated_costs {
+            if *cost == f64::NEG_INFINITY {
+                *cost = 0.0;
             }
         }
 
@@ -1136,10 +1142,7 @@ impl<'task> PatternDatabase<'task> {
 
     /// Builds goal distances using the supplied operator costs without computing
     /// saturated costs.  Used by the SCP online order generator.
-    pub fn build_goal_distances(
-        &self,
-        operator_costs: &[f64],
-    ) -> Result<Vec<f64>, String> {
+    pub fn build_goal_distances(&self, operator_costs: &[f64]) -> Result<Vec<f64>, String> {
         let mut distances = vec![f64::INFINITY; self.states.len()];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
 
@@ -1191,66 +1194,23 @@ impl<'task> PatternDatabase<'task> {
         Ok(distances)
     }
 
-    /// Builds a cost-partitioned distance table, capping every heuristic value
-    /// at `h_cap` (PERIM saturation).  Returns (capped_distances, saturated_costs).
+    /// Builds a PERIM cost-partitioned distance table.
+    ///
+    /// The perimeter table is used only to derive saturated costs. The returned
+    /// lookup table is recomputed globally from the nonnegative saturated costs,
+    /// so it remains an admissible table when reused for later states outside
+    /// the original perimeter.
     pub fn build_cost_partitioned_distance_table_capped(
         &self,
         operator_costs: &[f64],
         h_cap: f64,
     ) -> Result<(Vec<f64>, Vec<f64>), String> {
-        let mut distances = vec![f64::INFINITY; self.states.len()];
-        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+        let mut distances = self.build_goal_distances(operator_costs)?;
 
-        for &goal_state_id in &self.goal_state_ids {
-            if goal_state_id < distances.len() {
-                distances[goal_state_id] = 0.0;
-                heap.push((
-                    Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
-                    goal_state_id,
-                ));
-            }
-        }
-        if self.truncated {
-            for &frontier_state_id in &self.frontier_states {
-                if frontier_state_id < distances.len() && distances[frontier_state_id] > 0.0 {
-                    distances[frontier_state_id] = 0.0;
-                    heap.push((
-                        Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
-                        frontier_state_id,
-                    ));
-                }
-            }
-        }
-
-        while let Some((Reverse(distance), state_id)) = heap.pop() {
-            let distance = distance.into_inner();
-            if distance > distances[state_id] + 1e-12 {
-                continue;
-            }
-            for &(parent_id, projected_operator_id) in &self.transition_predecessors[state_id] {
-                let base_operator_id = self
-                    .task
-                    .base_operator_id(projected_operator_id)
-                    .ok_or_else(|| format!("missing base operator id for projected operator {projected_operator_id}"))?;
-                let operator_cost = *operator_costs.get(base_operator_id).ok_or_else(|| {
-                    format!("missing residual cost for operator {base_operator_id}")
-                })?;
-                let alternative = distance + operator_cost;
-                if alternative + 1e-12 < distances[parent_id] {
-                    distances[parent_id] = alternative;
-                    heap.push((
-                        Reverse(NotNan::new(alternative).map_err(|err| err.to_string())?),
-                        parent_id,
-                    ));
-                }
-            }
-        }
-
-        // Cap h-values at h_cap (finite only).
         if h_cap.is_finite() {
             for h in &mut distances {
-                if h.is_finite() && *h > h_cap {
-                    *h = h_cap;
+                if !h.is_finite() || *h > h_cap {
+                    *h = f64::NEG_INFINITY;
                 }
             }
         }
@@ -1271,12 +1231,26 @@ impl<'task> PatternDatabase<'task> {
                     continue;
                 };
                 if let Some(slot) = saturated_costs.get_mut(base_operator_id) {
-                    *slot = slot.max(parent_h - target_h);
+                    *slot = slot.max((parent_h - target_h).max(0.0));
                 }
             }
         }
 
-        Ok((distances, saturated_costs))
+        let mut lookup_costs = saturated_costs.clone();
+        for cost in &mut lookup_costs {
+            if !cost.is_finite() {
+                *cost = 0.0;
+            }
+        }
+        let global_distances = self.build_goal_distances(&lookup_costs)?;
+
+        for cost in &mut saturated_costs {
+            if *cost == f64::NEG_INFINITY {
+                *cost = 0.0;
+            }
+        }
+
+        Ok((global_distances, saturated_costs))
     }
 
     pub fn requires_derived_numeric_values(&self) -> bool {

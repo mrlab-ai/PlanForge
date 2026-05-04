@@ -511,7 +511,7 @@ impl DomainAbstractionFactory {
                     .fold(f64::INFINITY, f64::min))
             })
             .collect::<Result<Vec<_>>>()?;
-        let mut table = self.build_distance_table_with_transition_costs(
+        let table = self.build_distance_table_with_transition_costs(
             transition_system,
             &transition_costs,
             &transition_system.hash_multipliers,
@@ -522,11 +522,24 @@ impl DomainAbstractionFactory {
             && let Some(&h_cap) = table.distances.get(state_id)
             && h_cap.is_finite()
         {
-            for h in &mut table.distances {
-                if h.is_finite() && *h > h_cap {
-                    *h = h_cap;
+            let mut perim_table = table.clone();
+            for h in &mut perim_table.distances {
+                if !h.is_finite() || *h > h_cap {
+                    *h = f64::NEG_INFINITY;
                 }
             }
+            let tcf = self.compute_saturated_transition_costs(
+                transition_system,
+                &transition_costs,
+                &perim_table,
+            )?;
+            let global_table = self.build_distance_table_with_transition_costs(
+                transition_system,
+                &tcf.transition_costs,
+                &transition_system.hash_multipliers,
+                &transition_system.numeric_domain_sizes,
+            )?;
+            return Ok((global_table, tcf));
         }
 
         let tcf =
@@ -1033,7 +1046,7 @@ impl DomainAbstractionFactory {
                     if !src_h.is_finite() {
                         continue;
                     }
-                    let needed = src_h - target_h;
+                    let needed = (src_h - target_h).max(0.0);
                     for &op_id in &op.concrete_op_ids {
                         if let Some(slot) = saturated_costs.get_mut(op_id) {
                             *slot = slot.max(needed);
