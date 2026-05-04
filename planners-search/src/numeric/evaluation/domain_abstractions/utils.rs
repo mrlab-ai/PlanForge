@@ -231,25 +231,62 @@ fn interval_contains_value_tolerant(iv: &Interval, value: f64) -> bool {
         true
     } else {
         let tolerance = float_tolerance::tolerance(value, iv.lower);
-        value > iv.lower + tolerance
-            || (iv.lower_closed && (value - iv.lower).abs() <= tolerance)
+        value > iv.lower + tolerance || (iv.lower_closed && (value - iv.lower).abs() <= tolerance)
     };
 
     let upper_ok = if iv.upper == f64::INFINITY {
         true
     } else {
         let tolerance = float_tolerance::tolerance(value, iv.upper);
-        value < iv.upper - tolerance
-            || (iv.upper_closed && (value - iv.upper).abs() <= tolerance)
+        value < iv.upper - tolerance || (iv.upper_closed && (value - iv.upper).abs() <= tolerance)
     };
 
     lower_ok && upper_ok
 }
 
 pub(crate) fn partition_for_value(partitions: &[Interval], value: f64) -> Option<usize> {
-    partitions
-        .iter()
-        .position(|iv| interval_contains_value_tolerant(iv, value))
+    if partitions.len() <= 8 {
+        return partitions
+            .iter()
+            .position(|iv| interval_contains_value_tolerant(iv, value));
+    }
+
+    let mut low = 0;
+    let mut high = partitions.len();
+    while low < high {
+        let mid = low + (high - low) / 2;
+        let iv = &partitions[mid];
+        let below_lower = if iv.lower.is_finite() {
+            let tolerance = float_tolerance::tolerance(value, iv.lower);
+            value < iv.lower - tolerance
+                || (value - iv.lower).abs() <= tolerance && !iv.lower_closed
+        } else {
+            false
+        };
+        if below_lower {
+            high = mid;
+            continue;
+        }
+
+        let above_upper = if iv.upper.is_finite() {
+            let tolerance = float_tolerance::tolerance(value, iv.upper);
+            value > iv.upper + tolerance
+                || (value - iv.upper).abs() <= tolerance && !iv.upper_closed
+        } else {
+            false
+        };
+        if above_upper {
+            low = mid + 1;
+            continue;
+        }
+
+        let mut first = mid;
+        while first > 0 && interval_contains_value_tolerant(&partitions[first - 1], value) {
+            first -= 1;
+        }
+        return Some(first);
+    }
+    None
 }
 
 #[allow(unused)]

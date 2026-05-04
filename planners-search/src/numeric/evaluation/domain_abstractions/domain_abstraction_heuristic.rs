@@ -96,6 +96,33 @@ impl DomainAbstractionHeuristic {
         self.abstraction.task_projection.as_ref()
     }
 
+    fn numeric_partition_for_projected_value(
+        &self,
+        num_var_id: usize,
+        value: f64,
+    ) -> Result<usize, EvaluationError> {
+        if !value.is_finite() || value.is_nan() {
+            return Err(EvaluationError::InvalidState(format!(
+                "numeric value for var {num_var_id} must be finite, got {value}"
+            )));
+        }
+        let parts = self
+            .abstraction
+            .factory
+            .partitions()
+            .partitions(num_var_id)
+            .ok_or_else(|| {
+                EvaluationError::InvalidState(format!(
+                    "missing partitions for numeric var {num_var_id}"
+                ))
+            })?;
+        utils::partition_for_value(parts, value).ok_or_else(|| {
+            EvaluationError::InvalidState(format!(
+                "numeric value {value} not contained in any partition for var {num_var_id}"
+            ))
+        })
+    }
+
     pub fn abstract_state_hash(
         &self,
         eval_state: &EvaluationState<'_, '_>,
@@ -273,7 +300,6 @@ impl DomainAbstractionHeuristic {
             )));
         }
         let mapping = self.abstraction.factory.domain_mapping();
-        let partitions = self.abstraction.factory.partitions();
         let multipliers = &self.abstraction.hash_multipliers;
 
         if multipliers.len() != num_props + num_numeric {
@@ -285,22 +311,8 @@ impl DomainAbstractionHeuristic {
         let mut index: usize = 0;
 
         for &num_var_id in &self.active_numeric_vars {
-            let val = numeric_values[num_var_id];
-            if !val.is_finite() || val.is_nan() {
-                return Err(EvaluationError::InvalidState(format!(
-                    "numeric value for var {num_var_id} must be finite, got {val}"
-                )));
-            }
-            let parts = partitions.partitions(num_var_id).ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "missing partitions for numeric var {num_var_id}"
-                ))
-            })?;
-            let part = utils::partition_for_value(parts, val).ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "numeric value {val} not contained in any partition for var {num_var_id}"
-                ))
-            })?;
+            let part =
+                self.numeric_partition_for_projected_value(num_var_id, numeric_values[num_var_id])?;
             let abs_var = num_props + num_var_id;
             index += multipliers[abs_var] * part;
         }

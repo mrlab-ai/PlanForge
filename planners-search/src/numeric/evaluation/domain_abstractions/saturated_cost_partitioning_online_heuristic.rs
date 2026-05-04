@@ -4,12 +4,12 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use planners_sas::numeric::numeric_task::{
-    metric_operator_cost_from_initial_values, AbstractNumericTask,
+    AbstractNumericTask, metric_operator_cost_from_initial_values,
 };
 use rand::seq::SliceRandom;
-use rand::{rngs::SmallRng, SeedableRng};
+use rand::{SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
@@ -17,8 +17,8 @@ use crate::numeric::evaluation::pattern_databases::pattern_database::{
     PatternDatabase, PdbHeuristicConfig, PdbInternalHeuristic,
 };
 
-use super::abstracted_task::DomainAbstractionTaskProjection;
 use super::abstract_operator_generator::AbstractOperator;
+use super::abstracted_task::DomainAbstractionTaskProjection;
 use super::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
 use super::domain_abstraction_factory::AbstractDistanceTable;
 use super::domain_abstraction_generator::DomainAbstraction;
@@ -202,6 +202,7 @@ struct ScpOnlineState {
     stolen_costs_by_abstraction: Vec<f64>,
     rng: SmallRng,
     improvement_ended: bool,
+    required_lookup_ids: Vec<usize>,
 }
 
 impl ScpOnlineState {
@@ -222,6 +223,7 @@ impl ScpOnlineState {
             stolen_costs_by_abstraction: Vec::new(),
             rng: SmallRng::seed_from_u64(seed),
             improvement_ended: false,
+            required_lookup_ids: Vec::new(),
         }
     }
 }
@@ -1187,6 +1189,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             &saturated,
                             abstract_state_ids,
                         );
+                        if should_skip_zero_current_table(
+                            "label all",
+                            pos,
+                            &distances,
+                            abstract_state_ids,
+                        ) {
+                            continue;
+                        }
                         cp.add_h_values(pos, distances);
                         reduce_costs(&mut remaining_costs, &saturated)?;
                     }
@@ -1224,6 +1234,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             &saturated,
                             abstract_state_ids,
                         );
+                        if should_skip_zero_current_table(
+                            "label perim",
+                            pos,
+                            &distances,
+                            abstract_state_ids,
+                        ) {
+                            continue;
+                        }
                         cp.add_h_values(pos, distances);
                         reduce_costs(&mut remaining_costs, &saturated)?;
                     }
@@ -1261,8 +1279,15 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             &perim_saturated,
                             abstract_state_ids,
                         );
-                        cp.add_h_values(pos, perim_distances);
-                        reduce_costs(&mut remaining_costs, &perim_saturated)?;
+                        if !should_skip_zero_current_table(
+                            "label perimstar/perim",
+                            pos,
+                            &perim_distances,
+                            abstract_state_ids,
+                        ) {
+                            cp.add_h_values(pos, perim_distances);
+                            reduce_costs(&mut remaining_costs, &perim_saturated)?;
+                        }
 
                         let (all_distances, all_saturated) = Self::compute_domain_cp_entry(
                             abstraction,
@@ -1277,6 +1302,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             &all_saturated,
                             abstract_state_ids,
                         );
+                        if should_skip_zero_current_table(
+                            "label perimstar/all",
+                            pos,
+                            &all_distances,
+                            abstract_state_ids,
+                        ) {
+                            continue;
+                        }
                         cp.add_h_values(pos, all_distances);
                         reduce_costs(&mut remaining_costs, &all_saturated)?;
                     }
@@ -1317,6 +1350,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             "failed to compute PDB SCP table {pdb_id}: {error}"
                         ))
                     })?;
+                if should_skip_zero_current_table("pdb all", pos, &distances, abstract_state_ids) {
+                    return Ok(());
+                }
                 cp.add_pdb_h_values(pos, distances);
                 reduce_costs(remaining_costs, &saturated)?;
             }
@@ -1338,6 +1374,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             "failed to compute PDB PERIM table {pdb_id}: {error}"
                         ))
                     })?;
+                if should_skip_zero_current_table("pdb perim", pos, &distances, abstract_state_ids)
+                {
+                    return Ok(());
+                }
                 cp.add_pdb_h_values(pos, distances);
                 reduce_costs(remaining_costs, &saturated)?;
             }
@@ -1359,8 +1399,15 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             "failed to compute PDB Perim step for Perimstar {pdb_id}: {error}"
                         ))
                     })?;
-                cp.add_pdb_h_values(pos, perim_dists);
-                reduce_costs(remaining_costs, &perim_sat)?;
+                if !should_skip_zero_current_table(
+                    "pdb perimstar/perim",
+                    pos,
+                    &perim_dists,
+                    abstract_state_ids,
+                ) {
+                    cp.add_pdb_h_values(pos, perim_dists);
+                    reduce_costs(remaining_costs, &perim_sat)?;
+                }
 
                 let (all_dists, all_sat) = pdb
                     .build_cost_partitioned_distance_table(remaining_costs)
@@ -1369,6 +1416,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             "failed to compute PDB All step for Perimstar {pdb_id}: {error}"
                         ))
                     })?;
+                if should_skip_zero_current_table(
+                    "pdb perimstar/all",
+                    pos,
+                    &all_dists,
+                    abstract_state_ids,
+                ) {
+                    return Ok(());
+                }
                 cp.add_pdb_h_values(pos, all_dists);
                 reduce_costs(remaining_costs, &all_sat)?;
             }
@@ -1395,6 +1450,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             );
             state.size_kb = state.size_kb.saturating_add(cp.estimate_size_in_kb());
             state.cp_heuristics.push(cp);
+            state.required_lookup_ids = Self::required_lookup_ids(state);
             *max_h = new_h;
         } else {
             info!(
@@ -1544,9 +1600,7 @@ fn should_skip_zero_current_table(
     if current_h > 1e-9 {
         return false;
     }
-    info!(
-        "scp_online: skipping abstract-operator {step} abstraction {abstraction_id}: current_h=0"
-    );
+    debug!("scp_online: skipping {step} abstraction {abstraction_id}: current_h=0");
     true
 }
 
@@ -1638,7 +1692,7 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
             if self.should_build_cp(&state) {
                 (true, Vec::new())
             } else {
-                (false, Self::required_lookup_ids(&state))
+                (false, state.required_lookup_ids.clone())
             }
         };
         let (abstract_state_ids, num_domain_abstractions) =
