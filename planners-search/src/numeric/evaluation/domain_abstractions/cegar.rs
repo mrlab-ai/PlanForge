@@ -940,8 +940,16 @@ fn apply_initial_goal_splits(
         .as_ref()
         .map(|var_ids| var_ids.iter().copied().collect())
         .unwrap_or_else(|| goal_values.keys().copied().collect());
-    candidate_var_ids.sort_unstable();
+    candidate_var_ids.sort_by_key(|var_id| {
+        let is_goal = *var_id < num_prop_vars && goal_values.contains_key(var_id);
+        (!is_goal, *var_id)
+    });
     candidate_var_ids.dedup();
+    let initial_max_abstraction_size = if config.init_split_var_ids.is_some() {
+        (config.max_abstraction_size / 2).max(1)
+    } else {
+        config.max_abstraction_size
+    };
 
     for encoded_var_id in candidate_var_ids {
         if encoded_var_id >= num_prop_vars {
@@ -965,6 +973,14 @@ fn apply_initial_goal_splits(
             else {
                 continue;
             };
+            if !can_refine_numeric_variable(
+                domain_sizes,
+                numeric_domain_sizes,
+                numeric_var_id,
+                initial_max_abstraction_size,
+            ) {
+                continue;
+            }
             let include_in_lower = rng.gen_range(0..2) == 0;
             if partitions.split_at(numeric_var_id, init_value, include_in_lower)
                 && let Some(parts) = partitions.partitions(numeric_var_id)
@@ -996,7 +1012,7 @@ fn apply_initial_goal_splits(
             numeric_domain_sizes,
             var_id,
             new_domain_size,
-            config.max_abstraction_size,
+            initial_max_abstraction_size,
         ) {
             continue;
         }

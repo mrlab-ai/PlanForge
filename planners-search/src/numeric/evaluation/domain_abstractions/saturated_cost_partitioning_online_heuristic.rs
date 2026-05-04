@@ -268,9 +268,15 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
         for abstraction in &abstractions {
             let abstraction_task = abstraction.task_for_factory(task);
+            let goal_facts = &abstraction.distance_table.goal_facts;
             let table = abstraction
                 .factory
-                .build_goal_distances(abstraction_task, config.combine_labels, &original_costs)
+                .build_goal_distances_for_goals(
+                    abstraction_task,
+                    config.combine_labels,
+                    &original_costs,
+                    goal_facts,
+                )
                 .map_err(|error| {
                     EvaluationError::ComputationFailed(format!(
                         "failed to compute goal distances for order generator: {error:#}"
@@ -278,11 +284,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 })?;
             let (_, saturated) = abstraction
                 .factory
-                .build_cost_partitioned_distance_table(
+                .build_cost_partitioned_distance_table_for_goals(
                     abstraction_task,
                     config.combine_labels,
                     &original_costs,
                     false,
+                    goal_facts,
                 )
                 .map_err(|error| {
                     EvaluationError::ComputationFailed(format!(
@@ -1069,10 +1076,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 let abstraction_task = abstraction.task_for_factory(task);
                                 abstraction
                                     .factory
-                                    .build_goal_distances(
+                                    .build_goal_distances_for_goals(
                                         abstraction_task,
                                         self.config.combine_labels,
                                         &remaining_costs,
+                                        &abstraction.distance_table.goal_facts,
                                     )
                                     .ok()
                                     .and_then(|t| t.distances.get(sid).copied())
@@ -1105,10 +1113,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 let abstraction_task = abstraction.task_for_factory(task);
                                 abstraction
                                     .factory
-                                    .build_goal_distances(
+                                    .build_goal_distances_for_goals(
                                         abstraction_task,
                                         self.config.combine_labels,
                                         &remaining_costs,
+                                        &abstraction.distance_table.goal_facts,
                                     )
                                     .ok()
                                     .and_then(|t| t.distances.get(sid).copied())
@@ -1283,7 +1292,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     ) -> Result<(Vec<f64>, Vec<f64>), EvaluationError> {
         let (table, saturated) = abstraction
             .factory
-            .build_cost_partitioned_distance_table(task, combine_labels, remaining_costs, false)
+            .build_cost_partitioned_distance_table_for_goals(
+                task,
+                combine_labels,
+                remaining_costs,
+                false,
+                &abstraction.distance_table.goal_facts,
+            )
             .map_err(|error| {
                 EvaluationError::ComputationFailed(format!(
                     "failed to compute SCP table: {error:#}"
@@ -1307,7 +1322,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     ) -> Result<(Vec<f64>, Vec<f64>), EvaluationError> {
         let (table, _) = abstraction
             .factory
-            .build_cost_partitioned_distance_table(task, combine_labels, remaining_costs, false)
+            .build_cost_partitioned_distance_table_for_goals(
+                task,
+                combine_labels,
+                remaining_costs,
+                false,
+                &abstraction.distance_table.goal_facts,
+            )
             .map_err(|error| {
                 EvaluationError::ComputationFailed(format!(
                     "failed to compute SCP table for PERIM: {error:#}"
@@ -1353,7 +1374,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             })?;
         let global_table = abstraction
             .factory
-            .build_goal_distances(task, combine_labels, &saturated)
+            .build_goal_distances_for_goals(
+                task,
+                combine_labels,
+                &saturated,
+                &abstraction.distance_table.goal_facts,
+            )
             .map_err(|error| {
                 EvaluationError::ComputationFailed(format!(
                     "failed to compute global PERIM lookup table: {error:#}"

@@ -445,11 +445,34 @@ impl DomainAbstractionFactory {
         operator_costs: &[f64],
         dump_distances: bool,
     ) -> Result<(AbstractDistanceTable, Vec<f64>)> {
+        let goal_facts = self.compute_abstract_goals(task);
+        self.build_cost_partitioned_distance_table_for_goals(
+            task,
+            combine_labels,
+            operator_costs,
+            dump_distances,
+            &goal_facts,
+        )
+    }
+
+    pub fn build_cost_partitioned_distance_table_for_goals(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operator_costs: &[f64],
+        dump_distances: bool,
+        goal_facts: &[ExplicitFact],
+    ) -> Result<(AbstractDistanceTable, Vec<f64>)> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let mut operators = generator.build_abstract_operators(task)?;
         apply_operator_costs(&mut operators, operator_costs)?;
-        let table =
-            self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)?;
+        let table = self.build_distance_table_with_operators_for_goals(
+            task,
+            &generator,
+            &operators,
+            dump_distances,
+            goal_facts,
+        )?;
         let saturated_costs = self.compute_saturated_costs(task, &generator, &operators, &table)?;
         Ok((table, saturated_costs))
     }
@@ -462,10 +485,27 @@ impl DomainAbstractionFactory {
         combine_labels: bool,
         operator_costs: &[f64],
     ) -> Result<AbstractDistanceTable> {
+        let goal_facts = self.compute_abstract_goals(task);
+        self.build_goal_distances_for_goals(task, combine_labels, operator_costs, &goal_facts)
+    }
+
+    pub fn build_goal_distances_for_goals(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operator_costs: &[f64],
+        goal_facts: &[ExplicitFact],
+    ) -> Result<AbstractDistanceTable> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let mut operators = generator.build_abstract_operators(task)?;
         apply_operator_costs(&mut operators, operator_costs)?;
-        self.build_distance_table_with_operators(task, &generator, &operators, false)
+        self.build_distance_table_with_operators_for_goals(
+            task,
+            &generator,
+            &operators,
+            false,
+            goal_facts,
+        )
     }
 
     /// Computes saturated costs for the *already-built* distance table and
@@ -760,11 +800,27 @@ impl DomainAbstractionFactory {
         operators: &[AbstractOperator],
         dump_distances: bool,
     ) -> Result<AbstractDistanceTable> {
+        let goal_facts = self.compute_abstract_goals(task);
+        self.build_distance_table_with_operators_for_goals(
+            task,
+            generator,
+            operators,
+            dump_distances,
+            &goal_facts,
+        )
+    }
+
+    fn build_distance_table_with_operators_for_goals(
+        &self,
+        task: &dyn AbstractNumericTask,
+        generator: &AbstractOperatorGenerator,
+        operators: &[AbstractOperator],
+        dump_distances: bool,
+        goal_facts: &[ExplicitFact],
+    ) -> Result<AbstractDistanceTable> {
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
         let comparison_var_ids = self.comparison_var_ids();
-
-        let goal_facts = self.compute_abstract_goals(task);
 
         // Numeric-fd computes a *single* initial abstract state hash directly from the
         // concrete initial state (comparisons are evaluated, not enumerated).
@@ -796,6 +852,7 @@ impl DomainAbstractionFactory {
             num_states,
         )?;
 
+        let goal_facts = goal_facts.to_vec();
         let table = AbstractDistanceTable {
             distances,
             generating_op_ids,
