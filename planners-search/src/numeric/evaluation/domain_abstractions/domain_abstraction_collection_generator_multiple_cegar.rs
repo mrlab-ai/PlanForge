@@ -93,7 +93,6 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub debug: bool,
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
-    pub deviation_flaws: bool,
     pub flaw_kind: FlawKind,
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
@@ -118,7 +117,6 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             debug: false,
             use_wildcard_plans: true,
             combine_labels: true,
-            deviation_flaws: true,
             flaw_kind: FlawKind::Progression,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
@@ -155,7 +153,6 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "debug={}, ",
                 "use_wildcard_plans={}, ",
                 "combine_labels={}, ",
-                "deviation_flaws={}, ",
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
                 "numeric_split_strategy={}, ",
@@ -175,7 +172,6 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.debug,
             self.use_wildcard_plans,
             self.combine_labels,
-            self.deviation_flaws,
             self.flaw_treatment,
             self.init_split_method,
             self.numeric_split_strategy,
@@ -199,9 +195,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 
     fn validate_supported_options(&self) -> Result<()> {
-        if !self.config.deviation_flaws {
-            bail!("`deviation_flaws=false` is not supported in the current Rust port");
-        }
         if self.config.numeric_split_strategy != NumericSplitStrategy::Standard {
             bail!("`numeric_split_strategy=exclusion` is not supported in the current Rust port");
         }

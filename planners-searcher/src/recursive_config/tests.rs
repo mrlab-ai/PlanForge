@@ -413,6 +413,16 @@ fn display_round_trips_scp_online() {
 }
 
 #[test]
+fn rejects_deviation_flaws_option() {
+    let err = parse_search_spec("astar(scp_online(deviation_flaws=false))").unwrap_err();
+    assert!(err.contains("unknown option `deviation_flaws`"));
+
+    let err = parse_search_spec("astar(canonical_domain_abstractions(deviation_flaws=false))")
+        .unwrap_err();
+    assert!(err.contains("unknown option `deviation_flaws`"));
+}
+
+#[test]
 fn display_round_trips_greedy_numeric_pdb() {
     let parsed = parse_search_spec(
         "astar(greedy_numeric_pdb(max_pdb_states=42, numeric_first=false, random_seed=9, variable_order_type=cg_goal_random, exploration_heuristic=lmcut, frontier_heuristic=blind, failed_lookup_heuristic=lmcut))",

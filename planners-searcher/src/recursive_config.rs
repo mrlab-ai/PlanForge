@@ -824,11 +824,6 @@ fn multi_domain_abstractions_fields()
             combine_labels
         ),
         field_bool!(
-            "deviation_flaws",
-            DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-            deviation_flaws
-        ),
-        field_bool!(
             "transform_linear_task",
             DomainAbstractionCollectionGeneratorMultipleCegarConfig,
             transform_linear_task
@@ -1028,14 +1023,6 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
                 Ok(())
             },
             format: |config| config.combine_labels.to_string(),
-        },
-        Field {
-            name: "deviation_flaws",
-            apply: |config, value| {
-                config.collection_config.deviation_flaws = parse_bool(atom(value)?)?;
-                Ok(())
-            },
-            format: |config| config.collection_config.deviation_flaws.to_string(),
         },
         Field {
             name: "flaw_treatment",
