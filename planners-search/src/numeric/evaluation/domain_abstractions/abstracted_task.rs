@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{bail, ensure, Context, Result};
 use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom};
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, Metric,
@@ -54,6 +54,19 @@ impl DomainAbstractionTaskProjection {
             propositional_values: propositional_values.to_vec(),
             numeric_values: projected_numeric,
         })
+    }
+
+    pub fn project_numeric_values_into(
+        &self,
+        numeric_values: &[f64],
+        out: &mut Vec<f64>,
+    ) -> Result<()> {
+        out.clear();
+        out.reserve(self.numeric_exprs.len());
+        for expr in &self.numeric_exprs {
+            out.push(expr.evaluate(numeric_values)?);
+        }
+        Ok(())
     }
 }
 
