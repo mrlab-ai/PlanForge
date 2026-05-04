@@ -22,8 +22,8 @@ use super::numeric_context::{
     prepare_comparison_tree_inputs_from_abstract_state,
 };
 use super::transition_cost_partitioning::{
-    AbstractTransition, AbstractTransitionCostFunction, AbstractTransitionSystem, StateRegion,
-    TransitionResidualCosts,
+    AbstractOperatorCostFunction, AbstractTransition, AbstractTransitionCostFunction,
+    AbstractTransitionSystem, StateRegion, TransitionResidualCosts,
 };
 use super::utils;
 
@@ -608,6 +608,80 @@ impl DomainAbstractionFactory {
         Ok((table, tcf))
     }
 
+    pub fn build_abstract_operator_cost_partitioned_distance_table_from_system_with_deadline(
+        &self,
+        transition_system: &AbstractTransitionSystem,
+        residual_costs: &TransitionResidualCosts,
+        abstraction_id: usize,
+        cap_state_id: Option<usize>,
+        deadline: Option<Instant>,
+    ) -> Result<(AbstractDistanceTable, AbstractOperatorCostFunction)> {
+        ensure_online_scp_deadline(deadline)?;
+        let operator_regions = transition_system.abstract_operator_regions();
+        let concrete_op_ids = transition_system.concrete_operator_ids_by_abstract_operator();
+        let mut operator_costs = vec![f64::INFINITY; operator_regions.len()];
+        for (abstract_op_id, region) in operator_regions.iter().enumerate() {
+            if abstract_op_id % 64 == 0 {
+                ensure_online_scp_deadline(deadline)?;
+            }
+            let Some(region) = region else {
+                continue;
+            };
+            operator_costs[abstract_op_id] = concrete_op_ids[abstract_op_id]
+                .iter()
+                .map(|&concrete_op_id| {
+                    residual_costs.cost_for_abstract_operator(
+                        concrete_op_id,
+                        abstraction_id,
+                        abstract_op_id,
+                        region,
+                    )
+                })
+                .fold(f64::INFINITY, f64::min);
+        }
+        let transition_costs =
+            transition_costs_from_abstract_operator_costs(transition_system, &operator_costs);
+        let table = self.build_distance_table_with_transition_costs(
+            transition_system,
+            &transition_costs,
+            &transition_system.hash_multipliers,
+            &transition_system.numeric_domain_sizes,
+        )?;
+
+        if let Some(state_id) = cap_state_id
+            && let Some(&h_cap) = table.distances.get(state_id)
+            && h_cap.is_finite()
+        {
+            let mut perim_table = table.clone();
+            for h in &mut perim_table.distances {
+                if !h.is_finite() || *h > h_cap {
+                    *h = f64::NEG_INFINITY;
+                }
+            }
+            let tcf = self.compute_saturated_abstract_operator_costs(
+                transition_system,
+                &operator_costs,
+                &perim_table,
+            )?;
+            let saturated_transition_costs =
+                transition_costs_from_abstract_operator_costs(transition_system, &tcf.operator_costs);
+            let global_table = self.build_distance_table_with_transition_costs(
+                transition_system,
+                &saturated_transition_costs,
+                &transition_system.hash_multipliers,
+                &transition_system.numeric_domain_sizes,
+            )?;
+            return Ok((global_table, tcf));
+        }
+
+        let tcf = self.compute_saturated_abstract_operator_costs(
+            transition_system,
+            &operator_costs,
+            &table,
+        )?;
+        Ok((table, tcf))
+    }
+
     /// Computes an abstract wildcard plan (sequence of per-step concrete-op-ID sets) by:
     /// 1) Computing abstract goal distances with implicit regression Dijkstra.
     /// 2) Extracting a shortest-path abstract plan from the initial abstract state.
@@ -1051,6 +1125,45 @@ impl DomainAbstractionFactory {
         }
         Ok(AbstractTransitionCostFunction {
             transition_costs: saturated,
+        })
+    }
+
+    fn compute_saturated_abstract_operator_costs(
+        &self,
+        transition_system: &AbstractTransitionSystem,
+        operator_costs: &[f64],
+        table: &AbstractDistanceTable,
+    ) -> Result<AbstractOperatorCostFunction> {
+        let mut saturated = vec![0.0_f64; operator_costs.len()];
+        for transition in &transition_system.transitions {
+            let source_h = table.distances[transition.source_hash];
+            let target_h = table.distances[transition.target_hash];
+            if !source_h.is_finite() || !target_h.is_finite() {
+                continue;
+            }
+            let mut needed = source_h - target_h;
+            if needed < 0.0 && needed > -1e-9 {
+                needed = 0.0;
+            }
+            if needed < 0.0 {
+                needed = 0.0;
+            }
+            let abstract_op_id = transition.abstract_op_id;
+            ensure!(
+                abstract_op_id < operator_costs.len(),
+                "abstract operator id out of range: {abstract_op_id} >= {}",
+                operator_costs.len()
+            );
+            ensure!(
+                needed <= operator_costs[abstract_op_id] + 1e-7,
+                "saturated abstract-operator cost exceeds residual abstract-operator cost: {} > {}",
+                needed,
+                operator_costs[abstract_op_id]
+            );
+            saturated[abstract_op_id] = saturated[abstract_op_id].max(needed);
+        }
+        Ok(AbstractOperatorCostFunction {
+            operator_costs: saturated,
         })
     }
 
@@ -1883,6 +1996,22 @@ fn comparison_preconditions_by_operator(
     operators
         .iter()
         .map(|op| get_comparison_preconditions(op, comparison_var_ids))
+        .collect()
+}
+
+fn transition_costs_from_abstract_operator_costs(
+    transition_system: &AbstractTransitionSystem,
+    operator_costs: &[f64],
+) -> Vec<f64> {
+    transition_system
+        .transitions
+        .iter()
+        .map(|transition| {
+            operator_costs
+                .get(transition.abstract_op_id)
+                .copied()
+                .unwrap_or(f64::INFINITY)
+        })
         .collect()
 }
 

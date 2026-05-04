@@ -8,6 +8,7 @@ use planners_sas::numeric::utils::float_tolerance;
 use super::comparison_expression::Interval;
 
 const EPSILON: f64 = 1e-9;
+const ABSTRACT_OPERATOR_REGION_HASH: usize = usize::MAX;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransition {
@@ -85,11 +86,55 @@ impl AbstractTransitionSystem {
             .clone();
         Ok(TransitionRegion { source, target })
     }
+
+    pub fn abstract_operator_regions(&self) -> Vec<Option<TransitionRegion>> {
+        let num_abstract_ops = self
+            .transitions
+            .iter()
+            .map(|transition| transition.abstract_op_id)
+            .max()
+            .map_or(0, |max_id| max_id + 1);
+        let mut regions: Vec<Option<TransitionRegion>> = vec![None; num_abstract_ops];
+        for transition in &self.transitions {
+            let source = self.state_regions[transition.source_hash].clone();
+            let target = self.state_regions[transition.target_hash].clone();
+            let transition_region = TransitionRegion { source, target };
+            match &mut regions[transition.abstract_op_id] {
+                Some(region) => merge_transition_region(region, &transition_region),
+                None => regions[transition.abstract_op_id] = Some(transition_region),
+            }
+        }
+        regions
+    }
+
+    pub fn concrete_operator_ids_by_abstract_operator(&self) -> Vec<Vec<usize>> {
+        let num_abstract_ops = self
+            .transitions
+            .iter()
+            .map(|transition| transition.abstract_op_id)
+            .max()
+            .map_or(0, |max_id| max_id + 1);
+        let mut concrete_op_ids = vec![Vec::new(); num_abstract_ops];
+        for transition in &self.transitions {
+            concrete_op_ids[transition.abstract_op_id]
+                .extend(transition.concrete_op_ids.iter().copied());
+        }
+        for ids in &mut concrete_op_ids {
+            ids.sort_unstable();
+            ids.dedup();
+        }
+        concrete_op_ids
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransitionCostFunction {
     pub transition_costs: Vec<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbstractOperatorCostFunction {
+    pub operator_costs: Vec<f64>,
 }
 
 #[derive(Debug)]
@@ -280,6 +325,25 @@ impl TransitionResidualCosts {
         )
     }
 
+    pub fn cost_for_abstract_operator(
+        &self,
+        concrete_op_id: usize,
+        current_abstraction_id: usize,
+        abstract_op_id: usize,
+        region: &TransitionRegion,
+    ) -> f64 {
+        self.cost_for_transition_with_region_key(
+            concrete_op_id,
+            current_abstraction_id,
+            ABSTRACT_OPERATOR_REGION_HASH,
+            abstract_op_id,
+            ABSTRACT_OPERATOR_REGION_HASH,
+            &region.source,
+            &region.target,
+            None,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn cost_for_transition_with_region_key(
         &self,
@@ -393,6 +457,63 @@ impl TransitionResidualCosts {
         Ok(())
     }
 
+    pub fn reduce_by_abstract_operator_tcf(
+        &mut self,
+        producing_abstraction_id: usize,
+        transition_system: &AbstractTransitionSystem,
+        tcf: &AbstractOperatorCostFunction,
+    ) -> Result<()> {
+        let regions = transition_system.abstract_operator_regions();
+        ensure!(
+            regions.len() == tcf.operator_costs.len(),
+            "abstract-operator system/cost function size mismatch: {} vs {}",
+            regions.len(),
+            tcf.operator_costs.len()
+        );
+        let concrete_op_ids = transition_system.concrete_operator_ids_by_abstract_operator();
+        for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
+            ensure!(
+                !saturated.is_finite() || saturated >= -EPSILON,
+                "negative abstract-operator saturated costs are not supported: abstract op {} has {}",
+                abstract_op_id,
+                saturated
+            );
+            if !saturated.is_finite() || saturated <= EPSILON {
+                continue;
+            }
+            let Some(region) = regions.get(abstract_op_id).and_then(|region| region.clone())
+            else {
+                continue;
+            };
+            for &concrete_op_id in &concrete_op_ids[abstract_op_id] {
+                let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
+                    continue;
+                };
+                ensure!(
+                    residual.base_cost.is_finite(),
+                    "no base residual cost for operator {concrete_op_id}"
+                );
+                ensure!(
+                    saturated <= residual.base_cost + EPSILON,
+                    "residual cost underflow: abstract-operator reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
+                    residual.base_cost
+                );
+                residual.reductions.push(ResidualReduction {
+                    amount: saturated.min(residual.base_cost),
+                    condition: TransitionCondition {
+                        abstraction_id: producing_abstraction_id,
+                        source_hash: ABSTRACT_OPERATOR_REGION_HASH,
+                        abstract_op_id,
+                        target_hash: ABSTRACT_OPERATOR_REGION_HASH,
+                        region: region.clone(),
+                    },
+                });
+                residual.invalidate_cache();
+            }
+        }
+        Ok(())
+    }
+
     pub fn reduce_operator_costs_uniform(&mut self, saturated_costs: &[f64]) -> Result<()> {
         ensure!(
             self.operator_residuals.len() == saturated_costs.len(),
@@ -488,6 +609,44 @@ fn state_region_key(region: &StateRegion) -> StateRegionKey {
             })
             .collect(),
     }
+}
+
+fn merge_transition_region(target: &mut TransitionRegion, source: &TransitionRegion) {
+    merge_state_region(&mut target.source, &source.source);
+    merge_state_region(&mut target.target, &source.target);
+}
+
+fn merge_state_region(target: &mut StateRegion, source: &StateRegion) {
+    for (target_values, source_values) in target
+        .propositions
+        .iter_mut()
+        .zip(source.propositions.iter())
+    {
+        target_values.extend(source_values.iter().copied());
+        target_values.sort_unstable();
+        target_values.dedup();
+    }
+    for (target_interval, source_interval) in target.numeric.iter_mut().zip(source.numeric.iter()) {
+        *target_interval = interval_hull(*target_interval, *source_interval);
+    }
+}
+
+fn interval_hull(left: Interval, right: Interval) -> Interval {
+    let (lower, lower_closed) = if left.lower < right.lower {
+        (left.lower, left.lower_closed)
+    } else if left.lower > right.lower {
+        (right.lower, right.lower_closed)
+    } else {
+        (left.lower, left.lower_closed || right.lower_closed)
+    };
+    let (upper, upper_closed) = if left.upper > right.upper {
+        (left.upper, left.upper_closed)
+    } else if left.upper < right.upper {
+        (right.upper, right.upper_closed)
+    } else {
+        (left.upper, left.upper_closed || right.upper_closed)
+    };
+    Interval::new(lower, upper, lower_closed, upper_closed)
 }
 
 impl OperatorResidual {
@@ -872,10 +1031,19 @@ fn max_overlap_reduction(
 }
 
 fn compatible_identities(left: &TransitionCondition, right: &TransitionCondition) -> bool {
-    left.abstraction_id != right.abstraction_id
-        || (left.source_hash == right.source_hash
-            && left.abstract_op_id == right.abstract_op_id
-            && left.target_hash == right.target_hash)
+    if left.abstraction_id != right.abstraction_id {
+        return true;
+    }
+    if left.source_hash == ABSTRACT_OPERATOR_REGION_HASH
+        || right.source_hash == ABSTRACT_OPERATOR_REGION_HASH
+        || left.target_hash == ABSTRACT_OPERATOR_REGION_HASH
+        || right.target_hash == ABSTRACT_OPERATOR_REGION_HASH
+    {
+        return left.abstract_op_id == right.abstract_op_id;
+    }
+    left.source_hash == right.source_hash
+        && left.abstract_op_id == right.abstract_op_id
+        && left.target_hash == right.target_hash
 }
 
 fn can_add_reduction(
