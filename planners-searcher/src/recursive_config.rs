@@ -8,7 +8,9 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
 };
-use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig;
+use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
+    Saturator, ScpOnlineConfig,
+};
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use planners_search::numeric::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
@@ -575,6 +577,15 @@ fn parse_pdb_internal_heuristic(value: &str) -> Result<PdbInternalHeuristic, Str
     }
 }
 
+fn parse_saturator(value: &str) -> Result<Saturator, String> {
+    match value {
+        "all" => Ok(Saturator::All),
+        "perim" => Ok(Saturator::Perim),
+        "perimstar" => Ok(Saturator::Perimstar),
+        _ => Err(format!("invalid Saturator `{value}`")),
+    }
+}
+
 fn parse_variable_subset(value: &str) -> Result<VariableSubset, String> {
     match value {
         "goals" => Ok(VariableSubset::Goals),
@@ -864,6 +875,14 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
             ScpOnlineConfig,
             use_transition_cost_partitioning
         ),
+        Field {
+            name: "saturator",
+            apply: |config, value| {
+                config.saturator = parse_saturator(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.saturator.to_string(),
+        },
         field_usize!("max_pdb_states", ScpOnlineConfig, max_pdb_states),
         field_usize!("max_pattern_size", ScpOnlineConfig, max_pattern_size),
         field_bool!(

@@ -559,7 +559,7 @@ impl DomainAbstractionFactory {
                     .concrete_op_ids
                     .iter()
                     .map(|&concrete_op_id| {
-                        residual_costs.cost_for_transition(
+                        residual_costs.cost_for_indexed_transition(
                             concrete_op_id,
                             abstraction_id,
                             transition.source_hash,
@@ -779,6 +779,7 @@ impl DomainAbstractionFactory {
             )?);
         }
         let mut seen: HashSet<(usize, usize, usize)> = HashSet::new();
+        let mut duplicate_transition_attempts = 0usize;
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
 
         for target_hash in 0..num_states {
@@ -815,6 +816,8 @@ impl DomainAbstractionFactory {
                         continue;
                     }
                     if !seen.insert((source_hash, abstract_op_id, target_hash)) {
+                        duplicate_transition_attempts =
+                            duplicate_transition_attempts.saturating_add(1);
                         continue;
                     }
                     let transition_id = transitions.len();
@@ -856,6 +859,7 @@ impl DomainAbstractionFactory {
 
         Ok(AbstractTransitionSystem {
             transitions,
+            duplicate_transition_attempts,
             backward,
             forward,
             goal_facts,

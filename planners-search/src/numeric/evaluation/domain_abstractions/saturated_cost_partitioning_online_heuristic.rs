@@ -1,4 +1,6 @@
 use std::cell::RefCell;
+use std::collections::BTreeSet;
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use planners_sas::numeric::numeric_task::{
@@ -7,6 +9,7 @@ use planners_sas::numeric::numeric_task::{
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
@@ -39,6 +42,16 @@ pub enum Saturator {
     All,
     Perim,
     Perimstar,
+}
+
+impl fmt::Display for Saturator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Saturator::All => write!(f, "all"),
+            Saturator::Perim => write!(f, "perim"),
+            Saturator::Perimstar => write!(f, "perimstar"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -479,6 +492,21 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
         let deadline = (self.config.max_time.is_finite())
             .then(|| state.start_time + Duration::from_secs_f64(self.config.max_time));
+        let mode = if self.config.use_transition_cost_partitioning {
+            "transition"
+        } else {
+            "label"
+        };
+        info!(
+            "scp_online: building {mode} CP at evaluation {}, stored_cps={}, current_h={}, size={} KiB, order_len={}, saturator={}, elapsed={:.3}s",
+            state.evaluated_states,
+            state.cp_heuristics.len(),
+            Self::compute_max_h(state, abstract_state_ids),
+            state.size_kb,
+            order.len(),
+            self.config.saturator,
+            state.start_time.elapsed().as_secs_f64(),
+        );
 
         let cp = if self.config.use_transition_cost_partitioning {
             self.build_transition_cp(
@@ -502,6 +530,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             )?
         };
 
+        if cp.is_empty() {
+            info!("scp_online: {mode} CP attempt produced no lookup tables");
+        }
         Ok((!cp.is_empty()).then_some(cp))
     }
 
@@ -524,6 +555,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 )));
             }
             if cache[abstraction_id].is_none() {
+                let start = Instant::now();
+                info!("scp_online: building transition system for abstraction {abstraction_id}");
                 let abstraction_task = abstraction.task_for_factory(task);
                 let transition_system = match abstraction
                     .factory
@@ -542,7 +575,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         )));
                     }
                 };
+                log_transition_system_summary(abstraction_id, &transition_system, start.elapsed());
                 cache[abstraction_id] = Some(transition_system);
+            } else {
+                info!(
+                    "scp_online: reusing cached transition system for abstraction {abstraction_id}"
+                );
             }
         }
 
@@ -578,6 +616,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             }
             if pos < num_domain_abstractions {
                 let abstraction = &abstractions[pos];
+                info!(
+                    "scp_online: transition CP step abstraction {pos}, abstract_states={}",
+                    abstraction_state_count(abstraction)
+                );
                 match self.config.saturator {
                     Saturator::All => {
                         let completed = self.with_transition_system(
@@ -597,6 +639,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 ) {
                                     Ok(result) => result,
                                     Err(error) if Self::is_online_deadline_error(&error) => {
+                                        info!(
+                                            "scp_online: transition all abstraction {pos} stopped while computing table (deadline)"
+                                        );
                                         return Ok(());
                                     }
                                     Err(error) => {
@@ -605,6 +650,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     )));
                                     }
                                 };
+                                log_transition_table_summary(
+                                    "all",
+                                    pos,
+                                    &table.distances,
+                                    &tcf.transition_costs,
+                                    abstract_state_ids,
+                                );
                                 cp.add_h_values(pos, table.distances);
                                 remaining_costs
                                     .reduce_by_tcf(pos, transition_system, &tcf)
@@ -613,10 +665,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                             "failed to reduce transition residual costs: {error:#}"
                                         ))
                                     })?;
+                                log_transition_residual_summary(&remaining_costs);
                                 Ok(())
                             },
                         )?;
                         if completed.is_none() {
+                            info!(
+                                "scp_online: transition CP stopped while building abstraction {pos} (deadline)"
+                            );
                             break;
                         }
                     }
@@ -639,6 +695,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 ) {
                                     Ok(result) => result,
                                     Err(error) if Self::is_online_deadline_error(&error) => {
+                                        info!(
+                                            "scp_online: transition perim abstraction {pos} stopped while computing table (deadline)"
+                                        );
                                         return Ok(());
                                     }
                                     Err(error) => {
@@ -647,6 +706,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     )));
                                     }
                                 };
+                                log_transition_table_summary(
+                                    "perim",
+                                    pos,
+                                    &table.distances,
+                                    &tcf.transition_costs,
+                                    abstract_state_ids,
+                                );
                                 cp.add_h_values(pos, table.distances);
                                 remaining_costs
                                     .reduce_by_tcf(pos, transition_system, &tcf)
@@ -655,10 +721,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                             "failed to reduce transition PERIM residual costs: {error:#}"
                                         ))
                                     })?;
+                                log_transition_residual_summary(&remaining_costs);
                                 Ok(())
                             },
                         )?;
                         if completed.is_none() {
+                            info!(
+                                "scp_online: transition PERIM CP stopped while building abstraction {pos} (deadline)"
+                            );
                             break;
                         }
                     }
@@ -681,6 +751,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 ) {
                                     Ok(result) => result,
                                     Err(error) if Self::is_online_deadline_error(&error) => {
+                                        info!(
+                                            "scp_online: transition perimstar/perim abstraction {pos} stopped while computing table (deadline)"
+                                        );
                                         return Ok(());
                                     }
                                     Err(error) => {
@@ -689,6 +762,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     )));
                                     }
                                 };
+                                log_transition_table_summary(
+                                    "perimstar/perim",
+                                    pos,
+                                    &perim_table.distances,
+                                    &perim_tcf.transition_costs,
+                                    abstract_state_ids,
+                                );
                                 cp.add_h_values(pos, perim_table.distances);
                                 remaining_costs
                                     .reduce_by_tcf(pos, transition_system, &perim_tcf)
@@ -697,6 +777,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                             "failed to reduce transition Perim residual costs: {error:#}"
                                         ))
                                     })?;
+                                log_transition_residual_summary(&remaining_costs);
 
                                 let (all_table, all_tcf) = match abstraction
                                 .factory
@@ -709,6 +790,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 ) {
                                     Ok(result) => result,
                                     Err(error) if Self::is_online_deadline_error(&error) => {
+                                        info!(
+                                            "scp_online: transition perimstar/all abstraction {pos} stopped while computing table (deadline)"
+                                        );
                                         return Ok(());
                                     }
                                     Err(error) => {
@@ -717,6 +801,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     )));
                                     }
                                 };
+                                log_transition_table_summary(
+                                    "perimstar/all",
+                                    pos,
+                                    &all_table.distances,
+                                    &all_tcf.transition_costs,
+                                    abstract_state_ids,
+                                );
                                 cp.add_h_values(pos, all_table.distances);
                                 remaining_costs
                                     .reduce_by_tcf(pos, transition_system, &all_tcf)
@@ -725,10 +816,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                             "failed to reduce transition All residual costs: {error:#}"
                                         ))
                                     })?;
+                                log_transition_residual_summary(&remaining_costs);
                                 Ok(())
                             },
                         )?;
                         if completed.is_none() {
+                            info!(
+                                "scp_online: transition PERIMSTAR CP stopped while building abstraction {pos} (deadline)"
+                            );
                             break;
                         }
                     }
@@ -877,6 +972,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             }
             if pos < num_domain_abstractions {
                 let abstraction = &abstractions[pos];
+                info!(
+                    "scp_online: label CP step abstraction {pos}, abstract_states={}",
+                    abstraction_state_count(abstraction)
+                );
                 match self.config.saturator {
                     Saturator::All => {
                         let abstraction_task = abstraction.task_for_factory(task);
@@ -886,6 +985,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             self.config.combine_labels,
                             &remaining_costs,
                         )?;
+                        log_label_table_summary(
+                            "all",
+                            pos,
+                            &distances,
+                            &saturated,
+                            abstract_state_ids,
+                        );
                         cp.add_h_values(pos, distances);
                         reduce_costs(&mut remaining_costs, &saturated)?;
                     }
@@ -915,6 +1021,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             &remaining_costs,
                             h_cap,
                         )?;
+                        log_label_table_summary(
+                            "perim",
+                            pos,
+                            &distances,
+                            &saturated,
+                            abstract_state_ids,
+                        );
                         cp.add_h_values(pos, distances);
                         reduce_costs(&mut remaining_costs, &saturated)?;
                     }
@@ -944,6 +1057,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             &remaining_costs,
                             h_cap,
                         )?;
+                        log_label_table_summary(
+                            "perimstar/perim",
+                            pos,
+                            &perim_distances,
+                            &perim_saturated,
+                            abstract_state_ids,
+                        );
                         cp.add_h_values(pos, perim_distances);
                         reduce_costs(&mut remaining_costs, &perim_saturated)?;
 
@@ -953,6 +1073,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             self.config.combine_labels,
                             &remaining_costs,
                         )?;
+                        log_label_table_summary(
+                            "perimstar/all",
+                            pos,
+                            &all_distances,
+                            &all_saturated,
+                            abstract_state_ids,
+                        );
                         cp.add_h_values(pos, all_distances);
                         reduce_costs(&mut remaining_costs, &all_saturated)?;
                     }
@@ -1061,9 +1188,24 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     ) {
         let new_h = cp.compute_heuristic(abstract_state_ids);
         if new_h > *max_h {
+            let size_kb = cp.estimate_size_in_kb();
+            info!(
+                "scp_online: accepted CP, h {} -> {}, lookup_tables={}, size={} KiB",
+                *max_h,
+                new_h,
+                cp.lookup_tables.len(),
+                size_kb,
+            );
             state.size_kb = state.size_kb.saturating_add(cp.estimate_size_in_kb());
             state.cp_heuristics.push(cp);
             *max_h = new_h;
+        } else {
+            info!(
+                "scp_online: rejected CP, candidate_h={} did not improve current_h={}, lookup_tables={}",
+                new_h,
+                *max_h,
+                cp.lookup_tables.len(),
+            );
         }
     }
 
@@ -1154,6 +1296,101 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             })?;
         Ok((global_table.distances, saturated))
     }
+}
+
+fn abstraction_state_count(abstraction: &DomainAbstraction) -> u128 {
+    abstraction
+        .factory
+        .domain_sizes()
+        .iter()
+        .chain(abstraction.factory.numeric_domain_sizes().iter())
+        .fold(1_u128, |acc, &size| acc.saturating_mul(size as u128))
+}
+
+fn current_h_for_distances(
+    abstraction_id: usize,
+    distances: &[f64],
+    abstract_state_ids: &[Option<usize>],
+) -> f64 {
+    abstract_state_ids
+        .get(abstraction_id)
+        .copied()
+        .flatten()
+        .and_then(|state_id| distances.get(state_id).copied())
+        .unwrap_or(0.0)
+}
+
+fn positive_cost_stats(costs: &[f64]) -> (usize, f64) {
+    costs
+        .iter()
+        .copied()
+        .filter(|cost| cost.is_finite() && *cost > 0.0)
+        .fold((0, 0.0), |(count, total), cost| (count + 1, total + cost))
+}
+
+fn log_label_table_summary(
+    step: &str,
+    abstraction_id: usize,
+    distances: &[f64],
+    saturated_costs: &[f64],
+    abstract_state_ids: &[Option<usize>],
+) {
+    let (positive_count, total_positive) = positive_cost_stats(saturated_costs);
+    let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
+    info!(
+        "scp_online: label {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_labels={positive_count}, total_positive_saturated={total_positive:.6}"
+    );
+}
+
+fn log_transition_table_summary(
+    step: &str,
+    abstraction_id: usize,
+    distances: &[f64],
+    transition_costs: &[f64],
+    abstract_state_ids: &[Option<usize>],
+) {
+    let (positive_count, total_positive) = positive_cost_stats(transition_costs);
+    let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
+    info!(
+        "scp_online: transition {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_transitions={positive_count}, total_positive_saturated={total_positive:.6}"
+    );
+}
+
+fn log_transition_residual_summary(remaining_costs: &TransitionResidualCosts) {
+    info!(
+        "scp_online: transition residuals now store {} exact transition reductions",
+        remaining_costs.num_reductions()
+    );
+}
+
+fn log_transition_system_summary(
+    abstraction_id: usize,
+    transition_system: &AbstractTransitionSystem,
+    elapsed: Duration,
+) {
+    let mut abstract_ops = BTreeSet::new();
+    let mut concrete_ops = BTreeSet::new();
+    let mut label_refs = 0usize;
+    for transition in &transition_system.transitions {
+        abstract_ops.insert(transition.abstract_op_id);
+        label_refs = label_refs.saturating_add(transition.concrete_op_ids.len());
+        concrete_ops.extend(transition.concrete_op_ids.iter().copied());
+    }
+    let transitions = transition_system.transitions.len();
+    let avg_labels = if transitions == 0 {
+        0.0
+    } else {
+        label_refs as f64 / transitions as f64
+    };
+    info!(
+        "scp_online: transition system abstraction {abstraction_id}: states={}, transitions={}, duplicate_attempts_skipped={}, abstract_ops={}, concrete_labels={}, avg_labels_per_transition={avg_labels:.3}, build_time={:.3}s",
+        transition_system.state_regions.len(),
+        transitions,
+        transition_system.duplicate_transition_attempts,
+        abstract_ops.len(),
+        concrete_ops.len(),
+        elapsed.as_secs_f64(),
+    );
 }
 
 impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {

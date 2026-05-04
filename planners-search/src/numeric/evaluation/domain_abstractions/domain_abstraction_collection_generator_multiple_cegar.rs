@@ -16,6 +16,7 @@ use planners_sas::numeric::numeric_task::{
 use rand::seq::SliceRandom;
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::numeric::evaluation::domain_abstractions::cegar::FlawKind;
 
@@ -294,15 +295,15 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let remaining_abstraction_size =
                 remaining_collection_size.min(self.config.max_abstraction_size);
 
-            //info!(
-            //    "Iteration {}: elapsed={:.2}s, remaining_collection_size={}, remaining_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
-            //    iteration,
-            //    elapsed,
-            //    remaining_collection_size,
-            //    remaining_abstraction_size,
-            //    remaining_generation_time,
-            //    blacklisting
-            //);
+            info!(
+                "domain abstraction collection: iteration {}, elapsed={:.2}s, remaining_collection_size={}, remaining_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
+                iteration,
+                elapsed,
+                remaining_collection_size,
+                remaining_abstraction_size,
+                remaining_generation_time,
+                blacklisting
+            );
             if remaining_abstraction_size == 0 || remaining_generation_time <= 0.0 {
                 break;
             }
@@ -341,6 +342,12 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 abstraction.factory.numeric_domain_sizes(),
             )
             .unwrap_or(u128::MAX);
+            info!(
+                "domain abstraction collection: iteration {} generated abstraction_size={}, elapsed={:.2}s",
+                iteration,
+                abstraction_size,
+                start.elapsed().as_secs_f64()
+            );
 
             let abstraction_key = AbstractionKey::from_abstraction(&abstraction);
             if generated_keys.insert(abstraction_key) {

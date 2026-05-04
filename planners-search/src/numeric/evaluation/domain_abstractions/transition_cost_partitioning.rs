@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 
 use anyhow::{Context, Result, ensure};
 use planners_sas::numeric::numeric_task::ExplicitFact;
@@ -49,6 +50,7 @@ impl TransitionRegion {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransitionSystem {
     pub transitions: Vec<AbstractTransition>,
+    pub duplicate_transition_attempts: usize,
     pub backward: Vec<Vec<usize>>,
     pub forward: Vec<Vec<usize>>,
     pub goal_facts: Vec<ExplicitFact>,
@@ -101,7 +103,8 @@ struct OperatorResidual {
     reductions: Vec<ResidualReduction>,
     generation: Cell<u64>,
     uniform_cost_cache: Cell<Option<f64>>,
-    transition_cost_cache: RefCell<std::collections::HashMap<TransitionQueryKey, CachedCost>>,
+    transition_cost_cache: RefCell<HashMap<TransitionQueryKey, CachedCost>>,
+    full_reduction_index: RefCell<Option<FullReductionIndex>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -125,8 +128,13 @@ struct TransitionQueryKey {
     source_hash: usize,
     abstract_op_id: usize,
     target_hash: usize,
-    source_region: StateRegionKey,
-    target_region: StateRegionKey,
+    region: Option<TransitionRegionKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct TransitionRegionKey {
+    source: StateRegionKey,
+    target: StateRegionKey,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -135,7 +143,7 @@ struct StateRegionKey {
     numeric: Vec<IntervalKey>,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct IntervalKey {
     lower_bits: u64,
     upper_bits: u64,
@@ -149,6 +157,39 @@ struct CachedCost {
     cost: f64,
 }
 
+#[derive(Clone, Debug)]
+struct FullReductionIndex {
+    generation: u64,
+    kind: FullReductionIndexKind,
+    all_reductions_full: bool,
+}
+
+#[derive(Clone, Debug)]
+enum FullReductionIndexKind {
+    Prop {
+        feature: RegionFeature,
+        buckets: HashMap<usize, Vec<usize>>,
+    },
+    Numeric {
+        feature: RegionFeature,
+        intervals: Vec<IndexedInterval>,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct IndexedInterval {
+    interval: Interval,
+    reduction_id: usize,
+}
+
+#[derive(Copy, Clone, Debug)]
+enum RegionFeature {
+    SourceProp(usize),
+    TargetProp(usize),
+    SourceNumeric(usize),
+    TargetNumeric(usize),
+}
+
 impl TransitionResidualCosts {
     pub fn from_operator_costs(costs: &[f64]) -> Self {
         let operator_residuals = costs
@@ -158,10 +199,18 @@ impl TransitionResidualCosts {
                 reductions: Vec::new(),
                 generation: Cell::new(0),
                 uniform_cost_cache: Cell::new(None),
-                transition_cost_cache: RefCell::new(std::collections::HashMap::new()),
+                transition_cost_cache: RefCell::new(HashMap::new()),
+                full_reduction_index: RefCell::new(None),
             })
             .collect();
         Self { operator_residuals }
+    }
+
+    pub fn num_reductions(&self) -> usize {
+        self.operator_residuals
+            .iter()
+            .map(|residual| residual.reductions.len())
+            .sum()
     }
 
     pub fn operator_costs_for_label_cp(&self) -> Vec<f64> {
@@ -174,7 +223,7 @@ impl TransitionResidualCosts {
                 if let Some(cost) = residual.uniform_cost_cache.get() {
                     return cost;
                 }
-                let reduction = max_overlap_reduction(None, &residual.reductions);
+                let reduction = max_overlap_reduction(None, &residual.reductions, residual.base_cost);
                 let cost = (residual.base_cost - reduction).max(0.0);
                 residual.uniform_cost_cache.set(Some(cost));
                 cost
@@ -193,20 +242,73 @@ impl TransitionResidualCosts {
         source_region: &StateRegion,
         target_region: &StateRegion,
     ) -> f64 {
+        self.cost_for_transition_with_region_key(
+            concrete_op_id,
+            current_abstraction_id,
+            source_hash,
+            abstract_op_id,
+            target_hash,
+            source_region,
+            target_region,
+            Some(TransitionRegionKey {
+                source: state_region_key(source_region),
+                target: state_region_key(target_region),
+            }),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn cost_for_indexed_transition(
+        &self,
+        concrete_op_id: usize,
+        current_abstraction_id: usize,
+        source_hash: usize,
+        abstract_op_id: usize,
+        target_hash: usize,
+        source_region: &StateRegion,
+        target_region: &StateRegion,
+    ) -> f64 {
+        self.cost_for_transition_with_region_key(
+            concrete_op_id,
+            current_abstraction_id,
+            source_hash,
+            abstract_op_id,
+            target_hash,
+            source_region,
+            target_region,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn cost_for_transition_with_region_key(
+        &self,
+        concrete_op_id: usize,
+        current_abstraction_id: usize,
+        source_hash: usize,
+        abstract_op_id: usize,
+        target_hash: usize,
+        source_region: &StateRegion,
+        target_region: &StateRegion,
+        region_key: Option<TransitionRegionKey>,
+    ) -> f64 {
         let Some(residual) = self.operator_residuals.get(concrete_op_id) else {
             return f64::INFINITY;
         };
         if !residual.base_cost.is_finite() {
             return f64::INFINITY;
         }
+        let query_region = TransitionRegion {
+            source: source_region.clone(),
+            target: target_region.clone(),
+        };
 
         let key = TransitionQueryKey {
             abstraction_id: current_abstraction_id,
             source_hash,
             abstract_op_id,
             target_hash,
-            source_region: state_region_key(source_region),
-            target_region: state_region_key(target_region),
+            region: region_key,
         };
         if let Some(cached) = residual.transition_cost_cache.borrow().get(&key)
             && cached.generation == residual.generation.get()
@@ -214,17 +316,27 @@ impl TransitionResidualCosts {
             return cached.cost;
         }
 
+        if let Some(has_full_overlap) = residual.lookup_full_reduction_overlap(&query_region) {
+            let cost = if has_full_overlap { 0.0 } else { residual.base_cost };
+            residual.transition_cost_cache.borrow_mut().insert(
+                key,
+                CachedCost {
+                    generation: residual.generation.get(),
+                    cost,
+                },
+            );
+            return cost;
+        }
+
         let query = TransitionCondition {
             abstraction_id: current_abstraction_id,
             source_hash,
             abstract_op_id,
             target_hash,
-            region: TransitionRegion {
-                source: source_region.clone(),
-                target: target_region.clone(),
-            },
+            region: query_region,
         };
-        let reduction = max_overlap_reduction(Some(&query), &residual.reductions);
+        let reduction =
+            max_overlap_reduction(Some(&query), &residual.reductions, residual.base_cost);
         let cost = (residual.base_cost - reduction).max(0.0);
         residual.transition_cost_cache.borrow_mut().insert(
             key,
@@ -383,27 +495,296 @@ impl OperatorResidual {
         self.generation.set(self.generation.get().wrapping_add(1));
         self.uniform_cost_cache.set(None);
         self.transition_cost_cache.borrow_mut().clear();
+        self.full_reduction_index.borrow_mut().take();
+    }
+
+    fn lookup_full_reduction_overlap(&self, query: &TransitionRegion) -> Option<bool> {
+        if !self.base_cost.is_finite() || self.base_cost <= EPSILON || self.reductions.is_empty() {
+            return None;
+        }
+        self.ensure_full_reduction_index()?;
+        let index_ref = self.full_reduction_index.borrow();
+        let index = index_ref.as_ref()?;
+        if index.generation != self.generation.get() {
+            return None;
+        }
+        match &index.kind {
+            FullReductionIndexKind::Prop { feature, buckets } => {
+                let values = query_values_for_feature(query, *feature)?;
+                for &value in values {
+                    let Some(bucket) = buckets.get(&value) else {
+                        continue;
+                    };
+                    if bucket.iter().any(|&reduction_id| {
+                        self.reductions[reduction_id]
+                            .condition
+                            .region
+                            .overlaps(query)
+                    }) {
+                        return Some(true);
+                    }
+                }
+            }
+            FullReductionIndexKind::Numeric { feature, intervals } => {
+                let query_interval = interval_for_feature(query, *feature)?;
+                for indexed in intervals {
+                    if interval_starts_after(&indexed.interval, query_interval) {
+                        break;
+                    }
+                    if !intervals_overlap(indexed.interval, *query_interval) {
+                        continue;
+                    }
+                    if self.reductions[indexed.reduction_id]
+                        .condition
+                        .region
+                        .overlaps(query)
+                    {
+                        return Some(true);
+                    }
+                }
+            }
+        }
+        if index.all_reductions_full {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn ensure_full_reduction_index(&self) -> Option<()> {
+        if self
+            .full_reduction_index
+            .borrow()
+            .as_ref()
+            .is_some_and(|index| index.generation == self.generation.get())
+        {
+            return Some(());
+        }
+        let index = build_full_reduction_index(
+            &self.reductions,
+            self.base_cost,
+            self.generation.get(),
+        )?;
+        self.full_reduction_index.borrow_mut().replace(index);
+        Some(())
     }
 }
 
-#[derive(Clone, Debug)]
-struct OverlapConstraint {
-    region: TransitionRegion,
-    identities: Vec<TransitionIdentity>,
+fn build_full_reduction_index(
+    reductions: &[ResidualReduction],
+    cap: f64,
+    generation: u64,
+) -> Option<FullReductionIndex> {
+    if reductions.is_empty() || !cap.is_finite() || cap <= EPSILON {
+        return None;
+    }
+    let all_reductions_full = reductions
+        .iter()
+        .all(|reduction| reduction.amount >= cap - EPSILON);
+    let feature = best_full_reduction_feature(reductions, cap)?;
+    let kind = match feature {
+        RegionFeature::SourceProp(_) | RegionFeature::TargetProp(_) => {
+            let mut buckets: HashMap<usize, Vec<usize>> = HashMap::new();
+            for (reduction_id, reduction) in reductions.iter().enumerate() {
+                if reduction.amount < cap - EPSILON {
+                    continue;
+                }
+                let value = singleton_value_for_feature(&reduction.condition.region, feature)?;
+                buckets.entry(value).or_default().push(reduction_id);
+            }
+            if buckets.is_empty() {
+                return None;
+            }
+            FullReductionIndexKind::Prop { feature, buckets }
+        }
+        RegionFeature::SourceNumeric(_) | RegionFeature::TargetNumeric(_) => {
+            let mut intervals = Vec::new();
+            for (reduction_id, reduction) in reductions.iter().enumerate() {
+                if reduction.amount < cap - EPSILON {
+                    continue;
+                }
+                let interval = *interval_for_feature(&reduction.condition.region, feature)?;
+                if interval.is_empty() {
+                    return None;
+                }
+                intervals.push(IndexedInterval {
+                    interval,
+                    reduction_id,
+                });
+            }
+            if intervals.is_empty() {
+                return None;
+            }
+            intervals.sort_by(|left, right| {
+                left.interval
+                    .lower
+                    .total_cmp(&right.interval.lower)
+                    .then_with(|| left.interval.upper.total_cmp(&right.interval.upper))
+            });
+            FullReductionIndexKind::Numeric { feature, intervals }
+        }
+    };
+    Some(FullReductionIndex {
+        generation,
+        kind,
+        all_reductions_full,
+    })
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TransitionIdentity {
-    abstraction_id: usize,
-    source_hash: usize,
-    abstract_op_id: usize,
-    target_hash: usize,
+fn best_full_reduction_feature(
+    reductions: &[ResidualReduction],
+    cap: f64,
+) -> Option<RegionFeature> {
+    let first_full = reductions
+        .iter()
+        .find(|reduction| reduction.amount >= cap - EPSILON)?;
+    let source_len = first_full.condition.region.source.propositions.len();
+    let target_len = first_full.condition.region.target.propositions.len();
+    let mut best = None;
+    let mut best_distinct = 0usize;
+    for feature in (0..source_len)
+        .map(RegionFeature::SourceProp)
+        .chain((0..target_len).map(RegionFeature::TargetProp))
+    {
+        let mut buckets = std::collections::BTreeSet::new();
+        let mut usable = false;
+        for reduction in reductions
+            .iter()
+            .filter(|reduction| reduction.amount >= cap - EPSILON)
+        {
+            let Some(value) = singleton_value_for_feature(&reduction.condition.region, feature)
+            else {
+                usable = false;
+                break;
+            };
+            usable = true;
+            buckets.insert(value);
+        }
+        if usable && buckets.len() > best_distinct {
+            best = Some(feature);
+            best_distinct = buckets.len();
+        }
+    }
+    let source_numeric_len = first_full.condition.region.source.numeric.len();
+    let target_numeric_len = first_full.condition.region.target.numeric.len();
+    for feature in (0..source_numeric_len)
+        .map(RegionFeature::SourceNumeric)
+        .chain((0..target_numeric_len).map(RegionFeature::TargetNumeric))
+    {
+        let mut buckets = std::collections::BTreeSet::new();
+        let mut usable = false;
+        for reduction in reductions
+            .iter()
+            .filter(|reduction| reduction.amount >= cap - EPSILON)
+        {
+            let Some(interval) = interval_for_feature(&reduction.condition.region, feature) else {
+                usable = false;
+                break;
+            };
+            if interval.is_empty()
+                || (!interval.lower.is_finite() && !interval.upper.is_finite())
+            {
+                usable = false;
+                break;
+            }
+            usable = true;
+            buckets.insert(interval_key(interval));
+        }
+        if usable && buckets.len() > best_distinct {
+            best = Some(feature);
+            best_distinct = buckets.len();
+        }
+    }
+    best
+}
+
+fn singleton_value_for_feature(region: &TransitionRegion, feature: RegionFeature) -> Option<usize> {
+    let values = match feature {
+        RegionFeature::SourceProp(var_id) => region.source.propositions.get(var_id)?,
+        RegionFeature::TargetProp(var_id) => region.target.propositions.get(var_id)?,
+        RegionFeature::SourceNumeric(_) | RegionFeature::TargetNumeric(_) => return None,
+    };
+    (values.len() == 1).then_some(values[0])
+}
+
+fn query_values_for_feature(
+    region: &TransitionRegion,
+    feature: RegionFeature,
+) -> Option<&[usize]> {
+    match feature {
+        RegionFeature::SourceProp(var_id) => region.source.propositions.get(var_id),
+        RegionFeature::TargetProp(var_id) => region.target.propositions.get(var_id),
+        RegionFeature::SourceNumeric(_) | RegionFeature::TargetNumeric(_) => None,
+    }
+    .map(Vec::as_slice)
+}
+
+fn interval_for_feature(region: &TransitionRegion, feature: RegionFeature) -> Option<&Interval> {
+    match feature {
+        RegionFeature::SourceNumeric(var_id) => region.source.numeric.get(var_id),
+        RegionFeature::TargetNumeric(var_id) => region.target.numeric.get(var_id),
+        RegionFeature::SourceProp(_) | RegionFeature::TargetProp(_) => None,
+    }
+}
+
+fn interval_key(interval: &Interval) -> IntervalKey {
+    IntervalKey {
+        lower_bits: float_tolerance::canonical_bits(interval.lower),
+        upper_bits: float_tolerance::canonical_bits(interval.upper),
+        lower_closed: interval.lower_closed,
+        upper_closed: interval.upper_closed,
+    }
+}
+
+fn interval_starts_after(left: &Interval, right: &Interval) -> bool {
+    left.lower > right.upper
+        || (left.lower == right.upper && !(left.lower_closed && right.upper_closed))
+}
+
+fn intervals_overlap(left: Interval, right: Interval) -> bool {
+    !Interval::new(
+        left.lower.max(right.lower),
+        left.upper.min(right.upper),
+        if left.lower > right.lower {
+            left.lower_closed
+        } else if left.lower < right.lower {
+            right.lower_closed
+        } else {
+            left.lower_closed && right.lower_closed
+        },
+        if left.upper < right.upper {
+            left.upper_closed
+        } else if left.upper > right.upper {
+            right.upper_closed
+        } else {
+            left.upper_closed && right.upper_closed
+        },
+    )
+    .is_empty()
 }
 
 fn max_overlap_reduction(
     query: Option<&TransitionCondition>,
     reductions: &[ResidualReduction],
+    cap: f64,
 ) -> f64 {
+    if !cap.is_finite() || cap <= EPSILON {
+        return 0.0;
+    }
+    let mut has_subcap_reduction = false;
+    if reductions.iter().any(|reduction| {
+        has_subcap_reduction |= reduction.amount < cap - EPSILON;
+        reduction.amount >= cap - EPSILON
+            && query.is_none_or(|query| {
+                compatible_identities(query, &reduction.condition)
+                    && reduction.condition.region.overlaps(&query.region)
+            })
+    }) {
+        return cap;
+    }
+    if !has_subcap_reduction {
+        return 0.0;
+    }
     let mut relevant: Vec<&ResidualReduction> = reductions
         .iter()
         .filter(|reduction| {
@@ -429,9 +810,11 @@ fn max_overlap_reduction(
 
     fn search(
         index: usize,
-        current: Option<OverlapConstraint>,
+        selected: &mut Vec<usize>,
         current_sum: f64,
         best: &mut f64,
+        cap: f64,
+        query: Option<&TransitionCondition>,
         relevant: &[&ResidualReduction],
         suffix: &[f64],
     ) {
@@ -439,48 +822,53 @@ fn max_overlap_reduction(
             *best = best.max(current_sum);
             return;
         }
+        if *best >= cap - EPSILON {
+            return;
+        }
         if current_sum + suffix[index] <= *best + EPSILON {
             return;
         }
 
         let reduction = relevant[index];
-        let include = match current.as_ref() {
-            Some(current) => intersect_constraint_with_condition(current, &reduction.condition),
-            None => Some(constraint_from_condition(&reduction.condition)),
-        };
-        if let Some(include) = include {
+        if can_add_reduction(query, selected, &reduction.condition, relevant) {
+            selected.push(index);
             search(
                 index + 1,
-                Some(include),
+                selected,
                 current_sum + reduction.amount.max(0.0),
                 best,
+                cap,
+                query,
                 relevant,
                 suffix,
             );
+            selected.pop();
         }
-        search(index + 1, current, current_sum, best, relevant, suffix);
+        search(
+            index + 1,
+            selected,
+            current_sum,
+            best,
+            cap,
+            query,
+            relevant,
+            suffix,
+        );
     }
 
-    let initial = query.map(constraint_from_condition);
     let mut best = 0.0;
-    search(0, initial, 0.0, &mut best, &relevant, &suffix);
-    best
-}
-
-fn condition_identity(condition: &TransitionCondition) -> TransitionIdentity {
-    TransitionIdentity {
-        abstraction_id: condition.abstraction_id,
-        source_hash: condition.source_hash,
-        abstract_op_id: condition.abstract_op_id,
-        target_hash: condition.target_hash,
-    }
-}
-
-fn constraint_from_condition(condition: &TransitionCondition) -> OverlapConstraint {
-    OverlapConstraint {
-        region: condition.region.clone(),
-        identities: vec![condition_identity(condition)],
-    }
+    let mut selected = Vec::new();
+    search(
+        0,
+        &mut selected,
+        0.0,
+        &mut best,
+        cap,
+        query,
+        &relevant,
+        &suffix,
+    );
+    best.min(cap)
 }
 
 fn compatible_identities(left: &TransitionCondition, right: &TransitionCondition) -> bool {
@@ -490,99 +878,115 @@ fn compatible_identities(left: &TransitionCondition, right: &TransitionCondition
             && left.target_hash == right.target_hash)
 }
 
-fn intersect_constraint_with_condition(
-    current: &OverlapConstraint,
+fn can_add_reduction(
+    query: Option<&TransitionCondition>,
+    selected: &[usize],
     condition: &TransitionCondition,
-) -> Option<OverlapConstraint> {
-    let identity = condition_identity(condition);
-    if current
-        .identities
-        .iter()
-        .any(|existing| existing.abstraction_id == identity.abstraction_id && existing != &identity)
+    relevant: &[&ResidualReduction],
+) -> bool {
+    if let Some(query) = query
+        && !compatible_identities(query, condition)
     {
-        return None;
+        return false;
     }
-    let region = intersect_transition_regions(&current.region, &condition.region)?;
-    let mut identities = current.identities.clone();
-    if !identities.iter().any(|existing| existing == &identity) {
-        identities.push(identity);
-    }
-    Some(OverlapConstraint { region, identities })
-}
-
-fn intersect_transition_regions(
-    left: &TransitionRegion,
-    right: &TransitionRegion,
-) -> Option<TransitionRegion> {
-    Some(TransitionRegion {
-        source: intersect_state_regions(&left.source, &right.source)?,
-        target: intersect_state_regions(&left.target, &right.target)?,
-    })
-}
-
-fn intersect_state_regions(left: &StateRegion, right: &StateRegion) -> Option<StateRegion> {
-    if left.propositions.len() != right.propositions.len()
-        || left.numeric.len() != right.numeric.len()
-    {
-        return None;
-    }
-
-    let propositions = left
-        .propositions
-        .iter()
-        .zip(right.propositions.iter())
-        .map(|(left, right)| intersect_sorted_value_sets(left, right))
-        .collect::<Option<Vec<_>>>()?;
-    let numeric = left
-        .numeric
-        .iter()
-        .zip(right.numeric.iter())
-        .map(|(left, right)| intersect_intervals(*left, *right))
-        .collect::<Option<Vec<_>>>()?;
-    Some(StateRegion {
-        propositions,
-        numeric,
-    })
-}
-
-fn intersect_sorted_value_sets(left: &[usize], right: &[usize]) -> Option<Vec<usize>> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    let mut j = 0;
-    while i < left.len() && j < right.len() {
-        match left[i].cmp(&right[j]) {
-            std::cmp::Ordering::Less => i += 1,
-            std::cmp::Ordering::Greater => j += 1,
-            std::cmp::Ordering::Equal => {
-                out.push(left[i]);
-                i += 1;
-                j += 1;
-            }
+    for &index in selected {
+        if !compatible_identities(&relevant[index].condition, condition) {
+            return false;
         }
     }
-    (!out.is_empty()).then_some(out)
+    state_regions_have_common_intersection(
+        query.map(|condition| &condition.region.source),
+        selected
+            .iter()
+            .map(|&index| &relevant[index].condition.region.source),
+        &condition.region.source,
+    ) && state_regions_have_common_intersection(
+        query.map(|condition| &condition.region.target),
+        selected
+            .iter()
+            .map(|&index| &relevant[index].condition.region.target),
+        &condition.region.target,
+    )
 }
 
-fn intersect_intervals(left: Interval, right: Interval) -> Option<Interval> {
-    if !left.intersects(&right) {
-        return None;
+fn state_regions_have_common_intersection<'a, I>(
+    query: Option<&'a StateRegion>,
+    selected: I,
+    candidate: &'a StateRegion,
+) -> bool
+where
+    I: Iterator<Item = &'a StateRegion> + Clone,
+{
+    let regions = query
+        .into_iter()
+        .chain(selected)
+        .chain(std::iter::once(candidate));
+    state_regions_have_common_intersection_from_slice(regions)
+}
+
+fn state_regions_have_common_intersection_from_slice<'a, I>(regions: I) -> bool
+where
+    I: Iterator<Item = &'a StateRegion> + Clone,
+{
+    let mut regions = regions.peekable();
+    let Some(first) = regions.peek().copied() else {
+        return true;
+    };
+    if regions.clone().any(|region| {
+        region.propositions.len() != first.propositions.len()
+            || region.numeric.len() != first.numeric.len()
+    }) {
+        return false;
     }
-    let (lower, lower_closed) = if left.lower > right.lower {
-        (left.lower, left.lower_closed)
-    } else if right.lower > left.lower {
-        (right.lower, right.lower_closed)
-    } else {
-        (left.lower, left.lower_closed && right.lower_closed)
-    };
-    let (upper, upper_closed) = if left.upper < right.upper {
-        (left.upper, left.upper_closed)
-    } else if right.upper < left.upper {
-        (right.upper, right.upper_closed)
-    } else {
-        (left.upper, left.upper_closed && right.upper_closed)
-    };
-    let interval = Interval::new(lower, upper, lower_closed, upper_closed);
-    (!interval.is_empty()).then_some(interval)
+
+    for prop_id in 0..first.propositions.len() {
+        let mut smallest = first.propositions[prop_id].as_slice();
+        for region in regions.clone() {
+            let values = region.propositions[prop_id].as_slice();
+            if values.len() < smallest.len() {
+                smallest = values;
+            }
+        }
+        if !smallest.iter().any(|value| {
+            regions
+                .clone()
+                .all(|region| region.propositions[prop_id].binary_search(value).is_ok())
+        }) {
+            return false;
+        }
+    }
+
+    for numeric_id in 0..first.numeric.len() {
+        if !intervals_have_common_intersection(
+            regions.clone().map(|region| region.numeric[numeric_id]),
+        ) {
+            return false;
+        }
+    }
+    true
+}
+
+fn intervals_have_common_intersection(intervals: impl Iterator<Item = Interval>) -> bool {
+    let mut lower = f64::NEG_INFINITY;
+    let mut lower_closed = false;
+    let mut upper = f64::INFINITY;
+    let mut upper_closed = false;
+    for interval in intervals {
+        if interval.lower > lower {
+            lower = interval.lower;
+            lower_closed = interval.lower_closed;
+        } else if interval.lower == lower {
+            lower_closed = lower_closed && interval.lower_closed;
+        }
+
+        if interval.upper < upper {
+            upper = interval.upper;
+            upper_closed = interval.upper_closed;
+        } else if interval.upper == upper {
+            upper_closed = upper_closed && interval.upper_closed;
+        }
+    }
+    !Interval::new(lower, upper, lower_closed, upper_closed).is_empty()
 }
 
 fn subtract_cost(cost: f64, saturated: f64) -> Result<f64> {
@@ -676,6 +1080,7 @@ mod tests {
                 source_hash: 3,
                 target_hash: 4,
             }],
+            duplicate_transition_attempts: 0,
             backward: vec![vec![], vec![], vec![], vec![], vec![0]],
             forward: vec![vec![], vec![], vec![], vec![0], vec![]],
             goal_facts: vec![],
@@ -740,6 +1145,7 @@ mod tests {
                 source_hash: 0,
                 target_hash: 1,
             }],
+            duplicate_transition_attempts: 0,
             backward: vec![vec![], vec![0]],
             forward: vec![vec![0], vec![]],
             goal_facts: vec![],
@@ -794,6 +1200,7 @@ mod tests {
                 source_hash: 3,
                 target_hash: 4,
             }],
+            duplicate_transition_attempts: 0,
             backward: vec![vec![], vec![], vec![], vec![], vec![0]],
             forward: vec![vec![], vec![], vec![], vec![0], vec![]],
             goal_facts: vec![],
@@ -857,6 +1264,7 @@ mod tests {
                     target_hash: 3,
                 },
             ],
+            duplicate_transition_attempts: 0,
             backward: vec![vec![], vec![0], vec![], vec![1]],
             forward: vec![vec![0], vec![], vec![1], vec![]],
             goal_facts: vec![],
@@ -920,6 +1328,7 @@ mod tests {
                     target_hash: 3,
                 },
             ],
+            duplicate_transition_attempts: 0,
             backward: vec![vec![], vec![0], vec![], vec![1]],
             forward: vec![vec![0], vec![], vec![1], vec![]],
             goal_facts: vec![],
