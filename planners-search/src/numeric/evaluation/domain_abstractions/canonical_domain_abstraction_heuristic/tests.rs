@@ -65,6 +65,7 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
         hash_multipliers,
         combine_labels: false,
         task_projection: None,
+        transformed_task: None,
         relevant_operator_ids: Vec::new(),
     }
 }

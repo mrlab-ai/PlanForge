@@ -164,6 +164,7 @@ fn compute_relevant_operator_ids(
         return Ok(abstraction.relevant_operator_ids.iter().copied().collect());
     }
 
+    let task = abstraction.task_for_factory(task);
     let mut generator = abstraction
         .factory
         .make_operator_generator(task, abstraction.combine_labels)

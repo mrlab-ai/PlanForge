@@ -1,10 +1,10 @@
+use std::rc::Rc;
+
 use anyhow::{Context, Result, ensure};
 
-use planners_sas::numeric::numeric_task::AbstractNumericTask;
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
 
-use super::abstracted_task::{
-    AbstractedTask, DomainAbstractionTaskProjection, maybe_build_linear_abstracted_task,
-};
+use super::abstracted_task::{DomainAbstractionTaskProjection, maybe_build_linear_abstracted_task};
 use super::cegar::{Cegar, CegarConfig};
 use super::domain_abstraction_factory::{AbstractDistanceTable, DomainAbstractionFactory};
 
@@ -16,7 +16,20 @@ pub struct DomainAbstraction {
     pub hash_multipliers: Vec<usize>,
     pub combine_labels: bool,
     pub task_projection: Option<DomainAbstractionTaskProjection>,
+    pub transformed_task: Option<Rc<NumericRootTask>>,
     pub relevant_operator_ids: Vec<usize>,
+}
+
+impl DomainAbstraction {
+    pub fn task_for_factory<'task>(
+        &'task self,
+        fallback: &'task dyn AbstractNumericTask,
+    ) -> &'task dyn AbstractNumericTask {
+        self.transformed_task
+            .as_deref()
+            .map(|task| task as &dyn AbstractNumericTask)
+            .unwrap_or(fallback)
+    }
 }
 
 /// Numeric-fd style generator that constructs a domain abstraction via CEGAR.
@@ -41,23 +54,17 @@ impl DomainAbstractionGenerator {
         let abstracted_task =
             maybe_build_linear_abstracted_task(task, self.config.transform_linear_task)
                 .context("failed to build abstracted task for domain abstraction")?;
-        let (build_task, task_projection) = match abstracted_task {
+        let (transformed_task_owner, task_projection) = match abstracted_task {
             Some(abstracted_task) => {
-                let projection = abstracted_task.projection();
-                (
-                    Box::new(abstracted_task) as Box<dyn AbstractedTask>,
-                    Some(projection),
-                )
+                let (transformed_task, projection) = abstracted_task.into_parts();
+                (Some(Rc::new(transformed_task)), Some(projection))
             }
-            None => (
-                Box::new(BorrowedAbstractedTask {
-                    task,
-                    projection: DomainAbstractionTaskProjection::identity(task),
-                }) as Box<dyn AbstractedTask>,
-                None,
-            ),
+            None => (None, None),
         };
-        let transformed_task = build_task.task();
+        let transformed_task = transformed_task_owner
+            .as_deref()
+            .map(|task| task as &dyn AbstractNumericTask)
+            .unwrap_or(task);
         let outcome = self
             .cegar
             .build_abstraction(transformed_task)
@@ -90,28 +97,9 @@ impl DomainAbstractionGenerator {
             hash_multipliers,
             combine_labels: self.config.combine_labels,
             task_projection,
+            transformed_task: transformed_task_owner,
             relevant_operator_ids,
         })
-    }
-}
-
-struct BorrowedAbstractedTask<'task> {
-    task: &'task dyn AbstractNumericTask,
-    projection: DomainAbstractionTaskProjection,
-}
-
-impl AbstractedTask for BorrowedAbstractedTask<'_> {
-    fn task(&self) -> &dyn AbstractNumericTask {
-        self.task
-    }
-
-    fn project_state_values(
-        &self,
-        propositional_values: &[usize],
-        numeric_values: &[f64],
-    ) -> Result<super::abstracted_task::ProjectedState> {
-        self.projection
-            .project_state_values(propositional_values, numeric_values)
     }
 }
 

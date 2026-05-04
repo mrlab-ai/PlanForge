@@ -247,9 +247,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             Vec::with_capacity(total_components);
 
         for abstraction in &abstractions {
+            let abstraction_task = abstraction.task_for_factory(task);
             let table = abstraction
                 .factory
-                .build_goal_distances(task, config.combine_labels, &original_costs)
+                .build_goal_distances(abstraction_task, config.combine_labels, &original_costs)
                 .map_err(|error| {
                     EvaluationError::ComputationFailed(format!(
                         "failed to compute goal distances for order generator: {error:#}"
@@ -258,7 +259,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             let (_, saturated) = abstraction
                 .factory
                 .build_cost_partitioned_distance_table(
-                    task,
+                    abstraction_task,
                     config.combine_labels,
                     &original_costs,
                     false,
@@ -515,10 +516,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 )));
             }
             if cache[abstraction_id].is_none() {
+                let abstraction_task = abstraction.task_for_factory(task);
                 let transition_system = match abstraction
                     .factory
                     .build_abstract_transition_system_with_deadline(
-                        task,
+                        abstraction_task,
                         self.config.combine_labels,
                         deadline,
                     ) {
@@ -869,9 +871,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 let abstraction = &abstractions[pos];
                 match self.config.saturator {
                     Saturator::All | Saturator::Perimstar => {
+                        let abstraction_task = abstraction.task_for_factory(task);
                         let (distances, saturated) = Self::compute_domain_cp_entry(
                             abstraction,
-                            task,
+                            abstraction_task,
                             self.config.combine_labels,
                             &remaining_costs,
                         )?;
@@ -884,10 +887,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             .copied()
                             .flatten()
                             .and_then(|sid| {
+                                let abstraction_task = abstraction.task_for_factory(task);
                                 abstraction
                                     .factory
                                     .build_goal_distances(
-                                        task,
+                                        abstraction_task,
                                         self.config.combine_labels,
                                         &remaining_costs,
                                     )
@@ -895,9 +899,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     .and_then(|t| t.distances.get(sid).copied())
                             })
                             .unwrap_or(f64::INFINITY);
+                        let abstraction_task = abstraction.task_for_factory(task);
                         let (distances, saturated) = Self::compute_domain_perim_entry(
                             abstraction,
-                            task,
+                            abstraction_task,
                             self.config.combine_labels,
                             &remaining_costs,
                             h_cap,

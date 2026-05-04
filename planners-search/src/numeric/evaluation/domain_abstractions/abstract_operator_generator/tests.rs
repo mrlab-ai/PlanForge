@@ -1364,7 +1364,8 @@ fn incremental_cache_matches_full_rebuild_after_propositional_refinement() {
     refined_mapping[0][1] = 1;
     refined_domain_sizes[0] = 2;
 
-    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
+    let mut summary =
+        crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
     summary.refined_propositional_vars.insert(0);
     cache.mark_refined(&summary);
 
@@ -1449,7 +1450,8 @@ fn incremental_cache_matches_full_rebuild_after_numeric_refinement() {
         .build_abstract_operators_with_cache(&task, &mut cache)
         .unwrap();
 
-    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
+    let mut summary =
+        crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
     summary.refined_numeric_vars.insert(0);
     cache.mark_refined(&summary);
 
@@ -1518,7 +1520,8 @@ fn minecraft_output_incremental_cache_matches_full_rebuild() {
     refined_mapping[refined_var][refine_value] = 1;
     refined_domain_sizes[refined_var] = 2;
 
-    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
+    let mut summary =
+        crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
     summary.refined_propositional_vars.insert(refined_var);
     cache.mark_refined(&summary);
 

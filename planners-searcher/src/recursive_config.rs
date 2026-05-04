@@ -1062,6 +1062,14 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
             },
             format: |config| config.collection_config.numeric_split_strategy.to_string(),
         },
+        Field {
+            name: "transform_linear_task",
+            apply: |config, value| {
+                config.collection_config.transform_linear_task = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.transform_linear_task.to_string(),
+        },
     ]
 }
 

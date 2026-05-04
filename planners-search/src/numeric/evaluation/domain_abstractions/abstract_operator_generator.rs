@@ -1052,6 +1052,12 @@ fn compute_hash_effects_with_preconditions(
     let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
     let mut affected_numeric_vars: HashSet<usize> = HashSet::new();
     for v in 0..num_numeric_vars {
+        ensure!(
+            v < task.numeric_variables().len(),
+            "abstract operator numeric domain size/task variable mismatch: numeric_domain_sizes has {}, task has {} numeric variables",
+            generator.numeric_domain_sizes.len(),
+            task.numeric_variables().len()
+        );
         if task.numeric_variables()[v].get_type() == &NumericType::Derived {
             continue;
         }

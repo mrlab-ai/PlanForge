@@ -66,8 +66,8 @@ impl LinearAbstractedTask {
         self.projection.clone()
     }
 
-    pub fn into_projection(self) -> DomainAbstractionTaskProjection {
-        self.projection
+    pub fn into_parts(self) -> (NumericRootTask, DomainAbstractionTaskProjection) {
+        (self.task, self.projection)
     }
 }
 
