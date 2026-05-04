@@ -9,6 +9,8 @@ use super::comparison_expression::Interval;
 
 const EPSILON: f64 = 1e-9;
 const ABSTRACT_OPERATOR_REGION_HASH: usize = usize::MAX;
+const MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 4096;
+const MAX_TOTAL_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 50_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransition {
@@ -107,6 +109,42 @@ impl AbstractTransitionSystem {
         regions
     }
 
+    pub fn abstract_operator_region_covers(&self) -> Vec<Vec<TransitionRegion>> {
+        let num_abstract_ops = self
+            .transitions
+            .iter()
+            .map(|transition| transition.abstract_op_id)
+            .max()
+            .map_or(0, |max_id| max_id + 1);
+        let mut covers = vec![Vec::new(); num_abstract_ops];
+        let mut seen = vec![std::collections::HashSet::new(); num_abstract_ops];
+        for transition in &self.transitions {
+            let region = TransitionRegion {
+                source: self.state_regions[transition.source_hash].clone(),
+                target: self.state_regions[transition.target_hash].clone(),
+            };
+            let key = transition_region_key(&region);
+            if seen[transition.abstract_op_id].insert(key) {
+                covers[transition.abstract_op_id].push(region);
+            }
+        }
+        for (abstract_op_id, cover) in covers.iter_mut().enumerate() {
+            if cover.len() > MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES {
+                let mut hull = cover[0].clone();
+                for region in cover.iter().skip(1) {
+                    merge_transition_region(&mut hull, region);
+                }
+                tracing::debug!(
+                    "abstract operator {abstract_op_id} reduction cover exceeded {} pieces; using hull fallback",
+                    MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES
+                );
+                cover.clear();
+                cover.push(hull);
+            }
+        }
+        covers
+    }
+
     pub fn concrete_operator_ids_by_abstract_operator(&self) -> Vec<Vec<usize>> {
         let num_abstract_ops = self
             .transitions
@@ -124,6 +162,16 @@ impl AbstractTransitionSystem {
             ids.dedup();
         }
         concrete_op_ids
+    }
+
+    fn transition_counts_by_abstract_operator(&self, num_abstract_ops: usize) -> Vec<usize> {
+        let mut counts = vec![0usize; num_abstract_ops];
+        for transition in &self.transitions {
+            if let Some(count) = counts.get_mut(transition.abstract_op_id) {
+                *count = count.saturating_add(1);
+            }
+        }
+        counts
     }
 }
 
@@ -462,15 +510,30 @@ impl TransitionResidualCosts {
         producing_abstraction_id: usize,
         transition_system: &AbstractTransitionSystem,
         tcf: &AbstractOperatorCostFunction,
-    ) -> Result<()> {
-        let regions = transition_system.abstract_operator_regions();
+    ) -> Result<bool> {
+        let concrete_op_ids = transition_system.concrete_operator_ids_by_abstract_operator();
         ensure!(
-            regions.len() == tcf.operator_costs.len(),
+            concrete_op_ids.len() == tcf.operator_costs.len(),
             "abstract-operator system/cost function size mismatch: {} vs {}",
-            regions.len(),
+            concrete_op_ids.len(),
             tcf.operator_costs.len()
         );
-        let concrete_op_ids = transition_system.concrete_operator_ids_by_abstract_operator();
+        let transition_counts =
+            transition_system.transition_counts_by_abstract_operator(tcf.operator_costs.len());
+        let mut total_reduction_pieces = 0usize;
+        for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
+            if !saturated.is_finite() || saturated <= EPSILON {
+                continue;
+            }
+            total_reduction_pieces = total_reduction_pieces.saturating_add(
+                transition_counts[abstract_op_id]
+                    .saturating_mul(concrete_op_ids[abstract_op_id].len()),
+            );
+            if total_reduction_pieces > MAX_TOTAL_ABSTRACT_OPERATOR_REDUCTION_PIECES {
+                return Ok(false);
+            }
+        }
+        let covers = transition_system.abstract_operator_region_covers();
         for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
             ensure!(
                 !saturated.is_finite() || saturated >= -EPSILON,
@@ -481,37 +544,38 @@ impl TransitionResidualCosts {
             if !saturated.is_finite() || saturated <= EPSILON {
                 continue;
             }
-            let Some(region) = regions.get(abstract_op_id).and_then(|region| region.clone())
-            else {
+            let Some(cover) = covers.get(abstract_op_id) else {
                 continue;
             };
-            for &concrete_op_id in &concrete_op_ids[abstract_op_id] {
-                let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
-                    continue;
-                };
-                ensure!(
-                    residual.base_cost.is_finite(),
-                    "no base residual cost for operator {concrete_op_id}"
-                );
-                ensure!(
-                    saturated <= residual.base_cost + EPSILON,
-                    "residual cost underflow: abstract-operator reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
-                    residual.base_cost
-                );
-                residual.reductions.push(ResidualReduction {
-                    amount: saturated.min(residual.base_cost),
-                    condition: TransitionCondition {
-                        abstraction_id: producing_abstraction_id,
-                        source_hash: ABSTRACT_OPERATOR_REGION_HASH,
-                        abstract_op_id,
-                        target_hash: ABSTRACT_OPERATOR_REGION_HASH,
-                        region: region.clone(),
-                    },
-                });
-                residual.invalidate_cache();
+            for (piece_id, region) in cover.iter().enumerate() {
+                for &concrete_op_id in &concrete_op_ids[abstract_op_id] {
+                    let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
+                        continue;
+                    };
+                    ensure!(
+                        residual.base_cost.is_finite(),
+                        "no base residual cost for operator {concrete_op_id}"
+                    );
+                    ensure!(
+                        saturated <= residual.base_cost + EPSILON,
+                        "residual cost underflow: abstract-operator reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
+                        residual.base_cost
+                    );
+                    residual.reductions.push(ResidualReduction {
+                        amount: saturated.min(residual.base_cost),
+                        condition: TransitionCondition {
+                            abstraction_id: producing_abstraction_id,
+                            source_hash: piece_id,
+                            abstract_op_id,
+                            target_hash: piece_id,
+                            region: region.clone(),
+                        },
+                    });
+                    residual.invalidate_cache();
+                }
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     pub fn reduce_operator_costs_uniform(&mut self, saturated_costs: &[f64]) -> Result<()> {
@@ -608,6 +672,13 @@ fn state_region_key(region: &StateRegion) -> StateRegionKey {
                 upper_closed: interval.upper_closed,
             })
             .collect(),
+    }
+}
+
+fn transition_region_key(region: &TransitionRegion) -> TransitionRegionKey {
+    TransitionRegionKey {
+        source: state_region_key(&region.source),
+        target: state_region_key(&region.target),
     }
 }
 
@@ -1034,15 +1105,18 @@ fn compatible_identities(left: &TransitionCondition, right: &TransitionCondition
     if left.abstraction_id != right.abstraction_id {
         return true;
     }
-    if left.source_hash == ABSTRACT_OPERATOR_REGION_HASH
-        || right.source_hash == ABSTRACT_OPERATOR_REGION_HASH
-        || left.target_hash == ABSTRACT_OPERATOR_REGION_HASH
-        || right.target_hash == ABSTRACT_OPERATOR_REGION_HASH
-    {
-        return left.abstract_op_id == right.abstract_op_id;
+    if left.abstract_op_id != right.abstract_op_id {
+        return false;
     }
+    let left_is_abstract_operator_query = left.source_hash == ABSTRACT_OPERATOR_REGION_HASH
+        || left.target_hash == ABSTRACT_OPERATOR_REGION_HASH;
+    let right_is_abstract_operator_query = right.source_hash == ABSTRACT_OPERATOR_REGION_HASH
+        || right.target_hash == ABSTRACT_OPERATOR_REGION_HASH;
+    if left_is_abstract_operator_query || right_is_abstract_operator_query {
+        return true;
+    }
+
     left.source_hash == right.source_hash
-        && left.abstract_op_id == right.abstract_op_id
         && left.target_hash == right.target_hash
 }
 

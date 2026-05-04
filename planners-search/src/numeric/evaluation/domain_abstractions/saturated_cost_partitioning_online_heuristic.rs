@@ -642,7 +642,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                         info!(
                                             "scp_online: abstract-operator all abstraction {pos} stopped while computing table (deadline)"
                                         );
-                                        return Ok(());
+                                        return Ok(true);
                                     }
                                     Err(error) => {
                                         return Err(EvaluationError::ComputationFailed(format!(
@@ -663,24 +663,33 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     &table.distances,
                                     abstract_state_ids,
                                 ) {
-                                    return Ok(());
+                                    return Ok(true);
                                 }
                                 cp.add_h_values(pos, table.distances);
-                                remaining_costs
+                                let reduced = remaining_costs
                                     .reduce_by_abstract_operator_tcf(pos, transition_system, &tcf)
                                     .map_err(|error| {
                                         EvaluationError::ComputationFailed(format!(
                                             "failed to reduce abstract-operator residual costs: {error:#}"
                                         ))
                                     })?;
+                                if !reduced {
+                                    info!(
+                                        "scp_online: stopping abstract-operator CP after abstraction {pos}: reduction cover too large"
+                                    );
+                                    return Ok(false);
+                                }
                                 log_transition_residual_summary(&remaining_costs);
-                                Ok(())
+                                Ok(true)
                             },
                         )?;
                         if completed.is_none() {
                             info!(
                                 "scp_online: abstract-operator CP stopped while building abstraction {pos} (deadline)"
                             );
+                            break;
+                        }
+                        if completed == Some(false) {
                             break;
                         }
                     }
@@ -706,7 +715,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                         info!(
                                             "scp_online: abstract-operator perim abstraction {pos} stopped while computing table (deadline)"
                                         );
-                                        return Ok(());
+                                        return Ok(true);
                                     }
                                     Err(error) => {
                                         return Err(EvaluationError::ComputationFailed(format!(
@@ -727,24 +736,33 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     &table.distances,
                                     abstract_state_ids,
                                 ) {
-                                    return Ok(());
+                                    return Ok(true);
                                 }
                                 cp.add_h_values(pos, table.distances);
-                                remaining_costs
+                                let reduced = remaining_costs
                                     .reduce_by_abstract_operator_tcf(pos, transition_system, &tcf)
                                     .map_err(|error| {
                                         EvaluationError::ComputationFailed(format!(
                                             "failed to reduce abstract-operator PERIM residual costs: {error:#}"
                                         ))
                                     })?;
+                                if !reduced {
+                                    info!(
+                                        "scp_online: stopping abstract-operator PERIM CP after abstraction {pos}: reduction cover too large"
+                                    );
+                                    return Ok(false);
+                                }
                                 log_transition_residual_summary(&remaining_costs);
-                                Ok(())
+                                Ok(true)
                             },
                         )?;
                         if completed.is_none() {
                             info!(
                                 "scp_online: abstract-operator PERIM CP stopped while building abstraction {pos} (deadline)"
                             );
+                            break;
+                        }
+                        if completed == Some(false) {
                             break;
                         }
                     }
@@ -770,7 +788,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                         info!(
                                             "scp_online: abstract-operator perimstar/perim abstraction {pos} stopped while computing table (deadline)"
                                         );
-                                        return Ok(());
+                                        return Ok(true);
                                     }
                                     Err(error) => {
                                         return Err(EvaluationError::ComputationFailed(format!(
@@ -791,16 +809,22 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     &perim_table.distances,
                                     abstract_state_ids,
                                 ) {
-                                    return Ok(());
+                                    return Ok(true);
                                 }
                                 cp.add_h_values(pos, perim_table.distances);
-                                remaining_costs
+                                let reduced = remaining_costs
                                     .reduce_by_abstract_operator_tcf(pos, transition_system, &perim_tcf)
                                     .map_err(|error| {
                                         EvaluationError::ComputationFailed(format!(
                                             "failed to reduce abstract-operator Perim residual costs: {error:#}"
                                         ))
                                     })?;
+                                if !reduced {
+                                    info!(
+                                        "scp_online: stopping abstract-operator PERIMSTAR CP after Perim step abstraction {pos}: reduction cover too large"
+                                    );
+                                    return Ok(false);
+                                }
                                 log_transition_residual_summary(&remaining_costs);
 
                                 let (all_table, all_tcf) = match abstraction
@@ -817,7 +841,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                         info!(
                                             "scp_online: abstract-operator perimstar/all abstraction {pos} stopped while computing table (deadline)"
                                         );
-                                        return Ok(());
+                                        return Ok(true);
                                     }
                                     Err(error) => {
                                         return Err(EvaluationError::ComputationFailed(format!(
@@ -838,24 +862,33 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     &all_table.distances,
                                     abstract_state_ids,
                                 ) {
-                                    return Ok(());
+                                    return Ok(true);
                                 }
                                 cp.add_h_values(pos, all_table.distances);
-                                remaining_costs
+                                let reduced = remaining_costs
                                     .reduce_by_abstract_operator_tcf(pos, transition_system, &all_tcf)
                                     .map_err(|error| {
                                         EvaluationError::ComputationFailed(format!(
                                             "failed to reduce abstract-operator All residual costs: {error:#}"
                                         ))
                                     })?;
+                                if !reduced {
+                                    info!(
+                                        "scp_online: stopping abstract-operator PERIMSTAR CP after All step abstraction {pos}: reduction cover too large"
+                                    );
+                                    return Ok(false);
+                                }
                                 log_transition_residual_summary(&remaining_costs);
-                                Ok(())
+                                Ok(true)
                             },
                         )?;
                         if completed.is_none() {
                             info!(
                                 "scp_online: abstract-operator PERIMSTAR CP stopped while building abstraction {pos} (deadline)"
                             );
+                            break;
+                        }
+                        if completed == Some(false) {
                             break;
                         }
                     }

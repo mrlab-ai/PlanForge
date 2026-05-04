@@ -295,15 +295,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let remaining_abstraction_size =
                 remaining_collection_size.min(self.config.max_abstraction_size);
 
-            info!(
-                "domain abstraction collection: iteration {}, elapsed={:.2}s, remaining_collection_size={}, remaining_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
-                iteration,
-                elapsed,
-                remaining_collection_size,
-                remaining_abstraction_size,
-                remaining_generation_time,
-                blacklisting
-            );
             if remaining_abstraction_size == 0 || remaining_generation_time <= 0.0 {
                 break;
             }
@@ -342,12 +333,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 abstraction.factory.numeric_domain_sizes(),
             )
             .unwrap_or(u128::MAX);
-            info!(
-                "domain abstraction collection: iteration {} generated abstraction_size={}, elapsed={:.2}s",
-                iteration,
-                abstraction_size,
-                start.elapsed().as_secs_f64()
-            );
 
             let abstraction_key = AbstractionKey::from_abstraction(&abstraction);
             if generated_keys.insert(abstraction_key) {
@@ -355,6 +340,16 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 let consumed = abstraction_size.min(remaining_collection_size as u128) as usize;
                 remaining_collection_size = remaining_collection_size.saturating_sub(consumed);
                 generated_abstractions.push(abstraction);
+                info!(
+                    "domain abstraction collection: added abstraction at iteration {}, abstraction_size={}, elapsed={:.2}s, remaining_collection_size={}, next_max_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
+                    iteration,
+                    abstraction_size,
+                    start.elapsed().as_secs_f64(),
+                    remaining_collection_size,
+                    remaining_collection_size.min(self.config.max_abstraction_size),
+                    remaining_generation_time,
+                    blacklisting
+                );
             }
 
             let stagnated =
