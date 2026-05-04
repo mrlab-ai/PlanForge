@@ -183,6 +183,54 @@ impl AbstractOperatorCandidate {
     }
 }
 
+struct AbstractOperatorFinalizer {
+    combine_labels: bool,
+    hash_multipliers: Vec<usize>,
+    operators: Vec<AbstractOperator>,
+    grouping: HashMap<OperatorSignature, usize>,
+}
+
+impl AbstractOperatorFinalizer {
+    fn new(combine_labels: bool, hash_multipliers: &[usize]) -> Self {
+        Self {
+            combine_labels,
+            hash_multipliers: hash_multipliers.to_vec(),
+            operators: Vec::new(),
+            grouping: HashMap::new(),
+        }
+    }
+
+    fn push_candidate(&mut self, candidate: &AbstractOperatorCandidate) {
+        let signature = candidate.signature();
+        if self.combine_labels
+            && let Some(&idx) = self.grouping.get(&signature)
+        {
+            self.operators[idx]
+                .concrete_op_ids
+                .push(candidate.concrete_op_id);
+            return;
+        }
+
+        let idx = self.operators.len();
+        self.operators.push(AbstractOperator::new(
+            &candidate.prev_pairs,
+            &candidate.pre_pairs,
+            &candidate.eff_pairs,
+            candidate.cost,
+            &self.hash_multipliers,
+            vec![candidate.concrete_op_id],
+            candidate.changed_numeric_vars.clone(),
+        ));
+        if self.combine_labels {
+            self.grouping.insert(signature, idx);
+        }
+    }
+
+    fn into_operators(self) -> Vec<AbstractOperator> {
+        self.operators
+    }
+}
+
 fn has_in_list_conflict(facts: &[ExplicitFact]) -> bool {
     facts
         .windows(2)
@@ -342,6 +390,34 @@ fn materialize_skeletons(
         }
     }
     Ok(out)
+}
+
+fn materialize_skeletons_into(
+    task: &dyn AbstractNumericTask,
+    generator: &mut AbstractOperatorGenerator,
+    skeletons: &[AbstractOperatorSkeleton],
+    finalizer: &mut AbstractOperatorFinalizer,
+) -> Result<()> {
+    let Some(first) = skeletons.first() else {
+        return Ok(());
+    };
+    let transitions = compute_hash_effects_with_preconditions(
+        task,
+        generator,
+        &first.op_preconditions,
+        &first.ass_effects,
+    )?;
+
+    for skeleton in skeletons {
+        debug_assert_eq!(skeleton.ass_effects, first.ass_effects);
+        debug_assert_eq!(skeleton.op_preconditions, first.op_preconditions);
+        for trans in &transitions {
+            if let Some(candidate) = build_candidate_from_transition(skeleton, trans) {
+                finalizer.push_candidate(&candidate);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[allow(unused)]
@@ -539,13 +615,14 @@ impl AbstractOperatorGenerator {
         &mut self,
         task: &dyn AbstractNumericTask,
     ) -> Result<Vec<AbstractOperator>> {
-        let mut candidates: Vec<AbstractOperatorCandidate> = Vec::new();
+        let mut finalizer =
+            AbstractOperatorFinalizer::new(self.combine_labels, &self.hash_multipliers);
         for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
             let skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
-            candidates.extend(materialize_skeletons(task, self, &skeletons)?);
+            materialize_skeletons_into(task, self, &skeletons, &mut finalizer)?;
         }
 
-        Ok(self.finalize_candidates(candidates))
+        Ok(finalizer.into_operators())
     }
 
     pub fn build_abstract_operators_with_cache(
@@ -665,13 +742,6 @@ impl AbstractOperatorGenerator {
             }
         }
         dependencies
-    }
-
-    fn finalize_candidates(
-        &self,
-        candidates: Vec<AbstractOperatorCandidate>,
-    ) -> Vec<AbstractOperator> {
-        self.finalize_candidate_refs(candidates.iter())
     }
 
     fn finalize_candidate_refs<'a>(
@@ -1081,28 +1151,36 @@ fn compute_hash_effects_with_preconditions(
         let effs = &effects_by_var[v];
         if let Some(eff) = effs.first() {
             let rhs = eff.var_id();
-            let rhs_parts = generator
+            let rhs_partitions = generator
                 .partitions
                 .partitions(rhs)
-                .map(|s| s.len())
                 .ok_or_else(|| anyhow!("missing partitions for rhs numeric var {rhs}"))?;
+            let rhs_value = task
+                .get_initial_numeric_state_values()
+                .get(rhs)
+                .copied()
+                .ok_or_else(|| anyhow!("missing initial value for rhs numeric var {rhs}"))?;
+            let rhs_part =
+                utils::partition_for_value(rhs_partitions, rhs_value).ok_or_else(|| {
+                    anyhow!(
+                        "constant RHS value {rhs_value} is outside partitions for numeric var {rhs}"
+                    )
+                })?;
+            let rhs_iv = generator
+                .partitions
+                .partition_interval(rhs, rhs_part)
+                .with_context(|| {
+                    format!("missing partition interval for rhs var {rhs} part {rhs_part}")
+                })?;
 
             let mut pairs: HashSet<(usize, usize)> = HashSet::new();
             for src in 0..num_parts {
-                for rhs_part in 0..rhs_parts {
-                    let rhs_iv = generator
+                let targets =
+                    generator
                         .partitions
-                        .partition_interval(rhs, rhs_part)
-                        .with_context(|| {
-                            format!("missing partition interval for rhs var {rhs} part {rhs_part}")
-                        })?;
-                    let targets =
-                        generator
-                            .partitions
-                            .reachable_partitions(v, src, eff.operation(), rhs_iv);
-                    for tgt in targets {
-                        pairs.insert((src, tgt));
-                    }
+                        .reachable_partitions(v, src, eff.operation(), rhs_iv);
+                for tgt in targets {
+                    pairs.insert((src, tgt));
                 }
             }
             let mut transitions: Vec<(usize, usize)> = pairs.into_iter().collect();
