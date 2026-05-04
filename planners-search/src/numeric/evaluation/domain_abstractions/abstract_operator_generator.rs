@@ -1122,13 +1122,6 @@ fn compute_hash_effects_with_preconditions(
         affected_numeric_vars.insert(v);
     }
 
-    let relevant_numeric_vars = relevant_numeric_vars_for_operator(
-        task,
-        generator,
-        op_preconditions,
-        &affected_numeric_vars,
-    )?;
-
     let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
     for v in 0..num_numeric_vars {
         ensure!(
@@ -1144,43 +1137,31 @@ fn compute_hash_effects_with_preconditions(
         if num_parts <= 1 {
             continue;
         }
-        if !relevant_numeric_vars.contains(&v) {
-            continue;
-        }
-
         let effs = &effects_by_var[v];
         if let Some(eff) = effs.first() {
             let rhs = eff.var_id();
-            let rhs_partitions = generator
+            let rhs_parts = generator
                 .partitions
                 .partitions(rhs)
+                .map(|partitions| partitions.len())
                 .ok_or_else(|| anyhow!("missing partitions for rhs numeric var {rhs}"))?;
-            let rhs_value = task
-                .get_initial_numeric_state_values()
-                .get(rhs)
-                .copied()
-                .ok_or_else(|| anyhow!("missing initial value for rhs numeric var {rhs}"))?;
-            let rhs_part =
-                utils::partition_for_value(rhs_partitions, rhs_value).ok_or_else(|| {
-                    anyhow!(
-                        "constant RHS value {rhs_value} is outside partitions for numeric var {rhs}"
-                    )
-                })?;
-            let rhs_iv = generator
-                .partitions
-                .partition_interval(rhs, rhs_part)
-                .with_context(|| {
-                    format!("missing partition interval for rhs var {rhs} part {rhs_part}")
-                })?;
 
             let mut pairs: HashSet<(usize, usize)> = HashSet::new();
             for src in 0..num_parts {
-                let targets =
-                    generator
+                for rhs_part in 0..rhs_parts {
+                    let rhs_iv = generator
                         .partitions
-                        .reachable_partitions(v, src, eff.operation(), rhs_iv);
-                for tgt in targets {
-                    pairs.insert((src, tgt));
+                        .partition_interval(rhs, rhs_part)
+                        .with_context(|| {
+                            format!("missing partition interval for rhs var {rhs} part {rhs_part}")
+                        })?;
+                    let targets =
+                        generator
+                            .partitions
+                            .reachable_partitions(v, src, eff.operation(), rhs_iv);
+                    for tgt in targets {
+                        pairs.insert((src, tgt));
+                    }
                 }
             }
             let mut transitions: Vec<(usize, usize)> = pairs.into_iter().collect();
@@ -1283,45 +1264,6 @@ fn compute_hash_effects_with_preconditions(
     Ok(out)
 }
 
-fn relevant_numeric_vars_for_operator(
-    task: &dyn AbstractNumericTask,
-    generator: &AbstractOperatorGenerator,
-    op_preconditions: &[ExplicitFact],
-    affected_numeric_vars: &HashSet<usize>,
-) -> Result<HashSet<usize>> {
-    let mut relevant = affected_numeric_vars.clone();
-
-    for pre in op_preconditions {
-        for tree in &generator.comparison_trees {
-            if tree.affected_var_id != pre.var {
-                continue;
-            }
-            relevant.extend(tree.regular_numeric_var_dependencies(task));
-        }
-    }
-
-    for tree in &generator.comparison_trees {
-        let deps = tree.regular_numeric_var_dependencies(task);
-        if deps
-            .iter()
-            .any(|var_id| affected_numeric_vars.contains(var_id))
-        {
-            relevant.extend(deps);
-        }
-    }
-
-    relevant.retain(|&var_id| {
-        var_id < generator.numeric_domain_sizes.len()
-            && generator.numeric_domain_sizes[var_id] > 1
-            && task
-                .numeric_variables()
-                .get(var_id)
-                .is_some_and(|var| var.get_type() != &NumericType::Derived)
-    });
-
-    Ok(relevant)
-}
-
 fn prepare_comparison_tree_inputs_for_combo(
     task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
@@ -1334,7 +1276,8 @@ fn prepare_comparison_tree_inputs_for_combo(
 
     for (var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
         if numeric_var.get_type() == &NumericType::Constant {
-            numeric_intervals[var_id] = Interval::singleton(initial_numeric_values[var_id]);
+            numeric_intervals[var_id] =
+                Interval::singleton(float_tolerance::canonicalize(initial_numeric_values[var_id]));
         } else if numeric_var.get_type() != &NumericType::Derived {
             numeric_intervals[var_id] = Interval::unbounded();
         }

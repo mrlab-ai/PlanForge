@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericType};
+use planners_sas::numeric::utils::float_tolerance;
 
 use super::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstraction::NumericPartitions;
@@ -10,7 +11,8 @@ pub fn seed_numeric_intervals_from_initial_state(task: &dyn AbstractNumericTask)
         vec![Interval::unbounded(); task.numeric_variables().len()];
     for (i, v) in task.numeric_variables().iter().enumerate() {
         if v.get_type() == &NumericType::Constant {
-            numeric_intervals[i] = Interval::singleton(initial_numeric_values[i]);
+            numeric_intervals[i] =
+                Interval::singleton(float_tolerance::canonicalize(initial_numeric_values[i]));
         }
     }
     numeric_intervals
@@ -31,7 +33,8 @@ pub fn prepare_comparison_tree_inputs_from_initial_state(
 ) -> Result<Vec<Interval>> {
     let initial_numeric_values = task.get_initial_numeric_state_values();
     let mut numeric_intervals: Vec<Interval> = Vec::with_capacity(initial_numeric_values.len());
-    for (numeric_var_id, &value) in initial_numeric_values.iter().enumerate() {
+    for (numeric_var_id, &raw_value) in initial_numeric_values.iter().enumerate() {
+        let value = float_tolerance::canonicalize(raw_value);
         ensure!(
             value.is_finite() && !value.is_nan(),
             "initial numeric value for var {numeric_var_id} must be finite, got {value}"
@@ -63,7 +66,7 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state(
     for (numeric_var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
         match numeric_var.get_type() {
             NumericType::Constant => {
-                let value = initial_numeric_values[numeric_var_id];
+                let value = float_tolerance::canonicalize(initial_numeric_values[numeric_var_id]);
                 ensure!(
                     value.is_finite() && !value.is_nan(),
                     "constant numeric value for var {numeric_var_id} must be finite, got {value}"

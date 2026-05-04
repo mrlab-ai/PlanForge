@@ -4,6 +4,7 @@ use std::fmt::Write as _;
 
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planners_sas::numeric::utils::float_tolerance;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use tracing::debug;
 
@@ -220,8 +221,35 @@ pub(crate) fn fmt_f64_compact(v: f64) -> String {
     if s == "-0" { "0".to_string() } else { s }
 }
 
+#[inline]
+fn interval_contains_value_tolerant(iv: &Interval, value: f64) -> bool {
+    if value.is_nan() || iv.is_empty() {
+        return false;
+    }
+
+    let lower_ok = if iv.lower == f64::NEG_INFINITY {
+        true
+    } else {
+        let tolerance = float_tolerance::tolerance(value, iv.lower);
+        value > iv.lower + tolerance
+            || (iv.lower_closed && (value - iv.lower).abs() <= tolerance)
+    };
+
+    let upper_ok = if iv.upper == f64::INFINITY {
+        true
+    } else {
+        let tolerance = float_tolerance::tolerance(value, iv.upper);
+        value < iv.upper - tolerance
+            || (iv.upper_closed && (value - iv.upper).abs() <= tolerance)
+    };
+
+    lower_ok && upper_ok
+}
+
 pub(crate) fn partition_for_value(partitions: &[Interval], value: f64) -> Option<usize> {
-    partitions.iter().position(|iv| iv.contains(value))
+    partitions
+        .iter()
+        .position(|iv| interval_contains_value_tolerant(iv, value))
 }
 
 #[allow(unused)]

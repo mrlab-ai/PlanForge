@@ -11,6 +11,7 @@ use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planners_sas::numeric::utils::float_tolerance;
 
 use super::abstract_operator_generator::{
     AbstractOperator, AbstractOperatorGenerator, DomainMapping, IncrementalAbstractOperatorCache,
@@ -1391,7 +1392,7 @@ impl DomainAbstractionFactory {
         for num_var_id in 0..numeric_domain_sizes.len() {
             let abs_var = num_props + num_var_id;
             let mult = hash_multipliers[abs_var];
-            let val = num_init[num_var_id];
+            let val = float_tolerance::canonicalize(num_init[num_var_id]);
             ensure!(
                 val.is_finite() && !val.is_nan(),
                 "initial numeric value for var {num_var_id} must be finite, got {val}"
