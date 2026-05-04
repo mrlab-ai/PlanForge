@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::{collections::HashSet, fmt};
 
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
+use planners_sas::numeric::utils::float_tolerance;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
@@ -79,7 +80,7 @@ fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
             1,
             nf.numeric_var_id,
             0,
-            nf.value.to_bits(),
+            float_tolerance::canonical_bits(nf.value),
             nf.include_in_lower,
         ),
     }

@@ -10,6 +10,7 @@ use ordered_float::NotNan;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
+use planners_sas::numeric::utils::float_tolerance;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
@@ -43,7 +44,7 @@ fn hash_state_components(propositional: &[usize], numeric: &[f64]) -> u64 {
     }
     hash = hash_bytes(hash, &(propositional.len() as u64).to_le_bytes());
     for value in numeric {
-        hash = hash_bytes(hash, &value.to_bits().to_le_bytes());
+        hash = hash_bytes(hash, &float_tolerance::canonical_bits(*value).to_le_bytes());
     }
     hash_bytes(hash, &(numeric.len() as u64).to_le_bytes())
 }
@@ -62,7 +63,10 @@ fn hash_pattern_components(
     }
     hash = hash_bytes(hash, &(pattern_regular_ids.len() as u64).to_le_bytes());
     for &var_id in pattern_numeric_ids {
-        hash = hash_bytes(hash, &numeric[var_id].to_bits().to_le_bytes());
+        hash = hash_bytes(
+            hash,
+            &float_tolerance::canonical_bits(numeric[var_id]).to_le_bytes(),
+        );
     }
     hash_bytes(hash, &(pattern_numeric_ids.len() as u64).to_le_bytes())
 }
@@ -578,7 +582,7 @@ impl<'task> PatternDatabase<'task> {
                             .numeric
                             .iter()
                             .zip(numeric.iter())
-                            .all(|(lhs, rhs)| lhs.to_bits() == rhs.to_bits())
+                            .all(|(lhs, rhs)| float_tolerance::equal(*lhs, *rhs))
                 })
                 .filter_map(|state_id| self.distances.get(state_id).copied())
                 .min_by(|lhs, rhs| lhs.total_cmp(rhs));
@@ -609,8 +613,13 @@ impl<'task> PatternDatabase<'task> {
                         .iter()
                         .enumerate()
                         .all(|(pattern_index, &var_id)| {
-                            state.numeric.get(var_id).map(|value| value.to_bits())
-                                == numeric.get(pattern_index).map(|value| value.to_bits())
+                            state
+                                .numeric
+                                .get(var_id)
+                                .map(|value| float_tolerance::canonical_bits(*value))
+                                == numeric
+                                    .get(pattern_index)
+                                    .map(|value| float_tolerance::canonical_bits(*value))
                         })
             })
             .filter_map(|state_id| self.distances.get(state_id).copied())
@@ -706,7 +715,7 @@ impl<'task> PatternDatabase<'task> {
         bins.resize(1 + numeric.len(), 0);
         bins[0] = prop_hash as u64;
         for (numeric_index, value) in numeric.iter().enumerate() {
-            bins[numeric_index + 1] = value.to_bits();
+            bins[numeric_index + 1] = float_tolerance::canonical_bits(*value);
         }
         self.lookup_compact_numeric_distance(&bins)
     }
@@ -723,7 +732,8 @@ impl<'task> PatternDatabase<'task> {
         for (numeric_index, &projected_numeric_id) in
             self.task.pattern_numeric_projected_ids().iter().enumerate()
         {
-            bins[numeric_index + 1] = numeric[projected_numeric_id].to_bits();
+            bins[numeric_index + 1] =
+                float_tolerance::canonical_bits(numeric[projected_numeric_id]);
         }
         self.lookup_compact_numeric_distance(&bins)
     }
@@ -748,8 +758,11 @@ impl<'task> PatternDatabase<'task> {
         }
         let prop_len = propositional.len();
         for (numeric_index, value) in numeric.iter().enumerate() {
-            self.pattern_lookup_packer
-                .set(bins, prop_len + numeric_index, value.to_bits());
+            self.pattern_lookup_packer.set(
+                bins,
+                prop_len + numeric_index,
+                self.pattern_lookup_packer.pack_double(*value),
+            );
         }
 
         Some(())
@@ -786,7 +799,8 @@ impl<'task> PatternDatabase<'task> {
             self.pattern_lookup_packer.set(
                 bins,
                 prop_len + numeric_index,
-                numeric[projected_numeric_id].to_bits(),
+                self.pattern_lookup_packer
+                    .pack_double(numeric[projected_numeric_id]),
             );
         }
 
@@ -1037,7 +1051,7 @@ impl<'task> PatternDatabase<'task> {
                         .numeric
                         .iter()
                         .zip(numeric.iter())
-                        .all(|(lhs, rhs)| lhs.to_bits() == rhs.to_bits())
+                        .all(|(lhs, rhs)| float_tolerance::equal(*lhs, *rhs))
             })
     }
 
@@ -1484,7 +1498,7 @@ impl<'task> PatternDatabase<'task> {
                 for (numeric_index, &projected_numeric_id) in pattern_numeric_ids.iter().enumerate()
                 {
                     compact_numeric_bins[numeric_index + 1] =
-                        state.numeric[projected_numeric_id].to_bits();
+                        float_tolerance::canonical_bits(state.numeric[projected_numeric_id]);
                 }
                 let distance = self.distances[state_id];
                 self.compact_numeric_registry
@@ -1504,7 +1518,8 @@ impl<'task> PatternDatabase<'task> {
                 self.pattern_lookup_packer.set(
                     &mut packed_bins,
                     prop_len + numeric_index,
-                    state.numeric[projected_numeric_id].to_bits(),
+                    self.pattern_lookup_packer
+                        .pack_double(state.numeric[projected_numeric_id]),
                 );
             }
             let distance = self.distances[state_id];

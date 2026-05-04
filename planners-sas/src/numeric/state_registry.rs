@@ -22,6 +22,7 @@ mod tests;
 use crate::numeric::axioms::AxiomEvaluator;
 use crate::numeric::numeric_task::{AbstractNumericTask, AssignmentOperation, Operator};
 use crate::numeric::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
+use crate::numeric::utils::float_tolerance;
 use crate::numeric::utils::per_state_info::PerStateInformation;
 use crate::numeric::utils::segmented_vector2::SegmentedArrayVector;
 use crate::numeric::{numeric_task::NumericType, utils::int_packer::IntDoublePacker};
@@ -450,11 +451,12 @@ impl<'a> StateRegistry<'a> {
             match numeric_var.get_type() {
                 NumericType::Cost => {
                     self.numeric_indices[i] = Some(cost_variables.len());
-                    cost_variables.push(value);
+                    cost_variables.push(float_tolerance::canonicalize(value));
                 }
                 NumericType::Constant => {
                     self.numeric_indices[i] = Some(constant_index);
-                    self.numeric_constants.push(value);
+                    self.numeric_constants
+                        .push(float_tolerance::canonicalize(value));
                     constant_index += 1;
                 }
                 NumericType::Derived => {
@@ -479,6 +481,7 @@ impl<'a> StateRegistry<'a> {
         buffer: &mut [u64],
         numeric_state: &mut [f64],
     ) -> Result<(), StateInsertError> {
+        canonicalize_numeric_values(numeric_state);
         self.axiom_evaluator
             .evaluate_arithmetic_axioms(numeric_state)
             .map_err(|e| StateInsertError {
@@ -613,7 +616,7 @@ impl<'a> StateRegistry<'a> {
                     if self.numeric_indices[i].is_none() {
                         self.numeric_indices[i] = Some(cost_variables.len());
                     }
-                    cost_variables.push(value);
+                    cost_variables.push(float_tolerance::canonicalize(value));
                 }
                 NumericType::Regular => {
                     // Initialize the index if not set.
@@ -996,6 +999,7 @@ impl<'a> StateRegistry<'a> {
                 effect.operation(),
                 assignment_value,
             );
+            let result = float_tolerance::canonicalize(result);
 
             match affected_var.get_type() {
                 NumericType::Cost => {
@@ -1253,8 +1257,15 @@ impl<'a> StateRegistry<'a> {
     ///
     /// This corresponds to the C++ g_cost_information[state] = values assignment.
     /// It uses `RefCell` for interior mutability to resolve borrowing conflicts.
-    fn set_cost_information(&self, state: &ConcreteState, values: Vec<f64>) {
+    fn set_cost_information(&self, state: &ConcreteState, mut values: Vec<f64>) {
+        canonicalize_numeric_values(&mut values);
         self.cost_info.borrow_mut().set(state, self, values);
+    }
+}
+
+fn canonicalize_numeric_values(values: &mut [f64]) {
+    for value in values {
+        *value = float_tolerance::canonicalize(*value);
     }
 }
 

@@ -12,6 +12,7 @@ use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, NumericType, Operator,
     metric_operator_cost_from_initial_values,
 };
+use planners_sas::numeric::utils::float_tolerance;
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
@@ -177,7 +178,7 @@ impl AbstractOperatorCandidate {
             prev_pairs: self.prev_pairs.iter().map(|f| (f.var, f.value)).collect(),
             pre_pairs: self.pre_pairs.iter().map(|f| (f.var, f.value)).collect(),
             eff_pairs: self.eff_pairs.iter().map(|f| (f.var, f.value)).collect(),
-            cost_bits: self.cost.to_bits(),
+            cost_bits: float_tolerance::canonical_bits(self.cost),
         }
     }
 }

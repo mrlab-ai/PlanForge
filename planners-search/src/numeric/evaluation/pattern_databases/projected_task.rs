@@ -15,6 +15,7 @@ use planners_sas::numeric::numeric_task::{
     metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
+use planners_sas::numeric::utils::float_tolerance;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
 use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
@@ -528,8 +529,9 @@ impl PatternLookupProjection {
         bins.clear();
         bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
         for (numeric_index, lookup) in self.pattern_numeric_lookup.iter().enumerate() {
-            bins[numeric_index + 1] =
-                Self::numeric_value_from_expanded(lookup, expanded_numeric_values)?.to_bits();
+            bins[numeric_index + 1] = float_tolerance::canonical_bits(
+                Self::numeric_value_from_expanded(lookup, expanded_numeric_values)?,
+            );
         }
         Ok(())
     }
@@ -545,11 +547,11 @@ impl PatternLookupProjection {
         bins.clear();
         bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
         for (numeric_index, lookup) in self.pattern_numeric_lookup.iter().enumerate() {
-            bins[numeric_index + 1] = match *lookup {
+            let value = match *lookup {
                 ProjectedNumericLookup::Constant(value) => value,
                 ProjectedNumericLookup::Expanded(index) => expanded_numeric_values[index],
-            }
-            .to_bits();
+            };
+            bins[numeric_index + 1] = float_tolerance::canonical_bits(value);
         }
     }
 
@@ -593,7 +595,10 @@ impl PatternLookupProjection {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
-                Self::numeric_value_from_expanded(lookup, expanded_numeric_values)?.to_bits(),
+                packer.pack_double(Self::numeric_value_from_expanded(
+                    lookup,
+                    expanded_numeric_values,
+                )?),
             );
         }
 
@@ -1307,11 +1312,10 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
-                self.projected_numeric_value_from_expanded_numeric(
+                packer.pack_double(self.projected_numeric_value_from_expanded_numeric(
                     projected_numeric_id,
                     expanded_numeric_values,
-                )?
-                .to_bits(),
+                )?),
             );
         }
 
@@ -1343,11 +1347,10 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 numeric_index + 1,
-                self.projected_numeric_value_from_expanded_numeric(
+                packer.pack_double(self.projected_numeric_value_from_expanded_numeric(
                     projected_numeric_id,
                     expanded_numeric_values,
-                )?
-                .to_bits(),
+                )?),
             );
         }
 
@@ -1374,12 +1377,12 @@ impl<'task> ProjectedTask<'task> {
         for (numeric_index, &projected_numeric_id) in
             self.pattern_numeric_projected_ids.iter().enumerate()
         {
-            bins[numeric_index + 1] = self
-                .projected_numeric_value_from_expanded_numeric(
+            bins[numeric_index + 1] = float_tolerance::canonical_bits(
+                self.projected_numeric_value_from_expanded_numeric(
                     projected_numeric_id,
                     expanded_numeric_values,
-                )?
-                .to_bits();
+                )?,
+            );
         }
 
         Ok(())
@@ -1701,13 +1704,12 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
-                self.projected_numeric_value_from_concrete_state(
+                packer.pack_double(self.projected_numeric_value_from_concrete_state(
                     projected_numeric_id,
                     state,
                     registry,
                     numeric_value_cache,
-                )?
-                .to_bits(),
+                )?),
             );
         }
 
@@ -1741,13 +1743,12 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 numeric_index + 1,
-                self.projected_numeric_value_from_concrete_state(
+                packer.pack_double(self.projected_numeric_value_from_concrete_state(
                     projected_numeric_id,
                     state,
                     registry,
                     numeric_value_cache,
-                )?
-                .to_bits(),
+                )?),
             );
         }
 
@@ -1776,14 +1777,13 @@ impl<'task> ProjectedTask<'task> {
         for (numeric_index, &projected_numeric_id) in
             self.pattern_numeric_projected_ids.iter().enumerate()
         {
-            bins[numeric_index + 1] = self
-                .projected_numeric_value_from_concrete_state(
+            bins[numeric_index + 1] =
+                float_tolerance::canonical_bits(self.projected_numeric_value_from_concrete_state(
                     projected_numeric_id,
                     state,
                     registry,
                     numeric_value_cache,
-                )?
-                .to_bits();
+                )?);
         }
 
         Ok(())
@@ -2675,8 +2675,7 @@ fn collect_cpp_like_projected_goal_fact(
             helper_id_by_source_numeric_var,
         )?
         .is_some_and(|numeric_var_id| pattern_numeric.contains(&numeric_var_id));
-        if comparison_is_in_pattern || numeric_goal_is_in_pattern
-        {
+        if comparison_is_in_pattern || numeric_goal_is_in_pattern {
             push_unique_mapping(
                 fact.var,
                 projected_var_to_original,

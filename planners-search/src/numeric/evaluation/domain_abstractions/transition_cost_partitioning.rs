@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 
 use anyhow::{Context, Result, ensure};
 use planners_sas::numeric::numeric_task::ExplicitFact;
+use planners_sas::numeric::utils::float_tolerance;
 
 use super::comparison_expression::Interval;
 
@@ -368,8 +369,8 @@ fn state_region_key(region: &StateRegion) -> StateRegionKey {
             .numeric
             .iter()
             .map(|interval| IntervalKey {
-                lower_bits: interval.lower.to_bits(),
-                upper_bits: interval.upper.to_bits(),
+                lower_bits: float_tolerance::canonical_bits(interval.lower),
+                upper_bits: float_tolerance::canonical_bits(interval.upper),
                 lower_closed: interval.lower_closed,
                 upper_closed: interval.upper_closed,
             })

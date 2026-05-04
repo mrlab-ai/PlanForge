@@ -6,6 +6,7 @@ use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, Metric,
     NumericRootTask, NumericType, NumericVariable, Operator,
 };
+use planners_sas::numeric::utils::float_tolerance;
 
 use super::comparison_expression::ComparisonTree;
 
@@ -421,7 +422,7 @@ impl ConstantPool {
         transformed_to_expr: &mut Vec<AffineExpression>,
         num_original_numeric: usize,
     ) -> usize {
-        let bits = value.to_bits();
+        let bits = float_tolerance::canonical_bits(value);
         if let Some(&id) = self.by_bits.get(&bits) {
             return id;
         }

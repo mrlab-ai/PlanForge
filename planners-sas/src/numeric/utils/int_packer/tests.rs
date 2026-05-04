@@ -34,6 +34,25 @@ fn pack_and_unpack_doubles() {
         packer.set(buffer, double_var_id, packed);
 
         let unpacked = packer.get_double(buffer, double_var_id);
-        assert_eq!(unpacked, double_value);
+        assert!(crate::numeric::utils::float_tolerance::equal(
+            unpacked,
+            double_value
+        ));
     }
+}
+
+#[test]
+fn pack_double_canonicalizes_close_values() {
+    let packer = setup();
+
+    assert_eq!(packer.pack_double(0.1 + 0.2), packer.pack_double(0.3));
+}
+
+#[test]
+fn packer_handles_single_value_domains() {
+    let packer = IntDoublePacker::new(&[1, u64::MAX]);
+    let mut buffer = vec![0; packer.num_bins()];
+
+    packer.set(&mut buffer, 0, 0);
+    assert_eq!(packer.get(&buffer, 0), 0);
 }
