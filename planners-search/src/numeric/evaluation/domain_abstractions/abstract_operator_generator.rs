@@ -1030,13 +1030,14 @@ fn compute_hash_effects_with_preconditions(
 
     let num_props = generator.domain_sizes.len();
 
-    // Enumerate transitions per refined numeric variable.
-    // IMPORTANT: numeric-fd also enumerates identity transitions for refined-but-unaffected
-    // numeric vars (frame-like constraints). Without this, abstract operators can become
-    // overly optimistic (e.g., allowing `pour` regardless of x/y partitions).
+    // Enumerate transitions only for numeric variables whose partition value is
+    // needed by this operator. Other refined numeric variables are implicit
+    // frame variables: they are unchanged because the hash effect has no delta
+    // on their dimensions.
     let num_numeric_vars = generator.numeric_domain_sizes.len();
     let mut effects_by_var: Vec<Vec<&planners_sas::numeric::numeric_task::AssignmentEffect>> =
         vec![Vec::new(); num_numeric_vars];
+    let mut affected_numeric_vars: HashSet<usize> = HashSet::new();
     for eff in ass_effects {
         let v = eff.affected_var_id();
         debug_assert!(
@@ -1048,10 +1049,17 @@ fn compute_hash_effects_with_preconditions(
             continue;
         }
         effects_by_var[v].push(eff);
+        affected_numeric_vars.insert(v);
     }
 
+    let relevant_numeric_vars = relevant_numeric_vars_for_operator(
+        task,
+        generator,
+        op_preconditions,
+        &affected_numeric_vars,
+    )?;
+
     let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
-    let mut affected_numeric_vars: HashSet<usize> = HashSet::new();
     for v in 0..num_numeric_vars {
         ensure!(
             v < task.numeric_variables().len(),
@@ -1066,10 +1074,12 @@ fn compute_hash_effects_with_preconditions(
         if num_parts <= 1 {
             continue;
         }
+        if !relevant_numeric_vars.contains(&v) {
+            continue;
+        }
 
         let effs = &effects_by_var[v];
         if let Some(eff) = effs.first() {
-            affected_numeric_vars.insert(v);
             let rhs = eff.var_id();
             let rhs_parts = generator
                 .partitions
@@ -1195,6 +1205,45 @@ fn compute_hash_effects_with_preconditions(
     Ok(out)
 }
 
+fn relevant_numeric_vars_for_operator(
+    task: &dyn AbstractNumericTask,
+    generator: &AbstractOperatorGenerator,
+    op_preconditions: &[ExplicitFact],
+    affected_numeric_vars: &HashSet<usize>,
+) -> Result<HashSet<usize>> {
+    let mut relevant = affected_numeric_vars.clone();
+
+    for pre in op_preconditions {
+        for tree in &generator.comparison_trees {
+            if tree.affected_var_id != pre.var {
+                continue;
+            }
+            relevant.extend(tree.regular_numeric_var_dependencies(task));
+        }
+    }
+
+    for tree in &generator.comparison_trees {
+        let deps = tree.regular_numeric_var_dependencies(task);
+        if deps
+            .iter()
+            .any(|var_id| affected_numeric_vars.contains(var_id))
+        {
+            relevant.extend(deps);
+        }
+    }
+
+    relevant.retain(|&var_id| {
+        var_id < generator.numeric_domain_sizes.len()
+            && generator.numeric_domain_sizes[var_id] > 1
+            && task
+                .numeric_variables()
+                .get(var_id)
+                .is_some_and(|var| var.get_type() != &NumericType::Derived)
+    });
+
+    Ok(relevant)
+}
+
 fn prepare_comparison_tree_inputs_for_combo(
     task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
@@ -1208,14 +1257,7 @@ fn prepare_comparison_tree_inputs_for_combo(
     for (var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
         if numeric_var.get_type() == &NumericType::Constant {
             numeric_intervals[var_id] = Interval::singleton(initial_numeric_values[var_id]);
-        } else if numeric_var.get_type() != &NumericType::Derived
-            && generator
-                .numeric_domain_sizes
-                .get(var_id)
-                .copied()
-                .unwrap_or(0)
-                == 1
-        {
+        } else if numeric_var.get_type() != &NumericType::Derived {
             numeric_intervals[var_id] = Interval::unbounded();
         }
     }

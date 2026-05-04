@@ -50,7 +50,7 @@ fn ensure_online_scp_deadline(deadline: Option<Instant>) -> Result<()> {
 
 #[derive(Debug, Clone, Default)]
 struct MatchTreeNode {
-    value_children: HashMap<usize, Box<MatchTreeNode>>,
+    value_children: Vec<Option<Box<MatchTreeNode>>>,
     wildcard_child: Option<Box<MatchTreeNode>>,
     ops: Vec<usize>,
 }
@@ -64,6 +64,28 @@ struct MatchTree {
     root: MatchTreeNode,
 }
 
+fn domain_size_for_var(
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
+    var: usize,
+) -> usize {
+    if var < domain_sizes.len() {
+        domain_sizes.get(var).copied().unwrap_or(0)
+    } else {
+        numeric_domain_sizes
+            .get(var - domain_sizes.len())
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+fn fact_value_for_var(facts: &[ExplicitFact], var: usize) -> Option<usize> {
+    facts
+        .binary_search_by_key(&var, |fact| fact.var)
+        .ok()
+        .map(|index| facts[index].value)
+}
+
 impl MatchTree {
     fn build(
         domain_sizes: &[usize],
@@ -72,23 +94,29 @@ impl MatchTree {
         operators: &[AbstractOperator],
         _comparison_var_ids: &[usize],
     ) -> Self {
-        let num_props = domain_sizes.len();
-        let mut vars_seen: HashSet<usize> = HashSet::new();
+        let total_vars = domain_sizes.len() + numeric_domain_sizes.len();
+        let mut var_counts = vec![0usize; total_vars];
         for op in operators {
             for f in op.regression_preconditions.iter() {
-                let domain_size = if f.var < num_props {
-                    domain_sizes.get(f.var).copied().unwrap_or(0)
-                } else {
-                    let numeric_var = f.var - num_props;
-                    numeric_domain_sizes.get(numeric_var).copied().unwrap_or(0)
-                };
+                if f.var >= total_vars {
+                    continue;
+                }
+                let domain_size = domain_size_for_var(domain_sizes, numeric_domain_sizes, f.var);
                 if domain_size > 1 {
-                    vars_seen.insert(f.var);
+                    var_counts[f.var] += 1;
                 }
             }
         }
-        let mut var_order: Vec<usize> = vars_seen.into_iter().collect();
-        var_order.sort_unstable();
+        let mut var_order: Vec<usize> = var_counts
+            .iter()
+            .enumerate()
+            .filter_map(|(var, &count)| (count > 0).then_some(var))
+            .collect();
+        var_order.sort_by(|&left, &right| {
+            var_counts[right]
+                .cmp(&var_counts[left])
+                .then_with(|| left.cmp(&right))
+        });
 
         let mut tree = Self {
             var_order,
@@ -99,22 +127,20 @@ impl MatchTree {
         };
 
         for (op_id, op) in operators.iter().enumerate() {
-            let mut conds: HashMap<usize, usize> = HashMap::new();
-            for f in op.regression_preconditions.iter() {
-                conds.insert(f.var, f.value);
-            }
-            tree.insert(op_id, &conds);
+            tree.insert(op_id, &op.regression_preconditions);
         }
 
         tree
     }
 
-    fn insert(&mut self, op_id: usize, conds: &HashMap<usize, usize>) {
+    fn insert(&mut self, op_id: usize, conds: &[ExplicitFact]) {
         fn insert_rec(
             node: &mut MatchTreeNode,
             depth: usize,
             var_order: &[usize],
-            conds: &HashMap<usize, usize>,
+            conds: &[ExplicitFact],
+            domain_sizes: &[usize],
+            numeric_domain_sizes: &[usize],
             op_id: usize,
         ) {
             if depth == var_order.len() {
@@ -122,47 +148,74 @@ impl MatchTree {
                 return;
             }
             let var = var_order[depth];
-            if let Some(&val) = conds.get(&var) {
-                let child = node
-                    .value_children
-                    .entry(val)
-                    .or_insert_with(|| Box::new(MatchTreeNode::default()));
-                insert_rec(child.as_mut(), depth + 1, var_order, conds, op_id);
+            if let Some(val) = fact_value_for_var(conds, var) {
+                let domain_size = domain_size_for_var(domain_sizes, numeric_domain_sizes, var);
+                if node.value_children.len() < domain_size {
+                    node.value_children.resize_with(domain_size, || None);
+                }
+                let child = node.value_children[val]
+                    .get_or_insert_with(|| Box::new(MatchTreeNode::default()));
+                insert_rec(
+                    child.as_mut(),
+                    depth + 1,
+                    var_order,
+                    conds,
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    op_id,
+                );
             } else {
                 let child = node
                     .wildcard_child
                     .get_or_insert_with(|| Box::new(MatchTreeNode::default()));
-                insert_rec(child.as_mut(), depth + 1, var_order, conds, op_id);
+                insert_rec(
+                    child.as_mut(),
+                    depth + 1,
+                    var_order,
+                    conds,
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    op_id,
+                );
             }
         }
 
-        insert_rec(&mut self.root, 0, &self.var_order, conds, op_id);
+        insert_rec(
+            &mut self.root,
+            0,
+            &self.var_order,
+            conds,
+            &self.domain_sizes,
+            &self.numeric_domain_sizes,
+            op_id,
+        );
     }
 
     fn get_applicable_operator_ids(&self, state_hash: usize, out: &mut Vec<usize>) {
         out.clear();
-        if self.var_order.is_empty() {
-            out.extend_from_slice(&self.root.ops);
-            return;
-        }
-        let mut stack: Vec<(&MatchTreeNode, usize)> = Vec::new();
-        stack.push((&self.root, 0));
-        while let Some((node, depth)) = stack.pop() {
-            if depth == self.var_order.len() {
-                out.extend_from_slice(&node.ops);
-                continue;
-            }
-            let var = self.var_order[depth];
-            let actual = self.get_var_value(state_hash, var);
-            if let Some(child) = node.wildcard_child.as_deref() {
-                stack.push((child, depth + 1));
-            }
-            if let Some(child) = node.value_children.get(&actual) {
-                stack.push((child.as_ref(), depth + 1));
-            }
-        }
+        self.collect_applicable(&self.root, 0, state_hash, out);
     }
 
+    fn collect_applicable(
+        &self,
+        node: &MatchTreeNode,
+        depth: usize,
+        state_hash: usize,
+        out: &mut Vec<usize>,
+    ) {
+        if depth == self.var_order.len() {
+            out.extend_from_slice(&node.ops);
+            return;
+        }
+        let var = self.var_order[depth];
+        let actual = self.get_var_value(state_hash, var);
+        if let Some(child) = node.value_children.get(actual).and_then(Option::as_deref) {
+            self.collect_applicable(child, depth + 1, state_hash, out);
+        }
+        if let Some(child) = node.wildcard_child.as_deref() {
+            self.collect_applicable(child, depth + 1, state_hash, out);
+        }
+    }
     fn get_var_value(&self, state_hash: usize, var: usize) -> usize {
         let num_props = self.domain_sizes.len();
         debug_assert!(
@@ -648,7 +701,6 @@ impl DomainAbstractionFactory {
             operators,
             &comparison_var_ids,
         );
-
         let (distances, generating_op_ids) = self.compute_distances_and_generating_ops(
             task,
             operators,
@@ -704,6 +756,8 @@ impl DomainAbstractionFactory {
             operators,
             &comparison_var_ids,
         );
+        let comparison_preconditions =
+            comparison_preconditions_by_operator(operators, &comparison_var_ids);
 
         let mut transitions: Vec<AbstractTransition> = Vec::new();
         let mut backward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
@@ -738,7 +792,7 @@ impl DomainAbstractionFactory {
                     continue;
                 }
                 let predecessor_base = predecessor_base_i64 as usize;
-                let fixed_comparisons = get_comparison_preconditions(op, &comparison_var_ids);
+                let fixed_comparisons = &comparison_preconditions[abstract_op_id];
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
                     predecessor_base,
                     task,
@@ -1007,6 +1061,8 @@ impl DomainAbstractionFactory {
             operators,
             &comparison_var_ids,
         );
+        let comparison_preconditions =
+            comparison_preconditions_by_operator(operators, &comparison_var_ids);
 
         let mut applicable_operator_ids = Vec::new();
         for target_hash in 0..num_states {
@@ -1029,7 +1085,7 @@ impl DomainAbstractionFactory {
                 if predecessor_base >= num_states {
                     continue;
                 }
-                let fixed_comparisons = get_comparison_preconditions(op, &comparison_var_ids);
+                let fixed_comparisons = &comparison_preconditions[abstract_op_id];
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
                     predecessor_base,
                     task,
@@ -1403,6 +1459,8 @@ impl DomainAbstractionFactory {
 
         let dist = &table.distances;
         let generating_op = &table.generating_op_ids;
+        let comparison_preconditions =
+            comparison_preconditions_by_operator(operators, comparison_var_ids);
 
         let mut current_hash = table.initial_state_hash;
         if current_hash >= dist.len() || !dist[current_hash].is_finite() {
@@ -1519,7 +1577,7 @@ impl DomainAbstractionFactory {
                 }
                 let base_predecessor =
                     (base_successor as i32).wrapping_add(cand_op.hash_effect) as usize;
-                let fixed_comparisons = get_comparison_preconditions(cand_op, comparison_var_ids);
+                let fixed_comparisons = &comparison_preconditions[cand_op_id];
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
                     base_predecessor,
                     task,
@@ -1638,6 +1696,8 @@ impl DomainAbstractionFactory {
             heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
         }
 
+        let comparison_preconditions =
+            comparison_preconditions_by_operator(operators, comparison_var_ids);
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
         while let Some((Reverse(d), state_hash)) = heap.pop() {
             let d = d.into_inner();
@@ -1670,7 +1730,7 @@ impl DomainAbstractionFactory {
                 //     );
                 //     continue;
                 // }
-                let fixed_comparisons = get_comparison_preconditions(op, comparison_var_ids);
+                let fixed_comparisons = &comparison_preconditions[op_id];
                 let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
                     predecessor_base,
                     task,
@@ -1755,6 +1815,16 @@ fn get_comparison_preconditions(
         }
     }
     out
+}
+
+fn comparison_preconditions_by_operator(
+    operators: &[AbstractOperator],
+    comparison_var_ids: &[usize],
+) -> Vec<Vec<ExplicitFact>> {
+    operators
+        .iter()
+        .map(|op| get_comparison_preconditions(op, comparison_var_ids))
+        .collect()
 }
 
 fn decode_state_to_vectors(
