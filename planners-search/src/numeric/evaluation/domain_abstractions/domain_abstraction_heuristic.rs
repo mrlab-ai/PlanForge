@@ -9,6 +9,7 @@ use crate::numeric::evaluation::heuristic::Heuristic;
 use planners_sas::numeric::numeric_task::Operator;
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 
+use super::abstracted_task::DomainAbstractionTaskProjection;
 use super::comparison_expression::{ComparisonTree, ComparisonTreeNode};
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::utils;
@@ -91,6 +92,10 @@ impl DomainAbstractionHeuristic {
         &self.abstraction
     }
 
+    pub fn task_projection(&self) -> Option<&DomainAbstractionTaskProjection> {
+        self.abstraction.task_projection.as_ref()
+    }
+
     pub fn abstract_state_hash(
         &self,
         eval_state: &EvaluationState<'_, '_>,
@@ -120,6 +125,19 @@ impl DomainAbstractionHeuristic {
         )
     }
 
+    pub fn abstract_state_hash_from_projected_state_values_with_comparisons(
+        &self,
+        prop_values: &[usize],
+        projected_numeric_values: &[f64],
+        comparison_values: &[Option<usize>],
+    ) -> Result<usize, EvaluationError> {
+        self.compute_abstract_hash_from_projected_state_values(
+            prop_values,
+            projected_numeric_values,
+            Some(comparison_values),
+        )
+    }
+
     pub fn fill_comparison_values_from_state_values(
         &self,
         numeric: &[f64],
@@ -127,6 +145,14 @@ impl DomainAbstractionHeuristic {
     ) -> Result<(), EvaluationError> {
         let numeric_values = self.project_numeric_values(numeric)?;
         let numeric_values = numeric_values.as_slice();
+        self.fill_comparison_values_from_projected_state_values(numeric_values, out)
+    }
+
+    pub fn fill_comparison_values_from_projected_state_values(
+        &self,
+        numeric_values: &[f64],
+        out: &mut Vec<Option<usize>>,
+    ) -> Result<(), EvaluationError> {
         if out.len() < self.comparison_tree_by_var.len() {
             out.resize(self.comparison_tree_by_var.len(), None);
         }
@@ -208,7 +234,6 @@ impl DomainAbstractionHeuristic {
         comparison_values: Option<&[Option<usize>]>,
     ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
-        let num_numeric = self.abstraction.factory.numeric_domain_sizes().len();
 
         if prop_values.len() < num_props {
             return Err(EvaluationError::InvalidState(format!(
@@ -219,6 +244,28 @@ impl DomainAbstractionHeuristic {
 
         let numeric_values = self.project_numeric_values(numeric)?;
         let numeric_values = numeric_values.as_slice();
+        self.compute_abstract_hash_from_projected_state_values(
+            prop_values,
+            numeric_values,
+            comparison_values,
+        )
+    }
+
+    fn compute_abstract_hash_from_projected_state_values(
+        &self,
+        prop_values: &[usize],
+        numeric_values: &[f64],
+        comparison_values: Option<&[Option<usize>]>,
+    ) -> Result<usize, EvaluationError> {
+        let num_props = self.abstraction.factory.domain_sizes().len();
+        let num_numeric = self.abstraction.factory.numeric_domain_sizes().len();
+
+        if prop_values.len() < num_props {
+            return Err(EvaluationError::InvalidState(format!(
+                "propositional state too short: {} < {num_props}",
+                prop_values.len()
+            )));
+        }
         if numeric_values.len() < num_numeric {
             return Err(EvaluationError::InvalidState(format!(
                 "numeric state too short: {} < {num_numeric}",

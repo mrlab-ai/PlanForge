@@ -17,6 +17,7 @@ use crate::numeric::evaluation::pattern_databases::pattern_database::{
     PatternDatabase, PdbHeuristicConfig, PdbInternalHeuristic,
 };
 
+use super::abstracted_task::DomainAbstractionTaskProjection;
 use super::abstract_operator_generator::AbstractOperator;
 use super::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
 use super::domain_abstraction_factory::AbstractDistanceTable;
@@ -236,6 +237,7 @@ pub struct SaturatedCostPartitioningOnlineHeuristic<'task> {
     prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
     comparison_scratch: RefCell<Vec<Option<usize>>>,
+    projected_numeric_scratch: RefCell<Vec<f64>>,
 }
 
 impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
@@ -365,6 +367,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             prop_scratch: RefCell::new(Vec::new()),
             numeric_scratch: RefCell::new(Vec::new()),
             comparison_scratch: RefCell::new(Vec::new()),
+            projected_numeric_scratch: RefCell::new(Vec::new()),
         })
     }
 
@@ -426,39 +429,73 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .map_err(|err| {
                 EvaluationError::ComputationFailed(format!("failed to read numeric state: {err:?}"))
             })?;
-        let mut comparisons = self.comparison_scratch.borrow_mut();
-        comparisons.clear();
-        if let Some(first) = self.abstraction_heuristics.first() {
-            first.fill_comparison_values_from_state_values(&numeric, &mut comparisons)?;
-        }
-
         let num_domain = self.abstraction_heuristics.len();
         let total_components = num_domain + self.pdbs.len();
         let mut ids: Vec<Option<usize>> = vec![None; total_components];
         let needs_all = required_ids.is_none();
+        let required_domain_ids: Vec<usize> = if needs_all {
+            (0..num_domain).collect()
+        } else {
+            required_ids
+                .unwrap_or(&[])
+                .iter()
+                .copied()
+                .filter(|&id| id < num_domain)
+                .collect()
+        };
+        let shared_projection = self.shared_projection_for_domain_ids(&required_domain_ids)?;
+        let mut projected_numeric = self.projected_numeric_scratch.borrow_mut();
+        let shared_numeric_values = match shared_projection {
+            Some(Some(projection)) => {
+                projection
+                    .project_numeric_values_into(&numeric, &mut projected_numeric)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to project state into shared abstracted domain task: {error:#}"
+                        ))
+                    })?;
+                Some(projected_numeric.as_slice())
+            }
+            Some(None) => Some(numeric.as_slice()),
+            None => None,
+        };
+        let mut comparisons = self.comparison_scratch.borrow_mut();
+        comparisons.clear();
+        if let (Some(first), Some(numeric_values)) =
+            (self.abstraction_heuristics.first(), shared_numeric_values)
+        {
+            first.fill_comparison_values_from_projected_state_values(
+                numeric_values,
+                &mut comparisons,
+            )?;
+        }
         if needs_all {
             for (id, heuristic) in self.abstraction_heuristics.iter().enumerate() {
-                ids[id] = Some(
-                    heuristic.abstract_state_hash_from_state_values_with_comparisons(
+                ids[id] = Some(if let Some(numeric_values) = shared_numeric_values {
+                    heuristic.abstract_state_hash_from_projected_state_values_with_comparisons(
                         &prop,
-                        &numeric,
+                        numeric_values,
                         &comparisons,
-                    )?,
-                );
+                    )?
+                } else {
+                    heuristic.abstract_state_hash_from_state_values(&prop, &numeric)?
+                });
             }
         } else if let Some(required_ids) = required_ids {
             for &id in required_ids {
                 if id >= num_domain {
                     continue;
                 }
-                ids[id] = Some(
-                    self.abstraction_heuristics[id]
-                        .abstract_state_hash_from_state_values_with_comparisons(
-                            &prop,
-                            &numeric,
-                            &comparisons,
-                        )?,
-                );
+                let heuristic = &self.abstraction_heuristics[id];
+                ids[id] = Some(if let Some(numeric_values) = shared_numeric_values {
+                    heuristic.abstract_state_hash_from_projected_state_values_with_comparisons(
+                        &prop,
+                        numeric_values,
+                        &comparisons,
+                    )?
+                } else {
+                    heuristic.abstract_state_hash_from_state_values(&prop, &numeric)?
+                });
             }
         }
 
@@ -502,6 +539,24 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         ids.sort_unstable();
         ids.dedup();
         ids
+    }
+
+    fn shared_projection_for_domain_ids(
+        &self,
+        ids: &[usize],
+    ) -> Result<Option<Option<&DomainAbstractionTaskProjection>>, EvaluationError> {
+        let Some(first_id) = ids.first().copied() else {
+            return Ok(None);
+        };
+        let first = self.abstraction_heuristics[first_id].task_projection();
+        for &id in &ids[1..] {
+            if self.abstraction_heuristics[id].task_projection() != first {
+                return Err(EvaluationError::ComputationFailed(format!(
+                    "domain abstractions use different lookup task projections: abstraction {first_id} and abstraction {id}"
+                )));
+            }
+        }
+        Ok(Some(first))
     }
 
     fn operator_costs(task: &dyn AbstractNumericTask) -> Vec<f64> {

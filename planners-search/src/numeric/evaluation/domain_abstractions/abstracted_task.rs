@@ -25,7 +25,7 @@ pub trait AbstractedTask {
     ) -> Result<ProjectedState>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DomainAbstractionTaskProjection {
     numeric_exprs: Vec<AffineExpression>,
 }
@@ -100,7 +100,7 @@ impl AbstractedTask for LinearAbstractedTask {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct AffineExpression {
     coefficients: Vec<f64>,
     constant: f64,
