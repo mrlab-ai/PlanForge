@@ -94,10 +94,30 @@ impl DomainAbstractionHeuristic {
             .map_err(|e| {
                 EvaluationError::ComputationFailed(format!("failed to read numeric vars: {e:?}"))
             })?;
-        if numeric.len() < num_numeric {
+        let projected;
+        let (prop_values, numeric_values) =
+            if let Some(projection) = self.abstraction.task_projection.as_ref() {
+                projected = projection
+                    .project_state_values(&prop, &numeric)
+                    .map_err(|e| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to project state into abstracted domain task: {e:#}"
+                        ))
+                    })?;
+                (&projected.propositional_values, &projected.numeric_values)
+            } else {
+                (&*prop, &*numeric)
+            };
+        if numeric_values.len() < num_numeric {
             return Err(EvaluationError::InvalidState(format!(
                 "numeric state too short: {} < {num_numeric}",
-                numeric.len()
+                numeric_values.len()
+            )));
+        }
+        if prop_values.len() < num_props {
+            return Err(EvaluationError::InvalidState(format!(
+                "propositional state too short: {} < {num_props}",
+                prop_values.len()
             )));
         }
 
@@ -114,7 +134,7 @@ impl DomainAbstractionHeuristic {
         let mut index: usize = 0;
 
         for num_var_id in 0..num_numeric {
-            let val = numeric[num_var_id];
+            let val = numeric_values[num_var_id];
             if !val.is_finite() || val.is_nan() {
                 return Err(EvaluationError::InvalidState(format!(
                     "numeric value for var {num_var_id} must be finite, got {val}"
@@ -138,8 +158,8 @@ impl DomainAbstractionHeuristic {
         for var in 0..num_props {
             let concrete_val = resolved_propositional_value(
                 var,
-                prop[var],
-                &numeric,
+                prop_values[var],
+                numeric_values,
                 self.abstraction.factory.comparison_trees(),
             )?;
             let abs_val = abstract_propositional_value(var, concrete_val, mapping)?;

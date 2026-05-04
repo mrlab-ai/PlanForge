@@ -24,6 +24,7 @@ pub struct DomainAbstractionConfig {
     pub flaw_kind: FlawKind,
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
+    pub transform_linear_task: bool,
 }
 
 impl Default for DomainAbstractionConfig {
@@ -37,6 +38,7 @@ impl Default for DomainAbstractionConfig {
             flaw_kind: FlawKind::Progression,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
+            transform_linear_task: false,
         }
     }
 }
@@ -54,6 +56,7 @@ impl fmt::Display for DomainAbstractionConfig {
                 "flaw_kind={}, ",
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
+                "transform_linear_task={}, ",
             ),
             self.max_abstraction_size,
             self.max_iterations,
@@ -63,6 +66,7 @@ impl fmt::Display for DomainAbstractionConfig {
             self.flaw_kind,
             self.flaw_treatment,
             self.init_split_method,
+            self.transform_linear_task,
         )
     }
 }
@@ -704,6 +708,11 @@ fn domain_abstraction_fields() -> Vec<Field<DomainAbstractionConfig>> {
             use_wildcard_plans
         ),
         field_bool!("combine_labels", DomainAbstractionConfig, combine_labels),
+        field_bool!(
+            "transform_linear_task",
+            DomainAbstractionConfig,
+            transform_linear_task
+        ),
         field_i32!("random_seed", DomainAbstractionConfig, random_seed),
         Field {
             name: "flaw_treatment",
@@ -818,6 +827,11 @@ fn multi_domain_abstractions_fields()
             "deviation_flaws",
             DomainAbstractionCollectionGeneratorMultipleCegarConfig,
             deviation_flaws
+        ),
+        field_bool!(
+            "transform_linear_task",
+            DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+            transform_linear_task
         ),
         Field {
             name: "flaw_treatment",

@@ -160,6 +160,10 @@ fn compute_relevant_operator_ids(
     task: &dyn AbstractNumericTask,
     abstraction: &DomainAbstraction,
 ) -> Result<BTreeSet<usize>, String> {
+    if !abstraction.relevant_operator_ids.is_empty() {
+        return Ok(abstraction.relevant_operator_ids.iter().copied().collect());
+    }
+
     let mut generator = abstraction
         .factory
         .make_operator_generator(task, abstraction.combine_labels)

@@ -54,6 +54,7 @@ pub struct CegarConfig {
     pub init_split_var_ids: Option<HashSet<usize>>,
     pub blacklisted_prop_var_ids: HashSet<usize>,
     pub blacklisted_numeric_var_ids: HashSet<usize>,
+    pub transform_linear_task: bool,
 }
 
 impl Default for CegarConfig {
@@ -72,6 +73,7 @@ impl Default for CegarConfig {
             init_split_var_ids: None,
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
+            transform_linear_task: false,
         }
     }
 }

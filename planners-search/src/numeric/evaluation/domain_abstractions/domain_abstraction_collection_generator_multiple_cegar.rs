@@ -98,6 +98,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub numeric_split_strategy: NumericSplitStrategy,
+    pub transform_linear_task: bool,
 }
 
 impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
@@ -122,6 +123,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,
+            transform_linear_task: false,
         }
     }
 }
@@ -157,6 +159,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
                 "numeric_split_strategy={}, ",
+                "transform_linear_task={}, ",
             ),
             self.max_abstraction_size,
             self.max_collection_size,
@@ -176,6 +179,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.flaw_treatment,
             self.init_split_method,
             self.numeric_split_strategy,
+            self.transform_linear_task,
         )
     }
 }
@@ -246,6 +250,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             init_split_var_ids,
             blacklisted_prop_var_ids,
             blacklisted_numeric_var_ids,
+            transform_linear_task: self.config.transform_linear_task,
         }
     }
 
