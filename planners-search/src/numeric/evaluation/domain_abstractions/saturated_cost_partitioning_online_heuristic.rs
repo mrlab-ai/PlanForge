@@ -265,8 +265,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let mut h_values: Vec<Vec<f64>> = Vec::with_capacity(total_components);
         let mut saturated_costs_by_abstraction: Vec<Vec<f64>> =
             Vec::with_capacity(total_components);
+        let mut debug_initial_h_values = Vec::new();
 
-        for abstraction in &abstractions {
+        for (abstraction_id, abstraction) in abstractions.iter().enumerate() {
             let abstraction_task = abstraction.task_for_factory(task);
             let goal_facts = &abstraction.distance_table.goal_facts;
             let table = abstraction
@@ -296,8 +297,30 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         "failed to compute saturated costs for order generator: {error:#}"
                     ))
                 })?;
+            if config.collection_config.debug {
+                let initial_h = table
+                    .distances
+                    .get(table.initial_state_hash)
+                    .copied()
+                    .unwrap_or(f64::INFINITY);
+                debug_initial_h_values.push(initial_h);
+                info!(
+                    "scp_online debug: collection abstraction {abstraction_id}: original_initial_h={initial_h}, states={}, goal_facts={}",
+                    abstraction_state_count(abstraction),
+                    goal_facts.len()
+                );
+            }
             h_values.push(table.distances);
             saturated_costs_by_abstraction.push(saturated);
+        }
+        if config.collection_config.debug && !debug_initial_h_values.is_empty() {
+            let max_initial_h = debug_initial_h_values
+                .iter()
+                .copied()
+                .fold(0.0_f64, f64::max);
+            info!(
+                "scp_online debug: collection max original-cost initial h before cost partitioning = {max_initial_h}"
+            );
         }
 
         for pdb in &pdbs {
