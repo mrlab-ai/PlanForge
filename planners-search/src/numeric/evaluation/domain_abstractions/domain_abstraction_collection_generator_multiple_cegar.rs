@@ -89,7 +89,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub blacklist_option: VariableSubset,
     pub init_split_candidates: VariableSubset,
     pub init_split_quantity: InitSplitQuantity,
-    pub random_seed: i32,
+    pub random_seed: Option<u64>,
     pub debug: bool,
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
@@ -113,7 +113,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             blacklist_option: VariableSubset::All,
             init_split_candidates: VariableSubset::All,
             init_split_quantity: InitSplitQuantity::Single,
-            random_seed: -1,
+            random_seed: None,
             debug: false,
             use_wildcard_plans: true,
             combine_labels: true,
@@ -132,6 +132,17 @@ fn fmt_f64(value: f64) -> String {
     } else {
         value.to_string()
     }
+}
+
+fn fmt_optional_seed(seed: Option<u64>) -> String {
+    seed.map_or_else(|| "none".to_string(), |seed| seed.to_string())
+}
+
+fn time_seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0x5EED_F00D_u64)
 }
 
 impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
@@ -168,7 +179,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.blacklist_option,
             self.init_split_candidates,
             self.init_split_quantity,
-            self.random_seed,
+            fmt_optional_seed(self.random_seed),
             self.debug,
             self.use_wildcard_plans,
             self.combine_labels,
@@ -202,15 +213,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 
     fn create_rng(&self) -> SmallRng {
-        if self.config.random_seed >= 0 {
-            SmallRng::seed_from_u64(self.config.random_seed as u64)
-        } else {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(0x5EED_F00D_u64);
-            SmallRng::seed_from_u64(nanos)
-        }
+        SmallRng::seed_from_u64(self.config.random_seed.unwrap_or_else(time_seed))
     }
 
     fn build_cegar_config(

@@ -57,7 +57,7 @@ pub struct ScpOnlineConfig {
     pub pdb_failed_lookup_heuristic: PdbInternalHeuristic,
     pub scoring_function: ScoringFunction,
     pub saturator: Saturator,
-    pub random_seed: i32,
+    pub random_seed: Option<u64>,
     pub use_transition_cost_partitioning: bool,
 }
 
@@ -67,6 +67,7 @@ impl Default for ScpOnlineConfig {
             combine_labels: false,
             ..Default::default()
         };
+        let random_seed = collection_config.random_seed;
         Self {
             max_time: 200.0,
             max_size: usize::MAX,
@@ -82,7 +83,7 @@ impl Default for ScpOnlineConfig {
             pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
             scoring_function: ScoringFunction::MaxHeuristicPerStolenCosts,
             saturator: Saturator::All,
-            random_seed: 0,
+            random_seed,
             use_transition_cost_partitioning: false,
         }
     }
@@ -190,7 +191,13 @@ struct ScpOnlineState {
 }
 
 impl ScpOnlineState {
-    fn new(seed: i32) -> Self {
+    fn new(seed: Option<u64>) -> Self {
+        let seed = seed.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos() as u64)
+                .unwrap_or(0x5C9_0A11_u64)
+        });
         Self {
             start_time: Instant::now(),
             evaluated_states: 0,
@@ -199,7 +206,7 @@ impl ScpOnlineState {
             cp_heuristics: Vec::new(),
             h_values_by_abstraction: Vec::new(),
             stolen_costs_by_abstraction: Vec::new(),
-            rng: SmallRng::seed_from_u64(seed as u64),
+            rng: SmallRng::seed_from_u64(seed),
             improvement_ended: false,
         }
     }

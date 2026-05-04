@@ -20,7 +20,7 @@ pub struct DomainAbstractionConfig {
     pub max_iterations: usize,
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
-    pub random_seed: i32,
+    pub random_seed: Option<u64>,
     pub flaw_kind: FlawKind,
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
@@ -34,7 +34,7 @@ impl Default for DomainAbstractionConfig {
             max_iterations: 10_000,
             use_wildcard_plans: true,
             combine_labels: true,
-            random_seed: -1,
+            random_seed: None,
             flaw_kind: FlawKind::Progression,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
@@ -62,7 +62,7 @@ impl fmt::Display for DomainAbstractionConfig {
             self.max_iterations,
             self.use_wildcard_plans,
             self.combine_labels,
-            self.random_seed,
+            format_optional_seed(self.random_seed),
             self.flaw_kind,
             self.flaw_treatment,
             self.init_split_method,
@@ -489,15 +489,6 @@ fn set_u64<T>(
     Ok(())
 }
 
-fn set_i32<T>(
-    slot: fn(&mut T) -> &mut i32,
-    config: &mut T,
-    value: &ConfigValue,
-) -> Result<(), String> {
-    *slot(config) = parse_i32(atom(value)?)?;
-    Ok(())
-}
-
 fn set_bool<T>(
     slot: fn(&mut T) -> &mut bool,
     config: &mut T,
@@ -530,16 +521,18 @@ fn parse_usize(value: &str) -> Result<usize, String> {
         .map_err(|_| format!("expected non-negative integer, got `{value}`"))
 }
 
-fn parse_i32(value: &str) -> Result<i32, String> {
-    value
-        .parse::<i32>()
-        .map_err(|_| format!("expected integer, got `{value}`"))
-}
-
 fn parse_u64(value: &str) -> Result<u64, String> {
     value
         .parse::<u64>()
         .map_err(|_| format!("expected non-negative integer, got `{value}`"))
+}
+
+fn parse_optional_seed(value: &str) -> Result<Option<u64>, String> {
+    if value.eq_ignore_ascii_case("none") {
+        Ok(None)
+    } else {
+        parse_u64(value).map(Some)
+    }
 }
 
 fn parse_f64_or_infinity(value: &str) -> Result<f64, String> {
@@ -558,6 +551,10 @@ fn format_f64_or_infinity(value: f64) -> String {
     } else {
         value.to_string()
     }
+}
+
+fn format_optional_seed(seed: Option<u64>) -> String {
+    seed.map_or_else(|| "none".to_string(), |seed| seed.to_string())
 }
 
 fn parse_greedy_variable_order_type(value: &str) -> Result<GreedyVariableOrderType, String> {
@@ -666,15 +663,6 @@ macro_rules! field_u64 {
         }
     };
 }
-macro_rules! field_i32 {
-    ($name:literal, $ty:ty, $field:ident) => {
-        Field {
-            name: $name,
-            apply: |config: &mut $ty, value| set_i32(|c| &mut c.$field, config, value),
-            format: |config: &$ty| config.$field.to_string(),
-        }
-    };
-}
 macro_rules! field_bool {
     ($name:literal, $ty:ty, $field:ident) => {
         Field {
@@ -713,7 +701,14 @@ fn domain_abstraction_fields() -> Vec<Field<DomainAbstractionConfig>> {
             DomainAbstractionConfig,
             transform_linear_task
         ),
-        field_i32!("random_seed", DomainAbstractionConfig, random_seed),
+        Field {
+            name: "random_seed",
+            apply: |config, value| {
+                config.random_seed = parse_optional_seed(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_optional_seed(config.random_seed),
+        },
         Field {
             name: "flaw_treatment",
             apply: |config, value| {
@@ -803,11 +798,14 @@ fn multi_domain_abstractions_fields()
             },
             format: |config| config.init_split_quantity.to_string(),
         },
-        field_i32!(
-            "random_seed",
-            DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-            random_seed
-        ),
+        Field {
+            name: "random_seed",
+            apply: |config, value| {
+                config.random_seed = parse_optional_seed(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_optional_seed(config.random_seed),
+        },
         field_bool!(
             "debug",
             DomainAbstractionCollectionGeneratorMultipleCegarConfig,
@@ -993,10 +991,12 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
         Field {
             name: "random_seed",
             apply: |config, value| {
-                config.collection_config.random_seed = parse_i32(atom(value)?)?;
+                let random_seed = parse_optional_seed(atom(value)?)?;
+                config.collection_config.random_seed = random_seed;
+                config.random_seed = random_seed;
                 Ok(())
             },
-            format: |config| config.collection_config.random_seed.to_string(),
+            format: |config| format_optional_seed(config.collection_config.random_seed),
         },
         Field {
             name: "debug",

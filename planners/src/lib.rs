@@ -207,11 +207,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     config.max_iterations = domain_config.max_iterations;
                     config.use_wildcard_plans = domain_config.use_wildcard_plans;
                     config.combine_labels = domain_config.combine_labels;
-                    config.random_seed = if domain_config.random_seed >= 0 {
-                        Some(domain_config.random_seed as u64)
-                    } else {
-                        None
-                    };
+                    config.random_seed = domain_config.random_seed;
                     config.flaw_kind = domain_config.flaw_kind;
                     config.flaw_treatment = domain_config.flaw_treatment;
                     config.init_split_method = domain_config.init_split_method;

@@ -51,7 +51,7 @@ fn parses_astar_domain_abstraction_with_named_options() {
     assert_eq!(config.max_abstraction_size, 10_000);
     assert!(!config.use_wildcard_plans);
     assert!(config.combine_labels);
-    assert_eq!(config.random_seed, 7);
+    assert_eq!(config.random_seed, Some(7));
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn parses_astar_canonical_domain_abstractions_with_named_options() {
     assert_eq!(config.init_split_quantity, InitSplitQuantity::All);
     assert!(!config.use_wildcard_plans);
     assert!(config.combine_labels);
-    assert_eq!(config.random_seed, 7);
+    assert_eq!(config.random_seed, Some(7));
 }
 
 #[test]
@@ -134,7 +134,8 @@ fn parses_astar_scp_online_with_named_options() {
         config.collection_config.flaw_kind,
         FlawKind::SequenceProgression
     );
-    assert_eq!(config.collection_config.random_seed, 7);
+    assert_eq!(config.collection_config.random_seed, Some(7));
+    assert_eq!(config.random_seed, Some(7));
     assert!(config.collection_config.debug);
 }
 
@@ -366,7 +367,7 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
     assert_eq!(config.init_split_quantity, InitSplitQuantity::All);
     assert!(!config.use_wildcard_plans);
     assert!(config.combine_labels);
-    assert_eq!(config.random_seed, 7);
+    assert_eq!(config.random_seed, Some(7));
     assert!(config.debug);
 }
 

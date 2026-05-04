@@ -38,7 +38,7 @@ fn pfile2_multi_domain_abstractions_initial_heuristic_is_finite() {
         max_collection_size: 1_000_000,
         total_max_time: 150.0,
         debug: true,
-        random_seed: 0,
+        random_seed: Some(0),
         ..Default::default()
     };
     let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
