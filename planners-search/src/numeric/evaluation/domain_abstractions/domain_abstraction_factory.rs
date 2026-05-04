@@ -30,6 +30,14 @@ use super::utils;
 const COMPARISON_TRUE_VAL: usize = 0;
 const COMPARISON_FALSE_VAL: usize = 1;
 const COMPARISON_UNKNOWN_VAL: usize = 2;
+const COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES: usize = 20_000;
+const COMPARISON_ENUMERATION_CACHE_MAX_STATES: usize = 100_000;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ComparisonEnumerationKey {
+    base_state_hash: usize,
+    fixed_comparisons: Vec<(usize, usize)>,
+}
 
 fn current_time_seed() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1440,6 +1448,45 @@ impl DomainAbstractionFactory {
         Ok(states)
     }
 
+    fn enumerate_states_with_evaluated_comparisons_cached(
+        &self,
+        base_state_hash: usize,
+        task: &dyn AbstractNumericTask,
+        numeric_domain_sizes: &[usize],
+        hash_multipliers: &[usize],
+        comparison_var_ids: &[usize],
+        fixed_comparisons: &[ExplicitFact],
+        cache: &mut HashMap<ComparisonEnumerationKey, Vec<usize>>,
+        cached_state_count: &mut usize,
+    ) -> Result<Vec<usize>> {
+        let key = ComparisonEnumerationKey {
+            base_state_hash,
+            fixed_comparisons: fixed_comparisons
+                .iter()
+                .map(|fact| (fact.var, fact.value))
+                .collect(),
+        };
+        if let Some(states) = cache.get(&key) {
+            return Ok(states.clone());
+        }
+
+        let states = self.enumerate_states_with_evaluated_comparisons(
+            base_state_hash,
+            task,
+            numeric_domain_sizes,
+            hash_multipliers,
+            comparison_var_ids,
+            fixed_comparisons,
+        )?;
+        if cache.len() < COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES
+            && *cached_state_count + states.len() <= COMPARISON_ENUMERATION_CACHE_MAX_STATES
+        {
+            *cached_state_count += states.len();
+            cache.insert(key, states.clone());
+        }
+        Ok(states)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn compute_wildcard_plan_from_table(
         &self,
@@ -1670,6 +1717,9 @@ impl DomainAbstractionFactory {
         core_vars.dedup();
 
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+        let mut comparison_enumeration_cache: HashMap<ComparisonEnumerationKey, Vec<usize>> =
+            HashMap::new();
+        let mut cached_comparison_state_count = 0usize;
 
         // Initialize with feasible goal states.
         for state_hash in 0..num_states {
@@ -1681,13 +1731,15 @@ impl DomainAbstractionFactory {
             ) {
                 continue;
             }
-            let alts = self.enumerate_states_with_evaluated_comparisons(
+            let alts = self.enumerate_states_with_evaluated_comparisons_cached(
                 state_hash,
                 task,
                 numeric_domain_sizes,
                 hash_multipliers,
                 comparison_var_ids,
                 &[],
+                &mut comparison_enumeration_cache,
+                &mut cached_comparison_state_count,
             )?;
             if !alts.contains(&state_hash) {
                 continue;
@@ -1731,14 +1783,17 @@ impl DomainAbstractionFactory {
                 //     continue;
                 // }
                 let fixed_comparisons = &comparison_preconditions[op_id];
-                let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
-                    predecessor_base,
-                    task,
-                    numeric_domain_sizes,
-                    hash_multipliers,
-                    comparison_var_ids,
-                    &fixed_comparisons,
-                )?;
+                let possible_predecessors = self
+                    .enumerate_states_with_evaluated_comparisons_cached(
+                        predecessor_base,
+                        task,
+                        numeric_domain_sizes,
+                        hash_multipliers,
+                        comparison_var_ids,
+                        &fixed_comparisons,
+                        &mut comparison_enumeration_cache,
+                        &mut cached_comparison_state_count,
+                    )?;
 
                 let representative_predecessor = possible_predecessors.iter().copied().max();
 
