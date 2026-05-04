@@ -32,16 +32,30 @@ pub struct DomainAbstractionHeuristic {
     comparison_tree_required_lens: Vec<usize>,
 }
 
+enum NumericValues<'a> {
+    Borrowed(&'a [f64]),
+    Projected(std::cell::Ref<'a, [f64]>),
+}
+
+impl<'a> NumericValues<'a> {
+    fn as_slice(&self) -> &[f64] {
+        match self {
+            Self::Borrowed(values) => values,
+            Self::Projected(values) => values,
+        }
+    }
+}
+
 impl DomainAbstractionHeuristic {
     pub fn new(name: Option<String>, abstraction: DomainAbstraction) -> Self {
-        let active_prop_vars = abstraction
+        let active_prop_vars: Vec<usize> = abstraction
             .factory
             .domain_sizes()
             .iter()
             .enumerate()
             .filter_map(|(var_id, &size)| (size > 1).then_some(var_id))
             .collect();
-        let active_numeric_vars = abstraction
+        let active_numeric_vars: Vec<usize> = abstraction
             .factory
             .numeric_domain_sizes()
             .iter()
@@ -54,7 +68,7 @@ impl DomainAbstractionHeuristic {
                 comparison_tree_by_var[tree.affected_var_id] = Some(tree_id);
             }
         }
-        let comparison_tree_required_lens = abstraction
+        let comparison_tree_required_lens: Vec<usize> = abstraction
             .factory
             .comparison_trees()
             .iter()
@@ -85,6 +99,61 @@ impl DomainAbstractionHeuristic {
         self.compute_abstract_hash(eval_state.state(), registry)
     }
 
+    pub fn abstract_state_hash_from_state_values(
+        &self,
+        prop_values: &[usize],
+        numeric_values: &[f64],
+    ) -> Result<usize, EvaluationError> {
+        self.compute_abstract_hash_from_state_values(prop_values, numeric_values, None)
+    }
+
+    pub fn abstract_state_hash_from_state_values_with_comparisons(
+        &self,
+        prop_values: &[usize],
+        numeric_values: &[f64],
+        comparison_values: &[Option<usize>],
+    ) -> Result<usize, EvaluationError> {
+        self.compute_abstract_hash_from_state_values(
+            prop_values,
+            numeric_values,
+            Some(comparison_values),
+        )
+    }
+
+    pub fn fill_comparison_values_from_state_values(
+        &self,
+        numeric: &[f64],
+        out: &mut Vec<Option<usize>>,
+    ) -> Result<(), EvaluationError> {
+        let numeric_values = self.project_numeric_values(numeric)?;
+        let numeric_values = numeric_values.as_slice();
+        if out.len() < self.comparison_tree_by_var.len() {
+            out.resize(self.comparison_tree_by_var.len(), None);
+        }
+        for (tree_id, tree) in self
+            .abstraction
+            .factory
+            .comparison_trees()
+            .iter()
+            .enumerate()
+        {
+            let value = if evaluate_comparison_tree_on_concrete_numeric_state(
+                tree,
+                numeric_values,
+                self.comparison_tree_required_lens[tree_id],
+            )? {
+                COMPARISON_TRUE_VAL
+            } else {
+                COMPARISON_FALSE_VAL
+            };
+            if tree.affected_var_id >= out.len() {
+                out.resize(tree.affected_var_id + 1, None);
+            }
+            out[tree.affected_var_id] = Some(value);
+        }
+        Ok(())
+    }
+
     fn require_task_and_registry<'s, 't>(
         eval_state: &'s EvaluationState<'s, 't>,
     ) -> Result<
@@ -113,7 +182,6 @@ impl DomainAbstractionHeuristic {
         registry: &StateRegistry<'t>,
     ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
-        let num_numeric = self.abstraction.factory.numeric_domain_sizes().len();
 
         let mut prop = self.prop_scratch.borrow_mut();
         state.fill_state(registry, &mut prop);
@@ -130,33 +198,33 @@ impl DomainAbstractionHeuristic {
             .map_err(|e| {
                 EvaluationError::ComputationFailed(format!("failed to read numeric vars: {e:?}"))
             })?;
-        let mut projected_numeric;
-        let numeric_values = if let Some(projection) = self.abstraction.task_projection.as_ref() {
-            projected_numeric = self.projected_numeric_scratch.borrow_mut();
-            projection
-                .project_numeric_values_into(&numeric, &mut projected_numeric)
-                .map_err(|e| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to project state into abstracted domain task: {e:#}"
-                    ))
-                })?;
-            &*projected_numeric
-        } else {
-            &*numeric
-        };
+        self.compute_abstract_hash_from_state_values(&prop, &numeric, None)
+    }
+
+    fn compute_abstract_hash_from_state_values(
+        &self,
+        prop_values: &[usize],
+        numeric: &[f64],
+        comparison_values: Option<&[Option<usize>]>,
+    ) -> Result<usize, EvaluationError> {
+        let num_props = self.abstraction.factory.domain_sizes().len();
+        let num_numeric = self.abstraction.factory.numeric_domain_sizes().len();
+
+        if prop_values.len() < num_props {
+            return Err(EvaluationError::InvalidState(format!(
+                "propositional state too short: {} < {num_props}",
+                prop_values.len()
+            )));
+        }
+
+        let numeric_values = self.project_numeric_values(numeric)?;
+        let numeric_values = numeric_values.as_slice();
         if numeric_values.len() < num_numeric {
             return Err(EvaluationError::InvalidState(format!(
                 "numeric state too short: {} < {num_numeric}",
                 numeric_values.len()
             )));
         }
-        if prop.len() < num_props {
-            return Err(EvaluationError::InvalidState(format!(
-                "propositional state too short: {} < {num_props}",
-                prop.len()
-            )));
-        }
-
         let mapping = self.abstraction.factory.domain_mapping();
         let partitions = self.abstraction.factory.partitions();
         let multipliers = &self.abstraction.hash_multipliers;
@@ -194,17 +262,42 @@ impl DomainAbstractionHeuristic {
         for &var in &self.active_prop_vars {
             let concrete_val = resolved_propositional_value(
                 var,
-                prop[var],
+                prop_values[var],
                 numeric_values,
                 self.abstraction.factory.comparison_trees(),
                 &self.comparison_tree_by_var,
                 &self.comparison_tree_required_lens,
+                comparison_values,
             )?;
             let abs_val = abstract_propositional_value(var, concrete_val, mapping)?;
             prop_index += multipliers[var] * abs_val;
         }
 
         Ok(index + prop_index)
+    }
+
+    fn project_numeric_values<'a>(
+        &'a self,
+        numeric: &'a [f64],
+    ) -> Result<NumericValues<'a>, EvaluationError> {
+        if let Some(projection) = self.abstraction.task_projection.as_ref() {
+            {
+                let mut projected_numeric = self.projected_numeric_scratch.borrow_mut();
+                projection
+                    .project_numeric_values_into(numeric, &mut projected_numeric)
+                    .map_err(|e| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to project state into abstracted domain task: {e:#}"
+                        ))
+                    })?;
+            }
+            Ok(NumericValues::Projected(std::cell::Ref::map(
+                self.projected_numeric_scratch.borrow(),
+                |values| values.as_slice(),
+            )))
+        } else {
+            Ok(NumericValues::Borrowed(numeric))
+        }
     }
 }
 
@@ -215,7 +308,15 @@ fn resolved_propositional_value(
     comparison_trees: &[ComparisonTree],
     comparison_tree_by_var: &[Option<usize>],
     comparison_tree_required_lens: &[usize],
+    comparison_values: Option<&[Option<usize>]>,
 ) -> Result<usize, EvaluationError> {
+    if let Some(value) = comparison_values
+        .and_then(|values| values.get(var))
+        .copied()
+        .flatten()
+    {
+        return Ok(value);
+    }
     let Some(tree_id) = comparison_tree_by_var.get(var).copied().flatten() else {
         return Ok(stored_val);
     };

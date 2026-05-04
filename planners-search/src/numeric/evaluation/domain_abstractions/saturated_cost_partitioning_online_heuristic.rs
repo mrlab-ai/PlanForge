@@ -4,10 +4,10 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, metric_operator_cost_from_initial_values,
+    metric_operator_cost_from_initial_values, AbstractNumericTask,
 };
 use rand::seq::SliceRandom;
-use rand::{SeedableRng, rngs::SmallRng};
+use rand::{rngs::SmallRng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -233,6 +233,9 @@ pub struct SaturatedCostPartitioningOnlineHeuristic<'task> {
     config: ScpOnlineConfig,
     state: RefCell<ScpOnlineState>,
     transition_system_cache: RefCell<Vec<Option<AbstractTransitionSystem>>>,
+    prop_scratch: RefCell<Vec<usize>>,
+    numeric_scratch: RefCell<Vec<f64>>,
+    comparison_scratch: RefCell<Vec<Option<usize>>>,
 }
 
 impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
@@ -359,6 +362,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             config,
             state: RefCell::new(st),
             transition_system_cache: RefCell::new(vec![None; num_abstractions]),
+            prop_scratch: RefCell::new(Vec::new()),
+            numeric_scratch: RefCell::new(Vec::new()),
+            comparison_scratch: RefCell::new(Vec::new()),
         })
     }
 
@@ -406,45 +412,73 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     fn compute_abstract_state_ids(
         &self,
         eval_state: &EvaluationState<'_, '_>,
+        required_ids: Option<&[usize]>,
     ) -> Result<(Vec<Option<usize>>, usize), EvaluationError> {
+        let state = eval_state.state();
+        let registry = eval_state.state_registry().ok_or_else(|| {
+            EvaluationError::InvalidState("SCP online lookup requires state registry".to_string())
+        })?;
+        let mut prop = self.prop_scratch.borrow_mut();
+        state.fill_state(registry, &mut prop);
+        let mut numeric = self.numeric_scratch.borrow_mut();
+        registry
+            .fill_numeric_vars(state, &mut numeric)
+            .map_err(|err| {
+                EvaluationError::ComputationFailed(format!("failed to read numeric state: {err:?}"))
+            })?;
+        let mut comparisons = self.comparison_scratch.borrow_mut();
+        comparisons.clear();
+        if let Some(first) = self.abstraction_heuristics.first() {
+            first.fill_comparison_values_from_state_values(&numeric, &mut comparisons)?;
+        }
+
         let num_domain = self.abstraction_heuristics.len();
-        let mut ids: Vec<Option<usize>> = self
-            .abstraction_heuristics
-            .iter()
-            .map(|h| h.abstract_state_hash(eval_state))
-            .map(|r| r.map(Some))
-            .collect::<Result<Vec<_>, _>>()?;
+        let total_components = num_domain + self.pdbs.len();
+        let mut ids: Vec<Option<usize>> = vec![None; total_components];
+        let needs_all = required_ids.is_none();
+        if needs_all {
+            for (id, heuristic) in self.abstraction_heuristics.iter().enumerate() {
+                ids[id] = Some(
+                    heuristic.abstract_state_hash_from_state_values_with_comparisons(
+                        &prop,
+                        &numeric,
+                        &comparisons,
+                    )?,
+                );
+            }
+        } else if let Some(required_ids) = required_ids {
+            for &id in required_ids {
+                if id >= num_domain {
+                    continue;
+                }
+                ids[id] = Some(
+                    self.abstraction_heuristics[id]
+                        .abstract_state_hash_from_state_values_with_comparisons(
+                            &prop,
+                            &numeric,
+                            &comparisons,
+                        )?,
+                );
+            }
+        }
 
         if !self.pdbs.is_empty() {
-            let state = eval_state.state();
-            let registry = eval_state.state_registry().ok_or_else(|| {
-                EvaluationError::InvalidState(
-                    "SCP online PDB lookup requires state registry".to_string(),
-                )
-            })?;
-            let mut prop = Vec::new();
-            let mut numeric = Vec::new();
-            state.fill_state(registry, &mut prop);
-            registry
-                .fill_numeric_vars(state, &mut numeric)
-                .map_err(|err| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to read numeric state: {err:?}"
-                    ))
-                })?;
+            let pdb_required =
+                needs_all || required_ids.is_some_and(|ids| ids.iter().any(|&id| id >= num_domain));
+            if !pdb_required {
+                return Ok((ids, num_domain));
+            }
             let mut expanded = Vec::new();
             if let Some(first) = self.pdbs.first() {
                 first
                     .expand_numeric_state_values_into(&numeric, &mut expanded)
                     .map_err(EvaluationError::ComputationFailed)?;
-            } else {
-                expanded = numeric;
             }
-            for pdb in &self.pdbs {
+            for (pdb_id, pdb) in self.pdbs.iter().enumerate() {
                 let sid = pdb
                     .abstract_state_id_from_expanded_state_values(&prop, &expanded)
                     .map_err(EvaluationError::ComputationFailed)?;
-                ids.push(sid);
+                ids[num_domain + pdb_id] = sid;
             }
         }
 
@@ -457,6 +491,17 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .iter()
             .map(|cp| cp.compute_heuristic(ids))
             .fold(0.0, f64::max)
+    }
+
+    fn required_lookup_ids(state: &ScpOnlineState) -> Vec<usize> {
+        let mut ids: Vec<usize> = state
+            .cp_heuristics
+            .iter()
+            .flat_map(|cp| cp.lookup_tables.iter().map(|table| table.abstraction_id))
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
     }
 
     fn operator_costs(task: &dyn AbstractNumericTask) -> Vec<f64> {
@@ -1533,8 +1578,16 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
                 "SaturatedCostPartitioningOnlineHeuristic requires task".to_string(),
             )
         })?;
+        let (build_cp, required_ids) = {
+            let state = self.state.borrow();
+            if self.should_build_cp(&state) {
+                (true, Vec::new())
+            } else {
+                (false, Self::required_lookup_ids(&state))
+            }
+        };
         let (abstract_state_ids, num_domain_abstractions) =
-            self.compute_abstract_state_ids(eval_state)?;
+            self.compute_abstract_state_ids(eval_state, (!build_cp).then_some(&required_ids))?;
 
         let mut state = self.state.borrow_mut();
         let mut max_h = Self::compute_max_h(&state, &abstract_state_ids);
