@@ -10,6 +10,7 @@ use anyhow::Result;
 use std::fmt;
 
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planners_sas::numeric::utils::linear_effects::{LinearExpression, linearize_numeric_var};
 
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +23,7 @@ use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::sequenc
     SequenceDirection, get_sequence_flaws,
 };
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::FlawSearchState;
+use crate::numeric::evaluation::domain_abstractions::comparison_expression::{CompOp, Interval};
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction::{
     ComparisonAxiomIndex, NumericPartitions,
 };
@@ -93,7 +95,7 @@ impl FlawKind {
         match self {
             Self::Progression => get_progression_flaws(task, partitions, wildcard_plan),
             Self::Regression => {
-                let mut flaws = get_regression_flaws(task, domain_mapping, wildcard_plan);
+                let mut flaws = get_regression_flaws(task, partitions, domain_mapping, wildcard_plan);
                 // Progression flaw fallback if no regression flaw is found
                 // (numeric deviation flaws not detected).
                 if let Ok(ref flaws_ok) = flaws
@@ -255,6 +257,76 @@ fn dependent_numeric_flaws_in_interval_for_comparison_prop_var(
         }
     }
     out
+}
+
+pub(crate) fn numeric_requirement_for_comparison_fact(
+    task: &dyn AbstractNumericTask,
+    comparison_index: &ComparisonAxiomIndex,
+    fact: &ExplicitFact,
+) -> Option<(usize, Interval)> {
+    let tree = comparison_index.comparison_tree(fact.var)?;
+    let left = linearize_numeric_var(task, tree.left_numeric_var_id).ok()?;
+    let right = linearize_numeric_var(task, tree.right_numeric_var_id).ok()?;
+    let expression = left.subtract(&right);
+    let required_op = required_comparison_op(tree.op, fact.value)?;
+    single_var_interval_for_linear_zero_comparison(&expression, required_op)
+}
+
+fn required_comparison_op(op: CompOp, prop_value: usize) -> Option<CompOp> {
+    match prop_value {
+        0 => Some(op),
+        1 => Some(match op {
+            CompOp::Lt => CompOp::Ge,
+            CompOp::Le => CompOp::Gt,
+            CompOp::Gt => CompOp::Le,
+            CompOp::Ge => CompOp::Lt,
+            CompOp::Eq => CompOp::Ne,
+            CompOp::Ne => CompOp::Eq,
+        }),
+        _ => None,
+    }
+}
+
+fn single_var_interval_for_linear_zero_comparison(
+    expression: &LinearExpression,
+    op: CompOp,
+) -> Option<(usize, Interval)> {
+    if op == CompOp::Ne {
+        return None;
+    }
+
+    let mut non_zero_coefficients = expression
+        .coefficients
+        .iter()
+        .enumerate()
+        .filter(|(_, coefficient)| coefficient.abs() >= 1e-12);
+    let (numeric_var_id, coefficient) = non_zero_coefficients.next()?;
+    if non_zero_coefficients.next().is_some() {
+        return None;
+    }
+
+    let threshold = -expression.constant / *coefficient;
+    if !threshold.is_finite() {
+        return None;
+    }
+
+    let interval = match (op, coefficient.is_sign_positive()) {
+        (CompOp::Lt, true) | (CompOp::Gt, false) => {
+            Interval::new(f64::NEG_INFINITY, threshold, false, false)
+        }
+        (CompOp::Le, true) | (CompOp::Ge, false) => {
+            Interval::new(f64::NEG_INFINITY, threshold, false, true)
+        }
+        (CompOp::Gt, true) | (CompOp::Lt, false) => {
+            Interval::new(threshold, f64::INFINITY, false, false)
+        }
+        (CompOp::Ge, true) | (CompOp::Le, false) => {
+            Interval::new(threshold, f64::INFINITY, true, false)
+        }
+        (CompOp::Eq, _) => Interval::singleton(threshold),
+        (CompOp::Ne, _) => return None,
+    };
+    Some((numeric_var_id, interval))
 }
 
 fn can_split_numeric_var(

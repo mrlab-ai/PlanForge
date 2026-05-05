@@ -48,7 +48,7 @@ pub fn get_sequence_flaws(
             )?;
         }
         SequenceDirection::Regression => {
-            get_sequence_regression_flaws(task, domain_mapping, wildcard_plan, &mut flaws)?;
+            get_sequence_regression_flaws(task, partitions, domain_mapping, wildcard_plan, &mut flaws)?;
             if flaws.is_empty() {
                 // Progression sequence flaws as fallback.
                 get_sequence_progression_flaws(
@@ -68,7 +68,7 @@ pub fn get_sequence_flaws(
                 wildcard_plan,
                 &mut flaws,
             )?;
-            get_sequence_regression_flaws(task, domain_mapping, wildcard_plan, &mut flaws)?;
+            get_sequence_regression_flaws(task, partitions, domain_mapping, wildcard_plan, &mut flaws)?;
         }
     }
 
@@ -192,14 +192,18 @@ fn get_sequence_progression_flaws(
 
 fn get_sequence_regression_flaws(
     task: &dyn AbstractNumericTask,
+    partitions: &NumericPartitions,
     domain_mapping: &DomainMapping,
     wildcard_plan: &WildcardPlanResult,
     collected_flaws: &mut Vec<Flaw>,
 ) -> Result<()> {
     let state_packer = make_prop_state_packer(task);
     let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
+    let comparison_index = ComparisonAxiomIndex::from_task(task)
+        .map_err(|e| anyhow::anyhow!("failed to build comparison axiom index: {e}"))?;
 
     let mut state = FlawSearchState::goals_partial_state(task, domain_mapping);
+    super::regression::materialize_comparison_requirements(task, &comparison_index, &mut state);
 
     let mut step: usize = wildcard_plan.wildcard_plan.len();
 
@@ -221,6 +225,11 @@ fn get_sequence_regression_flaws(
                 chosen_op = Some(op);
                 step_flaws.clear();
                 state.regress(op, &axiom_evaluator)?;
+                super::regression::materialize_comparison_requirements(
+                    task,
+                    &comparison_index,
+                    &mut state,
+                );
                 break;
             } else {
                 step_flaws.extend(operator_flaws);
@@ -233,6 +242,11 @@ fn get_sequence_regression_flaws(
             && chosen_op.is_none()
         {
             state.regress(op, &axiom_evaluator)?;
+            super::regression::materialize_comparison_requirements(
+                task,
+                &comparison_index,
+                &mut state,
+            );
         }
 
         collected_flaws.extend(step_flaws);
@@ -241,7 +255,7 @@ fn get_sequence_regression_flaws(
     }
 
     state.revert_axioms(&axiom_evaluator)?;
-    let init_flaws = get_init_state_flaws(task, &state);
+    let init_flaws = get_init_state_flaws(task, partitions, &state);
     collected_flaws.extend(init_flaws);
 
     Ok(())

@@ -55,6 +55,7 @@ pub struct CegarConfig {
     pub blacklisted_prop_var_ids: HashSet<usize>,
     pub blacklisted_numeric_var_ids: HashSet<usize>,
     pub transform_linear_task: bool,
+    pub initial_seed_splits: Vec<InitialSeedSplit>,
 }
 
 impl Default for CegarConfig {
@@ -74,8 +75,22 @@ impl Default for CegarConfig {
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
             transform_linear_task: false,
+            initial_seed_splits: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InitialSeedSplit {
+    Propositional {
+        var_id: usize,
+        value: usize,
+    },
+    Numeric {
+        numeric_var_id: usize,
+        value: f64,
+        include_in_lower: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -173,17 +188,30 @@ impl Cegar {
         let mut blacklisted_prop_var_ids = config.blacklisted_prop_var_ids.clone();
         let mut blacklisted_numeric_var_ids = config.blacklisted_numeric_var_ids.clone();
 
-        apply_initial_goal_splits(
-            task,
-            config,
-            &mut rng,
-            &blacklisted_prop_var_ids,
-            &blacklisted_numeric_var_ids,
-            &mut domain_mapping,
-            &mut domain_sizes,
-            &mut partitions,
-            &mut numeric_domain_sizes,
-        );
+        if config.initial_seed_splits.is_empty() {
+            apply_initial_goal_splits(
+                task,
+                config,
+                &mut rng,
+                &blacklisted_prop_var_ids,
+                &blacklisted_numeric_var_ids,
+                &mut domain_mapping,
+                &mut domain_sizes,
+                &mut partitions,
+                &mut numeric_domain_sizes,
+            );
+        } else {
+            apply_initial_seed_splits(
+                task,
+                config,
+                &blacklisted_prop_var_ids,
+                &blacklisted_numeric_var_ids,
+                &mut domain_mapping,
+                &mut domain_sizes,
+                &mut partitions,
+                &mut numeric_domain_sizes,
+            );
+        }
 
         let mut iteration: usize = 1;
 
@@ -1021,6 +1049,95 @@ fn apply_initial_goal_splits(
         }
         if let Some(slot) = domain_sizes.get_mut(var_id) {
             *slot = new_domain_size;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_initial_seed_splits(
+    task: &dyn AbstractNumericTask,
+    config: &CegarConfig,
+    blacklisted_prop_var_ids: &HashSet<usize>,
+    blacklisted_numeric_var_ids: &HashSet<usize>,
+    domain_mapping: &mut DomainMapping,
+    domain_sizes: &mut [usize],
+    partitions: &mut NumericPartitions,
+    numeric_domain_sizes: &mut [usize],
+) {
+    let comparison_var_ids: HashSet<usize> = task
+        .comparison_axioms()
+        .iter()
+        .map(|axiom| axiom.get_affected_var_id())
+        .collect();
+
+    for seed in &config.initial_seed_splits {
+        match *seed {
+            InitialSeedSplit::Numeric {
+                numeric_var_id,
+                value,
+                include_in_lower,
+            } => {
+                if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
+                    continue;
+                }
+                let Some(numeric_var) = task.numeric_variables().get(numeric_var_id) else {
+                    continue;
+                };
+                if numeric_var.get_type() != &NumericType::Regular {
+                    continue;
+                }
+                if !can_refine_numeric_variable(
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    numeric_var_id,
+                    config.max_abstraction_size,
+                ) {
+                    continue;
+                }
+                if partitions.split_at(numeric_var_id, value, include_in_lower)
+                    && let Some(parts) = partitions.partitions(numeric_var_id)
+                    && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id)
+                {
+                    *slot = parts.len();
+                }
+            }
+            InitialSeedSplit::Propositional { var_id, value } => {
+                if blacklisted_prop_var_ids.contains(&var_id) {
+                    continue;
+                }
+                let Ok(concrete_size) = task.get_variable_domain_size(var_id) else {
+                    continue;
+                };
+                if value >= concrete_size {
+                    continue;
+                }
+                let (new_domain_size, mapping) = if comparison_var_ids.contains(&var_id) {
+                    let mut mapping = vec![0; concrete_size];
+                    if !mapping.is_empty() {
+                        mapping[0] = 1;
+                    }
+                    (2, mapping)
+                } else {
+                    let mut mapping = vec![0; concrete_size];
+                    mapping[value] = 1;
+                    (2, mapping)
+                };
+                if !can_refine_propositional_variable(
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    var_id,
+                    new_domain_size,
+                    config.max_abstraction_size,
+                ) {
+                    continue;
+                }
+                if let Some(slot) = domain_mapping.get_mut(var_id) {
+                    *slot = mapping;
+                }
+                if let Some(slot) = domain_sizes.get_mut(var_id) {
+                    *slot = new_domain_size;
+                }
+            }
         }
     }
 }

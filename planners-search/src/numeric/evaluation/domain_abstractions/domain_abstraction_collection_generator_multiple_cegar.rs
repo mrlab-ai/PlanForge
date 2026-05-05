@@ -6,24 +6,27 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use ordered_float::OrderedFloat;
+use planners_sas::numeric::axioms::ComparisonOperator;
 use planners_sas::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericType, NumericVariable,
     Operator,
 };
 use rand::seq::SliceRandom;
-use rand::{RngCore, SeedableRng, rngs::SmallRng};
+use rand::{rngs::SmallRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::numeric::evaluation::domain_abstractions::cegar::FlawKind;
 
-use super::cegar::CegarConfig;
 pub use super::cegar::flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
-use super::domain_abstraction_generator::DomainAbstraction;
-use super::domain_abstraction_generator::DomainAbstractionGenerator;
+use super::cegar::CegarConfig;
+use super::cegar::InitialSeedSplit;
+use super::domain_abstraction_generator::{
+    prepare_domain_abstraction_task, DomainAbstraction, DomainAbstractionGenerator,
+};
 use super::utils::compute_abstraction_size_u128;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -78,6 +81,22 @@ impl fmt::Display for NumericSplitStrategy {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PortfolioStrategy {
+    Standard,
+    ViewDiverse,
+}
+
+impl fmt::Display for PortfolioStrategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Standard => write!(f, "standard"),
+            Self::ViewDiverse => write!(f, "view_diverse"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub max_abstraction_size: usize,
@@ -99,6 +118,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub init_split_method: InitSplitMethod,
     pub numeric_split_strategy: NumericSplitStrategy,
     pub transform_linear_task: bool,
+    pub portfolio_strategy: PortfolioStrategy,
 }
 
 impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
@@ -123,6 +143,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,
             transform_linear_task: false,
+            portfolio_strategy: PortfolioStrategy::Standard,
         }
     }
 }
@@ -169,6 +190,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "init_split_method={}, ",
                 "numeric_split_strategy={}, ",
                 "transform_linear_task={}, ",
+                "portfolio_strategy={}, ",
             ),
             self.max_abstraction_size,
             self.max_collection_size,
@@ -188,6 +210,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.init_split_method,
             self.numeric_split_strategy,
             self.transform_linear_task,
+            self.portfolio_strategy,
         )
     }
 }
@@ -222,9 +245,11 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         max_abstraction_size: usize,
         remaining_time: f64,
         init_split_var_ids: Option<HashSet<usize>>,
+        initial_seed_splits: Vec<InitialSeedSplit>,
         blacklisted_prop_var_ids: HashSet<usize>,
         blacklisted_numeric_var_ids: HashSet<usize>,
         random_seed: Option<u64>,
+        flaw_kind: FlawKind,
     ) -> CegarConfig {
         CegarConfig {
             max_abstraction_size,
@@ -238,7 +263,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             combine_labels: self.config.combine_labels,
             debug: self.config.debug,
             random_seed,
-            flaw_kind: self.config.flaw_kind,
+            flaw_kind,
             flaw_treatment: self.config.flaw_treatment,
             init_split_method: match self.config.init_split_quantity {
                 InitSplitQuantity::None => InitSplitMethod::Identity,
@@ -248,6 +273,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             blacklisted_prop_var_ids,
             blacklisted_numeric_var_ids,
             transform_linear_task: self.config.transform_linear_task,
+            initial_seed_splits,
         }
     }
 
@@ -306,27 +332,42 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 .as_ref()
                 .map(|single_goal_task| single_goal_task as &dyn AbstractNumericTask)
                 .unwrap_or(task);
+            let prepared_task = prepare_domain_abstraction_task(
+                abstraction_task,
+                self.config.transform_linear_task,
+            )
+            .context("failed to prepare task for domain-abstraction collection")?;
+            let generation_task = prepared_task.task_for(abstraction_task);
             let blacklisted_var_ids = if blacklisting {
                 sample_blacklisted_variables(&blacklist_candidates, &mut rng)
             } else {
                 HashSet::new()
             };
+            let initial_seed_splits = self.initial_seed_splits(generation_task, iteration);
             let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
-                split_blacklisted_variables(task, blacklisted_var_ids);
-            let init_split_var_ids = self.initial_split_var_ids(abstraction_task, iteration);
+                split_blacklisted_variables(generation_task, blacklisted_var_ids);
+            let init_split_var_ids = if initial_seed_splits.is_empty() {
+                self.initial_split_var_ids(generation_task, iteration)
+            } else {
+                None
+            };
             let cegar_config = self.build_cegar_config(
                 remaining_abstraction_size,
                 remaining_generation_time,
                 init_split_var_ids,
+                initial_seed_splits,
                 blacklisted_prop_var_ids,
                 blacklisted_numeric_var_ids,
                 Some(rng.next_u64()),
+                self.flaw_kind_for_iteration(iteration),
             );
             let generator = DomainAbstractionGenerator::new(cegar_config)
                 .context("failed to construct single-abstraction CEGAR generator")?;
-            let abstraction = generator.generate(abstraction_task).with_context(|| {
-                format!("failed to generate abstraction for collection iteration {iteration}")
-            })?;
+            let abstraction = generator
+                .generate_prepared(abstraction_task, &prepared_task)
+                .with_context(|| {
+                    format!("failed to generate abstraction for collection iteration {iteration}")
+                })?;
 
             let abstraction_size = compute_abstraction_size_u128(
                 abstraction.factory.domain_sizes(),
@@ -399,6 +440,192 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
 
         Some(selected_var_ids)
     }
+
+    fn initial_seed_splits(
+        &self,
+        task: &dyn AbstractNumericTask,
+        iteration: usize,
+    ) -> Vec<InitialSeedSplit> {
+        if self.config.portfolio_strategy != PortfolioStrategy::ViewDiverse {
+            return Vec::new();
+        }
+
+        let mut candidates = collect_false_view_candidates(task);
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+        candidates.sort_by(|left, right| {
+            right
+                .deficit
+                .total_cmp(&left.deficit)
+                .then_with(|| left.numeric_var_id.cmp(&right.numeric_var_id))
+                .then_with(|| left.comparison_var_id.cmp(&right.comparison_var_id))
+        });
+        let candidate_iteration =
+            if self.config.portfolio_strategy == PortfolioStrategy::ViewDiverse {
+                (iteration - 1) / 2
+            } else {
+                iteration - 1
+            };
+        let selected = &candidates[candidate_iteration % candidates.len()];
+        let mut seeds = Vec::new();
+        seeds.push(InitialSeedSplit::Numeric {
+            numeric_var_id: selected.numeric_var_id,
+            value: selected.initial_value,
+            include_in_lower: selected.include_in_lower,
+        });
+        seeds.push(InitialSeedSplit::Propositional {
+            var_id: selected.comparison_var_id,
+            value: COMPARISON_TRUE_VALUE,
+        });
+        seeds.extend(goal_seed_splits(task));
+        seeds
+    }
+
+    fn flaw_kind_for_iteration(&self, iteration: usize) -> FlawKind {
+        if self.config.portfolio_strategy != PortfolioStrategy::ViewDiverse {
+            return self.config.flaw_kind;
+        }
+        if iteration % 2 == 1 {
+            FlawKind::SequenceProgression
+        } else {
+            FlawKind::SequenceRegression
+        }
+    }
+}
+
+const COMPARISON_TRUE_VALUE: usize = 0;
+
+#[derive(Debug, Clone)]
+struct ViewCandidate {
+    comparison_var_id: usize,
+    numeric_var_id: usize,
+    initial_value: f64,
+    deficit: f64,
+    include_in_lower: bool,
+}
+
+fn collect_false_view_candidates(task: &dyn AbstractNumericTask) -> Vec<ViewCandidate> {
+    let initial_numeric = task.get_initial_numeric_state_values();
+    let mut out = Vec::new();
+    for comparison in task.comparison_axioms() {
+        let Ok(is_true) = comparison.is_hold(&initial_numeric) else {
+            continue;
+        };
+        if is_true {
+            continue;
+        }
+        if let Some(candidate) = view_candidate_for_comparison(task, comparison, &initial_numeric) {
+            out.push(candidate);
+        }
+    }
+    out
+}
+
+fn view_candidate_for_comparison(
+    task: &dyn AbstractNumericTask,
+    comparison: &ComparisonAxiom,
+    initial_numeric: &[f64],
+) -> Option<ViewCandidate> {
+    let left = comparison.get_left_var_id();
+    let right = comparison.get_right_var_id();
+    let left_type = task.numeric_variables().get(left)?.get_type();
+    let right_type = task.numeric_variables().get(right)?.get_type();
+    let left_value = *initial_numeric.get(left)?;
+    let right_value = *initial_numeric.get(right)?;
+
+    if left_type == &NumericType::Regular && right_type == &NumericType::Constant {
+        view_candidate_from_values(
+            comparison.get_affected_var_id(),
+            left,
+            left_value,
+            right_value,
+            comparison.get_operator(),
+            true,
+        )
+    } else if left_type == &NumericType::Constant && right_type == &NumericType::Regular {
+        view_candidate_from_values(
+            comparison.get_affected_var_id(),
+            right,
+            right_value,
+            left_value,
+            comparison.get_operator(),
+            false,
+        )
+    } else {
+        None
+    }
+}
+
+fn view_candidate_from_values(
+    comparison_var_id: usize,
+    numeric_var_id: usize,
+    variable_value: f64,
+    constant_value: f64,
+    operator: &ComparisonOperator,
+    variable_is_left: bool,
+) -> Option<ViewCandidate> {
+    let deficit = match (operator, variable_is_left) {
+        (ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual, true)
+        | (ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual, false) => {
+            constant_value - variable_value
+        }
+        (ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual, true)
+        | (ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual, false) => {
+            variable_value - constant_value
+        }
+        (ComparisonOperator::Equal, _) => (variable_value - constant_value).abs(),
+        (ComparisonOperator::UnEqual, _) => return None,
+    };
+    if !deficit.is_finite() || deficit <= 0.0 || !variable_value.is_finite() {
+        return None;
+    }
+    Some(ViewCandidate {
+        comparison_var_id,
+        numeric_var_id,
+        initial_value: variable_value,
+        deficit,
+        include_in_lower: true,
+    })
+}
+
+fn goal_seed_splits(task: &dyn AbstractNumericTask) -> Vec<InitialSeedSplit> {
+    let mut goal_axiom_map: HashMap<usize, Vec<ExplicitFact>> = HashMap::new();
+    for axiom in task.axioms() {
+        if !axiom.conditions().is_empty() {
+            goal_axiom_map.insert(axiom.var_id(), axiom.conditions().to_vec());
+        }
+    }
+
+    let mut seeds = Vec::new();
+    for goal_id in 0..task.get_num_goals() {
+        let goal = task.get_goal_fact(goal_id);
+        if let Some(conditions) = goal_axiom_map.get(&goal.var) {
+            seeds.extend(
+                conditions
+                    .iter()
+                    .map(|fact| InitialSeedSplit::Propositional {
+                        var_id: fact.var,
+                        value: fact.value,
+                    }),
+            );
+        } else {
+            seeds.push(InitialSeedSplit::Propositional {
+                var_id: goal.var,
+                value: goal.value,
+            });
+        }
+    }
+    seeds.sort_by_key(|seed| match seed {
+        InitialSeedSplit::Propositional { var_id, value } => (0, *var_id, *value),
+        InitialSeedSplit::Numeric {
+            numeric_var_id,
+            value,
+            ..
+        } => (1, *numeric_var_id, value.to_bits() as usize),
+    });
+    seeds.dedup();
+    seeds
 }
 
 fn collect_logic_axiom_effect_vars(task: &dyn AbstractNumericTask) -> HashSet<usize> {

@@ -3,7 +3,10 @@ use crate::numeric::evaluation::domain_abstractions::max_domain_abstraction_heur
 use crate::numeric::evaluation::evaluator::EvaluationState;
 use crate::numeric::evaluation::heuristic::Heuristic;
 use planners_sas::numeric::axioms::AxiomEvaluator;
-use planners_sas::numeric::numeric_task::NumericRootTask;
+use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
+use planners_sas::numeric::numeric_task::{
+    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable, Operator,
+};
 use planners_sas::numeric::state_registry::StateRegistry;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
@@ -20,6 +23,96 @@ fn single_init_split_selection_uses_round_robin_iteration_order() {
 #[test]
 fn single_init_split_selection_handles_empty_candidates() {
     assert_eq!(select_single_init_split_var(&[], 1), None);
+}
+
+#[test]
+fn view_diverse_seed_splits_rotate_false_comparison_views_by_deficit() {
+    let variables = vec![
+        ExplicitVariable::new(
+            3,
+            "cmp_x".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(0),
+            2,
+        ),
+        ExplicitVariable::new(
+            3,
+            "cmp_y".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(1),
+            2,
+        ),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c10".into(), NumericType::Constant, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("c20".into(), NumericType::Constant, None),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![ExplicitFact::new(1, COMPARISON_TRUE_VALUE)],
+        vec![],
+        vec![0, 0],
+        vec![0.0, 10.0, 5.0, 20.0],
+        vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
+        vec![],
+        vec![
+            ComparisonAxiom::new(0, 0, 1, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(1, 2, 3, ComparisonOperator::GreaterThanOrEqual),
+        ],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        portfolio_strategy: PortfolioStrategy::ViewDiverse,
+        ..Default::default()
+    };
+    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
+
+    let first = generator.initial_seed_splits(&task, 1);
+    assert!(first.contains(&InitialSeedSplit::Numeric {
+        numeric_var_id: 2,
+        value: 5.0,
+        include_in_lower: true,
+    }));
+    assert!(first.contains(&InitialSeedSplit::Propositional {
+        var_id: 1,
+        value: COMPARISON_TRUE_VALUE,
+    }));
+
+    let second = generator.initial_seed_splits(&task, 2);
+    assert!(second.contains(&InitialSeedSplit::Numeric {
+        numeric_var_id: 2,
+        value: 5.0,
+        include_in_lower: true,
+    }));
+    assert!(second.contains(&InitialSeedSplit::Propositional {
+        var_id: 1,
+        value: COMPARISON_TRUE_VALUE,
+    }));
+
+    let third = generator.initial_seed_splits(&task, 3);
+    assert!(third.contains(&InitialSeedSplit::Numeric {
+        numeric_var_id: 0,
+        value: 0.0,
+        include_in_lower: true,
+    }));
+    assert!(third.contains(&InitialSeedSplit::Propositional {
+        var_id: 0,
+        value: COMPARISON_TRUE_VALUE,
+    }));
+    assert_eq!(
+        generator.flaw_kind_for_iteration(1),
+        FlawKind::SequenceProgression
+    );
+    assert_eq!(
+        generator.flaw_kind_for_iteration(2),
+        FlawKind::SequenceRegression
+    );
 }
 
 #[test]

@@ -36,6 +36,24 @@ impl DomainAbstraction {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PreparedDomainAbstractionTask {
+    pub transformed_task: Option<Rc<NumericRootTask>>,
+    pub task_projection: Option<DomainAbstractionTaskProjection>,
+}
+
+impl PreparedDomainAbstractionTask {
+    pub fn task_for<'task>(
+        &'task self,
+        fallback: &'task dyn AbstractNumericTask,
+    ) -> &'task dyn AbstractNumericTask {
+        self.transformed_task
+            .as_deref()
+            .map(|task| task as &dyn AbstractNumericTask)
+            .unwrap_or(fallback)
+    }
+}
+
 /// Numeric-fd style generator that constructs a domain abstraction via CEGAR.
 #[derive(Debug, Clone)]
 pub struct DomainAbstractionGenerator {
@@ -55,20 +73,16 @@ impl DomainAbstractionGenerator {
 
     /// Builds a domain abstraction and its abstract distance table.
     pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<DomainAbstraction> {
-        let abstracted_task =
-            maybe_build_linear_abstracted_task(task, self.config.transform_linear_task)
-                .context("failed to build abstracted task for domain abstraction")?;
-        let (transformed_task_owner, task_projection) = match abstracted_task {
-            Some(abstracted_task) => {
-                let (transformed_task, projection) = abstracted_task.into_parts();
-                (Some(Rc::new(transformed_task)), Some(projection))
-            }
-            None => (None, None),
-        };
-        let transformed_task = transformed_task_owner
-            .as_deref()
-            .map(|task| task as &dyn AbstractNumericTask)
-            .unwrap_or(task);
+        let prepared = prepare_domain_abstraction_task(task, self.config.transform_linear_task)?;
+        self.generate_prepared(task, &prepared)
+    }
+
+    pub fn generate_prepared(
+        &self,
+        fallback_task: &dyn AbstractNumericTask,
+        prepared: &PreparedDomainAbstractionTask,
+    ) -> Result<DomainAbstraction> {
+        let transformed_task = prepared.task_for(fallback_task);
         let outcome = self
             .cegar
             .build_abstraction(transformed_task)
@@ -107,13 +121,32 @@ impl DomainAbstractionGenerator {
             distance_table,
             hash_multipliers,
             combine_labels: self.config.combine_labels,
-            task_projection,
-            transformed_task: transformed_task_owner,
+            task_projection: prepared.task_projection.clone(),
+            transformed_task: prepared.transformed_task.clone(),
             relevant_operator_ids,
             abstract_operators,
             abstract_operator_footprints,
         })
     }
+}
+
+pub fn prepare_domain_abstraction_task(
+    task: &dyn AbstractNumericTask,
+    transform_linear_task: bool,
+) -> Result<PreparedDomainAbstractionTask> {
+    let abstracted_task = maybe_build_linear_abstracted_task(task, transform_linear_task)
+        .context("failed to build abstracted task for domain abstraction")?;
+    let (transformed_task, task_projection) = match abstracted_task {
+        Some(abstracted_task) => {
+            let (transformed_task, projection) = abstracted_task.into_parts();
+            (Some(Rc::new(transformed_task)), Some(projection))
+        }
+        None => (None, None),
+    };
+    Ok(PreparedDomainAbstractionTask {
+        transformed_task,
+        task_projection,
+    })
 }
 
 /// Computes mixed-radix hash multipliers for propositional and numeric variables.

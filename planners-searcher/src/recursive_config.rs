@@ -6,7 +6,7 @@ use std::fmt;
 
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
+    InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, PortfolioStrategy, VariableSubset,
 };
 use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
     Saturator, ScpOnlineConfig,
@@ -656,6 +656,14 @@ fn parse_numeric_split_strategy(value: &str) -> Result<NumericSplitStrategy, Str
     }
 }
 
+fn parse_portfolio_strategy(value: &str) -> Result<PortfolioStrategy, String> {
+    match value {
+        "standard" => Ok(PortfolioStrategy::Standard),
+        "view_diverse" => Ok(PortfolioStrategy::ViewDiverse),
+        _ => Err(format!("invalid PortfolioStrategy `{value}`")),
+    }
+}
+
 macro_rules! field_usize {
     ($name:literal, $ty:ty, $field:ident) => {
         Field {
@@ -860,6 +868,14 @@ fn multi_domain_abstractions_fields()
                 Ok(())
             },
             format: |config| config.numeric_split_strategy.to_string(),
+        },
+        Field {
+            name: "portfolio_strategy",
+            apply: |config, value| {
+                config.portfolio_strategy = parse_portfolio_strategy(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.portfolio_strategy.to_string(),
         },
     ]
 }
@@ -1083,6 +1099,15 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
                 Ok(())
             },
             format: |config| config.collection_config.transform_linear_task.to_string(),
+        },
+        Field {
+            name: "portfolio_strategy",
+            apply: |config, value| {
+                config.collection_config.portfolio_strategy =
+                    parse_portfolio_strategy(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.portfolio_strategy.to_string(),
         },
     ]
 }
