@@ -90,6 +90,10 @@ impl AbstractTransitionSystem {
     }
 
     pub fn abstract_operator_regions(&self) -> Vec<Option<TransitionRegion>> {
+        assert!(
+            !self.state_regions.is_empty(),
+            "abstract transition system has no materialized state regions"
+        );
         let num_abstract_ops = self
             .transitions
             .iter()
@@ -110,6 +114,10 @@ impl AbstractTransitionSystem {
     }
 
     pub fn abstract_operator_region_covers(&self) -> Vec<Vec<TransitionRegion>> {
+        assert!(
+            !self.state_regions.is_empty(),
+            "abstract transition system has no materialized state regions"
+        );
         let num_abstract_ops = self
             .transitions
             .iter()
@@ -304,6 +312,19 @@ impl TransitionResidualCosts {
             .iter()
             .map(|residual| residual.reductions.len())
             .sum()
+    }
+
+    pub fn has_reductions(&self) -> bool {
+        self.operator_residuals
+            .iter()
+            .any(|residual| !residual.reductions.is_empty())
+    }
+
+    pub fn base_cost(&self, concrete_op_id: usize) -> f64 {
+        self.operator_residuals
+            .get(concrete_op_id)
+            .map(|residual| residual.base_cost)
+            .unwrap_or(f64::INFINITY)
     }
 
     pub fn operator_costs_for_label_cp(&self) -> Vec<f64> {
@@ -532,6 +553,9 @@ impl TransitionResidualCosts {
             if total_reduction_pieces > MAX_TOTAL_ABSTRACT_OPERATOR_REDUCTION_PIECES {
                 return Ok(false);
             }
+        }
+        if transition_system.state_regions.is_empty() {
+            return Ok(false);
         }
         let covers = transition_system.abstract_operator_region_covers();
         for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
