@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom};
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, Metric,
@@ -174,11 +174,7 @@ impl AffineExpression {
         Ok(value)
     }
 
-    fn apply_effects(
-        &self,
-        additive_deltas: &[f64],
-        assigned_constants: &[Option<f64>],
-    ) -> Self {
+    fn apply_effects(&self, additive_deltas: &[f64], assigned_constants: &[Option<f64>]) -> Self {
         let mut out = Self::constant(self.constant, self.coefficients.len());
         for (var_id, &coefficient) in self.coefficients.iter().enumerate() {
             if approx_eq(coefficient, 0.0) {
@@ -732,13 +728,19 @@ mod tests {
 
         assert_eq!(assignment_effects.len(), 2);
         assert_eq!(assignment_effects[0].affected_var_id(), 0);
-        assert_eq!(assignment_effects[0].operation(), &AssignmentOperation::Assign);
+        assert_eq!(
+            assignment_effects[0].operation(),
+            &AssignmentOperation::Assign
+        );
         assert_eq!(
             transformed.get_initial_numeric_state_values()[assignment_effects[0].var_id()],
             6000.0
         );
         assert_eq!(assignment_effects[1].affected_var_id(), 2);
-        assert_eq!(assignment_effects[1].operation(), &AssignmentOperation::Assign);
+        assert_eq!(
+            assignment_effects[1].operation(),
+            &AssignmentOperation::Assign
+        );
         assert_eq!(
             transformed.get_initial_numeric_state_values()[assignment_effects[1].var_id()],
             0.0

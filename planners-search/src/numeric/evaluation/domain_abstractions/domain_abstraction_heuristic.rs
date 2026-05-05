@@ -18,6 +18,160 @@ pub(crate) const COMPARISON_TRUE_VAL: usize = 0;
 pub(crate) const COMPARISON_FALSE_VAL: usize = 1;
 pub(crate) const COMPARISON_UNKNOWN_VAL: usize = 2;
 
+#[derive(Debug, Clone)]
+pub(crate) struct DomainAbstractionLookupScratch {
+    pub(crate) prop: Vec<usize>,
+    pub(crate) numeric: Vec<f64>,
+    pub(crate) projected_numeric: Vec<f64>,
+    pub(crate) comparisons: Vec<Option<usize>>,
+    pub(crate) required_domain_ids: Vec<usize>,
+    pub(crate) abstract_state_ids: Vec<Option<usize>>,
+    pub(crate) abstraction_value_cache: Vec<Option<f64>>,
+}
+
+impl DomainAbstractionLookupScratch {
+    pub(crate) fn new() -> Self {
+        Self {
+            prop: Vec::new(),
+            numeric: Vec::new(),
+            projected_numeric: Vec::new(),
+            comparisons: Vec::new(),
+            required_domain_ids: Vec::new(),
+            abstract_state_ids: Vec::new(),
+            abstraction_value_cache: Vec::new(),
+        }
+    }
+}
+
+pub(crate) fn compute_collection_abstract_state_ids(
+    heuristics: &[DomainAbstractionHeuristic],
+    eval_state: &EvaluationState<'_, '_>,
+    required_ids: Option<&[usize]>,
+    scratch: &mut DomainAbstractionLookupScratch,
+) -> Result<(), EvaluationError> {
+    let state = eval_state.state();
+    let registry = eval_state.state_registry().ok_or_else(|| {
+        EvaluationError::InvalidState(
+            "domain abstraction lookup requires state registry".to_string(),
+        )
+    })?;
+    state.fill_state(registry, &mut scratch.prop);
+    registry
+        .fill_numeric_vars(state, &mut scratch.numeric)
+        .map_err(|err| {
+            EvaluationError::ComputationFailed(format!("failed to read numeric state: {err:?}"))
+        })?;
+
+    let num_domain = heuristics.len();
+    let needs_all = required_ids.is_none();
+    scratch.required_domain_ids.clear();
+    if needs_all {
+        scratch.required_domain_ids.extend(0..num_domain);
+    } else {
+        scratch.required_domain_ids.extend(
+            required_ids
+                .unwrap_or(&[])
+                .iter()
+                .copied()
+                .filter(|&id| id < num_domain),
+        );
+    }
+
+    let shared_projection =
+        shared_projection_for_domain_ids(heuristics, &scratch.required_domain_ids)?;
+    let shared_numeric_values = match shared_projection {
+        Some(Some(projection)) => {
+            projection
+                .project_numeric_values_into(&scratch.numeric, &mut scratch.projected_numeric)
+                .map_err(|error| {
+                    EvaluationError::ComputationFailed(format!(
+                        "failed to project state into shared abstracted domain task: {error:#}"
+                    ))
+                })?;
+            Some(scratch.projected_numeric.as_slice())
+        }
+        Some(None) => Some(scratch.numeric.as_slice()),
+        None => None,
+    };
+
+    scratch.comparisons.clear();
+    if scratch.required_domain_ids.len() > 1 {
+        if let (Some(&first_id), Some(numeric_values)) =
+            (scratch.required_domain_ids.first(), shared_numeric_values)
+        {
+            heuristics[first_id].fill_comparison_values_from_projected_state_values(
+                numeric_values,
+                &mut scratch.comparisons,
+            )?;
+        }
+    }
+
+    scratch.abstract_state_ids.clear();
+    scratch.abstract_state_ids.resize(num_domain, None);
+    if needs_all {
+        for (id, heuristic) in heuristics.iter().enumerate() {
+            scratch.abstract_state_ids[id] = Some(hash_with_shared_values(
+                heuristic,
+                &scratch.prop,
+                &scratch.numeric,
+                shared_numeric_values,
+                &scratch.comparisons,
+            )?);
+        }
+    } else if let Some(required_ids) = required_ids {
+        for &id in required_ids {
+            let Some(heuristic) = heuristics.get(id) else {
+                continue;
+            };
+            scratch.abstract_state_ids[id] = Some(hash_with_shared_values(
+                heuristic,
+                &scratch.prop,
+                &scratch.numeric,
+                shared_numeric_values,
+                &scratch.comparisons,
+            )?);
+        }
+    }
+
+    Ok(())
+}
+
+fn hash_with_shared_values(
+    heuristic: &DomainAbstractionHeuristic,
+    prop_values: &[usize],
+    numeric_values: &[f64],
+    shared_numeric_values: Option<&[f64]>,
+    comparison_values: &[Option<usize>],
+) -> Result<usize, EvaluationError> {
+    if let Some(shared_numeric_values) = shared_numeric_values {
+        heuristic.abstract_state_hash_from_projected_state_values_with_comparisons(
+            prop_values,
+            shared_numeric_values,
+            comparison_values,
+        )
+    } else {
+        heuristic.abstract_state_hash_from_state_values(prop_values, numeric_values)
+    }
+}
+
+fn shared_projection_for_domain_ids<'a>(
+    heuristics: &'a [DomainAbstractionHeuristic],
+    ids: &[usize],
+) -> Result<Option<Option<&'a DomainAbstractionTaskProjection>>, EvaluationError> {
+    let Some(first_id) = ids.first().copied() else {
+        return Ok(None);
+    };
+    let first = heuristics[first_id].task_projection();
+    for &id in &ids[1..] {
+        if heuristics[id].task_projection() != first {
+            return Err(EvaluationError::ComputationFailed(format!(
+                "domain abstractions use different lookup task projections: abstraction {first_id} and abstraction {id}"
+            )));
+        }
+    }
+    Ok(Some(first))
+}
+
 /// Heuristic that evaluates a concrete state by mapping it to an abstract state
 /// and looking up its precomputed goal distance.
 #[derive(Debug, Clone)]

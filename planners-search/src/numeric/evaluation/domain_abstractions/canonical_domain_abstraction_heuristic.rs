@@ -10,7 +10,10 @@ use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
 
 use super::domain_abstraction_generator::DomainAbstraction;
-use super::domain_abstraction_heuristic::DomainAbstractionHeuristic;
+use super::domain_abstraction_heuristic::{
+    compute_collection_abstract_state_ids, DomainAbstractionHeuristic,
+    DomainAbstractionLookupScratch,
+};
 
 #[derive(Debug, Clone)]
 pub struct CanonicalDomainAbstractionHeuristic {
@@ -18,6 +21,8 @@ pub struct CanonicalDomainAbstractionHeuristic {
     heuristics: Vec<DomainAbstractionHeuristic>,
     max_additive_subsets: Vec<Vec<usize>>,
     state_value_cache: RefCell<Vec<Option<f64>>>,
+    lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
+    required_abstraction_ids: Vec<usize>,
 }
 
 impl CanonicalDomainAbstractionHeuristic {
@@ -60,8 +65,10 @@ impl CanonicalDomainAbstractionHeuristic {
         Self {
             name: name.unwrap_or_else(|| "canonical_domain_abstractions".to_string()),
             heuristics,
+            required_abstraction_ids: required_abstraction_ids(&max_additive_subsets),
             max_additive_subsets,
             state_value_cache: RefCell::new(Vec::new()),
+            lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
         }
     }
 
@@ -96,13 +103,24 @@ impl CanonicalDomainAbstractionHeuristic {
             return Ok(0.0);
         }
 
-        let mut abstraction_value_cache = vec![None; self.heuristics.len()];
+        let mut scratch = self.lookup_scratch.borrow_mut();
+        compute_collection_abstract_state_ids(
+            &self.heuristics,
+            eval_state,
+            Some(&self.required_abstraction_ids),
+            &mut scratch,
+        )?;
+        scratch.abstraction_value_cache.clear();
+        scratch
+            .abstraction_value_cache
+            .resize(self.heuristics.len(), None);
         let mut best = 0.0_f64;
 
         for subset in &self.max_additive_subsets {
             let mut sum = 0.0_f64;
             for &abstraction_id in subset {
-                let value = if let Some(value) = abstraction_value_cache
+                let value = if let Some(value) = scratch
+                    .abstraction_value_cache
                     .get(abstraction_id)
                     .and_then(|cached| *cached)
                 {
@@ -113,8 +131,30 @@ impl CanonicalDomainAbstractionHeuristic {
                             "invalid canonical abstraction index {abstraction_id}"
                         )));
                     };
-                    let value = heuristic.compute_heuristic(eval_state)?;
-                    let Some(cache_slot) = abstraction_value_cache.get_mut(abstraction_id) else {
+                    let state_id = scratch
+                        .abstract_state_ids
+                        .get(abstraction_id)
+                        .copied()
+                        .flatten()
+                        .ok_or_else(|| {
+                            EvaluationError::InvalidState(format!(
+                                "missing abstract state id for canonical abstraction {abstraction_id}"
+                            ))
+                        })?;
+                    let value = heuristic
+                        .abstraction()
+                        .distance_table
+                        .distances
+                        .get(state_id)
+                        .copied()
+                        .ok_or_else(|| {
+                            EvaluationError::InvalidState(format!(
+                                "abstract hash out of bounds: {state_id} (len={})",
+                                heuristic.abstraction().distance_table.distances.len()
+                            ))
+                        })?;
+                    let Some(cache_slot) = scratch.abstraction_value_cache.get_mut(abstraction_id)
+                    else {
                         return Err(EvaluationError::InvalidState(format!(
                             "invalid canonical abstraction cache index {abstraction_id}"
                         )));
@@ -213,6 +253,16 @@ fn compute_max_additive_subsets_from_relevant_operators(
     maximal_cliques.sort();
     maximal_cliques.dedup();
     maximal_cliques
+}
+
+fn required_abstraction_ids(max_additive_subsets: &[Vec<usize>]) -> Vec<usize> {
+    let mut ids: Vec<usize> = max_additive_subsets
+        .iter()
+        .flat_map(|subset| subset.iter().copied())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 fn bron_kerbosch(

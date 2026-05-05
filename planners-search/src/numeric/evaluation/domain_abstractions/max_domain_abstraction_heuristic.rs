@@ -1,13 +1,19 @@
+use std::cell::RefCell;
+
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
 
 use super::domain_abstraction_generator::DomainAbstraction;
-use super::domain_abstraction_heuristic::DomainAbstractionHeuristic;
+use super::domain_abstraction_heuristic::{
+    compute_collection_abstract_state_ids, DomainAbstractionHeuristic,
+    DomainAbstractionLookupScratch,
+};
 
 #[derive(Debug, Clone)]
 pub struct MaxDomainAbstractionHeuristic {
     name: String,
     heuristics: Vec<DomainAbstractionHeuristic>,
+    lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
 }
 
 impl MaxDomainAbstractionHeuristic {
@@ -26,6 +32,7 @@ impl MaxDomainAbstractionHeuristic {
         Self {
             name: name.unwrap_or_else(|| "multi_domain_abstractions".to_string()),
             heuristics,
+            lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
         }
     }
 
@@ -40,8 +47,24 @@ impl Heuristic for MaxDomainAbstractionHeuristic {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         let mut best = f64::NEG_INFINITY;
-        for heuristic in &self.heuristics {
-            let value = heuristic.compute_heuristic(eval_state)?;
+        let mut scratch = self.lookup_scratch.borrow_mut();
+        compute_collection_abstract_state_ids(&self.heuristics, eval_state, None, &mut scratch)?;
+        for (heuristic, state_id) in self.heuristics.iter().zip(&scratch.abstract_state_ids) {
+            let Some(state_id) = *state_id else {
+                continue;
+            };
+            let value = heuristic
+                .abstraction()
+                .distance_table
+                .distances
+                .get(state_id)
+                .copied()
+                .ok_or_else(|| {
+                    EvaluationError::InvalidState(format!(
+                        "abstract hash out of bounds: {state_id} (len={})",
+                        heuristic.abstraction().distance_table.distances.len()
+                    ))
+                })?;
             if value > best {
                 best = value;
             }
