@@ -538,7 +538,29 @@ impl DomainAbstractionFactory {
     ) -> Result<AbstractTransitionSystem> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let operators = generator.build_abstract_operators(task)?;
-        self.build_transition_system_with_operators(task, &generator, &operators, deadline)
+        self.build_transition_system_with_operators(task, &generator, &operators, deadline, true)
+    }
+
+    pub fn build_abstract_transition_system_from_operators_with_deadline(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operators: &[AbstractOperator],
+        deadline: Option<Instant>,
+    ) -> Result<AbstractTransitionSystem> {
+        let generator = self.make_operator_generator(task, combine_labels)?;
+        self.build_transition_system_with_operators(task, &generator, operators, deadline, true)
+    }
+
+    pub fn build_abstract_transition_system_from_operators_without_regions_with_deadline(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operators: &[AbstractOperator],
+        deadline: Option<Instant>,
+    ) -> Result<AbstractTransitionSystem> {
+        let generator = self.make_operator_generator(task, combine_labels)?;
+        self.build_transition_system_with_operators(task, &generator, operators, deadline, false)
     }
 
     pub fn build_transition_cost_partitioned_distance_table(
@@ -588,6 +610,7 @@ impl DomainAbstractionFactory {
         deadline: Option<Instant>,
     ) -> Result<(AbstractDistanceTable, AbstractTransitionCostFunction)> {
         ensure_online_scp_deadline(deadline)?;
+        let residuals_have_reductions = residual_costs.has_reductions();
         let transition_costs = transition_system
             .transitions
             .iter()
@@ -600,15 +623,19 @@ impl DomainAbstractionFactory {
                     .concrete_op_ids
                     .iter()
                     .map(|&concrete_op_id| {
-                        residual_costs.cost_for_indexed_transition(
-                            concrete_op_id,
-                            abstraction_id,
-                            transition.source_hash,
-                            transition.abstract_op_id,
-                            transition.target_hash,
-                            &transition_system.state_regions[transition.source_hash],
-                            &transition_system.state_regions[transition.target_hash],
-                        )
+                        if residuals_have_reductions {
+                            residual_costs.cost_for_indexed_transition(
+                                concrete_op_id,
+                                abstraction_id,
+                                transition.source_hash,
+                                transition.abstract_op_id,
+                                transition.target_hash,
+                                &transition_system.state_regions[transition.source_hash],
+                                &transition_system.state_regions[transition.target_hash],
+                            )
+                        } else {
+                            residual_costs.base_cost(concrete_op_id)
+                        }
                     })
                     .fold(f64::INFINITY, f64::min))
             })
@@ -658,27 +685,36 @@ impl DomainAbstractionFactory {
         deadline: Option<Instant>,
     ) -> Result<(AbstractDistanceTable, AbstractOperatorCostFunction)> {
         ensure_online_scp_deadline(deadline)?;
-        let operator_regions = transition_system.abstract_operator_regions();
         let concrete_op_ids = transition_system.concrete_operator_ids_by_abstract_operator();
-        let mut operator_costs = vec![f64::INFINITY; operator_regions.len()];
-        for (abstract_op_id, region) in operator_regions.iter().enumerate() {
+        let operator_regions = residual_costs
+            .has_reductions()
+            .then(|| transition_system.abstract_operator_regions());
+        let mut operator_costs = vec![f64::INFINITY; concrete_op_ids.len()];
+        for abstract_op_id in 0..concrete_op_ids.len() {
             if abstract_op_id % 64 == 0 {
                 ensure_online_scp_deadline(deadline)?;
             }
-            let Some(region) = region else {
-                continue;
+            operator_costs[abstract_op_id] = if let Some(operator_regions) = &operator_regions {
+                let Some(region) = operator_regions[abstract_op_id].as_ref() else {
+                    continue;
+                };
+                concrete_op_ids[abstract_op_id]
+                    .iter()
+                    .map(|&concrete_op_id| {
+                        residual_costs.cost_for_abstract_operator(
+                            concrete_op_id,
+                            abstraction_id,
+                            abstract_op_id,
+                            region,
+                        )
+                    })
+                    .fold(f64::INFINITY, f64::min)
+            } else {
+                concrete_op_ids[abstract_op_id]
+                    .iter()
+                    .map(|&concrete_op_id| residual_costs.base_cost(concrete_op_id))
+                    .fold(f64::INFINITY, f64::min)
             };
-            operator_costs[abstract_op_id] = concrete_op_ids[abstract_op_id]
-                .iter()
-                .map(|&concrete_op_id| {
-                    residual_costs.cost_for_abstract_operator(
-                        concrete_op_id,
-                        abstraction_id,
-                        abstract_op_id,
-                        region,
-                    )
-                })
-                .fold(f64::INFINITY, f64::min);
         }
         let transition_costs =
             transition_costs_from_abstract_operator_costs(transition_system, &operator_costs);
@@ -793,7 +829,7 @@ impl DomainAbstractionFactory {
         )
     }
 
-    fn build_distance_table_with_operators(
+    pub(crate) fn build_distance_table_with_operators(
         &self,
         task: &dyn AbstractNumericTask,
         generator: &AbstractOperatorGenerator,
@@ -876,6 +912,7 @@ impl DomainAbstractionFactory {
         generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
         deadline: Option<Instant>,
+        materialize_state_regions: bool,
     ) -> Result<AbstractTransitionSystem> {
         ensure_online_scp_deadline(deadline)?;
         let hash_multipliers = generator.hash_multipliers();
@@ -902,13 +939,16 @@ impl DomainAbstractionFactory {
         let mut transitions: Vec<AbstractTransition> = Vec::new();
         let mut backward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
         let mut forward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
-        let mut state_regions = Vec::with_capacity(num_states);
-        for state_hash in 0..num_states {
-            state_regions.push(self.state_region_from_hash(
-                state_hash,
-                numeric_domain_sizes,
-                hash_multipliers,
-            )?);
+        let mut state_regions = Vec::new();
+        if materialize_state_regions {
+            state_regions.reserve(num_states);
+            for state_hash in 0..num_states {
+                state_regions.push(self.state_region_from_hash(
+                    state_hash,
+                    numeric_domain_sizes,
+                    hash_multipliers,
+                )?);
+            }
         }
         let mut seen: HashSet<(usize, usize, usize)> = HashSet::new();
         let mut duplicate_transition_attempts = 0usize;

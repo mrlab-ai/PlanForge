@@ -628,13 +628,23 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 let start = Instant::now();
                 info!("scp_online: building transition system for abstraction {abstraction_id}");
                 let abstraction_task = abstraction.task_for_factory(task);
-                let transition_system = match abstraction
-                    .factory
-                    .build_abstract_transition_system_with_deadline(
+                let build_without_regions = abstraction_state_count(abstraction) > 10_000;
+                let transition_system_result = if build_without_regions {
+                    abstraction.factory.build_abstract_transition_system_from_operators_without_regions_with_deadline(
                         abstraction_task,
                         self.config.combine_labels,
+                        &abstraction.abstract_operators,
                         deadline,
-                    ) {
+                    )
+                } else {
+                    abstraction.factory.build_abstract_transition_system_from_operators_with_deadline(
+                        abstraction_task,
+                        self.config.combine_labels,
+                        &abstraction.abstract_operators,
+                        deadline,
+                    )
+                };
+                let transition_system = match transition_system_result {
                     Ok(transition_system) => transition_system,
                     Err(error) => {
                         if error.to_string().contains("online SCP deadline exceeded") {
@@ -1606,7 +1616,7 @@ fn log_transition_system_summary(
     };
     info!(
         "scp_online: transition system abstraction {abstraction_id}: states={}, transitions={}, duplicate_attempts_skipped={}, abstract_ops={}, concrete_labels={}, avg_labels_per_transition={avg_labels:.3}, build_time={:.3}s",
-        transition_system.state_regions.len(),
+        transition_system.backward.len(),
         transitions,
         transition_system.duplicate_transition_attempts,
         abstract_ops.len(),

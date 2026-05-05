@@ -946,6 +946,7 @@ fn run_da_debug(
         task_projection: None,
         transformed_task: None,
         relevant_operator_ids: Vec::new(),
+        abstract_operators: Vec::new(),
     };
     let heuristic = DomainAbstractionHeuristic::new(Some("da_debug".to_string()), abstraction);
 

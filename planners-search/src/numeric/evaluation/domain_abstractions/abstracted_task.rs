@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{bail, ensure, Context, Result};
 use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom};
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, Metric,
@@ -298,6 +298,7 @@ fn build_task(
             task,
             operator,
             initial_numeric,
+            root_exprs,
             &original_to_transformed,
             &mut constants,
             &mut numeric_variables,
@@ -355,6 +356,105 @@ fn build_task(
 }
 
 fn transform_operator(
+    task: &dyn AbstractNumericTask,
+    operator: &Operator,
+    initial_numeric: &[f64],
+    root_exprs: &BTreeMap<usize, AffineExpression>,
+    original_to_transformed: &[Option<usize>],
+    constants: &mut ConstantPool,
+    numeric_variables: &mut Vec<NumericVariable>,
+    numeric_initial: &mut Vec<f64>,
+    transformed_to_expr: &mut Vec<AffineExpression>,
+) -> Result<Operator> {
+    let has_assignment = operator
+        .assignment_effects()
+        .iter()
+        .any(|effect| matches!(effect.operation(), AssignmentOperation::Assign));
+    if has_assignment {
+        return transform_operator_with_assignment(
+            task,
+            operator,
+            initial_numeric,
+            original_to_transformed,
+            constants,
+            numeric_variables,
+            numeric_initial,
+            transformed_to_expr,
+        );
+    }
+
+    let mut deltas = vec![0.0; task.numeric_variables().len()];
+    for effect in operator.assignment_effects() {
+        ensure!(
+            !effect.is_conditional() && effect.conditions().is_empty(),
+            "abstracted domain task does not support conditional numeric effects in operator {}",
+            operator.name()
+        );
+        let source_value = match task.numeric_variables()[effect.var_id()].get_type() {
+            NumericType::Constant | NumericType::Cost => initial_numeric[effect.var_id()],
+            _ => bail!(
+                "abstracted domain task requires constant RHS numeric effects in operator {}",
+                operator.name()
+            ),
+        };
+        match effect.operation() {
+            AssignmentOperation::Plus => deltas[effect.affected_var_id()] += source_value,
+            AssignmentOperation::Minus => deltas[effect.affected_var_id()] -= source_value,
+            AssignmentOperation::Assign => bail!(
+                "abstracted domain task does not support assignment numeric effects in operator {}",
+                operator.name()
+            ),
+            AssignmentOperation::Times | AssignmentOperation::Divide => bail!(
+                "abstracted domain task does not support non-additive numeric effects in operator {}",
+                operator.name()
+            ),
+        }
+    }
+
+    let mut assignment_effects = Vec::new();
+    for (original_id, mapped) in original_to_transformed.iter().enumerate() {
+        let Some(transformed_id) = *mapped else {
+            continue;
+        };
+        let delta = root_exprs
+            .get(&original_id)
+            .map(|expr| {
+                expr.coefficients
+                    .iter()
+                    .zip(deltas.iter())
+                    .map(|(&coefficient, &delta)| coefficient * delta)
+                    .sum::<f64>()
+            })
+            .unwrap_or(deltas[original_id]);
+        if approx_eq(delta, 0.0) {
+            continue;
+        }
+        let const_id = constants.get_or_insert(
+            delta,
+            numeric_variables,
+            numeric_initial,
+            transformed_to_expr,
+            task.numeric_variables().len(),
+        );
+        assignment_effects.push(AssignmentEffect::new(
+            transformed_id,
+            AssignmentOperation::Plus,
+            const_id,
+            false,
+            vec![],
+        ));
+    }
+
+    Ok(Operator::new(
+        operator.name().to_string(),
+        operator.preconditions().clone(),
+        operator.effects().clone(),
+        assignment_effects,
+        operator.cost(),
+    ))
+}
+
+fn transform_operator_with_assignment(
     task: &dyn AbstractNumericTask,
     operator: &Operator,
     initial_numeric: &[f64],

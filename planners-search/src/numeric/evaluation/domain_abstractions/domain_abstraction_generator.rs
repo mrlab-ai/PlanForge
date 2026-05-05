@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
 
-use super::abstracted_task::{DomainAbstractionTaskProjection, maybe_build_linear_abstracted_task};
+use super::abstract_operator_generator::AbstractOperator;
+use super::abstracted_task::{maybe_build_linear_abstracted_task, DomainAbstractionTaskProjection};
 use super::cegar::{Cegar, CegarConfig};
 use super::domain_abstraction_factory::{AbstractDistanceTable, DomainAbstractionFactory};
 
@@ -18,6 +19,7 @@ pub struct DomainAbstraction {
     pub task_projection: Option<DomainAbstractionTaskProjection>,
     pub transformed_task: Option<Rc<NumericRootTask>>,
     pub relevant_operator_ids: Vec<usize>,
+    pub abstract_operators: Vec<AbstractOperator>,
 }
 
 impl DomainAbstraction {
@@ -71,25 +73,29 @@ impl DomainAbstractionGenerator {
             .context("CEGAR failed to build abstraction")?;
 
         let factory = outcome.final_state.factory;
+        let mut operator_generator =
+            factory.make_operator_generator(transformed_task, self.config.combine_labels)?;
+        let abstract_operators = operator_generator
+            .build_abstract_operators(transformed_task)
+            .context("failed to build abstract operators")?;
         let distance_table = factory
-            .build_abstract_distance_table(transformed_task, self.config.combine_labels, false)
+            .build_distance_table_with_operators(
+                transformed_task,
+                &operator_generator,
+                &abstract_operators,
+                false,
+            )
             .context("failed to build abstract distance table")?;
 
         let hash_multipliers =
             compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())
                 .context("failed to compute hash multipliers")?;
-        let relevant_operator_ids = {
-            let mut operator_generator =
-                factory.make_operator_generator(transformed_task, self.config.combine_labels)?;
-            let mut ids: Vec<usize> = operator_generator
-                .build_abstract_operators(transformed_task)?
-                .into_iter()
-                .flat_map(|operator| operator.concrete_op_ids.into_iter())
-                .collect();
-            ids.sort_unstable();
-            ids.dedup();
-            ids
-        };
+        let mut relevant_operator_ids: Vec<usize> = abstract_operators
+            .iter()
+            .flat_map(|operator| operator.concrete_op_ids.iter().copied())
+            .collect();
+        relevant_operator_ids.sort_unstable();
+        relevant_operator_ids.dedup();
 
         Ok(DomainAbstraction {
             factory,
@@ -99,6 +105,7 @@ impl DomainAbstractionGenerator {
             task_projection,
             transformed_task: transformed_task_owner,
             relevant_operator_ids,
+            abstract_operators,
         })
     }
 }
