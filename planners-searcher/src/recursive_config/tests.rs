@@ -105,7 +105,7 @@ fn parses_astar_scp_online_with_or_without_unit_parens() {
 #[test]
 fn parses_astar_scp_online_with_named_options() {
     let spec = parse_search_spec(
-        "astar(scp_online(max_time=12.5, max_size=2048, interval=3, use_abstract_operator_cost_partitioning=true, saturator=perimstar, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, portfolio_strategy=view_diverse, random_seed=7, debug=true))",
+        "astar(scp_online(max_time=12.5, max_size=2048, interval=3, use_abstract_operator_cost_partitioning=true, saturator=perimstar, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, portfolio_strategy=region_landmarks, random_seed=7, debug=true))",
     )
     .unwrap();
 
@@ -137,7 +137,7 @@ fn parses_astar_scp_online_with_named_options() {
     );
     assert_eq!(
         config.collection_config.portfolio_strategy,
-        PortfolioStrategy::ViewDiverse
+        PortfolioStrategy::RegionLandmarks
     );
     assert_eq!(config.collection_config.random_seed, Some(7));
     assert_eq!(config.random_seed, Some(7));

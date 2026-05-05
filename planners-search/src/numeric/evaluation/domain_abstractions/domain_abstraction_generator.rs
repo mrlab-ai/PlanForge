@@ -22,6 +22,17 @@ pub struct DomainAbstraction {
     pub relevant_operator_ids: Vec<usize>,
     pub abstract_operators: Vec<AbstractOperator>,
     pub abstract_operator_footprints: Vec<AbstractOperatorFootprint>,
+    pub metadata: DomainAbstractionMetadata,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DomainAbstractionMetadata {
+    pub collection_iteration: Option<usize>,
+    pub portfolio_strategy: Option<String>,
+    pub flaw_kind: Option<String>,
+    pub full_goal_task: Option<bool>,
+    pub initial_seed_splits: Vec<String>,
+    pub max_abstraction_size: Option<usize>,
 }
 
 impl DomainAbstraction {
@@ -126,6 +137,7 @@ impl DomainAbstractionGenerator {
             relevant_operator_ids,
             abstract_operators,
             abstract_operator_footprints,
+            metadata: DomainAbstractionMetadata::default(),
         })
     }
 }

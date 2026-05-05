@@ -11,8 +11,8 @@ use ordered_float::OrderedFloat;
 use planners_sas::numeric::axioms::ComparisonOperator;
 use planners_sas::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
 use planners_sas::numeric::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericType, NumericVariable,
-    Operator,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericType,
+    NumericVariable, Operator,
 };
 use rand::seq::SliceRandom;
 use rand::{rngs::SmallRng, RngCore, SeedableRng};
@@ -22,10 +22,13 @@ use tracing::info;
 use crate::numeric::evaluation::domain_abstractions::cegar::FlawKind;
 
 pub use super::cegar::flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
+use super::cegar::flaw_search::numeric_requirement_for_comparison_fact;
 use super::cegar::CegarConfig;
 use super::cegar::InitialSeedSplit;
+use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction_generator::{
     prepare_domain_abstraction_task, DomainAbstraction, DomainAbstractionGenerator,
+    DomainAbstractionMetadata,
 };
 use super::utils::compute_abstraction_size_u128;
 
@@ -86,6 +89,7 @@ impl fmt::Display for NumericSplitStrategy {
 pub enum PortfolioStrategy {
     Standard,
     ViewDiverse,
+    RegionLandmarks,
 }
 
 impl fmt::Display for PortfolioStrategy {
@@ -93,6 +97,7 @@ impl fmt::Display for PortfolioStrategy {
         match self {
             Self::Standard => write!(f, "standard"),
             Self::ViewDiverse => write!(f, "view_diverse"),
+            Self::RegionLandmarks => write!(f, "region_landmarks"),
         }
     }
 }
@@ -301,6 +306,13 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             self.config.total_max_time * self.config.blacklist_trigger_percentage;
         let mut iteration = 1usize;
         let mut goal_index = 0usize;
+        let region_abstraction_budget = if self.config.portfolio_strategy
+            == PortfolioStrategy::RegionLandmarks
+        {
+            Some((self.config.max_collection_size / 3).max(1))
+        } else {
+            None
+        };
 
         loop {
             let elapsed = start.elapsed().as_secs_f64();
@@ -318,16 +330,23 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 .config
                 .abstraction_generation_max_time
                 .min(remaining_total_time);
-            let remaining_abstraction_size =
+            let mut remaining_abstraction_size =
                 remaining_collection_size.min(self.config.max_abstraction_size);
+            if let Some(region_budget) = region_abstraction_budget {
+                remaining_abstraction_size = remaining_abstraction_size.min(region_budget);
+            }
 
             if remaining_abstraction_size == 0 || remaining_generation_time <= 0.0 {
                 break;
             }
 
-            let goal_task = goals
-                .get(goal_index)
-                .map(|goal| SingleGoalTask::new(task, goal.clone()));
+            let goal_task = if self.config.portfolio_strategy == PortfolioStrategy::RegionLandmarks
+            {
+                None
+            } else {
+                goals.get(goal_index)
+                    .map(|goal| SingleGoalTask::new(task, goal.clone()))
+            };
             let abstraction_task: &dyn AbstractNumericTask = goal_task
                 .as_ref()
                 .map(|single_goal_task| single_goal_task as &dyn AbstractNumericTask)
@@ -351,6 +370,11 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             } else {
                 None
             };
+            let flaw_kind = self.flaw_kind_for_iteration(iteration);
+            let seed_descriptions = initial_seed_splits
+                .iter()
+                .map(seed_split_description)
+                .collect::<Vec<_>>();
             let cegar_config = self.build_cegar_config(
                 remaining_abstraction_size,
                 remaining_generation_time,
@@ -359,15 +383,23 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 blacklisted_prop_var_ids,
                 blacklisted_numeric_var_ids,
                 Some(rng.next_u64()),
-                self.flaw_kind_for_iteration(iteration),
+                flaw_kind,
             );
             let generator = DomainAbstractionGenerator::new(cegar_config)
                 .context("failed to construct single-abstraction CEGAR generator")?;
-            let abstraction = generator
+            let mut abstraction = generator
                 .generate_prepared(abstraction_task, &prepared_task)
                 .with_context(|| {
                     format!("failed to generate abstraction for collection iteration {iteration}")
                 })?;
+            abstraction.metadata = DomainAbstractionMetadata {
+                collection_iteration: Some(iteration),
+                portfolio_strategy: Some(self.config.portfolio_strategy.to_string()),
+                flaw_kind: Some(flaw_kind.to_string()),
+                full_goal_task: Some(goal_task.is_none()),
+                initial_seed_splits: seed_descriptions,
+                max_abstraction_size: Some(remaining_abstraction_size),
+            };
 
             let abstraction_size = compute_abstraction_size_u128(
                 abstraction.factory.domain_sizes(),
@@ -381,6 +413,15 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 let consumed = abstraction_size.min(remaining_collection_size as u128) as usize;
                 remaining_collection_size = remaining_collection_size.saturating_sub(consumed);
                 generated_abstractions.push(abstraction);
+                if self.config.debug {
+                    if let Some(last) = generated_abstractions.last() {
+                        log_collection_abstraction_debug(
+                            generated_abstractions.len() - 1,
+                            last,
+                            generation_task,
+                        );
+                    }
+                }
                 info!(
                     "domain abstraction collection: added abstraction at iteration {}, abstraction_size={}, elapsed={:.2}s, remaining_collection_size={}, next_max_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
                     iteration,
@@ -416,6 +457,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         if generated_abstractions.is_empty() {
             bail!("multi_domain_abstractions(...) failed to generate any abstractions")
         }
+        if self.config.debug {
+            log_collection_debug_summary(&generated_abstractions);
+        }
 
         Ok(generated_abstractions)
     }
@@ -446,8 +490,12 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         task: &dyn AbstractNumericTask,
         iteration: usize,
     ) -> Vec<InitialSeedSplit> {
-        if self.config.portfolio_strategy != PortfolioStrategy::ViewDiverse {
-            return Vec::new();
+        match self.config.portfolio_strategy {
+            PortfolioStrategy::Standard => return Vec::new(),
+            PortfolioStrategy::ViewDiverse => {}
+            PortfolioStrategy::RegionLandmarks => {
+                return self.region_landmark_seed_splits(task, iteration);
+            }
         }
 
         let mut candidates = collect_false_view_candidates(task);
@@ -483,14 +531,78 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 
     fn flaw_kind_for_iteration(&self, iteration: usize) -> FlawKind {
-        if self.config.portfolio_strategy != PortfolioStrategy::ViewDiverse {
-            return self.config.flaw_kind;
+        match self.config.portfolio_strategy {
+            PortfolioStrategy::Standard => return self.config.flaw_kind,
+            PortfolioStrategy::RegionLandmarks => return FlawKind::SequenceBidirectional,
+            PortfolioStrategy::ViewDiverse => {}
         }
         if iteration % 2 == 1 {
             FlawKind::SequenceProgression
         } else {
             FlawKind::SequenceRegression
         }
+    }
+
+    fn region_landmark_seed_splits(
+        &self,
+        task: &dyn AbstractNumericTask,
+        iteration: usize,
+    ) -> Vec<InitialSeedSplit> {
+        let anchors = collect_region_landmark_anchors(task);
+        if anchors.is_empty() {
+            return Vec::new();
+        }
+
+        let segment_id = (iteration - 1) % (anchors.len() + 1);
+        let mut seeds = Vec::new();
+        seeds.extend(goal_seed_splits(task));
+
+        let initial_numeric = task.get_initial_numeric_state_values();
+        let (source_requirements, target_requirements): (Vec<NumericRequirement>, Vec<NumericRequirement>) =
+            if segment_id == 0 {
+                let initial_requirements = anchors[0]
+                    .requirements
+                    .iter()
+                    .filter_map(|requirement| {
+                        initial_numeric
+                            .get(requirement.numeric_var_id)
+                            .copied()
+                            .map(|value| NumericRequirement::singleton(requirement.numeric_var_id, value))
+                    })
+                    .collect();
+                (initial_requirements, anchors[0].requirements.clone())
+            } else if segment_id < anchors.len() {
+                (
+                    anchors[segment_id - 1].requirements.clone(),
+                    anchors[segment_id].requirements.clone(),
+                )
+            } else {
+                let last = anchors
+                    .last()
+                    .expect("region landmark anchors must be non-empty");
+                (last.requirements.clone(), last.requirements.clone())
+            };
+
+        if segment_id > 0 {
+            seeds.extend(anchors[segment_id - 1].facts.iter().cloned().map(
+                |fact| InitialSeedSplit::Propositional {
+                    var_id: fact.var,
+                    value: fact.value,
+                },
+            ));
+        }
+        if let Some(anchor) = anchors.get(segment_id.min(anchors.len() - 1)) {
+            seeds.extend(anchor.facts.iter().cloned().map(|fact| {
+                InitialSeedSplit::Propositional {
+                    var_id: fact.var,
+                    value: fact.value,
+                }
+            }));
+        }
+
+        seeds.extend(shell_seed_splits(task, &source_requirements, &target_requirements));
+        sort_and_dedup_seed_splits(&mut seeds);
+        seeds
     }
 }
 
@@ -587,6 +699,479 @@ fn view_candidate_from_values(
         deficit,
         include_in_lower: true,
     })
+}
+
+fn seed_split_description(seed: &InitialSeedSplit) -> String {
+    match seed {
+        InitialSeedSplit::Propositional { var_id, value } => format!("p{var_id}={value}"),
+        InitialSeedSplit::Numeric {
+            numeric_var_id,
+            value,
+            include_in_lower,
+        } => format!(
+            "n{numeric_var_id}{}{}",
+            if *include_in_lower { "<=" } else { "<" },
+            value
+        ),
+    }
+}
+
+fn log_collection_abstraction_debug(
+    abstraction_id: usize,
+    abstraction: &DomainAbstraction,
+    task: &dyn AbstractNumericTask,
+) {
+    let metadata = &abstraction.metadata;
+    let split_numeric = abstraction
+        .factory
+        .numeric_domain_sizes()
+        .iter()
+        .enumerate()
+        .filter(|(_, size)| **size > 1)
+        .count();
+    info!(
+        "domain abstraction collection debug: id={abstraction_id}, iteration={:?}, strategy={:?}, flaw_kind={:?}, full_goal_task={:?}, max_abs_size={:?}, states={}, prop_split_vars={}, numeric_split_vars={}, abstract_ops={}, seed_splits={}",
+        metadata.collection_iteration,
+        metadata.portfolio_strategy,
+        metadata.flaw_kind,
+        metadata.full_goal_task,
+        metadata.max_abstraction_size,
+        compute_abstraction_size_u128(
+            abstraction.factory.domain_sizes(),
+            abstraction.factory.numeric_domain_sizes()
+        )
+        .unwrap_or(u128::MAX),
+        abstraction
+            .factory
+            .domain_sizes()
+            .iter()
+            .filter(|&&size| size > 1)
+            .count(),
+        split_numeric,
+        abstraction.abstract_operators.len(),
+        metadata.initial_seed_splits.join(","),
+    );
+    log_split_numeric_partitions(abstraction, task);
+}
+
+fn log_collection_debug_summary(abstractions: &[DomainAbstraction]) {
+    info!(
+        "domain abstraction collection debug: generated {} abstractions",
+        abstractions.len()
+    );
+    for (id, abstraction) in abstractions.iter().enumerate() {
+        info!(
+            "domain abstraction collection debug summary: id={id}, iteration={:?}, strategy={:?}, flaw_kind={:?}, states={}, abstract_ops={}, seed_splits={}",
+            abstraction.metadata.collection_iteration,
+            abstraction.metadata.portfolio_strategy,
+            abstraction.metadata.flaw_kind,
+            compute_abstraction_size_u128(
+                abstraction.factory.domain_sizes(),
+                abstraction.factory.numeric_domain_sizes()
+            )
+            .unwrap_or(u128::MAX),
+            abstraction.abstract_operators.len(),
+            abstraction.metadata.initial_seed_splits.join(","),
+        );
+    }
+}
+
+fn log_split_numeric_partitions(
+    abstraction: &DomainAbstraction,
+    task: &dyn AbstractNumericTask,
+) {
+    for (numeric_var_id, &size) in abstraction
+        .factory
+        .numeric_domain_sizes()
+        .iter()
+        .enumerate()
+        .filter(|(_, size)| **size > 1)
+    {
+        let name = task
+            .numeric_variables()
+            .get(numeric_var_id)
+            .map(|variable| variable.name())
+            .unwrap_or("<unknown>");
+        let Some(parts) = abstraction.factory.partitions().partitions(numeric_var_id) else {
+            continue;
+        };
+        let preview = partition_preview(parts);
+        info!(
+            "domain abstraction collection debug partitions: n{numeric_var_id}={name}, size={size}, {preview}"
+        );
+    }
+}
+
+fn partition_preview(parts: &[super::comparison_expression::Interval]) -> String {
+    let mut entries = Vec::new();
+    for interval in parts.iter().take(3) {
+        entries.push(format!("{interval:?}"));
+    }
+    if parts.len() > 6 {
+        entries.push("...".to_string());
+    }
+    let suffix_start = if parts.len() > 6 { parts.len() - 3 } else { 3 };
+    for interval in parts.iter().skip(suffix_start) {
+        entries.push(format!("{interval:?}"));
+    }
+    entries.join(" ")
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct NumericRequirement {
+    numeric_var_id: usize,
+    lower: Option<f64>,
+    upper: Option<f64>,
+}
+
+impl NumericRequirement {
+    fn singleton(numeric_var_id: usize, value: f64) -> Self {
+        Self {
+            numeric_var_id,
+            lower: Some(value),
+            upper: Some(value),
+        }
+    }
+
+    fn from_interval(numeric_var_id: usize, interval: super::comparison_expression::Interval) -> Self {
+        Self {
+            numeric_var_id,
+            lower: interval.lower.is_finite().then_some(interval.lower),
+            upper: interval.upper.is_finite().then_some(interval.upper),
+        }
+    }
+
+    fn representative_value(&self) -> Option<f64> {
+        match (self.lower, self.upper) {
+            (Some(lower), Some(upper)) => Some((lower + upper) / 2.0),
+            (Some(lower), None) => Some(lower),
+            (None, Some(upper)) => Some(upper),
+            (None, None) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RegionLandmarkAnchor {
+    facts: Vec<ExplicitFact>,
+    requirements: Vec<NumericRequirement>,
+    distance_from_initial: f64,
+}
+
+fn collect_region_landmark_anchors(task: &dyn AbstractNumericTask) -> Vec<RegionLandmarkAnchor> {
+    let Ok(comparison_index) = ComparisonAxiomIndex::from_task(task) else {
+        return Vec::new();
+    };
+    let goals = (0..task.get_num_goals())
+        .map(|goal_id| task.get_goal_fact(goal_id).clone())
+        .collect::<Vec<_>>();
+    let initial_numeric = task.get_initial_numeric_state_values();
+    let mut anchors = Vec::new();
+
+    for goal in &goals {
+        for op in task.get_operators() {
+            if !op.effects().iter().any(|effect| {
+                effect.var_id() == goal.var
+                    && effect.value() == goal.value
+                    && effect.conditions().is_empty()
+            }) {
+                continue;
+            }
+
+            let mut facts = vec![goal.clone()];
+            facts.extend(op.preconditions().iter().cloned());
+            facts.sort();
+            facts.dedup();
+
+            let mut requirements = Vec::new();
+            for fact in op.preconditions() {
+                let Some((numeric_var_id, interval)) =
+                    numeric_requirement_for_comparison_fact(task, &comparison_index, fact)
+                else {
+                    continue;
+                };
+                if task
+                    .numeric_variables()
+                    .get(numeric_var_id)
+                    .is_none_or(|variable| variable.get_type() != &NumericType::Regular)
+                {
+                    continue;
+                }
+                requirements.push(NumericRequirement::from_interval(numeric_var_id, interval));
+            }
+            merge_numeric_requirements(&mut requirements);
+            if requirements.is_empty() {
+                continue;
+            }
+            let distance_from_initial =
+                approximate_distance_from_initial(&requirements, &initial_numeric);
+            if !distance_from_initial.is_finite() {
+                continue;
+            }
+            anchors.push(RegionLandmarkAnchor {
+                facts,
+                requirements,
+                distance_from_initial,
+            });
+        }
+    }
+
+    anchors.sort_by(|left, right| {
+        left.distance_from_initial
+            .total_cmp(&right.distance_from_initial)
+            .then_with(|| {
+                left.facts
+                    .first()
+                    .map(|fact| (fact.var, fact.value))
+                    .cmp(&right.facts.first().map(|fact| (fact.var, fact.value)))
+            })
+    });
+    anchors.dedup_by(|left, right| {
+        left.facts == right.facts && left.requirements == right.requirements
+    });
+    anchors
+}
+
+fn merge_numeric_requirements(requirements: &mut Vec<NumericRequirement>) {
+    requirements.sort_by_key(|requirement| requirement.numeric_var_id);
+    let mut merged: Vec<NumericRequirement> = Vec::new();
+    for requirement in requirements.drain(..) {
+        if let Some(last) = merged.last_mut()
+            && last.numeric_var_id == requirement.numeric_var_id
+        {
+            last.lower = match (last.lower, requirement.lower) {
+                (Some(left), Some(right)) => Some(left.max(right)),
+                (Some(left), None) => Some(left),
+                (None, Some(right)) => Some(right),
+                (None, None) => None,
+            };
+            last.upper = match (last.upper, requirement.upper) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (Some(left), None) => Some(left),
+                (None, Some(right)) => Some(right),
+                (None, None) => None,
+            };
+            continue;
+        }
+        merged.push(requirement);
+    }
+    *requirements = merged;
+}
+
+fn approximate_distance_from_initial(
+    requirements: &[NumericRequirement],
+    initial_numeric: &[f64],
+) -> f64 {
+    requirements
+        .iter()
+        .map(|requirement| {
+            let Some(&initial_value) = initial_numeric.get(requirement.numeric_var_id) else {
+                return f64::INFINITY;
+            };
+            if !initial_value.is_finite() {
+                return f64::INFINITY;
+            }
+            match (requirement.lower, requirement.upper) {
+                (Some(lower), _) if initial_value < lower => lower - initial_value,
+                (_, Some(upper)) if initial_value > upper => initial_value - upper,
+                _ => 0.0,
+            }
+        })
+        .sum()
+}
+
+fn shell_seed_splits(
+    task: &dyn AbstractNumericTask,
+    source_requirements: &[NumericRequirement],
+    target_requirements: &[NumericRequirement],
+) -> Vec<InitialSeedSplit> {
+    let deltas = numeric_effect_deltas(task);
+    let mut seeds = Vec::new();
+    for target in target_requirements {
+        add_requirement_bounds(target, &mut seeds);
+        let source_value = source_requirements
+            .iter()
+            .find(|source| source.numeric_var_id == target.numeric_var_id)
+            .and_then(NumericRequirement::representative_value)
+            .or_else(|| {
+                task.get_initial_numeric_state_values()
+                    .get(target.numeric_var_id)
+                    .copied()
+            });
+        let Some(source_value) = source_value else {
+            continue;
+        };
+        add_shells_for_requirement(task, &deltas, source_value, target, &mut seeds);
+    }
+    seeds
+}
+
+fn numeric_effect_deltas(task: &dyn AbstractNumericTask) -> HashMap<usize, Vec<f64>> {
+    let initial_numeric = task.get_initial_numeric_state_values();
+    let mut deltas: HashMap<usize, Vec<f64>> = HashMap::new();
+    for op in task.get_operators() {
+        for effect in op.assignment_effects() {
+            let affected = effect.affected_var_id();
+            if task
+                .numeric_variables()
+                .get(affected)
+                .is_none_or(|variable| variable.get_type() != &NumericType::Regular)
+            {
+                continue;
+            }
+            let Some(&source_value) = initial_numeric.get(effect.var_id()) else {
+                continue;
+            };
+            if !source_value.is_finite() {
+                continue;
+            }
+            let delta = match effect.operation() {
+                AssignmentOperation::Plus => source_value,
+                AssignmentOperation::Minus => -source_value,
+                AssignmentOperation::Assign
+                | AssignmentOperation::Times
+                | AssignmentOperation::Divide => continue,
+            };
+            if delta.abs() < 1e-12 {
+                continue;
+            }
+            deltas.entry(affected).or_default().push(delta);
+        }
+    }
+    for values in deltas.values_mut() {
+        values.sort_by_key(|value| OrderedFloat(*value));
+        values.dedup_by(|left, right| (*left - *right).abs() < 1e-12);
+    }
+    deltas
+}
+
+fn add_requirement_bounds(requirement: &NumericRequirement, seeds: &mut Vec<InitialSeedSplit>) {
+    if let Some(lower) = requirement.lower
+        && lower.is_finite()
+    {
+        seeds.push(InitialSeedSplit::Numeric {
+            numeric_var_id: requirement.numeric_var_id,
+            value: lower,
+            include_in_lower: false,
+        });
+    }
+    if let Some(upper) = requirement.upper
+        && upper.is_finite()
+    {
+        seeds.push(InitialSeedSplit::Numeric {
+            numeric_var_id: requirement.numeric_var_id,
+            value: upper,
+            include_in_lower: true,
+        });
+    }
+}
+
+fn add_shells_for_requirement(
+    task: &dyn AbstractNumericTask,
+    deltas: &HashMap<usize, Vec<f64>>,
+    source_value: f64,
+    target: &NumericRequirement,
+    seeds: &mut Vec<InitialSeedSplit>,
+) {
+    let Some(var_deltas) = deltas.get(&target.numeric_var_id) else {
+        return;
+    };
+    let max_shells = max_shell_splits_for_task(task);
+    if let Some(lower) = target.lower
+        && source_value < lower
+        && let Some(step) = smallest_positive_delta(var_deltas)
+    {
+        add_monotone_shells(
+            target.numeric_var_id,
+            source_value,
+            lower,
+            -step,
+            false,
+            max_shells,
+            seeds,
+        );
+    }
+    if let Some(upper) = target.upper
+        && source_value > upper
+        && let Some(step) = largest_negative_delta(var_deltas)
+    {
+        add_monotone_shells(
+            target.numeric_var_id,
+            source_value,
+            upper,
+            -step,
+            true,
+            max_shells,
+            seeds,
+        );
+    }
+}
+
+fn max_shell_splits_for_task(task: &dyn AbstractNumericTask) -> usize {
+    (256usize).max(task.numeric_variables().len() * 4)
+}
+
+fn smallest_positive_delta(deltas: &[f64]) -> Option<f64> {
+    deltas
+        .iter()
+        .copied()
+        .filter(|delta| *delta > 1e-12)
+        .min_by_key(|delta| OrderedFloat(*delta))
+}
+
+fn largest_negative_delta(deltas: &[f64]) -> Option<f64> {
+    deltas
+        .iter()
+        .copied()
+        .filter(|delta| *delta < -1e-12)
+        .max_by_key(|delta| OrderedFloat(*delta))
+}
+
+fn add_monotone_shells(
+    numeric_var_id: usize,
+    source_value: f64,
+    target_value: f64,
+    reverse_step: f64,
+    include_in_lower: bool,
+    max_shells: usize,
+    seeds: &mut Vec<InitialSeedSplit>,
+) {
+    let mut value = target_value;
+    for _ in 0..max_shells {
+        if !value.is_finite() {
+            break;
+        }
+        if reverse_step < 0.0 && value <= source_value {
+            break;
+        }
+        if reverse_step > 0.0 && value >= source_value {
+            break;
+        }
+        seeds.push(InitialSeedSplit::Numeric {
+            numeric_var_id,
+            value,
+            include_in_lower,
+        });
+        value += reverse_step;
+    }
+}
+
+fn sort_and_dedup_seed_splits(seeds: &mut Vec<InitialSeedSplit>) {
+    seeds.sort_by_key(|seed| match seed {
+        InitialSeedSplit::Propositional { var_id, value } => (0, *var_id, *value, 0, 0),
+        InitialSeedSplit::Numeric {
+            numeric_var_id,
+            value,
+            include_in_lower,
+        } => (
+            1,
+            *numeric_var_id,
+            *include_in_lower as usize,
+            value.to_bits() as usize,
+            0,
+        ),
+    });
+    seeds.dedup();
 }
 
 fn goal_seed_splits(task: &dyn AbstractNumericTask) -> Vec<InitialSeedSplit> {

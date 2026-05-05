@@ -5,7 +5,8 @@ use crate::numeric::evaluation::heuristic::Heuristic;
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
 use planners_sas::numeric::numeric_task::{
-    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable, Operator,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
+    NumericRootTask, NumericType, NumericVariable, Operator,
 };
 use planners_sas::numeric::state_registry::StateRegistry;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
@@ -112,6 +113,175 @@ fn view_diverse_seed_splits_rotate_false_comparison_views_by_deficit() {
     assert_eq!(
         generator.flaw_kind_for_iteration(2),
         FlawKind::SequenceRegression
+    );
+}
+
+#[test]
+fn region_landmarks_seed_splits_build_goal_achiever_shells() {
+    let variables = vec![
+        ExplicitVariable::new(
+            3,
+            "cmp".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(0),
+            2,
+        ),
+        ExplicitVariable::new(2, "goal".into(), vec!["no".into(), "yes".into()], None, 0),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("delta".into(), NumericType::Constant, None),
+        NumericVariable::new("threshold".into(), NumericType::Constant, None),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![ExplicitFact::new(1, 1)],
+        vec![],
+        vec![1, 0],
+        vec![0.0, 3.0, 10.0],
+        vec![
+            Operator::new(
+                "inc".into(),
+                vec![],
+                vec![],
+                vec![AssignmentEffect::new(
+                    0,
+                    AssignmentOperation::Plus,
+                    1,
+                    false,
+                    vec![],
+                )],
+                1,
+            ),
+            Operator::new(
+                "achieve".into(),
+                vec![ExplicitFact::new(0, COMPARISON_TRUE_VALUE)],
+                vec![Effect::new(vec![], 1, Some(0), 1)],
+                vec![],
+                1,
+            ),
+        ],
+        vec![],
+        vec![ComparisonAxiom::new(
+            0,
+            0,
+            2,
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        portfolio_strategy: PortfolioStrategy::RegionLandmarks,
+        ..Default::default()
+    };
+    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
+
+    let seeds = generator.initial_seed_splits(&task, 1);
+    assert!(seeds.contains(&InitialSeedSplit::Propositional {
+        var_id: 1,
+        value: 1,
+    }));
+    assert!(seeds.contains(&InitialSeedSplit::Propositional {
+        var_id: 0,
+        value: COMPARISON_TRUE_VALUE,
+    }));
+    for value in [10.0, 7.0, 4.0, 1.0] {
+        assert!(
+            seeds.contains(&InitialSeedSplit::Numeric {
+                numeric_var_id: 0,
+                value,
+                include_in_lower: false,
+            }),
+            "missing shell split at {value}: {seeds:?}"
+        );
+    }
+    assert_eq!(
+        generator.flaw_kind_for_iteration(1),
+        FlawKind::SequenceBidirectional
+    );
+}
+
+#[test]
+fn region_landmarks_caps_single_abstraction_budget() {
+    let variables = vec![
+        ExplicitVariable::new(
+            3,
+            "cmp".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(0),
+            2,
+        ),
+        ExplicitVariable::new(2, "goal".into(), vec!["no".into(), "yes".into()], None, 0),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("delta".into(), NumericType::Constant, None),
+        NumericVariable::new("threshold".into(), NumericType::Constant, None),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![ExplicitFact::new(1, 1)],
+        vec![],
+        vec![1, 0],
+        vec![0.0, 1.0, 10.0],
+        vec![
+            Operator::new(
+                "inc".into(),
+                vec![],
+                vec![],
+                vec![AssignmentEffect::new(
+                    0,
+                    AssignmentOperation::Plus,
+                    1,
+                    false,
+                    vec![],
+                )],
+                1,
+            ),
+            Operator::new(
+                "achieve".into(),
+                vec![ExplicitFact::new(0, COMPARISON_TRUE_VALUE)],
+                vec![Effect::new(vec![], 1, Some(0), 1)],
+                vec![],
+                1,
+            ),
+        ],
+        vec![],
+        vec![ComparisonAxiom::new(
+            0,
+            0,
+            2,
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        portfolio_strategy: PortfolioStrategy::RegionLandmarks,
+        max_abstraction_size: 10_000,
+        max_collection_size: 90,
+        random_seed: Some(1),
+        ..Default::default()
+    };
+    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
+    let abstractions = generator.generate_collection(&task).unwrap();
+
+    assert!(!abstractions.is_empty());
+    assert!(
+        abstractions.iter().all(|abstraction| {
+            abstraction
+                .metadata
+                .max_abstraction_size
+                .is_some_and(|budget| budget <= 30)
+        }),
+        "region landmarks should cap each abstraction at one third of collection budget"
     );
 }
 

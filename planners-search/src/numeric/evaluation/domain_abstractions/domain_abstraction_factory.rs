@@ -693,6 +693,78 @@ impl DomainAbstractionFactory {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operators: &[AbstractOperator],
+        footprints: &[AbstractOperatorFootprint],
+        residual_costs: &TransitionResidualCosts,
+        abstraction_id: usize,
+        cap_state_id: Option<usize>,
+        deadline: Option<Instant>,
+    ) -> Result<(AbstractDistanceTable, AbstractOperatorCostFunction)> {
+        ensure_online_scp_deadline(deadline)?;
+        ensure!(
+            footprints.len() >= operators.len(),
+            "abstract-operator footprint/operator size mismatch: {} vs {}",
+            footprints.len(),
+            operators.len()
+        );
+
+        let operator_costs = abstract_operator_costs_from_footprints(
+            operators.len(),
+            footprints,
+            residual_costs,
+            abstraction_id,
+            deadline,
+        )?;
+        let mut operators = operators.to_vec();
+        apply_abstract_operator_costs(&mut operators, &operator_costs)?;
+        let generator = self.make_operator_generator(task, combine_labels)?;
+        let table = self.build_distance_table_with_operators(task, &generator, &operators, false)?;
+
+        if let Some(state_id) = cap_state_id
+            && let Some(&h_cap) = table.distances.get(state_id)
+            && h_cap.is_finite()
+        {
+            let mut perim_table = table.clone();
+            for h in &mut perim_table.distances {
+                if !h.is_finite() || *h > h_cap {
+                    *h = f64::NEG_INFINITY;
+                }
+            }
+            let tcf = self.compute_saturated_abstract_operator_costs_from_operators(
+                task,
+                &generator,
+                &operators,
+                &operator_costs,
+                &perim_table,
+                deadline,
+            )?;
+            let mut saturated_operators = operators;
+            apply_abstract_operator_costs(&mut saturated_operators, &tcf.operator_costs)?;
+            let global_table = self.build_distance_table_with_operators(
+                task,
+                &generator,
+                &saturated_operators,
+                false,
+            )?;
+            return Ok((global_table, tcf));
+        }
+
+        let tcf = self.compute_saturated_abstract_operator_costs_from_operators(
+            task,
+            &generator,
+            &operators,
+            &operator_costs,
+            &table,
+            deadline,
+        )?;
+        Ok((table, tcf))
+    }
+
     pub fn build_abstract_operator_cost_partitioned_distance_table_from_system_and_footprints_with_deadline(
         &self,
         transition_system: &AbstractTransitionSystem,
@@ -1445,6 +1517,105 @@ impl DomainAbstractionFactory {
             );
             saturated[abstract_op_id] = saturated[abstract_op_id].max(needed);
         }
+        Ok(AbstractOperatorCostFunction {
+            operator_costs: saturated,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compute_saturated_abstract_operator_costs_from_operators(
+        &self,
+        task: &dyn AbstractNumericTask,
+        generator: &AbstractOperatorGenerator,
+        operators: &[AbstractOperator],
+        operator_costs: &[f64],
+        table: &AbstractDistanceTable,
+        deadline: Option<Instant>,
+    ) -> Result<AbstractOperatorCostFunction> {
+        ensure!(
+            operators.len() == operator_costs.len(),
+            "abstract operator/cost vector size mismatch: {} vs {}",
+            operators.len(),
+            operator_costs.len()
+        );
+
+        let num_states = table.distances.len();
+        let comparison_var_ids = self.comparison_var_ids();
+        let match_tree = MatchTree::build(
+            generator.domain_sizes(),
+            generator.numeric_domain_sizes(),
+            generator.hash_multipliers(),
+            operators,
+            &comparison_var_ids,
+        );
+        let comparison_preconditions =
+            comparison_preconditions_by_operator(operators, &comparison_var_ids);
+        let mut saturated = vec![0.0_f64; operators.len()];
+        let mut comparison_enumeration_cache: HashMap<ComparisonEnumerationKey, Vec<usize>> =
+            HashMap::new();
+        let mut cached_comparison_state_count = 0usize;
+        let mut applicable_operator_ids = Vec::new();
+
+        for target_hash in 0..num_states {
+            if target_hash % 64 == 0 {
+                ensure_online_scp_deadline(deadline)?;
+            }
+            let target_h = table.distances[target_hash];
+            if !target_h.is_finite() {
+                continue;
+            }
+
+            let base_state = self.reset_comparison_vars_to_unknown_except(
+                target_hash,
+                generator.hash_multipliers(),
+                &comparison_var_ids,
+                &[],
+            )?;
+
+            match_tree.get_applicable_operator_ids(base_state, &mut applicable_operator_ids);
+            for &abstract_op_id in &applicable_operator_ids {
+                let op = &operators[abstract_op_id];
+                let predecessor_base_i64 = base_state as i64 + op.hash_effect as i64;
+                if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
+                    continue;
+                }
+                let predecessor_base = predecessor_base_i64 as usize;
+                let fixed_comparisons = &comparison_preconditions[abstract_op_id];
+                let possible_predecessors = self
+                    .enumerate_states_with_evaluated_comparisons_cached(
+                        predecessor_base,
+                        task,
+                        generator.numeric_domain_sizes(),
+                        generator.hash_multipliers(),
+                        &comparison_var_ids,
+                        fixed_comparisons,
+                        &mut comparison_enumeration_cache,
+                        &mut cached_comparison_state_count,
+                    )?;
+
+                for source_hash in possible_predecessors {
+                    let source_h = table.distances[source_hash];
+                    if !source_h.is_finite() {
+                        continue;
+                    }
+                    let mut needed = source_h - target_h;
+                    if needed < 0.0 && needed > -1e-9 {
+                        needed = 0.0;
+                    }
+                    if needed < 0.0 {
+                        needed = 0.0;
+                    }
+                    ensure!(
+                        needed <= operator_costs[abstract_op_id] + 1e-7,
+                        "saturated abstract-operator cost exceeds residual abstract-operator cost: {} > {}",
+                        needed,
+                        operator_costs[abstract_op_id]
+                    );
+                    saturated[abstract_op_id] = saturated[abstract_op_id].max(needed);
+                }
+            }
+        }
+
         Ok(AbstractOperatorCostFunction {
             operator_costs: saturated,
         })
@@ -2257,6 +2428,80 @@ fn apply_operator_costs(operators: &mut [AbstractOperator], operator_costs: &[f6
         op.cost = cost;
     }
     Ok(())
+}
+
+fn apply_abstract_operator_costs(
+    operators: &mut [AbstractOperator],
+    operator_costs: &[f64],
+) -> Result<()> {
+    ensure!(
+        operators.len() == operator_costs.len(),
+        "abstract operator/cost vector size mismatch: {} vs {}",
+        operators.len(),
+        operator_costs.len()
+    );
+    for (abstract_op_id, op) in operators.iter_mut().enumerate() {
+        let cost = operator_costs[abstract_op_id];
+        ensure!(
+            cost.is_finite(),
+            "residual cost for abstract operator {abstract_op_id} must be finite"
+        );
+        op.cost = cost;
+    }
+    Ok(())
+}
+
+fn abstract_operator_costs_from_footprints(
+    num_operators: usize,
+    footprints: &[AbstractOperatorFootprint],
+    residual_costs: &TransitionResidualCosts,
+    abstraction_id: usize,
+    deadline: Option<Instant>,
+) -> Result<Vec<f64>> {
+    let has_reductions = residual_costs.has_reductions();
+    let mut operator_costs = vec![f64::INFINITY; num_operators];
+    for abstract_op_id in 0..num_operators {
+        if abstract_op_id % 64 == 0 {
+            ensure_online_scp_deadline(deadline)?;
+        }
+        let footprint = footprints.get(abstract_op_id).with_context(|| {
+            format!("missing footprint for abstract operator {abstract_op_id}")
+        })?;
+        ensure!(
+            !footprint.labels.is_empty(),
+            "abstract operator {abstract_op_id} has no concrete footprint labels"
+        );
+        operator_costs[abstract_op_id] = if has_reductions {
+            footprint
+                .labels
+                .iter()
+                .map(|label| {
+                    residual_costs.cost_for_operator_footprint(
+                        abstraction_id,
+                        abstract_op_id,
+                        label,
+                    )
+                })
+                .fold(f64::INFINITY, f64::min)
+        } else {
+            footprint
+                .labels
+                .iter()
+                .map(|label| {
+                    if label.allocable {
+                        residual_costs.base_cost(label.concrete_op_id)
+                    } else {
+                        0.0
+                    }
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        ensure!(
+            operator_costs[abstract_op_id].is_finite(),
+            "residual cost for abstract operator {abstract_op_id} is not finite"
+        );
+    }
+    Ok(operator_costs)
 }
 
 fn get_comparison_preconditions(

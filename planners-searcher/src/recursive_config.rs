@@ -660,6 +660,7 @@ fn parse_portfolio_strategy(value: &str) -> Result<PortfolioStrategy, String> {
     match value {
         "standard" => Ok(PortfolioStrategy::Standard),
         "view_diverse" => Ok(PortfolioStrategy::ViewDiverse),
+        "region_landmarks" => Ok(PortfolioStrategy::RegionLandmarks),
         _ => Err(format!("invalid PortfolioStrategy `{value}`")),
     }
 }
