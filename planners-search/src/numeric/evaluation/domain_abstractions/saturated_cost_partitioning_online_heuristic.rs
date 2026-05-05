@@ -4,10 +4,10 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use planners_sas::numeric::numeric_task::{
-    metric_operator_cost_from_initial_values, AbstractNumericTask,
+    AbstractNumericTask, metric_operator_cost_from_initial_values,
 };
 use rand::seq::SliceRandom;
-use rand::{rngs::SmallRng, SeedableRng};
+use rand::{SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
@@ -22,10 +22,12 @@ use super::domain_abstraction_collection_generator_multiple_cegar::DomainAbstrac
 use super::domain_abstraction_factory::AbstractDistanceTable;
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::domain_abstraction_heuristic::{
-    compute_collection_abstract_state_ids, DomainAbstractionHeuristic,
-    DomainAbstractionLookupScratch,
+    DomainAbstractionHeuristic, DomainAbstractionLookupScratch,
+    compute_collection_abstract_state_ids,
 };
-use super::transition_cost_partitioning::{AbstractTransitionSystem, TransitionResidualCosts};
+use super::transition_cost_partitioning::{
+    AbstractOperatorFootprint, AbstractTransitionSystem, TransitionResidualCosts,
+};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -74,7 +76,7 @@ pub struct ScpOnlineConfig {
     pub scoring_function: ScoringFunction,
     pub saturator: Saturator,
     pub random_seed: Option<u64>,
-    pub use_transition_cost_partitioning: bool,
+    pub use_abstract_operator_cost_partitioning: bool,
 }
 
 impl Default for ScpOnlineConfig {
@@ -100,7 +102,7 @@ impl Default for ScpOnlineConfig {
             scoring_function: ScoringFunction::MaxHeuristicPerStolenCosts,
             saturator: Saturator::All,
             random_seed,
-            use_transition_cost_partitioning: false,
+            use_abstract_operator_cost_partitioning: false,
         }
     }
 }
@@ -562,7 +564,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
         let deadline = (self.config.max_time.is_finite())
             .then(|| state.start_time + Duration::from_secs_f64(self.config.max_time));
-        let mode = if self.config.use_transition_cost_partitioning {
+        let mode = if self.config.use_abstract_operator_cost_partitioning {
             "abstract-operator"
         } else {
             "label"
@@ -578,8 +580,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             state.start_time.elapsed().as_secs_f64(),
         );
 
-        let cp = if self.config.use_transition_cost_partitioning {
-            self.build_transition_cp(
+        let cp = if self.config.use_abstract_operator_cost_partitioning {
+            self.build_abstract_operator_cp(
                 task,
                 abstractions,
                 &order,
@@ -637,12 +639,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         deadline,
                     )
                 } else {
-                    abstraction.factory.build_abstract_transition_system_from_operators_with_deadline(
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &abstraction.abstract_operators,
-                        deadline,
-                    )
+                    abstraction
+                        .factory
+                        .build_abstract_transition_system_from_operators_with_deadline(
+                            abstraction_task,
+                            self.config.combine_labels,
+                            &abstraction.abstract_operators,
+                            deadline,
+                        )
                 };
                 let transition_system = match transition_system_result {
                     Ok(transition_system) => transition_system,
@@ -677,7 +681,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn build_transition_cp(
+    fn build_abstract_operator_cp(
         &self,
         task: &dyn AbstractNumericTask,
         abstractions: &[DomainAbstraction],
@@ -700,6 +704,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     "scp_online: abstract-operator CP step abstraction {pos}, abstract_states={}",
                     abstraction_state_count(abstraction)
                 );
+                log_abstract_operator_footprint_summary(
+                    pos,
+                    &abstraction.abstract_operator_footprints,
+                );
                 match self.config.saturator {
                     Saturator::All => {
                         let completed = self.with_transition_system(
@@ -710,8 +718,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             |transition_system| {
                                 let (table, tcf) = match abstraction
                                 .factory
-                                .build_abstract_operator_cost_partitioned_distance_table_from_system_with_deadline(
+                                .build_abstract_operator_cost_partitioned_distance_table_from_system_and_footprints_with_deadline(
                                     transition_system,
+                                    Some(&abstraction.abstract_operator_footprints),
                                     &remaining_costs,
                                     pos,
                                     None,
@@ -746,19 +755,17 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     return Ok(true);
                                 }
                                 cp.add_h_values(pos, table.distances);
-                                let reduced = remaining_costs
-                                    .reduce_by_abstract_operator_tcf(pos, transition_system, &tcf)
+                                remaining_costs
+                                    .reduce_by_abstract_operator_footprints(
+                                        pos,
+                                        &abstraction.abstract_operator_footprints,
+                                        &tcf,
+                                    )
                                     .map_err(|error| {
                                         EvaluationError::ComputationFailed(format!(
                                             "failed to reduce abstract-operator residual costs: {error:#}"
                                         ))
                                     })?;
-                                if !reduced {
-                                    info!(
-                                        "scp_online: stopping abstract-operator CP after abstraction {pos}: reduction cover too large"
-                                    );
-                                    return Ok(false);
-                                }
                                 log_transition_residual_summary(&remaining_costs);
                                 Ok(true)
                             },
@@ -783,8 +790,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             |transition_system| {
                                 let (table, tcf) = match abstraction
                                 .factory
-                                .build_abstract_operator_cost_partitioned_distance_table_from_system_with_deadline(
+                                .build_abstract_operator_cost_partitioned_distance_table_from_system_and_footprints_with_deadline(
                                     transition_system,
+                                    Some(&abstraction.abstract_operator_footprints),
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
@@ -819,19 +827,17 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     return Ok(true);
                                 }
                                 cp.add_h_values(pos, table.distances);
-                                let reduced = remaining_costs
-                                    .reduce_by_abstract_operator_tcf(pos, transition_system, &tcf)
+                                remaining_costs
+                                    .reduce_by_abstract_operator_footprints(
+                                        pos,
+                                        &abstraction.abstract_operator_footprints,
+                                        &tcf,
+                                    )
                                     .map_err(|error| {
                                         EvaluationError::ComputationFailed(format!(
                                             "failed to reduce abstract-operator PERIM residual costs: {error:#}"
                                         ))
                                     })?;
-                                if !reduced {
-                                    info!(
-                                        "scp_online: stopping abstract-operator PERIM CP after abstraction {pos}: reduction cover too large"
-                                    );
-                                    return Ok(false);
-                                }
                                 log_transition_residual_summary(&remaining_costs);
                                 Ok(true)
                             },
@@ -856,8 +862,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             |transition_system| {
                                 let (perim_table, perim_tcf) = match abstraction
                                 .factory
-                                .build_abstract_operator_cost_partitioned_distance_table_from_system_with_deadline(
+                                .build_abstract_operator_cost_partitioned_distance_table_from_system_and_footprints_with_deadline(
                                     transition_system,
+                                    Some(&abstraction.abstract_operator_footprints),
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
@@ -892,25 +899,24 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     return Ok(true);
                                 }
                                 cp.add_h_values(pos, perim_table.distances);
-                                let reduced = remaining_costs
-                                    .reduce_by_abstract_operator_tcf(pos, transition_system, &perim_tcf)
+                                remaining_costs
+                                    .reduce_by_abstract_operator_footprints(
+                                        pos,
+                                        &abstraction.abstract_operator_footprints,
+                                        &perim_tcf,
+                                    )
                                     .map_err(|error| {
                                         EvaluationError::ComputationFailed(format!(
                                             "failed to reduce abstract-operator Perim residual costs: {error:#}"
                                         ))
                                     })?;
-                                if !reduced {
-                                    info!(
-                                        "scp_online: stopping abstract-operator PERIMSTAR CP after Perim step abstraction {pos}: reduction cover too large"
-                                    );
-                                    return Ok(false);
-                                }
                                 log_transition_residual_summary(&remaining_costs);
 
                                 let (all_table, all_tcf) = match abstraction
                                 .factory
-                                .build_abstract_operator_cost_partitioned_distance_table_from_system_with_deadline(
+                                .build_abstract_operator_cost_partitioned_distance_table_from_system_and_footprints_with_deadline(
                                     transition_system,
+                                    Some(&abstraction.abstract_operator_footprints),
                                     &remaining_costs,
                                     pos,
                                     None,
@@ -945,19 +951,17 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     return Ok(true);
                                 }
                                 cp.add_h_values(pos, all_table.distances);
-                                let reduced = remaining_costs
-                                    .reduce_by_abstract_operator_tcf(pos, transition_system, &all_tcf)
+                                remaining_costs
+                                    .reduce_by_abstract_operator_footprints(
+                                        pos,
+                                        &abstraction.abstract_operator_footprints,
+                                        &all_tcf,
+                                    )
                                     .map_err(|error| {
                                         EvaluationError::ComputationFailed(format!(
                                             "failed to reduce abstract-operator All residual costs: {error:#}"
                                         ))
                                     })?;
-                                if !reduced {
-                                    info!(
-                                        "scp_online: stopping abstract-operator PERIMSTAR CP after All step abstraction {pos}: reduction cover too large"
-                                    );
-                                    return Ok(false);
-                                }
                                 log_transition_residual_summary(&remaining_costs);
                                 Ok(true)
                             },
@@ -1585,6 +1589,21 @@ fn log_transition_table_summary(
     let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
     info!(
         "scp_online: abstract-operator {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_abstract_ops={positive_count}, total_positive_saturated={total_positive:.6}"
+    );
+}
+
+fn log_abstract_operator_footprint_summary(
+    abstraction_id: usize,
+    footprints: &[AbstractOperatorFootprint],
+) {
+    let total_labels: usize = footprints.iter().map(|fp| fp.labels.len()).sum();
+    let non_allocable_labels: usize = footprints
+        .iter()
+        .flat_map(|fp| fp.labels.iter())
+        .filter(|fp| !fp.allocable)
+        .count();
+    info!(
+        "scp_online: abstract-operator footprints abstraction {abstraction_id}: labels={total_labels}, non_allocable_labels={non_allocable_labels}"
     );
 }
 

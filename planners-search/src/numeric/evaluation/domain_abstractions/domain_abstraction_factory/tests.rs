@@ -11,8 +11,8 @@ use planners_sas::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
 };
 use planners_sas::numeric::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
-    Operator,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
+    NumericRootTask, NumericType, NumericVariable, Operator,
 };
 
 fn constant_leaf_values(
@@ -859,4 +859,117 @@ fn factory_numeric_context_recomputes_tree_reachable_derived_intervals_from_regu
     assert_eq!(numeric_intervals[0], Interval::singleton(0.0));
     assert_eq!(numeric_intervals[1], Interval::singleton(2.0));
     assert_eq!(numeric_intervals[2], Interval::singleton(2.0));
+}
+
+fn additive_numeric_footprint_task() -> (NumericRootTask, DomainAbstractionFactory) {
+    let variables = vec![ExplicitVariable::new(
+        1,
+        "p".into(),
+        vec!["p0".into()],
+        None,
+        0,
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+    ];
+    let op = Operator::new(
+        "inc".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![9.0, 1.0],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::new(9.0, 10.0, true, true),
+            Interval::new(10.0, f64::INFINITY, true, false),
+        ],
+        vec![Interval::singleton(1.0)],
+    ]);
+    let numeric_domain_sizes = vec![2, 1];
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .unwrap();
+
+    (task, factory)
+}
+
+#[test]
+fn abstract_operator_footprint_tightens_additive_effect_into_infinite_target_tail() {
+    let (task, factory) = additive_numeric_footprint_task();
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![0],
+        cost: 1.0,
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
+        changed_numeric_vars: vec![0],
+    };
+
+    let footprints = factory
+        .build_abstract_operator_footprints(&task, &[op])
+        .unwrap();
+    let concrete = &footprints[0].labels[0];
+
+    assert_eq!(concrete.concrete_op_id, 0);
+    assert!(concrete.allocable);
+    assert_eq!(
+        concrete.region.numeric[0],
+        Interval::new(9.0, 11.0, true, true)
+    );
+}
+
+#[test]
+fn abstract_operator_footprint_marks_unbounded_changed_tail_non_allocable() {
+    let (task, factory) = additive_numeric_footprint_task();
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![0],
+        cost: 1.0,
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
+        changed_numeric_vars: vec![0],
+    };
+
+    let footprints = factory
+        .build_abstract_operator_footprints(&task, &[op])
+        .unwrap();
+    let concrete = &footprints[0].labels[0];
+
+    assert_eq!(concrete.concrete_op_id, 0);
+    assert!(!concrete.allocable);
+    assert_eq!(
+        concrete.region.numeric[0],
+        Interval::new(10.0, f64::INFINITY, true, false)
+    );
 }

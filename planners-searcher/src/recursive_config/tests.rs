@@ -105,7 +105,7 @@ fn parses_astar_scp_online_with_or_without_unit_parens() {
 #[test]
 fn parses_astar_scp_online_with_named_options() {
     let spec = parse_search_spec(
-        "astar(scp_online(max_time=12.5, max_size=2048, interval=3, use_transition_cost_partitioning=true, saturator=perimstar, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, random_seed=7, debug=true))",
+        "astar(scp_online(max_time=12.5, max_size=2048, interval=3, use_abstract_operator_cost_partitioning=true, saturator=perimstar, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, random_seed=7, debug=true))",
     )
     .unwrap();
 
@@ -116,7 +116,7 @@ fn parses_astar_scp_online_with_named_options() {
     assert_eq!(config.max_time, 12.5);
     assert_eq!(config.max_size, 2048);
     assert_eq!(config.interval, 3);
-    assert!(config.use_transition_cost_partitioning);
+    assert!(config.use_abstract_operator_cost_partitioning);
     assert_eq!(config.saturator, Saturator::Perimstar);
     assert!(config.combine_labels);
     assert_eq!(config.collection_config.max_collection_size, 123);
@@ -407,7 +407,7 @@ fn display_round_trips_canonical_domain_abstractions() {
 #[test]
 fn display_round_trips_scp_online() {
     let parsed = parse_search_spec(
-        "astar(scp_online(max_time=12.5, max_abstraction_size=42, abstraction_generation_max_time=infinity, use_transition_cost_partitioning=true, saturator=perimstar))",
+        "astar(scp_online(max_time=12.5, max_abstraction_size=42, abstraction_generation_max_time=infinity, use_abstract_operator_cost_partitioning=true, saturator=perimstar))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();

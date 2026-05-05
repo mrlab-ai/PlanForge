@@ -10,7 +10,9 @@ use ordered_float::NotNan;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planners_sas::numeric::numeric_task::{
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType, Operator,
+};
 use planners_sas::numeric::utils::float_tolerance;
 
 use super::abstract_operator_generator::{
@@ -23,8 +25,9 @@ use super::numeric_context::{
     prepare_comparison_tree_inputs_from_abstract_state,
 };
 use super::transition_cost_partitioning::{
-    AbstractOperatorCostFunction, AbstractTransition, AbstractTransitionCostFunction,
-    AbstractTransitionSystem, StateRegion, TransitionResidualCosts,
+    AbstractOperatorCostFunction, AbstractOperatorFootprint, AbstractTransition,
+    AbstractTransitionCostFunction, AbstractTransitionSystem, ConcreteOperatorFootprint,
+    StateRegion, TransitionResidualCosts,
 };
 use super::utils;
 
@@ -500,11 +503,7 @@ impl DomainAbstractionFactory {
         let mut operators = generator.build_abstract_operators(task)?;
         apply_operator_costs(&mut operators, operator_costs)?;
         self.build_distance_table_with_operators_for_goals(
-            task,
-            &generator,
-            &operators,
-            false,
-            goal_facts,
+            task, &generator, &operators, false, goal_facts,
         )
     }
 
@@ -684,17 +683,57 @@ impl DomainAbstractionFactory {
         cap_state_id: Option<usize>,
         deadline: Option<Instant>,
     ) -> Result<(AbstractDistanceTable, AbstractOperatorCostFunction)> {
+        self.build_abstract_operator_cost_partitioned_distance_table_from_system_and_footprints_with_deadline(
+            transition_system,
+            None,
+            residual_costs,
+            abstraction_id,
+            cap_state_id,
+            deadline,
+        )
+    }
+
+    pub fn build_abstract_operator_cost_partitioned_distance_table_from_system_and_footprints_with_deadline(
+        &self,
+        transition_system: &AbstractTransitionSystem,
+        footprints: Option<&[AbstractOperatorFootprint]>,
+        residual_costs: &TransitionResidualCosts,
+        abstraction_id: usize,
+        cap_state_id: Option<usize>,
+        deadline: Option<Instant>,
+    ) -> Result<(AbstractDistanceTable, AbstractOperatorCostFunction)> {
         ensure_online_scp_deadline(deadline)?;
         let concrete_op_ids = transition_system.concrete_operator_ids_by_abstract_operator();
-        let operator_regions = residual_costs
-            .has_reductions()
+        if let Some(footprints) = footprints {
+            ensure!(
+                footprints.len() >= concrete_op_ids.len(),
+                "abstract-operator footprint/operator size mismatch: {} vs {}",
+                footprints.len(),
+                concrete_op_ids.len()
+            );
+        }
+        let has_reductions = residual_costs.has_reductions();
+        let operator_regions = (has_reductions && footprints.is_none())
             .then(|| transition_system.abstract_operator_regions());
         let mut operator_costs = vec![f64::INFINITY; concrete_op_ids.len()];
         for abstract_op_id in 0..concrete_op_ids.len() {
             if abstract_op_id % 64 == 0 {
                 ensure_online_scp_deadline(deadline)?;
             }
-            operator_costs[abstract_op_id] = if let Some(operator_regions) = &operator_regions {
+            operator_costs[abstract_op_id] = if has_reductions && let Some(footprints) = footprints
+            {
+                footprints[abstract_op_id]
+                    .labels
+                    .iter()
+                    .map(|footprint| {
+                        residual_costs.cost_for_operator_footprint(
+                            abstraction_id,
+                            abstract_op_id,
+                            footprint,
+                        )
+                    })
+                    .fold(f64::INFINITY, f64::min)
+            } else if let Some(operator_regions) = &operator_regions {
                 let Some(region) = operator_regions[abstract_op_id].as_ref() else {
                     continue;
                 };
@@ -710,10 +749,24 @@ impl DomainAbstractionFactory {
                     })
                     .fold(f64::INFINITY, f64::min)
             } else {
-                concrete_op_ids[abstract_op_id]
-                    .iter()
-                    .map(|&concrete_op_id| residual_costs.base_cost(concrete_op_id))
-                    .fold(f64::INFINITY, f64::min)
+                if let Some(footprints) = footprints {
+                    footprints[abstract_op_id]
+                        .labels
+                        .iter()
+                        .map(|footprint| {
+                            if footprint.allocable {
+                                residual_costs.base_cost(footprint.concrete_op_id)
+                            } else {
+                                0.0
+                            }
+                        })
+                        .fold(f64::INFINITY, f64::min)
+                } else {
+                    concrete_op_ids[abstract_op_id]
+                        .iter()
+                        .map(|&concrete_op_id| residual_costs.base_cost(concrete_op_id))
+                        .fold(f64::INFINITY, f64::min)
+                }
             };
         }
         let transition_costs =
@@ -740,8 +793,10 @@ impl DomainAbstractionFactory {
                 &operator_costs,
                 &perim_table,
             )?;
-            let saturated_transition_costs =
-                transition_costs_from_abstract_operator_costs(transition_system, &tcf.operator_costs);
+            let saturated_transition_costs = transition_costs_from_abstract_operator_costs(
+                transition_system,
+                &tcf.operator_costs,
+            );
             let global_table = self.build_distance_table_with_transition_costs(
                 transition_system,
                 &saturated_transition_costs,
@@ -757,6 +812,74 @@ impl DomainAbstractionFactory {
             &table,
         )?;
         Ok((table, tcf))
+    }
+
+    pub fn build_abstract_operator_footprints(
+        &self,
+        task: &dyn AbstractNumericTask,
+        operators: &[AbstractOperator],
+    ) -> Result<Vec<AbstractOperatorFootprint>> {
+        operators
+            .iter()
+            .map(|operator| {
+                let labels = operator
+                    .concrete_op_ids
+                    .iter()
+                    .copied()
+                    .map(|concrete_op_id| {
+                        self.build_concrete_operator_footprint(task, operator, concrete_op_id)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(AbstractOperatorFootprint { labels })
+            })
+            .collect()
+    }
+
+    fn build_concrete_operator_footprint(
+        &self,
+        task: &dyn AbstractNumericTask,
+        abstract_operator: &AbstractOperator,
+        concrete_op_id: usize,
+    ) -> Result<ConcreteOperatorFootprint> {
+        let concrete_operator = task.get_operators().get(concrete_op_id).with_context(|| {
+            format!("abstract operator references missing concrete operator {concrete_op_id}")
+        })?;
+        let source_region = self.state_region_from_facts(task, &abstract_operator.preconditions)?;
+        let mut region = source_region.clone();
+        let target_from_abstract =
+            self.state_region_from_facts(task, &abstract_operator.regression_preconditions)?;
+        region.merge_hull(&target_from_abstract);
+
+        let mut allocable = true;
+        for &numeric_var_id in &abstract_operator.changed_numeric_vars {
+            ensure!(
+                numeric_var_id < region.numeric.len(),
+                "abstract operator references changed numeric var {numeric_var_id}, but footprint has {} numeric vars",
+                region.numeric.len()
+            );
+            let source_interval = source_region.numeric[numeric_var_id];
+            let Some(image) = deterministic_numeric_effect_image(
+                task,
+                concrete_operator,
+                numeric_var_id,
+                source_interval,
+            ) else {
+                allocable = false;
+                continue;
+            };
+            let mut changed_hull = source_interval;
+            changed_hull = interval_hull(changed_hull, image);
+            region.numeric[numeric_var_id] = changed_hull;
+            if !interval_is_finite(changed_hull) {
+                allocable = false;
+            }
+        }
+
+        Ok(ConcreteOperatorFootprint {
+            concrete_op_id,
+            region,
+            allocable,
+        })
     }
 
     /// Computes an abstract wildcard plan (sequence of per-step concrete-op-ID sets) by:
@@ -1059,6 +1182,82 @@ impl DomainAbstractionFactory {
         })
     }
 
+    fn state_region_from_facts(
+        &self,
+        task: &dyn AbstractNumericTask,
+        facts: &[ExplicitFact],
+    ) -> Result<StateRegion> {
+        let num_props = self.domain_sizes.len();
+        let mut propositions = self.full_propositional_region()?;
+        let mut numeric = vec![Interval::unbounded(); task.numeric_variables().len()];
+
+        for fact in facts {
+            if fact.var < num_props {
+                propositions[fact.var] =
+                    self.concrete_values_for_abstract_value(fact.var, fact.value)?;
+            } else {
+                let numeric_var_id = fact.var - num_props;
+                ensure!(
+                    numeric_var_id < numeric.len(),
+                    "abstract-operator footprint fact references numeric var {numeric_var_id}, but task has {} numeric vars",
+                    numeric.len()
+                );
+                numeric[numeric_var_id] = self
+                    .partitions
+                    .partition_interval(numeric_var_id, fact.value)
+                    .with_context(|| {
+                        format!(
+                            "missing interval for numeric var {numeric_var_id} partition {}",
+                            fact.value
+                        )
+                    })?;
+            }
+        }
+
+        Ok(StateRegion {
+            propositions,
+            numeric,
+        })
+    }
+
+    fn full_propositional_region(&self) -> Result<Vec<Vec<usize>>> {
+        let mut region = Vec::with_capacity(self.domain_sizes.len());
+        for var_id in 0..self.domain_sizes.len() {
+            let mapping = self
+                .domain_mapping
+                .get(var_id)
+                .with_context(|| format!("missing domain mapping for var {var_id}"))?;
+            ensure!(
+                !mapping.is_empty(),
+                "empty concrete value set for propositional var {var_id}"
+            );
+            region.push((0..mapping.len()).collect());
+        }
+        Ok(region)
+    }
+
+    fn concrete_values_for_abstract_value(
+        &self,
+        var_id: usize,
+        abstract_value: usize,
+    ) -> Result<Vec<usize>> {
+        let values = self
+            .domain_mapping
+            .get(var_id)
+            .with_context(|| format!("missing domain mapping for var {var_id}"))?
+            .iter()
+            .enumerate()
+            .filter_map(|(concrete_value, &mapped_value)| {
+                (mapped_value == abstract_value).then_some(concrete_value)
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            !values.is_empty(),
+            "empty concrete value set for var {var_id} abstract value {abstract_value}"
+        );
+        Ok(values)
+    }
+
     fn propositional_region_from_hash(
         &self,
         state_hash: usize,
@@ -1071,21 +1270,7 @@ impl DomainAbstractionFactory {
                 .get(var_id)
                 .with_context(|| format!("missing hash multiplier for var {var_id}"))?;
             let abstract_value = (state_hash / multiplier) % domain_size;
-            let values = self
-                .domain_mapping
-                .get(var_id)
-                .with_context(|| format!("missing domain mapping for var {var_id}"))?
-                .iter()
-                .enumerate()
-                .filter_map(|(concrete_value, &mapped_value)| {
-                    (mapped_value == abstract_value).then_some(concrete_value)
-                })
-                .collect::<Vec<_>>();
-            ensure!(
-                !values.is_empty(),
-                "empty concrete value set for var {var_id} abstract value {abstract_value}"
-            );
-            region.push(values);
+            region.push(self.concrete_values_for_abstract_value(var_id, abstract_value)?);
         }
         Ok(region)
     }
@@ -2111,6 +2296,96 @@ fn transition_costs_from_abstract_operator_costs(
                 .unwrap_or(f64::INFINITY)
         })
         .collect()
+}
+
+fn deterministic_numeric_effect_image(
+    task: &dyn AbstractNumericTask,
+    operator: &Operator,
+    numeric_var_id: usize,
+    source_interval: Interval,
+) -> Option<Interval> {
+    let initial_numeric = task.get_initial_numeric_state_values();
+    let mut delta = 0.0;
+    let mut assignment = None;
+    let mut touched = false;
+    for effect in operator
+        .assignment_effects()
+        .iter()
+        .filter(|effect| effect.affected_var_id() == numeric_var_id)
+    {
+        if effect.is_conditional() || !effect.conditions().is_empty() {
+            return None;
+        }
+        let rhs_value = match task.numeric_variables()[effect.var_id()].get_type() {
+            NumericType::Constant | NumericType::Cost => *initial_numeric.get(effect.var_id())?,
+            _ => return None,
+        };
+        if !rhs_value.is_finite() {
+            return None;
+        }
+        match effect.operation() {
+            AssignmentOperation::Plus => {
+                if assignment.is_some() {
+                    return None;
+                }
+                delta += rhs_value;
+                touched = true;
+            }
+            AssignmentOperation::Minus => {
+                if assignment.is_some() {
+                    return None;
+                }
+                delta -= rhs_value;
+                touched = true;
+            }
+            AssignmentOperation::Assign => {
+                if touched || assignment.is_some() {
+                    return None;
+                }
+                assignment = Some(rhs_value);
+                touched = true;
+            }
+            AssignmentOperation::Times | AssignmentOperation::Divide => return None,
+        }
+    }
+    if let Some(value) = assignment {
+        Some(Interval::singleton(value))
+    } else if touched {
+        Some(shift_interval(source_interval, delta))
+    } else {
+        None
+    }
+}
+
+fn shift_interval(interval: Interval, delta: f64) -> Interval {
+    Interval::new(
+        interval.lower + delta,
+        interval.upper + delta,
+        interval.lower_closed,
+        interval.upper_closed,
+    )
+}
+
+fn interval_is_finite(interval: Interval) -> bool {
+    interval.lower.is_finite() && interval.upper.is_finite()
+}
+
+fn interval_hull(left: Interval, right: Interval) -> Interval {
+    let (lower, lower_closed) = if left.lower < right.lower {
+        (left.lower, left.lower_closed)
+    } else if left.lower > right.lower {
+        (right.lower, right.lower_closed)
+    } else {
+        (left.lower, left.lower_closed || right.lower_closed)
+    };
+    let (upper, upper_closed) = if left.upper > right.upper {
+        (left.upper, left.upper_closed)
+    } else if left.upper < right.upper {
+        (right.upper, right.upper_closed)
+    } else {
+        (left.upper, left.upper_closed || right.upper_closed)
+    };
+    Interval::new(lower, upper, lower_closed, upper_closed)
 }
 
 fn decode_state_to_vectors(

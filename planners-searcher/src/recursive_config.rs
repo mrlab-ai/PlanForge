@@ -871,9 +871,9 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
         field_usize!("interval", ScpOnlineConfig, interval),
         field_bool!("use_numeric_pdbs", ScpOnlineConfig, use_numeric_pdbs),
         field_bool!(
-            "use_transition_cost_partitioning",
+            "use_abstract_operator_cost_partitioning",
             ScpOnlineConfig,
-            use_transition_cost_partitioning
+            use_abstract_operator_cost_partitioning
         ),
         Field {
             name: "saturator",

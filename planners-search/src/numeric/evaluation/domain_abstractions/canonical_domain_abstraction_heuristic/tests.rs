@@ -68,6 +68,7 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
         transformed_task: None,
         relevant_operator_ids: Vec::new(),
         abstract_operators: Vec::new(),
+        abstract_operator_footprints: Vec::new(),
     }
 }
 

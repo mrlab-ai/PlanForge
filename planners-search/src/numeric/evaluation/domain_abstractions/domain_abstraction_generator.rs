@@ -1,13 +1,14 @@
 use std::rc::Rc;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
 
 use super::abstract_operator_generator::AbstractOperator;
-use super::abstracted_task::{maybe_build_linear_abstracted_task, DomainAbstractionTaskProjection};
+use super::abstracted_task::{DomainAbstractionTaskProjection, maybe_build_linear_abstracted_task};
 use super::cegar::{Cegar, CegarConfig};
 use super::domain_abstraction_factory::{AbstractDistanceTable, DomainAbstractionFactory};
+use super::transition_cost_partitioning::AbstractOperatorFootprint;
 
 /// Fully built abstraction artifact that can be used to evaluate concrete states.
 #[derive(Debug, Clone)]
@@ -20,6 +21,7 @@ pub struct DomainAbstraction {
     pub transformed_task: Option<Rc<NumericRootTask>>,
     pub relevant_operator_ids: Vec<usize>,
     pub abstract_operators: Vec<AbstractOperator>,
+    pub abstract_operator_footprints: Vec<AbstractOperatorFootprint>,
 }
 
 impl DomainAbstraction {
@@ -78,6 +80,9 @@ impl DomainAbstractionGenerator {
         let abstract_operators = operator_generator
             .build_abstract_operators(transformed_task)
             .context("failed to build abstract operators")?;
+        let abstract_operator_footprints = factory
+            .build_abstract_operator_footprints(transformed_task, &abstract_operators)
+            .context("failed to build abstract-operator footprints")?;
         let distance_table = factory
             .build_distance_table_with_operators(
                 transformed_task,
@@ -106,6 +111,7 @@ impl DomainAbstractionGenerator {
             transformed_task: transformed_task_owner,
             relevant_operator_ids,
             abstract_operators,
+            abstract_operator_footprints,
         })
     }
 }
