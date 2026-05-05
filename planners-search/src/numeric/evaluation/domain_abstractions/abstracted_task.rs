@@ -173,6 +173,22 @@ impl AffineExpression {
         }
         Ok(value)
     }
+
+    fn apply_effects(&self, additive_deltas: &[f64], assigned_constants: &[Option<f64>]) -> Self {
+        let mut out = Self::constant(self.constant, self.coefficients.len());
+        for (var_id, &coefficient) in self.coefficients.iter().enumerate() {
+            if approx_eq(coefficient, 0.0) {
+                continue;
+            }
+            if let Some(value) = assigned_constants[var_id] {
+                out.constant += coefficient * value;
+            } else {
+                out.coefficients[var_id] += coefficient;
+                out.constant += coefficient * additive_deltas[var_id];
+            }
+        }
+        out
+    }
 }
 
 pub fn maybe_build_linear_abstracted_task(
@@ -350,6 +366,23 @@ fn transform_operator(
     numeric_initial: &mut Vec<f64>,
     transformed_to_expr: &mut Vec<AffineExpression>,
 ) -> Result<Operator> {
+    let has_assignment = operator
+        .assignment_effects()
+        .iter()
+        .any(|effect| matches!(effect.operation(), AssignmentOperation::Assign));
+    if has_assignment {
+        return transform_operator_with_assignment(
+            task,
+            operator,
+            initial_numeric,
+            original_to_transformed,
+            constants,
+            numeric_variables,
+            numeric_initial,
+            transformed_to_expr,
+        );
+    }
+
     let mut deltas = vec![0.0; task.numeric_variables().len()];
     for effect in operator.assignment_effects() {
         ensure!(
@@ -406,6 +439,123 @@ fn transform_operator(
         assignment_effects.push(AssignmentEffect::new(
             transformed_id,
             AssignmentOperation::Plus,
+            const_id,
+            false,
+            vec![],
+        ));
+    }
+
+    Ok(Operator::new(
+        operator.name().to_string(),
+        operator.preconditions().clone(),
+        operator.effects().clone(),
+        assignment_effects,
+        operator.cost(),
+    ))
+}
+
+fn transform_operator_with_assignment(
+    task: &dyn AbstractNumericTask,
+    operator: &Operator,
+    initial_numeric: &[f64],
+    original_to_transformed: &[Option<usize>],
+    constants: &mut ConstantPool,
+    numeric_variables: &mut Vec<NumericVariable>,
+    numeric_initial: &mut Vec<f64>,
+    transformed_to_expr: &mut Vec<AffineExpression>,
+) -> Result<Operator> {
+    let mut additive_deltas = vec![0.0; task.numeric_variables().len()];
+    let mut assigned_constants = vec![None; task.numeric_variables().len()];
+    for effect in operator.assignment_effects() {
+        ensure!(
+            !effect.is_conditional() && effect.conditions().is_empty(),
+            "abstracted domain task does not support conditional numeric effects in operator {}",
+            operator.name()
+        );
+        let source_value = match task.numeric_variables()[effect.var_id()].get_type() {
+            NumericType::Constant | NumericType::Cost => initial_numeric[effect.var_id()],
+            _ => bail!(
+                "abstracted domain task requires constant RHS numeric effects in operator {}",
+                operator.name()
+            ),
+        };
+        match effect.operation() {
+            AssignmentOperation::Plus => {
+                ensure!(
+                    assigned_constants[effect.affected_var_id()].is_none(),
+                    "abstracted domain task does not support mixed assignment/additive numeric effects on one variable in operator {}",
+                    operator.name()
+                );
+                additive_deltas[effect.affected_var_id()] += source_value;
+            }
+            AssignmentOperation::Minus => {
+                ensure!(
+                    assigned_constants[effect.affected_var_id()].is_none(),
+                    "abstracted domain task does not support mixed assignment/additive numeric effects on one variable in operator {}",
+                    operator.name()
+                );
+                additive_deltas[effect.affected_var_id()] -= source_value;
+            }
+            AssignmentOperation::Assign => {
+                ensure!(
+                    approx_eq(additive_deltas[effect.affected_var_id()], 0.0)
+                        && assigned_constants[effect.affected_var_id()].is_none(),
+                    "abstracted domain task does not support multiple numeric effects on an assigned variable in operator {}",
+                    operator.name()
+                );
+                assigned_constants[effect.affected_var_id()] = Some(source_value);
+            }
+            AssignmentOperation::Times | AssignmentOperation::Divide => bail!(
+                "abstracted domain task does not support non-additive numeric effects in operator {}",
+                operator.name()
+            ),
+        }
+    }
+
+    let mut assignment_effects = Vec::new();
+    for (original_id, mapped) in original_to_transformed.iter().enumerate() {
+        let Some(transformed_id) = *mapped else {
+            continue;
+        };
+        let expr = &transformed_to_expr[transformed_id];
+        let successor_expr = expr.apply_effects(&additive_deltas, &assigned_constants);
+        let delta_expr = successor_expr.clone().sub(expr.clone());
+        if delta_expr.non_zero_vars().is_empty() {
+            let delta = delta_expr.constant;
+            if approx_eq(delta, 0.0) {
+                continue;
+            }
+            let const_id = constants.get_or_insert(
+                delta,
+                numeric_variables,
+                numeric_initial,
+                transformed_to_expr,
+                task.numeric_variables().len(),
+            );
+            assignment_effects.push(AssignmentEffect::new(
+                transformed_id,
+                AssignmentOperation::Plus,
+                const_id,
+                false,
+                vec![],
+            ));
+            continue;
+        }
+        ensure!(
+            successor_expr.non_zero_vars().is_empty(),
+            "abstracted domain task cannot express assignment effect on transformed numeric variable {original_id} in operator {}",
+            operator.name()
+        );
+        let const_id = constants.get_or_insert(
+            successor_expr.constant,
+            numeric_variables,
+            numeric_initial,
+            transformed_to_expr,
+            task.numeric_variables().len(),
+        );
+        assignment_effects.push(AssignmentEffect::new(
+            transformed_id,
+            AssignmentOperation::Assign,
             const_id,
             false,
             vec![],
@@ -619,6 +769,81 @@ mod tests {
         assert_eq!(
             projected.numeric_values,
             vec![7.0, 11.0, 18.0, 10.0, 1.0, 1.0]
+        );
+    }
+
+    #[test]
+    fn linear_abstracted_task_supports_assignment_to_constant_when_views_stay_simple() {
+        let variables = vec![ExplicitVariable::new(
+            2,
+            "cmp".into(),
+            vec!["true".into(), "false".into()],
+            Some(0),
+            1,
+        )];
+        let numeric_variables = vec![
+            NumericVariable::new("fuel".into(), NumericType::Regular, None),
+            NumericVariable::new("capacity".into(), NumericType::Constant, None),
+            NumericVariable::new("capacity-minus-fuel".into(), NumericType::Derived, Some(0)),
+        ];
+        let operator = Operator::new(
+            "refuel".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Assign,
+                1,
+                false,
+                vec![],
+            )],
+            1,
+        );
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, None),
+            variables,
+            numeric_variables,
+            vec![ExplicitFact::new(0, 0)],
+            vec![],
+            vec![1],
+            vec![4000.0, 6000.0, 2000.0],
+            vec![operator],
+            vec![],
+            vec![ComparisonAxiom::new(
+                0,
+                2,
+                1,
+                ComparisonOperator::GreaterThan,
+            )],
+            vec![AssignmentAxiom::new(2, CalOperator::Difference, 1, 0)],
+            ExplicitFact::new(0, 0),
+        );
+
+        let abstracted = maybe_build_linear_abstracted_task(&task, true)
+            .unwrap()
+            .expect("task should be transformed");
+        let transformed = abstracted.task();
+        let assignment_effects = transformed.get_operators()[0].assignment_effects();
+
+        assert_eq!(assignment_effects.len(), 2);
+        assert_eq!(assignment_effects[0].affected_var_id(), 0);
+        assert_eq!(
+            assignment_effects[0].operation(),
+            &AssignmentOperation::Assign
+        );
+        assert_eq!(
+            transformed.get_initial_numeric_state_values()[assignment_effects[0].var_id()],
+            6000.0
+        );
+        assert_eq!(assignment_effects[1].affected_var_id(), 2);
+        assert_eq!(
+            assignment_effects[1].operation(),
+            &AssignmentOperation::Assign
+        );
+        assert_eq!(
+            transformed.get_initial_numeric_state_values()[assignment_effects[1].var_id()],
+            0.0
         );
     }
 }
