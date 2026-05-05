@@ -922,8 +922,66 @@ fn additive_numeric_footprint_task() -> (NumericRootTask, DomainAbstractionFacto
     (task, factory)
 }
 
+fn additive_numeric_footprint_task_with_partitions(
+    x_partitions: Vec<Interval>,
+) -> (NumericRootTask, DomainAbstractionFactory) {
+    let variables = vec![ExplicitVariable::new(
+        1,
+        "p".into(),
+        vec!["p0".into()],
+        None,
+        0,
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+    ];
+    let op = Operator::new(
+        "inc".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 1.0],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let numeric_domain_sizes = vec![x_partitions.len(), 1];
+    let partitions =
+        NumericPartitions::with_partitions(vec![x_partitions, vec![Interval::singleton(1.0)]]);
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .unwrap();
+
+    (task, factory)
+}
+
 #[test]
-fn abstract_operator_footprint_tightens_additive_effect_into_infinite_target_tail() {
+fn abstract_operator_footprint_keeps_finite_source_when_target_reaches_tail() {
     let (task, factory) = additive_numeric_footprint_task();
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operator_generator::AbstractOperator {
@@ -943,8 +1001,41 @@ fn abstract_operator_footprint_tightens_additive_effect_into_infinite_target_tai
     assert_eq!(concrete.concrete_op_id, 0);
     assert!(concrete.allocable);
     assert_eq!(
-        concrete.region.numeric[0],
-        Interval::new(9.0, 11.0, true, true)
+        concrete.source_region.numeric[0],
+        Interval::new(9.0, 10.0, true, true)
+    );
+    assert_eq!(
+        concrete.source_region.numeric[1],
+        Interval::new(f64::NEG_INFINITY, f64::INFINITY, false, false)
+    );
+}
+
+#[test]
+fn abstract_operator_footprint_tightens_source_by_inverse_target_image() {
+    let (task, factory) = additive_numeric_footprint_task_with_partitions(vec![
+        Interval::new(f64::NEG_INFINITY, 5.0, false, true),
+        Interval::new(5.0, 10.0, false, true),
+    ]);
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![0],
+        cost: 1.0,
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
+        changed_numeric_vars: vec![0],
+    };
+
+    let footprints = factory
+        .build_abstract_operator_footprints(&task, &[op])
+        .unwrap();
+    let concrete = &footprints[0].labels[0];
+
+    assert_eq!(concrete.concrete_op_id, 0);
+    assert!(concrete.allocable);
+    assert_eq!(
+        concrete.source_region.numeric[0],
+        Interval::new(4.0, 5.0, false, true)
     );
 }
 
@@ -969,7 +1060,11 @@ fn abstract_operator_footprint_marks_unbounded_changed_tail_non_allocable() {
     assert_eq!(concrete.concrete_op_id, 0);
     assert!(!concrete.allocable);
     assert_eq!(
-        concrete.region.numeric[0],
+        concrete.source_region.numeric[0],
         Interval::new(10.0, f64::INFINITY, true, false)
+    );
+    assert_eq!(
+        concrete.non_allocable_reason,
+        Some(super::super::transition_cost_partitioning::NonAllocableFootprintReason::InfiniteActiveSource)
     );
 }

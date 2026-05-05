@@ -27,7 +27,7 @@ use super::numeric_context::{
 use super::transition_cost_partitioning::{
     AbstractOperatorCostFunction, AbstractOperatorFootprint, AbstractTransition,
     AbstractTransitionCostFunction, AbstractTransitionSystem, ConcreteOperatorFootprint,
-    StateRegion, TransitionResidualCosts,
+    NonAllocableFootprintReason, StateRegion, TransitionResidualCosts,
 };
 use super::utils;
 
@@ -743,6 +743,7 @@ impl DomainAbstractionFactory {
                 &perim_table,
                 deadline,
             )?;
+            let tcf = mask_non_allocable_abstract_operator_costs(tcf, footprints)?;
             let mut saturated_operators = operators;
             apply_abstract_operator_costs(&mut saturated_operators, &tcf.operator_costs)?;
             let global_table = self.build_distance_table_with_operators(
@@ -762,7 +763,12 @@ impl DomainAbstractionFactory {
             &table,
             deadline,
         )?;
-        Ok((table, tcf))
+        let tcf = mask_non_allocable_abstract_operator_costs(tcf, footprints)?;
+        let mut saturated_operators = operators;
+        apply_abstract_operator_costs(&mut saturated_operators, &tcf.operator_costs)?;
+        let global_table =
+            self.build_distance_table_with_operators(task, &generator, &saturated_operators, false)?;
+        Ok((global_table, tcf))
     }
 
     pub fn build_abstract_operator_cost_partitioned_distance_table_from_system_and_footprints_with_deadline(
@@ -916,41 +922,53 @@ impl DomainAbstractionFactory {
         let concrete_operator = task.get_operators().get(concrete_op_id).with_context(|| {
             format!("abstract operator references missing concrete operator {concrete_op_id}")
         })?;
-        let source_region = self.state_region_from_facts(task, &abstract_operator.preconditions)?;
-        let mut region = source_region.clone();
-        let target_from_abstract =
+        let mut source_region =
+            self.state_region_from_facts(task, &abstract_operator.preconditions)?;
+        let target_region =
             self.state_region_from_facts(task, &abstract_operator.regression_preconditions)?;
-        region.merge_hull(&target_from_abstract);
+        let mut non_allocable_reason = None;
 
-        let mut allocable = true;
         for &numeric_var_id in &abstract_operator.changed_numeric_vars {
             ensure!(
-                numeric_var_id < region.numeric.len(),
+                numeric_var_id < source_region.numeric.len(),
                 "abstract operator references changed numeric var {numeric_var_id}, but footprint has {} numeric vars",
-                region.numeric.len()
+                source_region.numeric.len()
             );
             let source_interval = source_region.numeric[numeric_var_id];
-            let Some(image) = deterministic_numeric_effect_image(
+            let Some(effect_image) = deterministic_numeric_effect_image(
                 task,
                 concrete_operator,
                 numeric_var_id,
                 source_interval,
             ) else {
-                allocable = false;
+                non_allocable_reason
+                    .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
                 continue;
             };
-            let mut changed_hull = source_interval;
-            changed_hull = interval_hull(changed_hull, image);
-            region.numeric[numeric_var_id] = changed_hull;
-            if !interval_is_finite(changed_hull) {
-                allocable = false;
+            if effect_image.image.is_empty() {
+                non_allocable_reason
+                    .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
+                continue;
             }
+            let target_interval = target_region.numeric[numeric_var_id];
+            if let Some(inverse_source) = effect_image.inverse_source_for_target(target_interval) {
+                source_region.numeric[numeric_var_id] =
+                    interval_intersection(source_region.numeric[numeric_var_id], inverse_source);
+            }
+            if !interval_is_finite(source_region.numeric[numeric_var_id]) {
+                non_allocable_reason
+                    .get_or_insert(NonAllocableFootprintReason::InfiniteActiveSource);
+            }
+        }
+        if !footprint_has_informative_source(self, &source_region)? {
+            non_allocable_reason.get_or_insert(NonAllocableFootprintReason::UninformativeSource);
         }
 
         Ok(ConcreteOperatorFootprint {
             concrete_op_id,
-            region,
-            allocable,
+            source_region,
+            allocable: non_allocable_reason.is_none(),
+            non_allocable_reason,
         })
     }
 
@@ -2476,24 +2494,22 @@ fn abstract_operator_costs_from_footprints(
                 .labels
                 .iter()
                 .map(|label| {
-                    residual_costs.cost_for_operator_footprint(
-                        abstraction_id,
-                        abstract_op_id,
-                        label,
-                    )
+                    if label.allocable {
+                        residual_costs.cost_for_operator_footprint(
+                            abstraction_id,
+                            abstract_op_id,
+                            label,
+                        )
+                    } else {
+                        residual_costs.base_cost(label.concrete_op_id)
+                    }
                 })
                 .fold(f64::INFINITY, f64::min)
         } else {
             footprint
                 .labels
                 .iter()
-                .map(|label| {
-                    if label.allocable {
-                        residual_costs.base_cost(label.concrete_op_id)
-                    } else {
-                        0.0
-                    }
-                })
+                .map(|label| residual_costs.base_cost(label.concrete_op_id))
                 .fold(f64::INFINITY, f64::min)
         };
         ensure!(
@@ -2502,6 +2518,29 @@ fn abstract_operator_costs_from_footprints(
         );
     }
     Ok(operator_costs)
+}
+
+fn mask_non_allocable_abstract_operator_costs(
+    mut tcf: AbstractOperatorCostFunction,
+    footprints: &[AbstractOperatorFootprint],
+) -> Result<AbstractOperatorCostFunction> {
+    ensure!(
+        footprints.len() >= tcf.operator_costs.len(),
+        "abstract-operator footprint/cost function size mismatch: footprints={} costs={}",
+        footprints.len(),
+        tcf.operator_costs.len()
+    );
+    for (abstract_op_id, saturated) in tcf.operator_costs.iter_mut().enumerate() {
+        let footprint = &footprints[abstract_op_id];
+        ensure!(
+            !footprint.labels.is_empty(),
+            "abstract operator {abstract_op_id} has no concrete footprint labels"
+        );
+        if footprint.labels.iter().any(|label| !label.allocable) {
+            *saturated = 0.0;
+        }
+    }
+    Ok(tcf)
 }
 
 fn get_comparison_preconditions(
@@ -2543,12 +2582,37 @@ fn transition_costs_from_abstract_operator_costs(
         .collect()
 }
 
+#[derive(Debug, Clone, Copy)]
+struct DeterministicNumericEffectImage {
+    image: Interval,
+    inverse: DeterministicNumericEffectInverse,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DeterministicNumericEffectInverse {
+    Additive { delta: f64 },
+    AssignmentConstant { value: f64 },
+}
+
+impl DeterministicNumericEffectImage {
+    fn inverse_source_for_target(&self, target_interval: Interval) -> Option<Interval> {
+        match self.inverse {
+            DeterministicNumericEffectInverse::Additive { delta } => {
+                Some(shift_interval(target_interval, -delta))
+            }
+            DeterministicNumericEffectInverse::AssignmentConstant { value } => {
+                target_interval.contains(value).then_some(Interval::unbounded())
+            }
+        }
+    }
+}
+
 fn deterministic_numeric_effect_image(
     task: &dyn AbstractNumericTask,
     operator: &Operator,
     numeric_var_id: usize,
     source_interval: Interval,
-) -> Option<Interval> {
+) -> Option<DeterministicNumericEffectImage> {
     let initial_numeric = task.get_initial_numeric_state_values();
     let mut delta = 0.0;
     let mut assignment = None;
@@ -2594,9 +2658,15 @@ fn deterministic_numeric_effect_image(
         }
     }
     if let Some(value) = assignment {
-        Some(Interval::singleton(value))
+        Some(DeterministicNumericEffectImage {
+            image: Interval::singleton(value),
+            inverse: DeterministicNumericEffectInverse::AssignmentConstant { value },
+        })
     } else if touched {
-        Some(shift_interval(source_interval, delta))
+        Some(DeterministicNumericEffectImage {
+            image: shift_interval(source_interval, delta),
+            inverse: DeterministicNumericEffectInverse::Additive { delta },
+        })
     } else {
         None
     }
@@ -2615,22 +2685,42 @@ fn interval_is_finite(interval: Interval) -> bool {
     interval.lower.is_finite() && interval.upper.is_finite()
 }
 
-fn interval_hull(left: Interval, right: Interval) -> Interval {
-    let (lower, lower_closed) = if left.lower < right.lower {
-        (left.lower, left.lower_closed)
-    } else if left.lower > right.lower {
-        (right.lower, right.lower_closed)
+fn interval_intersection(lhs: Interval, rhs: Interval) -> Interval {
+    let (lower, lower_closed) = if lhs.lower > rhs.lower {
+        (lhs.lower, lhs.lower_closed)
+    } else if lhs.lower < rhs.lower {
+        (rhs.lower, rhs.lower_closed)
     } else {
-        (left.lower, left.lower_closed || right.lower_closed)
+        (lhs.lower, lhs.lower_closed && rhs.lower_closed)
     };
-    let (upper, upper_closed) = if left.upper > right.upper {
-        (left.upper, left.upper_closed)
-    } else if left.upper < right.upper {
-        (right.upper, right.upper_closed)
+    let (upper, upper_closed) = if lhs.upper < rhs.upper {
+        (lhs.upper, lhs.upper_closed)
+    } else if lhs.upper > rhs.upper {
+        (rhs.upper, rhs.upper_closed)
     } else {
-        (left.upper, left.upper_closed || right.upper_closed)
+        (lhs.upper, lhs.upper_closed && rhs.upper_closed)
     };
     Interval::new(lower, upper, lower_closed, upper_closed)
+}
+
+fn footprint_has_informative_source(
+    factory: &DomainAbstractionFactory,
+    source_region: &StateRegion,
+) -> Result<bool> {
+    for (var_id, values) in source_region.propositions.iter().enumerate() {
+        let full_size = factory
+            .domain_mapping
+            .get(var_id)
+            .with_context(|| format!("missing domain mapping for propositional var {var_id}"))?
+            .len();
+        if values.len() < full_size {
+            return Ok(true);
+        }
+    }
+    Ok(source_region
+        .numeric
+        .iter()
+        .any(|interval| interval_is_finite(*interval) && !interval.is_empty()))
 }
 
 fn decode_state_to_vectors(

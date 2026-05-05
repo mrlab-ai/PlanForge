@@ -242,15 +242,20 @@ pub fn maybe_build_linear_abstracted_task(
         return Ok(None);
     }
 
-    let mut numeric_var_ids: Vec<usize> = task
-        .numeric_variables()
+    let mut numeric_var_ids: Vec<usize> = root_var_ids
         .iter()
-        .enumerate()
-        .filter_map(|(numeric_var_id, variable)| {
-            (!matches!(variable.get_type(), NumericType::Derived)).then_some(numeric_var_id)
+        .copied()
+        .filter(|&numeric_var_id| {
+            !matches!(
+                task.numeric_variables()[numeric_var_id].get_type(),
+                NumericType::Derived
+            )
         })
         .collect();
     numeric_var_ids.extend(root_exprs.keys().copied());
+    if let Some(metric_var_id) = task.metric().var_id() {
+        numeric_var_ids.push(metric_var_id);
+    }
     numeric_var_ids.sort_unstable();
     numeric_var_ids.dedup();
 
@@ -743,33 +748,26 @@ mod tests {
             .expect("task should be transformed");
         let transformed = abstracted.task();
 
-        assert_eq!(transformed.numeric_variables().len(), 6);
-        assert_eq!(transformed.numeric_variables()[0].name(), "x");
-        assert_eq!(transformed.numeric_variables()[1].name(), "y");
-        assert_eq!(transformed.numeric_variables()[2].name(), "u");
-        assert_eq!(transformed.numeric_variables()[3].name(), "limit");
+        assert_eq!(transformed.numeric_variables().len(), 3);
+        assert_eq!(transformed.numeric_variables()[0].name(), "u");
+        assert_eq!(transformed.numeric_variables()[1].name(), "limit");
         assert_eq!(
             transformed.get_initial_numeric_state_values().as_slice(),
-            &[2.0, 3.0, 5.0, 10.0, 1.0, 1.0]
+            &[5.0, 10.0, 1.0]
         );
-        assert_eq!(transformed.comparison_axioms()[0].get_left_var_id(), 2);
-        assert_eq!(transformed.comparison_axioms()[0].get_right_var_id(), 3);
+        assert_eq!(transformed.comparison_axioms()[0].get_left_var_id(), 0);
+        assert_eq!(transformed.comparison_axioms()[0].get_right_var_id(), 1);
 
         let assignment_effects = transformed.get_operators()[0].assignment_effects();
-        assert_eq!(assignment_effects.len(), 2);
+        assert_eq!(assignment_effects.len(), 1);
         assert_eq!(assignment_effects[0].affected_var_id(), 0);
-        assert_eq!(assignment_effects[0].var_id(), 5);
-        assert_eq!(assignment_effects[1].affected_var_id(), 2);
-        assert_eq!(assignment_effects[1].var_id(), 5);
+        assert_eq!(assignment_effects[0].var_id(), 2);
 
         let projected = abstracted
             .project_state_values(&[1], &[7.0, 11.0, 18.0, 10.0, 1.0])
             .unwrap();
         assert_eq!(projected.propositional_values, vec![1]);
-        assert_eq!(
-            projected.numeric_values,
-            vec![7.0, 11.0, 18.0, 10.0, 1.0, 1.0]
-        );
+        assert_eq!(projected.numeric_values, vec![18.0, 10.0, 1.0]);
     }
 
     #[test]
@@ -826,23 +824,14 @@ mod tests {
         let transformed = abstracted.task();
         let assignment_effects = transformed.get_operators()[0].assignment_effects();
 
-        assert_eq!(assignment_effects.len(), 2);
-        assert_eq!(assignment_effects[0].affected_var_id(), 0);
+        assert_eq!(assignment_effects.len(), 1);
+        assert_eq!(assignment_effects[0].affected_var_id(), 1);
         assert_eq!(
             assignment_effects[0].operation(),
             &AssignmentOperation::Assign
         );
         assert_eq!(
             transformed.get_initial_numeric_state_values()[assignment_effects[0].var_id()],
-            6000.0
-        );
-        assert_eq!(assignment_effects[1].affected_var_id(), 2);
-        assert_eq!(
-            assignment_effects[1].operation(),
-            &AssignmentOperation::Assign
-        );
-        assert_eq!(
-            transformed.get_initial_numeric_state_values()[assignment_effects[1].var_id()],
             0.0
         );
     }

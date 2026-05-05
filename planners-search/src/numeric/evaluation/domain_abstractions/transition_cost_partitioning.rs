@@ -46,8 +46,16 @@ pub struct AbstractOperatorFootprint {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConcreteOperatorFootprint {
     pub concrete_op_id: usize,
-    pub region: StateRegion,
+    pub source_region: StateRegion,
     pub allocable: bool,
+    pub non_allocable_reason: Option<NonAllocableFootprintReason>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NonAllocableFootprintReason {
+    InfiniteActiveSource,
+    UninformativeSource,
+    UnsupportedEffectImage,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -439,15 +447,15 @@ impl TransitionResidualCosts {
         if !footprint.allocable {
             return 0.0;
         }
-        let region_key = state_region_key(&footprint.region);
+        let region_key = state_region_key(&footprint.source_region);
         self.cost_for_transition_with_region_key(
             footprint.concrete_op_id,
             current_abstraction_id,
             ABSTRACT_OPERATOR_REGION_HASH,
             abstract_op_id,
             ABSTRACT_OPERATOR_REGION_HASH,
-            &footprint.region,
-            &footprint.region,
+            &footprint.source_region,
+            &footprint.source_region,
             Some(TransitionRegionKey {
                 source: region_key.clone(),
                 target: region_key,
@@ -677,8 +685,8 @@ impl TransitionResidualCosts {
                     continue;
                 }
                 let region = TransitionRegion {
-                    source: footprint.region.clone(),
-                    target: footprint.region.clone(),
+                    source: footprint.source_region.clone(),
+                    target: footprint.source_region.clone(),
                 };
                 let concrete_op_id = footprint.concrete_op_id;
                 let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
@@ -1447,8 +1455,9 @@ mod tests {
     ) -> ConcreteOperatorFootprint {
         ConcreteOperatorFootprint {
             concrete_op_id,
-            region: numeric_state_region(lower, upper),
+            source_region: numeric_state_region(lower, upper),
             allocable,
+            non_allocable_reason: None,
         }
     }
 
@@ -1774,7 +1783,7 @@ mod tests {
     }
 
     #[test]
-    fn disjoint_footprint_hulls_do_not_reduce_residual_cost() {
+    fn disjoint_footprint_sources_do_not_reduce_residual_cost() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
         residuals
             .reduce_by_abstract_operator_footprints(
@@ -1793,7 +1802,26 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_footprint_hulls_reduce_residual_cost() {
+    fn target_hull_overlap_is_ignored_for_abstract_operator_footprints() {
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
+        residuals
+            .reduce_by_abstract_operator_footprints(
+                0,
+                &[footprint(1.0, 10.0)],
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![4.0],
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            residuals.cost_for_operator_footprint(1, 0, &concrete_footprint(10.5, 11.0)),
+            10.0
+        );
+    }
+
+    #[test]
+    fn overlapping_footprint_sources_reduce_residual_cost() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
         residuals
             .reduce_by_abstract_operator_footprints(

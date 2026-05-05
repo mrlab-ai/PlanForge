@@ -24,7 +24,9 @@ use super::domain_abstraction_heuristic::{
     DomainAbstractionHeuristic, DomainAbstractionLookupScratch,
     compute_collection_abstract_state_ids,
 };
-use super::transition_cost_partitioning::{AbstractOperatorFootprint, TransitionResidualCosts};
+use super::transition_cost_partitioning::{
+    AbstractOperatorFootprint, NonAllocableFootprintReason, TransitionResidualCosts,
+};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -587,6 +589,17 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             self.config.saturator,
             state.start_time.elapsed().as_secs_f64(),
         );
+        if self.config.collection_config.debug {
+            log_abstraction_candidate_report(
+                mode,
+                state,
+                abstractions,
+                &order,
+                abstract_state_ids,
+                self.config.scoring_function,
+                self.config.use_abstract_operator_cost_partitioning,
+            );
+        }
 
         let cp = if self.config.use_abstract_operator_cost_partitioning {
             self.build_abstract_operator_cp(
@@ -1491,25 +1504,125 @@ fn log_abstract_operator_footprint_summary(
     abstraction_id: usize,
     footprints: &[AbstractOperatorFootprint],
 ) {
-    let (total_labels, non_allocable_labels) = abstract_operator_footprint_stats(footprints);
-    let non_allocable_ratio = if total_labels == 0 {
+    let stats = abstract_operator_footprint_stats(footprints);
+    let non_allocable_ratio = if stats.total_labels == 0 {
         0.0
     } else {
-        non_allocable_labels as f64 / total_labels as f64
+        stats.non_allocable_labels as f64 / stats.total_labels as f64
     };
     info!(
-        "scp_online: abstract-operator footprints abstraction {abstraction_id}: labels={total_labels}, non_allocable_labels={non_allocable_labels}, non_allocable_ratio={non_allocable_ratio:.3}"
+        "scp_online: abstract-operator footprints abstraction {abstraction_id}: labels={}, non_allocable_labels={}, non_allocable_ratio={non_allocable_ratio:.3}, infinite_source={}, unsupported_effect={}",
+        stats.total_labels,
+        stats.non_allocable_labels,
+        stats.infinite_active_source,
+        stats.unsupported_effect_image,
     );
 }
 
-fn abstract_operator_footprint_stats(footprints: &[AbstractOperatorFootprint]) -> (usize, usize) {
-    let total_labels: usize = footprints.iter().map(|fp| fp.labels.len()).sum();
-    let non_allocable_labels: usize = footprints
+fn log_abstraction_candidate_report(
+    mode: &str,
+    state: &ScpOnlineState,
+    abstractions: &[DomainAbstraction],
+    order: &[usize],
+    abstract_state_ids: &[Option<usize>],
+    scoring_function: ScoringFunction,
+    use_abstract_operator_cost_partitioning: bool,
+) {
+    let inactive = order
         .iter()
-        .flat_map(|fp| fp.labels.iter())
-        .filter(|fp| !fp.allocable)
+        .filter(|&&abstraction_id| {
+            state
+                .h_values_by_abstraction
+                .get(abstraction_id)
+                .map(|distances| {
+                    current_h_for_distances(abstraction_id, distances, abstract_state_ids)
+                })
+                .unwrap_or(0.0)
+                <= 1e-9
+        })
         .count();
-    (total_labels, non_allocable_labels)
+    info!(
+        "scp_online: {mode} abstraction candidate report, candidates={}, inactive_current_state={inactive}, showing_top={}",
+        order.len(),
+        order.len().min(25),
+    );
+
+    for (rank, &abstraction_id) in order.iter().take(25).enumerate() {
+        let h = state
+            .h_values_by_abstraction
+            .get(abstraction_id)
+            .map(|distances| current_h_for_distances(abstraction_id, distances, abstract_state_ids))
+            .unwrap_or(0.0);
+        let stolen = state
+            .stolen_costs_by_abstraction
+            .get(abstraction_id)
+            .copied()
+            .unwrap_or(0.0);
+        let Some(abstraction) = abstractions.get(abstraction_id) else {
+            info!(
+                "scp_online: candidate rank={rank}, id={abstraction_id}, h={h}, stolen={stolen}, missing_domain_abstraction=true"
+            );
+            continue;
+        };
+        let score = if use_abstract_operator_cost_partitioning {
+            compute_abstract_operator_order_score(h, stolen, scoring_function, abstraction)
+        } else {
+            compute_score(h, stolen, scoring_function)
+        };
+        let stats = abstract_operator_footprint_stats(&abstraction.abstract_operator_footprints);
+        let allocable_ratio = if stats.total_labels == 0 {
+            0.0
+        } else {
+            (stats
+                .total_labels
+                .saturating_sub(stats.non_allocable_labels)) as f64
+                / stats.total_labels as f64
+        };
+        let metadata = &abstraction.metadata;
+        let seeds = truncate_for_log(&metadata.initial_seed_splits.join("|"), 220);
+        info!(
+            "scp_online: candidate rank={rank}, id={abstraction_id}, score={score:.6}, h={h}, stolen={stolen:.6}, states={}, abstract_ops={}, footprint_labels={}, allocable_ratio={allocable_ratio:.3}, infinite_source={}, unsupported_effect={}, iteration={:?}, flaw_kind={:?}, full_goal_task={:?}, seeds={seeds}",
+            abstraction_state_count(abstraction),
+            abstraction.abstract_operators.len(),
+            stats.total_labels,
+            stats.infinite_active_source,
+            stats.unsupported_effect_image,
+            metadata.collection_iteration,
+            metadata.flaw_kind,
+            metadata.full_goal_task,
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AbstractOperatorFootprintStats {
+    total_labels: usize,
+    non_allocable_labels: usize,
+    infinite_active_source: usize,
+    unsupported_effect_image: usize,
+}
+
+fn abstract_operator_footprint_stats(
+    footprints: &[AbstractOperatorFootprint],
+) -> AbstractOperatorFootprintStats {
+    let mut stats = AbstractOperatorFootprintStats::default();
+    for label in footprints.iter().flat_map(|fp| fp.labels.iter()) {
+        stats.total_labels = stats.total_labels.saturating_add(1);
+        if !label.allocable {
+            stats.non_allocable_labels = stats.non_allocable_labels.saturating_add(1);
+        }
+        match label.non_allocable_reason {
+            Some(NonAllocableFootprintReason::InfiniteActiveSource) => {
+                stats.infinite_active_source = stats.infinite_active_source.saturating_add(1);
+            }
+            Some(NonAllocableFootprintReason::UnsupportedEffectImage) => {
+                stats.unsupported_effect_image = stats.unsupported_effect_image.saturating_add(1);
+            }
+            Some(NonAllocableFootprintReason::UninformativeSource) => {}
+            None => {}
+        }
+    }
+    stats
 }
 
 fn abstraction_metadata_summary(abstraction: &DomainAbstraction) -> String {
@@ -1522,6 +1635,15 @@ fn abstraction_metadata_summary(abstraction: &DomainAbstraction) -> String {
         metadata.full_goal_task,
         metadata.initial_seed_splits.join("|"),
     )
+}
+
+fn truncate_for_log(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let mut truncated = value.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 fn log_transition_residual_summary(remaining_costs: &TransitionResidualCosts) {
@@ -1612,18 +1734,10 @@ fn compute_abstract_operator_order_score(
         return -1.0e100;
     }
     let base = compute_score(h, stolen_costs, scoring_function);
-    let (labels, non_allocable) = abstract_operator_footprint_stats(
-        &abstraction.abstract_operator_footprints,
-    );
-    let allocable_ratio = if labels == 0 {
-        0.0
-    } else {
-        (labels.saturating_sub(non_allocable)) as f64 / labels as f64
-    };
     let size_penalty = ((abstraction_state_count(abstraction) as f64) / 10_000.0)
         .max(1.0)
         .sqrt();
-    base * allocable_ratio / size_penalty
+    base / size_penalty
 }
 
 fn standalone_current_h_values(
