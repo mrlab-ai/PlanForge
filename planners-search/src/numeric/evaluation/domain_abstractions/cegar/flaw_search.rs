@@ -95,7 +95,8 @@ impl FlawKind {
         match self {
             Self::Progression => get_progression_flaws(task, partitions, wildcard_plan),
             Self::Regression => {
-                let mut flaws = get_regression_flaws(task, partitions, domain_mapping, wildcard_plan);
+                let mut flaws =
+                    get_regression_flaws(task, partitions, domain_mapping, wildcard_plan);
                 // Progression flaw fallback if no regression flaw is found
                 // (numeric deviation flaws not detected).
                 if let Ok(ref flaws_ok) = flaws

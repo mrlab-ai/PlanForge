@@ -48,7 +48,13 @@ pub fn get_sequence_flaws(
             )?;
         }
         SequenceDirection::Regression => {
-            get_sequence_regression_flaws(task, partitions, domain_mapping, wildcard_plan, &mut flaws)?;
+            get_sequence_regression_flaws(
+                task,
+                partitions,
+                domain_mapping,
+                wildcard_plan,
+                &mut flaws,
+            )?;
             if flaws.is_empty() {
                 // Progression sequence flaws as fallback.
                 get_sequence_progression_flaws(
@@ -68,7 +74,13 @@ pub fn get_sequence_flaws(
                 wildcard_plan,
                 &mut flaws,
             )?;
-            get_sequence_regression_flaws(task, partitions, domain_mapping, wildcard_plan, &mut flaws)?;
+            get_sequence_regression_flaws(
+                task,
+                partitions,
+                domain_mapping,
+                wildcard_plan,
+                &mut flaws,
+            )?;
         }
     }
 

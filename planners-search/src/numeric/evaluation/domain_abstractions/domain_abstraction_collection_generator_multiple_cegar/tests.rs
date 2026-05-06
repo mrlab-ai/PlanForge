@@ -117,6 +117,201 @@ fn view_diverse_seed_splits_rotate_false_comparison_views_by_deficit() {
 }
 
 #[test]
+fn complementary_seed_splits_rotate_false_views_with_route_shells() {
+    let variables = vec![
+        ExplicitVariable::new(
+            3,
+            "cmp_x".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(0),
+            2,
+        ),
+        ExplicitVariable::new(
+            3,
+            "cmp_y".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(1),
+            2,
+        ),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c10".into(), NumericType::Constant, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("c20".into(), NumericType::Constant, None),
+        NumericVariable::new("delta3".into(), NumericType::Constant, None),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![ExplicitFact::new(1, COMPARISON_TRUE_VALUE)],
+        vec![],
+        vec![0, 0],
+        vec![0.0, 10.0, 5.0, 20.0, 3.0],
+        vec![Operator::new(
+            "inc_y".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                2,
+                AssignmentOperation::Plus,
+                4,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![],
+        vec![
+            ComparisonAxiom::new(0, 0, 1, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(1, 2, 3, ComparisonOperator::GreaterThanOrEqual),
+        ],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        portfolio_strategy: PortfolioStrategy::Complementary,
+        ..Default::default()
+    };
+    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
+
+    let first = generator.initial_seed_splits(&task, 1);
+    assert!(first.contains(&InitialSeedSplit::Numeric {
+        numeric_var_id: 2,
+        value: 5.0,
+        include_in_lower: true,
+    }));
+    assert!(first.contains(&InitialSeedSplit::Propositional {
+        var_id: 1,
+        value: COMPARISON_TRUE_VALUE,
+    }));
+    for value in [20.0, 17.0, 14.0, 11.0, 8.0] {
+        assert!(
+            first.contains(&InitialSeedSplit::Numeric {
+                numeric_var_id: 2,
+                value,
+                include_in_lower: false,
+            }),
+            "missing complementary route shell at {value}: {first:?}"
+        );
+    }
+
+    let second = generator.initial_seed_splits(&task, 2);
+    assert!(second.contains(&InitialSeedSplit::Numeric {
+        numeric_var_id: 0,
+        value: 0.0,
+        include_in_lower: true,
+    }));
+    assert!(second.contains(&InitialSeedSplit::Propositional {
+        var_id: 0,
+        value: COMPARISON_TRUE_VALUE,
+    }));
+    assert_eq!(
+        generator.flaw_kind_for_iteration(1),
+        FlawKind::SequenceBidirectional
+    );
+}
+
+#[test]
+fn complementary_seed_splits_group_alternative_goal_achiever_views() {
+    let variables = vec![
+        ExplicitVariable::new(
+            3,
+            "cmp_a".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(0),
+            2,
+        ),
+        ExplicitVariable::new(
+            3,
+            "cmp_b".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(1),
+            2,
+        ),
+        ExplicitVariable::new(2, "goal".into(), vec!["no".into(), "yes".into()], None, 0),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("a".into(), NumericType::Regular, None),
+        NumericVariable::new("b".into(), NumericType::Regular, None),
+        NumericVariable::new("c10".into(), NumericType::Constant, None),
+        NumericVariable::new("delta".into(), NumericType::Constant, None),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![ExplicitFact::new(2, 1)],
+        vec![],
+        vec![0, 0, 0],
+        vec![0.0, 1.0, 10.0, 1.0],
+        vec![
+            Operator::new(
+                "achieve_a".into(),
+                vec![ExplicitFact::new(0, COMPARISON_TRUE_VALUE)],
+                vec![Effect::new(vec![], 2, Some(0), 1)],
+                vec![AssignmentEffect::new(
+                    0,
+                    AssignmentOperation::Plus,
+                    3,
+                    false,
+                    vec![],
+                )],
+                1,
+            ),
+            Operator::new(
+                "achieve_b".into(),
+                vec![ExplicitFact::new(1, COMPARISON_TRUE_VALUE)],
+                vec![Effect::new(vec![], 2, Some(0), 1)],
+                vec![AssignmentEffect::new(
+                    1,
+                    AssignmentOperation::Plus,
+                    3,
+                    false,
+                    vec![],
+                )],
+                1,
+            ),
+        ],
+        vec![],
+        vec![
+            ComparisonAxiom::new(0, 0, 2, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(1, 1, 2, ComparisonOperator::GreaterThanOrEqual),
+        ],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        portfolio_strategy: PortfolioStrategy::Complementary,
+        ..Default::default()
+    };
+    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
+
+    let seeds = generator.initial_seed_splits(&task, 1);
+    assert!(seeds.contains(&InitialSeedSplit::Propositional {
+        var_id: 0,
+        value: COMPARISON_TRUE_VALUE,
+    }));
+    assert!(seeds.contains(&InitialSeedSplit::Propositional {
+        var_id: 1,
+        value: COMPARISON_TRUE_VALUE,
+    }));
+    assert!(seeds.contains(&InitialSeedSplit::Numeric {
+        numeric_var_id: 0,
+        value: 10.0,
+        include_in_lower: false,
+    }));
+    assert!(seeds.contains(&InitialSeedSplit::Numeric {
+        numeric_var_id: 1,
+        value: 10.0,
+        include_in_lower: false,
+    }));
+}
+
+#[test]
 fn region_landmarks_seed_splits_build_goal_achiever_shells() {
     let variables = vec![
         ExplicitVariable::new(

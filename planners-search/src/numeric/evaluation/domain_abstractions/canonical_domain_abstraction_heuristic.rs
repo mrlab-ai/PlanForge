@@ -11,8 +11,8 @@ use crate::numeric::evaluation::heuristic::Heuristic;
 
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::domain_abstraction_heuristic::{
-    compute_collection_abstract_state_ids, DomainAbstractionHeuristic,
-    DomainAbstractionLookupScratch,
+    DomainAbstractionHeuristic, DomainAbstractionLookupScratch,
+    compute_collection_abstract_state_ids,
 };
 
 #[derive(Debug, Clone)]

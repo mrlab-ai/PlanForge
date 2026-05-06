@@ -11,7 +11,6 @@ use crate::numeric::{
     evaluation::{EvaluationError, EvaluationState, Heuristic},
     successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node},
 };
-use tracing::{debug, info};
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, ExplicitFact, Operator, metric_operator_cost_from_initial_values,
@@ -22,6 +21,7 @@ use std::collections::BinaryHeap;
 use std::collections::VecDeque;
 use std::env;
 use std::time::{Duration, Instant};
+use tracing::{debug, info};
 
 const MEMORY_CHECK_EXPANSION_INTERVAL: usize = 1024;
 

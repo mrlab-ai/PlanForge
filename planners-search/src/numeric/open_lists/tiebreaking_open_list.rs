@@ -1,11 +1,11 @@
 use super::open_list::{OpenList, SearchNode};
-use tracing::debug;
 use ordered_float::OrderedFloat;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::env;
 use std::error::Error;
 use std::fmt;
+use tracing::debug;
 
 #[cfg(test)]
 mod tests;

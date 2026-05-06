@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::axioms::ComparisonOperator;
 use planners_sas::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
@@ -15,20 +15,20 @@ use planners_sas::numeric::numeric_task::{
     NumericVariable, Operator,
 };
 use rand::seq::SliceRandom;
-use rand::{rngs::SmallRng, RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::numeric::evaluation::domain_abstractions::cegar::FlawKind;
 
-pub use super::cegar::flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
-use super::cegar::flaw_search::numeric_requirement_for_comparison_fact;
 use super::cegar::CegarConfig;
 use super::cegar::InitialSeedSplit;
+pub use super::cegar::flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
+use super::cegar::flaw_search::numeric_requirement_for_comparison_fact;
 use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction_generator::{
-    prepare_domain_abstraction_task, DomainAbstraction, DomainAbstractionGenerator,
-    DomainAbstractionMetadata,
+    DomainAbstraction, DomainAbstractionGenerator, DomainAbstractionMetadata,
+    prepare_domain_abstraction_task,
 };
 use super::utils::compute_abstraction_size_u128;
 
@@ -89,6 +89,7 @@ impl fmt::Display for NumericSplitStrategy {
 pub enum PortfolioStrategy {
     Standard,
     ViewDiverse,
+    Complementary,
     RegionLandmarks,
 }
 
@@ -97,6 +98,7 @@ impl fmt::Display for PortfolioStrategy {
         match self {
             Self::Standard => write!(f, "standard"),
             Self::ViewDiverse => write!(f, "view_diverse"),
+            Self::Complementary => write!(f, "complementary"),
             Self::RegionLandmarks => write!(f, "region_landmarks"),
         }
     }
@@ -306,13 +308,12 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             self.config.total_max_time * self.config.blacklist_trigger_percentage;
         let mut iteration = 1usize;
         let mut goal_index = 0usize;
-        let region_abstraction_budget = if self.config.portfolio_strategy
-            == PortfolioStrategy::RegionLandmarks
-        {
-            Some((self.config.max_collection_size / 3).max(1))
-        } else {
-            None
-        };
+        let region_abstraction_budget =
+            if self.config.portfolio_strategy == PortfolioStrategy::RegionLandmarks {
+                Some((self.config.max_collection_size / 3).max(1))
+            } else {
+                None
+            };
 
         loop {
             let elapsed = start.elapsed().as_secs_f64();
@@ -344,7 +345,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             {
                 None
             } else {
-                goals.get(goal_index)
+                goals
+                    .get(goal_index)
                     .map(|goal| SingleGoalTask::new(task, goal.clone()))
             };
             let abstraction_task: &dyn AbstractNumericTask = goal_task
@@ -362,7 +364,15 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             } else {
                 HashSet::new()
             };
-            let initial_seed_splits = self.initial_seed_splits(generation_task, iteration);
+            let seed_iteration = if self.config.portfolio_strategy
+                == PortfolioStrategy::Complementary
+                && !goals.is_empty()
+            {
+                ((iteration - 1) / goals.len()) + 1
+            } else {
+                iteration
+            };
+            let initial_seed_splits = self.initial_seed_splits(generation_task, seed_iteration);
             let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
                 split_blacklisted_variables(generation_task, blacklisted_var_ids);
             let init_split_var_ids = if initial_seed_splits.is_empty() {
@@ -493,6 +503,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         match self.config.portfolio_strategy {
             PortfolioStrategy::Standard => return Vec::new(),
             PortfolioStrategy::ViewDiverse => {}
+            PortfolioStrategy::Complementary => {
+                return self.complementary_seed_splits(task, iteration);
+            }
             PortfolioStrategy::RegionLandmarks => {
                 return self.region_landmark_seed_splits(task, iteration);
             }
@@ -533,6 +546,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     fn flaw_kind_for_iteration(&self, iteration: usize) -> FlawKind {
         match self.config.portfolio_strategy {
             PortfolioStrategy::Standard => return self.config.flaw_kind,
+            PortfolioStrategy::Complementary => return FlawKind::SequenceBidirectional,
             PortfolioStrategy::RegionLandmarks => return FlawKind::SequenceBidirectional,
             PortfolioStrategy::ViewDiverse => {}
         }
@@ -541,6 +555,45 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         } else {
             FlawKind::SequenceRegression
         }
+    }
+
+    fn complementary_seed_splits(
+        &self,
+        task: &dyn AbstractNumericTask,
+        iteration: usize,
+    ) -> Vec<InitialSeedSplit> {
+        let mut groups = collect_complementary_view_groups(task);
+        if groups.is_empty() {
+            return Vec::new();
+        }
+        groups.sort_by(|left, right| {
+            right
+                .deficit
+                .total_cmp(&left.deficit)
+                .then_with(|| left.first_numeric_var_id.cmp(&right.first_numeric_var_id))
+                .then_with(|| {
+                    left.first_comparison_var_id
+                        .cmp(&right.first_comparison_var_id)
+                })
+        });
+
+        let selected = &groups[(iteration - 1) % groups.len()];
+        let mut seeds = Vec::new();
+        seeds.extend(goal_seed_splits(task));
+        for candidate in &selected.candidates {
+            seeds.push(InitialSeedSplit::Numeric {
+                numeric_var_id: candidate.numeric_var_id,
+                value: candidate.initial_value,
+                include_in_lower: candidate.include_in_lower,
+            });
+            seeds.push(InitialSeedSplit::Propositional {
+                var_id: candidate.comparison_var_id,
+                value: COMPARISON_TRUE_VALUE,
+            });
+            seeds.extend(complementary_route_seed_splits(task, candidate));
+        }
+        sort_and_dedup_seed_splits(&mut seeds);
+        seeds
     }
 
     fn region_landmark_seed_splits(
@@ -558,38 +611,42 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         seeds.extend(goal_seed_splits(task));
 
         let initial_numeric = task.get_initial_numeric_state_values();
-        let (source_requirements, target_requirements): (Vec<NumericRequirement>, Vec<NumericRequirement>) =
-            if segment_id == 0 {
-                let initial_requirements = anchors[0]
-                    .requirements
-                    .iter()
-                    .filter_map(|requirement| {
-                        initial_numeric
-                            .get(requirement.numeric_var_id)
-                            .copied()
-                            .map(|value| NumericRequirement::singleton(requirement.numeric_var_id, value))
-                    })
-                    .collect();
-                (initial_requirements, anchors[0].requirements.clone())
-            } else if segment_id < anchors.len() {
-                (
-                    anchors[segment_id - 1].requirements.clone(),
-                    anchors[segment_id].requirements.clone(),
-                )
-            } else {
-                let last = anchors
-                    .last()
-                    .expect("region landmark anchors must be non-empty");
-                (last.requirements.clone(), last.requirements.clone())
-            };
+        let (source_requirements, target_requirements): (
+            Vec<NumericRequirement>,
+            Vec<NumericRequirement>,
+        ) = if segment_id == 0 {
+            let initial_requirements = anchors[0]
+                .requirements
+                .iter()
+                .filter_map(|requirement| {
+                    initial_numeric
+                        .get(requirement.numeric_var_id)
+                        .copied()
+                        .map(|value| {
+                            NumericRequirement::singleton(requirement.numeric_var_id, value)
+                        })
+                })
+                .collect();
+            (initial_requirements, anchors[0].requirements.clone())
+        } else if segment_id < anchors.len() {
+            (
+                anchors[segment_id - 1].requirements.clone(),
+                anchors[segment_id].requirements.clone(),
+            )
+        } else {
+            let last = anchors
+                .last()
+                .expect("region landmark anchors must be non-empty");
+            (last.requirements.clone(), last.requirements.clone())
+        };
 
         if segment_id > 0 {
-            seeds.extend(anchors[segment_id - 1].facts.iter().cloned().map(
-                |fact| InitialSeedSplit::Propositional {
+            seeds.extend(anchors[segment_id - 1].facts.iter().cloned().map(|fact| {
+                InitialSeedSplit::Propositional {
                     var_id: fact.var,
                     value: fact.value,
-                },
-            ));
+                }
+            }));
         }
         if let Some(anchor) = anchors.get(segment_id.min(anchors.len() - 1)) {
             seeds.extend(anchor.facts.iter().cloned().map(|fact| {
@@ -600,7 +657,11 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             }));
         }
 
-        seeds.extend(shell_seed_splits(task, &source_requirements, &target_requirements));
+        seeds.extend(shell_seed_splits(
+            task,
+            &source_requirements,
+            &target_requirements,
+        ));
         sort_and_dedup_seed_splits(&mut seeds);
         seeds
     }
@@ -613,8 +674,25 @@ struct ViewCandidate {
     comparison_var_id: usize,
     numeric_var_id: usize,
     initial_value: f64,
+    target_value: f64,
     deficit: f64,
     include_in_lower: bool,
+    threshold_include_in_lower: bool,
+    direction: ViewDirection,
+}
+
+#[derive(Debug, Clone)]
+struct ViewCandidateGroup {
+    candidates: Vec<ViewCandidate>,
+    deficit: f64,
+    first_numeric_var_id: usize,
+    first_comparison_var_id: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewDirection {
+    Increase,
+    Decrease,
 }
 
 fn collect_false_view_candidates(task: &dyn AbstractNumericTask) -> Vec<ViewCandidate> {
@@ -632,6 +710,96 @@ fn collect_false_view_candidates(task: &dyn AbstractNumericTask) -> Vec<ViewCand
         }
     }
     out
+}
+
+fn collect_complementary_view_groups(task: &dyn AbstractNumericTask) -> Vec<ViewCandidateGroup> {
+    let initial_numeric = task.get_initial_numeric_state_values();
+    let mut groups_by_precondition_index: HashMap<usize, Vec<ViewCandidate>> = HashMap::new();
+
+    for goal_id in 0..task.get_num_goals() {
+        let goal = task.get_goal_fact(goal_id);
+        for op in task.get_operators() {
+            if !op.effects().iter().any(|effect| {
+                effect.var_id() == goal.var
+                    && effect.value() == goal.value
+                    && effect.conditions().is_empty()
+            }) {
+                continue;
+            }
+
+            let false_view_preconditions = op
+                .preconditions()
+                .iter()
+                .filter_map(|fact| view_candidate_for_comparison_fact(task, fact, &initial_numeric))
+                .collect::<Vec<_>>();
+            for (index, candidate) in false_view_preconditions.into_iter().enumerate() {
+                groups_by_precondition_index
+                    .entry(index)
+                    .or_default()
+                    .push(candidate);
+            }
+        }
+    }
+
+    let mut groups = groups_by_precondition_index
+        .into_values()
+        .filter_map(view_candidate_group)
+        .collect::<Vec<_>>();
+    if groups.is_empty() {
+        groups = collect_false_view_candidates(task)
+            .into_iter()
+            .map(|candidate| view_candidate_group(vec![candidate]))
+            .collect::<Option<Vec<_>>>()
+            .unwrap_or_default();
+    }
+    groups
+}
+
+fn view_candidate_for_comparison_fact(
+    task: &dyn AbstractNumericTask,
+    fact: &ExplicitFact,
+    initial_numeric: &[f64],
+) -> Option<ViewCandidate> {
+    if fact.value != COMPARISON_TRUE_VALUE {
+        return None;
+    }
+    let comparison = task
+        .comparison_axioms()
+        .iter()
+        .find(|comparison| comparison.get_affected_var_id() == fact.var)?;
+    let Ok(is_true) = comparison.is_hold(initial_numeric) else {
+        return None;
+    };
+    if is_true {
+        return None;
+    }
+    view_candidate_for_comparison(task, comparison, initial_numeric)
+}
+
+fn view_candidate_group(mut candidates: Vec<ViewCandidate>) -> Option<ViewCandidateGroup> {
+    candidates.sort_by(|left, right| {
+        left.numeric_var_id
+            .cmp(&right.numeric_var_id)
+            .then_with(|| left.comparison_var_id.cmp(&right.comparison_var_id))
+    });
+    candidates.dedup_by(|left, right| {
+        left.numeric_var_id == right.numeric_var_id
+            && left.comparison_var_id == right.comparison_var_id
+    });
+    let first = candidates.first()?;
+    let first_numeric_var_id = first.numeric_var_id;
+    let first_comparison_var_id = first.comparison_var_id;
+    let deficit = candidates
+        .iter()
+        .map(|candidate| candidate.deficit)
+        .max_by_key(|deficit| OrderedFloat(*deficit))
+        .expect("candidate group must be non-empty");
+    Some(ViewCandidateGroup {
+        candidates,
+        deficit,
+        first_numeric_var_id,
+        first_comparison_var_id,
+    })
 }
 
 fn view_candidate_for_comparison(
@@ -677,17 +845,29 @@ fn view_candidate_from_values(
     operator: &ComparisonOperator,
     variable_is_left: bool,
 ) -> Option<ViewCandidate> {
-    let deficit = match (operator, variable_is_left) {
+    let direction = match (operator, variable_is_left) {
         (ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual, true)
         | (ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual, false) => {
-            constant_value - variable_value
+            ViewDirection::Increase
         }
         (ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual, true)
         | (ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual, false) => {
-            variable_value - constant_value
+            ViewDirection::Decrease
         }
-        (ComparisonOperator::Equal, _) => (variable_value - constant_value).abs(),
+        (ComparisonOperator::Equal, _) if variable_value < constant_value => {
+            ViewDirection::Increase
+        }
+        (ComparisonOperator::Equal, _) if variable_value > constant_value => {
+            ViewDirection::Decrease
+        }
+        (ComparisonOperator::Equal, _) => {
+            return None;
+        }
         (ComparisonOperator::UnEqual, _) => return None,
+    };
+    let deficit = match direction {
+        ViewDirection::Increase => constant_value - variable_value,
+        ViewDirection::Decrease => variable_value - constant_value,
     };
     if !deficit.is_finite() || deficit <= 0.0 || !variable_value.is_finite() {
         return None;
@@ -696,9 +876,45 @@ fn view_candidate_from_values(
         comparison_var_id,
         numeric_var_id,
         initial_value: variable_value,
+        target_value: constant_value,
         deficit,
         include_in_lower: true,
+        threshold_include_in_lower: direction == ViewDirection::Decrease,
+        direction,
     })
+}
+
+fn complementary_route_seed_splits(
+    task: &dyn AbstractNumericTask,
+    candidate: &ViewCandidate,
+) -> Vec<InitialSeedSplit> {
+    let mut seeds = Vec::new();
+    seeds.push(InitialSeedSplit::Numeric {
+        numeric_var_id: candidate.numeric_var_id,
+        value: candidate.target_value,
+        include_in_lower: candidate.threshold_include_in_lower,
+    });
+
+    let target = match candidate.direction {
+        ViewDirection::Increase => NumericRequirement {
+            numeric_var_id: candidate.numeric_var_id,
+            lower: Some(candidate.target_value),
+            upper: None,
+        },
+        ViewDirection::Decrease => NumericRequirement {
+            numeric_var_id: candidate.numeric_var_id,
+            lower: None,
+            upper: Some(candidate.target_value),
+        },
+    };
+    add_shells_for_requirement(
+        task,
+        &numeric_effect_deltas(task),
+        candidate.initial_value,
+        &target,
+        &mut seeds,
+    );
+    seeds
 }
 
 fn seed_split_description(seed: &InitialSeedSplit) -> String {
@@ -776,10 +992,7 @@ fn log_collection_debug_summary(abstractions: &[DomainAbstraction]) {
     }
 }
 
-fn log_split_numeric_partitions(
-    abstraction: &DomainAbstraction,
-    task: &dyn AbstractNumericTask,
-) {
+fn log_split_numeric_partitions(abstraction: &DomainAbstraction, task: &dyn AbstractNumericTask) {
     for (numeric_var_id, &size) in abstraction
         .factory
         .numeric_domain_sizes()
@@ -833,7 +1046,10 @@ impl NumericRequirement {
         }
     }
 
-    fn from_interval(numeric_var_id: usize, interval: super::comparison_expression::Interval) -> Self {
+    fn from_interval(
+        numeric_var_id: usize,
+        interval: super::comparison_expression::Interval,
+    ) -> Self {
         Self {
             numeric_var_id,
             lower: interval.lower.is_finite().then_some(interval.lower),

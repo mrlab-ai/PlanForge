@@ -1276,8 +1276,9 @@ fn prepare_comparison_tree_inputs_for_combo(
 
     for (var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
         if numeric_var.get_type() == &NumericType::Constant {
-            numeric_intervals[var_id] =
-                Interval::singleton(float_tolerance::canonicalize(initial_numeric_values[var_id]));
+            numeric_intervals[var_id] = Interval::singleton(float_tolerance::canonicalize(
+                initial_numeric_values[var_id],
+            ));
         } else if numeric_var.get_type() != &NumericType::Derived {
             numeric_intervals[var_id] = Interval::unbounded();
         }

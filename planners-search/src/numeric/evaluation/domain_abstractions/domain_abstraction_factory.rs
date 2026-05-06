@@ -723,7 +723,8 @@ impl DomainAbstractionFactory {
         let mut operators = operators.to_vec();
         apply_abstract_operator_costs(&mut operators, &operator_costs)?;
         let generator = self.make_operator_generator(task, combine_labels)?;
-        let table = self.build_distance_table_with_operators(task, &generator, &operators, false)?;
+        let table =
+            self.build_distance_table_with_operators(task, &generator, &operators, false)?;
 
         if let Some(state_id) = cap_state_id
             && let Some(&h_cap) = table.distances.get(state_id)
@@ -766,8 +767,12 @@ impl DomainAbstractionFactory {
         let tcf = mask_non_allocable_abstract_operator_costs(tcf, footprints)?;
         let mut saturated_operators = operators;
         apply_abstract_operator_costs(&mut saturated_operators, &tcf.operator_costs)?;
-        let global_table =
-            self.build_distance_table_with_operators(task, &generator, &saturated_operators, false)?;
+        let global_table = self.build_distance_table_with_operators(
+            task,
+            &generator,
+            &saturated_operators,
+            false,
+        )?;
         Ok((global_table, tcf))
     }
 
@@ -2482,9 +2487,9 @@ fn abstract_operator_costs_from_footprints(
         if abstract_op_id % 64 == 0 {
             ensure_online_scp_deadline(deadline)?;
         }
-        let footprint = footprints.get(abstract_op_id).with_context(|| {
-            format!("missing footprint for abstract operator {abstract_op_id}")
-        })?;
+        let footprint = footprints
+            .get(abstract_op_id)
+            .with_context(|| format!("missing footprint for abstract operator {abstract_op_id}"))?;
         ensure!(
             !footprint.labels.is_empty(),
             "abstract operator {abstract_op_id} has no concrete footprint labels"
@@ -2600,9 +2605,9 @@ impl DeterministicNumericEffectImage {
             DeterministicNumericEffectInverse::Additive { delta } => {
                 Some(shift_interval(target_interval, -delta))
             }
-            DeterministicNumericEffectInverse::AssignmentConstant { value } => {
-                target_interval.contains(value).then_some(Interval::unbounded())
-            }
+            DeterministicNumericEffectInverse::AssignmentConstant { value } => target_interval
+                .contains(value)
+                .then_some(Interval::unbounded()),
         }
     }
 }

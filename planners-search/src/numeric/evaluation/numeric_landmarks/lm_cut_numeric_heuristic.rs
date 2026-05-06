@@ -5,10 +5,10 @@ use std::cell::RefCell;
 use std::env;
 use std::fmt;
 
-use tracing::debug;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use planners_sas::numeric::state_registry::StateID;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;

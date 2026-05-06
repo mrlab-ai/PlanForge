@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use planners_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom};
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, Metric,

@@ -1712,6 +1712,644 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
     }
 }
 
+#[cfg(test)]
+mod handcrafted_sailing_tests {
+    use std::cell::{Ref, RefMut};
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+
+    use planners_preprocess::run_preprocess_to_output;
+    use planners_sas::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
+    use planners_sas::numeric::numeric_task::{
+        AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
+        NumericVariable, Operator,
+    };
+    use planners_translator::translate_to_sas_to_path_fast;
+
+    use super::*;
+    use crate::numeric::evaluation::domain_abstractions::cegar::InitialSeedSplit;
+    use crate::numeric::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
+    use crate::numeric::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
+    use crate::numeric::evaluation::domain_abstractions::domain_abstraction_generator::{
+        DomainAbstractionMetadata, compute_hash_multipliers, prepare_domain_abstraction_task,
+    };
+
+    #[test]
+    #[ignore = "diagnostic full-task handcrafted sailing abstract-operator SCP report"]
+    fn sailing_handcrafted_four_abstractions_full_task_abstract_operator_scp_initial_h_report() {
+        let task = translated_sailing_2_2_task();
+        let prepared = prepare_domain_abstraction_task(&task, true)
+            .expect("sailing task should support transformed linear views");
+        let transformed_task = prepared.task_for(&task);
+        let specs = handcrafted_full_task_specs(transformed_task);
+        assert_eq!(specs.len(), 4);
+
+        let mut abstractions = Vec::new();
+        for (index, spec) in specs.iter().enumerate() {
+            let single_goal_task = SingleGoalTask::new(transformed_task, spec.goal.clone());
+            let mut abstraction = build_handcrafted_abstraction(&single_goal_task, &prepared, spec)
+                .unwrap_or_else(|error| panic!("failed to build {}: {error:#}", spec.name));
+            abstraction.metadata = DomainAbstractionMetadata {
+                collection_iteration: Some(index + 1),
+                portfolio_strategy: Some("handcrafted_full_task_sailing".to_string()),
+                flaw_kind: None,
+                full_goal_task: Some(false),
+                initial_seed_splits: spec.seed_splits.iter().map(seed_description).collect(),
+                max_abstraction_size: Some(10_000),
+            };
+            let states = abstraction_state_count(&abstraction);
+            assert!(
+                states <= 10_000,
+                "{} has {states} states, expected at most 10000",
+                spec.name
+            );
+            abstractions.push(abstraction);
+        }
+
+        let config = ScpOnlineConfig {
+            max_time: 300.0,
+            max_size: 10_000_000,
+            interval: usize::MAX,
+            combine_labels: false,
+            collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+                debug: true,
+                transform_linear_task: true,
+                ..Default::default()
+            },
+            use_numeric_pdbs: false,
+            max_pdb_states: 0,
+            max_pattern_size: 0,
+            only_interesting_patterns: true,
+            pdb_exploration_heuristic: PdbInternalHeuristic::Blind,
+            pdb_frontier_heuristic: PdbInternalHeuristic::Zero,
+            pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
+            scoring_function: ScoringFunction::MaxHeuristic,
+            saturator: Saturator::All,
+            random_seed: Some(1),
+            use_abstract_operator_cost_partitioning: true,
+        };
+
+        let heuristic = SaturatedCostPartitioningOnlineHeuristic::new(
+            None,
+            abstractions,
+            vec![],
+            config,
+            &task,
+        )
+        .expect("failed to construct SCP heuristic");
+        let abstract_state_ids = initial_abstract_state_ids(&heuristic, &task);
+        {
+            let mut state = heuristic.state.borrow_mut();
+            let mut max_h = SaturatedCostPartitioningOnlineHeuristic::compute_max_h(
+                &state,
+                &abstract_state_ids,
+            );
+            let cp = heuristic
+                .maybe_build_cp(&task, &mut state, &abstract_state_ids, specs.len())
+                .expect("initial SCP construction failed")
+                .expect("initial SCP should produce a cost partitioning");
+            SaturatedCostPartitioningOnlineHeuristic::accept_improved_cp(
+                &mut state,
+                cp,
+                &abstract_state_ids,
+                &mut max_h,
+            );
+        }
+
+        let state = heuristic.state.borrow();
+        let initial_h =
+            SaturatedCostPartitioningOnlineHeuristic::compute_max_h(&state, &abstract_state_ids);
+        let abstractions_ref = heuristic.abstractions.borrow();
+        let abstractions = abstractions_ref
+            .as_ref()
+            .expect("diagnostic keeps abstractions alive");
+
+        println!("HANDCRAFTED_FULL_TASK_INITIAL_H {initial_h}");
+        let mut contributions = vec![0.0; specs.len()];
+        for cp in &state.cp_heuristics {
+            for table in &cp.lookup_tables {
+                let contribution = abstract_state_ids
+                    .get(table.abstraction_id)
+                    .copied()
+                    .flatten()
+                    .and_then(|state_id| table.distances.get(state_id).copied())
+                    .unwrap_or(table.unknown_value);
+                if let Some(total) = contributions.get_mut(table.abstraction_id) {
+                    *total += contribution;
+                }
+            }
+        }
+
+        for (index, (spec, abstraction)) in specs.iter().zip(abstractions).enumerate() {
+            let standalone_h = current_h_for_distances(
+                index,
+                &abstraction.distance_table.distances,
+                &abstract_state_ids,
+            );
+            println!(
+                "HANDCRAFTED_FULL_TASK_ABS index={index} name={} standalone_h={standalone_h} scp_contribution={} states={} abstract_ops={} views={}",
+                spec.name,
+                contributions[index],
+                abstraction_state_count(abstraction),
+                abstraction.abstract_operators.len(),
+                partition_report(transformed_task, abstraction, &spec.view_ids),
+            );
+        }
+        println!("HANDCRAFTED_FULL_TASK_CONTRIBUTIONS {contributions:?}");
+
+        assert!(
+            initial_h.is_finite(),
+            "initial h must be finite, got {initial_h}"
+        );
+        assert!(initial_h > 0.0, "initial h should be positive");
+        assert!(
+            initial_h <= 76.0,
+            "full-task diagnostic should not exceed the known optimal cost 76, got {initial_h}"
+        );
+    }
+
+    #[derive(Debug, Clone)]
+    struct HandcraftedSpec {
+        name: String,
+        goal: ExplicitFact,
+        view_ids: Vec<usize>,
+        seed_splits: Vec<InitialSeedSplit>,
+    }
+
+    fn handcrafted_full_task_specs(task: &dyn AbstractNumericTask) -> Vec<HandcraftedSpec> {
+        [
+            ("p1-u", "p1", ViewKind::Sum),
+            ("p1-v", "p1", ViewKind::Difference),
+            ("p0-u", "p0", ViewKind::Sum),
+            ("p0-v", "p0", ViewKind::Difference),
+        ]
+        .into_iter()
+        .map(|(name, person, view_kind)| {
+            let view_ids = ["b0", "b1"]
+                .into_iter()
+                .map(|boat| find_sailing_view(task, boat, person, view_kind))
+                .collect::<Vec<_>>();
+            let seed_splits = route_seed_splits(task, &view_ids);
+            HandcraftedSpec {
+                name: name.to_string(),
+                goal: find_saved_goal_fact(task, person),
+                view_ids,
+                seed_splits,
+            }
+        })
+        .collect()
+    }
+
+    fn build_handcrafted_abstraction(
+        transformed_task: &dyn AbstractNumericTask,
+        prepared: &crate::numeric::evaluation::domain_abstractions::domain_abstraction_generator::PreparedDomainAbstractionTask,
+        spec: &HandcraftedSpec,
+    ) -> anyhow::Result<DomainAbstraction> {
+        let mut partitions = NumericPartitions::trivial(transformed_task);
+        for seed in &spec.seed_splits {
+            let InitialSeedSplit::Numeric {
+                numeric_var_id,
+                value,
+                include_in_lower,
+            } = seed
+            else {
+                continue;
+            };
+            partitions.split_at(*numeric_var_id, *value, *include_in_lower);
+        }
+
+        let goal_vars = (0..transformed_task.get_num_goals())
+            .map(|goal_id| transformed_task.get_goal_fact(goal_id).var)
+            .collect::<HashSet<_>>();
+        let domain_mapping = (0..transformed_task.get_num_variables())
+            .map(|var_id| {
+                let domain_size = transformed_task
+                    .get_variable_domain_size(var_id)
+                    .expect("valid transformed prop var id");
+                if goal_vars.contains(&var_id) {
+                    (0..domain_size).collect::<Vec<_>>()
+                } else {
+                    vec![0; domain_size]
+                }
+            })
+            .collect::<Vec<_>>();
+        let domain_sizes = domain_mapping
+            .iter()
+            .map(|mapping| mapping.iter().copied().max().map_or(0, |value| value + 1))
+            .collect::<Vec<_>>();
+        let numeric_domain_sizes = (0..transformed_task.numeric_variables().len())
+            .map(|numeric_var_id| {
+                partitions
+                    .partitions(numeric_var_id)
+                    .expect("trivial partitions contain every numeric variable")
+                    .len()
+            })
+            .collect::<Vec<_>>();
+        let factory = DomainAbstractionFactory::new(
+            transformed_task,
+            domain_mapping,
+            domain_sizes,
+            partitions,
+            numeric_domain_sizes,
+        )?;
+        let mut operator_generator = factory.make_operator_generator(transformed_task, false)?;
+        let abstract_operators = operator_generator.build_abstract_operators(transformed_task)?;
+        let abstract_operator_footprints =
+            factory.build_abstract_operator_footprints(transformed_task, &abstract_operators)?;
+        let distance_table = factory.build_distance_table_with_operators(
+            transformed_task,
+            &operator_generator,
+            &abstract_operators,
+            false,
+        )?;
+        let hash_multipliers =
+            compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())?;
+        let mut relevant_operator_ids = abstract_operators
+            .iter()
+            .flat_map(|operator| operator.concrete_op_ids.iter().copied())
+            .collect::<Vec<_>>();
+        relevant_operator_ids.sort_unstable();
+        relevant_operator_ids.dedup();
+        Ok(DomainAbstraction {
+            factory,
+            distance_table,
+            hash_multipliers,
+            combine_labels: false,
+            task_projection: prepared.task_projection.clone(),
+            transformed_task: prepared.transformed_task.clone(),
+            relevant_operator_ids,
+            abstract_operators,
+            abstract_operator_footprints,
+            metadata: DomainAbstractionMetadata::default(),
+        })
+    }
+
+    fn initial_abstract_state_ids(
+        heuristic: &SaturatedCostPartitioningOnlineHeuristic<'_>,
+        task: &dyn AbstractNumericTask,
+    ) -> Vec<Option<usize>> {
+        let prop = task.get_initial_propositional_state_values();
+        let numeric = task.get_initial_numeric_state_values();
+        heuristic
+            .abstraction_heuristics
+            .iter()
+            .map(|component| {
+                Some(
+                    component
+                        .abstract_state_hash_from_state_values(&prop, &numeric)
+                        .expect("failed to hash initial state for handcrafted abstraction"),
+                )
+            })
+            .collect()
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum ViewKind {
+        Sum,
+        Difference,
+    }
+
+    fn find_sailing_view(
+        task: &dyn AbstractNumericTask,
+        boat: &str,
+        person: &str,
+        view_kind: ViewKind,
+    ) -> usize {
+        let tuple = format!("({boat}, {boat}, {person})");
+        let candidates = task
+            .numeric_variables()
+            .iter()
+            .enumerate()
+            .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
+            .filter(|(_, variable)| {
+                let name = variable.name();
+                name.contains(&tuple)
+                    && !name.contains("25.0")
+                    && match view_kind {
+                        ViewKind::Sum => name.contains("derived!sum_PNE x"),
+                        ViewKind::Difference => name.contains("derived!difference_PNE y"),
+                    }
+            })
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            candidates.len(),
+            1,
+            "expected one {view_kind:?} view for {boat}/{person}, got {candidates:?}"
+        );
+        candidates[0]
+    }
+
+    fn find_saved_goal_fact(task: &dyn AbstractNumericTask, person: &str) -> ExplicitFact {
+        let suffix = format!(" {person}");
+        let mut candidates = task
+            .get_operators()
+            .iter()
+            .filter(|operator| operator.name().starts_with("save_person "))
+            .filter(|operator| operator.name().ends_with(&suffix))
+            .flat_map(|operator| operator.effects().iter())
+            .filter(|effect| effect.conditions().is_empty())
+            .map(|effect| ExplicitFact::new(effect.var_id(), effect.value()))
+            .collect::<Vec<_>>();
+        candidates.sort();
+        candidates.dedup();
+        assert_eq!(
+            candidates.len(),
+            1,
+            "expected one saved fact from save_person operators for {person}, got {candidates:?}"
+        );
+        candidates[0].clone()
+    }
+
+    fn route_seed_splits(
+        task: &dyn AbstractNumericTask,
+        view_ids: &[usize],
+    ) -> Vec<InitialSeedSplit> {
+        let initial = task.get_initial_numeric_state_values();
+        let mut seeds = Vec::new();
+        for &view_id in view_ids {
+            add_split(&mut seeds, view_id, initial[view_id], false);
+            add_split(&mut seeds, view_id, 0.0, true);
+            add_split(&mut seeds, view_id, 25.0, true);
+            add_route_grid_values(&mut seeds, view_id, initial[view_id], 25.0, 3.0);
+        }
+        seeds.sort_by(|left, right| seed_description(left).cmp(&seed_description(right)));
+        seeds.dedup();
+        seeds
+    }
+
+    fn add_route_grid_values(
+        seeds: &mut Vec<InitialSeedSplit>,
+        numeric_var_id: usize,
+        start: f64,
+        end: f64,
+        step: f64,
+    ) {
+        assert!(start.is_finite() && end.is_finite() && step.is_finite() && step > 0.0);
+        let direction = if start <= end { 1.0 } else { -1.0 };
+        let mut value = start;
+        while (end - value) * direction > step {
+            value += direction * step;
+            add_split(seeds, numeric_var_id, value, true);
+        }
+    }
+
+    fn add_split(
+        seeds: &mut Vec<InitialSeedSplit>,
+        numeric_var_id: usize,
+        value: f64,
+        include_in_lower: bool,
+    ) {
+        seeds.push(InitialSeedSplit::Numeric {
+            numeric_var_id,
+            value,
+            include_in_lower,
+        });
+    }
+
+    fn partition_report(
+        task: &dyn AbstractNumericTask,
+        abstraction: &DomainAbstraction,
+        view_ids: &[usize],
+    ) -> String {
+        view_ids
+            .iter()
+            .map(|&view_id| {
+                let name = task.numeric_variables()[view_id].name();
+                let num_parts = abstraction
+                    .factory
+                    .partitions()
+                    .partitions(view_id)
+                    .expect("missing partition for handcrafted view")
+                    .len();
+                format!("n{view_id}:{name} parts={num_parts}")
+            })
+            .collect::<Vec<_>>()
+            .join(" || ")
+    }
+
+    fn seed_description(seed: &InitialSeedSplit) -> String {
+        match seed {
+            InitialSeedSplit::Propositional { var_id, value } => format!("p{var_id}={value}"),
+            InitialSeedSplit::Numeric {
+                numeric_var_id,
+                value,
+                include_in_lower,
+            } => format!(
+                "n{numeric_var_id}{}{}",
+                if *include_in_lower { "<=" } else { "<" },
+                value
+            ),
+        }
+    }
+
+    fn translated_sailing_2_2_task() -> NumericRootTask {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let domain = root.join("others/sailing/domain.pddl");
+        let problem = root.join("others/sailing/prob_2_2_1229.pddl");
+        assert!(domain.is_file(), "missing {}", domain.display());
+        assert!(problem.is_file(), "missing {}", problem.display());
+        let temp_dir = unique_temp_dir("sailing_handcrafted_full_task_scp")
+            .expect("failed to create sailing diagnostic temp dir");
+        let output_sas = temp_dir.join("output.sas");
+        let preprocessed = temp_dir.join("output");
+        translate_to_sas_to_path_fast(
+            domain.to_str().expect("non-utf8 sailing domain path"),
+            problem.to_str().expect("non-utf8 sailing problem path"),
+            &output_sas,
+        )
+        .expect("sailing translation failed");
+        run_preprocess_to_output(
+            &[
+                "preprocess".to_string(),
+                output_sas.to_string_lossy().to_string(),
+            ],
+            &preprocessed,
+        );
+        NumericRootTask::from_file(&preprocessed)
+    }
+
+    fn unique_temp_dir(prefix: &str) -> std::io::Result<PathBuf> {
+        let base = std::env::temp_dir().join("numeric_planneRS");
+        std::fs::create_dir_all(&base)?;
+        let dir = base.join(format!(
+            "{prefix}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir)?;
+        Ok(dir)
+    }
+
+    struct SingleGoalTask<'task> {
+        base: &'task dyn AbstractNumericTask,
+        goal: ExplicitFact,
+    }
+
+    impl<'task> SingleGoalTask<'task> {
+        fn new(base: &'task dyn AbstractNumericTask, goal: ExplicitFact) -> Self {
+            Self { base, goal }
+        }
+    }
+
+    impl AbstractNumericTask for SingleGoalTask<'_> {
+        fn variables(&self) -> &Vec<ExplicitVariable> {
+            self.base.variables()
+        }
+        fn numeric_variables(&self) -> &Vec<NumericVariable> {
+            self.base.numeric_variables()
+        }
+        fn assignment_axioms(&self) -> &Vec<AssignmentAxiom> {
+            self.base.assignment_axioms()
+        }
+        fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
+            self.base.comparison_axioms()
+        }
+        fn axioms(&self) -> &Vec<PropositionalAxiom> {
+            self.base.axioms()
+        }
+        fn metric(&self) -> &Metric {
+            self.base.metric()
+        }
+        fn get_num_variables(&self) -> usize {
+            self.base.get_num_variables()
+        }
+        fn get_variable_name(&self, index: usize) -> Result<&str, &str> {
+            self.base.get_variable_name(index)
+        }
+        fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str> {
+            self.base.get_variable_domain_size(index)
+        }
+        fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str> {
+            self.base.get_variable_axiom_layer(index)
+        }
+        fn get_variable_default_axiom_value(&self, index: usize) -> Result<usize, &str> {
+            self.base.get_variable_default_axiom_value(index)
+        }
+        fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
+            self.base.get_fact_name(fact)
+        }
+        fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
+            self.base.are_facts_mutex(fact1, fact2)
+        }
+        fn get_operators(&self) -> &Vec<Operator> {
+            self.base.get_operators()
+        }
+        fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {
+            self.base.get_operator_cost(index, is_axiom)
+        }
+        fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str {
+            self.base.get_operator_name(index, is_axiom)
+        }
+        fn get_num_operators(&self) -> usize {
+            self.base.get_num_operators()
+        }
+        fn get_num_operator_preconditions(&self, index: usize, is_axiom: bool) -> usize {
+            self.base.get_num_operator_preconditions(index, is_axiom)
+        }
+        fn get_operator_precondition(
+            &self,
+            index: usize,
+            precond_index: usize,
+            is_axiom: bool,
+        ) -> &ExplicitFact {
+            self.base
+                .get_operator_precondition(index, precond_index, is_axiom)
+        }
+        fn get_num_operator_effects(&self, index: usize, is_axiom: bool) -> usize {
+            self.base.get_num_operator_effects(index, is_axiom)
+        }
+        fn get_num_operator_effect_conditions(
+            &self,
+            index: usize,
+            eff_index: usize,
+            is_axiom: bool,
+        ) -> usize {
+            self.base
+                .get_num_operator_effect_conditions(index, eff_index, is_axiom)
+        }
+        fn get_operator_effect_condition(
+            &self,
+            index: usize,
+            eff_index: usize,
+            cond_index: usize,
+            is_axiom: bool,
+        ) -> &ExplicitFact {
+            self.base
+                .get_operator_effect_condition(index, eff_index, cond_index, is_axiom)
+        }
+        fn get_operator_effect(
+            &self,
+            index: usize,
+            eff_index: usize,
+            is_axiom: bool,
+        ) -> &ExplicitFact {
+            self.base.get_operator_effect(index, eff_index, is_axiom)
+        }
+        fn convert_operator_index(&self, index: usize, ancestor_task: &dyn AbstractNumericTask) {
+            self.base.convert_operator_index(index, ancestor_task)
+        }
+        fn get_num_axioms(&self) -> usize {
+            self.base.get_num_axioms()
+        }
+        fn get_num_goals(&self) -> usize {
+            1
+        }
+        fn get_goal_fact(&self, index: usize) -> &ExplicitFact {
+            assert_eq!(index, 0, "SingleGoalTask only exposes one goal");
+            &self.goal
+        }
+        fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>> {
+            self.base.get_initial_propositional_state_values()
+        }
+        fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>> {
+            self.base.get_initial_numeric_state_values()
+        }
+        fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>> {
+            self.base.get_initial_propositional_state_values_mut()
+        }
+        fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>> {
+            self.base.get_initial_numeric_state_values_mut()
+        }
+        fn set_initial_numeric_state_values(&self, values: Vec<f64>) {
+            self.base.set_initial_numeric_state_values(values)
+        }
+        fn set_initial_propositional_state_values(&self, values: Vec<usize>) {
+            self.base.set_initial_propositional_state_values(values)
+        }
+        fn convert_ancestor_state_values(
+            &self,
+            ancestor_state_values: &[usize],
+            ancestor_task: &dyn AbstractNumericTask,
+        ) -> Vec<usize> {
+            self.base
+                .convert_ancestor_state_values(ancestor_state_values, ancestor_task)
+        }
+        fn get_num_cmp_axioms(&self) -> usize {
+            self.base.get_num_cmp_axioms()
+        }
+        fn abstract_state_values(
+            &self,
+            propositional_values: &[usize],
+            numeric_values: &[f64],
+        ) -> Result<(Vec<usize>, Vec<f64>), String> {
+            self.base
+                .abstract_state_values(propositional_values, numeric_values)
+        }
+        fn evaluated_initial_abstract_state_values(
+            &self,
+        ) -> Result<(Vec<usize>, Vec<f64>), String> {
+            self.base.evaluated_initial_abstract_state_values()
+        }
+        fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
+            self.base.abstract_operator_cost(operator_id)
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Greedy order utilities
 // ---------------------------------------------------------------------------

@@ -358,7 +358,7 @@ fn parses_astar_multi_domain_abstractions_with_or_without_parens() {
 #[test]
 fn parses_astar_multi_domain_abstractions_with_named_options() {
     let spec = parse_search_spec(
-        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, portfolio_strategy=view_diverse, random_seed=7, debug=true))",
+        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, portfolio_strategy=complementary, random_seed=7, debug=true))",
     )
     .unwrap();
 
@@ -372,7 +372,7 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
     assert_eq!(config.init_split_quantity, InitSplitQuantity::All);
     assert!(!config.use_wildcard_plans);
     assert!(config.combine_labels);
-    assert_eq!(config.portfolio_strategy, PortfolioStrategy::ViewDiverse);
+    assert_eq!(config.portfolio_strategy, PortfolioStrategy::Complementary);
     assert_eq!(config.random_seed, Some(7));
     assert!(config.debug);
 }

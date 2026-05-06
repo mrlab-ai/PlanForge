@@ -3,9 +3,9 @@ mod tests;
 
 use std::fmt;
 
-use tracing::info;
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use super::numeric_size_estimator::NumericSizeEstimator;
 use super::numeric_support::NumericSupportContext;

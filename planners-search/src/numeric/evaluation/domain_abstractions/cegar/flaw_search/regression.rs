@@ -7,11 +7,11 @@ use planners_sas::numeric::{
     numeric_task::{AbstractNumericTask, ExplicitFact, Operator},
 };
 
-use super::{can_split_numeric_var, Flaw, NumericFlaw, PropFlaw};
+use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
 use crate::numeric::evaluation::domain_abstractions::{
     abstract_operator_generator::DomainMapping,
     cegar::flaw_search::{numeric_requirement_for_comparison_fact, state::FlawSearchState},
-    comparison_expression::{Interval, EMPTY_INTERVAL, UNBOUNDED_INTERVAL},
+    comparison_expression::{EMPTY_INTERVAL, Interval, UNBOUNDED_INTERVAL},
     domain_abstraction::{ComparisonAxiomIndex, NumericPartitions},
     domain_abstraction_factory::WildcardPlanResult,
     utils::make_prop_state_packer,
