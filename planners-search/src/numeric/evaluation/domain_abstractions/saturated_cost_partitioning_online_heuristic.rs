@@ -387,10 +387,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let total = state.h_values_by_abstraction.len();
         let mut order: Vec<usize> = (0..total).collect();
         order.shuffle(&mut state.rng);
-
-        let scores: Vec<f64> = (0..total)
+        let current_h: Vec<f64> = (0..total)
             .map(|abs_id| {
-                let h = abstract_state_ids
+                abstract_state_ids
                     .get(abs_id)
                     .copied()
                     .flatten()
@@ -401,7 +400,36 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             .and_then(|values| values.get(sid))
                             .copied()
                     })
-                    .unwrap_or(0.0);
+                    .unwrap_or(0.0)
+            })
+            .collect();
+
+        if use_abstract_operator_cost_partitioning
+            && abstractions.iter().any(|abstraction| {
+                abstraction
+                    .metadata
+                    .portfolio_strategy
+                    .as_deref()
+                    == Some("complementary")
+            })
+        {
+            order.sort_by(|&a, &b| {
+                let a_inactive = current_h.get(a).copied().unwrap_or(0.0) <= 1e-9;
+                let b_inactive = current_h.get(b).copied().unwrap_or(0.0) <= 1e-9;
+                a_inactive
+                    .cmp(&b_inactive)
+                    .then_with(|| {
+                        abstraction_collection_iteration(abstractions, a)
+                            .cmp(&abstraction_collection_iteration(abstractions, b))
+                    })
+                    .then_with(|| a.cmp(&b))
+            });
+            return order;
+        }
+
+        let scores: Vec<f64> = (0..total)
+            .map(|abs_id| {
+                let h = current_h[abs_id];
                 let stolen = state
                     .stolen_costs_by_abstraction
                     .get(abs_id)
@@ -679,6 +707,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
                                     &remaining_costs,
                                     pos,
+                                    abstract_state_ids.get(pos).copied().flatten(),
                                     None,
                                     deadline,
                                 ) {
@@ -737,6 +766,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
+                                    cap_state_id,
                                     deadline,
                                 ) {
                                     Ok(result) => result,
@@ -794,6 +824,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
+                                    cap_state_id,
                                     deadline,
                                 ) {
                                     Ok(result) => result,
@@ -848,6 +879,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                             budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
                                             &remaining_costs,
                                             pos,
+                                            cap_state_id,
                                     None,
                                     deadline,
                                 ) {
@@ -1444,6 +1476,16 @@ fn abstraction_state_count(abstraction: &DomainAbstraction) -> u128 {
         .iter()
         .chain(abstraction.factory.numeric_domain_sizes().iter())
         .fold(1_u128, |acc, &size| acc.saturating_mul(size as u128))
+}
+
+fn abstraction_collection_iteration(
+    abstractions: &[DomainAbstraction],
+    abstraction_id: usize,
+) -> usize {
+    abstractions
+        .get(abstraction_id)
+        .and_then(|abstraction| abstraction.metadata.collection_iteration)
+        .unwrap_or(usize::MAX)
 }
 
 fn current_h_for_distances(

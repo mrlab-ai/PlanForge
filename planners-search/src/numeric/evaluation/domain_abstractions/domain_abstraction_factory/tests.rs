@@ -1190,4 +1190,9 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
         Interval::new(f64::NEG_INFINITY, -1.0, false, true)
     );
     assert!((concrete.max_allocation_fraction - 0.5).abs() < 1e-9);
+
+    let residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
+    let operator_costs =
+        abstract_operator_costs_from_footprints(1, &footprints, None, &residuals, 0, None).unwrap();
+    assert_eq!(operator_costs, vec![0.5]);
 }

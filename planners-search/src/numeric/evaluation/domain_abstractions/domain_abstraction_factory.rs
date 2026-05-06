@@ -703,6 +703,7 @@ impl DomainAbstractionFactory {
         budgets: Option<&[AbstractOperatorCostBudget]>,
         residual_costs: &TransitionResidualCosts,
         abstraction_id: usize,
+        current_state_id: Option<usize>,
         cap_state_id: Option<usize>,
         deadline: Option<Instant>,
     ) -> Result<(AbstractDistanceTable, AbstractOperatorCostFunction)> {
@@ -725,6 +726,31 @@ impl DomainAbstractionFactory {
         let mut operators = operators.to_vec();
         apply_abstract_operator_costs(&mut operators, &operator_costs)?;
         let generator = self.make_operator_generator(task, combine_labels)?;
+        if operator_costs.iter().all(|&cost| cost <= 1e-12) {
+            let table = self.zero_distance_table_for_generator(task, &generator)?;
+            let tcf = AbstractOperatorCostFunction {
+                operator_costs: vec![0.0; operator_costs.len()],
+            };
+            return Ok((table, tcf));
+        }
+        if residual_costs.has_reductions()
+            && let Some(current_state_id) = current_state_id
+        {
+            let current_distance = self.compute_distance_to_goal_state_with_operators(
+                task,
+                &generator,
+                &operators,
+                current_state_id,
+                deadline,
+            )?;
+            if current_distance <= 1e-12 {
+                let table = self.zero_distance_table_for_generator(task, &generator)?;
+                let tcf = AbstractOperatorCostFunction {
+                    operator_costs: vec![0.0; operator_costs.len()],
+                };
+                return Ok((table, tcf));
+            }
+        }
         let table =
             self.build_distance_table_with_operators(task, &generator, &operators, false)?;
 
@@ -746,7 +772,6 @@ impl DomainAbstractionFactory {
                 &perim_table,
                 deadline,
             )?;
-            let tcf = mask_non_allocable_abstract_operator_costs(tcf, footprints)?;
             let mut saturated_operators = operators;
             apply_abstract_operator_costs(&mut saturated_operators, &tcf.operator_costs)?;
             let global_table = self.build_distance_table_with_operators(
@@ -766,7 +791,6 @@ impl DomainAbstractionFactory {
             &table,
             deadline,
         )?;
-        let tcf = mask_non_allocable_abstract_operator_costs(tcf, footprints)?;
         let mut saturated_operators = operators;
         apply_abstract_operator_costs(&mut saturated_operators, &tcf.operator_costs)?;
         let global_table = self.build_distance_table_with_operators(
@@ -810,11 +834,33 @@ impl DomainAbstractionFactory {
                 footprints[abstract_op_id]
                     .labels
                     .iter()
-                    .map(|footprint| {
-                        residual_costs.cost_for_operator_footprint(
-                            abstraction_id,
-                            abstract_op_id,
+                    .enumerate()
+                    .map(|(label_id, footprint)| {
+                        abstract_operator_label_cost(
+                            residual_costs.cost_for_operator_footprint(
+                                abstraction_id,
+                                abstract_op_id,
+                                footprint,
+                            ),
+                            residual_costs,
                             footprint,
+                            None,
+                            label_id,
+                        )
+                    })
+                    .fold(f64::INFINITY, f64::min)
+            } else if let Some(footprints) = footprints {
+                footprints[abstract_op_id]
+                    .labels
+                    .iter()
+                    .enumerate()
+                    .map(|(label_id, footprint)| {
+                        abstract_operator_label_cost(
+                            residual_costs.base_cost(footprint.concrete_op_id),
+                            residual_costs,
+                            footprint,
+                            None,
+                            label_id,
                         )
                     })
                     .fold(f64::INFINITY, f64::min)
@@ -834,24 +880,10 @@ impl DomainAbstractionFactory {
                     })
                     .fold(f64::INFINITY, f64::min)
             } else {
-                if let Some(footprints) = footprints {
-                    footprints[abstract_op_id]
-                        .labels
-                        .iter()
-                        .map(|footprint| {
-                            if footprint.allocable {
-                                residual_costs.base_cost(footprint.concrete_op_id)
-                            } else {
-                                0.0
-                            }
-                        })
-                        .fold(f64::INFINITY, f64::min)
-                } else {
-                    concrete_op_ids[abstract_op_id]
-                        .iter()
-                        .map(|&concrete_op_id| residual_costs.base_cost(concrete_op_id))
-                        .fold(f64::INFINITY, f64::min)
-                }
+                concrete_op_ids[abstract_op_id]
+                    .iter()
+                    .map(|&concrete_op_id| residual_costs.base_cost(concrete_op_id))
+                    .fold(f64::INFINITY, f64::min)
             };
         }
         let transition_costs =
@@ -1102,6 +1134,69 @@ impl DomainAbstractionFactory {
             operators,
             dump_distances,
             &goal_facts,
+        )
+    }
+
+    fn zero_distance_table_for_generator(
+        &self,
+        task: &dyn AbstractNumericTask,
+        generator: &AbstractOperatorGenerator,
+    ) -> Result<AbstractDistanceTable> {
+        let hash_multipliers = generator.hash_multipliers();
+        let numeric_domain_sizes = generator.numeric_domain_sizes();
+        let comparison_var_ids = self.comparison_var_ids();
+        let init_hash = self.compute_initial_state_hash_determined(
+            task,
+            numeric_domain_sizes,
+            hash_multipliers,
+            &comparison_var_ids,
+        )?;
+        let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
+        Ok(AbstractDistanceTable {
+            distances: vec![0.0; num_states],
+            generating_op_ids: vec![None; num_states],
+            initial_state_hash: init_hash,
+            goal_facts: self.compute_abstract_goals(task),
+            hash_multipliers: hash_multipliers.to_vec(),
+            numeric_domain_sizes: numeric_domain_sizes.to_vec(),
+        })
+    }
+
+    fn compute_distance_to_goal_state_with_operators(
+        &self,
+        task: &dyn AbstractNumericTask,
+        generator: &AbstractOperatorGenerator,
+        operators: &[AbstractOperator],
+        target_state_hash: usize,
+        deadline: Option<Instant>,
+    ) -> Result<f64> {
+        let goal_facts = self.compute_abstract_goals(task);
+        let hash_multipliers = generator.hash_multipliers();
+        let numeric_domain_sizes = generator.numeric_domain_sizes();
+        let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
+        ensure!(
+            target_state_hash < num_states,
+            "target abstract state {target_state_hash} is out of bounds for {num_states} states"
+        );
+        let comparison_var_ids = self.comparison_var_ids();
+        let match_tree = MatchTree::build(
+            &self.domain_sizes,
+            numeric_domain_sizes,
+            hash_multipliers,
+            operators,
+            &comparison_var_ids,
+        );
+        self.compute_distance_to_goal_state(
+            task,
+            operators,
+            &match_tree,
+            &goal_facts,
+            target_state_hash,
+            numeric_domain_sizes,
+            hash_multipliers,
+            &comparison_var_ids,
+            num_states,
+            deadline,
         )
     }
 
@@ -2454,6 +2549,119 @@ impl DomainAbstractionFactory {
 
         Ok((distances, generating_op_ids))
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compute_distance_to_goal_state(
+        &self,
+        task: &dyn AbstractNumericTask,
+        operators: &[AbstractOperator],
+        match_tree: &MatchTree,
+        goal_facts: &[ExplicitFact],
+        target_state_hash: usize,
+        numeric_domain_sizes: &[usize],
+        hash_multipliers: &[usize],
+        comparison_var_ids: &[usize],
+        num_states: usize,
+        deadline: Option<Instant>,
+    ) -> Result<f64> {
+        let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
+        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+        let mut comparison_enumeration_cache: HashMap<ComparisonEnumerationKey, Vec<usize>> =
+            HashMap::new();
+        let mut cached_comparison_state_count = 0usize;
+
+        for state_hash in 0..num_states {
+            if state_hash % 4096 == 0 {
+                ensure_online_scp_deadline(deadline)?;
+            }
+            if !self.is_goal_state(
+                state_hash,
+                goal_facts,
+                numeric_domain_sizes,
+                hash_multipliers,
+            ) {
+                continue;
+            }
+            let alts = self.enumerate_states_with_evaluated_comparisons_cached(
+                state_hash,
+                task,
+                numeric_domain_sizes,
+                hash_multipliers,
+                comparison_var_ids,
+                &[],
+                &mut comparison_enumeration_cache,
+                &mut cached_comparison_state_count,
+            )?;
+            if !alts.contains(&state_hash) {
+                continue;
+            }
+            distances[state_hash] = 0.0;
+            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
+        }
+
+        let comparison_preconditions =
+            comparison_preconditions_by_operator(operators, comparison_var_ids);
+        let mut applicable_operator_ids: Vec<usize> = Vec::new();
+        while let Some((Reverse(d), state_hash)) = heap.pop() {
+            let d = d.into_inner();
+            if d > distances[state_hash] + 1e-12 {
+                continue;
+            }
+            if state_hash == target_state_hash {
+                return Ok(d);
+            }
+
+            let base_state = self.reset_comparison_vars_to_unknown_except(
+                state_hash,
+                hash_multipliers,
+                comparison_var_ids,
+                &[],
+            )?;
+
+            match_tree.get_applicable_operator_ids(base_state, &mut applicable_operator_ids);
+            for &op_id in &applicable_operator_ids {
+                let op = &operators[op_id];
+                ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
+                let alternative_cost = d + op.cost;
+                let predecessor_base = (base_state as i32 + op.hash_effect) as usize;
+                debug_assert!(
+                    predecessor_base < num_states,
+                    "[DA] predecessor base hash is out of bounds: {predecessor_base}"
+                );
+                let fixed_comparisons = &comparison_preconditions[op_id];
+                let possible_predecessors = self
+                    .enumerate_states_with_evaluated_comparisons_cached(
+                        predecessor_base,
+                        task,
+                        numeric_domain_sizes,
+                        hash_multipliers,
+                        comparison_var_ids,
+                        fixed_comparisons,
+                        &mut comparison_enumeration_cache,
+                        &mut cached_comparison_state_count,
+                    )?;
+                let representative_predecessor = possible_predecessors.iter().copied().max();
+
+                for pred in possible_predecessors.iter().copied() {
+                    debug_assert!(pred < num_states, "predecessor hash does not fit usize");
+                    if alternative_cost + 1e-12 < distances[pred] {
+                        distances[pred] = alternative_cost;
+                        if pred == target_state_hash || Some(pred) == representative_predecessor {
+                            heap.push((
+                                Reverse(
+                                    NotNan::new(alternative_cost)
+                                        .context("alternative cost is NaN")?,
+                                ),
+                                pred,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(f64::INFINITY)
+    }
 }
 
 fn compute_num_states(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) -> Result<usize> {
@@ -2564,9 +2772,15 @@ fn abstract_operator_costs_from_footprints(
                             abstract_op_id,
                             label,
                         );
-                        cap_abstract_operator_label_cost(residual, residual_costs, label, budget, label_id)
+                        abstract_operator_label_cost(
+                            residual,
+                            residual_costs,
+                            label,
+                            budget,
+                            label_id,
+                        )
                     } else {
-                        residual_costs.base_cost(label.concrete_op_id)
+                        0.0
                     }
                 })
                 .fold(f64::INFINITY, f64::min)
@@ -2577,17 +2791,7 @@ fn abstract_operator_costs_from_footprints(
                 .enumerate()
                 .map(|(label_id, label)| {
                     let residual = residual_costs.base_cost(label.concrete_op_id);
-                    if label.allocable {
-                        cap_abstract_operator_label_cost(
-                            residual,
-                            residual_costs,
-                            label,
-                            budget,
-                            label_id,
-                        )
-                    } else {
-                        residual
-                    }
+                    abstract_operator_label_cost(residual, residual_costs, label, budget, label_id)
                 })
                 .fold(f64::INFINITY, f64::min)
         };
@@ -2599,45 +2803,26 @@ fn abstract_operator_costs_from_footprints(
     Ok(operator_costs)
 }
 
-fn cap_abstract_operator_label_cost(
+fn abstract_operator_label_cost(
     residual: f64,
     residual_costs: &TransitionResidualCosts,
     label: &ConcreteOperatorFootprint,
     budget: Option<&AbstractOperatorCostBudget>,
     label_id: usize,
 ) -> f64 {
-    let Some(budget) = budget else {
-        return residual;
+    if !label.allocable {
+        return 0.0;
+    }
+    let fraction = if let Some(budget) = budget {
+        budget.label_fractions[label_id]
+    } else {
+        label.max_allocation_fraction
     };
-    let fraction = budget.label_fractions[label_id];
     assert!(
         fraction.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&fraction),
-        "invalid abstract-operator budget fraction {fraction}"
+        "invalid abstract-operator allocation fraction {fraction}"
     );
     residual.min(residual_costs.base_cost(label.concrete_op_id) * fraction.clamp(0.0, 1.0))
-}
-
-fn mask_non_allocable_abstract_operator_costs(
-    mut tcf: AbstractOperatorCostFunction,
-    footprints: &[AbstractOperatorFootprint],
-) -> Result<AbstractOperatorCostFunction> {
-    ensure!(
-        footprints.len() >= tcf.operator_costs.len(),
-        "abstract-operator footprint/cost function size mismatch: footprints={} costs={}",
-        footprints.len(),
-        tcf.operator_costs.len()
-    );
-    for (abstract_op_id, saturated) in tcf.operator_costs.iter_mut().enumerate() {
-        let footprint = &footprints[abstract_op_id];
-        ensure!(
-            !footprint.labels.is_empty(),
-            "abstract operator {abstract_op_id} has no concrete footprint labels"
-        );
-        if footprint.labels.iter().any(|label| !label.allocable) {
-            *saturated = 0.0;
-        }
-    }
-    Ok(tcf)
 }
 
 fn get_comparison_preconditions(

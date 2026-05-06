@@ -713,6 +713,11 @@ impl TransitionResidualCosts {
 
             for footprint in &footprints[abstract_op_id].labels {
                 if !footprint.allocable {
+                    ensure!(
+                        saturated <= EPSILON,
+                        "positive abstract-operator saturated cost {saturated} for non-allocable footprint of abstract op {abstract_op_id}, concrete op {}",
+                        footprint.concrete_op_id
+                    );
                     continue;
                 }
                 let region = TransitionRegion {
@@ -720,6 +725,26 @@ impl TransitionResidualCosts {
                     target: footprint.source_region.clone(),
                 };
                 let concrete_op_id = footprint.concrete_op_id;
+                ensure!(
+                    footprint.max_allocation_fraction.is_finite()
+                        && footprint.max_allocation_fraction >= -EPSILON
+                        && footprint.max_allocation_fraction <= 1.0 + EPSILON,
+                    "invalid abstract-operator footprint allocation fraction {} for operator {concrete_op_id}",
+                    footprint.max_allocation_fraction
+                );
+                let current_residual = self.cost_for_operator_footprint(
+                    producing_abstraction_id,
+                    abstract_op_id,
+                    footprint,
+                );
+                ensure!(
+                    current_residual.is_finite(),
+                    "residual cost for abstract op {abstract_op_id}, concrete op {concrete_op_id} must be finite"
+                );
+                ensure!(
+                    saturated <= current_residual + EPSILON,
+                    "abstract-operator footprint reduction {saturated} exceeds current residual cost {current_residual} for concrete operator {concrete_op_id}"
+                );
                 let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
                     continue;
                 };
@@ -731,24 +756,19 @@ impl TransitionResidualCosts {
                     "no base residual cost for operator {concrete_op_id}"
                 );
                 ensure!(
-                    footprint.max_allocation_fraction.is_finite()
-                        && footprint.max_allocation_fraction >= -EPSILON
-                        && footprint.max_allocation_fraction <= 1.0 + EPSILON,
-                    "invalid abstract-operator footprint allocation fraction {} for operator {concrete_op_id}",
-                    footprint.max_allocation_fraction
+                    saturated
+                        <= residual.base_cost * footprint.max_allocation_fraction.min(1.0)
+                            + EPSILON,
+                    "abstract-operator footprint reduction {saturated} exceeds allocation cap {} for concrete operator {concrete_op_id}",
+                    residual.base_cost * footprint.max_allocation_fraction.min(1.0)
                 );
-                let capped_saturated =
-                    saturated.min(residual.base_cost * footprint.max_allocation_fraction.min(1.0));
-                if capped_saturated <= EPSILON {
-                    continue;
-                }
                 ensure!(
-                    capped_saturated <= residual.base_cost + EPSILON,
-                    "residual cost underflow: abstract-operator footprint reduction {capped_saturated} exceeds base cost {} for operator {concrete_op_id}",
+                    saturated <= residual.base_cost + EPSILON,
+                    "residual cost underflow: abstract-operator footprint reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
                     residual.base_cost
                 );
                 residual.reductions.push(ResidualReduction {
-                    amount: capped_saturated.min(residual.base_cost),
+                    amount: saturated,
                     condition: TransitionCondition {
                         abstraction_id: producing_abstraction_id,
                         source_hash: ABSTRACT_OPERATOR_REGION_HASH,
@@ -1696,11 +1716,25 @@ mod tests {
         upper: f64,
         allocable: bool,
     ) -> ConcreteOperatorFootprint {
+        concrete_footprint_for_op_with_fraction(concrete_op_id, lower, upper, allocable, 1.0)
+    }
+
+    fn concrete_footprint_for_op_with_fraction(
+        concrete_op_id: usize,
+        lower: f64,
+        upper: f64,
+        allocable: bool,
+        max_allocation_fraction: f64,
+    ) -> ConcreteOperatorFootprint {
         ConcreteOperatorFootprint {
             concrete_op_id,
             source_region: numeric_state_region(lower, upper),
             allocable,
-            max_allocation_fraction: if allocable { 1.0 } else { 0.0 },
+            max_allocation_fraction: if allocable {
+                max_allocation_fraction
+            } else {
+                0.0
+            },
             non_allocable_reason: None,
         }
     }
@@ -1725,6 +1759,22 @@ mod tests {
     fn footprint(lower: f64, upper: f64) -> AbstractOperatorFootprint {
         AbstractOperatorFootprint {
             labels: vec![concrete_footprint(lower, upper)],
+        }
+    }
+
+    fn footprint_with_fraction(
+        lower: f64,
+        upper: f64,
+        max_allocation_fraction: f64,
+    ) -> AbstractOperatorFootprint {
+        AbstractOperatorFootprint {
+            labels: vec![concrete_footprint_for_op_with_fraction(
+                0,
+                lower,
+                upper,
+                true,
+                max_allocation_fraction,
+            )],
         }
     }
 
@@ -2049,6 +2099,26 @@ mod tests {
         assert_eq!(
             residuals.cost_for_operator_footprint(1, 0, &other_op_query),
             10.0
+        );
+    }
+
+    #[test]
+    fn footprint_reduction_rejects_saturated_cost_above_allocation_fraction() {
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
+        let reduced = footprint_with_fraction(3.0, 7.0, 0.5);
+        let error = residuals
+            .reduce_by_abstract_operator_footprints(
+                0,
+                &[reduced],
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![1.0],
+                },
+            )
+            .unwrap_err();
+
+        assert!(
+            error.to_string().contains("exceeds allocation cap"),
+            "{error:#}"
         );
     }
 
