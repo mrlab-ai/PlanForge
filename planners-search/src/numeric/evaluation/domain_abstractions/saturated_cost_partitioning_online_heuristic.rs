@@ -25,7 +25,8 @@ use super::domain_abstraction_heuristic::{
     compute_collection_abstract_state_ids,
 };
 use super::transition_cost_partitioning::{
-    AbstractOperatorFootprint, NonAllocableFootprintReason, TransitionResidualCosts,
+    AbstractOperatorCostBudget, AbstractOperatorFootprint, NonAllocableFootprintReason,
+    TransitionResidualCosts,
 };
 
 // ---------------------------------------------------------------------------
@@ -611,6 +612,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 num_domain_abstractions,
                 &original_costs,
                 deadline,
+                self.config.saturator,
+                None,
             )?
         } else {
             self.build_label_cp(
@@ -641,6 +644,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         num_domain_abstractions: usize,
         original_costs: &[f64],
         deadline: Option<Instant>,
+        saturator: Saturator,
+        budgets: Option<&[Vec<AbstractOperatorCostBudget>]>,
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
@@ -662,7 +667,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     &abstraction.abstract_operator_footprints,
                 );
                 let abstraction_task = abstraction.task_for_factory(task);
-                match self.config.saturator {
+                match saturator {
                     Saturator::All => {
                         let (table, tcf) = match abstraction
                                 .factory
@@ -671,6 +676,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     abstraction.combine_labels,
                                     &abstraction.abstract_operators,
                                     &abstraction.abstract_operator_footprints,
+                                    budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
                                     &remaining_costs,
                                     pos,
                                     None,
@@ -727,6 +733,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     abstraction.combine_labels,
                                     &abstraction.abstract_operators,
                                     &abstraction.abstract_operator_footprints,
+                                    budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
@@ -783,6 +790,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     abstraction.combine_labels,
                                     &abstraction.abstract_operators,
                                     &abstraction.abstract_operator_footprints,
+                                    budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
@@ -835,10 +843,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
                                     abstraction_task,
                                     abstraction.combine_labels,
-                                    &abstraction.abstract_operators,
-                                    &abstraction.abstract_operator_footprints,
-                                    &remaining_costs,
-                                    pos,
+                                            &abstraction.abstract_operators,
+                                            &abstraction.abstract_operator_footprints,
+                                            budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
+                                            &remaining_costs,
+                                            pos,
                                     None,
                                     deadline,
                                 ) {

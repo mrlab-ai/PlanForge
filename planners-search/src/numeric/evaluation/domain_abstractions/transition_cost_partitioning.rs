@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, ensure};
 use planners_sas::numeric::numeric_task::ExplicitFact;
@@ -218,6 +218,11 @@ pub struct AbstractOperatorCostFunction {
     pub operator_costs: Vec<f64>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbstractOperatorCostBudget {
+    pub label_fractions: Vec<f64>,
+}
+
 #[derive(Debug)]
 pub struct TransitionResidualCosts {
     operator_residuals: Vec<OperatorResidual>,
@@ -306,6 +311,31 @@ enum FullReductionIndexKind {
 struct IndexedInterval {
     interval: Interval,
     reduction_id: usize,
+}
+
+#[derive(Clone, Debug)]
+struct IndexedLaterFootprint {
+    interval: Interval,
+    later_footprint_id: usize,
+}
+
+#[derive(Clone, Debug)]
+struct LaterFootprint {
+    abstraction_id: usize,
+    source_region: StateRegion,
+}
+
+#[derive(Clone, Debug, Default)]
+struct OperatorFootprintOverlapIndex {
+    footprints: Vec<LaterFootprint>,
+    numeric: Vec<Vec<IndexedLaterFootprint>>,
+    unbounded_by_numeric: Vec<Vec<usize>>,
+    unbounded_abstractions_by_numeric: Vec<HashSet<usize>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct FootprintOverlapIndex {
+    by_operator: HashMap<usize, OperatorFootprintOverlapIndex>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -952,6 +982,195 @@ impl OperatorResidual {
     }
 }
 
+pub fn compute_lookahead_abstract_operator_cost_budgets(
+    footprints_by_abstraction: &[&[AbstractOperatorFootprint]],
+    order: &[usize],
+    active_abstractions: &[bool],
+) -> Result<Vec<Vec<AbstractOperatorCostBudget>>> {
+    let mut budgets: Vec<Vec<AbstractOperatorCostBudget>> = footprints_by_abstraction
+        .iter()
+        .map(|footprints| {
+            footprints
+                .iter()
+                .map(|footprint| AbstractOperatorCostBudget {
+                    label_fractions: vec![0.0; footprint.labels.len()],
+                })
+                .collect()
+        })
+        .collect();
+    let mut suffix_index = FootprintOverlapIndex::default();
+
+    for &abstraction_id in order.iter().rev() {
+        if abstraction_id >= footprints_by_abstraction.len() {
+            continue;
+        }
+        let active = active_abstractions
+            .get(abstraction_id)
+            .copied()
+            .unwrap_or(false);
+        if active {
+            let footprints = footprints_by_abstraction[abstraction_id];
+            for (abstract_op_id, footprint) in footprints.iter().enumerate() {
+                ensure!(
+                    abstract_op_id < budgets[abstraction_id].len(),
+                    "missing abstract-operator budget for abstraction {abstraction_id}, abstract op {abstract_op_id}"
+                );
+                ensure!(
+                    budgets[abstraction_id][abstract_op_id].label_fractions.len()
+                        == footprint.labels.len(),
+                    "abstract-operator budget label count mismatch for abstraction {abstraction_id}, abstract op {abstract_op_id}"
+                );
+                for (label_id, label) in footprint.labels.iter().enumerate() {
+                    let competitors = suffix_index.count_overlapping_abstractions(label);
+                    let lookahead_share = 1.0 / (competitors as f64 + 1.0);
+                    budgets[abstraction_id][abstract_op_id].label_fractions[label_id] =
+                        label.max_allocation_fraction * lookahead_share;
+                }
+            }
+            suffix_index.add_abstraction(abstraction_id, footprints)?;
+        }
+    }
+
+    Ok(budgets)
+}
+
+impl FootprintOverlapIndex {
+    fn add_abstraction(
+        &mut self,
+        abstraction_id: usize,
+        footprints: &[AbstractOperatorFootprint],
+    ) -> Result<()> {
+        for footprint in footprints {
+            for label in &footprint.labels {
+                if !label.allocable {
+                    continue;
+                }
+                let operator_index = self
+                    .by_operator
+                    .entry(label.concrete_op_id)
+                    .or_default();
+                let footprint_id = operator_index.footprints.len();
+                operator_index.footprints.push(LaterFootprint {
+                    abstraction_id,
+                    source_region: label.source_region.clone(),
+                });
+                if operator_index.numeric.len() < label.source_region.numeric.len() {
+                    operator_index
+                        .numeric
+                        .resize_with(label.source_region.numeric.len(), Vec::new);
+                    operator_index
+                        .unbounded_by_numeric
+                        .resize_with(label.source_region.numeric.len(), Vec::new);
+                    operator_index
+                        .unbounded_abstractions_by_numeric
+                        .resize_with(label.source_region.numeric.len(), HashSet::new);
+                }
+                for (var_id, interval) in label.source_region.numeric.iter().copied().enumerate() {
+                    if interval.is_empty() {
+                        continue;
+                    }
+                    if !interval.lower.is_finite() && !interval.upper.is_finite() {
+                        operator_index.unbounded_by_numeric[var_id].push(footprint_id);
+                        operator_index.unbounded_abstractions_by_numeric[var_id]
+                            .insert(abstraction_id);
+                        continue;
+                    }
+                    operator_index.numeric[var_id].push(IndexedLaterFootprint {
+                        interval,
+                        later_footprint_id: footprint_id,
+                    });
+                }
+            }
+        }
+        for operator_index in self.by_operator.values_mut() {
+            for intervals in &mut operator_index.numeric {
+                intervals.sort_by(|left, right| {
+                    left.interval
+                        .lower
+                        .total_cmp(&right.interval.lower)
+                        .then_with(|| left.interval.upper.total_cmp(&right.interval.upper))
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn count_overlapping_abstractions(&self, label: &ConcreteOperatorFootprint) -> usize {
+        if !label.allocable {
+            return 0;
+        }
+        let Some(operator_index) = self.by_operator.get(&label.concrete_op_id) else {
+            return 0;
+        };
+        let mut best_var = None;
+        let mut best_count = usize::MAX;
+        for (var_id, query_interval) in label.source_region.numeric.iter().copied().enumerate() {
+            if query_interval.is_empty()
+                || (!query_interval.lower.is_finite() && !query_interval.upper.is_finite())
+            {
+                continue;
+            }
+            let Some(intervals) = operator_index.numeric.get(var_id) else {
+                continue;
+            };
+            let unbounded_count = operator_index
+                .unbounded_abstractions_by_numeric
+                .get(var_id)
+                .map_or(0, HashSet::len);
+            let count = count_interval_candidates(intervals, query_interval)
+                .saturating_add(unbounded_count);
+            if count < best_count {
+                best_count = count;
+                best_var = Some(var_id);
+            }
+        }
+
+        let mut abstractions = HashSet::new();
+        if let Some(var_id) = best_var {
+            if let Some(intervals) = operator_index.numeric.get(var_id) {
+                for indexed in intervals {
+                    if interval_starts_after(&indexed.interval, &label.source_region.numeric[var_id])
+                    {
+                        break;
+                    }
+                    if !intervals_overlap(indexed.interval, label.source_region.numeric[var_id]) {
+                        continue;
+                    }
+                    let later = &operator_index.footprints[indexed.later_footprint_id];
+                    if later.source_region.overlaps(&label.source_region) {
+                        abstractions.insert(later.abstraction_id);
+                    }
+                }
+            }
+            if let Some(unbounded_abstractions) =
+                operator_index.unbounded_abstractions_by_numeric.get(var_id)
+            {
+                abstractions.extend(unbounded_abstractions.iter().copied());
+            }
+        } else {
+            for later in &operator_index.footprints {
+                if later.source_region.overlaps(&label.source_region) {
+                    abstractions.insert(later.abstraction_id);
+                }
+            }
+        }
+        abstractions.len()
+    }
+}
+
+fn count_interval_candidates(intervals: &[IndexedLaterFootprint], query: Interval) -> usize {
+    let mut count = 0usize;
+    for indexed in intervals {
+        if interval_starts_after(&indexed.interval, &query) {
+            break;
+        }
+        if intervals_overlap(indexed.interval, query) {
+            count = count.saturating_add(1);
+        }
+    }
+    count
+}
+
 fn build_full_reduction_index(
     reductions: &[ResidualReduction],
     cap: f64,
@@ -1486,10 +1705,36 @@ mod tests {
         }
     }
 
+    fn concrete_footprint_2d(
+        concrete_op_id: usize,
+        first: Interval,
+        second: Interval,
+    ) -> ConcreteOperatorFootprint {
+        ConcreteOperatorFootprint {
+            concrete_op_id,
+            source_region: StateRegion {
+                propositions: vec![vec![0]],
+                numeric: vec![first, second],
+            },
+            allocable: true,
+            max_allocation_fraction: 1.0,
+            non_allocable_reason: None,
+        }
+    }
+
     fn footprint(lower: f64, upper: f64) -> AbstractOperatorFootprint {
         AbstractOperatorFootprint {
             labels: vec![concrete_footprint(lower, upper)],
         }
+    }
+
+    fn budget_fraction(
+        budgets: &[Vec<AbstractOperatorCostBudget>],
+        abstraction_id: usize,
+        abstract_op_id: usize,
+        label_id: usize,
+    ) -> f64 {
+        budgets[abstraction_id][abstract_op_id].label_fractions[label_id]
     }
 
     #[test]
@@ -1862,5 +2107,102 @@ mod tests {
             residuals.cost_for_operator_footprint(1, 0, &concrete_footprint(4.5, 4.75)),
             6.0
         );
+    }
+
+    #[test]
+    fn lookahead_budget_splits_overlapping_same_label_abstractions() {
+        let first = vec![footprint(0.0, 5.0)];
+        let second = vec![footprint(3.0, 8.0)];
+        let footprints = vec![first.as_slice(), second.as_slice()];
+        let budgets =
+            compute_lookahead_abstract_operator_cost_budgets(&footprints, &[0, 1], &[true, true])
+                .unwrap();
+
+        assert_eq!(budget_fraction(&budgets, 0, 0, 0), 0.5);
+        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 1.0);
+    }
+
+    #[test]
+    fn lookahead_budget_keeps_disjoint_same_label_footprints_full() {
+        let first = vec![footprint(0.0, 2.0)];
+        let second = vec![footprint(3.0, 8.0)];
+        let footprints = vec![first.as_slice(), second.as_slice()];
+        let budgets =
+            compute_lookahead_abstract_operator_cost_budgets(&footprints, &[0, 1], &[true, true])
+                .unwrap();
+
+        assert_eq!(budget_fraction(&budgets, 0, 0, 0), 1.0);
+        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 1.0);
+    }
+
+    #[test]
+    fn lookahead_budget_splits_three_overlapping_abstractions() {
+        let first = vec![footprint(0.0, 5.0)];
+        let second = vec![footprint(1.0, 6.0)];
+        let third = vec![footprint(2.0, 7.0)];
+        let footprints = vec![first.as_slice(), second.as_slice(), third.as_slice()];
+        let budgets = compute_lookahead_abstract_operator_cost_budgets(
+            &footprints,
+            &[0, 1, 2],
+            &[true, true, true],
+        )
+        .unwrap();
+
+        assert!((budget_fraction(&budgets, 0, 0, 0) - 1.0 / 3.0).abs() < 1e-9);
+        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 0.5);
+        assert_eq!(budget_fraction(&budgets, 2, 0, 0), 1.0);
+    }
+
+    #[test]
+    fn lookahead_budget_counts_unbounded_later_dimension_as_overlap() {
+        let first = vec![AbstractOperatorFootprint {
+            labels: vec![concrete_footprint_2d(
+                0,
+                Interval::closed(0.0, 5.0),
+                Interval::closed(f64::NEG_INFINITY, f64::INFINITY),
+            )],
+        }];
+        let second = vec![AbstractOperatorFootprint {
+            labels: vec![concrete_footprint_2d(
+                0,
+                Interval::closed(f64::NEG_INFINITY, f64::INFINITY),
+                Interval::closed(3.0, 8.0),
+            )],
+        }];
+        let footprints = vec![first.as_slice(), second.as_slice()];
+        let budgets =
+            compute_lookahead_abstract_operator_cost_budgets(&footprints, &[0, 1], &[true, true])
+                .unwrap();
+
+        assert_eq!(budget_fraction(&budgets, 0, 0, 0), 0.5);
+        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 1.0);
+    }
+
+    #[test]
+    fn lookahead_budget_ignores_inactive_later_abstraction() {
+        let first = vec![footprint(0.0, 5.0)];
+        let second = vec![footprint(3.0, 8.0)];
+        let footprints = vec![first.as_slice(), second.as_slice()];
+        let budgets =
+            compute_lookahead_abstract_operator_cost_budgets(&footprints, &[0, 1], &[true, false])
+                .unwrap();
+
+        assert_eq!(budget_fraction(&budgets, 0, 0, 0), 1.0);
+        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 0.0);
+    }
+
+    #[test]
+    fn lookahead_budget_never_competes_across_concrete_operators() {
+        let first = vec![footprint(0.0, 5.0)];
+        let second = vec![AbstractOperatorFootprint {
+            labels: vec![concrete_footprint_for_op(1, 3.0, 8.0, true)],
+        }];
+        let footprints = vec![first.as_slice(), second.as_slice()];
+        let budgets =
+            compute_lookahead_abstract_operator_cost_budgets(&footprints, &[0, 1], &[true, true])
+                .unwrap();
+
+        assert_eq!(budget_fraction(&budgets, 0, 0, 0), 1.0);
+        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 1.0);
     }
 }

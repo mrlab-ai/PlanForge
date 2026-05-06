@@ -25,9 +25,9 @@ use super::numeric_context::{
     prepare_comparison_tree_inputs_from_abstract_state,
 };
 use super::transition_cost_partitioning::{
-    AbstractOperatorCostFunction, AbstractOperatorFootprint, AbstractTransition,
-    AbstractTransitionCostFunction, AbstractTransitionSystem, ConcreteOperatorFootprint,
-    NonAllocableFootprintReason, StateRegion, TransitionResidualCosts,
+    AbstractOperatorCostBudget, AbstractOperatorCostFunction, AbstractOperatorFootprint,
+    AbstractTransition, AbstractTransitionCostFunction, AbstractTransitionSystem,
+    ConcreteOperatorFootprint, NonAllocableFootprintReason, StateRegion, TransitionResidualCosts,
 };
 use super::utils;
 
@@ -700,6 +700,7 @@ impl DomainAbstractionFactory {
         combine_labels: bool,
         operators: &[AbstractOperator],
         footprints: &[AbstractOperatorFootprint],
+        budgets: Option<&[AbstractOperatorCostBudget]>,
         residual_costs: &TransitionResidualCosts,
         abstraction_id: usize,
         cap_state_id: Option<usize>,
@@ -716,6 +717,7 @@ impl DomainAbstractionFactory {
         let operator_costs = abstract_operator_costs_from_footprints(
             operators.len(),
             footprints,
+            budgets,
             residual_costs,
             abstraction_id,
             deadline,
@@ -2516,10 +2518,18 @@ fn apply_abstract_operator_costs(
 fn abstract_operator_costs_from_footprints(
     num_operators: usize,
     footprints: &[AbstractOperatorFootprint],
+    budgets: Option<&[AbstractOperatorCostBudget]>,
     residual_costs: &TransitionResidualCosts,
     abstraction_id: usize,
     deadline: Option<Instant>,
 ) -> Result<Vec<f64>> {
+    if let Some(budgets) = budgets {
+        ensure!(
+            budgets.len() >= num_operators,
+            "abstract-operator budget/operator size mismatch: budgets={} operators={num_operators}",
+            budgets.len()
+        );
+    }
     let has_reductions = residual_costs.has_reductions();
     let mut operator_costs = vec![f64::INFINITY; num_operators];
     for abstract_op_id in 0..num_operators {
@@ -2533,17 +2543,28 @@ fn abstract_operator_costs_from_footprints(
             !footprint.labels.is_empty(),
             "abstract operator {abstract_op_id} has no concrete footprint labels"
         );
+        let budget = budgets.map(|budgets| &budgets[abstract_op_id]);
+        if let Some(budget) = budget {
+            ensure!(
+                budget.label_fractions.len() == footprint.labels.len(),
+                "abstract-operator budget label count mismatch for abstract op {abstract_op_id}: budgets={} labels={}",
+                budget.label_fractions.len(),
+                footprint.labels.len()
+            );
+        }
         operator_costs[abstract_op_id] = if has_reductions {
             footprint
                 .labels
                 .iter()
-                .map(|label| {
+                .enumerate()
+                .map(|(label_id, label)| {
                     if label.allocable {
-                        residual_costs.cost_for_operator_footprint(
+                        let residual = residual_costs.cost_for_operator_footprint(
                             abstraction_id,
                             abstract_op_id,
                             label,
-                        )
+                        );
+                        cap_abstract_operator_label_cost(residual, residual_costs, label, budget, label_id)
                     } else {
                         residual_costs.base_cost(label.concrete_op_id)
                     }
@@ -2553,7 +2574,21 @@ fn abstract_operator_costs_from_footprints(
             footprint
                 .labels
                 .iter()
-                .map(|label| residual_costs.base_cost(label.concrete_op_id))
+                .enumerate()
+                .map(|(label_id, label)| {
+                    let residual = residual_costs.base_cost(label.concrete_op_id);
+                    if label.allocable {
+                        cap_abstract_operator_label_cost(
+                            residual,
+                            residual_costs,
+                            label,
+                            budget,
+                            label_id,
+                        )
+                    } else {
+                        residual
+                    }
+                })
                 .fold(f64::INFINITY, f64::min)
         };
         ensure!(
@@ -2562,6 +2597,24 @@ fn abstract_operator_costs_from_footprints(
         );
     }
     Ok(operator_costs)
+}
+
+fn cap_abstract_operator_label_cost(
+    residual: f64,
+    residual_costs: &TransitionResidualCosts,
+    label: &ConcreteOperatorFootprint,
+    budget: Option<&AbstractOperatorCostBudget>,
+    label_id: usize,
+) -> f64 {
+    let Some(budget) = budget else {
+        return residual;
+    };
+    let fraction = budget.label_fractions[label_id];
+    assert!(
+        fraction.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&fraction),
+        "invalid abstract-operator budget fraction {fraction}"
+    );
+    residual.min(residual_costs.base_cost(label.concrete_op_id) * fraction.clamp(0.0, 1.0))
 }
 
 fn mask_non_allocable_abstract_operator_costs(
