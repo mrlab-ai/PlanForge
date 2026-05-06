@@ -198,6 +198,9 @@ pub struct AStarSearch<'a> {
     state_registry: StateRegistry<'a>,
     successor_generator: Box<dyn Node<'a> + 'a>,
     operator_costs: Vec<f64>,
+    /// Cached `task.metric().use_metric()` so per-successor cost selection
+    /// does not chase the trait vtable.
+    use_metric: bool,
 
     // Search components.
     open_list: AStarOpenList,
@@ -276,11 +279,13 @@ impl<'a> AStarSearch<'a> {
         });
         let heuristic_name = heuristic.name();
 
+        let use_metric = task.metric().use_metric();
         Self {
             task,
             state_registry,
             successor_generator,
             operator_costs,
+            use_metric,
             open_list: AStarOpenList::default(),
             search_nodes: Vec::new(),
             heuristic,
@@ -620,7 +625,7 @@ impl<'a> AStarSearch<'a> {
                 Err(_) => continue,
             };
             let succ_state_id = succ_state.get_id();
-            let op_cost = if self.task.metric().use_metric() {
+            let op_cost = if self.use_metric {
                 op_cost
             } else {
                 self.operator_costs

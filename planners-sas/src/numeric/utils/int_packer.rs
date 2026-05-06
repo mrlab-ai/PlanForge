@@ -105,6 +105,19 @@ impl IntDoublePacker {
         self.num_bins
     }
 
+    /// Build a per-bin bit mask covering the slots of the variables in
+    /// `included_var_ids`. Useful for hashing/comparing buffers while ignoring
+    /// the bits owned by other (e.g. axiom-derived) variables.
+    pub fn build_var_subset_mask(&self, included_var_ids: &[usize]) -> Vec<u64> {
+        let mut mask = vec![0u64; self.num_bins];
+        for &var in included_var_ids {
+            if let Some(info) = self.var_infos.get(var) {
+                mask[info.bin_index] |= info.read_mask;
+            }
+        }
+        mask
+    }
+
     fn pack_one_bin(&mut self, ranges: &[u64], bits_to_var: &mut [Vec<usize>]) -> usize {
         self.num_bins += 1;
         let bin_index = self.num_bins - 1;

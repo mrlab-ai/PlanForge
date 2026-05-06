@@ -28,7 +28,41 @@ use crate::numeric::utils::segmented_vector2::SegmentedArrayVector;
 use crate::numeric::{numeric_task::NumericType, utils::int_packer::IntDoublePacker};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Pass-through hasher for `u64` keys that are *already* hashes
+/// (e.g. `fast_hash_bins` outputs). Avoids re-hashing the key with `SipHash`.
+#[derive(Default)]
+pub struct IdentityU64Hasher(u64);
+
+impl Hasher for IdentityU64Hasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        // The map only ever hashes a single `u64`, so we expect exactly 8 bytes.
+        // We still handle the general case defensively in case the API is reused.
+        if bytes.len() == 8 {
+            self.0 = u64::from_ne_bytes(bytes.try_into().unwrap());
+        } else {
+            for &b in bytes {
+                self.0 = self.0.rotate_left(5) ^ u64::from(b);
+            }
+        }
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        self.0 = value;
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+type IdentityHasherBuilder = BuildHasherDefault<IdentityU64Hasher>;
+type RegisteredStatesMap = HashMap<u64, Vec<StateID>, IdentityHasherBuilder>;
 
 /// Type alias for the state packer used throughout the system.
 type StatePacker = IntDoublePacker;
@@ -167,9 +201,27 @@ impl ConcreteState {
 // We use a bucketed map from content hash -> list of `StateID`s, then compare
 // only within the bucket using the packed bins for semantic equality.
 
+/// SplitMix64 finalizer. Spreads bits well across both halves of the output
+/// so the result is suitable as a key for hashbrown (which uses both the
+/// low bits for the bucket index and the top 7 bits for the SIMD tag).
+#[inline]
+fn finalize_mix(mut x: u64) -> u64 {
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xff51afd7ed558ccd);
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xc4ceb9fe1a85ec53);
+    x ^= x >> 33;
+    x
+}
+
 #[inline]
 fn fast_hash_bins(bins: &[u64]) -> u64 {
-    // 64-bit `FNV-1a`.
+    // 64-bit `FNV-1a`. Hashes byte-by-byte rather than u64-by-u64. Earlier
+    // experiments showed that the u64-chunk variant produces noticeably more
+    // hashbrown bucket collisions on packed planning state buffers (where
+    // many bins share large stretches of zero/sparse bits), and `memcmp`
+    // dominates the dedup path when buckets grow. The 8x extra
+    // multiplications per bin are cheap by comparison.
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x00000100000001B3;
     let mut hash = FNV_OFFSET;
@@ -180,7 +232,40 @@ fn fast_hash_bins(bins: &[u64]) -> u64 {
             hash = hash.wrapping_mul(FNV_PRIME);
         }
     }
-    hash
+    finalize_mix(hash)
+}
+
+/// Hash only the bits that the per-bin `mask` selects, byte-by-byte to match
+/// `fast_hash_bins`'s distribution properties. Used to dedup buffers where
+/// some bins also contain derived (axiom-computed) bits we want to ignore.
+#[inline]
+fn fast_hash_bins_masked(bins: &[u64], mask: &[u64]) -> u64 {
+    debug_assert_eq!(bins.len(), mask.len());
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x00000100000001B3;
+    let mut hash = FNV_OFFSET;
+    for (&x, &m) in bins.iter().zip(mask.iter()) {
+        let masked = x & m;
+        let bytes = masked.to_le_bytes();
+        for b in bytes {
+            hash ^= b as u64;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+    }
+    finalize_mix(hash)
+}
+
+/// Compare two buffers, considering only the bits selected by `mask`.
+#[inline]
+fn bins_eq_masked(left: &[u64], right: &[u64], mask: &[u64]) -> bool {
+    debug_assert_eq!(left.len(), right.len());
+    debug_assert_eq!(left.len(), mask.len());
+    for ((&l, &r), &m) in left.iter().zip(right.iter()).zip(mask.iter()) {
+        if (l & m) != (r & m) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Static counter for generating unique registry IDs.
@@ -209,9 +294,34 @@ pub struct StateRegistry<'a> {
     /// Mapping from numeric variable index to packed state index.
     numeric_indices: Vec<Option<usize>>,
     /// Buckets of registered states for duplicate detection (hash -> `Vec<StateID>`).
-    registered_states: HashMap<u64, Vec<StateID>>,
+    /// Uses an identity hasher because keys are already 64-bit content hashes.
+    registered_states: RegisteredStatesMap,
     /// Per-state cost information storage.
     cost_info: RefCell<PerStateInformation<Vec<f64>>>,
+    /// Snapshot of the numeric variable layout, populated at construction.
+    /// Iterating this avoids per-call vtable dispatch through `task.numeric_variables()`
+    /// in hot paths like `fill_numeric_vars`.
+    numeric_var_types: Vec<NumericType>,
+    /// Cached count returned by `count_cost_variables`. Constant for the task.
+    cost_variable_count: usize,
+    /// Cached `task.metric().var_id()` and the metric variable's type when set.
+    /// Used to short-circuit `metric_value_for_state` for the common Regular case.
+    metric_var: Option<(usize, NumericType)>,
+    /// Whether the task uses a metric (cached `task.metric().use_metric()`).
+    metric_use_metric: bool,
+    /// Per-bin mask covering only the bits owned by non-derived (input)
+    /// variables: regular propositional vars (axiom_layer == None) and regular
+    /// numeric vars. Used by `insert_id_or_pop_state_masked` to dedup
+    /// successors before running the comparison/propositional axiom passes.
+    /// Two states with identical non-derived bits are guaranteed to produce
+    /// identical full buffers because axioms are deterministic functions of
+    /// the inputs, so masked equality matches full equality.
+    non_derived_bits_mask: Vec<u64>,
+    /// True iff the task has at least one comparison or propositional axiom
+    /// AND `non_derived_bits_mask` actually masks anything off. When true, the
+    /// successor flow defers comparison/propositional axiom evaluation until
+    /// after dedup so we can skip it entirely on duplicate states.
+    has_axiom_derived_bits: bool,
 }
 
 impl<'a> StateRegistry<'a> {
@@ -221,12 +331,58 @@ impl<'a> StateRegistry<'a> {
         global_state_packer: &'a StatePacker,
         axiom_evaluator: &'a AxiomEvaluator<'a>,
     ) -> Self {
-        let number_numeric_vars = task.numeric_variables().len();
+        let numeric_vars = task.numeric_variables();
+        let number_numeric_vars = numeric_vars.len();
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
 
         // Create cost info and subscribe it to this registry
         let mut cost_info = PerStateInformation::new();
         cost_info.subscribe(id);
+
+        let numeric_var_types: Vec<NumericType> =
+            numeric_vars.iter().map(|var| *var.get_type()).collect();
+        let cost_variable_count = numeric_var_types
+            .iter()
+            .filter(|&&ty| ty == NumericType::Cost)
+            .count();
+        let metric_use_metric = task.metric().use_metric();
+        let metric_var = task
+            .metric()
+            .var_id()
+            .and_then(|var_id| numeric_var_types.get(var_id).copied().map(|ty| (var_id, ty)));
+
+        // Collect packer var ids for non-derived (input) variables.
+        // Propositional vars are 0..num_prop_vars; numeric Regular vars start
+        // at num_prop_vars in the packer's variable index space.
+        let prop_vars = task.variables();
+        let mut non_derived_var_ids: Vec<usize> = Vec::new();
+        let mut has_propositional_derived = false;
+        for (i, _) in prop_vars.iter().enumerate() {
+            match task.get_variable_axiom_layer(i) {
+                Ok(None) => non_derived_var_ids.push(i),
+                Ok(Some(_)) => {
+                    has_propositional_derived = true;
+                }
+                Err(_) => non_derived_var_ids.push(i),
+            }
+        }
+        let num_prop_vars = prop_vars.len();
+        let mut numeric_packer_index = num_prop_vars;
+        for &ty in &numeric_var_types {
+            if ty == NumericType::Regular {
+                non_derived_var_ids.push(numeric_packer_index);
+                numeric_packer_index += 1;
+            }
+        }
+        let non_derived_bits_mask =
+            global_state_packer.build_var_subset_mask(&non_derived_var_ids);
+        let mask_covers_any_bits = non_derived_bits_mask.iter().any(|&m| m != 0);
+        let has_axiom_derived_bits = has_propositional_derived && mask_covers_any_bits;
+        if has_propositional_derived && !mask_covers_any_bits {
+            tracing::warn!(
+                "state_registry: skipping masked dedup because non-derived bit mask is empty (every variable is axiom-derived)"
+            );
+        }
 
         Self {
             id,
@@ -235,9 +391,18 @@ impl<'a> StateRegistry<'a> {
             state_data_pool: DataStorage::new(global_state_packer.num_bins()),
             numeric_constants: Vec::new(),
             numeric_indices: vec![None; number_numeric_vars],
-            registered_states: HashMap::with_capacity(1024),
+            registered_states: RegisteredStatesMap::with_capacity_and_hasher(
+                1024,
+                IdentityHasherBuilder::default(),
+            ),
             axiom_evaluator,
             cost_info: RefCell::new(cost_info),
+            numeric_var_types,
+            cost_variable_count,
+            metric_var,
+            metric_use_metric,
+            non_derived_bits_mask,
+            has_axiom_derived_bits,
         }
     }
 
@@ -273,7 +438,7 @@ impl<'a> StateRegistry<'a> {
         }
     }
 
-    pub fn get_registered_states(&self) -> &HashMap<u64, Vec<usize>> {
+    pub fn get_registered_states(&self) -> &RegisteredStatesMap {
         &self.registered_states
     }
 
@@ -354,6 +519,14 @@ impl<'a> StateRegistry<'a> {
     }
 
     fn insert_id_or_pop_state(&mut self) -> (StateID, bool) {
+        // When the task has axiom-derived bits, route through the masked path
+        // so that all registrations live in a single map and stay consistent
+        // with `insert_id_or_pop_state_masked` (used by the successor flow
+        // when axioms are deferred).
+        if self.has_axiom_derived_bits {
+            return self.insert_id_or_pop_state_masked();
+        }
+
         let state_id = self.state_data_pool.len() - 1;
         let key = {
             let state_data = self.get_buffer(state_id);
@@ -364,6 +537,52 @@ impl<'a> StateRegistry<'a> {
             let state_data = self.get_buffer(state_id);
             self.find_registered_state_id(key, state_data)
         };
+
+        if let Some(existing_id) = existing_id {
+            self.state_data_pool.pop_back();
+            return (existing_id, false);
+        }
+
+        self.registered_states
+            .entry(key)
+            .or_insert_with(|| Vec::with_capacity(4))
+            .push(state_id);
+        (state_id, true)
+    }
+
+    /// Variant of `insert_id_or_pop_state` that hashes and compares only the
+    /// non-derived bits of the buffer, as configured by `non_derived_bits_mask`.
+    /// Use this when the buffer's derived (axiom-computed) bits have not yet
+    /// been refreshed for the current input. Two states with identical
+    /// non-derived bits are guaranteed to be equal because axioms are
+    /// deterministic functions of their inputs, so masked equality matches
+    /// full equality and the resulting dedup is sound.
+    fn insert_id_or_pop_state_masked(&mut self) -> (StateID, bool) {
+        let state_id = self.state_data_pool.len() - 1;
+        let num_bins = self.num_state_bins();
+        let key = {
+            let state_data = self.get_buffer(state_id);
+            fast_hash_bins_masked(
+                &state_data[..num_bins],
+                &self.non_derived_bits_mask[..num_bins],
+            )
+        };
+
+        let mut existing_id: Option<StateID> = None;
+        if let Some(bucket) = self.registered_states.get(&key) {
+            for &candidate in bucket {
+                let existing = self.get_buffer(candidate);
+                let probe = self.get_buffer(state_id);
+                if bins_eq_masked(
+                    &existing[..num_bins],
+                    &probe[..num_bins],
+                    &self.non_derived_bits_mask[..num_bins],
+                ) {
+                    existing_id = Some(candidate);
+                    break;
+                }
+            }
+        }
 
         if let Some(existing_id) = existing_id {
             self.state_data_pool.pop_back();
@@ -721,12 +940,20 @@ impl<'a> StateRegistry<'a> {
 
         self.apply_propositional_effects(next_buffer, current_state, operator);
 
-        self.apply_numeric_effects(
+        // Skip the comparison/propositional axiom passes during effect
+        // application when the task has axiom-derived bits we can mask off.
+        // We dedup using only non-derived bits below; if the successor is a
+        // duplicate, the existing state already has correct derived bits and
+        // we save the (typically expensive) axiom evaluation. If the
+        // successor is new, we run the full axiom pass after dedup.
+        let defer_full_axioms = self.has_axiom_derived_bits;
+        self.apply_numeric_effects_inner(
             successor_values,
             cost_values,
             operator,
             next_buffer,
             previous_buffer,
+            !defer_full_axioms,
         )?;
 
         let op_cost =
@@ -736,6 +963,17 @@ impl<'a> StateRegistry<'a> {
         let successor = ConcreteState::new(id);
 
         if is_new_state {
+            if defer_full_axioms {
+                // Run the deferred comparison/propositional axiom pass on the
+                // (now permanent) buffer for this newly-registered state.
+                let new_buffer_ptr = self.get_buffer_mut(id).as_mut_ptr();
+                let new_buffer = unsafe { std::slice::from_raw_parts_mut(new_buffer_ptr, num_bins) };
+                self.axiom_evaluator
+                    .evaluate(new_buffer, successor_values)
+                    .map_err(|e| StateInsertError {
+                        message: format!("Failed to evaluate axioms: {:?}", e),
+                    })?;
+            }
             if !cost_values.is_empty() {
                 self.set_cost_information(&successor, cost_values.clone());
             }
@@ -778,12 +1016,10 @@ impl<'a> StateRegistry<'a> {
     }
 
     /// Count the number of cost variables in the planning task.
+    /// Returns the cached count populated at construction.
+    #[inline]
     fn count_cost_variables(&self) -> usize {
-        self.task
-            .numeric_variables()
-            .iter()
-            .filter(|var| var.get_type() == &NumericType::Cost)
-            .count()
+        self.cost_variable_count
     }
 
     fn fill_cost_information(&self, state: &ConcreteState, output: &mut Vec<f64>) {
@@ -921,7 +1157,7 @@ impl<'a> StateRegistry<'a> {
         state: &ConcreteState,
         output: &mut Vec<f64>,
     ) -> Result<(), InvalidIndex> {
-        output.resize(self.task.numeric_variables().len(), 0.0);
+        output.resize(self.numeric_var_types.len(), 0.0);
 
         let buffer = state.buffer(self);
 
@@ -929,9 +1165,10 @@ impl<'a> StateRegistry<'a> {
         let cost_info_borrow = self.cost_info.borrow();
         let cost_variables = cost_info_borrow.get(state, self);
 
-        // Fill in values by variable type.
-        for (i, numeric_var) in self.task.numeric_variables().iter().enumerate() {
-            output[i] = match numeric_var.get_type() {
+        // Fill in values by variable type. Iterate the cached layout to avoid
+        // a vtable dispatch through `task.numeric_variables()` per element.
+        for (i, ty) in self.numeric_var_types.iter().enumerate() {
+            output[i] = match ty {
                 NumericType::Cost => {
                     // Retrieve cost variable from per-state storage.
                     if let Some(cost_index) = self.numeric_indices[i]
@@ -972,6 +1209,31 @@ impl<'a> StateRegistry<'a> {
         next_buffer: &mut [u64],
         previous_buffer: &[u64],
     ) -> Result<(), StateInsertError> {
+        self.apply_numeric_effects_inner(
+            current_values,
+            cost_part,
+            operator,
+            next_buffer,
+            previous_buffer,
+            true,
+        )
+    }
+
+    /// Like `apply_numeric_effects`, but if `run_full_axioms` is false the
+    /// comparison and propositional axiom passes are skipped (arithmetic
+    /// axioms still run because the metric and any subsequent computations
+    /// may need derived numeric values). The caller is then responsible for
+    /// running `axiom_evaluator.evaluate` once it is known the successor is a
+    /// new state worth registering — see `get_successor_state_with_buffers_and_cost`.
+    fn apply_numeric_effects_inner(
+        &self,
+        current_values: &mut [f64],
+        cost_part: &mut [f64],
+        operator: &Operator,
+        next_buffer: &mut [u64],
+        previous_buffer: &[u64],
+        run_full_axioms: bool,
+    ) -> Result<(), StateInsertError> {
         for effect in operator.assignment_effects() {
             let assignment_var_id = effect.var_id();
             let affected_var_id = effect.affected_var_id();
@@ -982,10 +1244,10 @@ impl<'a> StateRegistry<'a> {
                 });
             }
 
-            let assignment_var = &self.task.numeric_variables()[assignment_var_id];
-            let affected_var = &self.task.numeric_variables()[affected_var_id];
+            let assignment_ty = self.numeric_var_types[assignment_var_id];
+            let affected_ty = self.numeric_var_types[affected_var_id];
 
-            let assignment_value = if assignment_var.get_type() == &NumericType::Regular {
+            let assignment_value = if assignment_ty == NumericType::Regular {
                 self.global_state_packer.get_double(
                     previous_buffer,
                     self.numeric_indices[assignment_var_id].unwrap(),
@@ -1001,7 +1263,7 @@ impl<'a> StateRegistry<'a> {
             );
             let result = float_tolerance::canonicalize(result);
 
-            match affected_var.get_type() {
+            match affected_ty {
                 NumericType::Cost => {
                     let cost_index = self.numeric_indices[affected_var_id].unwrap();
                     if cost_index >= cost_part.len() {
@@ -1025,7 +1287,7 @@ impl<'a> StateRegistry<'a> {
                     return Err(StateInsertError {
                         message: format!(
                             "Only regular and cost variables can be affected by assignment operations: {:?}",
-                            affected_var.get_type()
+                            affected_ty
                         ),
                     });
                 }
@@ -1038,11 +1300,13 @@ impl<'a> StateRegistry<'a> {
                 message: format!("Failed to evaluate arithmetic axioms: {:?}", e),
             })?;
 
-        self.axiom_evaluator
-            .evaluate(next_buffer, current_values)
-            .map_err(|e| StateInsertError {
-                message: format!("Failed to evaluate axioms: {:?}", e),
-            })?;
+        if run_full_axioms {
+            self.axiom_evaluator
+                .evaluate(next_buffer, current_values)
+                .map_err(|e| StateInsertError {
+                    message: format!("Failed to evaluate axioms: {:?}", e),
+                })?;
+        }
 
         Ok(())
     }
@@ -1052,10 +1316,8 @@ impl<'a> StateRegistry<'a> {
     /// This corresponds to the C++ evaluate_metric function that retrieves
     /// the value of the metric fluent from the numeric state.
     pub fn evaluate_metric(&self, numeric_state: &[f64]) -> Result<f64, InvalidIndex> {
-        let metric_fluent_id = self.task.metric().var_id();
-
-        match metric_fluent_id {
-            Some(metric) => {
+        match self.metric_var {
+            Some((metric, _)) => {
                 if metric < numeric_state.len() {
                     Ok(numeric_state[metric])
                 } else {
@@ -1128,7 +1390,7 @@ impl<'a> StateRegistry<'a> {
         state: &ConcreteState,
         successor_numeric_values: &[f64],
     ) -> Result<f64, StateInsertError> {
-        if !self.task.metric().use_metric() {
+        if !self.metric_use_metric {
             return Ok(1.0);
         }
 
@@ -1148,21 +1410,17 @@ impl<'a> StateRegistry<'a> {
     }
 
     fn metric_value_for_state(&self, state: &ConcreteState) -> Result<f64, InvalidIndex> {
-        let metric_fluent_id = self.task.metric().var_id();
-        if metric_fluent_id.is_none() {
+        let Some((metric_fluent_id, metric_type)) = self.metric_var else {
             return Ok(0.0);
-        }
-
-        let metric_fluent_id = metric_fluent_id.unwrap();
-        if metric_fluent_id >= self.task.numeric_variables().len() {
+        };
+        if metric_fluent_id >= self.numeric_var_types.len() {
             return Err(InvalidIndex {
-                length: self.task.numeric_variables().len(),
+                length: self.numeric_var_types.len(),
                 index: metric_fluent_id,
             });
         }
 
-        let metric_var = &self.task.numeric_variables()[metric_fluent_id];
-        match metric_var.get_type() {
+        match metric_type {
             NumericType::Regular => {
                 let buffer = state.buffer(self);
                 Ok(self

@@ -683,7 +683,7 @@ impl NumericRootTask {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum NumericType {
     Constant,
     Derived,
