@@ -1040,6 +1040,35 @@ fn abstract_operator_footprint_tightens_source_by_inverse_target_image() {
 }
 
 #[test]
+fn abstract_operator_footprint_rejects_empty_inverse_target_image() {
+    let (task, factory) = additive_numeric_footprint_task_with_partitions(vec![
+        Interval::new(f64::NEG_INFINITY, 5.0, false, true),
+        Interval::new(7.0, 10.0, false, true),
+    ]);
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![0],
+        cost: 1.0,
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
+        changed_numeric_vars: vec![0],
+    };
+
+    let footprints = factory
+        .build_abstract_operator_footprints(&task, &[op])
+        .unwrap();
+    let concrete = &footprints[0].labels[0];
+
+    assert!(!concrete.allocable);
+    assert!(concrete.source_region.numeric[0].is_empty());
+    assert_eq!(
+        concrete.non_allocable_reason,
+        Some(super::super::transition_cost_partitioning::NonAllocableFootprintReason::UnsupportedEffectImage)
+    );
+}
+
+#[test]
 fn abstract_operator_footprint_marks_unbounded_changed_tail_non_allocable() {
     let (task, factory) = additive_numeric_footprint_task();
     let x_abs_var = task.variables().len();

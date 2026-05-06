@@ -956,9 +956,18 @@ impl DomainAbstractionFactory {
                 continue;
             }
             let target_interval = target_region.numeric[numeric_var_id];
-            if let Some(inverse_source) = effect_image.inverse_source_for_target(target_interval) {
-                source_region.numeric[numeric_var_id] =
-                    interval_intersection(source_region.numeric[numeric_var_id], inverse_source);
+            let Some(inverse_source) = effect_image.inverse_source_for_target(target_interval)
+            else {
+                non_allocable_reason
+                    .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
+                continue;
+            };
+            source_region.numeric[numeric_var_id] =
+                interval_intersection(source_region.numeric[numeric_var_id], inverse_source);
+            if source_region.numeric[numeric_var_id].is_empty() {
+                non_allocable_reason
+                    .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
+                continue;
             }
             if !interval_is_finite(source_region.numeric[numeric_var_id]) {
                 non_allocable_reason
