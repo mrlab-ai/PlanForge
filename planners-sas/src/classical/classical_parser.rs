@@ -1,5 +1,4 @@
 use crate::classical::classical_task::{Axiom, Effect, ExplicitVariable, Fact, Operator, RootTask};
-use tracing::info;
 use nom::{
     IResult, Parser,
     bytes::complete::tag,
@@ -10,6 +9,7 @@ use nom::{
     sequence::separated_pair,
 };
 use std::vec;
+use tracing::info;
 
 fn parse_version(input: &str) -> IResult<&str, u32> {
     let (input, _) = tag("begin_version")(input)?;

@@ -1,10 +1,10 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::os::unix::process::ExitStatusExt;
 
-use tracing::info;
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use tracing::info;
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_OUT_OF_MEMORY: i32 = 6;

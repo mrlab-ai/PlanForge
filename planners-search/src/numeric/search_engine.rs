@@ -21,7 +21,7 @@ use std::collections::BinaryHeap;
 use std::collections::VecDeque;
 use std::env;
 use std::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 const MEMORY_CHECK_EXPANSION_INTERVAL: usize = 1024;
 
@@ -755,28 +755,33 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             .unwrap_or_else(|| self.state_registry.get_initial_state());
 
         // Add initial state to open list
-        if let Ok(initial_evaluation) = self.evaluate_state(&initial_state, 0.0) {
-            self.nodes_evaluated += 1;
-            if initial_evaluation.is_dead_end {
-                self.dead_ends += 1;
-            } else {
-                let progress =
-                    self.maybe_report_heuristic_progress(&initial_evaluation, &start_time);
-                if progress.improved {
-                    self.maybe_print_f_value(initial_evaluation.f_value, &start_time);
+        match self.evaluate_state(&initial_state, 0.0) {
+            Ok(initial_evaluation) => {
+                self.nodes_evaluated += 1;
+                if initial_evaluation.is_dead_end {
+                    self.dead_ends += 1;
+                } else {
+                    let progress =
+                        self.maybe_report_heuristic_progress(&initial_evaluation, &start_time);
+                    if progress.improved {
+                        self.maybe_print_f_value(initial_evaluation.f_value, &start_time);
+                    }
                 }
-            }
 
-            if !initial_evaluation.is_dead_end {
-                self.open_list.insert(
-                    initial_state.get_id(),
-                    0.0,
-                    initial_evaluation.h_value,
-                    initial_evaluation.f_value,
-                );
-            }
+                if !initial_evaluation.is_dead_end {
+                    self.open_list.insert(
+                        initial_state.get_id(),
+                        0.0,
+                        initial_evaluation.h_value,
+                        initial_evaluation.f_value,
+                    );
+                }
 
-            self.print_initial_h_values();
+                self.print_initial_h_values();
+            }
+            Err(err) => {
+                error!("Initial state evaluation failed: {err}");
+            }
         }
 
         // Initialize search node info for initial state.

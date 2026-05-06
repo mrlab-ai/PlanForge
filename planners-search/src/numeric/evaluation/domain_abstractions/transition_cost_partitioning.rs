@@ -769,11 +769,11 @@ impl TransitionResidualCosts {
                     region: region.clone(),
                 };
                 let amount = saturated.min(residual.base_cost);
-                if let Some((_, existing)) = pending.iter_mut().find(
-                    |(pending_op_id, reduction)| {
+                if let Some((_, existing)) =
+                    pending.iter_mut().find(|(pending_op_id, reduction)| {
                         *pending_op_id == concrete_op_id && reduction.condition == condition
-                    },
-                ) {
+                    })
+                {
                     existing.amount = existing.amount.max(amount);
                 } else {
                     pending.push((concrete_op_id, ResidualReduction { amount, condition }));
@@ -1052,7 +1052,9 @@ pub fn compute_lookahead_abstract_operator_cost_budgets(
                     "missing abstract-operator budget for abstraction {abstraction_id}, abstract op {abstract_op_id}"
                 );
                 ensure!(
-                    budgets[abstraction_id][abstract_op_id].label_fractions.len()
+                    budgets[abstraction_id][abstract_op_id]
+                        .label_fractions
+                        .len()
                         == footprint.labels.len(),
                     "abstract-operator budget label count mismatch for abstraction {abstraction_id}, abstract op {abstract_op_id}"
                 );
@@ -1081,10 +1083,7 @@ impl FootprintOverlapIndex {
                 if !label.allocable {
                     continue;
                 }
-                let operator_index = self
-                    .by_operator
-                    .entry(label.concrete_op_id)
-                    .or_default();
+                let operator_index = self.by_operator.entry(label.concrete_op_id).or_default();
                 let footprint_id = operator_index.footprints.len();
                 operator_index.footprints.push(LaterFootprint {
                     abstraction_id,
@@ -1165,8 +1164,10 @@ impl FootprintOverlapIndex {
         if let Some(var_id) = best_var {
             if let Some(intervals) = operator_index.numeric.get(var_id) {
                 for indexed in intervals {
-                    if interval_starts_after(&indexed.interval, &label.source_region.numeric[var_id])
-                    {
+                    if interval_starts_after(
+                        &indexed.interval,
+                        &label.source_region.numeric[var_id],
+                    ) {
                         break;
                     }
                     if !intervals_overlap(indexed.interval, label.source_region.numeric[var_id]) {

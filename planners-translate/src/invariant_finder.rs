@@ -1,9 +1,9 @@
 use itertools::Itertools;
-use tracing::info;
 /// Port of invariant_finder.py
 /// Finds mutex invariants among ground atoms.
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
+use tracing::info;
 
 use super::invariants::{BalanceChecker, Invariant, InvariantPart};
 use super::options;

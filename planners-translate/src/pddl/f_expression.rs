@@ -1,10 +1,10 @@
-use tracing::debug;
 use ordered_float::OrderedFloat;
 /// Port of pddl/f_expression.py
 /// Functional expression hierarchy for numeric PDDL.
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use tracing::debug;
 
 /// Root enum for functional expressions
 /// Python: class FunctionalExpression(object)

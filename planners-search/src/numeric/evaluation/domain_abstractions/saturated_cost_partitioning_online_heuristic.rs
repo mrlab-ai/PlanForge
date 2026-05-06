@@ -408,11 +408,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
         if use_abstract_operator_cost_partitioning
             && abstractions.iter().any(|abstraction| {
-                abstraction
-                    .metadata
-                    .portfolio_strategy
-                    .as_deref()
-                    == Some("complementary")
+                abstraction.metadata.portfolio_strategy.as_deref() == Some("complementary")
             })
         {
             order.sort_by(|&a, &b| {

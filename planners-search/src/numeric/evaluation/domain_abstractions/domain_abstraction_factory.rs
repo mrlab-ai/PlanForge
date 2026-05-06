@@ -3054,10 +3054,7 @@ fn deterministic_affected_regular_numeric_vars(
         ) {
             continue;
         }
-        let Some(&rhs_value) = task
-            .get_initial_numeric_state_values()
-            .get(effect.var_id())
-        else {
+        let Some(&rhs_value) = task.get_initial_numeric_state_values().get(effect.var_id()) else {
             continue;
         };
         if !rhs_value.is_finite() {
