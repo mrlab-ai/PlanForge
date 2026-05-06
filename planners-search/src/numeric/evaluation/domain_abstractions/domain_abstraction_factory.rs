@@ -932,6 +932,8 @@ impl DomainAbstractionFactory {
         let target_region =
             self.state_region_from_facts(task, &abstract_operator.regression_preconditions)?;
         let mut non_allocable_reason = None;
+        let mut has_finite_changed_source = false;
+        let mut has_infinite_changed_source = false;
 
         for &numeric_var_id in &abstract_operator.changed_numeric_vars {
             ensure!(
@@ -969,10 +971,17 @@ impl DomainAbstractionFactory {
                     .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
                 continue;
             }
-            if !interval_is_finite(source_region.numeric[numeric_var_id]) {
-                non_allocable_reason
-                    .get_or_insert(NonAllocableFootprintReason::InfiniteActiveSource);
+            if interval_is_finite(source_region.numeric[numeric_var_id]) {
+                has_finite_changed_source = true;
+            } else {
+                has_infinite_changed_source = true;
             }
+        }
+        if non_allocable_reason.is_none()
+            && has_infinite_changed_source
+            && !has_finite_changed_source
+        {
+            non_allocable_reason.get_or_insert(NonAllocableFootprintReason::InfiniteActiveSource);
         }
         if !footprint_has_informative_source(self, &source_region)? {
             non_allocable_reason.get_or_insert(NonAllocableFootprintReason::UninformativeSource);
