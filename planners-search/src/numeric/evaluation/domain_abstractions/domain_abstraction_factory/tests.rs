@@ -1189,4 +1189,5 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
         concrete.source_region.numeric[1],
         Interval::new(f64::NEG_INFINITY, -1.0, false, true)
     );
+    assert!((concrete.max_allocation_fraction - 0.5).abs() < 1e-9);
 }

@@ -48,6 +48,7 @@ pub struct ConcreteOperatorFootprint {
     pub concrete_op_id: usize,
     pub source_region: StateRegion,
     pub allocable: bool,
+    pub max_allocation_fraction: f64,
     pub non_allocable_reason: Option<NonAllocableFootprintReason>,
 }
 
@@ -700,12 +701,24 @@ impl TransitionResidualCosts {
                     "no base residual cost for operator {concrete_op_id}"
                 );
                 ensure!(
-                    saturated <= residual.base_cost + EPSILON,
-                    "residual cost underflow: abstract-operator footprint reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
+                    footprint.max_allocation_fraction.is_finite()
+                        && footprint.max_allocation_fraction >= -EPSILON
+                        && footprint.max_allocation_fraction <= 1.0 + EPSILON,
+                    "invalid abstract-operator footprint allocation fraction {} for operator {concrete_op_id}",
+                    footprint.max_allocation_fraction
+                );
+                let capped_saturated =
+                    saturated.min(residual.base_cost * footprint.max_allocation_fraction.min(1.0));
+                if capped_saturated <= EPSILON {
+                    continue;
+                }
+                ensure!(
+                    capped_saturated <= residual.base_cost + EPSILON,
+                    "residual cost underflow: abstract-operator footprint reduction {capped_saturated} exceeds base cost {} for operator {concrete_op_id}",
                     residual.base_cost
                 );
                 residual.reductions.push(ResidualReduction {
-                    amount: saturated.min(residual.base_cost),
+                    amount: capped_saturated.min(residual.base_cost),
                     condition: TransitionCondition {
                         abstraction_id: producing_abstraction_id,
                         source_hash: ABSTRACT_OPERATOR_REGION_HASH,
@@ -1158,6 +1171,17 @@ fn max_overlap_reduction(
             })
         })
         .collect();
+    // Exact overlap accounting is exponential in the number of overlapping
+    // reductions. For very large overlap sets we deliberately over-approximate
+    // the already allocated cost. This can only lower residual costs and make
+    // the heuristic weaker; it must not increase allocated cost.
+    if relevant.len() > 64 {
+        return relevant
+            .iter()
+            .map(|reduction| reduction.amount.max(0.0))
+            .sum::<f64>()
+            .min(cap);
+    }
     relevant.sort_by(|left, right| {
         right
             .amount
@@ -1457,6 +1481,7 @@ mod tests {
             concrete_op_id,
             source_region: numeric_state_region(lower, upper),
             allocable,
+            max_allocation_fraction: if allocable { 1.0 } else { 0.0 },
             non_allocable_reason: None,
         }
     }

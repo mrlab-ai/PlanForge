@@ -934,11 +934,13 @@ impl DomainAbstractionFactory {
         let mut non_allocable_reason = None;
         let mut has_finite_changed_source = false;
         let mut has_infinite_changed_source = false;
+        let mut precision_sum = 0.0;
+        let mut precision_count = 0usize;
 
-        for &numeric_var_id in &abstract_operator.changed_numeric_vars {
+        for numeric_var_id in deterministic_affected_regular_numeric_vars(task, concrete_operator) {
             ensure!(
                 numeric_var_id < source_region.numeric.len(),
-                "abstract operator references changed numeric var {numeric_var_id}, but footprint has {} numeric vars",
+                "abstract operator references affected numeric var {numeric_var_id}, but footprint has {} numeric vars",
                 source_region.numeric.len()
             );
             let source_interval = source_region.numeric[numeric_var_id];
@@ -971,6 +973,11 @@ impl DomainAbstractionFactory {
                     .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
                 continue;
             }
+            precision_sum += changed_source_precision(
+                source_region.numeric[numeric_var_id],
+                effect_image.inverse,
+            );
+            precision_count += 1;
             if interval_is_finite(source_region.numeric[numeric_var_id]) {
                 has_finite_changed_source = true;
             } else {
@@ -991,6 +998,20 @@ impl DomainAbstractionFactory {
             concrete_op_id,
             source_region,
             allocable: non_allocable_reason.is_none(),
+            max_allocation_fraction: if non_allocable_reason.is_none() {
+                let fraction = if precision_count == 0 {
+                    1.0
+                } else {
+                    precision_sum / precision_count as f64
+                };
+                ensure!(
+                    fraction.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&fraction),
+                    "invalid abstract-operator footprint precision {fraction} for operator {concrete_op_id}"
+                );
+                fraction.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
             non_allocable_reason,
         })
     }
@@ -2695,6 +2716,42 @@ fn deterministic_numeric_effect_image(
     }
 }
 
+fn deterministic_affected_regular_numeric_vars(
+    task: &dyn AbstractNumericTask,
+    operator: &Operator,
+) -> Vec<usize> {
+    let mut vars = Vec::new();
+    for effect in operator.assignment_effects() {
+        let affected_var_id = effect.affected_var_id();
+        if task
+            .numeric_variables()
+            .get(affected_var_id)
+            .is_none_or(|variable| variable.get_type() != &NumericType::Regular)
+        {
+            continue;
+        }
+        if effect.is_conditional() || !effect.conditions().is_empty() {
+            continue;
+        }
+        if !matches!(
+            effect.operation(),
+            AssignmentOperation::Plus | AssignmentOperation::Minus | AssignmentOperation::Assign
+        ) {
+            continue;
+        }
+        if !matches!(
+            task.numeric_variables()[effect.var_id()].get_type(),
+            NumericType::Constant | NumericType::Cost
+        ) {
+            continue;
+        }
+        vars.push(affected_var_id);
+    }
+    vars.sort_unstable();
+    vars.dedup();
+    vars
+}
+
 fn shift_interval(interval: Interval, delta: f64) -> Interval {
     Interval::new(
         interval.lower + delta,
@@ -2706,6 +2763,30 @@ fn shift_interval(interval: Interval, delta: f64) -> Interval {
 
 fn interval_is_finite(interval: Interval) -> bool {
     interval.lower.is_finite() && interval.upper.is_finite()
+}
+
+fn changed_source_precision(
+    source_interval: Interval,
+    inverse: DeterministicNumericEffectInverse,
+) -> f64 {
+    if !interval_is_finite(source_interval) {
+        return 0.0;
+    }
+    match inverse {
+        DeterministicNumericEffectInverse::Additive { delta } => {
+            let delta = delta.abs();
+            if delta <= 1e-9 {
+                return 0.0;
+            }
+            let width = source_interval.upper - source_interval.lower;
+            if width <= 1e-9 {
+                1.0
+            } else {
+                (delta / width).min(1.0)
+            }
+        }
+        DeterministicNumericEffectInverse::AssignmentConstant { .. } => 1.0,
+    }
 }
 
 fn interval_intersection(lhs: Interval, rhs: Interval) -> Interval {
