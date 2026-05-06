@@ -15,7 +15,9 @@ use ordered_float::OrderedFloat;
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, ExplicitFact, Operator, metric_operator_cost_from_initial_values,
 };
-use planners_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistry};
+use planners_sas::numeric::state_registry::{
+    ConcreteState, ExpansionContext, StateID, StateRegistry,
+};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::collections::VecDeque;
@@ -230,6 +232,7 @@ pub struct AStarSearch<'a> {
     applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
     successor_numeric_values_buffer: Vec<f64>,
     successor_cost_values_buffer: Vec<f64>,
+    expansion_context: ExpansionContext,
 }
 
 impl<'a> AStarSearch<'a> {
@@ -307,6 +310,7 @@ impl<'a> AStarSearch<'a> {
             applicable_operators_buffer: Vec::new(),
             successor_numeric_values_buffer: Vec::with_capacity(task.numeric_variables().len()),
             successor_cost_values_buffer: Vec::new(),
+            expansion_context: ExpansionContext::default(),
         }
     }
 
@@ -612,15 +616,26 @@ impl<'a> AStarSearch<'a> {
         let trace_generated_states = self.trace_flags.generated_states;
         let trace_evaluated_successors = self.trace_flags.evaluated_successors;
 
+        // Fill the parent's numeric/cost/metric values once; reuse across all
+        // successors below.
+        let mut expansion_context = std::mem::take(&mut self.expansion_context);
+        if let Err(_) = self
+            .state_registry
+            .build_expansion_context(&state, &mut expansion_context)
+        {
+            self.expansion_context = expansion_context;
+            self.applicable_operators_buffer = applicable_operators;
+            return SearchStatus::InProgress;
+        }
+
         for (operator, operator_id) in applicable_operators.iter().copied() {
-            let (succ_state, op_cost) = match self
-                .state_registry
-                .get_successor_state_with_buffers_and_cost(
-                    &state,
-                    operator,
-                    &mut self.successor_numeric_values_buffer,
-                    &mut self.successor_cost_values_buffer,
-                ) {
+            let (succ_state, op_cost) = match self.state_registry.apply_operator_in_context(
+                &state,
+                operator,
+                &expansion_context,
+                &mut self.successor_numeric_values_buffer,
+                &mut self.successor_cost_values_buffer,
+            ) {
                 Ok(result) => result,
                 Err(_) => continue,
             };
@@ -743,6 +758,7 @@ impl<'a> AStarSearch<'a> {
 
         applicable_operators.clear();
         self.applicable_operators_buffer = applicable_operators;
+        self.expansion_context = expansion_context;
 
         SearchStatus::InProgress
     }

@@ -1,9 +1,15 @@
 #[cfg(test)]
 mod tests;
 
-use crate::numeric::state_registry::{ConcreteState, StateRegistry};
+use crate::numeric::state_registry::{ConcreteState, IdentityU64Hasher, StateRegistry};
 use std::collections::{HashMap, HashSet};
+use std::hash::BuildHasherDefault;
 use std::marker::PhantomData;
+
+/// HashMap variant keyed by `usize` (registry ids) using the same identity
+/// hasher we use for state-content hashes. Registry ids are dense
+/// monotonically-allocated `usize`s, so the default `SipHash` is overkill.
+type RegistryIdMap<V> = HashMap<usize, V, BuildHasherDefault<IdentityU64Hasher>>;
 
 /// Base trait for per-state information storage.
 ///
@@ -56,7 +62,7 @@ pub struct PerStateInformation<T> {
     default_value: T,
 
     /// Map from registry ID to the vector of entries for that registry.
-    entries_by_registry: HashMap<usize, Vec<T>>,
+    entries_by_registry: RegistryIdMap<Vec<T>>,
 
     /// Cache for the last accessed registry to speed up consecutive lookups.
     cached_registry_id: Option<usize>,
@@ -76,7 +82,7 @@ where
     pub fn new() -> Self {
         Self {
             default_value: T::default(),
-            entries_by_registry: HashMap::new(),
+            entries_by_registry: RegistryIdMap::default(),
             cached_registry_id: None,
             subscribed_registries: HashSet::new(),
             _phantom: PhantomData,
@@ -87,7 +93,7 @@ where
     pub fn with_default(default_value: T) -> Self {
         Self {
             default_value,
-            entries_by_registry: HashMap::new(),
+            entries_by_registry: RegistryIdMap::default(),
             cached_registry_id: None,
             subscribed_registries: HashSet::new(),
             _phantom: PhantomData,
