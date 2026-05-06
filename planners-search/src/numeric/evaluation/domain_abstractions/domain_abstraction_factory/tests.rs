@@ -1194,5 +1194,97 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
     let residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
     let operator_costs =
         abstract_operator_costs_from_footprints(1, &footprints, None, &residuals, 0, None).unwrap();
-    assert_eq!(operator_costs, vec![0.5]);
+    assert_eq!(operator_costs, vec![1.0]);
+}
+
+#[test]
+fn abstract_operator_footprint_ignores_zero_additive_effect_dimension() {
+    let variables = vec![ExplicitVariable::new(
+        1,
+        "p".into(),
+        vec!["p0".into()],
+        None,
+        0,
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+        NumericVariable::new("zero".into(), NumericType::Constant, None),
+    ];
+    let op = Operator::new(
+        "inc_x_keep_y".into(),
+        vec![],
+        vec![],
+        vec![
+            AssignmentEffect::new(0, AssignmentOperation::Plus, 2, false, vec![]),
+            AssignmentEffect::new(1, AssignmentOperation::Plus, 3, false, vec![]),
+        ],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 0.0, 1.0, 0.0],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::new(0.0, 1.0, true, true),
+            Interval::new(1.0, 2.0, false, true),
+        ],
+        vec![
+            Interval::new(0.0, 1.0, true, true),
+            Interval::new(1.0, 2.0, false, true),
+        ],
+        vec![Interval::singleton(1.0)],
+        vec![Interval::singleton(0.0)],
+    ]);
+    let numeric_domain_sizes = vec![2, 2, 1, 1];
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .unwrap();
+    let x_abs_var = task.variables().len();
+    let y_abs_var = x_abs_var + 1;
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![0],
+        cost: 1.0,
+        hash_effect: 0,
+        regression_preconditions: vec![
+            ExplicitFact::new(x_abs_var, 1),
+            ExplicitFact::new(y_abs_var, 0),
+        ],
+        preconditions: vec![
+            ExplicitFact::new(x_abs_var, 0),
+            ExplicitFact::new(y_abs_var, 0),
+        ],
+        changed_numeric_vars: vec![0, 1],
+    };
+
+    let footprints = factory
+        .build_abstract_operator_footprints(&task, &[op])
+        .unwrap();
+    let concrete = &footprints[0].labels[0];
+
+    assert!(concrete.allocable);
+    assert_eq!(
+        concrete.source_region.numeric[0],
+        Interval::new(0.0, 1.0, false, true)
+    );
+    assert_eq!(concrete.source_region.numeric[1], Interval::unbounded());
 }

@@ -700,6 +700,7 @@ impl TransitionResidualCosts {
             tcf.operator_costs.len()
         );
 
+        let mut pending: Vec<(usize, ResidualReduction)> = Vec::new();
         for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
             ensure!(
                 !saturated.is_finite() || saturated >= -EPSILON,
@@ -745,7 +746,7 @@ impl TransitionResidualCosts {
                     saturated <= current_residual + EPSILON,
                     "abstract-operator footprint reduction {saturated} exceeds current residual cost {current_residual} for concrete operator {concrete_op_id}"
                 );
-                let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
+                let Some(residual) = self.operator_residuals.get(concrete_op_id) else {
                     continue;
                 };
                 if residual.base_cost <= EPSILON {
@@ -756,29 +757,44 @@ impl TransitionResidualCosts {
                     "no base residual cost for operator {concrete_op_id}"
                 );
                 ensure!(
-                    saturated
-                        <= residual.base_cost * footprint.max_allocation_fraction.min(1.0)
-                            + EPSILON,
-                    "abstract-operator footprint reduction {saturated} exceeds allocation cap {} for concrete operator {concrete_op_id}",
-                    residual.base_cost * footprint.max_allocation_fraction.min(1.0)
-                );
-                ensure!(
                     saturated <= residual.base_cost + EPSILON,
                     "residual cost underflow: abstract-operator footprint reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
                     residual.base_cost
                 );
-                residual.reductions.push(ResidualReduction {
-                    amount: saturated,
-                    condition: TransitionCondition {
-                        abstraction_id: producing_abstraction_id,
-                        source_hash: ABSTRACT_OPERATOR_REGION_HASH,
-                        abstract_op_id,
-                        target_hash: ABSTRACT_OPERATOR_REGION_HASH,
-                        region: region.clone(),
+                let condition = TransitionCondition {
+                    abstraction_id: producing_abstraction_id,
+                    source_hash: ABSTRACT_OPERATOR_REGION_HASH,
+                    abstract_op_id,
+                    target_hash: ABSTRACT_OPERATOR_REGION_HASH,
+                    region: region.clone(),
+                };
+                let amount = saturated.min(residual.base_cost);
+                if let Some((_, existing)) = pending.iter_mut().find(
+                    |(pending_op_id, reduction)| {
+                        *pending_op_id == concrete_op_id && reduction.condition == condition
                     },
-                });
-                residual.invalidate_cache();
+                ) {
+                    existing.amount = existing.amount.max(amount);
+                } else {
+                    pending.push((concrete_op_id, ResidualReduction { amount, condition }));
+                }
             }
+        }
+
+        for (concrete_op_id, reduction) in pending {
+            let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
+                continue;
+            };
+            if let Some(existing) = residual
+                .reductions
+                .iter_mut()
+                .find(|existing| existing.condition == reduction.condition)
+            {
+                existing.amount = (existing.amount + reduction.amount).min(residual.base_cost);
+            } else {
+                residual.reductions.push(reduction);
+            }
+            residual.invalidate_cache();
         }
         Ok(())
     }
@@ -1528,6 +1544,9 @@ fn can_add_reduction(
         return false;
     }
     for &index in selected {
+        if same_abstract_operator_reduction_identity(&relevant[index].condition, condition) {
+            return false;
+        }
         if !compatible_identities(&relevant[index].condition, condition) {
             return false;
         }
@@ -1545,6 +1564,18 @@ fn can_add_reduction(
             .map(|&index| &relevant[index].condition.region.target),
         &condition.region.target,
     )
+}
+
+fn same_abstract_operator_reduction_identity(
+    left: &TransitionCondition,
+    right: &TransitionCondition,
+) -> bool {
+    left.abstraction_id == right.abstraction_id
+        && left.abstract_op_id == right.abstract_op_id
+        && left.source_hash == ABSTRACT_OPERATOR_REGION_HASH
+        && left.target_hash == ABSTRACT_OPERATOR_REGION_HASH
+        && right.source_hash == ABSTRACT_OPERATOR_REGION_HASH
+        && right.target_hash == ABSTRACT_OPERATOR_REGION_HASH
 }
 
 fn state_regions_have_common_intersection<'a, I>(
@@ -2103,22 +2134,44 @@ mod tests {
     }
 
     #[test]
-    fn footprint_reduction_rejects_saturated_cost_above_allocation_fraction() {
+    fn footprint_reduction_allows_full_cost_for_allocable_fractional_footprint() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
         let reduced = footprint_with_fraction(3.0, 7.0, 0.5);
-        let error = residuals
+        residuals
             .reduce_by_abstract_operator_footprints(
                 0,
-                &[reduced],
+                std::slice::from_ref(&reduced),
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![1.0],
                 },
             )
-            .unwrap_err();
+            .unwrap();
 
-        assert!(
-            error.to_string().contains("exceeds allocation cap"),
-            "{error:#}"
+        assert_eq!(
+            residuals.cost_for_operator_footprint(1, 0, &reduced.labels[0]),
+            0.0
+        );
+    }
+
+    #[test]
+    fn same_abstract_operator_alternative_footprints_do_not_stack() {
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
+        let reduced = AbstractOperatorFootprint {
+            labels: vec![concrete_footprint(0.0, 10.0), concrete_footprint(5.0, 15.0)],
+        };
+        residuals
+            .reduce_by_abstract_operator_footprints(
+                0,
+                &[reduced],
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![0.4],
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            residuals.cost_for_operator_footprint(1, 0, &concrete_footprint(7.0, 8.0)),
+            0.6
         );
     }
 

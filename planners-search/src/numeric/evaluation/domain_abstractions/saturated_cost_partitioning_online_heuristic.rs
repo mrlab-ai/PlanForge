@@ -8,7 +8,7 @@ use planners_sas::numeric::numeric_task::{
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{Level, debug, enabled, info};
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
@@ -238,6 +238,7 @@ pub struct SaturatedCostPartitioningOnlineHeuristic<'task> {
     abstraction_heuristics: Vec<DomainAbstractionHeuristic>,
     pdbs: Vec<PatternDatabase<'task>>,
     config: ScpOnlineConfig,
+    original_operator_costs: Vec<f64>,
     state: RefCell<ScpOnlineState>,
     lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
     component_ids_scratch: RefCell<Vec<Option<usize>>>,
@@ -368,6 +369,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             abstraction_heuristics,
             pdbs,
             config,
+            original_operator_costs: original_costs,
             state: RefCell::new(st),
             lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
             component_ids_scratch: RefCell::new(Vec::new()),
@@ -535,13 +537,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         ids
     }
 
-    fn operator_costs(task: &dyn AbstractNumericTask) -> Vec<f64> {
-        task.get_operators()
-            .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op))
-            .collect()
-    }
-
     fn is_online_deadline_error(error: &anyhow::Error) -> bool {
         error.to_string().contains("online SCP deadline exceeded")
     }
@@ -590,7 +585,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         if abstractions.is_empty() && self.pdbs.is_empty() {
             return Ok(None);
         }
-        let original_costs = Self::operator_costs(task);
+        let original_costs = self.original_operator_costs.as_slice();
         let standalone_current_h =
             standalone_current_h_values(state, abstract_state_ids, num_domain_abstractions);
         let order = Self::compute_order_for_state(
@@ -638,7 +633,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 abstract_state_ids,
                 &standalone_current_h,
                 num_domain_abstractions,
-                &original_costs,
+                original_costs,
                 deadline,
                 self.config.saturator,
                 None,
@@ -650,7 +645,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 &order,
                 abstract_state_ids,
                 num_domain_abstractions,
-                &original_costs,
+                original_costs,
                 deadline,
             )?
         };
@@ -1530,6 +1525,9 @@ fn log_label_table_summary(
     saturated_costs: &[f64],
     abstract_state_ids: &[Option<usize>],
 ) {
+    if !enabled!(Level::INFO) {
+        return;
+    }
     let (positive_count, total_positive) = positive_cost_stats(saturated_costs);
     let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
     info!(
@@ -1544,6 +1542,9 @@ fn log_transition_table_summary(
     operator_costs: &[f64],
     abstract_state_ids: &[Option<usize>],
 ) {
+    if !enabled!(Level::INFO) {
+        return;
+    }
     let (positive_count, total_positive) = positive_cost_stats(operator_costs);
     let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
     info!(
@@ -1555,6 +1556,9 @@ fn log_abstract_operator_footprint_summary(
     abstraction_id: usize,
     footprints: &[AbstractOperatorFootprint],
 ) {
+    if !enabled!(Level::INFO) {
+        return;
+    }
     let stats = abstract_operator_footprint_stats(footprints);
     let non_allocable_ratio = if stats.total_labels == 0 {
         0.0
@@ -1698,6 +1702,9 @@ fn truncate_for_log(value: &str, max_chars: usize) -> String {
 }
 
 fn log_transition_residual_summary(remaining_costs: &TransitionResidualCosts) {
+    if !enabled!(Level::INFO) {
+        return;
+    }
     info!(
         "scp_online: abstract-operator residuals now store {} region reductions",
         remaining_costs.num_reductions()

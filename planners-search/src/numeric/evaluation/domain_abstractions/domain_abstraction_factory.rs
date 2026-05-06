@@ -751,8 +751,28 @@ impl DomainAbstractionFactory {
                 return Ok((table, tcf));
             }
         }
-        let table =
-            self.build_distance_table_with_operators(task, &generator, &operators, false)?;
+        // Build the match tree once. It depends only on
+        // (domain_sizes, numeric_domain_sizes, hash_multipliers, regression
+        // preconditions of `operators`); none of those change when we re-apply
+        // costs below. Reusing it avoids 2x (or 4x for perimstar) rebuilds.
+        let comparison_var_ids_for_tree = self.comparison_var_ids();
+        let match_tree = MatchTree::build(
+            generator.domain_sizes(),
+            generator.numeric_domain_sizes(),
+            generator.hash_multipliers(),
+            &operators,
+            &comparison_var_ids_for_tree,
+        );
+
+        let goal_facts = self.compute_abstract_goals(task);
+        let table = self.build_distance_table_with_operators_for_goals_inner(
+            task,
+            &generator,
+            &operators,
+            false,
+            &goal_facts,
+            Some(&match_tree),
+        )?;
 
         if let Some(state_id) = cap_state_id
             && let Some(&h_cap) = table.distances.get(state_id)
@@ -764,42 +784,45 @@ impl DomainAbstractionFactory {
                     *h = f64::NEG_INFINITY;
                 }
             }
-            let tcf = self.compute_saturated_abstract_operator_costs_from_operators(
+            let tcf = self.compute_saturated_abstract_operator_costs_from_operators_inner(
                 task,
                 &generator,
                 &operators,
                 &operator_costs,
                 &perim_table,
                 deadline,
+                Some(&match_tree),
             )?;
             let mut saturated_operators = operators;
             apply_abstract_operator_costs(&mut saturated_operators, &tcf.operator_costs)?;
-            let global_table = self.build_distance_table_with_operators(
+            let global_table = self.build_distance_table_with_operators_for_goals_inner(
                 task,
                 &generator,
                 &saturated_operators,
                 false,
+                &goal_facts,
+                Some(&match_tree),
             )?;
             return Ok((global_table, tcf));
         }
 
-        let tcf = self.compute_saturated_abstract_operator_costs_from_operators(
+        let tcf = self.compute_saturated_abstract_operator_costs_from_operators_inner(
             task,
             &generator,
             &operators,
             &operator_costs,
             &table,
             deadline,
+            Some(&match_tree),
         )?;
-        let mut saturated_operators = operators;
-        apply_abstract_operator_costs(&mut saturated_operators, &tcf.operator_costs)?;
-        let global_table = self.build_distance_table_with_operators(
-            task,
-            &generator,
-            &saturated_operators,
-            false,
-        )?;
-        Ok((global_table, tcf))
+        // For Saturator::All, the saturated abstract-operator costs are tight
+        // wrt `table.distances`: by construction every transition (u,v) using
+        // operator op has saturated[op] >= h(u) - h(v), so any path from s to
+        // the goal has length >= h(s) under saturated costs (telescoping), and
+        // the original shortest path remains feasible. Therefore distances
+        // under saturated costs equal `table.distances`, and the historic
+        // second Dijkstra over saturated_operators was redundant.
+        Ok((table, tcf))
     }
 
     pub fn build_abstract_operator_cost_partitioned_distance_table_from_system_and_footprints_with_deadline(
@@ -961,8 +984,13 @@ impl DomainAbstractionFactory {
         let concrete_operator = task.get_operators().get(concrete_op_id).with_context(|| {
             format!("abstract operator references missing concrete operator {concrete_op_id}")
         })?;
-        let mut source_region =
+        let abstract_source_region =
             self.state_region_from_facts(task, &abstract_operator.preconditions)?;
+        let mut source_region = abstract_source_region.clone();
+        source_region
+            .numeric
+            .iter_mut()
+            .for_each(|interval| *interval = Interval::unbounded());
         let target_region =
             self.state_region_from_facts(task, &abstract_operator.regression_preconditions)?;
         let mut non_allocable_reason = None;
@@ -973,11 +1001,11 @@ impl DomainAbstractionFactory {
 
         for numeric_var_id in deterministic_affected_regular_numeric_vars(task, concrete_operator) {
             ensure!(
-                numeric_var_id < source_region.numeric.len(),
+                numeric_var_id < abstract_source_region.numeric.len(),
                 "abstract operator references affected numeric var {numeric_var_id}, but footprint has {} numeric vars",
-                source_region.numeric.len()
+                abstract_source_region.numeric.len()
             );
-            let source_interval = source_region.numeric[numeric_var_id];
+            let source_interval = abstract_source_region.numeric[numeric_var_id];
             let Some(effect_image) = deterministic_numeric_effect_image(
                 task,
                 concrete_operator,
@@ -988,6 +1016,9 @@ impl DomainAbstractionFactory {
                     .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
                 continue;
             };
+            if effect_image.is_noop_for_source(source_interval) {
+                continue;
+            }
             if effect_image.image.is_empty() {
                 non_allocable_reason
                     .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
@@ -1001,7 +1032,7 @@ impl DomainAbstractionFactory {
                 continue;
             };
             source_region.numeric[numeric_var_id] =
-                interval_intersection(source_region.numeric[numeric_var_id], inverse_source);
+                interval_intersection(source_interval, inverse_source);
             if source_region.numeric[numeric_var_id].is_empty() {
                 non_allocable_reason
                     .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
@@ -1208,6 +1239,25 @@ impl DomainAbstractionFactory {
         dump_distances: bool,
         goal_facts: &[ExplicitFact],
     ) -> Result<AbstractDistanceTable> {
+        self.build_distance_table_with_operators_for_goals_inner(
+            task,
+            generator,
+            operators,
+            dump_distances,
+            goal_facts,
+            None,
+        )
+    }
+
+    fn build_distance_table_with_operators_for_goals_inner(
+        &self,
+        task: &dyn AbstractNumericTask,
+        generator: &AbstractOperatorGenerator,
+        operators: &[AbstractOperator],
+        dump_distances: bool,
+        goal_facts: &[ExplicitFact],
+        prebuilt_match_tree: Option<&MatchTree>,
+    ) -> Result<AbstractDistanceTable> {
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
         let comparison_var_ids = self.comparison_var_ids();
@@ -1223,17 +1273,22 @@ impl DomainAbstractionFactory {
 
         let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
 
-        let match_tree = MatchTree::build(
-            &self.domain_sizes,
-            numeric_domain_sizes,
-            hash_multipliers,
-            operators,
-            &comparison_var_ids,
-        );
+        let owned_match_tree = if prebuilt_match_tree.is_none() {
+            Some(MatchTree::build(
+                &self.domain_sizes,
+                numeric_domain_sizes,
+                hash_multipliers,
+                operators,
+                &comparison_var_ids,
+            ))
+        } else {
+            None
+        };
+        let match_tree = prebuilt_match_tree.unwrap_or_else(|| owned_match_tree.as_ref().unwrap());
         let (distances, generating_op_ids) = self.compute_distances_and_generating_ops(
             task,
             operators,
-            &match_tree,
+            match_tree,
             &goal_facts,
             init_hash,
             numeric_domain_sizes,
@@ -1682,7 +1737,7 @@ impl DomainAbstractionFactory {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn compute_saturated_abstract_operator_costs_from_operators(
+    fn compute_saturated_abstract_operator_costs_from_operators_inner(
         &self,
         task: &dyn AbstractNumericTask,
         generator: &AbstractOperatorGenerator,
@@ -1690,6 +1745,7 @@ impl DomainAbstractionFactory {
         operator_costs: &[f64],
         table: &AbstractDistanceTable,
         deadline: Option<Instant>,
+        prebuilt_match_tree: Option<&MatchTree>,
     ) -> Result<AbstractOperatorCostFunction> {
         ensure!(
             operators.len() == operator_costs.len(),
@@ -1700,13 +1756,18 @@ impl DomainAbstractionFactory {
 
         let num_states = table.distances.len();
         let comparison_var_ids = self.comparison_var_ids();
-        let match_tree = MatchTree::build(
-            generator.domain_sizes(),
-            generator.numeric_domain_sizes(),
-            generator.hash_multipliers(),
-            operators,
-            &comparison_var_ids,
-        );
+        let owned_match_tree = if prebuilt_match_tree.is_none() {
+            Some(MatchTree::build(
+                generator.domain_sizes(),
+                generator.numeric_domain_sizes(),
+                generator.hash_multipliers(),
+                operators,
+                &comparison_var_ids,
+            ))
+        } else {
+            None
+        };
+        let match_tree = prebuilt_match_tree.unwrap_or_else(|| owned_match_tree.as_ref().unwrap());
         let comparison_preconditions =
             comparison_preconditions_by_operator(operators, &comparison_var_ids);
         let mut saturated = vec![0.0_f64; operators.len()];
@@ -2816,7 +2877,7 @@ fn abstract_operator_label_cost(
     let fraction = if let Some(budget) = budget {
         budget.label_fractions[label_id]
     } else {
-        label.max_allocation_fraction
+        1.0
     };
     assert!(
         fraction.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&fraction),
@@ -2877,6 +2938,15 @@ enum DeterministicNumericEffectInverse {
 }
 
 impl DeterministicNumericEffectImage {
+    fn is_noop_for_source(&self, source_interval: Interval) -> bool {
+        match self.inverse {
+            DeterministicNumericEffectInverse::Additive { delta } => delta.abs() <= 1e-12,
+            DeterministicNumericEffectInverse::AssignmentConstant { value } => {
+                interval_is_singleton(source_interval) && source_interval.contains(value)
+            }
+        }
+    }
+
     fn inverse_source_for_target(&self, target_interval: Interval) -> Option<Interval> {
         match self.inverse {
             DeterministicNumericEffectInverse::Additive { delta } => {
@@ -2944,7 +3014,7 @@ fn deterministic_numeric_effect_image(
             image: Interval::singleton(value),
             inverse: DeterministicNumericEffectInverse::AssignmentConstant { value },
         })
-    } else if touched {
+    } else if touched && delta.abs() > 1e-12 {
         Some(DeterministicNumericEffectImage {
             image: shift_interval(source_interval, delta),
             inverse: DeterministicNumericEffectInverse::Additive { delta },
@@ -2958,7 +3028,8 @@ fn deterministic_affected_regular_numeric_vars(
     task: &dyn AbstractNumericTask,
     operator: &Operator,
 ) -> Vec<usize> {
-    let mut vars = Vec::new();
+    let mut deltas = vec![0.0; task.numeric_variables().len()];
+    let mut assignments = Vec::new();
     for effect in operator.assignment_effects() {
         let affected_var_id = effect.affected_var_id();
         if task
@@ -2983,8 +3054,28 @@ fn deterministic_affected_regular_numeric_vars(
         ) {
             continue;
         }
-        vars.push(affected_var_id);
+        let Some(&rhs_value) = task
+            .get_initial_numeric_state_values()
+            .get(effect.var_id())
+        else {
+            continue;
+        };
+        if !rhs_value.is_finite() {
+            continue;
+        }
+        match effect.operation() {
+            AssignmentOperation::Plus => deltas[affected_var_id] += rhs_value,
+            AssignmentOperation::Minus => deltas[affected_var_id] -= rhs_value,
+            AssignmentOperation::Assign => assignments.push(affected_var_id),
+            AssignmentOperation::Times | AssignmentOperation::Divide => unreachable!(),
+        }
     }
+    let mut vars: Vec<usize> = deltas
+        .iter()
+        .enumerate()
+        .filter_map(|(var_id, &delta)| (delta.abs() > 1e-12).then_some(var_id))
+        .collect();
+    vars.extend(assignments);
     vars.sort_unstable();
     vars.dedup();
     vars
@@ -3001,6 +3092,10 @@ fn shift_interval(interval: Interval, delta: f64) -> Interval {
 
 fn interval_is_finite(interval: Interval) -> bool {
     interval.lower.is_finite() && interval.upper.is_finite()
+}
+
+fn interval_is_singleton(interval: Interval) -> bool {
+    interval.lower == interval.upper && interval.lower_closed && interval.upper_closed
 }
 
 fn changed_source_precision(
