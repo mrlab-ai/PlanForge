@@ -164,30 +164,96 @@ pub struct TransitionInfo {
     pub changed_numeric_vars: Vec<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct OperatorSignature {
-    prev_pairs: Vec<(usize, usize)>,
-    pre_pairs: Vec<(usize, usize)>,
-    eff_pairs: Vec<(usize, usize)>,
+/// Stored signature per *operator* (post-grouping). Holding the original
+/// pair lists once per operator (instead of per candidate) lets us match
+/// later candidates without re-allocating their signature each call.
+#[derive(Debug, Clone)]
+struct StoredOperatorSignature {
+    prev_pairs: Vec<ExplicitFact>,
+    pre_pairs: Vec<ExplicitFact>,
+    eff_pairs: Vec<ExplicitFact>,
     cost_bits: u64,
 }
 
-impl AbstractOperatorCandidate {
-    fn signature(&self) -> OperatorSignature {
-        OperatorSignature {
-            prev_pairs: self.prev_pairs.iter().map(|f| (f.var, f.value)).collect(),
-            pre_pairs: self.pre_pairs.iter().map(|f| (f.var, f.value)).collect(),
-            eff_pairs: self.eff_pairs.iter().map(|f| (f.var, f.value)).collect(),
-            cost_bits: float_tolerance::canonical_bits(self.cost),
+impl StoredOperatorSignature {
+    fn matches_candidate(&self, candidate: &AbstractOperatorCandidate, cost_bits: u64) -> bool {
+        self.cost_bits == cost_bits
+            && self.prev_pairs.as_slice() == candidate.prev_pairs.as_slice()
+            && self.pre_pairs.as_slice() == candidate.pre_pairs.as_slice()
+            && self.eff_pairs.as_slice() == candidate.eff_pairs.as_slice()
+    }
+
+    fn from_candidate(candidate: &AbstractOperatorCandidate, cost_bits: u64) -> Self {
+        Self {
+            prev_pairs: candidate.prev_pairs.clone(),
+            pre_pairs: candidate.pre_pairs.clone(),
+            eff_pairs: candidate.eff_pairs.clone(),
+            cost_bits,
         }
     }
 }
+
+/// Compute a 64-bit signature hash directly from the candidate's slices.
+/// Avoids the per-candidate `Vec<(usize, usize)>` allocations that the old
+/// `signature()` did, and lets us key the grouping map with an identity
+/// hasher (skipping `SipHash`).
+#[inline]
+fn candidate_signature_hash(candidate: &AbstractOperatorCandidate, cost_bits: u64) -> u64 {
+    // FNV-1a-style mix at the u64 chunk level + a SplitMix64 finalizer for
+    // even bit distribution. Same construction as the state-registry hash.
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x00000100000001B3;
+
+    #[inline(always)]
+    fn mix_facts(hash: &mut u64, facts: &[ExplicitFact]) {
+        // Length tag — keep distinct empty/non-empty inputs.
+        *hash ^= facts.len() as u64;
+        *hash = hash.wrapping_mul(FNV_PRIME);
+        for fact in facts {
+            *hash ^= fact.var as u64;
+            *hash = hash.wrapping_mul(FNV_PRIME);
+            *hash ^= fact.value as u64;
+            *hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        // Section delimiter.
+        *hash ^= 0xdeadbeef_cafef00d;
+        *hash = hash.wrapping_mul(FNV_PRIME);
+    }
+
+    let mut hash = FNV_OFFSET;
+    mix_facts(&mut hash, &candidate.prev_pairs);
+    mix_facts(&mut hash, &candidate.pre_pairs);
+    mix_facts(&mut hash, &candidate.eff_pairs);
+    hash ^= cost_bits;
+    hash = hash.wrapping_mul(FNV_PRIME);
+
+    // SplitMix64 finalizer.
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xff51afd7ed558ccd);
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xc4ceb9fe1a85ec53);
+    hash ^= hash >> 33;
+    hash
+}
+
+/// Identity hasher reused from the state registry (pass-through for u64
+/// keys). Keeps grouping-map probes off the SipHash slow path.
+type SignatureMap = HashMap<
+    u64,
+    Vec<u32>,
+    std::hash::BuildHasherDefault<planners_sas::numeric::state_registry::IdentityU64Hasher>,
+>;
 
 struct AbstractOperatorFinalizer {
     combine_labels: bool,
     hash_multipliers: Vec<usize>,
     operators: Vec<AbstractOperator>,
-    grouping: HashMap<OperatorSignature, usize>,
+    /// Per-operator stored signatures, indexed parallel to `operators`.
+    stored_signatures: Vec<StoredOperatorSignature>,
+    /// Map from signature hash to the operator indices that share that hash.
+    /// Most buckets hold a single index; collisions degrade gracefully via
+    /// the small-vec scan and `StoredOperatorSignature::matches_candidate`.
+    grouping: SignatureMap,
 }
 
 impl AbstractOperatorFinalizer {
@@ -196,22 +262,47 @@ impl AbstractOperatorFinalizer {
             combine_labels,
             hash_multipliers: hash_multipliers.to_vec(),
             operators: Vec::new(),
-            grouping: HashMap::new(),
+            stored_signatures: Vec::new(),
+            grouping: SignatureMap::default(),
         }
     }
 
     fn push_candidate(&mut self, candidate: &AbstractOperatorCandidate) {
-        let signature = candidate.signature();
-        if self.combine_labels
-            && let Some(&idx) = self.grouping.get(&signature)
-        {
-            self.operators[idx]
-                .concrete_op_ids
-                .push(candidate.concrete_op_id);
+        if self.combine_labels {
+            let cost_bits = float_tolerance::canonical_bits(candidate.cost);
+            let hash = candidate_signature_hash(candidate, cost_bits);
+            if let Some(bucket) = self.grouping.get(&hash) {
+                for &idx in bucket {
+                    let stored = &self.stored_signatures[idx as usize];
+                    if stored.matches_candidate(candidate, cost_bits) {
+                        self.operators[idx as usize]
+                            .concrete_op_ids
+                            .push(candidate.concrete_op_id);
+                        return;
+                    }
+                }
+            }
+
+            let idx = self.operators.len();
+            self.operators.push(AbstractOperator::new(
+                &candidate.prev_pairs,
+                &candidate.pre_pairs,
+                &candidate.eff_pairs,
+                candidate.cost,
+                &self.hash_multipliers,
+                vec![candidate.concrete_op_id],
+                candidate.changed_numeric_vars.clone(),
+            ));
+            self.stored_signatures
+                .push(StoredOperatorSignature::from_candidate(candidate, cost_bits));
+            self.grouping
+                .entry(hash)
+                .or_default()
+                .push(idx as u32);
             return;
         }
 
-        let idx = self.operators.len();
+        // No label combining — every candidate becomes its own operator.
         self.operators.push(AbstractOperator::new(
             &candidate.prev_pairs,
             &candidate.pre_pairs,
@@ -221,9 +312,6 @@ impl AbstractOperatorFinalizer {
             vec![candidate.concrete_op_id],
             candidate.changed_numeric_vars.clone(),
         ));
-        if self.combine_labels {
-            self.grouping.insert(signature, idx);
-        }
     }
 
     fn into_operators(self) -> Vec<AbstractOperator> {
@@ -748,34 +836,14 @@ impl AbstractOperatorGenerator {
         &self,
         candidates: impl IntoIterator<Item = &'a AbstractOperatorCandidate>,
     ) -> Vec<AbstractOperator> {
-        let mut out: Vec<AbstractOperator> = Vec::new();
-        let mut grouping: HashMap<OperatorSignature, usize> = HashMap::new();
-
+        // Reuse the same finalizer that `build_abstract_operators` uses so we
+        // share the identity-hashed grouping path and the per-operator
+        // signature storage that avoids per-candidate Vec allocations.
+        let mut finalizer = AbstractOperatorFinalizer::new(self.combine_labels, &self.hash_multipliers);
         for candidate in candidates {
-            let signature = candidate.signature();
-            if self.combine_labels
-                && let Some(&idx) = grouping.get(&signature)
-            {
-                out[idx].concrete_op_ids.push(candidate.concrete_op_id);
-                continue;
-            }
-
-            let idx = out.len();
-            out.push(AbstractOperator::new(
-                &candidate.prev_pairs,
-                &candidate.pre_pairs,
-                &candidate.eff_pairs,
-                candidate.cost,
-                &self.hash_multipliers,
-                vec![candidate.concrete_op_id],
-                candidate.changed_numeric_vars.clone(),
-            ));
-            if self.combine_labels {
-                grouping.insert(signature, idx);
-            }
+            finalizer.push_candidate(candidate);
         }
-
-        out
+        finalizer.into_operators()
     }
 
     #[inline]
@@ -1201,6 +1269,10 @@ fn compute_hash_effects_with_preconditions(
     }
 
     let mut out: Vec<TransitionInfo> = Vec::new();
+    // Reusable scratch buffers for comparison-tree input intervals — sized
+    // by `task.numeric_variables().len()` and refreshed per combo.
+    let mut source_intervals_buf: Vec<Interval> = Vec::new();
+    let mut target_intervals_buf: Vec<Interval> = Vec::new();
     for combo in combos {
         let mut source_partition_facts: Vec<ExplicitFact> = Vec::new();
         let mut target_partition_facts: Vec<ExplicitFact> = Vec::new();
@@ -1222,25 +1294,38 @@ fn compute_hash_effects_with_preconditions(
         // regression/predecessor enumeration.
 
         // Optimistic filtering for comparison preconditions based on *source* intervals.
-        let source_numeric_intervals =
-            prepare_comparison_tree_inputs_for_combo(task, generator, &combo, false)?;
+        // Reuse `source_intervals_buf` / `target_intervals_buf` across combos —
+        // each combo otherwise allocates a fresh `Vec<Interval>` of size
+        // `task.numeric_variables().len()`.
+        prepare_comparison_tree_inputs_for_combo_into(
+            task,
+            generator,
+            &combo,
+            false,
+            &mut source_intervals_buf,
+        )?;
         if let Some(index) = &generator.comparison_index
             && op_preconditions
                 .iter()
-                .any(|pre| index.precondition_is_contradicted(pre, &source_numeric_intervals))
+                .any(|pre| index.precondition_is_contradicted(pre, &source_intervals_buf))
         {
             continue;
         }
 
         if !changed_numeric_vars.is_empty() {
-            let target_numeric_intervals =
-                prepare_comparison_tree_inputs_for_combo(task, generator, &combo, true)?;
+            prepare_comparison_tree_inputs_for_combo_into(
+                task,
+                generator,
+                &combo,
+                true,
+                &mut target_intervals_buf,
+            )?;
             let (source_comparison_facts, target_comparison_facts) =
                 compute_comparison_tree_cascades(
                     generator,
                     &combo,
-                    &source_numeric_intervals,
-                    &target_numeric_intervals,
+                    &source_intervals_buf,
+                    &target_intervals_buf,
                 )?;
             source_partition_facts.extend(source_comparison_facts);
             target_partition_facts.extend(target_comparison_facts);
@@ -1270,17 +1355,39 @@ fn prepare_comparison_tree_inputs_for_combo(
     combo: &[(usize, usize, usize)],
     use_target_partitions: bool,
 ) -> Result<Vec<Interval>> {
+    let mut buf: Vec<Interval> = Vec::new();
+    prepare_comparison_tree_inputs_for_combo_into(
+        task,
+        generator,
+        combo,
+        use_target_partitions,
+        &mut buf,
+    )?;
+    Ok(buf)
+}
+
+/// Resize-and-overwrite variant: lets callers reuse a scratch buffer across
+/// combos. Avoids per-combo `Vec<Interval>` allocations during the cartesian
+/// product in `compute_hash_effects_with_preconditions`.
+fn prepare_comparison_tree_inputs_for_combo_into(
+    task: &dyn AbstractNumericTask,
+    generator: &AbstractOperatorGenerator,
+    combo: &[(usize, usize, usize)],
+    use_target_partitions: bool,
+    out: &mut Vec<Interval>,
+) -> Result<()> {
     let initial_numeric_values = task.get_initial_numeric_state_values();
-    let mut numeric_intervals: Vec<Interval> =
-        vec![Interval::new(0.0, 0.0, false, false); task.numeric_variables().len()];
+    let num_numeric = task.numeric_variables().len();
+    out.clear();
+    out.resize(num_numeric, Interval::new(0.0, 0.0, false, false));
 
     for (var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
         if numeric_var.get_type() == &NumericType::Constant {
-            numeric_intervals[var_id] = Interval::singleton(float_tolerance::canonicalize(
+            out[var_id] = Interval::singleton(float_tolerance::canonicalize(
                 initial_numeric_values[var_id],
             ));
         } else if numeric_var.get_type() != &NumericType::Derived {
-            numeric_intervals[var_id] = Interval::unbounded();
+            out[var_id] = Interval::unbounded();
         }
     }
 
@@ -1292,21 +1399,18 @@ fn prepare_comparison_tree_inputs_for_combo(
             .with_context(|| {
                 format!("missing partition interval for var {var_id} part {partition_id}")
             })?;
-        numeric_intervals[*var_id] = iv;
+        out[*var_id] = iv;
     }
 
-    fill_derived_numeric_intervals_from_comparison_trees(
-        &generator.comparison_trees,
-        &mut numeric_intervals,
-    );
+    fill_derived_numeric_intervals_from_comparison_trees(&generator.comparison_trees, out);
 
-    for interval in &mut numeric_intervals {
+    for interval in out.iter_mut() {
         if interval.is_empty() {
             *interval = Interval::unbounded();
         }
     }
 
-    Ok(numeric_intervals)
+    Ok(())
 }
 
 fn tri_value_for_comparison(

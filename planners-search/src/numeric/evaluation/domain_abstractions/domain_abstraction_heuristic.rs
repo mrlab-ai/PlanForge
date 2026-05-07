@@ -405,7 +405,20 @@ impl DomainAbstractionHeuristic {
             .map_err(|e| {
                 EvaluationError::ComputationFailed(format!("failed to read numeric vars: {e:?}"))
             })?;
-        self.compute_abstract_hash_from_state_values(&prop, &numeric, None)
+        // When the abstraction shares its task with the registry (no
+        // `task_projection`), the registry's buffer already holds correct
+        // comparison-axiom-derived bits in `prop` — they were materialized
+        // when the state was registered. We can skip the per-evaluation
+        // re-evaluation of `ComparisonTree`s entirely.
+        // Set DA_NO_FAST_HASH=1 to disable for A/B benchmarking.
+        let prop_has_resolved_comparisons = self.abstraction.task_projection.is_none()
+            && std::env::var_os("DA_NO_FAST_HASH").is_none();
+        self.compute_abstract_hash_inner(
+            &prop,
+            &numeric,
+            None,
+            prop_has_resolved_comparisons,
+        )
     }
 
     fn compute_abstract_hash_from_state_values(
@@ -413,6 +426,19 @@ impl DomainAbstractionHeuristic {
         prop_values: &[usize],
         numeric: &[f64],
         comparison_values: Option<&[Option<usize>]>,
+    ) -> Result<usize, EvaluationError> {
+        // Conservative path used by external callers: assume `prop_values`
+        // does not yet have comparison-axiom-derived bits resolved, so we
+        // still consult the comparison trees on the numeric values.
+        self.compute_abstract_hash_inner(prop_values, numeric, comparison_values, false)
+    }
+
+    fn compute_abstract_hash_inner(
+        &self,
+        prop_values: &[usize],
+        numeric: &[f64],
+        comparison_values: Option<&[Option<usize>]>,
+        prop_has_resolved_comparisons: bool,
     ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
 
@@ -425,10 +451,11 @@ impl DomainAbstractionHeuristic {
 
         let numeric_values = self.project_numeric_values(numeric)?;
         let numeric_values = numeric_values.as_slice();
-        self.compute_abstract_hash_from_projected_state_values(
+        self.compute_abstract_hash_from_projected_state_values_inner(
             prop_values,
             numeric_values,
             comparison_values,
+            prop_has_resolved_comparisons,
         )
     }
 
@@ -437,6 +464,21 @@ impl DomainAbstractionHeuristic {
         prop_values: &[usize],
         numeric_values: &[f64],
         comparison_values: Option<&[Option<usize>]>,
+    ) -> Result<usize, EvaluationError> {
+        self.compute_abstract_hash_from_projected_state_values_inner(
+            prop_values,
+            numeric_values,
+            comparison_values,
+            false,
+        )
+    }
+
+    fn compute_abstract_hash_from_projected_state_values_inner(
+        &self,
+        prop_values: &[usize],
+        numeric_values: &[f64],
+        comparison_values: Option<&[Option<usize>]>,
+        prop_has_resolved_comparisons: bool,
     ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
         let num_numeric = self.abstraction.factory.numeric_domain_sizes().len();
@@ -472,18 +514,29 @@ impl DomainAbstractionHeuristic {
         }
 
         let mut prop_index: usize = 0;
-        for &var in &self.active_prop_vars {
-            let concrete_val = resolved_propositional_value(
-                var,
-                prop_values[var],
-                numeric_values,
-                self.abstraction.factory.comparison_trees(),
-                &self.comparison_tree_by_var,
-                &self.comparison_tree_required_lens,
-                comparison_values,
-            )?;
-            let abs_val = abstract_propositional_value(var, concrete_val, mapping)?;
-            prop_index += multipliers[var] * abs_val;
+        if prop_has_resolved_comparisons {
+            // Fast path: `prop_values[var]` already holds the comparison
+            // result that the registry's axiom evaluator wrote when this
+            // state was registered. No need to walk the comparison trees on
+            // the numeric values again.
+            for &var in &self.active_prop_vars {
+                let abs_val = abstract_propositional_value(var, prop_values[var], mapping)?;
+                prop_index += multipliers[var] * abs_val;
+            }
+        } else {
+            for &var in &self.active_prop_vars {
+                let concrete_val = resolved_propositional_value(
+                    var,
+                    prop_values[var],
+                    numeric_values,
+                    self.abstraction.factory.comparison_trees(),
+                    &self.comparison_tree_by_var,
+                    &self.comparison_tree_required_lens,
+                    comparison_values,
+                )?;
+                let abs_val = abstract_propositional_value(var, concrete_val, mapping)?;
+                prop_index += multipliers[var] * abs_val;
+            }
         }
 
         Ok(index + prop_index)
