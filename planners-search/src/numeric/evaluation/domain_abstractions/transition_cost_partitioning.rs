@@ -530,7 +530,15 @@ impl TransitionResidualCosts {
             return cached.cost;
         }
 
-        if let Some(has_full_overlap) = residual.lookup_full_reduction_overlap(&query_region) {
+        let query = TransitionCondition {
+            abstraction_id: current_abstraction_id,
+            source_hash,
+            abstract_op_id,
+            target_hash,
+            region: query_region,
+        };
+
+        if let Some(has_full_overlap) = residual.lookup_full_reduction_overlap(&query) {
             let cost = if has_full_overlap {
                 0.0
             } else {
@@ -545,14 +553,6 @@ impl TransitionResidualCosts {
             );
             return cost;
         }
-
-        let query = TransitionCondition {
-            abstraction_id: current_abstraction_id,
-            source_hash,
-            abstract_op_id,
-            target_hash,
-            region: query_region,
-        };
         let reduction =
             max_overlap_reduction(Some(&query), &residual.reductions, residual.base_cost);
         let cost = (residual.base_cost - reduction).max(0.0);
@@ -949,7 +949,7 @@ impl OperatorResidual {
         self.full_reduction_index.borrow_mut().take();
     }
 
-    fn lookup_full_reduction_overlap(&self, query: &TransitionRegion) -> Option<bool> {
+    fn lookup_full_reduction_overlap(&self, query: &TransitionCondition) -> Option<bool> {
         if !self.base_cost.is_finite() || self.base_cost <= EPSILON || self.reductions.is_empty() {
             return None;
         }
@@ -961,23 +961,22 @@ impl OperatorResidual {
         }
         match &index.kind {
             FullReductionIndexKind::Prop { feature, buckets } => {
-                let values = query_values_for_feature(query, *feature)?;
+                let values = query_values_for_feature(&query.region, *feature)?;
                 for &value in values {
                     let Some(bucket) = buckets.get(&value) else {
                         continue;
                     };
                     if bucket.iter().any(|&reduction_id| {
-                        self.reductions[reduction_id]
-                            .condition
-                            .region
-                            .overlaps(query)
+                        let reduction = &self.reductions[reduction_id];
+                        compatible_identities(query, &reduction.condition)
+                            && reduction.condition.region.overlaps(&query.region)
                     }) {
                         return Some(true);
                     }
                 }
             }
             FullReductionIndexKind::Numeric { feature, intervals } => {
-                let query_interval = interval_for_feature(query, *feature)?;
+                let query_interval = interval_for_feature(&query.region, *feature)?;
                 for indexed in intervals {
                     if interval_starts_after(&indexed.interval, query_interval) {
                         break;
@@ -985,10 +984,9 @@ impl OperatorResidual {
                     if !intervals_overlap(indexed.interval, *query_interval) {
                         continue;
                     }
-                    if self.reductions[indexed.reduction_id]
-                        .condition
-                        .region
-                        .overlaps(query)
+                    let reduction = &self.reductions[indexed.reduction_id];
+                    if compatible_identities(query, &reduction.condition)
+                        && reduction.condition.region.overlaps(&query.region)
                     {
                         return Some(true);
                     }

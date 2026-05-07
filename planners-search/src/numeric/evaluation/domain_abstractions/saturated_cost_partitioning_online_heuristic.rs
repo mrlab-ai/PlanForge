@@ -497,13 +497,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 })?;
             let mut prop = self.prop_scratch.borrow_mut();
             eval_state.state().fill_state(registry, &mut prop);
-            let mut expanded = self.expanded_numeric_scratch.borrow_mut();
-            if let Some(first) = self.pdbs.first() {
-                first
-                    .expand_numeric_state_values_into(&numeric, &mut expanded)
-                    .map_err(EvaluationError::ComputationFailed)?;
-            }
             for (pdb_id, pdb) in self.pdbs.iter().enumerate() {
+                let mut expanded = self.expanded_numeric_scratch.borrow_mut();
+                expanded.clear();
+                pdb.expand_numeric_state_values_into(&numeric, &mut expanded)
+                    .map_err(EvaluationError::ComputationFailed)?;
                 let sid = pdb
                     .abstract_state_id_from_expanded_state_values(&prop, &expanded)
                     .map_err(EvaluationError::ComputationFailed)?;

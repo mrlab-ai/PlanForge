@@ -375,7 +375,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let initial_seed_splits = self.initial_seed_splits(generation_task, seed_iteration);
             let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
                 split_blacklisted_variables(generation_task, blacklisted_var_ids);
-            let init_split_var_ids = if initial_seed_splits.is_empty() {
+            let init_split_var_ids = if initial_seed_splits.is_empty()
+                || self.config.portfolio_strategy == PortfolioStrategy::Complementary
+            {
                 self.initial_split_var_ids(generation_task, iteration)
             } else {
                 None
@@ -562,9 +564,11 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         task: &dyn AbstractNumericTask,
         iteration: usize,
     ) -> Vec<InitialSeedSplit> {
+        let mut seeds = complementary_propositional_achiever_seed_splits(task, iteration);
         let mut groups = collect_complementary_view_groups(task);
         if groups.is_empty() {
-            return Vec::new();
+            dedup_seed_splits_preserve_order(&mut seeds);
+            return seeds;
         }
         groups.sort_by(|left, right| {
             right
@@ -578,8 +582,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         });
 
         let selected = &groups[(iteration - 1) % groups.len()];
-        let mut seeds = Vec::new();
-        seeds.extend(goal_seed_splits(task));
         for candidate in &selected.candidates {
             seeds.push(InitialSeedSplit::Numeric {
                 numeric_var_id: candidate.numeric_var_id,
@@ -592,7 +594,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             });
             seeds.extend(complementary_route_seed_splits(task, candidate));
         }
-        sort_and_dedup_seed_splits(&mut seeds);
+        dedup_seed_splits_preserve_order(&mut seeds);
         seeds
     }
 
@@ -668,6 +670,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
 }
 
 const COMPARISON_TRUE_VALUE: usize = 0;
+const COMPLEMENTARY_PROPOSITIONAL_ACHIEVER_DEPTH: usize = 2;
+const COMPLEMENTARY_MAX_PROPOSITIONAL_SEEDS: usize = 64;
 
 #[derive(Debug, Clone)]
 struct ViewCandidate {
@@ -753,6 +757,57 @@ fn collect_complementary_view_groups(task: &dyn AbstractNumericTask) -> Vec<View
             .unwrap_or_default();
     }
     groups
+}
+
+fn complementary_propositional_achiever_seed_splits(
+    task: &dyn AbstractNumericTask,
+    iteration: usize,
+) -> Vec<InitialSeedSplit> {
+    if task.get_num_goals() == 0 {
+        return Vec::new();
+    }
+    let selected_goal_id = (iteration - 1) % task.get_num_goals();
+    let selected_goal = task.get_goal_fact(selected_goal_id);
+    let mut seeds = Vec::new();
+    let mut seen_facts = HashSet::new();
+    let mut frontier = vec![(selected_goal.clone(), 0usize)];
+    let mut frontier_index = 0usize;
+
+    while frontier_index < frontier.len() && seeds.len() < COMPLEMENTARY_MAX_PROPOSITIONAL_SEEDS {
+        let (fact, depth) = frontier[frontier_index].clone();
+        frontier_index += 1;
+        if !seen_facts.insert((fact.var, fact.value)) {
+            continue;
+        }
+        seeds.push(InitialSeedSplit::Propositional {
+            var_id: fact.var,
+            value: fact.value,
+        });
+        if depth >= COMPLEMENTARY_PROPOSITIONAL_ACHIEVER_DEPTH {
+            continue;
+        }
+        for op in task.get_operators() {
+            if !operator_has_unconditional_effect(op, &fact) {
+                continue;
+            }
+            for precondition in op.preconditions() {
+                if frontier.len() >= COMPLEMENTARY_MAX_PROPOSITIONAL_SEEDS {
+                    break;
+                }
+                frontier.push((precondition.clone(), depth + 1));
+            }
+        }
+    }
+    dedup_seed_splits_preserve_order(&mut seeds);
+    seeds
+}
+
+fn operator_has_unconditional_effect(op: &Operator, fact: &ExplicitFact) -> bool {
+    op.effects().iter().any(|effect| {
+        effect.conditions().is_empty()
+            && effect.var_id() == fact.var
+            && effect.value() == fact.value
+    })
 }
 
 fn view_candidate_for_comparison_fact(
@@ -1388,6 +1443,16 @@ fn sort_and_dedup_seed_splits(seeds: &mut Vec<InitialSeedSplit>) {
         ),
     });
     seeds.dedup();
+}
+
+fn dedup_seed_splits_preserve_order(seeds: &mut Vec<InitialSeedSplit>) {
+    let mut unique = Vec::with_capacity(seeds.len());
+    for seed in seeds.drain(..) {
+        if !unique.iter().any(|existing| existing == &seed) {
+            unique.push(seed);
+        }
+    }
+    *seeds = unique;
 }
 
 fn goal_seed_splits(task: &dyn AbstractNumericTask) -> Vec<InitialSeedSplit> {

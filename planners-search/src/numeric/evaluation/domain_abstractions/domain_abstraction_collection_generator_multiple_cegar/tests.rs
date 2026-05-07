@@ -312,6 +312,108 @@ fn complementary_seed_splits_group_alternative_goal_achiever_views() {
 }
 
 #[test]
+fn complementary_seed_splits_include_bounded_propositional_achiever_chain() {
+    let variables = vec![
+        ExplicitVariable::new(
+            2,
+            "at_item_target".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            0,
+        ),
+        ExplicitVariable::new(
+            2,
+            "in_arm".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            0,
+        ),
+        ExplicitVariable::new(
+            2,
+            "at_bot_target".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            0,
+        ),
+        ExplicitVariable::new(
+            2,
+            "at_item_source".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            1,
+        ),
+        ExplicitVariable::new(
+            2,
+            "at_bot_source".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            1,
+        ),
+        ExplicitVariable::new(
+            2,
+            "free_arm".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            1,
+        ),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0, 0, 0, 1, 1, 1],
+        vec![],
+        vec![
+            Operator::new(
+                "drop".into(),
+                vec![ExplicitFact::new(1, 1), ExplicitFact::new(2, 1)],
+                vec![Effect::new(vec![], 0, Some(0), 1)],
+                vec![],
+                1,
+            ),
+            Operator::new(
+                "pick".into(),
+                vec![
+                    ExplicitFact::new(3, 1),
+                    ExplicitFact::new(4, 1),
+                    ExplicitFact::new(5, 1),
+                ],
+                vec![Effect::new(vec![], 1, Some(0), 1)],
+                vec![],
+                1,
+            ),
+            Operator::new(
+                "move".into(),
+                vec![ExplicitFact::new(4, 1)],
+                vec![Effect::new(vec![], 2, Some(0), 1)],
+                vec![],
+                1,
+            ),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        portfolio_strategy: PortfolioStrategy::Complementary,
+        ..Default::default()
+    };
+    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
+
+    let seeds = generator.initial_seed_splits(&task, 1);
+    for (var_id, value) in [(0, 1), (1, 1), (2, 1), (3, 1), (4, 1), (5, 1)] {
+        assert!(
+            seeds.contains(&InitialSeedSplit::Propositional { var_id, value }),
+            "missing propositional achiever seed p{var_id}={value}: {seeds:?}"
+        );
+    }
+}
+
+#[test]
 fn region_landmarks_seed_splits_build_goal_achiever_shells() {
     let variables = vec![
         ExplicitVariable::new(
