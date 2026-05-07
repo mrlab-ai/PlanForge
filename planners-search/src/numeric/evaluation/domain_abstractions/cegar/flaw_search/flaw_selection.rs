@@ -156,6 +156,7 @@ impl FlawTreatment for FlawTreatmentVariants {
                 domain_sizes,
                 numeric_domain_sizes,
                 1,
+                rng,
             ),
             Self::MaxRefinedPreferringProp => fix_single_flaw_max_refined(
                 flaws,
@@ -163,6 +164,7 @@ impl FlawTreatment for FlawTreatmentVariants {
                 domain_sizes,
                 numeric_domain_sizes,
                 100,
+                rng,
             ),
             FlawTreatmentVariants::ClosestToGoal => fix_closest_to_goal(flaws),
             Self::BalanceMaxRefinedAndClosestToGoal => fix_balance_max_refined_closest_to_goal(
@@ -323,6 +325,7 @@ pub(super) fn fix_single_flaw_max_refined(
     domain_sizes: &mut [usize],
     numeric_domain_sizes: &mut [usize],
     prop_multiplier: usize,
+    rng: &mut SmallRng,
 ) -> ChosenFlaws {
     if flaws.is_empty() {
         return vec![];
@@ -335,12 +338,18 @@ pub(super) fn fix_single_flaw_max_refined(
         numeric_domain_sizes,
         prop_multiplier,
     );
-    // Highest score first; tie-break by stable atom key for determinism.
-    candidates.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
-            .then_with(|| flaw_atom_key(&flaws[a.idx]).cmp(&flaw_atom_key(&flaws[b.idx])))
-    });
+    // Match numeric-FD: highest score first, random order within an equal-score tier.
+    candidates.sort_by(|a, b| b.score.cmp(&a.score));
+    let mut tier_start = 0;
+    while tier_start < candidates.len() {
+        let score = candidates[tier_start].score;
+        let mut tier_end = tier_start + 1;
+        while tier_end < candidates.len() && candidates[tier_end].score == score {
+            tier_end += 1;
+        }
+        candidates[tier_start..tier_end].shuffle(rng);
+        tier_start = tier_end;
+    }
 
     candidates
 }

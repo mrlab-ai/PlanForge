@@ -146,9 +146,9 @@ fn get_sequence_progression_flaws(
                 )?;
                 if !flawed {
                     step_flaws.clear();
-                    state = next_state.take().unwrap();
-                    break;
                 }
+                state = next_state.take().unwrap();
+                break;
             } else {
                 step_flaws.extend(operator_flaws);
             }

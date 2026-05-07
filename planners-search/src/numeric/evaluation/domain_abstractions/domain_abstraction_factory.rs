@@ -21,8 +21,7 @@ use super::abstract_operator_generator::{
 use super::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::{
-    evaluate_comparison_tree_from_abstract_state, evaluate_comparison_tree_from_initial_state,
-    prepare_comparison_tree_inputs_from_abstract_state,
+    evaluate_comparison_tree_from_initial_state, prepare_comparison_tree_inputs_from_abstract_state,
     prepare_comparison_tree_inputs_from_abstract_state_into,
 };
 use super::transition_cost_partitioning::{

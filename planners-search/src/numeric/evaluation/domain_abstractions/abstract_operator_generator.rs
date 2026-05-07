@@ -2,7 +2,6 @@
 mod tests;
 
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
 
 use anyhow::{Context, Result, anyhow, ensure};
 
@@ -468,35 +467,6 @@ fn build_candidate_from_transition(
     })
 }
 
-fn materialize_skeletons(
-    task: &dyn AbstractNumericTask,
-    generator: &mut AbstractOperatorGenerator,
-    skeletons: &[AbstractOperatorSkeleton],
-) -> Result<Vec<AbstractOperatorCandidate>> {
-    let Some(first) = skeletons.first() else {
-        return Ok(Vec::new());
-    };
-    let transitions = compute_hash_effects_with_preconditions(
-        task,
-        generator,
-        &first.op_preconditions,
-        &first.ass_effects,
-    )?;
-
-    let mut out: Vec<AbstractOperatorCandidate> =
-        Vec::with_capacity(skeletons.len().saturating_mul(transitions.len()));
-    for skeleton in skeletons {
-        debug_assert_eq!(skeleton.ass_effects, first.ass_effects);
-        debug_assert_eq!(skeleton.op_preconditions, first.op_preconditions);
-        for trans in &transitions {
-            if let Some(candidate) = build_candidate_from_transition(skeleton, trans) {
-                out.push(candidate);
-            }
-        }
-    }
-    Ok(out)
-}
-
 fn materialize_skeletons_into(
     task: &dyn AbstractNumericTask,
     generator: &mut AbstractOperatorGenerator,
@@ -854,21 +824,6 @@ impl AbstractOperatorGenerator {
             }
         }
         dependencies
-    }
-
-    fn finalize_candidate_refs<'a>(
-        &self,
-        candidates: impl IntoIterator<Item = &'a AbstractOperatorCandidate>,
-    ) -> Vec<AbstractOperator> {
-        // Reuse the same finalizer that `build_abstract_operators` uses so we
-        // share the identity-hashed grouping path and the per-operator
-        // signature storage that avoids per-candidate Vec allocations.
-        let mut finalizer =
-            AbstractOperatorFinalizer::new(self.combine_labels, &self.hash_multipliers);
-        for candidate in candidates {
-            finalizer.push_candidate(candidate);
-        }
-        finalizer.into_operators()
     }
 
     #[inline]
@@ -1506,6 +1461,7 @@ fn enumerate_partition_combos(
     Ok(())
 }
 
+#[cfg(test)]
 fn prepare_comparison_tree_inputs_for_combo(
     task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,

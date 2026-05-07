@@ -1544,30 +1544,6 @@ impl<'a> StateRegistry<'a> {
         Ok(new_metric - old_metric)
     }
 
-    fn metric_delta_from_successor_numeric_values(
-        &self,
-        state: &ConcreteState,
-        successor_numeric_values: &[f64],
-    ) -> Result<f64, StateInsertError> {
-        if !self.metric_use_metric {
-            return Ok(1.0);
-        }
-
-        let old_metric = self
-            .metric_value_for_state(state)
-            .map_err(|e| StateInsertError {
-                message: format!("Failed to read metric value for state: {e:?}"),
-            })?;
-
-        let new_metric = self
-            .evaluate_metric(successor_numeric_values)
-            .map_err(|e| StateInsertError {
-                message: format!("Failed to evaluate metric after applying operator: {e:?}"),
-            })?;
-
-        Ok(new_metric - old_metric)
-    }
-
     fn metric_value_for_state(&self, state: &ConcreteState) -> Result<f64, InvalidIndex> {
         let Some((metric_fluent_id, metric_type)) = self.metric_var else {
             return Ok(0.0);

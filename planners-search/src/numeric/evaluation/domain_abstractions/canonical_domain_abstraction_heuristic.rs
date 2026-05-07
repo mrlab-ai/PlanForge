@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
+use tracing::info;
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
@@ -23,6 +24,8 @@ pub struct CanonicalDomainAbstractionHeuristic {
     state_value_cache: RefCell<Vec<Option<f64>>>,
     lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
     required_abstraction_ids: Vec<usize>,
+    relevant_operator_ids: Vec<BTreeSet<usize>>,
+    diagnostics_logged: RefCell<bool>,
 }
 
 impl CanonicalDomainAbstractionHeuristic {
@@ -50,10 +53,13 @@ impl CanonicalDomainAbstractionHeuristic {
             )?);
         }
 
-        Ok(Self::with_explicit_subsets(
+        let max_additive_subsets =
+            compute_max_additive_subsets_from_relevant_operators(&relevant_operators);
+        Ok(Self::with_explicit_subsets_and_relevant_operators(
             name,
             heuristics,
-            compute_max_additive_subsets_from_relevant_operators(&relevant_operators),
+            max_additive_subsets,
+            relevant_operators,
         ))
     }
 
@@ -62,6 +68,20 @@ impl CanonicalDomainAbstractionHeuristic {
         heuristics: Vec<DomainAbstractionHeuristic>,
         max_additive_subsets: Vec<Vec<usize>>,
     ) -> Self {
+        Self::with_explicit_subsets_and_relevant_operators(
+            name,
+            heuristics,
+            max_additive_subsets,
+            Vec::new(),
+        )
+    }
+
+    fn with_explicit_subsets_and_relevant_operators(
+        name: Option<String>,
+        heuristics: Vec<DomainAbstractionHeuristic>,
+        max_additive_subsets: Vec<Vec<usize>>,
+        relevant_operator_ids: Vec<BTreeSet<usize>>,
+    ) -> Self {
         Self {
             name: name.unwrap_or_else(|| "canonical_domain_abstractions".to_string()),
             heuristics,
@@ -69,6 +89,8 @@ impl CanonicalDomainAbstractionHeuristic {
             max_additive_subsets,
             state_value_cache: RefCell::new(Vec::new()),
             lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
+            relevant_operator_ids,
+            diagnostics_logged: RefCell::new(false),
         }
     }
 
@@ -110,6 +132,7 @@ impl CanonicalDomainAbstractionHeuristic {
             Some(&self.required_abstraction_ids),
             &mut scratch,
         )?;
+        self.log_diagnostics_once(&scratch.abstract_state_ids);
         scratch.abstraction_value_cache.clear();
         scratch
             .abstraction_value_cache
@@ -174,6 +197,80 @@ impl CanonicalDomainAbstractionHeuristic {
 
         Ok(best)
     }
+
+    fn log_diagnostics_once(&self, abstract_state_ids: &[Option<usize>]) {
+        {
+            let mut logged = self.diagnostics_logged.borrow_mut();
+            if *logged {
+                return;
+            }
+            *logged = true;
+        }
+
+        let mut abstraction_values = Vec::with_capacity(self.heuristics.len());
+        for (index, heuristic) in self.heuristics.iter().enumerate() {
+            let value = match abstract_state_ids.get(index).copied().flatten() {
+                Some(state_id) => heuristic
+                    .abstraction()
+                    .distance_table
+                    .distances
+                    .get(state_id)
+                    .copied()
+                    .unwrap_or(f64::NAN),
+                None => f64::NAN,
+            };
+            abstraction_values.push(value);
+        }
+
+        info!(
+            "canonical domain abstraction diagnostics: abstractions={}, max_additive_subsets={}, required_abstractions={}",
+            self.heuristics.len(),
+            self.max_additive_subsets.len(),
+            self.required_abstraction_ids.len()
+        );
+        for (index, heuristic) in self.heuristics.iter().enumerate() {
+            let abstraction = heuristic.abstraction();
+            let relevant_count = self
+                .relevant_operator_ids
+                .get(index)
+                .map(BTreeSet::len)
+                .unwrap_or(0);
+            let relevant_preview = self
+                .relevant_operator_ids
+                .get(index)
+                .map(preview_operator_ids)
+                .unwrap_or_else(|| "not available".to_string());
+            info!(
+                "canonical abstraction {index}: states={}, lookup_state={:?}, h={}, relevant_ops={} [{}]",
+                abstraction.distance_table.distances.len(),
+                abstract_state_ids.get(index).copied().flatten(),
+                abstraction_values.get(index).copied().unwrap_or(f64::NAN),
+                relevant_count,
+                relevant_preview
+            );
+        }
+
+        let mut subset_summaries: Vec<_> = self
+            .max_additive_subsets
+            .iter()
+            .map(|subset| {
+                let value = subset
+                    .iter()
+                    .map(|&index| abstraction_values.get(index).copied().unwrap_or(f64::NAN))
+                    .sum::<f64>();
+                (value, subset)
+            })
+            .collect();
+        subset_summaries.sort_by(|left, right| {
+            right
+                .0
+                .partial_cmp(&left.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for (rank, (value, subset)) in subset_summaries.iter().take(10).enumerate() {
+            info!("canonical subset #{rank}: h={value}, abstractions={subset:?}");
+        }
+    }
 }
 
 impl Heuristic for CanonicalDomainAbstractionHeuristic {
@@ -216,15 +313,42 @@ fn compute_relevant_operator_ids(
     let operators = generator.build_abstract_operators(task).map_err(|error| {
         format!("failed to build abstract operators for canonical domain abstraction: {error:#}")
     })?;
+    let transition_system = abstraction
+        .factory
+        .build_abstract_transition_system_from_operators_without_regions_with_deadline(
+            task,
+            abstraction.combine_labels,
+            &operators,
+            None,
+        )
+        .map_err(|error| {
+            format!(
+                "failed to build abstract transition system for canonical domain abstraction: {error:#}"
+            )
+        })?;
 
-    Ok(operators
+    Ok(transition_system
+        .transitions
         .into_iter()
-        .flat_map(|operator| operator.concrete_op_ids.into_iter())
+        .flat_map(|transition| transition.concrete_op_ids.into_iter())
         .collect())
 }
 
 fn are_operator_sets_additive(left: &BTreeSet<usize>, right: &BTreeSet<usize>) -> bool {
     !left.iter().any(|operator_id| right.contains(operator_id))
+}
+
+fn preview_operator_ids(operator_ids: &BTreeSet<usize>) -> String {
+    const LIMIT: usize = 24;
+    let mut ids: Vec<String> = operator_ids
+        .iter()
+        .take(LIMIT)
+        .map(|operator_id| operator_id.to_string())
+        .collect();
+    if operator_ids.len() > LIMIT {
+        ids.push(format!("...+{}", operator_ids.len() - LIMIT));
+    }
+    ids.join(",")
 }
 
 fn compute_max_additive_subsets_from_relevant_operators(

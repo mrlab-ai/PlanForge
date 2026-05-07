@@ -12,7 +12,7 @@ use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
-use tracing::debug;
+use tracing::{debug, info};
 
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, ExplicitFact, NumericType, Operator,
@@ -243,6 +243,8 @@ impl Cegar {
                 );
             }
 
+            let iteration_start = Instant::now();
+            let plan_start = Instant::now();
             wildcard_plan = factory
                 .compute_plan_with_rng_and_cache(
                     task,
@@ -255,6 +257,7 @@ impl Cegar {
                 .with_context(|| {
                     format!("failed to compute abstract plan (iteration {iteration})")
                 })?;
+            let plan_time = plan_start.elapsed();
             if config.debug {
                 match wildcard_plan.as_ref() {
                     Some(plan) => super::utils::debug_print_wildcard_plan(
@@ -271,11 +274,9 @@ impl Cegar {
             let Some(plan) = wildcard_plan.as_ref() else {
                 break;
             };
-            if wildcard_plan_is_real(task, plan)? {
-                // There is a real plan in the abstract plan, perfect heuristic.
-                break;
-            }
+            let real_check_time = Duration::ZERO;
 
+            let flaw_start = Instant::now();
             let flaws = get_flaws(
                 task,
                 &factory.partitions,
@@ -284,6 +285,7 @@ impl Cegar {
                 self.config.flaw_kind,
             )
             .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
+            let flaw_time = flaw_start.elapsed();
             if config.debug {
                 super::utils::debug_print_flaws(&flaws);
             }
@@ -296,6 +298,7 @@ impl Cegar {
             } else {
                 None
             };
+            let refine_start = Instant::now();
             let refined = fix_flaws(
                 &self.config,
                 task,
@@ -310,6 +313,7 @@ impl Cegar {
                 plan.wildcard_plan.len(),
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
+            let refine_time = refine_start.elapsed();
             operator_cache.mark_refined(&refined);
             if config.debug {
                 let after_size = compute_abstraction_size_u128(
@@ -327,6 +331,23 @@ impl Cegar {
             if refined.is_empty() {
                 break;
             }
+            if config.debug {
+                let abstraction_size =
+                    compute_abstraction_size_u128(&factory.domain_sizes, &factory.numeric_domain_sizes)
+                        .unwrap_or(u128::MAX);
+                info!(
+                    "CEGAR iteration {iteration}: plan_len={}, flaws={}, refined={:?}, size={}, elapsed={:.3}s, plan={:.3}s, real_check={:.3}s, flaws_time={:.3}s, refine={:.3}s",
+                    plan.wildcard_plan.len(),
+                    flaws.len(),
+                    refined,
+                    abstraction_size,
+                    iteration_start.elapsed().as_secs_f64(),
+                    plan_time.as_secs_f64(),
+                    real_check_time.as_secs_f64(),
+                    flaw_time.as_secs_f64(),
+                    refine_time.as_secs_f64()
+                );
+            }
 
             iteration += 1;
         }
@@ -339,10 +360,17 @@ impl Cegar {
     }
 }
 
+#[allow(dead_code)]
 fn wildcard_plan_is_real(
     task: &dyn AbstractNumericTask,
     wildcard_plan: &WildcardPlanResult,
 ) -> Result<bool> {
+    // Note for Martin:
+    // This verifies whether *any* concrete operator choice through a wildcard
+    // abstract plan is a real plan. For long wildcard plans the search is
+    // exponential in the number of equivalent concrete operators per step. On
+    // sailing it cost several seconds per CEGAR iteration once plans became
+    // long, so the CEGAR loop intentionally does not call this hot-path check.
     let state_packer = make_prop_state_packer(task);
     let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
 
@@ -356,11 +384,8 @@ fn wildcard_plan_is_real(
     last_state_per_layer[0] = Some((prop_state.clone(), numeric_state.clone()));
 
     let mut real_plan_exists = false;
-    // TODO: A set of dead ends could be used if `f64` could be hashed.
-    // let mut dead_ends: HashSet<ConcreteState> = HashSet::new();
     let mut current_step: usize = 0;
     let mut equiv_op_iterators = Vec::with_capacity(plan_length);
-    // Equivalent operators of the first layer.
     equiv_op_iterators.push(wildcard_plan.wildcard_plan[0].iter());
 
     loop {
@@ -376,63 +401,45 @@ fn wildcard_plan_is_real(
                     &mut prop_state,
                     &mut numeric_state,
                 )?;
-                // if dead_ends.contains((prop_state, numeric_state)) { // Go to the previous layer. }
                 current_step += 1;
                 if current_step == plan_length {
                     if is_goal(task, &prop_state, &state_packer) {
                         real_plan_exists = true;
                         break;
-                    } else {
-                        // Go to the previous layer.
-                        current_step -= 1;
-                        (prop_state, numeric_state) =
-                            last_state_per_layer[current_step].clone().unwrap();
-                        continue;
                     }
+                    current_step -= 1;
+                    (prop_state, numeric_state) =
+                        last_state_per_layer[current_step].clone().unwrap();
+                    continue;
                 }
                 last_state_per_layer[current_step] =
                     Some((prop_state.clone(), numeric_state.clone()));
-                // All operators must be tried again from this state.
                 equiv_op_iterators.push(wildcard_plan.wildcard_plan[current_step].iter());
-            } else {
-                // dead_ends.insert((prop_state, numeric_state));
-                continue;
             }
+        } else if current_step == 0 {
+            break;
         } else {
-            if current_step == 0 {
-                // All operators tried.
-                break;
-            } else {
-                // Go to the previous layer.
-                current_step -= 1;
-                equiv_op_iterators.pop();
-                (prop_state, numeric_state) = last_state_per_layer[current_step].clone().unwrap();
-                continue;
-            }
+            current_step -= 1;
+            equiv_op_iterators.pop();
+            (prop_state, numeric_state) = last_state_per_layer[current_step].clone().unwrap();
         }
     }
 
     Ok(real_plan_exists)
 }
 
+#[allow(dead_code)]
 fn is_applicable(buffer: &[u64], packer: &IntDoublePacker, op: &Operator) -> bool {
-    for pre in op.preconditions().iter() {
-        if !fact_is_hold(pre, packer, buffer) {
-            return false;
-        }
-    }
-
-    true
+    op.preconditions()
+        .iter()
+        .all(|pre| fact_is_hold(pre, packer, buffer))
 }
 
+#[allow(dead_code)]
 fn is_goal(task: &dyn AbstractNumericTask, buffer: &[u64], packer: &IntDoublePacker) -> bool {
-    for goal_fact in goal_variable_values(task) {
-        if !fact_is_hold(&goal_fact, packer, buffer) {
-            return false;
-        }
-    }
-
-    true
+    goal_variable_values(task)
+        .iter()
+        .all(|goal_fact| fact_is_hold(goal_fact, packer, buffer))
 }
 
 fn current_time_seed() -> u64 {

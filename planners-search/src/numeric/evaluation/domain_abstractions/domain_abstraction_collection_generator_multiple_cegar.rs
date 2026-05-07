@@ -1045,6 +1045,7 @@ fn log_collection_abstraction_debug(
         abstraction.abstract_operators.len(),
         metadata.initial_seed_splits.join(","),
     );
+    log_split_propositional_vars(abstraction, task);
     log_split_numeric_partitions(abstraction, task);
 }
 
@@ -1066,6 +1067,26 @@ fn log_collection_debug_summary(abstractions: &[DomainAbstraction]) {
             .unwrap_or(u128::MAX),
             abstraction.abstract_operators.len(),
             abstraction.metadata.initial_seed_splits.join(","),
+        );
+    }
+}
+
+fn log_split_propositional_vars(abstraction: &DomainAbstraction, task: &dyn AbstractNumericTask) {
+    let mut entries = Vec::new();
+    for (var_id, &size) in abstraction
+        .factory
+        .domain_sizes()
+        .iter()
+        .enumerate()
+        .filter(|(_, size)| **size > 1)
+    {
+        let name = task.get_variable_name(var_id).unwrap_or("<unknown>");
+        entries.push(format!("p{var_id}={name}:size{size}"));
+    }
+    if !entries.is_empty() {
+        info!(
+            "domain abstraction collection debug prop vars: {}",
+            entries.join(", ")
         );
     }
 }
