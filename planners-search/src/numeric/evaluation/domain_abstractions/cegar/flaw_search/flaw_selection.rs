@@ -54,10 +54,10 @@ pub trait FlawTreatment {
         rng: &mut SmallRng,
         blacklisted_prop_var_ids: &mut HashSet<usize>,
         blacklisted_numeric_var_ids: &mut HashSet<usize>,
-        domain_mapping: &mut DomainMapping,
-        domain_sizes: &mut [usize],
-        partitions: &mut NumericPartitions,
-        numeric_domain_sizes: &mut [usize],
+        domain_mapping: &DomainMapping,
+        domain_sizes: &[usize],
+        partitions: &NumericPartitions,
+        numeric_domain_sizes: &[usize],
         plan_length: usize,
     ) -> ChosenFlaws;
 
@@ -139,10 +139,10 @@ impl FlawTreatment for FlawTreatmentVariants {
         rng: &mut SmallRng,
         _blacklisted_prop_var_ids: &mut HashSet<usize>,
         _blacklisted_numeric_var_ids: &mut HashSet<usize>,
-        _domain_mapping: &mut DomainMapping,
-        domain_sizes: &mut [usize],
-        _partitions: &mut NumericPartitions,
-        numeric_domain_sizes: &mut [usize],
+        _domain_mapping: &DomainMapping,
+        domain_sizes: &[usize],
+        _partitions: &NumericPartitions,
+        numeric_domain_sizes: &[usize],
         plan_length: usize,
     ) -> ChosenFlaws {
         match self {
@@ -267,8 +267,8 @@ pub(super) fn fix_flaws_per_variable(flaws: &[Flaw]) -> ChosenFlaws {
 fn compute_max_refined(
     flaws: &[Flaw],
     comparison_var_ids: &HashSet<usize>,
-    domain_sizes: &mut [usize],
-    numeric_domain_sizes: &mut [usize],
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
     prop_multiplier: usize,
 ) -> (ChosenFlaws, usize) {
     let mut max_score = 0;
@@ -319,8 +319,8 @@ fn compute_max_refined(
 pub(super) fn fix_single_flaw_max_refined(
     flaws: &[Flaw],
     comparison_var_ids: &HashSet<usize>,
-    domain_sizes: &mut [usize],
-    numeric_domain_sizes: &mut [usize],
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
     prop_multiplier: usize,
 ) -> ChosenFlaws {
     if flaws.is_empty() {
@@ -361,8 +361,8 @@ pub(super) fn fix_closest_to_goal(flaws: &[Flaw]) -> ChosenFlaws {
 pub(super) fn fix_balance_max_refined_closest_to_goal(
     flaws: &[Flaw],
     comparison_var_ids: &HashSet<usize>,
-    domain_sizes: &mut [usize],
-    numeric_domain_sizes: &mut [usize],
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
     plan_length: usize,
     prop_multiplier: usize,
 ) -> ChosenFlaws {

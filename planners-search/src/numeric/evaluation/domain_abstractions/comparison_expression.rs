@@ -140,6 +140,26 @@ impl Interval {
     }
 
     #[inline]
+    pub fn intersect(&mut self, other: &Interval) {
+        if other.is_empty() {
+            *self = EMPTY_INTERVAL;
+        } else if !self.is_empty() {
+            if self.lower < other.lower {
+                self.lower = other.lower;
+                self.lower_closed = other.lower_closed;
+            } else if self.lower == other.lower {
+                self.lower_closed = self.lower_closed && other.lower_closed;
+            }
+            if self.upper > other.upper {
+                self.upper = other.upper;
+                self.upper_closed = other.upper_closed;
+            } else if self.upper == other.upper {
+                self.upper_closed = self.upper_closed && other.upper_closed;
+            }
+        }
+    }
+
+    #[inline]
     #[allow(clippy::if_same_then_else)]
     pub fn lower_is_lower(&self, other: &Self) -> bool {
         if self.lower < other.lower {

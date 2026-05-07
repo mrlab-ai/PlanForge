@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
 
@@ -10,7 +10,6 @@ use super::domain_abstraction_factory::{AbstractDistanceTable, DomainAbstraction
 pub struct DomainAbstraction {
     pub factory: DomainAbstractionFactory,
     pub distance_table: AbstractDistanceTable,
-    pub hash_multipliers: Vec<usize>,
     pub combine_labels: bool,
 }
 
@@ -43,50 +42,10 @@ impl DomainAbstractionGenerator {
             .build_abstract_distance_table(task, self.config.combine_labels, false)
             .context("failed to build abstract distance table")?;
 
-        let hash_multipliers =
-            compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())
-                .context("failed to compute hash multipliers")?;
-
         Ok(DomainAbstraction {
             factory,
             distance_table,
-            hash_multipliers,
             combine_labels: self.config.combine_labels,
         })
     }
-}
-
-/// Computes mixed-radix hash multipliers for propositional and numeric variables.
-///
-/// This mirrors the hashing scheme used by `AbstractOperatorGenerator`.
-pub fn compute_hash_multipliers(
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-) -> Result<Vec<usize>> {
-    let total = domain_sizes
-        .len()
-        .checked_add(numeric_domain_sizes.len())
-        .context("variable count overflow")?;
-    ensure!(total > 0, "cannot compute hash multipliers for 0 variables");
-
-    let mut multipliers: Vec<usize> = vec![0; total];
-    let mut mult: usize = 1;
-    for idx in 0..total {
-        multipliers[idx] = mult;
-
-        let radix: usize = if idx < domain_sizes.len() {
-            domain_sizes[idx]
-        } else {
-            let n = idx - domain_sizes.len();
-            *numeric_domain_sizes
-                .get(n)
-                .context("numeric domain size out of range")?
-        };
-
-        mult = mult
-            .checked_mul(radix)
-            .context("hash multiplier overflow")?;
-    }
-
-    Ok(multipliers)
 }

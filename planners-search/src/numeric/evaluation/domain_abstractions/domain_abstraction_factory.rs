@@ -12,6 +12,8 @@ use rand::{SeedableRng, rngs::SmallRng};
 
 use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
 
+use crate::numeric::evaluation::domain_abstractions::transition_system::TransitionSystem;
+
 use super::abstract_operator_generator::{
     AbstractOperator, AbstractOperatorGenerator, DomainMapping, IncrementalAbstractOperatorCache,
 };
@@ -230,10 +232,7 @@ pub struct WildcardPlanResult {
 
 #[derive(Debug, Clone)]
 pub struct DomainAbstractionFactory {
-    pub domain_mapping: DomainMapping,
-    pub domain_sizes: Vec<usize>,
-    pub partitions: NumericPartitions,
-    pub numeric_domain_sizes: Vec<usize>,
+    pub transition_system: TransitionSystem,
     comparison_index: Option<ComparisonAxiomIndex>,
     comparison_trees: Vec<ComparisonTree>,
 }
@@ -313,29 +312,45 @@ impl DomainAbstractionFactory {
         }
 
         Ok(Self {
-            domain_mapping,
-            domain_sizes,
-            partitions,
-            numeric_domain_sizes,
+            transition_system: TransitionSystem::trivial_abstraction(
+                task,
+                domain_mapping,
+                domain_sizes,
+                partitions,
+                numeric_domain_sizes,
+            ),
             comparison_index,
             comparison_trees,
         })
     }
 
+    pub fn abstract_state_hash(&self, prop: &[usize], numeric: &[usize]) -> usize {
+        let mut hash: usize = 0;
+
+        hash += prop.iter().enumerate().fold(0, |accum, (var, value)| {
+            accum + self.transition_system.hash_multipliers()[var] * *value
+        });
+        hash += numeric.iter().enumerate().fold(0, |accum, (var, value)| {
+            accum + self.transition_system.hash_multipliers()[prop.len() + var] * *value
+        });
+
+        hash
+    }
+
     pub fn partitions(&self) -> &NumericPartitions {
-        &self.partitions
+        self.transition_system.partitions()
     }
 
     pub fn domain_mapping(&self) -> &DomainMapping {
-        &self.domain_mapping
+        self.transition_system.domain_mapping()
     }
 
     pub fn domain_sizes(&self) -> &[usize] {
-        &self.domain_sizes
+        self.transition_system.domain_sizes()
     }
 
     pub fn numeric_domain_sizes(&self) -> &[usize] {
-        &self.numeric_domain_sizes
+        self.transition_system.numeric_domain_sizes()
     }
 
     pub fn comparison_index(&self) -> Option<&ComparisonAxiomIndex> {
@@ -353,10 +368,10 @@ impl DomainAbstractionFactory {
     ) -> Result<AbstractOperatorGenerator> {
         AbstractOperatorGenerator::new(
             task,
-            self.domain_mapping.clone(),
-            self.domain_sizes.clone(),
-            self.partitions.clone(),
-            self.numeric_domain_sizes.clone(),
+            self.transition_system.domain_mapping().clone(),
+            self.transition_system.domain_sizes().clone(),
+            self.transition_system.partitions().clone(),
+            self.transition_system.numeric_domain_sizes().clone(),
             combine_labels,
         )
     }
@@ -626,10 +641,11 @@ impl DomainAbstractionFactory {
             &comparison_var_ids,
         )?;
 
-        let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
+        let num_states =
+            compute_num_states(&self.transition_system.domain_sizes(), numeric_domain_sizes)?;
 
         let match_tree = MatchTree::build(
-            &self.domain_sizes,
+            &self.transition_system.domain_sizes(),
             numeric_domain_sizes,
             hash_multipliers,
             operators,
@@ -683,9 +699,10 @@ impl DomainAbstractionFactory {
             hash_multipliers,
             &comparison_var_ids,
         )?;
-        let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
+        let num_states =
+            compute_num_states(&self.transition_system.domain_sizes(), numeric_domain_sizes)?;
         let match_tree = MatchTree::build(
-            &self.domain_sizes,
+            &self.transition_system.domain_sizes(),
             numeric_domain_sizes,
             hash_multipliers,
             operators,
@@ -813,15 +830,16 @@ impl DomainAbstractionFactory {
         state_hash: usize,
         hash_multipliers: &[usize],
     ) -> Result<Vec<Vec<usize>>> {
-        let mut region = Vec::with_capacity(self.domain_sizes.len());
-        for (var_id, &domain_size) in self.domain_sizes.iter().enumerate() {
+        let mut region = Vec::with_capacity(self.transition_system.domain_sizes().len());
+        for (var_id, &domain_size) in self.transition_system.domain_sizes().iter().enumerate() {
             ensure!(domain_size > 0, "domain size must be > 0 for var {var_id}");
             let multiplier = *hash_multipliers
                 .get(var_id)
                 .with_context(|| format!("missing hash multiplier for var {var_id}"))?;
             let abstract_value = (state_hash / multiplier) % domain_size;
             let values = self
-                .domain_mapping
+                .transition_system
+                .domain_mapping()
                 .get(var_id)
                 .with_context(|| format!("missing domain mapping for var {var_id}"))?
                 .iter()
@@ -845,7 +863,7 @@ impl DomainAbstractionFactory {
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
     ) -> Result<Vec<Interval>> {
-        let num_props = self.domain_sizes.len();
+        let num_props = self.transition_system.domain_sizes().len();
         let mut region = Vec::with_capacity(numeric_domain_sizes.len());
         for (numeric_var_id, &domain_size) in numeric_domain_sizes.iter().enumerate() {
             ensure!(
@@ -858,7 +876,8 @@ impl DomainAbstractionFactory {
             })?;
             let partition_id = (state_hash / multiplier) % domain_size;
             let interval = self
-                .partitions
+                .transition_system
+                .partitions()
                 .partition_interval(numeric_var_id, partition_id)
                 .with_context(|| {
                     format!(
@@ -1083,12 +1102,20 @@ impl DomainAbstractionFactory {
                 let ax = &task.axioms()[ax_idx];
                 for cond in ax.conditions() {
                     let v = cond.var;
-                    if self.domain_sizes.get(v).copied().unwrap_or(1) <= 1 {
+                    if self
+                        .transition_system
+                        .domain_sizes()
+                        .get(v)
+                        .copied()
+                        .unwrap_or(1)
+                        <= 1
+                    {
                         continue;
                     }
                     let val = cond.value;
                     let mapped = self
-                        .domain_mapping
+                        .transition_system
+                        .domain_mapping()
                         .get(v)
                         .and_then(|m| m.get(val))
                         .copied()
@@ -1097,12 +1124,20 @@ impl DomainAbstractionFactory {
                 }
             } else {
                 let v = g.var;
-                if self.domain_sizes.get(v).copied().unwrap_or(1) <= 1 {
+                if self
+                    .transition_system
+                    .domain_sizes()
+                    .get(v)
+                    .copied()
+                    .unwrap_or(1)
+                    <= 1
+                {
                     continue;
                 }
                 let val = g.value;
                 let mapped = self
-                    .domain_mapping
+                    .transition_system
+                    .domain_mapping()
                     .get(v)
                     .and_then(|m| m.get(val))
                     .copied()
@@ -1121,14 +1156,14 @@ impl DomainAbstractionFactory {
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
     ) -> bool {
-        let num_props = self.domain_sizes.len();
+        let num_props = self.transition_system.domain_sizes().len();
         for g in goals {
             let var = g.var;
             let expected = g.value;
             let mult = hash_multipliers[var];
             let state = state_hash;
             let dom_size = if var < num_props {
-                self.domain_sizes[var]
+                self.transition_system.domain_sizes()[var]
             } else {
                 let n = var - num_props;
                 numeric_domain_sizes.get(n).copied().unwrap_or(0)
@@ -1150,7 +1185,7 @@ impl DomainAbstractionFactory {
     ) -> Result<usize> {
         let prop_init = task.get_initial_propositional_state_values();
         let num_init = task.get_initial_numeric_state_values();
-        let num_props = self.domain_sizes.len();
+        let num_props = self.transition_system.domain_sizes().len();
         ensure!(
             prop_init.len() >= num_props,
             "initial propositional state too short: {} < {num_props}",
@@ -1184,7 +1219,7 @@ impl DomainAbstractionFactory {
             } else {
                 prop_init[var]
             };
-            let abs_val = *self.domain_mapping[var]
+            let abs_val = *self.transition_system.domain_mapping()[var]
                 .get(concrete_val)
                 .with_context(|| {
                     format!(
@@ -1203,7 +1238,8 @@ impl DomainAbstractionFactory {
                 "initial numeric value for var {num_var_id} must be finite, got {val}"
             );
             let parts = self
-                .partitions
+                .transition_system
+                .partitions()
                 .partitions(num_var_id)
                 .with_context(|| format!("missing partitions for numeric var {num_var_id}"))?;
             let part = utils::partition_for_value(parts, val).with_context(|| {
@@ -1232,20 +1268,20 @@ impl DomainAbstractionFactory {
         let mut out = state_hash;
         for &var_id in comparison_var_ids {
             ensure!(
-                var_id < self.domain_sizes.len(),
+                var_id < self.transition_system.domain_sizes().len(),
                 "comparison var id out of range: {var_id}"
             );
             if fixed.contains(&(var_id)) {
                 continue;
             }
-            if self.domain_sizes[var_id] <= 1 {
+            if self.transition_system.domain_sizes()[var_id] <= 1 {
                 continue;
             }
             let mult = hash_multipliers[var_id];
-            let dom = self.domain_sizes[var_id];
+            let dom = self.transition_system.domain_sizes()[var_id];
             ensure!(dom > 0, "domain size must be > 0 for var {var_id}");
             let cur = (out / mult) % dom;
-            let unknown_abs = *self.domain_mapping[var_id]
+            let unknown_abs = *self.transition_system.domain_mapping()[var_id]
                 .get(COMPARISON_UNKNOWN_VAL)
                 .with_context(|| format!("missing UNKNOWN mapping for comparison var {var_id}"))?;
             let cur_offset = cur
@@ -1275,9 +1311,9 @@ impl DomainAbstractionFactory {
         prepare_comparison_tree_inputs_from_abstract_state(
             task,
             &self.comparison_trees,
-            &self.partitions,
+            &self.transition_system.partitions(),
             state_hash,
-            self.domain_sizes.len(),
+            self.transition_system.domain_sizes().len(),
             numeric_domain_sizes,
             hash_multipliers,
         )
@@ -1292,7 +1328,7 @@ impl DomainAbstractionFactory {
         comparison_var_ids: &[usize],
         fixed_comparisons: &[ExplicitFact],
     ) -> Result<Vec<usize>> {
-        let num_props = self.domain_sizes.len();
+        let num_props = self.transition_system.domain_sizes().len();
         let state_unknown = self.reset_comparison_vars_to_unknown_except(
             base_state_hash,
             hash_multipliers,
@@ -1312,7 +1348,7 @@ impl DomainAbstractionFactory {
                 var_id < num_props,
                 "comparison tree affected_var_id out of range: {var_id} >= {num_props}"
             );
-            if self.domain_sizes[var_id] <= 1 {
+            if self.transition_system.domain_sizes()[var_id] <= 1 {
                 continue;
             }
             if fixed_map.contains_key(&var_id) {
@@ -1320,18 +1356,18 @@ impl DomainAbstractionFactory {
             }
 
             let mult = hash_multipliers[var_id];
-            let unknown_abs = *self.domain_mapping[var_id]
+            let unknown_abs = *self.transition_system.domain_mapping()[var_id]
                 .get(COMPARISON_UNKNOWN_VAL)
                 .with_context(|| format!("missing UNKNOWN mapping for comparison var {var_id}"))?
                 as i32;
-            let delta_true = (self.domain_mapping[var_id]
+            let delta_true = (self.transition_system.domain_mapping()[var_id]
                 .get(COMPARISON_TRUE_VAL)
                 .copied()
                 .with_context(|| format!("missing TRUE mapping for comparison var {var_id}"))?
                 as i32
                 - unknown_abs)
                 * mult as i32;
-            let delta_false = (self.domain_mapping[var_id]
+            let delta_false = (self.transition_system.domain_mapping()[var_id]
                 .get(COMPARISON_FALSE_VAL)
                 .copied()
                 .with_context(|| format!("missing FALSE mapping for comparison var {var_id}"))?
@@ -1342,7 +1378,7 @@ impl DomainAbstractionFactory {
             match evaluate_comparison_tree_from_abstract_state(
                 task,
                 tree,
-                &self.partitions,
+                self.transition_system.partitions(),
                 base_state_hash,
                 num_props,
                 numeric_domain_sizes,
@@ -1580,12 +1616,12 @@ impl DomainAbstractionFactory {
         comparison_var_ids: &[usize],
         num_states: usize,
     ) -> Result<(Vec<f64>, Vec<Option<usize>>)> {
-        let num_props = self.domain_sizes.len();
+        let num_props = self.transition_system.domain_sizes().len();
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
         let mut generating_op_ids: Vec<Option<usize>> = vec![None; num_states];
 
         let mut core_vars: Vec<usize> = Vec::new();
-        for (v, &dom) in self.domain_sizes.iter().enumerate() {
+        for (v, &dom) in self.transition_system.domain_sizes().iter().enumerate() {
             if dom > 1 {
                 core_vars.push(v);
             }

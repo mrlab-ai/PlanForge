@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::fmt::Write as _;
 
 use planners_sas::numeric::axioms::AxiomEvaluator;
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact, Operator};
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use tracing::debug;
 
@@ -14,11 +14,13 @@ use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{
     AbstractDistanceTable, DomainAbstractionFactory, WildcardPlanResult,
 };
+use crate::numeric::evaluation::EvaluationError;
 use crate::numeric::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::progression::{
     get_progression_numeric_deviation_flaws, get_progression_precondition_flaws,
 };
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::progress;
+use crate::numeric::evaluation::domain_abstractions::comparison_expression::UNBOUNDED_INTERVAL;
 
 pub(crate) fn compute_abstraction_size_u128(
     domain_sizes: &[usize],
@@ -70,6 +72,40 @@ pub(crate) fn identity_domain_mapping_and_sizes(
     }
 
     Ok((domain_mapping, domain_sizes))
+}
+
+pub(crate) fn get_pre(op: &Operator, var_id: usize) -> Option<usize> {
+    for pre in op.preconditions() {
+        if pre.var == var_id {
+            return Some(pre.value);
+        }
+    }
+    None
+}
+
+pub(crate) fn get_eff(op: &Operator, var_id: usize) -> Option<usize> {
+    for eff in op.effects() {
+        if eff.var_id() == var_id {
+            return Some(eff.value());
+        }
+    }
+    None
+}
+
+pub(crate) fn get_post(op: &Operator, var_id: usize) -> Option<usize> {
+    let eff = get_eff(op, var_id);
+    if eff.is_some() {
+        eff
+    } else {
+        get_pre(op, var_id)
+    }
+}
+
+pub(crate) fn get_numeric_pre(op: &Operator, var_id: usize) -> Interval {
+    let mut result = UNBOUNDED_INTERVAL;
+    for pre in op.preconditions() {}
+
+    result
 }
 
 pub(crate) fn debug_print_abstraction_stats(
@@ -220,6 +256,22 @@ pub(crate) fn fmt_f64_compact(v: f64) -> String {
     if s == "-0" { "0".to_string() } else { s }
 }
 
+pub(crate) fn abstract_propositional_value(
+    var: usize,
+    concrete_val: usize,
+    mapping: &[Vec<usize>],
+) -> Result<usize, EvaluationError> {
+    mapping
+        .get(var)
+        .and_then(|m| m.get(concrete_val))
+        .copied()
+        .ok_or_else(|| {
+            EvaluationError::InvalidState(format!(
+                "missing domain mapping for var {var} value index {concrete_val}"
+            ))
+        })
+}
+
 pub(crate) fn partition_for_value(partitions: &[Interval], value: f64) -> Option<usize> {
     partitions.iter().position(|iv| iv.contains(value))
 }
@@ -273,9 +325,62 @@ pub(crate) fn get_initial_state(
     Ok((buffer, numeric_state))
 }
 
+pub(crate) fn get_goals(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
+    let mut goals = vec![];
+    let mut seen: BTreeSet<ExplicitFact> = BTreeSet::new();
+    let mut derived_goal_vars: BTreeSet<usize> = BTreeSet::new();
+
+    for goal_id in 0..task.get_num_goals() {
+        let goal_fact = task.get_goal_fact(goal_id);
+        let goal_var = goal_fact.var;
+        let goal_is_derived = task.axioms().iter().any(|ax| ax.var_id() == goal_var);
+        if goal_is_derived {
+            derived_goal_vars.insert(goal_var);
+            continue;
+        }
+        goals.push(ExplicitFact::new(goal_var, goal_fact.value));
+    }
+
+    // Reconstruct (potentially hidden) goal conditions from propositional goal axioms.
+    for ax in task.axioms().iter() {
+        if ax.conditions().is_empty() {
+            continue;
+        }
+        if !derived_goal_vars.is_empty() && !derived_goal_vars.contains(&ax.var_id()) {
+            continue;
+        }
+        for pre in ax.conditions().iter() {
+            if seen.insert(pre.clone()) {
+                goals.push(ExplicitFact::new(pre.var, pre.value));
+            }
+        }
+    }
+
+    goals
+}
+
 pub(crate) fn fact_is_hold(fact: &ExplicitFact, packer: &IntDoublePacker, buffer: &[u64]) -> bool {
     let current = packer.get(buffer, fact.var) as usize;
     current == fact.value
+}
+
+pub(crate) fn abstract_state_values_for_concrete_state(
+    prop: &[usize],
+    numeric: &[f64],
+    domain_mapping: &DomainMapping,
+    numeric_partitions: &NumericPartitions,
+) -> (Vec<usize>, Vec<usize>) {
+    let mut abstract_prop = Vec::with_capacity(prop.len());
+    let mut abstract_num = Vec::with_capacity(numeric.len());
+
+    for (var, value) in prop.iter().enumerate() {
+        abstract_prop.push(domain_mapping[var][*value]);
+    }
+    for (var, value) in numeric.iter().enumerate() {
+        abstract_num.push(partition_for_value(numeric_partitions.partitions(var).unwrap(), *value).expect("Error getting a partition for a value when getting the abstract values of a concrete state."));
+    }
+
+    (abstract_prop, abstract_num)
 }
 
 pub(crate) fn debug_print_wildcard_plan(

@@ -5,11 +5,11 @@ use planners_sas::numeric::numeric_task::{
 use planners_sas::numeric::state_registry::StateRegistry;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
+use crate::numeric::evaluation::domain_abstractions::transition_system::TransitionSystem;
 use crate::numeric::evaluation::evaluator::EvaluationState;
 
 use super::super::domain_abstraction::NumericPartitions;
 use super::super::domain_abstraction_factory::{AbstractDistanceTable, DomainAbstractionFactory};
-use super::super::domain_abstraction_generator::compute_hash_multipliers;
 use super::*;
 
 fn simple_var(name: &str) -> ExplicitVariable {
@@ -49,8 +49,11 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
         vec![],
     )
     .unwrap();
-    let hash_multipliers =
-        compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes()).unwrap();
+    let hash_multipliers = TransitionSystem::compute_hash_multipliers(
+        factory.domain_sizes(),
+        factory.numeric_domain_sizes(),
+    )
+    .unwrap();
 
     DomainAbstraction {
         factory,
@@ -62,7 +65,6 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
             hash_multipliers: hash_multipliers.clone(),
             numeric_domain_sizes: vec![],
         },
-        hash_multipliers,
         combine_labels: false,
     }
 }

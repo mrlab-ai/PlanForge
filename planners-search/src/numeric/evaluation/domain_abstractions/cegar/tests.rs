@@ -279,10 +279,10 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
         ..Default::default()
     };
 
-    let mut domain_mapping = vec![vec![0, 0]];
-    let mut domain_sizes = vec![1];
-    let mut partitions = NumericPartitions::trivial(&task);
-    let mut numeric_domain_sizes = vec![];
+    let domain_mapping = vec![vec![0, 0]];
+    let domain_sizes = vec![1];
+    let partitions = NumericPartitions::trivial(&task);
+    let numeric_domain_sizes = vec![];
     let mut rng = SmallRng::seed_from_u64(7);
     let mut blacklisted_prop_var_ids = HashSet::new();
     let mut blacklisted_numeric_var_ids = HashSet::new();
@@ -292,14 +292,19 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
         step: 0,
     })];
 
+    let mut ts = TransitionSystem::trivial_abstraction(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    );
+
     let refined = fix_flaws(
         &config,
         &task,
         &flaws,
-        &mut domain_mapping,
-        &mut domain_sizes,
-        &mut partitions,
-        &mut numeric_domain_sizes,
+        &mut ts,
         &mut rng,
         &mut blacklisted_prop_var_ids,
         &mut blacklisted_numeric_var_ids,
@@ -308,8 +313,8 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
     .unwrap();
 
     assert!(refined.is_empty());
-    assert_eq!(domain_sizes, vec![1]);
-    assert_eq!(domain_mapping, vec![vec![0, 0]]);
+    assert_eq!(*ts.domain_sizes(), vec![1]);
+    assert_eq!(*ts.domain_mapping(), vec![vec![0, 0]]);
     assert!(blacklisted_prop_var_ids.contains(&0));
 }
 #[test]
@@ -341,10 +346,10 @@ fn blacklisted_propositional_vars_are_not_refined() {
     config.blacklisted_prop_var_ids.insert(0);
     let cegar = Cegar::new(config).unwrap();
 
-    let mut domain_mapping = vec![vec![0, 0]];
-    let mut domain_sizes = vec![1];
-    let mut partitions = NumericPartitions::trivial(&task);
-    let mut numeric_domain_sizes = vec![];
+    let domain_mapping = vec![vec![0, 0]];
+    let domain_sizes = vec![1];
+    let partitions = NumericPartitions::trivial(&task);
+    let numeric_domain_sizes = vec![];
     let mut rng = SmallRng::seed_from_u64(7);
     let mut blacklisted_prop_var_ids = HashSet::from([0usize]);
     let mut blacklisted_numeric_var_ids = HashSet::new();
@@ -353,15 +358,19 @@ fn blacklisted_propositional_vars_are_not_refined() {
         dependent_numeric_flaws: vec![],
         step: 0,
     })];
+    let mut ts = TransitionSystem::trivial_abstraction(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    );
 
     let refined = fix_flaws(
         &cegar.config,
         &task,
         &flaws,
-        &mut domain_mapping,
-        &mut domain_sizes,
-        &mut partitions,
-        &mut numeric_domain_sizes,
+        &mut ts,
         &mut rng,
         &mut blacklisted_prop_var_ids,
         &mut blacklisted_numeric_var_ids,
@@ -370,7 +379,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
     .unwrap();
 
     assert!(refined.is_empty());
-    assert_eq!(domain_sizes, vec![1]);
+    assert_eq!(*ts.domain_sizes(), vec![1]);
 }
 
 #[test]

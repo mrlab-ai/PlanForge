@@ -26,6 +26,7 @@ pub use flaw_search::flaw_selection::{FlawTreatment, FlawTreatmentVariants, Init
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::{
     FlawSearchState, progress,
 };
+use crate::numeric::evaluation::domain_abstractions::transition_system::TransitionSystem;
 use crate::numeric::evaluation::domain_abstractions::utils::{
     fact_is_hold, get_initial_state, make_prop_state_packer,
 };
@@ -118,15 +119,15 @@ impl RefinementSummary {
         self.refined_propositional_vars.is_empty() && self.refined_numeric_vars.is_empty()
     }
 
-    fn mark_propositional(&mut self, var_id: usize) {
+    pub fn mark_propositional(&mut self, var_id: usize) {
         self.refined_propositional_vars.insert(var_id);
     }
 
-    fn mark_numeric(&mut self, var_id: usize) {
+    pub fn mark_numeric(&mut self, var_id: usize) {
         self.refined_numeric_vars.insert(var_id);
     }
 
-    fn merge(&mut self, other: Self) {
+    pub fn merge(&mut self, other: Self) {
         self.refined_propositional_vars
             .extend(other.refined_propositional_vars);
         self.refined_numeric_vars.extend(other.refined_numeric_vars);
@@ -208,8 +209,8 @@ impl Cegar {
             if config.debug {
                 super::utils::debug_print_abstraction_stats(
                     iteration,
-                    &factory.domain_sizes,
-                    &factory.numeric_domain_sizes,
+                    factory.transition_system.domain_sizes(),
+                    factory.transition_system.numeric_domain_sizes(),
                 );
             }
 
@@ -230,9 +231,9 @@ impl Cegar {
                     Some(plan) => super::utils::debug_print_wildcard_plan(
                         task,
                         plan,
-                        &factory.domain_sizes,
-                        &factory.numeric_domain_sizes,
-                        &factory.partitions,
+                        factory.transition_system.domain_sizes(),
+                        factory.transition_system.numeric_domain_sizes(),
+                        factory.transition_system.partitions(),
                     ),
                     None => debug!("[Abstract Plan] <none>"),
                 }
@@ -248,8 +249,8 @@ impl Cegar {
 
             let flaws = get_flaws(
                 task,
-                &factory.partitions,
-                &factory.domain_mapping,
+                factory.transition_system.partitions(),
+                factory.transition_system.domain_mapping(),
                 plan,
                 self.config.flaw_kind,
             )
@@ -262,7 +263,10 @@ impl Cegar {
             }
 
             let before_size = if config.debug {
-                compute_abstraction_size_u128(&factory.domain_sizes, &factory.numeric_domain_sizes)
+                compute_abstraction_size_u128(
+                    factory.transition_system.domain_sizes(),
+                    factory.transition_system.numeric_domain_sizes(),
+                )
             } else {
                 None
             };
@@ -270,10 +274,7 @@ impl Cegar {
                 &self.config,
                 task,
                 &flaws,
-                &mut factory.domain_mapping,
-                &mut factory.domain_sizes,
-                &mut factory.partitions,
-                &mut factory.numeric_domain_sizes,
+                &mut factory.transition_system,
                 &mut rng,
                 &mut blacklisted_prop_var_ids,
                 &mut blacklisted_numeric_var_ids,
@@ -283,14 +284,14 @@ impl Cegar {
             operator_cache.mark_refined(&refined);
             if config.debug {
                 let after_size = compute_abstraction_size_u128(
-                    &factory.domain_sizes,
-                    &factory.numeric_domain_sizes,
+                    factory.transition_system.domain_sizes(),
+                    factory.transition_system.numeric_domain_sizes(),
                 );
                 debug_print_refinement_summary(
                     before_size,
                     after_size,
-                    &factory.domain_sizes,
-                    &factory.numeric_domain_sizes,
+                    factory.transition_system.domain_sizes(),
+                    factory.transition_system.numeric_domain_sizes(),
                     !refined.is_empty(),
                 );
             }
@@ -418,107 +419,6 @@ fn shuffle_indices_with_rng<R: rand::Rng + ?Sized>(indices: &mut [usize], rng: &
     indices.shuffle(rng);
 }
 
-fn abstraction_size_u128(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) -> Option<u128> {
-    compute_abstraction_size_u128(domain_sizes, numeric_domain_sizes)
-}
-
-fn can_refine_propositional_variable(
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-    var_id: usize,
-    new_domain_size: usize,
-    max_abstraction_size: usize,
-) -> bool {
-    let Some(total_size) = abstraction_size_u128(domain_sizes, numeric_domain_sizes) else {
-        return false;
-    };
-    let Some(&old_domain_size) = domain_sizes.get(var_id) else {
-        return false;
-    };
-    if old_domain_size == 0 || new_domain_size == 0 {
-        return false;
-    }
-    let reduced = total_size / (old_domain_size as u128);
-    reduced
-        .checked_mul(new_domain_size as u128)
-        .map(|candidate| candidate <= max_abstraction_size as u128)
-        .unwrap_or(false)
-}
-
-fn can_refine_numeric_variable(
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-    numeric_var_id: usize,
-    max_abstraction_size: usize,
-) -> bool {
-    let Some(total_size) = abstraction_size_u128(domain_sizes, numeric_domain_sizes) else {
-        return false;
-    };
-    let Some(&old_partition_count) = numeric_domain_sizes.get(numeric_var_id) else {
-        return false;
-    };
-    if old_partition_count == 0 {
-        return false;
-    }
-    let reduced = total_size / (old_partition_count as u128);
-    reduced
-        .checked_mul((old_partition_count as u128) + 1)
-        .map(|candidate| candidate <= max_abstraction_size as u128)
-        .unwrap_or(false)
-}
-
-fn can_refine_propositional_variable_with_blacklist(
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-    var_id: usize,
-    new_domain_size: usize,
-    max_abstraction_size: usize,
-    comparison_var_ids: &HashSet<usize>,
-    blacklisted_prop_var_ids: &mut HashSet<usize>,
-) -> bool {
-    if blacklisted_prop_var_ids.contains(&var_id) {
-        return false;
-    }
-    if comparison_var_ids.contains(&var_id) && domain_sizes.get(var_id).copied().unwrap_or(0) >= 2 {
-        return true;
-    }
-    if can_refine_propositional_variable(
-        domain_sizes,
-        numeric_domain_sizes,
-        var_id,
-        new_domain_size,
-        max_abstraction_size,
-    ) {
-        true
-    } else {
-        blacklisted_prop_var_ids.insert(var_id);
-        false
-    }
-}
-
-fn can_refine_numeric_variable_with_blacklist(
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-    numeric_var_id: usize,
-    max_abstraction_size: usize,
-    blacklisted_numeric_var_ids: &mut HashSet<usize>,
-) -> bool {
-    if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
-        return false;
-    }
-    if can_refine_numeric_variable(
-        domain_sizes,
-        numeric_domain_sizes,
-        numeric_var_id,
-        max_abstraction_size,
-    ) {
-        true
-    } else {
-        blacklisted_numeric_var_ids.insert(numeric_var_id);
-        false
-    }
-}
-
 /// Port of numeric-FD's refinement step (`fix_flaws`).
 ///
 /// Return the refined variable IDs.
@@ -527,10 +427,7 @@ pub fn fix_flaws(
     config: &CegarConfig,
     task: &dyn AbstractNumericTask,
     flaws: &[Flaw],
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [usize],
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut [usize],
+    transition_system: &mut TransitionSystem,
     rng: &mut SmallRng,
     blacklisted_prop_var_ids: &mut HashSet<usize>,
     blacklisted_numeric_var_ids: &mut HashSet<usize>,
@@ -550,10 +447,10 @@ pub fn fix_flaws(
         rng,
         blacklisted_prop_var_ids,
         blacklisted_numeric_var_ids,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
+        transition_system.domain_mapping(),
+        transition_system.domain_sizes(),
+        transition_system.partitions(),
+        transition_system.numeric_domain_sizes(),
         plan_length,
     );
 
@@ -570,17 +467,13 @@ pub fn fix_flaws(
                 .flaw_treatment
                 .should_be_refined(&chosen, last_refined.unwrap())
         {
-            let flaw_refined = try_refine_from_flaw(
+            let flaw_refined = transition_system.try_refine_from_flaw(
                 task,
                 &chosen,
                 config,
                 &comparison_var_ids,
                 blacklisted_prop_var_ids,
                 blacklisted_numeric_var_ids,
-                domain_mapping,
-                domain_sizes,
-                partitions,
-                numeric_domain_sizes,
                 DependentNumericRefinement::One,
             )?;
 
@@ -595,203 +488,6 @@ pub fn fix_flaws(
     }
 
     Ok(refined_summary)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn try_refine_from_flaw(
-    task: &dyn AbstractNumericTask,
-    flaw: &Flaw,
-    config: &CegarConfig,
-    comparison_var_ids: &HashSet<usize>,
-    blacklisted_prop_var_ids: &mut HashSet<usize>,
-    blacklisted_numeric_var_ids: &mut HashSet<usize>,
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [usize],
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut [usize],
-    dependent_numeric_refinement: DependentNumericRefinement,
-) -> Result<Option<RefinementSummary>> {
-    match flaw {
-        Flaw::Numeric(nf) => {
-            let var_id = nf.numeric_var_id;
-            if !can_refine_numeric_variable_with_blacklist(
-                domain_sizes,
-                numeric_domain_sizes,
-                var_id,
-                config.max_abstraction_size,
-                blacklisted_numeric_var_ids,
-            ) {
-                return Ok(None);
-            }
-            if partitions.split_at(var_id, nf.value, nf.include_in_lower) {
-                if let Some(parts) = partitions.partitions(var_id)
-                    && let Some(slot) = numeric_domain_sizes.get_mut(var_id)
-                {
-                    *slot = parts.len();
-                }
-                let mut refined = RefinementSummary::default();
-                refined.mark_numeric(var_id);
-                return Ok(Some(refined));
-            }
-            Ok(None)
-        }
-        Flaw::Propositional(pf) => {
-            let var_id = pf.fact.var;
-            let value = pf.fact.value;
-
-            // Bounds and conversion checks: these should hold in normal operation;
-            // surface violations during debug builds but keep release behavior.
-            if var_id >= domain_mapping.len() || var_id >= domain_sizes.len() {
-                debug_assert!(
-                    false,
-                    "try_refine_from_flaw: var_id out of bounds: {} (mapping.len={}, domain_sizes.len={})",
-                    var_id,
-                    domain_mapping.len(),
-                    domain_sizes.len()
-                );
-                return Ok(None);
-            }
-
-            let concrete_size = match task.get_variable_domain_size(var_id) {
-                Ok(s) => s,
-                Err(e) => {
-                    debug_assert!(
-                        false,
-                        "try_refine_from_flaw: get_variable_domain_size({}) failed: {}",
-                        var_id, e
-                    );
-                    return Ok(None);
-                }
-            };
-
-            if value >= concrete_size {
-                debug_assert!(
-                    false,
-                    "try_refine_from_flaw: fact value {} out of range (concrete size {}) for var {}",
-                    value, concrete_size, var_id
-                );
-                return Ok(None);
-            }
-
-            let mut changed = false;
-
-            if comparison_var_ids.contains(&var_id) {
-                if !can_refine_propositional_variable_with_blacklist(
-                    domain_sizes,
-                    numeric_domain_sizes,
-                    var_id,
-                    2,
-                    config.max_abstraction_size,
-                    comparison_var_ids,
-                    blacklisted_prop_var_ids,
-                ) {
-                    return Ok(None);
-                }
-                // Comparison axiom vars: split into {false/unknown} vs {true} like numeric-fd.
-                let old_size = domain_sizes[var_id];
-                if domain_sizes[var_id] < 2 {
-                    domain_sizes[var_id] = 2;
-                    changed = true;
-                }
-                // Ensure mapping values are within the new abstract size.
-                if !domain_mapping[var_id].is_empty() && domain_mapping[var_id][0] != 1 {
-                    domain_mapping[var_id][0] = 1;
-                    changed = true;
-                }
-                if domain_mapping[var_id].len() >= 2 && domain_mapping[var_id][1] != 0 {
-                    domain_mapping[var_id][1] = 0;
-                    changed = true;
-                }
-                if domain_mapping[var_id].len() >= 3 && domain_mapping[var_id][2] != 0 {
-                    domain_mapping[var_id][2] = 0;
-                    changed = true;
-                }
-                let _ = old_size; // Keep structure similar to numeric-fd; size tracking handled elsewhere.
-            } else {
-                let abs_size = domain_sizes[var_id];
-                // If we've already fully refined this variable, nothing to do.
-                if abs_size >= concrete_size {
-                    return Ok(None);
-                }
-                // Only refine if the value is still mapped to the default class (0).
-                if domain_mapping[var_id].get(value).copied().unwrap_or(0) != 0 {
-                    return Ok(None);
-                }
-                if !can_refine_propositional_variable_with_blacklist(
-                    domain_sizes,
-                    numeric_domain_sizes,
-                    var_id,
-                    abs_size + 1,
-                    config.max_abstraction_size,
-                    comparison_var_ids,
-                    blacklisted_prop_var_ids,
-                ) {
-                    return Ok(None);
-                }
-
-                domain_mapping[var_id][value] = abs_size;
-                domain_sizes[var_id] = abs_size + 1;
-                changed = true;
-            }
-
-            // Optional dependent numeric refinements (currently produced only for comparison vars).
-            if dependent_numeric_refinement != DependentNumericRefinement::None
-                && !pf.dependent_numeric_flaws.is_empty()
-            {
-                let mut any_numeric_changed = false;
-                let mut refined = RefinementSummary::default();
-                if changed {
-                    refined.mark_propositional(var_id);
-                }
-                let iter: Box<dyn Iterator<Item = &NumericFlaw>> =
-                    match dependent_numeric_refinement {
-                        DependentNumericRefinement::None => Box::new(std::iter::empty()),
-                        DependentNumericRefinement::All => {
-                            Box::new(pf.dependent_numeric_flaws.iter())
-                        }
-                        DependentNumericRefinement::One => {
-                            Box::new(pf.dependent_numeric_flaws.iter())
-                        }
-                    };
-
-                for dep in iter {
-                    let num_id = dep.numeric_var_id;
-
-                    if !can_refine_numeric_variable_with_blacklist(
-                        domain_sizes,
-                        numeric_domain_sizes,
-                        num_id,
-                        config.max_abstraction_size,
-                        blacklisted_numeric_var_ids,
-                    ) {
-                        continue;
-                    }
-
-                    if partitions.split_at(num_id, dep.value, dep.include_in_lower) {
-                        if let Some(parts) = partitions.partitions(num_id)
-                            && let Some(slot) = numeric_domain_sizes.get_mut(num_id)
-                        {
-                            *slot = parts.len();
-                        }
-                        any_numeric_changed = true;
-                        refined.mark_numeric(num_id);
-                        if dependent_numeric_refinement == DependentNumericRefinement::One {
-                            break;
-                        }
-                    }
-                }
-                return Ok((any_numeric_changed || changed).then_some(refined));
-            }
-
-            if changed {
-                let mut refined = RefinementSummary::default();
-                refined.mark_propositional(var_id);
-                Ok(Some(refined))
-            } else {
-                Ok(None)
-            }
-        }
-    }
 }
 
 fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
@@ -989,7 +685,7 @@ fn apply_initial_goal_splits(
         if new_domain_size <= 1 {
             continue;
         }
-        if !can_refine_propositional_variable(
+        if !TransitionSystem::can_refine_propositional_variable(
             domain_sizes,
             numeric_domain_sizes,
             var_id,

@@ -3,6 +3,7 @@ mod tests;
 
 use std::cell::RefCell;
 
+use crate::numeric::evaluation::domain_abstractions::utils::abstract_propositional_value;
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
 
@@ -101,17 +102,11 @@ impl DomainAbstractionHeuristic {
             )));
         }
 
-        let mapping = self.abstraction.factory.domain_mapping();
         let partitions = self.abstraction.factory.partitions();
-        let multipliers = &self.abstraction.hash_multipliers;
+        let mapping = self.abstraction.factory.domain_mapping();
 
-        if multipliers.len() != num_props + num_numeric {
-            return Err(EvaluationError::InvalidState(
-                "hash multipliers length mismatch".to_string(),
-            ));
-        }
-
-        let mut index: usize = 0;
+        let mut abstract_prop = Vec::with_capacity(num_props);
+        let mut abstract_num = Vec::with_capacity(num_numeric);
 
         for num_var_id in 0..num_numeric {
             let val = numeric[num_var_id];
@@ -130,11 +125,9 @@ impl DomainAbstractionHeuristic {
                     "numeric value {val} not contained in any partition for var {num_var_id}"
                 ))
             })?;
-            let abs_var = num_props + num_var_id;
-            index += multipliers[abs_var] * part;
+            abstract_num.push(part);
         }
 
-        let mut prop_index: usize = 0;
         for var in 0..num_props {
             let concrete_val = resolved_propositional_value(
                 var,
@@ -143,10 +136,14 @@ impl DomainAbstractionHeuristic {
                 self.abstraction.factory.comparison_trees(),
             )?;
             let abs_val = abstract_propositional_value(var, concrete_val, mapping)?;
-            prop_index += multipliers[var] * abs_val;
+            abstract_prop.push(abs_val);
         }
 
-        Ok(index + prop_index)
+        Ok(self
+            .abstraction
+            .factory
+            .transition_system
+            .abstract_state_hash(&abstract_prop, &abstract_num))
     }
 }
 
@@ -213,22 +210,6 @@ fn comparison_tree_numeric_len(tree: &ComparisonTree) -> usize {
         }
     }
     max_numeric_var_id + 1
-}
-
-fn abstract_propositional_value(
-    var: usize,
-    concrete_val: usize,
-    mapping: &[Vec<usize>],
-) -> Result<usize, EvaluationError> {
-    mapping
-        .get(var)
-        .and_then(|m| m.get(concrete_val))
-        .copied()
-        .ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "missing domain mapping for var {var} value index {concrete_val}"
-            ))
-        })
 }
 
 impl Heuristic for DomainAbstractionHeuristic {
