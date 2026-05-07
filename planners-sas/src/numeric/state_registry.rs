@@ -368,10 +368,12 @@ impl<'a> StateRegistry<'a> {
             .filter(|&&ty| ty == NumericType::Cost)
             .count();
         let metric_use_metric = task.metric().use_metric();
-        let metric_var = task
-            .metric()
-            .var_id()
-            .and_then(|var_id| numeric_var_types.get(var_id).copied().map(|ty| (var_id, ty)));
+        let metric_var = task.metric().var_id().and_then(|var_id| {
+            numeric_var_types
+                .get(var_id)
+                .copied()
+                .map(|ty| (var_id, ty))
+        });
 
         // Collect packer var ids for non-derived (input) variables.
         // Propositional vars are 0..num_prop_vars; numeric Regular vars start
@@ -396,8 +398,7 @@ impl<'a> StateRegistry<'a> {
                 numeric_packer_index += 1;
             }
         }
-        let non_derived_bits_mask =
-            global_state_packer.build_var_subset_mask(&non_derived_var_ids);
+        let non_derived_bits_mask = global_state_packer.build_var_subset_mask(&non_derived_var_ids);
         let mask_covers_any_bits = non_derived_bits_mask.iter().any(|&m| m != 0);
         let has_axiom_derived_bits = has_propositional_derived && mask_covers_any_bits;
         if has_propositional_derived && !mask_covers_any_bits {
@@ -948,13 +949,7 @@ impl<'a> StateRegistry<'a> {
     ) -> Result<(ConcreteState, f64), StateInsertError> {
         let mut ctx = ExpansionContext::default();
         self.build_expansion_context(current_state, &mut ctx)?;
-        self.apply_operator_in_context(
-            current_state,
-            operator,
-            &ctx,
-            successor_values,
-            cost_values,
-        )
+        self.apply_operator_in_context(current_state, operator, &ctx, successor_values, cost_values)
     }
 
     /// Fill `ctx` with the parent's numeric values, cost vars, and metric
@@ -980,9 +975,11 @@ impl<'a> StateRegistry<'a> {
             // cost-info-backed read if the parent isn't cached yet.
             match self.cached_metric_value(parent.get_id()) {
                 Some(value) => value,
-                None => self.metric_value_for_state(parent).map_err(|e| StateInsertError {
-                    message: format!("Failed to read metric for parent state: {e:?}"),
-                })?,
+                None => self
+                    .metric_value_for_state(parent)
+                    .map_err(|e| StateInsertError {
+                        message: format!("Failed to read metric for parent state: {e:?}"),
+                    })?,
             }
         } else {
             0.0
@@ -1045,9 +1042,10 @@ impl<'a> StateRegistry<'a> {
         // even if we're not using the metric (in that case we just return
         // 1.0 for `op_cost` but still want to pre-fill the metric cache).
         let new_metric = if self.metric_use_metric {
-            self.evaluate_metric(successor_values).map_err(|e| StateInsertError {
-                message: format!("Failed to evaluate metric: {e:?}"),
-            })?
+            self.evaluate_metric(successor_values)
+                .map_err(|e| StateInsertError {
+                    message: format!("Failed to evaluate metric: {e:?}"),
+                })?
         } else {
             0.0
         };
@@ -1095,10 +1093,8 @@ impl<'a> StateRegistry<'a> {
                     self.cache_metric_value(id, new_metric);
                 }
             } else {
-                let metric_is_regular = matches!(
-                    self.metric_var,
-                    Some((_, NumericType::Regular)) | None
-                );
+                let metric_is_regular =
+                    matches!(self.metric_var, Some((_, NumericType::Regular)) | None);
                 let keep_old = if !self.metric_use_metric {
                     false
                 } else if metric_is_regular {
@@ -1117,10 +1113,8 @@ impl<'a> StateRegistry<'a> {
                         None => {
                             // Cache miss — fall back to cost_info-backed read.
                             let cost_info_borrow = self.cost_info.borrow();
-                            let result = self.should_keep_old_cost_information(
-                                &successor,
-                                successor_values,
-                            );
+                            let result =
+                                self.should_keep_old_cost_information(&successor, successor_values);
                             drop(cost_info_borrow);
                             match result {
                                 Ok(v) => v,
@@ -1161,10 +1155,7 @@ impl<'a> StateRegistry<'a> {
     #[inline]
     fn cached_metric_value(&self, state_id: StateID) -> Option<f64> {
         let cache = self.metric_value_by_state.borrow();
-        cache
-            .get(state_id)
-            .copied()
-            .filter(|v| !v.is_nan())
+        cache.get(state_id).copied().filter(|v| !v.is_nan())
     }
 
     /// Apply propositional effects of an operator to the state buffer.

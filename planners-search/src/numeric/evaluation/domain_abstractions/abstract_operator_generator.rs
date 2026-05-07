@@ -303,11 +303,10 @@ impl AbstractOperatorFinalizer {
                 candidate.changed_numeric_vars.clone(),
             ));
             self.stored_signatures
-                .push(StoredOperatorSignature::from_candidate(candidate, cost_bits));
-            self.grouping
-                .entry(hash)
-                .or_default()
-                .push(idx as u32);
+                .push(StoredOperatorSignature::from_candidate(
+                    candidate, cost_bits,
+                ));
+            self.grouping.entry(hash).or_default().push(idx as u32);
             return;
         }
 
@@ -864,7 +863,8 @@ impl AbstractOperatorGenerator {
         // Reuse the same finalizer that `build_abstract_operators` uses so we
         // share the identity-hashed grouping path and the per-operator
         // signature storage that avoids per-candidate Vec allocations.
-        let mut finalizer = AbstractOperatorFinalizer::new(self.combine_labels, &self.hash_multipliers);
+        let mut finalizer =
+            AbstractOperatorFinalizer::new(self.combine_labels, &self.hash_multipliers);
         for candidate in candidates {
             finalizer.push_candidate(candidate);
         }

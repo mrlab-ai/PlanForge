@@ -210,7 +210,11 @@ fn complementary_seed_splits_rotate_false_views_with_route_shells() {
     }));
     assert_eq!(
         generator.flaw_kind_for_iteration(1),
-        FlawKind::SequenceBidirectional
+        DomainAbstractionCollectionGeneratorMultipleCegarConfig::default().flaw_kind
+    );
+    assert_eq!(
+        generator.flaw_kind_for_iteration(2),
+        FlawKind::SequenceRegression
     );
 }
 

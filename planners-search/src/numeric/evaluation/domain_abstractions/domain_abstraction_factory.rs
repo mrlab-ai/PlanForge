@@ -707,6 +707,7 @@ impl DomainAbstractionFactory {
         operators: &[AbstractOperator],
         footprints: &[AbstractOperatorFootprint],
         budgets: Option<&[AbstractOperatorCostBudget]>,
+        label_rescue_operator_ids: Option<&HashSet<usize>>,
         residual_costs: &TransitionResidualCosts,
         abstraction_id: usize,
         current_state_id: Option<usize>,
@@ -725,6 +726,7 @@ impl DomainAbstractionFactory {
             operators.len(),
             footprints,
             budgets,
+            label_rescue_operator_ids,
             residual_costs,
             abstraction_id,
             deadline,
@@ -1055,21 +1057,25 @@ impl DomainAbstractionFactory {
                 has_infinite_changed_source = true;
             }
         }
-        if non_allocable_reason.is_none()
-            && has_infinite_changed_source
-            && !has_finite_changed_source
-        {
-            non_allocable_reason.get_or_insert(NonAllocableFootprintReason::InfiniteActiveSource);
-        }
-        if !footprint_has_informative_source(self, &source_region)? {
-            non_allocable_reason.get_or_insert(NonAllocableFootprintReason::UninformativeSource);
+        let allocable = has_finite_changed_source;
+        if !allocable {
+            if non_allocable_reason.is_none() && has_infinite_changed_source {
+                non_allocable_reason
+                    .get_or_insert(NonAllocableFootprintReason::InfiniteActiveSource);
+            }
+            if !footprint_has_informative_source(self, &source_region)? {
+                non_allocable_reason
+                    .get_or_insert(NonAllocableFootprintReason::UninformativeSource);
+            }
+        } else {
+            non_allocable_reason = None;
         }
 
         Ok(ConcreteOperatorFootprint {
             concrete_op_id,
             source_region,
-            allocable: non_allocable_reason.is_none(),
-            max_allocation_fraction: if non_allocable_reason.is_none() {
+            allocable,
+            max_allocation_fraction: if allocable {
                 let fraction = if precision_count == 0 {
                     1.0
                 } else {
@@ -2181,9 +2187,8 @@ impl DomainAbstractionFactory {
         // `fixed_comparisons` is typically empty or has 1-3 entries — replace the
         // per-call `HashMap<usize, usize>` (with default SipHash + heap alloc) with
         // a stack-friendly slice scan.
-        let is_fixed_var = |var_id: usize| -> bool {
-            fixed_comparisons.iter().any(|f| f.var == var_id)
-        };
+        let is_fixed_var =
+            |var_id: usize| -> bool { fixed_comparisons.iter().any(|f| f.var == var_id) };
 
         // Build the numeric intervals for this abstract state ONCE, then
         // evaluate each comparison tree against the shared buffer. The old
@@ -2814,6 +2819,7 @@ fn abstract_operator_costs_from_footprints(
     num_operators: usize,
     footprints: &[AbstractOperatorFootprint],
     budgets: Option<&[AbstractOperatorCostBudget]>,
+    label_rescue_operator_ids: Option<&HashSet<usize>>,
     residual_costs: &TransitionResidualCosts,
     abstraction_id: usize,
     deadline: Option<Instant>,
@@ -2826,6 +2832,8 @@ fn abstract_operator_costs_from_footprints(
         );
     }
     let has_reductions = residual_costs.has_reductions();
+    let uniform_label_residuals =
+        label_rescue_operator_ids.map(|_| residual_costs.operator_costs_for_label_cp());
     let mut operator_costs = vec![f64::INFINITY; num_operators];
     for abstract_op_id in 0..num_operators {
         if abstract_op_id % 64 == 0 {
@@ -2866,6 +2874,27 @@ fn abstract_operator_costs_from_footprints(
                             budget,
                             label_id,
                         )
+                    } else if matches!(
+                        label.non_allocable_reason,
+                        Some(
+                            NonAllocableFootprintReason::InfiniteActiveSource
+                                | NonAllocableFootprintReason::UninformativeSource
+                        )
+                    ) && label_rescue_operator_ids
+                        .is_some_and(|ids| ids.contains(&label.concrete_op_id))
+                    {
+                        let uniform_residual = uniform_label_residuals
+                            .as_ref()
+                            .and_then(|costs| costs.get(label.concrete_op_id))
+                            .copied()
+                            .unwrap_or(f64::INFINITY);
+                        abstract_operator_non_region_label_cost(
+                            uniform_residual,
+                            residual_costs,
+                            label,
+                            budget,
+                            label_id,
+                        )
                     } else {
                         0.0
                     }
@@ -2878,7 +2907,33 @@ fn abstract_operator_costs_from_footprints(
                 .enumerate()
                 .map(|(label_id, label)| {
                     let residual = residual_costs.base_cost(label.concrete_op_id);
-                    abstract_operator_label_cost(residual, residual_costs, label, budget, label_id)
+                    if label.allocable {
+                        abstract_operator_label_cost(
+                            residual,
+                            residual_costs,
+                            label,
+                            budget,
+                            label_id,
+                        )
+                    } else if matches!(
+                        label.non_allocable_reason,
+                        Some(
+                            NonAllocableFootprintReason::InfiniteActiveSource
+                                | NonAllocableFootprintReason::UninformativeSource
+                        )
+                    ) && label_rescue_operator_ids
+                        .is_some_and(|ids| ids.contains(&label.concrete_op_id))
+                    {
+                        abstract_operator_non_region_label_cost(
+                            residual,
+                            residual_costs,
+                            label,
+                            budget,
+                            label_id,
+                        )
+                    } else {
+                        0.0
+                    }
                 })
                 .fold(f64::INFINITY, f64::min)
         };
@@ -2900,6 +2955,25 @@ fn abstract_operator_label_cost(
     if !label.allocable {
         return 0.0;
     }
+    let fraction = if let Some(budget) = budget {
+        budget.label_fractions[label_id]
+    } else {
+        1.0
+    };
+    assert!(
+        fraction.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&fraction),
+        "invalid abstract-operator allocation fraction {fraction}"
+    );
+    residual.min(residual_costs.base_cost(label.concrete_op_id) * fraction.clamp(0.0, 1.0))
+}
+
+fn abstract_operator_non_region_label_cost(
+    residual: f64,
+    residual_costs: &TransitionResidualCosts,
+    label: &ConcreteOperatorFootprint,
+    budget: Option<&AbstractOperatorCostBudget>,
+    label_id: usize,
+) -> f64 {
     let fraction = if let Some(budget) = budget {
         budget.label_fractions[label_id]
     } else {

@@ -1193,7 +1193,8 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
 
     let residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
     let operator_costs =
-        abstract_operator_costs_from_footprints(1, &footprints, None, &residuals, 0, None).unwrap();
+        abstract_operator_costs_from_footprints(1, &footprints, None, None, &residuals, 0, None)
+            .unwrap();
     assert_eq!(operator_costs, vec![1.0]);
 }
 

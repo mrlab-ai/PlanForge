@@ -341,8 +341,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 break;
             }
 
-            let goal_task = if self.config.portfolio_strategy == PortfolioStrategy::RegionLandmarks
-            {
+            let full_goal_task = self.full_goal_task_for_iteration(iteration);
+            let goal_task = if full_goal_task {
                 None
             } else {
                 goals
@@ -366,16 +366,25 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             };
             let seed_iteration = if self.config.portfolio_strategy
                 == PortfolioStrategy::Complementary
+                && !full_goal_task
                 && !goals.is_empty()
             {
-                ((iteration - 1) / goals.len()) + 1
+                ((iteration - 2) / goals.len()) + 1
             } else {
                 iteration
             };
-            let initial_seed_splits = self.initial_seed_splits(generation_task, seed_iteration);
+            let initial_seed_splits = if full_goal_task {
+                Vec::new()
+            } else {
+                self.initial_seed_splits(generation_task, seed_iteration)
+            };
             let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
                 split_blacklisted_variables(generation_task, blacklisted_var_ids);
-            let init_split_var_ids = if initial_seed_splits.is_empty()
+            let init_split_var_ids = if full_goal_task
+                && self.config.portfolio_strategy == PortfolioStrategy::Complementary
+            {
+                None
+            } else if initial_seed_splits.is_empty()
                 || self.config.portfolio_strategy == PortfolioStrategy::Complementary
             {
                 self.initial_split_var_ids(generation_task, iteration)
@@ -408,7 +417,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 collection_iteration: Some(iteration),
                 portfolio_strategy: Some(self.config.portfolio_strategy.to_string()),
                 flaw_kind: Some(flaw_kind.to_string()),
-                full_goal_task: Some(goal_task.is_none()),
+                full_goal_task: Some(full_goal_task),
                 initial_seed_splits: seed_descriptions,
                 max_abstraction_size: Some(remaining_abstraction_size),
             };
@@ -459,8 +468,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 time_point_of_last_new_abstraction = elapsed;
             }
 
+            let completed_full_goal_task = full_goal_task;
             iteration += 1;
-            if !goals.is_empty() {
+            if !completed_full_goal_task && !goals.is_empty() {
                 goal_index = (goal_index + 1) % goals.len();
                 let _ = &goals[goal_index];
             }
@@ -548,7 +558,12 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     fn flaw_kind_for_iteration(&self, iteration: usize) -> FlawKind {
         match self.config.portfolio_strategy {
             PortfolioStrategy::Standard => return self.config.flaw_kind,
-            PortfolioStrategy::Complementary => return FlawKind::SequenceBidirectional,
+            PortfolioStrategy::Complementary => {
+                if self.full_goal_task_for_iteration(iteration) {
+                    return self.config.flaw_kind;
+                }
+                return FlawKind::SequenceRegression;
+            }
             PortfolioStrategy::RegionLandmarks => return FlawKind::SequenceBidirectional,
             PortfolioStrategy::ViewDiverse => {}
         }
@@ -556,6 +571,14 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             FlawKind::SequenceProgression
         } else {
             FlawKind::SequenceRegression
+        }
+    }
+
+    fn full_goal_task_for_iteration(&self, iteration: usize) -> bool {
+        match self.config.portfolio_strategy {
+            PortfolioStrategy::Complementary => iteration == 1,
+            PortfolioStrategy::RegionLandmarks => true,
+            PortfolioStrategy::Standard | PortfolioStrategy::ViewDiverse => false,
         }
     }
 

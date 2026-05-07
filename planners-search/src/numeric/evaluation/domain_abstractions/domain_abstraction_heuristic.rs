@@ -413,12 +413,7 @@ impl DomainAbstractionHeuristic {
         // Set DA_NO_FAST_HASH=1 to disable for A/B benchmarking.
         let prop_has_resolved_comparisons = self.abstraction.task_projection.is_none()
             && std::env::var_os("DA_NO_FAST_HASH").is_none();
-        self.compute_abstract_hash_inner(
-            &prop,
-            &numeric,
-            None,
-            prop_has_resolved_comparisons,
-        )
+        self.compute_abstract_hash_inner(&prop, &numeric, None, prop_has_resolved_comparisons)
     }
 
     fn compute_abstract_hash_from_state_values(

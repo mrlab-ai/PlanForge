@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -41,6 +42,36 @@ pub enum ScoringFunction {
     MaxHeuristicPerStolenCosts,
 }
 
+impl fmt::Display for ScoringFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ScoringFunction::MaxHeuristic => write!(f, "max_heuristic"),
+            ScoringFunction::MinStolenCosts => write!(f, "min_stolen_costs"),
+            ScoringFunction::MaxHeuristicPerStolenCosts => {
+                write!(f, "max_heuristic_per_stolen_costs")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderGenerator {
+    Greedy,
+    DynamicGreedy,
+    Random,
+}
+
+impl fmt::Display for OrderGenerator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OrderGenerator::Greedy => write!(f, "greedy_orders"),
+            OrderGenerator::DynamicGreedy => write!(f, "dynamic_greedy_orders"),
+            OrderGenerator::Random => write!(f, "random_orders"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Saturator {
@@ -62,6 +93,7 @@ impl fmt::Display for Saturator {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ScpOnlineConfig {
     pub max_time: f64,
+    pub table_construction_max_time: f64,
     pub max_size: usize,
     pub interval: usize,
     pub combine_labels: bool,
@@ -74,6 +106,8 @@ pub struct ScpOnlineConfig {
     pub pdb_frontier_heuristic: PdbInternalHeuristic,
     pub pdb_failed_lookup_heuristic: PdbInternalHeuristic,
     pub scoring_function: ScoringFunction,
+    pub order_generator: OrderGenerator,
+    pub order_optimization_max_time: f64,
     pub saturator: Saturator,
     pub random_seed: Option<u64>,
     pub use_abstract_operator_cost_partitioning: bool,
@@ -88,6 +122,7 @@ impl Default for ScpOnlineConfig {
         let random_seed = collection_config.random_seed;
         Self {
             max_time: 200.0,
+            table_construction_max_time: 30.0,
             max_size: usize::MAX,
             interval: 10_000,
             combine_labels: false,
@@ -100,6 +135,8 @@ impl Default for ScpOnlineConfig {
             pdb_frontier_heuristic: PdbInternalHeuristic::Zero,
             pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
             scoring_function: ScoringFunction::MaxHeuristicPerStolenCosts,
+            order_generator: OrderGenerator::Greedy,
+            order_optimization_max_time: 0.0,
             saturator: Saturator::All,
             random_seed,
             use_abstract_operator_cost_partitioning: false,
@@ -380,6 +417,40 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     }
 
     fn compute_order_for_state(
+        &self,
+        task: &dyn AbstractNumericTask,
+        state: &mut ScpOnlineState,
+        abstract_state_ids: &[Option<usize>],
+        abstractions: &[DomainAbstraction],
+        num_domain_abstractions: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<usize>, EvaluationError> {
+        match self.config.order_generator {
+            OrderGenerator::Greedy => Ok(Self::compute_greedy_order_for_state(
+                state,
+                abstract_state_ids,
+                self.config.scoring_function,
+                abstractions,
+                self.config.use_abstract_operator_cost_partitioning,
+            )),
+            OrderGenerator::Random => {
+                let total = state.h_values_by_abstraction.len();
+                let mut order: Vec<usize> = (0..total).collect();
+                order.shuffle(&mut state.rng);
+                Ok(order)
+            }
+            OrderGenerator::DynamicGreedy => self.compute_dynamic_greedy_order_for_state(
+                task,
+                state,
+                abstract_state_ids,
+                abstractions,
+                num_domain_abstractions,
+                deadline,
+            ),
+        }
+    }
+
+    fn compute_greedy_order_for_state(
         state: &mut ScpOnlineState,
         abstract_state_ids: &[Option<usize>],
         scoring_function: ScoringFunction,
@@ -450,6 +521,104 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         });
 
         order
+    }
+
+    fn compute_dynamic_greedy_order_for_state(
+        &self,
+        task: &dyn AbstractNumericTask,
+        state: &mut ScpOnlineState,
+        abstract_state_ids: &[Option<usize>],
+        abstractions: &[DomainAbstraction],
+        num_domain_abstractions: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<usize>, EvaluationError> {
+        if self.config.use_abstract_operator_cost_partitioning {
+            return Err(EvaluationError::ComputationFailed(
+                "dynamic_greedy_orders is only implemented for label SCP; abstract-operator SCP needs residual abstract-operator scoring, not label-order scoring".to_string(),
+            ));
+        }
+
+        let total = state.h_values_by_abstraction.len();
+        let mut remaining_components: Vec<usize> = (0..total).collect();
+        let mut remaining_costs = self.original_operator_costs.clone();
+        let mut order = Vec::with_capacity(total);
+
+        while !remaining_components.is_empty() {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                break;
+            }
+
+            remaining_components.shuffle(&mut state.rng);
+            let mut candidate_saturated_costs = Vec::with_capacity(remaining_components.len());
+            let mut candidate_h_values = Vec::with_capacity(remaining_components.len());
+
+            for &pos in &remaining_components {
+                if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    break;
+                }
+                let (distances, saturated) = if pos < num_domain_abstractions {
+                    let abstraction = &abstractions[pos];
+                    let abstraction_task = abstraction.task_for_factory(task);
+                    Self::compute_domain_cp_entry(
+                        abstraction,
+                        abstraction_task,
+                        self.config.combine_labels,
+                        &remaining_costs,
+                    )?
+                } else {
+                    let pdb_id = pos - num_domain_abstractions;
+                    let pdb = self.pdbs.get(pdb_id).ok_or_else(|| {
+                        EvaluationError::ComputationFailed(format!(
+                            "dynamic order requested missing PDB component {pdb_id}"
+                        ))
+                    })?;
+                    pdb.build_cost_partitioned_distance_table(&remaining_costs)
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to compute PDB dynamic-order table {pdb_id}: {error}"
+                            ))
+                        })?
+                };
+                let h = current_h_for_distances(pos, &distances, abstract_state_ids);
+                candidate_h_values.push(h);
+                candidate_saturated_costs.push(saturated);
+            }
+
+            if candidate_saturated_costs.len() != remaining_components.len() {
+                break;
+            }
+
+            let surplus_costs =
+                compute_all_surplus_costs(&remaining_costs, &candidate_saturated_costs);
+            let mut best_index = None;
+            let mut best_score = f64::NEG_INFINITY;
+            for rem_index in 0..remaining_components.len() {
+                let stolen = compute_costs_stolen_by_heuristic(
+                    &candidate_saturated_costs[rem_index],
+                    &surplus_costs,
+                );
+                let score = compute_score(
+                    candidate_h_values[rem_index],
+                    stolen,
+                    self.config.scoring_function,
+                );
+                if best_index.is_none() || score > best_score {
+                    best_index = Some(rem_index);
+                    best_score = score;
+                }
+            }
+            let best_index = best_index.ok_or_else(|| {
+                EvaluationError::ComputationFailed(
+                    "dynamic order generator had no remaining candidate".to_string(),
+                )
+            })?;
+            order.push(remaining_components[best_index]);
+            reduce_costs(&mut remaining_costs, &candidate_saturated_costs[best_index])?;
+            remaining_components.swap_remove(best_index);
+        }
+
+        order.extend(remaining_components);
+        Ok(order)
     }
 
     fn compute_abstract_state_ids_into(
@@ -580,18 +749,23 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             return Ok(None);
         }
         let original_costs = self.original_operator_costs.as_slice();
+        let deadline = self
+            .config
+            .table_construction_max_time
+            .is_finite()
+            .then(|| {
+                Instant::now() + Duration::from_secs_f64(self.config.table_construction_max_time)
+            });
         let standalone_current_h =
             standalone_current_h_values(state, abstract_state_ids, num_domain_abstractions);
-        let order = Self::compute_order_for_state(
+        let mut order = self.compute_order_for_state(
+            task,
             state,
             abstract_state_ids,
-            self.config.scoring_function,
             abstractions,
-            self.config.use_abstract_operator_cost_partitioning,
-        );
-
-        let deadline = (self.config.max_time.is_finite())
-            .then(|| state.start_time + Duration::from_secs_f64(self.config.max_time));
+            num_domain_abstractions,
+            deadline,
+        )?;
         let mode = if self.config.use_abstract_operator_cost_partitioning {
             "abstract-operator"
         } else {
@@ -619,7 +793,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             );
         }
 
-        let cp = if self.config.use_abstract_operator_cost_partitioning {
+        let mut cp = if self.config.use_abstract_operator_cost_partitioning {
             self.build_abstract_operator_cp(
                 task,
                 abstractions,
@@ -644,10 +818,112 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             )?
         };
 
+        if self.config.order_optimization_max_time > 0.0 {
+            let optimization_deadline = self
+                .config
+                .order_optimization_max_time
+                .is_finite()
+                .then(|| {
+                    Instant::now()
+                        + Duration::from_secs_f64(self.config.order_optimization_max_time)
+                });
+            self.optimize_order_with_hill_climbing(
+                task,
+                abstractions,
+                &standalone_current_h,
+                num_domain_abstractions,
+                original_costs,
+                abstract_state_ids,
+                &mut order,
+                &mut cp,
+                optimization_deadline,
+            )?;
+        }
+
         if cp.is_empty() {
             info!("scp_online: {mode} CP attempt produced no lookup tables");
         }
         Ok((!cp.is_empty()).then_some(cp))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn optimize_order_with_hill_climbing(
+        &self,
+        task: &dyn AbstractNumericTask,
+        abstractions: &[DomainAbstraction],
+        standalone_current_h: &[f64],
+        num_domain_abstractions: usize,
+        original_costs: &[f64],
+        abstract_state_ids: &[Option<usize>],
+        incumbent_order: &mut [usize],
+        incumbent_cp: &mut CostPartitioningHeuristic,
+        optimization_deadline: Option<Instant>,
+    ) -> Result<(), EvaluationError> {
+        let mut incumbent_h = incumbent_cp.compute_heuristic(abstract_state_ids);
+        if self.config.collection_config.debug {
+            info!("scp_online: order optimization incumbent_h={incumbent_h}");
+        }
+
+        loop {
+            if optimization_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                break;
+            }
+            let mut improved = false;
+            for i in 0..incumbent_order.len() {
+                for j in (i + 1)..incumbent_order.len() {
+                    if optimization_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                        return Ok(());
+                    }
+
+                    incumbent_order.swap(i, j);
+                    let neighbor_cp = if self.config.use_abstract_operator_cost_partitioning {
+                        self.build_abstract_operator_cp(
+                            task,
+                            abstractions,
+                            incumbent_order,
+                            abstract_state_ids,
+                            standalone_current_h,
+                            num_domain_abstractions,
+                            original_costs,
+                            optimization_deadline,
+                            self.config.saturator,
+                            None,
+                        )?
+                    } else {
+                        self.build_label_cp(
+                            task,
+                            abstractions,
+                            incumbent_order,
+                            abstract_state_ids,
+                            num_domain_abstractions,
+                            original_costs,
+                            optimization_deadline,
+                        )?
+                    };
+                    let neighbor_h = neighbor_cp.compute_heuristic(abstract_state_ids);
+                    if neighbor_h > incumbent_h {
+                        if self.config.collection_config.debug {
+                            info!(
+                                "scp_online: order optimization swapped positions {i}/{j}, h {incumbent_h} -> {neighbor_h}"
+                            );
+                        }
+                        *incumbent_cp = neighbor_cp;
+                        incumbent_h = neighbor_h;
+                        improved = true;
+                        break;
+                    }
+
+                    incumbent_order.swap(i, j);
+                }
+                if improved {
+                    break;
+                }
+            }
+            if !improved {
+                break;
+            }
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -666,6 +942,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
+        let label_rescue_operator_ids_by_abstraction =
+            compute_suffix_label_rescue_operator_ids(abstractions, order, num_domain_abstractions);
 
         for &pos in order {
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
@@ -686,6 +964,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 let abstraction_task = abstraction.task_for_factory(task);
                 match saturator {
                     Saturator::All => {
+                        self.log_abstract_operator_label_diagnostic(
+                            abstraction,
+                            abstraction_task,
+                            pos,
+                            abstract_state_ids,
+                            &remaining_costs,
+                        )?;
                         let (table, tcf) = match abstraction
                                 .factory
                                 .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
@@ -694,6 +979,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     &abstraction.abstract_operators,
                                     &abstraction.abstract_operator_footprints,
                                     budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
+                                    label_rescue_operator_ids_by_abstraction
+                                        .get(pos),
                                     &remaining_costs,
                                     pos,
                                     abstract_state_ids.get(pos).copied().flatten(),
@@ -733,6 +1020,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             .reduce_by_abstract_operator_footprints(
                                 pos,
                                 &abstraction.abstract_operator_footprints,
+                                label_rescue_operator_ids_by_abstraction.get(pos),
                                 &tcf,
                             )
                             .map_err(|error| {
@@ -744,6 +1032,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     }
                     Saturator::Perim => {
                         let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
+                        self.log_abstract_operator_label_diagnostic(
+                            abstraction,
+                            abstraction_task,
+                            pos,
+                            abstract_state_ids,
+                            &remaining_costs,
+                        )?;
                         let (table, tcf) = match abstraction
                                 .factory
                                 .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
@@ -752,6 +1047,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     &abstraction.abstract_operators,
                                     &abstraction.abstract_operator_footprints,
                                     budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
+                                    label_rescue_operator_ids_by_abstraction
+                                        .get(pos),
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
@@ -791,6 +1088,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             .reduce_by_abstract_operator_footprints(
                                 pos,
                                 &abstraction.abstract_operator_footprints,
+                                label_rescue_operator_ids_by_abstraction
+                                        .get(pos),
                                 &tcf,
                             )
                             .map_err(|error| {
@@ -802,6 +1101,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     }
                     Saturator::Perimstar => {
                         let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
+                        self.log_abstract_operator_label_diagnostic(
+                            abstraction,
+                            abstraction_task,
+                            pos,
+                            abstract_state_ids,
+                            &remaining_costs,
+                        )?;
                         let (perim_table, perim_tcf) = match abstraction
                                 .factory
                                 .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
@@ -810,6 +1116,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     &abstraction.abstract_operators,
                                     &abstraction.abstract_operator_footprints,
                                     budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
+                                    label_rescue_operator_ids_by_abstraction
+                                        .get(pos),
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
@@ -849,6 +1157,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             .reduce_by_abstract_operator_footprints(
                                 pos,
                                 &abstraction.abstract_operator_footprints,
+                                label_rescue_operator_ids_by_abstraction
+                                        .get(pos),
                                 &perim_tcf,
                             )
                             .map_err(|error| {
@@ -866,6 +1176,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                             &abstraction.abstract_operators,
                                             &abstraction.abstract_operator_footprints,
                                             budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
+                                            label_rescue_operator_ids_by_abstraction
+                                        .get(pos),
                                             &remaining_costs,
                                             pos,
                                             cap_state_id,
@@ -905,6 +1217,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             .reduce_by_abstract_operator_footprints(
                                 pos,
                                 &abstraction.abstract_operator_footprints,
+                                label_rescue_operator_ids_by_abstraction
+                                        .get(pos),
                                 &all_tcf,
                             )
                             .map_err(|error| {
@@ -928,6 +1242,44 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
 
         Ok(cp)
+    }
+
+    fn log_abstract_operator_label_diagnostic(
+        &self,
+        abstraction: &DomainAbstraction,
+        abstraction_task: &dyn AbstractNumericTask,
+        abstraction_id: usize,
+        abstract_state_ids: &[Option<usize>],
+        remaining_costs: &TransitionResidualCosts,
+    ) -> Result<(), EvaluationError> {
+        if !enabled!(Level::INFO) {
+            return Ok(());
+        }
+        let label_remaining_costs = remaining_costs.operator_costs_for_label_cp();
+        let (label_distances, label_saturated) = Self::compute_domain_cp_entry(
+            abstraction,
+            abstraction_task,
+            self.config.combine_labels,
+            &label_remaining_costs,
+        )?;
+        let label_h = current_h_for_distances(abstraction_id, &label_distances, abstract_state_ids);
+        let (positive_labels, total_label_saturated) = positive_cost_stats(&label_saturated);
+        let stats = abstract_operator_footprint_stats(&abstraction.abstract_operator_footprints);
+        let potentially_lost_labels = count_positive_saturated_non_allocable_labels(
+            &abstraction.abstract_operator_footprints,
+            &label_saturated,
+        );
+        info!(
+            "scp_online: abstract-operator label diagnostic abstraction {abstraction_id}: label_equivalent_h={label_h}, positive_saturated_labels={positive_labels}, total_label_saturated={total_label_saturated:.6}, footprint_labels={}, non_allocable_labels={}, positive_label_non_allocable_footprint_labels={potentially_lost_labels}",
+            stats.total_labels, stats.non_allocable_labels,
+        );
+        log_positive_label_footprint_diagnostics(
+            abstraction_id,
+            abstraction_task,
+            &abstraction.abstract_operator_footprints,
+            &label_saturated,
+        );
+        Ok(())
     }
 
     fn add_transition_pdb_step(
@@ -1674,6 +2026,155 @@ fn abstract_operator_footprint_stats(
     stats
 }
 
+fn compute_suffix_label_rescue_operator_ids(
+    abstractions: &[DomainAbstraction],
+    order: &[usize],
+    num_domain_abstractions: usize,
+) -> Vec<HashSet<usize>> {
+    let mut rescue_by_abstraction = vec![HashSet::new(); abstractions.len()];
+    let mut suffix_allocable = HashSet::new();
+
+    for &abstraction_id in order.iter().rev() {
+        if abstraction_id >= num_domain_abstractions {
+            continue;
+        }
+        let abstraction = &abstractions[abstraction_id];
+        let mut current_allocable = HashSet::new();
+        let mut current_rescue_candidates = HashSet::new();
+        for label in abstraction
+            .abstract_operator_footprints
+            .iter()
+            .flat_map(|footprint| footprint.labels.iter())
+        {
+            if label.allocable {
+                current_allocable.insert(label.concrete_op_id);
+            } else if matches!(
+                label.non_allocable_reason,
+                Some(
+                    NonAllocableFootprintReason::InfiniteActiveSource
+                        | NonAllocableFootprintReason::UninformativeSource
+                )
+            ) {
+                current_rescue_candidates.insert(label.concrete_op_id);
+            }
+        }
+
+        let mut current_and_later_allocable = suffix_allocable.clone();
+        current_and_later_allocable.extend(current_allocable.iter().copied());
+        let blocking_allocable = if abstraction.metadata.full_goal_task == Some(true) {
+            &current_allocable
+        } else {
+            &current_and_later_allocable
+        };
+        rescue_by_abstraction[abstraction_id] = current_rescue_candidates
+            .into_iter()
+            .filter(|op_id| !blocking_allocable.contains(op_id))
+            .collect();
+        suffix_allocable = current_and_later_allocable;
+    }
+
+    rescue_by_abstraction
+}
+
+fn count_positive_saturated_non_allocable_labels(
+    footprints: &[AbstractOperatorFootprint],
+    label_saturated_costs: &[f64],
+) -> usize {
+    footprints
+        .iter()
+        .flat_map(|footprint| footprint.labels.iter())
+        .filter(|label| {
+            !label.allocable
+                && label_saturated_costs
+                    .get(label.concrete_op_id)
+                    .is_some_and(|cost| cost.is_finite() && *cost > 1e-9)
+        })
+        .count()
+}
+
+#[derive(Debug, Default)]
+struct LabelFootprintReasonCounts {
+    allocable: usize,
+    infinite_source: usize,
+    uninformative_source: usize,
+    unsupported_effect: usize,
+}
+
+fn log_positive_label_footprint_diagnostics(
+    abstraction_id: usize,
+    task: &dyn AbstractNumericTask,
+    footprints: &[AbstractOperatorFootprint],
+    label_saturated_costs: &[f64],
+) {
+    if !enabled!(Level::INFO) {
+        return;
+    }
+    let mut counts_by_label: HashMap<usize, LabelFootprintReasonCounts> = HashMap::new();
+    for label in footprints
+        .iter()
+        .flat_map(|footprint| footprint.labels.iter())
+    {
+        let counts = counts_by_label.entry(label.concrete_op_id).or_default();
+        if label.allocable {
+            counts.allocable += 1;
+        } else {
+            match label.non_allocable_reason {
+                Some(NonAllocableFootprintReason::InfiniteActiveSource) => {
+                    counts.infinite_source += 1;
+                }
+                Some(NonAllocableFootprintReason::UninformativeSource) => {
+                    counts.uninformative_source += 1;
+                }
+                Some(NonAllocableFootprintReason::UnsupportedEffectImage) => {
+                    counts.unsupported_effect += 1;
+                }
+                None => {
+                    counts.unsupported_effect += 1;
+                }
+            }
+        }
+    }
+
+    let mut positive_labels = label_saturated_costs
+        .iter()
+        .enumerate()
+        .filter_map(|(concrete_op_id, &cost)| {
+            if cost.is_finite() && cost > 1e-9 {
+                Some((concrete_op_id, cost))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    positive_labels.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+
+    for (rank, (concrete_op_id, saturated_cost)) in positive_labels.into_iter().take(12).enumerate()
+    {
+        let counts = counts_by_label.get(&concrete_op_id);
+        let (allocable, infinite, uninformative, unsupported) = counts
+            .map(|counts| {
+                (
+                    counts.allocable,
+                    counts.infinite_source,
+                    counts.uninformative_source,
+                    counts.unsupported_effect,
+                )
+            })
+            .unwrap_or((0, 0, 0, 0));
+        let op = task.get_operators().get(concrete_op_id);
+        let op_name = op.map(|op| op.name()).unwrap_or("<missing operator>");
+        let numeric_effects = op.map(|op| op.assignment_effects().len()).unwrap_or(0);
+        info!(
+            "scp_online: abstract-operator label diagnostic detail abstraction {abstraction_id}: rank={rank}, label={concrete_op_id}, saturated={saturated_cost:.6}, numeric_effects={numeric_effects}, footprint_allocable={allocable}, footprint_infinite={infinite}, footprint_uninformative={uninformative}, footprint_unsupported={unsupported}, op={op_name}"
+        );
+    }
+}
+
 fn abstraction_metadata_summary(abstraction: &DomainAbstraction) -> String {
     let metadata = &abstraction.metadata;
     format!(
@@ -1820,6 +2321,7 @@ mod handcrafted_sailing_tests {
 
         let config = ScpOnlineConfig {
             max_time: 300.0,
+            table_construction_max_time: 30.0,
             max_size: 10_000_000,
             interval: usize::MAX,
             combine_labels: false,
@@ -1836,6 +2338,8 @@ mod handcrafted_sailing_tests {
             pdb_frontier_heuristic: PdbInternalHeuristic::Zero,
             pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
             scoring_function: ScoringFunction::MaxHeuristic,
+            order_generator: OrderGenerator::Greedy,
+            order_optimization_max_time: 0.0,
             saturator: Saturator::All,
             random_seed: Some(1),
             use_abstract_operator_cost_partitioning: true,

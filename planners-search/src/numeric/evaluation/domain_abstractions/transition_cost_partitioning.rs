@@ -691,6 +691,7 @@ impl TransitionResidualCosts {
         &mut self,
         producing_abstraction_id: usize,
         footprints: &[AbstractOperatorFootprint],
+        label_rescue_operator_ids: Option<&HashSet<usize>>,
         tcf: &AbstractOperatorCostFunction,
     ) -> Result<()> {
         ensure!(
@@ -701,6 +702,9 @@ impl TransitionResidualCosts {
         );
 
         let mut pending: Vec<(usize, ResidualReduction)> = Vec::new();
+        let mut pending_uniform: Vec<(usize, f64)> = Vec::new();
+        let uniform_label_residuals =
+            label_rescue_operator_ids.map(|_| self.operator_costs_for_label_cp());
         for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
             ensure!(
                 !saturated.is_finite() || saturated >= -EPSILON,
@@ -714,6 +718,39 @@ impl TransitionResidualCosts {
 
             for footprint in &footprints[abstract_op_id].labels {
                 if !footprint.allocable {
+                    if matches!(
+                        footprint.non_allocable_reason,
+                        Some(
+                            NonAllocableFootprintReason::InfiniteActiveSource
+                                | NonAllocableFootprintReason::UninformativeSource
+                        )
+                    ) && label_rescue_operator_ids
+                        .is_some_and(|ids| ids.contains(&footprint.concrete_op_id))
+                    {
+                        let concrete_op_id = footprint.concrete_op_id;
+                        let current_residual = uniform_label_residuals
+                            .as_ref()
+                            .and_then(|costs| costs.get(concrete_op_id))
+                            .copied()
+                            .unwrap_or(f64::INFINITY);
+                        ensure!(
+                            current_residual.is_finite(),
+                            "uniform residual cost for rescued abstract op {abstract_op_id}, concrete op {concrete_op_id} must be finite"
+                        );
+                        ensure!(
+                            saturated <= current_residual + EPSILON,
+                            "rescued abstract-operator reduction {saturated} exceeds current uniform residual cost {current_residual} for concrete operator {concrete_op_id}"
+                        );
+                        if let Some((_, existing)) = pending_uniform
+                            .iter_mut()
+                            .find(|(pending_op_id, _)| *pending_op_id == concrete_op_id)
+                        {
+                            *existing = existing.max(saturated);
+                        } else {
+                            pending_uniform.push((concrete_op_id, saturated));
+                        }
+                        continue;
+                    }
                     ensure!(
                         saturated <= EPSILON,
                         "positive abstract-operator saturated cost {saturated} for non-allocable footprint of abstract op {abstract_op_id}, concrete op {}",
@@ -779,6 +816,18 @@ impl TransitionResidualCosts {
                     pending.push((concrete_op_id, ResidualReduction { amount, condition }));
                 }
             }
+        }
+
+        for (concrete_op_id, amount) in pending_uniform {
+            let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
+                continue;
+            };
+            residual.base_cost = subtract_cost(residual.base_cost, amount).with_context(|| {
+                format!(
+                    "rescued uniform residual reduction underflow for operator {concrete_op_id}"
+                )
+            })?;
+            residual.invalidate_cache();
         }
 
         for (concrete_op_id, reduction) in pending {
@@ -2117,6 +2166,7 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 std::slice::from_ref(&reduced),
+                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![3.0],
                 },
@@ -2140,6 +2190,7 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 std::slice::from_ref(&reduced),
+                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![1.0],
                 },
@@ -2162,6 +2213,7 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 &[reduced],
+                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![0.4],
                 },
@@ -2181,6 +2233,7 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 &[footprint(0.0, 2.0)],
+                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![4.0],
                 },
@@ -2200,6 +2253,7 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 &[footprint(1.0, 10.0)],
+                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![4.0],
                 },
@@ -2219,6 +2273,7 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 &[footprint(0.0, 5.0), footprint(4.0, 10.0)],
+                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![3.0, 4.0],
                 },

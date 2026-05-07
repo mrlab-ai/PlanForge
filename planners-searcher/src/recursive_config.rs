@@ -9,7 +9,7 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
     InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, PortfolioStrategy, VariableSubset,
 };
 use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
-    Saturator, ScpOnlineConfig,
+    OrderGenerator, Saturator, ScoringFunction, ScpOnlineConfig,
 };
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -586,6 +586,26 @@ fn parse_saturator(value: &str) -> Result<Saturator, String> {
     }
 }
 
+fn parse_scoring_function(value: &str) -> Result<ScoringFunction, String> {
+    match value {
+        "max_heuristic" => Ok(ScoringFunction::MaxHeuristic),
+        "min_stolen_costs" => Ok(ScoringFunction::MinStolenCosts),
+        "max_heuristic_per_stolen_costs" => Ok(ScoringFunction::MaxHeuristicPerStolenCosts),
+        _ => Err(format!("invalid ScoringFunction `{value}`")),
+    }
+}
+
+fn parse_order_generator(value: &str) -> Result<OrderGenerator, String> {
+    match value {
+        "greedy_orders" | "greedy_orders()" => Ok(OrderGenerator::Greedy),
+        "dynamic_greedy_orders" | "dynamic_greedy_orders()" => {
+            Ok(OrderGenerator::DynamicGreedy)
+        }
+        "random_orders" | "random_orders()" => Ok(OrderGenerator::Random),
+        _ => Err(format!("invalid OrderGenerator `{value}`")),
+    }
+}
+
 fn parse_variable_subset(value: &str) -> Result<VariableSubset, String> {
     match value {
         "goals" => Ok(VariableSubset::Goals),
@@ -885,6 +905,11 @@ fn multi_domain_abstractions_fields()
 fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
     vec![
         field_f64!("max_time", ScpOnlineConfig, max_time),
+        field_f64!(
+            "table_construction_max_time",
+            ScpOnlineConfig,
+            table_construction_max_time
+        ),
         field_usize!("max_size", ScpOnlineConfig, max_size),
         field_usize!("interval", ScpOnlineConfig, interval),
         field_bool!("use_numeric_pdbs", ScpOnlineConfig, use_numeric_pdbs),
@@ -901,6 +926,27 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
             },
             format: |config| config.saturator.to_string(),
         },
+        Field {
+            name: "scoring_function",
+            apply: |config, value| {
+                config.scoring_function = parse_scoring_function(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.scoring_function.to_string(),
+        },
+        Field {
+            name: "orders",
+            apply: |config, value| {
+                config.order_generator = parse_order_generator(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.order_generator.to_string(),
+        },
+        field_f64!(
+            "order_optimization_max_time",
+            ScpOnlineConfig,
+            order_optimization_max_time
+        ),
         field_usize!("max_pdb_states", ScpOnlineConfig, max_pdb_states),
         field_usize!("max_pattern_size", ScpOnlineConfig, max_pattern_size),
         field_bool!(
