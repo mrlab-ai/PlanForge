@@ -54,6 +54,32 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state(
     numeric_domain_sizes: &[usize],
     hash_multipliers: &[usize],
 ) -> Result<Vec<Interval>> {
+    let mut buf = Vec::new();
+    prepare_comparison_tree_inputs_from_abstract_state_into(
+        task,
+        comparison_trees,
+        partitions,
+        state_hash,
+        num_props,
+        numeric_domain_sizes,
+        hash_multipliers,
+        &mut buf,
+    )?;
+    Ok(buf)
+}
+
+/// Resize-and-fill variant for callers that re-evaluate this on many states
+/// and want to reuse one `Vec<Interval>` across the loop.
+pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
+    task: &dyn AbstractNumericTask,
+    comparison_trees: &[ComparisonTree],
+    partitions: &NumericPartitions,
+    state_hash: usize,
+    num_props: usize,
+    numeric_domain_sizes: &[usize],
+    hash_multipliers: &[usize],
+    out: &mut Vec<Interval>,
+) -> Result<()> {
     let num_numeric_vars = task.numeric_variables().len();
     ensure!(
         numeric_domain_sizes.len() == num_numeric_vars,
@@ -62,7 +88,8 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state(
     );
 
     let initial_numeric_values = task.get_initial_numeric_state_values();
-    let mut numeric_intervals = vec![Interval::new(0.0, 0.0, false, false); num_numeric_vars];
+    out.clear();
+    out.resize(num_numeric_vars, Interval::new(0.0, 0.0, false, false));
     for (numeric_var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
         match numeric_var.get_type() {
             NumericType::Constant => {
@@ -71,7 +98,7 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state(
                     value.is_finite() && !value.is_nan(),
                     "constant numeric value for var {numeric_var_id} must be finite, got {value}"
                 );
-                numeric_intervals[numeric_var_id] = Interval::singleton(value);
+                out[numeric_var_id] = Interval::singleton(value);
             }
             NumericType::Derived => {}
             _ => {
@@ -92,19 +119,19 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state(
                         "missing partition interval for numeric var {numeric_var_id} part {part}"
                     )
                 })?;
-                numeric_intervals[numeric_var_id] = interval;
+                out[numeric_var_id] = interval;
             }
         }
     }
 
-    fill_derived_numeric_intervals_from_comparison_trees(comparison_trees, &mut numeric_intervals);
-    for interval in &mut numeric_intervals {
+    fill_derived_numeric_intervals_from_comparison_trees(comparison_trees, out);
+    for interval in out.iter_mut() {
         if interval.is_empty() {
             *interval = Interval::unbounded();
         }
     }
 
-    Ok(numeric_intervals)
+    Ok(())
 }
 
 pub fn evaluate_comparison_tree_from_initial_state(

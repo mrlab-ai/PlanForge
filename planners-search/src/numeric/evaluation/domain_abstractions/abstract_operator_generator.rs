@@ -56,7 +56,6 @@ impl IncrementalAbstractOperatorCache {
 struct CachedConcreteOperatorBuild {
     dependencies: OperatorDependencies,
     skeletons: Vec<AbstractOperatorSkeleton>,
-    candidates: Vec<AbstractOperatorCandidate>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -78,6 +77,12 @@ struct AbstractOperatorCandidate {
     pre_pairs: Vec<ExplicitFact>,
     eff_pairs: Vec<ExplicitFact>,
     changed_numeric_vars: Vec<usize>,
+    /// `(cost_bits, FNV+SplitMix64 hash of prev+pre+eff+cost)`.
+    /// Precomputed once at candidate creation so the (often-cached) candidate
+    /// can be matched against the grouping map in `push_candidate` without
+    /// re-walking its fact slices on every CEGAR iteration.
+    cost_bits: u64,
+    signature_hash: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -193,20 +198,25 @@ impl StoredOperatorSignature {
     }
 }
 
-/// Compute a 64-bit signature hash directly from the candidate's slices.
-/// Avoids the per-candidate `Vec<(usize, usize)>` allocations that the old
-/// `signature()` did, and lets us key the grouping map with an identity
-/// hasher (skipping `SipHash`).
+/// Compute a 64-bit signature hash from the operator's prev/pre/eff fact
+/// slices and `cost_bits`. Precomputed once per candidate at creation time
+/// and stored on the candidate, so `push_candidate` does not have to walk
+/// the slices again on every CEGAR iteration.
+///
+/// FNV-1a-style mix at the u64 chunk level + a SplitMix64 finalizer for
+/// even bit distribution. Same construction as the state-registry hash.
 #[inline]
-fn candidate_signature_hash(candidate: &AbstractOperatorCandidate, cost_bits: u64) -> u64 {
-    // FNV-1a-style mix at the u64 chunk level + a SplitMix64 finalizer for
-    // even bit distribution. Same construction as the state-registry hash.
+fn compute_signature_hash(
+    prev_pairs: &[ExplicitFact],
+    pre_pairs: &[ExplicitFact],
+    eff_pairs: &[ExplicitFact],
+    cost_bits: u64,
+) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x00000100000001B3;
 
     #[inline(always)]
     fn mix_facts(hash: &mut u64, facts: &[ExplicitFact]) {
-        // Length tag — keep distinct empty/non-empty inputs.
         *hash ^= facts.len() as u64;
         *hash = hash.wrapping_mul(FNV_PRIME);
         for fact in facts {
@@ -215,19 +225,17 @@ fn candidate_signature_hash(candidate: &AbstractOperatorCandidate, cost_bits: u6
             *hash ^= fact.value as u64;
             *hash = hash.wrapping_mul(FNV_PRIME);
         }
-        // Section delimiter.
         *hash ^= 0xdeadbeef_cafef00d;
         *hash = hash.wrapping_mul(FNV_PRIME);
     }
 
     let mut hash = FNV_OFFSET;
-    mix_facts(&mut hash, &candidate.prev_pairs);
-    mix_facts(&mut hash, &candidate.pre_pairs);
-    mix_facts(&mut hash, &candidate.eff_pairs);
+    mix_facts(&mut hash, prev_pairs);
+    mix_facts(&mut hash, pre_pairs);
+    mix_facts(&mut hash, eff_pairs);
     hash ^= cost_bits;
     hash = hash.wrapping_mul(FNV_PRIME);
 
-    // SplitMix64 finalizer.
     hash ^= hash >> 33;
     hash = hash.wrapping_mul(0xff51afd7ed558ccd);
     hash ^= hash >> 33;
@@ -269,8 +277,9 @@ impl AbstractOperatorFinalizer {
 
     fn push_candidate(&mut self, candidate: &AbstractOperatorCandidate) {
         if self.combine_labels {
-            let cost_bits = float_tolerance::canonical_bits(candidate.cost);
-            let hash = candidate_signature_hash(candidate, cost_bits);
+            // Hash and cost bits are precomputed at candidate-creation time.
+            let cost_bits = candidate.cost_bits;
+            let hash = candidate.signature_hash;
             if let Some(bucket) = self.grouping.get(&hash) {
                 for &idx in bucket {
                     let stored = &self.stored_signatures[idx as usize];
@@ -441,6 +450,13 @@ fn build_candidate_from_transition(
         return None;
     }
 
+    let cost_bits = float_tolerance::canonical_bits(skeleton.cost);
+    let signature_hash = compute_signature_hash(
+        &extended_prev_pairs,
+        &extended_pre_pairs,
+        &extended_eff_pairs,
+        cost_bits,
+    );
     Some(AbstractOperatorCandidate {
         concrete_op_id: skeleton.concrete_op_id,
         cost: skeleton.cost,
@@ -448,6 +464,8 @@ fn build_candidate_from_transition(
         pre_pairs: extended_pre_pairs,
         eff_pairs: extended_eff_pairs,
         changed_numeric_vars: trans.changed_numeric_vars.clone(),
+        cost_bits,
+        signature_hash,
     })
 }
 
@@ -718,49 +736,56 @@ impl AbstractOperatorGenerator {
         task: &dyn AbstractNumericTask,
         cache: &mut IncrementalAbstractOperatorCache,
     ) -> Result<Vec<AbstractOperator>> {
+        // Strategy: cache only the *skeletons* (and per-op dependency
+        // metadata), not the candidates. Candidates are heavy
+        // (`AbstractOperatorCandidate` carries 4 `Vec`s) and are essentially
+        // always invalidated on numeric refinements anyway because partition
+        // indices shift on `NumericPartitions::split_at`. Re-materializing
+        // skeletons → operators directly via `materialize_skeletons_into`
+        // (which pushes into `AbstractOperatorFinalizer` without an
+        // intermediate candidate vec) saves 4 vec allocations per emitted
+        // abstract operator on every CEGAR iteration.
+        let mut finalizer =
+            AbstractOperatorFinalizer::new(self.combine_labels, &self.hash_multipliers);
+
         if cache.per_operator.len() != task.get_operators().len() {
             cache.per_operator.clear();
             cache.per_operator.reserve(task.get_operators().len());
             for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
                 let skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
-                let candidates = materialize_skeletons(task, self, &skeletons)?;
                 cache.per_operator.push(CachedConcreteOperatorBuild {
                     dependencies: self.compute_operator_dependencies(op),
                     skeletons,
-                    candidates,
                 });
             }
-            return Ok(self.finalize_candidate_refs(
-                cache
-                    .per_operator
-                    .iter()
-                    .flat_map(|entry| entry.candidates.iter()),
-            ));
-        }
-
-        let (dirty_propositional_vars, dirty_numeric) = cache.take_dirty_state();
-        if dirty_numeric || !dirty_propositional_vars.is_empty() {
-            for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
-                let entry = &mut cache.per_operator[concrete_op_id];
-                let prop_dirty = entry
-                    .dependencies
-                    .intersects_propositional(&dirty_propositional_vars);
-                if prop_dirty {
-                    entry.dependencies = self.compute_operator_dependencies(op);
-                    entry.skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
-                }
-                if dirty_numeric || prop_dirty {
-                    entry.candidates = materialize_skeletons(task, self, &entry.skeletons)?;
+            // Drain the dirty state — the fresh build subsumes it.
+            let _ = cache.take_dirty_state();
+        } else {
+            let (dirty_propositional_vars, _dirty_numeric) = cache.take_dirty_state();
+            if !dirty_propositional_vars.is_empty() {
+                for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
+                    let entry = &mut cache.per_operator[concrete_op_id];
+                    let prop_dirty = entry
+                        .dependencies
+                        .intersects_propositional(&dirty_propositional_vars);
+                    if prop_dirty {
+                        entry.dependencies = self.compute_operator_dependencies(op);
+                        entry.skeletons =
+                            self.build_for_concrete_operator(task, op, concrete_op_id)?;
+                    }
                 }
             }
         }
 
-        Ok(self.finalize_candidate_refs(
-            cache
-                .per_operator
-                .iter()
-                .flat_map(|entry| entry.candidates.iter()),
-        ))
+        // Materialize skeletons → operators directly into the finalizer for
+        // every concrete op every iteration. Numeric refinements invalidate
+        // numeric partition transitions but not skeletons, so the skeleton
+        // cache still serves its purpose for the propositional part.
+        for entry in &cache.per_operator {
+            materialize_skeletons_into(task, self, &entry.skeletons, &mut finalizer)?;
+        }
+
+        Ok(finalizer.into_operators())
     }
 
     fn build_for_concrete_operator(
@@ -1190,6 +1215,30 @@ fn compute_hash_effects_with_preconditions(
         affected_numeric_vars.insert(v);
     }
 
+    // Compute the set of numeric vars that this operator's preconditions
+    // *transitively* depend on through comparison-axiom-derived propositional
+    // variables. A refined numeric var that is neither affected by the
+    // operator nor referenced by any of its comparison preconditions has no
+    // observable role: the operator's effect on its abstract-state hash is
+    // 0 along that dimension, and the match tree never queries the var. We
+    // can therefore omit it from the cartesian product entirely (treating it
+    // as a wildcard at the abstract-operator level), which can shrink the
+    // transition count by orders of magnitude in domains like minecraft
+    // where most concrete operators do not query most refined numerics.
+    let mut needed_numeric_vars: HashSet<usize> = HashSet::new();
+    if let Some(index) = &generator.comparison_index {
+        for pre in op_preconditions {
+            if !generator.derived_prop_vars.contains(&pre.var) {
+                continue;
+            }
+            if let Some(tree) = index.comparison_tree(pre.var) {
+                for dep in tree.regular_numeric_var_dependencies(task) {
+                    needed_numeric_vars.insert(dep);
+                }
+            }
+        }
+    }
+
     let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
     for v in 0..num_numeric_vars {
         ensure!(
@@ -1235,11 +1284,16 @@ fn compute_hash_effects_with_preconditions(
             let mut transitions: Vec<(usize, usize)> = pairs.into_iter().collect();
             transitions.sort_unstable();
             per_var.push((v, transitions));
-        } else {
-            // Unaffected refined numeric var: enumerate identity transitions `p` -> `p`.
+        } else if needed_numeric_vars.contains(&v) {
+            // Unaffected but referenced via a comparison precondition:
+            // enumerate identity transitions `p` -> `p` so the comparison
+            // can be evaluated on the partition interval.
             let transitions: Vec<(usize, usize)> = (0..num_parts).map(|p| (p, p)).collect();
             per_var.push((v, transitions));
         }
+        // Otherwise: skip — the operator is wildcarded on `v`. Its
+        // hash effect on `v`'s dimension is 0, the match tree never queries
+        // `v`, and no comparison precondition depends on `v`.
     }
 
     if per_var.is_empty() {
@@ -1251,102 +1305,205 @@ fn compute_hash_effects_with_preconditions(
         }]);
     }
 
-    // Cartesian product across numeric variables.
-    let mut combos: Vec<Vec<(usize, usize, usize)>> = vec![Vec::new()];
-    for (var_id, transitions) in per_var {
-        let mut next: Vec<Vec<(usize, usize, usize)>> = Vec::new();
-        for prefix in &combos {
-            for (src, tgt) in &transitions {
-                let mut v = prefix.clone();
-                v.push((var_id, *src, *tgt));
-                next.push(v);
-            }
-        }
-        combos = next;
-        if combos.is_empty() {
-            break;
-        }
-    }
+    // Determine whether any of the operator's preconditions reference a
+    // comparison-axiom-derived propositional variable. Combined with whether
+    // the operator changes any numeric variable that feeds a comparison tree,
+    // this lets us short-circuit the interval/cascade work on every combo.
+    let op_has_comparison_preconditions = op_preconditions
+        .iter()
+        .any(|pre| generator.derived_prop_vars.contains(&pre.var));
 
+    // Pre-decide the "this combo can possibly change a comparison's truth
+    // value" flag at the level of the operator: any affected (changed)
+    // numeric var that participates in a comparison tree is a trigger. We
+    // re-check per combo (a combo may have src==tgt and thus no actual
+    // change), but use this as the upper bound.
+    let any_changed_var_affects_comparison = ass_effects.iter().any(|eff| {
+        let v = eff.affected_var_id();
+        generator
+            .comparisons_by_numeric_dep
+            .get(v)
+            .is_some_and(|trees| !trees.is_empty())
+    });
+
+    // Backtracking enumeration. Following the C++ reference, we share the
+    // partition-fact scratch buffers across recursive frames (push/pop) and
+    // only clone into a `TransitionInfo` at the leaf. This avoids the
+    // per-combo `Vec<(usize,usize,usize)>` materialization that the older
+    // cartesian-product expansion did.
     let mut out: Vec<TransitionInfo> = Vec::new();
-    // Reusable scratch buffers for comparison-tree input intervals — sized
-    // by `task.numeric_variables().len()` and refreshed per combo.
+    let mut source_partition_facts: Vec<ExplicitFact> = Vec::new();
+    let mut target_partition_facts: Vec<ExplicitFact> = Vec::new();
+    let mut changed_numeric_vars: Vec<usize> = Vec::new();
+    let mut combo_scratch: Vec<(usize, usize, usize)> = Vec::with_capacity(per_var.len());
     let mut source_intervals_buf: Vec<Interval> = Vec::new();
     let mut target_intervals_buf: Vec<Interval> = Vec::new();
-    for combo in combos {
-        let mut source_partition_facts: Vec<ExplicitFact> = Vec::new();
-        let mut target_partition_facts: Vec<ExplicitFact> = Vec::new();
-        let prevail_facts: Vec<ExplicitFact> = Vec::new();
 
-        let mut changed_numeric_vars: Vec<usize> = Vec::new();
+    enumerate_partition_combos(
+        task,
+        generator,
+        op_preconditions,
+        &per_var,
+        &affected_numeric_vars,
+        num_props,
+        op_has_comparison_preconditions,
+        any_changed_var_affects_comparison,
+        0,
+        &mut source_partition_facts,
+        &mut target_partition_facts,
+        &mut changed_numeric_vars,
+        &mut combo_scratch,
+        &mut source_intervals_buf,
+        &mut target_intervals_buf,
+        &mut out,
+    )?;
 
-        for (var_id, src, tgt) in &combo {
-            let abs_var_id = num_props + (*var_id);
-            source_partition_facts.push(ExplicitFact::new(abs_var_id, *src));
-            target_partition_facts.push(ExplicitFact::new(abs_var_id, *tgt));
-            if affected_numeric_vars.contains(var_id) {
-                changed_numeric_vars.push(*var_id);
-            }
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enumerate_partition_combos(
+    task: &dyn AbstractNumericTask,
+    generator: &AbstractOperatorGenerator,
+    op_preconditions: &[ExplicitFact],
+    per_var: &[(usize, Vec<(usize, usize)>)],
+    affected_numeric_vars: &HashSet<usize>,
+    num_props: usize,
+    op_has_comparison_preconditions: bool,
+    any_changed_var_affects_comparison: bool,
+    pos: usize,
+    source_partition_facts: &mut Vec<ExplicitFact>,
+    target_partition_facts: &mut Vec<ExplicitFact>,
+    changed_numeric_vars: &mut Vec<usize>,
+    combo_scratch: &mut Vec<(usize, usize, usize)>,
+    source_intervals_buf: &mut Vec<Interval>,
+    target_intervals_buf: &mut Vec<Interval>,
+    out: &mut Vec<TransitionInfo>,
+) -> Result<()> {
+    if pos == per_var.len() {
+        // Leaf: emit a TransitionInfo for the current (source, target,
+        // changed_vars) state of the scratch.
+
+        // Fast path: when this operator has no comparison preconditions and
+        // its changes can't affect any comparison axiom, no interval or
+        // cascade work is needed — emit directly. Mirrors the C++ early-exit
+        // before the optimistic filtering pass.
+        if !op_has_comparison_preconditions && !any_changed_var_affects_comparison {
+            let mut source_facts = source_partition_facts.clone();
+            let mut target_facts = target_partition_facts.clone();
+            source_facts.sort();
+            source_facts.dedup();
+            target_facts.sort();
+            target_facts.dedup();
+            let mut changed_vars = changed_numeric_vars.clone();
+            changed_vars.sort_unstable();
+            changed_vars.dedup();
+            out.push(TransitionInfo {
+                source_partition_facts: source_facts,
+                target_partition_facts: target_facts,
+                prevail_facts: Vec::new(),
+                changed_numeric_vars: changed_vars,
+            });
+            return Ok(());
         }
 
-        // Note: we do NOT encode explicit effects on comparison/derived vars here.
-        // They are treated as implicitly (re-)evaluated from numeric intervals during
-        // regression/predecessor enumeration.
-
-        // Optimistic filtering for comparison preconditions based on *source* intervals.
-        // Reuse `source_intervals_buf` / `target_intervals_buf` across combos —
-        // each combo otherwise allocates a fresh `Vec<Interval>` of size
-        // `task.numeric_variables().len()`.
+        // Otherwise we need the source intervals to (a) prune via the
+        // comparison-precondition index and (b) compute cascade facts.
         prepare_comparison_tree_inputs_for_combo_into(
             task,
             generator,
-            &combo,
+            combo_scratch,
             false,
-            &mut source_intervals_buf,
+            source_intervals_buf,
         )?;
-        if let Some(index) = &generator.comparison_index
+        if op_has_comparison_preconditions
+            && let Some(index) = &generator.comparison_index
             && op_preconditions
                 .iter()
-                .any(|pre| index.precondition_is_contradicted(pre, &source_intervals_buf))
+                .any(|pre| index.precondition_is_contradicted(pre, source_intervals_buf))
         {
-            continue;
+            return Ok(());
         }
 
+        let mut source_facts = source_partition_facts.clone();
+        let mut target_facts = target_partition_facts.clone();
         if !changed_numeric_vars.is_empty() {
             prepare_comparison_tree_inputs_for_combo_into(
                 task,
                 generator,
-                &combo,
+                combo_scratch,
                 true,
-                &mut target_intervals_buf,
+                target_intervals_buf,
             )?;
             let (source_comparison_facts, target_comparison_facts) =
                 compute_comparison_tree_cascades(
                     generator,
-                    &combo,
-                    &source_intervals_buf,
-                    &target_intervals_buf,
+                    combo_scratch,
+                    source_intervals_buf,
+                    target_intervals_buf,
                 )?;
-            source_partition_facts.extend(source_comparison_facts);
-            target_partition_facts.extend(target_comparison_facts);
+            source_facts.extend(source_comparison_facts);
+            target_facts.extend(target_comparison_facts);
         }
 
-        source_partition_facts.sort();
-        source_partition_facts.dedup();
-        target_partition_facts.sort();
-        target_partition_facts.dedup();
-        changed_numeric_vars.sort_unstable();
-        changed_numeric_vars.dedup();
-
+        source_facts.sort();
+        source_facts.dedup();
+        target_facts.sort();
+        target_facts.dedup();
+        let mut changed_vars = changed_numeric_vars.clone();
+        changed_vars.sort_unstable();
+        changed_vars.dedup();
         out.push(TransitionInfo {
-            source_partition_facts,
-            target_partition_facts,
-            prevail_facts,
-            changed_numeric_vars,
+            source_partition_facts: source_facts,
+            target_partition_facts: target_facts,
+            prevail_facts: Vec::new(),
+            changed_numeric_vars: changed_vars,
         });
+        return Ok(());
     }
 
-    Ok(out)
+    let (var_id, transitions) = &per_var[pos];
+    let var_id = *var_id;
+    let abs_var_id = num_props + var_id;
+    let var_is_affected = affected_numeric_vars.contains(&var_id);
+    for &(src, tgt) in transitions {
+        source_partition_facts.push(ExplicitFact::new(abs_var_id, src));
+        target_partition_facts.push(ExplicitFact::new(abs_var_id, tgt));
+        combo_scratch.push((var_id, src, tgt));
+        let pushed_changed = if var_is_affected {
+            changed_numeric_vars.push(var_id);
+            true
+        } else {
+            false
+        };
+
+        enumerate_partition_combos(
+            task,
+            generator,
+            op_preconditions,
+            per_var,
+            affected_numeric_vars,
+            num_props,
+            op_has_comparison_preconditions,
+            any_changed_var_affects_comparison,
+            pos + 1,
+            source_partition_facts,
+            target_partition_facts,
+            changed_numeric_vars,
+            combo_scratch,
+            source_intervals_buf,
+            target_intervals_buf,
+            out,
+        )?;
+
+        source_partition_facts.pop();
+        target_partition_facts.pop();
+        combo_scratch.pop();
+        if pushed_changed {
+            changed_numeric_vars.pop();
+        }
+    }
+    Ok(())
 }
 
 fn prepare_comparison_tree_inputs_for_combo(

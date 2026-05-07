@@ -23,6 +23,7 @@ use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::{
     evaluate_comparison_tree_from_abstract_state, evaluate_comparison_tree_from_initial_state,
     prepare_comparison_tree_inputs_from_abstract_state,
+    prepare_comparison_tree_inputs_from_abstract_state_into,
 };
 use super::transition_cost_partitioning::{
     AbstractOperatorCostBudget, AbstractOperatorCostFunction, AbstractOperatorFootprint,
@@ -34,8 +35,13 @@ use super::utils;
 const COMPARISON_TRUE_VAL: usize = 0;
 const COMPARISON_FALSE_VAL: usize = 1;
 const COMPARISON_UNKNOWN_VAL: usize = 2;
-const COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES: usize = 20_000;
-const COMPARISON_ENUMERATION_CACHE_MAX_STATES: usize = 100_000;
+// The comparison-enumeration cache short-circuits the per-state walk over
+// the comparison-tree forest in the regression Dijkstra. Each cached entry
+// is a `Vec<usize>` of resolved successor hashes, typically only a handful
+// of entries. For a 1M-state abstraction the cache may peak around tens of
+// MB which is acceptable for the build phase.
+const COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES: usize = 2_000_000;
+const COMPARISON_ENUMERATION_CACHE_MAX_STATES: usize = 10_000_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ComparisonEnumerationKey {
@@ -1122,7 +1128,11 @@ impl DomainAbstractionFactory {
         plan_step_rng: Option<&mut SmallRng>,
     ) -> Result<Option<WildcardPlanResult>> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
-        let operators = if let Some(cache) = operator_cache {
+        // Set DA_DISABLE_CACHE=1 to A/B compare with no skeleton cache.
+        let disable_cache = std::env::var_os("DA_DISABLE_CACHE").is_some();
+        let operators = if let Some(cache) = operator_cache
+            && !disable_cache
+        {
             generator.build_abstract_operators_with_cache(task, cache)?
         } else {
             generator.build_abstract_operators(task)?
@@ -2168,10 +2178,20 @@ impl DomainAbstractionFactory {
             fixed_comparisons,
         )?;
 
-        let mut fixed_map: HashMap<usize, usize> = HashMap::new();
-        for f in fixed_comparisons {
-            fixed_map.insert(f.var, f.value);
-        }
+        // `fixed_comparisons` is typically empty or has 1-3 entries — replace the
+        // per-call `HashMap<usize, usize>` (with default SipHash + heap alloc) with
+        // a stack-friendly slice scan.
+        let is_fixed_var = |var_id: usize| -> bool {
+            fixed_comparisons.iter().any(|f| f.var == var_id)
+        };
+
+        // Build the numeric intervals for this abstract state ONCE, then
+        // evaluate each comparison tree against the shared buffer. The old
+        // path called `evaluate_comparison_tree_from_abstract_state` per tree,
+        // each call allocating a fresh `Vec<Interval>` and re-running
+        // `fill_derived_numeric_intervals_from_comparison_trees`.
+        let mut numeric_intervals: Vec<Interval> = Vec::new();
+        let mut intervals_built = false;
 
         let mut states: Vec<usize> = vec![state_unknown];
         for tree in &self.comparison_trees {
@@ -2183,7 +2203,7 @@ impl DomainAbstractionFactory {
             if self.domain_sizes[var_id] <= 1 {
                 continue;
             }
-            if fixed_map.contains_key(&var_id) {
+            if is_fixed_var(var_id) {
                 continue;
             }
 
@@ -2207,15 +2227,21 @@ impl DomainAbstractionFactory {
                 - unknown_abs)
                 * mult as i32;
 
-            match evaluate_comparison_tree_from_abstract_state(
-                task,
-                tree,
-                &self.partitions,
-                base_state_hash,
-                num_props,
-                numeric_domain_sizes,
-                hash_multipliers,
-            )? {
+            if !intervals_built {
+                prepare_comparison_tree_inputs_from_abstract_state_into(
+                    task,
+                    &self.comparison_trees,
+                    &self.partitions,
+                    base_state_hash,
+                    num_props,
+                    numeric_domain_sizes,
+                    hash_multipliers,
+                    &mut numeric_intervals,
+                )?;
+                intervals_built = true;
+            }
+
+            match tree.evaluate_interval(&numeric_intervals) {
                 Some(true) => {
                     for s in &mut states {
                         *s = (*s as i32 + delta_true) as usize;
