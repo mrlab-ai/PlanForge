@@ -876,6 +876,14 @@ fn multi_domain_abstractions_fields()
             format: |config| config.flaw_treatment.to_string(),
         },
         Field {
+            name: "flaw_kind",
+            apply: |config, value| {
+                config.flaw_kind = parse_flaw_kind(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.flaw_kind.to_string(),
+        },
+        Field {
             name: "init_split_method",
             apply: |config, value| {
                 config.init_split_method = parse_init_split_method(atom(value)?)?;
