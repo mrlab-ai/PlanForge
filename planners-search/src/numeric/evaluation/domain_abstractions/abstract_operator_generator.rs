@@ -239,9 +239,13 @@ impl AbstractOperatorFinalizer {
                 for &idx in bucket {
                     let stored = &self.stored_signatures[idx as usize];
                     if stored.matches_candidate(candidate, cost_bits) {
-                        self.operators[idx as usize]
-                            .concrete_op_ids
-                            .push(candidate.concrete_op_id);
+                        let operator = &mut self.operators[idx as usize];
+                        operator.concrete_op_ids.push(candidate.concrete_op_id);
+                        operator
+                            .changed_numeric_vars
+                            .extend(candidate.changed_numeric_vars.iter().copied());
+                        operator.changed_numeric_vars.sort_unstable();
+                        operator.changed_numeric_vars.dedup();
                         return;
                     }
                 }
@@ -1071,6 +1075,11 @@ fn compute_hash_effects_with_preconditions(
         }
     }
 
+    let mut changed_numeric_vars_for_semantics: Vec<usize> =
+        affected_numeric_vars.iter().copied().collect();
+    changed_numeric_vars_for_semantics.sort_unstable();
+    changed_numeric_vars_for_semantics.dedup();
+
     let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
     for v in 0..num_numeric_vars {
         ensure!(
@@ -1133,7 +1142,7 @@ fn compute_hash_effects_with_preconditions(
             source_partition_facts: Vec::new(),
             target_partition_facts: Vec::new(),
             prevail_facts: Vec::new(),
-            changed_numeric_vars: Vec::new(),
+            changed_numeric_vars: changed_numeric_vars_for_semantics,
         }]);
     }
 
@@ -1166,7 +1175,7 @@ fn compute_hash_effects_with_preconditions(
     let mut out: Vec<TransitionInfo> = Vec::new();
     let mut source_partition_facts: Vec<ExplicitFact> = Vec::new();
     let mut target_partition_facts: Vec<ExplicitFact> = Vec::new();
-    let mut changed_numeric_vars: Vec<usize> = Vec::new();
+    let mut changed_numeric_vars: Vec<usize> = changed_numeric_vars_for_semantics;
     let mut combo_scratch: Vec<(usize, usize, usize)> = Vec::with_capacity(per_var.len());
     let mut source_intervals_buf: Vec<Interval> = Vec::new();
     let mut target_intervals_buf: Vec<Interval> = Vec::new();

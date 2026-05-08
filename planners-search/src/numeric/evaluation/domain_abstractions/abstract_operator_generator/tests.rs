@@ -483,6 +483,143 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
 }
 
 #[test]
+fn affected_numeric_var_stays_marked_changed_without_refined_partition() {
+    let variables = vec![ExplicitVariable::new(
+        3,
+        "cmp".into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        Some(0),
+        2,
+    )];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
+    ];
+    let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
+
+    let op = Operator::new(
+        "op".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 1.0],
+        vec![op.clone()],
+        vec![],
+        comparison_axioms,
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::unbounded()],
+        vec![Interval::singleton(1.0)],
+    ]);
+
+    let mut generator =
+        AbstractOperatorGenerator::new_with_identity_mapping(&task, partitions, vec![1, 1], false)
+            .unwrap();
+
+    let transitions = compute_hash_effects_with_preconditions(
+        &task,
+        &mut generator,
+        &[],
+        op.assignment_effects(),
+    )
+    .unwrap();
+
+    assert_eq!(transitions.len(), 1);
+    assert_eq!(transitions[0].source_partition_facts, Vec::new());
+    assert_eq!(transitions[0].target_partition_facts, Vec::new());
+    assert_eq!(transitions[0].changed_numeric_vars, vec![0]);
+}
+
+#[test]
+fn combined_labels_union_changed_numeric_vars() {
+    let variables: Vec<ExplicitVariable> = vec![];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
+    ];
+
+    let op_x = Operator::new(
+        "inc_x".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            2,
+            false,
+            vec![],
+        )],
+        1,
+    );
+    let op_y = Operator::new(
+        "inc_y".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            1,
+            AssignmentOperation::Plus,
+            2,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 0.0, 1.0],
+        vec![op_x, op_y],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::unbounded()],
+        vec![Interval::unbounded()],
+        vec![Interval::singleton(1.0)],
+    ]);
+    let mut generator =
+        AbstractOperatorGenerator::new_with_identity_mapping(&task, partitions, vec![1, 1, 1], true)
+            .unwrap();
+
+    let operators = generator.build_abstract_operators(&task).unwrap();
+
+    assert_eq!(operators.len(), 1);
+    assert_eq!(operators[0].concrete_op_ids, vec![0, 1]);
+    assert_eq!(operators[0].changed_numeric_vars, vec![0, 1]);
+}
+
+#[test]
 fn derived_numeric_partitions_are_not_materialized_in_transitions() {
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -1288,15 +1425,4 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
         err.to_string()
             .contains("assignment effects require constant RHS")
     );
-}
-
-fn trivial_mapping(task: &dyn AbstractNumericTask) -> (DomainMapping, Vec<usize>) {
-    let mut domain_mapping = Vec::with_capacity(task.get_num_variables());
-    let mut domain_sizes = Vec::with_capacity(task.get_num_variables());
-    for var_id in 0..task.get_num_variables() {
-        let size = task.get_variable_domain_size(var_id).unwrap();
-        domain_mapping.push(vec![0; size]);
-        domain_sizes.push(1);
-    }
-    (domain_mapping, domain_sizes)
 }
