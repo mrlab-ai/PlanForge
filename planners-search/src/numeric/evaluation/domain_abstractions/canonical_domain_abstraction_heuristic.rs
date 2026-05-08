@@ -313,9 +313,9 @@ fn compute_relevant_operator_ids(
     let operators = generator.build_abstract_operators(task).map_err(|error| {
         format!("failed to build abstract operators for canonical domain abstraction: {error:#}")
     })?;
-    let transition_system = abstraction
+    let relevant_operator_ids = abstraction
         .factory
-        .build_abstract_transition_system_from_operators_without_regions_with_deadline(
+        .relevant_operator_ids_from_operators_with_deadline(
             task,
             abstraction.combine_labels,
             &operators,
@@ -323,15 +323,11 @@ fn compute_relevant_operator_ids(
         )
         .map_err(|error| {
             format!(
-                "failed to build abstract transition system for canonical domain abstraction: {error:#}"
+                "failed to compute relevant operator ids for canonical domain abstraction: {error:#}"
             )
         })?;
 
-    Ok(transition_system
-        .transitions
-        .into_iter()
-        .flat_map(|transition| transition.concrete_op_ids.into_iter())
-        .collect())
+    Ok(relevant_operator_ids.into_iter().collect())
 }
 
 fn are_operator_sets_additive(left: &BTreeSet<usize>, right: &BTreeSet<usize>) -> bool {

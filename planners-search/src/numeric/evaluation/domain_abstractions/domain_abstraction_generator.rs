@@ -136,25 +136,17 @@ impl DomainAbstractionGenerator {
             factory.domain_sizes(),
             factory.numeric_domain_sizes()
         );
-        let transition_system = factory
-            .build_abstract_transition_system_from_operators_without_regions_with_deadline(
+        let hash_multipliers =
+            compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())
+                .context("failed to compute hash multipliers")?;
+        let relevant_operator_ids = factory
+            .relevant_operator_ids_from_operators_with_deadline(
                 transformed_task,
                 self.config.combine_labels,
                 &abstract_operators,
                 None,
             )
-            .context("failed to build abstract transition system for active operator ids")?;
-
-        let hash_multipliers =
-            compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())
-                .context("failed to compute hash multipliers")?;
-        let mut relevant_operator_ids: Vec<usize> = transition_system
-            .transitions
-            .iter()
-            .flat_map(|transition| transition.concrete_op_ids.iter().copied())
-            .collect();
-        relevant_operator_ids.sort_unstable();
-        relevant_operator_ids.dedup();
+            .context("failed to compute relevant operator ids")?;
 
         Ok(DomainAbstraction {
             factory,

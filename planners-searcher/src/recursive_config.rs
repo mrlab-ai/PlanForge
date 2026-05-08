@@ -679,12 +679,7 @@ fn parse_numeric_split_strategy(value: &str) -> Result<NumericSplitStrategy, Str
 fn parse_portfolio_strategy(value: &str) -> Result<PortfolioStrategy, String> {
     match value {
         "standard" => Ok(PortfolioStrategy::Standard),
-        "view_diverse" => Ok(PortfolioStrategy::ViewDiverse),
         "complementary" => Ok(PortfolioStrategy::Complementary),
-        "region_landmarks" => Ok(PortfolioStrategy::RegionLandmarks),
-        "backward_goals" => Ok(PortfolioStrategy::BackwardGoals),
-        "forward_backward_goals" => Ok(PortfolioStrategy::ForwardBackwardGoals),
-        "route_shells" => Ok(PortfolioStrategy::RouteShells),
         _ => Err(format!("invalid PortfolioStrategy `{value}`")),
     }
 }

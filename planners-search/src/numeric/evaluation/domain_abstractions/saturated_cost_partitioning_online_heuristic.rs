@@ -2733,22 +2733,14 @@ mod handcrafted_sailing_tests {
             &abstract_operators,
             false,
         )?;
-        let transition_system = factory
-            .build_abstract_transition_system_from_operators_without_regions_with_deadline(
-                transformed_task,
-                false,
-                &abstract_operators,
-                None,
-            )?;
+        let relevant_operator_ids = factory.relevant_operator_ids_from_operators_with_deadline(
+            transformed_task,
+            false,
+            &abstract_operators,
+            None,
+        )?;
         let hash_multipliers =
             compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())?;
-        let mut relevant_operator_ids = transition_system
-            .transitions
-            .iter()
-            .flat_map(|transition| transition.concrete_op_ids.iter().copied())
-            .collect::<Vec<_>>();
-        relevant_operator_ids.sort_unstable();
-        relevant_operator_ids.dedup();
         Ok(DomainAbstraction {
             factory,
             distance_table,

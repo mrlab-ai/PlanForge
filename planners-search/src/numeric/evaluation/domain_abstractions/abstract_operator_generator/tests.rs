@@ -608,9 +608,13 @@ fn combined_labels_union_changed_numeric_vars() {
         vec![Interval::unbounded()],
         vec![Interval::singleton(1.0)],
     ]);
-    let mut generator =
-        AbstractOperatorGenerator::new_with_identity_mapping(&task, partitions, vec![1, 1, 1], true)
-            .unwrap();
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        vec![1, 1, 1],
+        true,
+    )
+    .unwrap();
 
     let operators = generator.build_abstract_operators(&task).unwrap();
 
