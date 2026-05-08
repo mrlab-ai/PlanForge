@@ -96,6 +96,7 @@ pub enum PortfolioStrategy {
     RegionLandmarks,
     BackwardGoals,
     ForwardBackwardGoals,
+    RouteShells,
 }
 
 impl fmt::Display for PortfolioStrategy {
@@ -107,6 +108,7 @@ impl fmt::Display for PortfolioStrategy {
             Self::RegionLandmarks => write!(f, "region_landmarks"),
             Self::BackwardGoals => write!(f, "backward_goals"),
             Self::ForwardBackwardGoals => write!(f, "forward_backward_goals"),
+            Self::RouteShells => write!(f, "route_shells"),
         }
     }
 }
@@ -119,6 +121,7 @@ impl PortfolioStrategy {
                 | Self::RegionLandmarks
                 | Self::BackwardGoals
                 | Self::ForwardBackwardGoals
+                | Self::RouteShells
         )
     }
 }
@@ -371,6 +374,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 break;
             }
 
+            if self.config.portfolio_strategy == PortfolioStrategy::RouteShells && !goals.is_empty()
+            {
+                goal_index = self.route_shell_goal_index(goals.len(), iteration);
+            }
             let full_goal_task = self.full_goal_task_for_iteration(iteration);
             let goal_task = if full_goal_task {
                 None
@@ -400,6 +407,11 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 && !goals.is_empty()
             {
                 ((iteration - 2) / goals.len()) + 1
+            } else if self.config.portfolio_strategy == PortfolioStrategy::RouteShells
+                && !full_goal_task
+                && !goals.is_empty()
+            {
+                self.route_shell_index(goals.len(), iteration) + 1
             } else {
                 iteration
             };
@@ -504,7 +516,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
 
             let completed_full_goal_task = full_goal_task;
             iteration += 1;
-            if !completed_full_goal_task && !goals.is_empty() {
+            if self.config.portfolio_strategy != PortfolioStrategy::RouteShells
+                && !completed_full_goal_task
+                && !goals.is_empty()
+            {
                 goal_index = (goal_index + 1) % goals.len();
                 let _ = &goals[goal_index];
             }
@@ -575,6 +590,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 }
                 return Vec::new();
             }
+            PortfolioStrategy::RouteShells => {
+                return self.route_shell_seed_splits(task, iteration.saturating_sub(1));
+            }
         }
 
         let mut candidates = collect_false_view_candidates(task);
@@ -632,6 +650,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 }
                 return self.config.flaw_kind;
             }
+            PortfolioStrategy::RouteShells => return FlawKind::TargetCentered,
             PortfolioStrategy::ViewDiverse => {}
         }
         if iteration % 2 == 1 {
@@ -648,7 +667,28 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             PortfolioStrategy::Standard
             | PortfolioStrategy::ViewDiverse
             | PortfolioStrategy::BackwardGoals
-            | PortfolioStrategy::ForwardBackwardGoals => false,
+            | PortfolioStrategy::ForwardBackwardGoals
+            | PortfolioStrategy::RouteShells => false,
+        }
+    }
+
+    fn route_shell_goal_index(&self, goal_count: usize, iteration: usize) -> usize {
+        debug_assert!(goal_count > 0);
+        let zero_based = iteration - 1;
+        if goal_count >= ROUTE_SHELL_MANY_GOAL_THRESHOLD {
+            (zero_based / ROUTE_SHELLS_PER_GOAL_PASS) % goal_count
+        } else {
+            zero_based % goal_count
+        }
+    }
+
+    fn route_shell_index(&self, goal_count: usize, iteration: usize) -> usize {
+        debug_assert!(goal_count > 0);
+        let zero_based = iteration - 1;
+        if goal_count >= ROUTE_SHELL_MANY_GOAL_THRESHOLD {
+            zero_based % ROUTE_SHELLS_PER_GOAL_PASS
+        } else {
+            zero_based / goal_count
         }
     }
 
@@ -822,11 +862,56 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         sort_and_dedup_seed_splits(&mut seeds);
         seeds
     }
+
+    fn route_shell_seed_splits(
+        &self,
+        task: &dyn AbstractNumericTask,
+        shell_index: usize,
+    ) -> Vec<InitialSeedSplit> {
+        let Ok(comparison_index) = ComparisonAxiomIndex::from_task(task) else {
+            return goal_seed_splits(task);
+        };
+        let initial_numeric = task.get_initial_numeric_state_values();
+        let deltas = numeric_effect_deltas(task);
+        let mut seeds = goal_seed_splits(task);
+
+        for goal_id in 0..task.get_num_goals() {
+            let goal = task.get_goal_fact(goal_id);
+            for op in task
+                .get_operators()
+                .iter()
+                .filter(|op| operator_has_unconditional_effect(op, goal))
+            {
+                for precondition in op.preconditions() {
+                    for requirement in target_centered_requirements_for_comparison_fact(
+                        task,
+                        &comparison_index,
+                        precondition,
+                        &initial_numeric,
+                    ) {
+                        add_route_shell_for_requirement(
+                            &requirement,
+                            &deltas,
+                            &initial_numeric,
+                            shell_index,
+                            &mut seeds,
+                        );
+                    }
+                }
+            }
+        }
+
+        sort_and_dedup_seed_splits(&mut seeds);
+        seeds
+    }
 }
 
 const COMPARISON_TRUE_VALUE: usize = 0;
 const COMPLEMENTARY_PROPOSITIONAL_ACHIEVER_DEPTH: usize = 2;
 const COMPLEMENTARY_MAX_PROPOSITIONAL_SEEDS: usize = 64;
+const ROUTE_SHELL_STEPS: usize = 4;
+const ROUTE_SHELLS_PER_GOAL_PASS: usize = 4;
+const ROUTE_SHELL_MANY_GOAL_THRESHOLD: usize = 6;
 
 #[derive(Debug, Clone)]
 struct ViewCandidate {
@@ -1715,6 +1800,113 @@ fn add_shells_for_requirement(
             max_shells,
             seeds,
         );
+    }
+}
+
+fn add_route_shell_for_requirement(
+    requirement: &NumericRequirement,
+    deltas: &HashMap<usize, Vec<f64>>,
+    initial_numeric: &[f64],
+    shell_index: usize,
+    seeds: &mut Vec<InitialSeedSplit>,
+) {
+    let Some(&initial_value) = initial_numeric.get(requirement.numeric_var_id) else {
+        return;
+    };
+    if !initial_value.is_finite() {
+        return;
+    }
+    match (requirement.lower, requirement.upper) {
+        (Some(lower), _) if initial_value < lower => {
+            let Some(step) = deltas
+                .get(&requirement.numeric_var_id)
+                .and_then(|values| smallest_positive_delta(values))
+            else {
+                add_requirement_bounds(requirement, seeds);
+                return;
+            };
+            add_increasing_route_shell(requirement.numeric_var_id, lower, step, shell_index, seeds);
+        }
+        (_, Some(upper)) if initial_value > upper => {
+            let Some(step) = deltas
+                .get(&requirement.numeric_var_id)
+                .and_then(|values| largest_negative_delta(values))
+                .map(f64::abs)
+            else {
+                add_requirement_bounds(requirement, seeds);
+                return;
+            };
+            add_decreasing_route_shell(requirement.numeric_var_id, upper, step, shell_index, seeds);
+        }
+        _ => add_requirement_bounds(requirement, seeds),
+    }
+}
+
+fn add_increasing_route_shell(
+    numeric_var_id: usize,
+    target_lower: f64,
+    step: f64,
+    shell_index: usize,
+    seeds: &mut Vec<InitialSeedSplit>,
+) {
+    if step <= 1e-12 || !target_lower.is_finite() {
+        return;
+    }
+    let shell_width = step * ROUTE_SHELL_STEPS as f64;
+    let shell_near = target_lower - shell_index as f64 * shell_width;
+    let shell_far = shell_near - shell_width;
+    add_route_shell_points(numeric_var_id, shell_far, shell_near, step, false, seeds);
+    seeds.push(InitialSeedSplit::Numeric {
+        numeric_var_id,
+        value: target_lower,
+        include_in_lower: false,
+    });
+}
+
+fn add_decreasing_route_shell(
+    numeric_var_id: usize,
+    target_upper: f64,
+    step: f64,
+    shell_index: usize,
+    seeds: &mut Vec<InitialSeedSplit>,
+) {
+    if step <= 1e-12 || !target_upper.is_finite() {
+        return;
+    }
+    let shell_width = step * ROUTE_SHELL_STEPS as f64;
+    let shell_near = target_upper + shell_index as f64 * shell_width;
+    let shell_far = shell_near + shell_width;
+    add_route_shell_points(numeric_var_id, shell_near, shell_far, step, true, seeds);
+    seeds.push(InitialSeedSplit::Numeric {
+        numeric_var_id,
+        value: target_upper,
+        include_in_lower: true,
+    });
+}
+
+fn add_route_shell_points(
+    numeric_var_id: usize,
+    start: f64,
+    end: f64,
+    step: f64,
+    include_in_lower: bool,
+    seeds: &mut Vec<InitialSeedSplit>,
+) {
+    if !start.is_finite() || !end.is_finite() || step <= 1e-12 {
+        return;
+    }
+    let mut value = start;
+    let limit = ROUTE_SHELL_STEPS + 1;
+    for _ in 0..=limit {
+        if value > end + 1e-9 {
+            break;
+        }
+        seeds.push(InitialSeedSplit::Numeric {
+            numeric_var_id,
+            value,
+            include_in_lower,
+        });
+        value += step;
     }
 }
 

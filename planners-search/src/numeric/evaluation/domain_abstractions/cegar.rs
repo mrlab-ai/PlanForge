@@ -6,7 +6,7 @@ pub mod flaw_search;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use rand::Rng;
@@ -30,7 +30,7 @@ use crate::numeric::evaluation::domain_abstractions::utils::{
     fact_is_hold, get_initial_state, make_prop_state_packer,
 };
 
-use super::abstract_operator_generator::{DomainMapping, IncrementalAbstractOperatorCache};
+use super::abstract_operator_generator::DomainMapping;
 use super::comparison_expression::Interval;
 use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
@@ -225,7 +225,6 @@ impl Cegar {
         .with_context(|| {
             format!("failed to construct DomainAbstractionFactory (iteration {iteration})")
         })?;
-        let mut operator_cache = IncrementalAbstractOperatorCache::default();
         let mut wildcard_plan = None;
 
         while iteration <= config.max_iterations {
@@ -246,12 +245,11 @@ impl Cegar {
             let iteration_start = Instant::now();
             let plan_start = Instant::now();
             wildcard_plan = factory
-                .compute_plan_with_rng_and_cache(
+                .compute_plan_with_rng(
                     task,
                     config.combine_labels,
                     config.debug,
                     config.use_wildcard_plans,
-                    Some(&mut operator_cache),
                     Some(&mut rng),
                 )
                 .with_context(|| {
@@ -272,7 +270,16 @@ impl Cegar {
             }
 
             let Some(plan) = wildcard_plan.as_ref() else {
-                break;
+                let abstraction_size = compute_abstraction_size_u128(
+                    &factory.domain_sizes,
+                    &factory.numeric_domain_sizes,
+                )
+                .unwrap_or(u128::MAX);
+                bail!(
+                    "CEGAR produced an abstract dead end for the concrete initial state at iteration {iteration}; abstraction_size={abstraction_size}, prop_domains={:?}, numeric_domains={:?}",
+                    factory.domain_sizes,
+                    factory.numeric_domain_sizes
+                );
             };
             let real_check_time = Duration::ZERO;
 
@@ -314,7 +321,6 @@ impl Cegar {
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
             let refine_time = refine_start.elapsed();
-            operator_cache.mark_refined(&refined);
             if config.debug {
                 let after_size = compute_abstraction_size_u128(
                     &factory.domain_sizes,

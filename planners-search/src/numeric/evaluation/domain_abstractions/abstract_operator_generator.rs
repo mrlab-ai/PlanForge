@@ -24,50 +24,6 @@ const COMPARISON_UNKNOWN_VAL: usize = 2;
 
 pub type DomainMapping = Vec<Vec<usize>>;
 
-#[derive(Debug, Clone, Default)]
-pub struct IncrementalAbstractOperatorCache {
-    per_operator: Vec<CachedConcreteOperatorBuild>,
-    dirty_propositional_vars: HashSet<usize>,
-    dirty_numeric: bool,
-}
-
-impl IncrementalAbstractOperatorCache {
-    pub fn mark_refined(
-        &mut self,
-        summary: &crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary,
-    ) {
-        if !summary.refined_numeric_vars.is_empty() {
-            self.dirty_numeric = true;
-        }
-        self.dirty_propositional_vars
-            .extend(summary.refined_propositional_vars.iter().copied());
-    }
-
-    fn take_dirty_state(&mut self) -> (HashSet<usize>, bool) {
-        (
-            std::mem::take(&mut self.dirty_propositional_vars),
-            std::mem::take(&mut self.dirty_numeric),
-        )
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct CachedConcreteOperatorBuild {
-    dependencies: OperatorDependencies,
-    skeletons: Vec<AbstractOperatorSkeleton>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct OperatorDependencies {
-    propositional_vars: HashSet<usize>,
-}
-
-impl OperatorDependencies {
-    fn intersects_propositional(&self, dirty_vars: &HashSet<usize>) -> bool {
-        !dirty_vars.is_disjoint(&self.propositional_vars)
-    }
-}
-
 #[derive(Debug, Clone)]
 struct AbstractOperatorCandidate {
     concrete_op_id: usize,
@@ -77,9 +33,9 @@ struct AbstractOperatorCandidate {
     eff_pairs: Vec<ExplicitFact>,
     changed_numeric_vars: Vec<usize>,
     /// `(cost_bits, FNV+SplitMix64 hash of prev+pre+eff+cost)`.
-    /// Precomputed once at candidate creation so the (often-cached) candidate
-    /// can be matched against the grouping map in `push_candidate` without
-    /// re-walking its fact slices on every CEGAR iteration.
+    /// Precomputed once at candidate creation so the candidate can be matched
+    /// against the grouping map in `push_candidate` without re-walking its fact
+    /// slices.
     cost_bits: u64,
     signature_hash: u64,
 }
@@ -700,69 +656,6 @@ impl AbstractOperatorGenerator {
         Ok(finalizer.into_operators())
     }
 
-    pub fn build_abstract_operators_with_cache(
-        &mut self,
-        task: &dyn AbstractNumericTask,
-        cache: &mut IncrementalAbstractOperatorCache,
-    ) -> Result<Vec<AbstractOperator>> {
-        // Strategy: cache only the *skeletons* (and per-op dependency
-        // metadata), not the candidates. Candidates are heavy
-        // (`AbstractOperatorCandidate` carries 4 `Vec`s) and are essentially
-        // always invalidated on numeric refinements anyway because partition
-        // indices shift on `NumericPartitions::split_at`. Re-materializing
-        // skeletons → operators directly via `materialize_skeletons_into`
-        // (which pushes into `AbstractOperatorFinalizer` without an
-        // intermediate candidate vec) saves 4 vec allocations per emitted
-        // abstract operator on every CEGAR iteration.
-        let mut finalizer =
-            AbstractOperatorFinalizer::new(self.combine_labels, &self.hash_multipliers);
-
-        if cache.per_operator.len() != task.get_operators().len() {
-            cache.per_operator.clear();
-            cache.per_operator.reserve(task.get_operators().len());
-            for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
-                let skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
-                cache.per_operator.push(CachedConcreteOperatorBuild {
-                    dependencies: self.compute_operator_dependencies(op),
-                    skeletons,
-                });
-            }
-            // Drain the dirty state — the fresh build subsumes it.
-            let _ = cache.take_dirty_state();
-        } else {
-            let (dirty_propositional_vars, dirty_numeric) = cache.take_dirty_state();
-            if dirty_numeric {
-                for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
-                    let entry = &mut cache.per_operator[concrete_op_id];
-                    entry.dependencies = self.compute_operator_dependencies(op);
-                    entry.skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
-                }
-            } else if !dirty_propositional_vars.is_empty() {
-                for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
-                    let entry = &mut cache.per_operator[concrete_op_id];
-                    let prop_dirty = entry
-                        .dependencies
-                        .intersects_propositional(&dirty_propositional_vars);
-                    if prop_dirty {
-                        entry.dependencies = self.compute_operator_dependencies(op);
-                        entry.skeletons =
-                            self.build_for_concrete_operator(task, op, concrete_op_id)?;
-                    }
-                }
-            }
-        }
-
-        // Materialize skeletons → operators directly into the finalizer for
-        // every concrete op every iteration. Numeric refinements invalidate
-        // numeric partition transitions but not skeletons, so the skeleton
-        // cache still serves its purpose for the propositional part.
-        for entry in &cache.per_operator {
-            materialize_skeletons_into(task, self, &entry.skeletons, &mut finalizer)?;
-        }
-
-        Ok(finalizer.into_operators())
-    }
-
     fn build_for_concrete_operator(
         &mut self,
         task: &dyn AbstractNumericTask,
@@ -811,25 +704,6 @@ impl AbstractOperatorGenerator {
             concrete_op_id,
             self,
         )
-    }
-
-    fn compute_operator_dependencies(&self, op: &Operator) -> OperatorDependencies {
-        let mut dependencies = OperatorDependencies::default();
-        for pre in op.preconditions() {
-            dependencies.propositional_vars.insert(pre.var);
-        }
-        for eff in op.effects() {
-            dependencies.propositional_vars.insert(eff.var_id());
-            for cond in eff.conditions() {
-                dependencies.propositional_vars.insert(cond.var);
-            }
-        }
-        for eff in op.assignment_effects() {
-            for cond in eff.conditions() {
-                dependencies.propositional_vars.insert(cond.var);
-            }
-        }
-        dependencies
     }
 
     #[inline]

@@ -116,6 +116,26 @@ impl DomainAbstractionGenerator {
                 false,
             )
             .context("failed to build abstract distance table")?;
+        let initial_h = distance_table
+            .distances
+            .get(distance_table.initial_state_hash)
+            .copied()
+            .with_context(|| {
+                format!(
+                    "abstract initial state hash {} out of bounds for distance table of length {}",
+                    distance_table.initial_state_hash,
+                    distance_table.distances.len()
+                )
+            })?;
+        ensure!(
+            initial_h.is_finite(),
+            "domain abstraction initial state is abstract-dead after CEGAR; initial_hash={}, states={}, abstract_ops={}, prop_domains={:?}, numeric_domains={:?}",
+            distance_table.initial_state_hash,
+            distance_table.distances.len(),
+            abstract_operators.len(),
+            factory.domain_sizes(),
+            factory.numeric_domain_sizes()
+        );
         let transition_system = factory
             .build_abstract_transition_system_from_operators_without_regions_with_deadline(
                 transformed_task,

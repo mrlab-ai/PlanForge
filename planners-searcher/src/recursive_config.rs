@@ -684,6 +684,7 @@ fn parse_portfolio_strategy(value: &str) -> Result<PortfolioStrategy, String> {
         "region_landmarks" => Ok(PortfolioStrategy::RegionLandmarks),
         "backward_goals" => Ok(PortfolioStrategy::BackwardGoals),
         "forward_backward_goals" => Ok(PortfolioStrategy::ForwardBackwardGoals),
+        "route_shells" => Ok(PortfolioStrategy::RouteShells),
         _ => Err(format!("invalid PortfolioStrategy `{value}`")),
     }
 }

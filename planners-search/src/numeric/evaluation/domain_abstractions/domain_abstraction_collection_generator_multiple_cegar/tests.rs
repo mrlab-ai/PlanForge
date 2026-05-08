@@ -316,6 +316,103 @@ fn complementary_seed_splits_group_alternative_goal_achiever_views() {
 }
 
 #[test]
+fn route_shell_seed_splits_create_separate_backward_windows() {
+    let variables = vec![
+        ExplicitVariable::new(
+            3,
+            "cmp_x".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(0),
+            2,
+        ),
+        ExplicitVariable::new(2, "saved".into(), vec!["no".into(), "yes".into()], None, 0),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("target".into(), NumericType::Constant, None),
+        NumericVariable::new("delta".into(), NumericType::Constant, None),
+    ];
+    let task = NumericRootTask::new(
+        3,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![ExplicitFact::new(1, 1)],
+        vec![],
+        vec![0, 0],
+        vec![0.0, 10.0, 1.0],
+        vec![
+            Operator::new(
+                "inc".into(),
+                vec![],
+                vec![],
+                vec![AssignmentEffect::new(
+                    0,
+                    AssignmentOperation::Plus,
+                    2,
+                    false,
+                    vec![],
+                )],
+                1,
+            ),
+            Operator::new(
+                "save".into(),
+                vec![ExplicitFact::new(0, COMPARISON_TRUE_VALUE)],
+                vec![Effect::new(vec![], 1, Some(0), 1)],
+                vec![],
+                1,
+            ),
+        ],
+        vec![],
+        vec![ComparisonAxiom::new(
+            0,
+            0,
+            1,
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        portfolio_strategy: PortfolioStrategy::RouteShells,
+        ..Default::default()
+    };
+    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
+
+    let shell_0 = generator.initial_seed_splits(&task, 1);
+    let shell_1 = generator.initial_seed_splits(&task, 2);
+
+    for value in [6.0, 7.0, 8.0, 9.0, 10.0] {
+        assert!(
+            shell_0.contains(&InitialSeedSplit::Numeric {
+                numeric_var_id: 0,
+                value,
+                include_in_lower: false,
+            }),
+            "missing shell 0 split {value}: {shell_0:?}"
+        );
+    }
+    for value in [2.0, 3.0, 4.0, 5.0, 6.0, 10.0] {
+        assert!(
+            shell_1.contains(&InitialSeedSplit::Numeric {
+                numeric_var_id: 0,
+                value,
+                include_in_lower: false,
+            }),
+            "missing shell 1 split {value}: {shell_1:?}"
+        );
+    }
+    assert!(shell_0.contains(&InitialSeedSplit::Propositional {
+        var_id: 1,
+        value: 1,
+    }));
+    assert!(shell_1.contains(&InitialSeedSplit::Propositional {
+        var_id: 1,
+        value: 1,
+    }));
+}
+
+#[test]
 fn complementary_seed_splits_include_bounded_propositional_achiever_chain() {
     let variables = vec![
         ExplicitVariable::new(
