@@ -990,10 +990,7 @@ fn build_branch_for_operator(
             continue;
         }
         if generator.derived_prop_vars.contains(&(var_id)) {
-            let abs_val = generator.abstract_value(var_id, pre.value);
-            pre_pairs.push(ExplicitFact::new(var_id, abs_val));
-            let unknown_abs = generator.abstract_value(var_id, COMPARISON_UNKNOWN_VAL);
-            eff_pairs.push(ExplicitFact::new(var_id, unknown_abs));
+            continue;
         }
     }
 
@@ -1380,9 +1377,7 @@ fn enumerate_partition_combos(
             return Ok(());
         }
 
-        let mut source_facts = source_partition_facts.clone();
-        let mut target_facts = target_partition_facts.clone();
-        if !changed_numeric_vars.is_empty() {
+        let comparison_variants = if op_has_comparison_preconditions {
             prepare_comparison_tree_inputs_for_combo_into(
                 task,
                 generator,
@@ -1390,30 +1385,40 @@ fn enumerate_partition_combos(
                 true,
                 target_intervals_buf,
             )?;
-            let (source_comparison_facts, target_comparison_facts) =
-                compute_comparison_tree_cascades(
-                    generator,
-                    combo_scratch,
-                    source_intervals_buf,
-                    target_intervals_buf,
-                )?;
-            source_facts.extend(source_comparison_facts);
-            target_facts.extend(target_comparison_facts);
-        }
+            compute_comparison_precondition_transition_variants(
+                task,
+                generator,
+                op_preconditions,
+                combo_scratch,
+                source_intervals_buf,
+                target_intervals_buf,
+            )?
+        } else {
+            vec![ComparisonTransitionFacts::default()]
+        };
 
-        source_facts.sort();
-        source_facts.dedup();
-        target_facts.sort();
-        target_facts.dedup();
         let mut changed_vars = changed_numeric_vars.clone();
         changed_vars.sort_unstable();
         changed_vars.dedup();
-        out.push(TransitionInfo {
-            source_partition_facts: source_facts,
-            target_partition_facts: target_facts,
-            prevail_facts: Vec::new(),
-            changed_numeric_vars: changed_vars,
-        });
+        for comparison_facts in comparison_variants {
+            let mut source_facts = source_partition_facts.clone();
+            let mut target_facts = target_partition_facts.clone();
+            let mut prevail_facts = comparison_facts.prevail_facts;
+            source_facts.extend(comparison_facts.source_facts);
+            target_facts.extend(comparison_facts.target_facts);
+            source_facts.sort();
+            source_facts.dedup();
+            target_facts.sort();
+            target_facts.dedup();
+            prevail_facts.sort();
+            prevail_facts.dedup();
+            out.push(TransitionInfo {
+                source_partition_facts: source_facts,
+                target_partition_facts: target_facts,
+                prevail_facts,
+                changed_numeric_vars: changed_vars.clone(),
+            });
+        }
         return Ok(());
     }
 
@@ -1526,84 +1531,98 @@ fn prepare_comparison_tree_inputs_for_combo_into(
     Ok(())
 }
 
-fn tri_value_for_comparison(
+#[derive(Debug, Clone, Default)]
+struct ComparisonTransitionFacts {
+    source_facts: Vec<ExplicitFact>,
+    target_facts: Vec<ExplicitFact>,
+    prevail_facts: Vec<ExplicitFact>,
+}
+
+fn comparison_target_values(
     tree: &ComparisonTree,
     inputs: &[Interval],
     affected_var_id: usize,
     domain_mapping: &DomainMapping,
-) -> usize {
-    match tree.evaluate_interval(inputs) {
-        Some(true) => domain_mapping[affected_var_id][COMPARISON_TRUE_VAL],
-        Some(false) => domain_mapping[affected_var_id][COMPARISON_FALSE_VAL],
-        None => domain_mapping[affected_var_id][COMPARISON_UNKNOWN_VAL],
-    }
+) -> Vec<usize> {
+    let mut values = match tree.evaluate_interval(inputs) {
+        Some(true) => vec![domain_mapping[affected_var_id][COMPARISON_TRUE_VAL]],
+        Some(false) => vec![domain_mapping[affected_var_id][COMPARISON_FALSE_VAL]],
+        None => vec![
+            domain_mapping[affected_var_id][COMPARISON_TRUE_VAL],
+            domain_mapping[affected_var_id][COMPARISON_FALSE_VAL],
+        ],
+    };
+    values.sort_unstable();
+    values.dedup();
+    values
 }
 
-fn compute_comparison_tree_cascades(
+fn compute_comparison_precondition_transition_variants(
+    task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
+    op_preconditions: &[ExplicitFact],
     combo: &[(usize, usize, usize)],
     source_inputs: &[Interval],
     target_inputs: &[Interval],
-) -> Result<(Vec<ExplicitFact>, Vec<ExplicitFact>)> {
-    let mut affected_tree_ids: Vec<usize> = Vec::new();
-    let mut seen_tree_ids: HashSet<usize> = HashSet::new();
-    for (var_id, source_partition, target_partition) in combo {
-        if source_partition == target_partition {
+) -> Result<Vec<ComparisonTransitionFacts>> {
+    let Some(index) = &generator.comparison_index else {
+        return Ok(vec![ComparisonTransitionFacts::default()]);
+    };
+
+    let mut variants = vec![ComparisonTransitionFacts::default()];
+    for precondition in op_preconditions {
+        if !generator.derived_prop_vars.contains(&precondition.var) {
             continue;
         }
-        let tree_ids = generator
-            .comparisons_by_numeric_dep
-            .get(*var_id)
-            .with_context(|| {
-                format!("missing comparison dependency bucket for numeric var {var_id}")
-            })?;
-        for &tree_id in tree_ids {
-            if seen_tree_ids.insert(tree_id) {
-                affected_tree_ids.push(tree_id);
+        let Some(tree) = index.comparison_tree(precondition.var) else {
+            continue;
+        };
+        let source_value = match tree.evaluate_interval(source_inputs) {
+            Some(false) => return Ok(Vec::new()),
+            Some(true) | None => generator.domain_mapping[precondition.var][COMPARISON_TRUE_VAL],
+        };
+        let precondition_value = generator.abstract_value(precondition.var, precondition.value);
+        if source_value != precondition_value {
+            return Ok(Vec::new());
+        }
+
+        let dependency_changed = comparison_dependency_partition_changed(task, tree, combo);
+        let target_values = if dependency_changed {
+            comparison_target_values(
+                tree,
+                target_inputs,
+                precondition.var,
+                &generator.domain_mapping,
+            )
+        } else {
+            vec![precondition_value]
+        };
+
+        let mut next = Vec::with_capacity(variants.len() * target_values.len().max(1));
+        for variant in variants {
+            if dependency_changed {
+                for &target_value in &target_values {
+                    let mut branch = variant.clone();
+                    branch
+                        .source_facts
+                        .push(ExplicitFact::new(precondition.var, precondition_value));
+                    branch
+                        .target_facts
+                        .push(ExplicitFact::new(precondition.var, target_value));
+                    next.push(branch);
+                }
+            } else {
+                let mut branch = variant;
+                branch
+                    .prevail_facts
+                    .push(ExplicitFact::new(precondition.var, precondition_value));
+                next.push(branch);
             }
         }
+        variants = next;
     }
 
-    let mut source_facts: Vec<ExplicitFact> = Vec::new();
-    let mut target_facts: Vec<ExplicitFact> = Vec::new();
-    for tree_id in affected_tree_ids {
-        let tree = generator
-            .comparison_trees
-            .get(tree_id)
-            .with_context(|| format!("missing comparison tree {tree_id}"))?;
-        ensure!(
-            tree.affected_var_id < generator.domain_mapping.len(),
-            "comparison tree {tree_id} affected var {1} out of range for domain mapping of len {0}",
-            generator.domain_mapping.len(),
-            tree.affected_var_id
-        );
-
-        let source_value = tri_value_for_comparison(
-            tree,
-            source_inputs,
-            tree.affected_var_id,
-            &generator.domain_mapping,
-        );
-        let target_value = tri_value_for_comparison(
-            tree,
-            target_inputs,
-            tree.affected_var_id,
-            &generator.domain_mapping,
-        );
-
-        let unknown_value = generator.domain_mapping[tree.affected_var_id][COMPARISON_UNKNOWN_VAL];
-        if source_value == target_value
-            || source_value == unknown_value
-            || target_value == unknown_value
-        {
-            continue;
-        }
-
-        source_facts.push(ExplicitFact::new(tree.affected_var_id, source_value));
-        target_facts.push(ExplicitFact::new(tree.affected_var_id, target_value));
-    }
-
-    Ok((source_facts, target_facts))
+    Ok(variants)
 }
 
 #[allow(unused)]

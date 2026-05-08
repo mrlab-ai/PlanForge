@@ -819,14 +819,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         };
 
         if self.config.order_optimization_max_time > 0.0 {
-            let optimization_deadline = self
-                .config
-                .order_optimization_max_time
-                .is_finite()
-                .then(|| {
-                    Instant::now()
-                        + Duration::from_secs_f64(self.config.order_optimization_max_time)
-                });
+            let optimization_deadline =
+                self.config
+                    .order_optimization_max_time
+                    .is_finite()
+                    .then(|| {
+                        Instant::now()
+                            + Duration::from_secs_f64(self.config.order_optimization_max_time)
+                    });
             self.optimize_order_with_hill_climbing(
                 task,
                 abstractions,

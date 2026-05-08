@@ -598,9 +598,7 @@ fn parse_scoring_function(value: &str) -> Result<ScoringFunction, String> {
 fn parse_order_generator(value: &str) -> Result<OrderGenerator, String> {
     match value {
         "greedy_orders" | "greedy_orders()" => Ok(OrderGenerator::Greedy),
-        "dynamic_greedy_orders" | "dynamic_greedy_orders()" => {
-            Ok(OrderGenerator::DynamicGreedy)
-        }
+        "dynamic_greedy_orders" | "dynamic_greedy_orders()" => Ok(OrderGenerator::DynamicGreedy),
         "random_orders" | "random_orders()" => Ok(OrderGenerator::Random),
         _ => Err(format!("invalid OrderGenerator `{value}`")),
     }
@@ -683,6 +681,7 @@ fn parse_portfolio_strategy(value: &str) -> Result<PortfolioStrategy, String> {
         "view_diverse" => Ok(PortfolioStrategy::ViewDiverse),
         "complementary" => Ok(PortfolioStrategy::Complementary),
         "region_landmarks" => Ok(PortfolioStrategy::RegionLandmarks),
+        "backward_goals" => Ok(PortfolioStrategy::BackwardGoals),
         _ => Err(format!("invalid PortfolioStrategy `{value}`")),
     }
 }

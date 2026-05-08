@@ -1099,6 +1099,66 @@ fn abstract_operator_footprint_marks_unbounded_changed_tail_non_allocable() {
 }
 
 #[test]
+fn abstract_operator_footprint_allocates_operator_without_numeric_effects() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "saved".into(),
+        vec!["false".into(), "true".into()],
+        None,
+        0,
+    )];
+    let op = Operator::new(
+        "save".into(),
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(vec![], 0, None, 1)],
+        vec![],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        NumericPartitions::with_partitions(vec![]),
+        vec![],
+    )
+    .unwrap();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![0],
+        cost: 1.0,
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::new(0, 1)],
+        preconditions: vec![ExplicitFact::new(0, 0)],
+        changed_numeric_vars: vec![],
+    };
+
+    let footprints = factory
+        .build_abstract_operator_footprints(&task, &[op])
+        .unwrap();
+    let concrete = &footprints[0].labels[0];
+
+    assert!(concrete.allocable);
+    assert_eq!(concrete.max_allocation_fraction, 1.0);
+    assert_eq!(concrete.non_allocable_reason, None);
+    assert_eq!(concrete.source_region.propositions[0], vec![0]);
+}
+
+#[test]
 fn abstract_operator_footprint_allows_one_finite_changed_source() {
     let variables = vec![ExplicitVariable::new(
         1,

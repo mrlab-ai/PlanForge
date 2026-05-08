@@ -14,6 +14,7 @@ use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericType,
     NumericVariable, Operator,
 };
+use planners_sas::numeric::utils::linear_effects::linearize_numeric_var;
 use rand::seq::SliceRandom;
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,7 @@ use super::cegar::CegarConfig;
 use super::cegar::InitialSeedSplit;
 pub use super::cegar::flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
 use super::cegar::flaw_search::numeric_requirement_for_comparison_fact;
+use super::comparison_expression::{CompOp, Interval};
 use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, DomainAbstractionMetadata,
@@ -91,6 +93,7 @@ pub enum PortfolioStrategy {
     ViewDiverse,
     Complementary,
     RegionLandmarks,
+    BackwardGoals,
 }
 
 impl fmt::Display for PortfolioStrategy {
@@ -100,6 +103,7 @@ impl fmt::Display for PortfolioStrategy {
             Self::ViewDiverse => write!(f, "view_diverse"),
             Self::Complementary => write!(f, "complementary"),
             Self::RegionLandmarks => write!(f, "region_landmarks"),
+            Self::BackwardGoals => write!(f, "backward_goals"),
         }
     }
 }
@@ -316,6 +320,13 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             };
 
         loop {
+            if self.config.portfolio_strategy == PortfolioStrategy::BackwardGoals
+                && !goals.is_empty()
+                && iteration > goals.len()
+            {
+                break;
+            }
+
             let elapsed = start.elapsed().as_secs_f64();
             if !blacklisting && elapsed > blacklist_start_time {
                 blacklisting = true;
@@ -521,6 +532,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             PortfolioStrategy::RegionLandmarks => {
                 return self.region_landmark_seed_splits(task, iteration);
             }
+            PortfolioStrategy::BackwardGoals => {
+                return self.backward_goal_seed_splits(task);
+            }
         }
 
         let mut candidates = collect_false_view_candidates(task);
@@ -565,6 +579,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 return FlawKind::SequenceRegression;
             }
             PortfolioStrategy::RegionLandmarks => return FlawKind::SequenceBidirectional,
+            PortfolioStrategy::BackwardGoals => return FlawKind::TargetCentered,
             PortfolioStrategy::ViewDiverse => {}
         }
         if iteration % 2 == 1 {
@@ -578,7 +593,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         match self.config.portfolio_strategy {
             PortfolioStrategy::Complementary => iteration == 1,
             PortfolioStrategy::RegionLandmarks => true,
-            PortfolioStrategy::Standard | PortfolioStrategy::ViewDiverse => false,
+            PortfolioStrategy::Standard
+            | PortfolioStrategy::ViewDiverse
+            | PortfolioStrategy::BackwardGoals => false,
         }
     }
 
@@ -687,6 +704,59 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             &source_requirements,
             &target_requirements,
         ));
+        sort_and_dedup_seed_splits(&mut seeds);
+        seeds
+    }
+
+    fn backward_goal_seed_splits(&self, task: &dyn AbstractNumericTask) -> Vec<InitialSeedSplit> {
+        let Ok(comparison_index) = ComparisonAxiomIndex::from_task(task) else {
+            return goal_seed_splits(task);
+        };
+        let initial_numeric = task.get_initial_numeric_state_values();
+        let deltas = numeric_effect_deltas(task);
+        let mut seeds = Vec::new();
+
+        for goal_id in 0..task.get_num_goals() {
+            let goal = task.get_goal_fact(goal_id);
+            seeds.push(InitialSeedSplit::Propositional {
+                var_id: goal.var,
+                value: goal.value,
+            });
+
+            for op in task
+                .get_operators()
+                .iter()
+                .filter(|op| operator_has_unconditional_effect(op, goal))
+            {
+                for precondition in op.preconditions() {
+                    seeds.push(InitialSeedSplit::Propositional {
+                        var_id: precondition.var,
+                        value: precondition.value,
+                    });
+                    for requirement in target_centered_requirements_for_comparison_fact(
+                        task,
+                        &comparison_index,
+                        precondition,
+                        &initial_numeric,
+                    ) {
+                        add_requirement_bounds(&requirement, &mut seeds);
+                        let Some(source_value) =
+                            initial_numeric.get(requirement.numeric_var_id).copied()
+                        else {
+                            continue;
+                        };
+                        add_shells_for_requirement(
+                            task,
+                            &deltas,
+                            source_value,
+                            &requirement,
+                            &mut seeds,
+                        );
+                    }
+                }
+            }
+        }
+
         sort_and_dedup_seed_splits(&mut seeds);
         seeds
     }
@@ -1245,6 +1315,116 @@ fn collect_region_landmark_anchors(task: &dyn AbstractNumericTask) -> Vec<Region
         left.facts == right.facts && left.requirements == right.requirements
     });
     anchors
+}
+
+fn target_centered_requirements_for_comparison_fact(
+    task: &dyn AbstractNumericTask,
+    comparison_index: &ComparisonAxiomIndex,
+    fact: &ExplicitFact,
+    numeric_state: &[f64],
+) -> Vec<NumericRequirement> {
+    if let Some((numeric_var_id, interval)) =
+        numeric_requirement_for_comparison_fact(task, comparison_index, fact)
+    {
+        if task
+            .numeric_variables()
+            .get(numeric_var_id)
+            .is_some_and(|variable| variable.get_type() == &NumericType::Regular)
+        {
+            return vec![NumericRequirement::from_interval(numeric_var_id, interval)];
+        }
+    }
+
+    let Some(tree) = comparison_index.comparison_tree(fact.var) else {
+        return Vec::new();
+    };
+    let Ok(left) = linearize_numeric_var(task, tree.left_numeric_var_id) else {
+        return Vec::new();
+    };
+    let Ok(right) = linearize_numeric_var(task, tree.right_numeric_var_id) else {
+        return Vec::new();
+    };
+    let Some(required_op) = required_comparison_op(tree.op, fact.value) else {
+        return Vec::new();
+    };
+
+    let expression = left.subtract(&right);
+    let mut requirements = Vec::new();
+    for (numeric_var_id, &coefficient) in expression.coefficients.iter().enumerate() {
+        if coefficient.abs() < 1e-12 {
+            continue;
+        }
+        if task
+            .numeric_variables()
+            .get(numeric_var_id)
+            .is_none_or(|variable| variable.get_type() != &NumericType::Regular)
+        {
+            continue;
+        }
+        let mut fixed_constant = expression.constant;
+        let mut has_all_values = true;
+        for (var, other_coefficient) in expression.coefficients.iter().enumerate() {
+            if var == numeric_var_id {
+                continue;
+            }
+            let Some(value) = numeric_state.get(var).copied() else {
+                has_all_values = false;
+                break;
+            };
+            fixed_constant += other_coefficient * value;
+        }
+        if !has_all_values {
+            continue;
+        }
+        let Some(interval) = single_var_interval(coefficient, fixed_constant, required_op) else {
+            continue;
+        };
+        requirements.push(NumericRequirement::from_interval(numeric_var_id, interval));
+    }
+
+    merge_numeric_requirements(&mut requirements);
+    requirements
+}
+
+fn required_comparison_op(op: CompOp, prop_value: usize) -> Option<CompOp> {
+    match prop_value {
+        0 => Some(op),
+        1 => Some(match op {
+            CompOp::Lt => CompOp::Ge,
+            CompOp::Le => CompOp::Gt,
+            CompOp::Gt => CompOp::Le,
+            CompOp::Ge => CompOp::Lt,
+            CompOp::Eq => CompOp::Ne,
+            CompOp::Ne => CompOp::Eq,
+        }),
+        _ => None,
+    }
+}
+
+fn single_var_interval(coefficient: f64, constant: f64, op: CompOp) -> Option<Interval> {
+    if coefficient.abs() < 1e-12 || op == CompOp::Ne {
+        return None;
+    }
+    let threshold = -constant / coefficient;
+    if !threshold.is_finite() {
+        return None;
+    }
+    Some(match (op, coefficient.is_sign_positive()) {
+        (CompOp::Lt, true) | (CompOp::Gt, false) => {
+            Interval::new(f64::NEG_INFINITY, threshold, false, false)
+        }
+        (CompOp::Le, true) | (CompOp::Ge, false) => {
+            Interval::new(f64::NEG_INFINITY, threshold, false, true)
+        }
+        (CompOp::Gt, true) | (CompOp::Lt, false) => {
+            Interval::new(threshold, f64::INFINITY, false, false)
+        }
+        (CompOp::Ge, true) | (CompOp::Le, false) => {
+            Interval::new(threshold, f64::INFINITY, true, false)
+        }
+        (CompOp::Eq, _) => Interval::singleton(threshold),
+        (CompOp::Ne, _) => return None,
+    })
 }
 
 fn merge_numeric_requirements(requirements: &mut Vec<NumericRequirement>) {
