@@ -3,6 +3,7 @@ pub mod progression;
 pub mod regression;
 pub mod sequence;
 pub mod state;
+pub mod target_centered;
 #[cfg(test)]
 mod tests;
 
@@ -23,6 +24,7 @@ use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::sequenc
     SequenceDirection, get_sequence_flaws,
 };
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::FlawSearchState;
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::target_centered::get_target_centered_flaws;
 use crate::numeric::evaluation::domain_abstractions::comparison_expression::{CompOp, Interval};
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction::{
     ComparisonAxiomIndex, NumericPartitions,
@@ -70,6 +72,7 @@ pub enum FlawKind {
     SequenceProgression,
     SequenceRegression,
     SequenceBidirectional,
+    TargetCentered,
 }
 
 impl fmt::Display for FlawKind {
@@ -80,6 +83,7 @@ impl fmt::Display for FlawKind {
             Self::SequenceProgression => write!(f, "sequence_progression"),
             Self::SequenceRegression => write!(f, "sequence_regression"),
             Self::SequenceBidirectional => write!(f, "sequence_bidirectional"),
+            Self::TargetCentered => write!(f, "target_centered"),
         }
     }
 }
@@ -129,6 +133,7 @@ impl FlawKind {
                 wildcard_plan,
                 SequenceDirection::Bidirectional,
             ),
+            Self::TargetCentered => get_target_centered_flaws(task, partitions, wildcard_plan),
         }
     }
 }

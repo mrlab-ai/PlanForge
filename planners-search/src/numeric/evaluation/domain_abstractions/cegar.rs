@@ -332,9 +332,11 @@ impl Cegar {
                 break;
             }
             if config.debug {
-                let abstraction_size =
-                    compute_abstraction_size_u128(&factory.domain_sizes, &factory.numeric_domain_sizes)
-                        .unwrap_or(u128::MAX);
+                let abstraction_size = compute_abstraction_size_u128(
+                    &factory.domain_sizes,
+                    &factory.numeric_domain_sizes,
+                )
+                .unwrap_or(u128::MAX);
                 info!(
                     "CEGAR iteration {iteration}: plan_len={}, flaws={}, refined={:?}, size={}, elapsed={:.3}s, plan={:.3}s, real_check={:.3}s, flaws_time={:.3}s, refine={:.3}s",
                     plan.wildcard_plan.len(),
@@ -352,11 +354,55 @@ impl Cegar {
             iteration += 1;
         }
 
+        if matches!(config.flaw_kind, FlawKind::TargetCentered)
+            || std::env::var_os("DA_DUMP_FINAL_ABSTRACTION").is_some()
+        {
+            log_final_target_centered_abstraction(task, &factory);
+        }
+
         let last_step = CegarStep { wildcard_plan };
         Ok(CegarOutcome {
             final_state: CegarState::new(factory, iteration),
             last_step,
         })
+    }
+}
+
+fn log_final_target_centered_abstraction(
+    task: &dyn AbstractNumericTask,
+    factory: &DomainAbstractionFactory,
+) {
+    info!("target-centered domain abstraction final domains:");
+    for (numeric_var_id, &size) in factory
+        .numeric_domain_sizes()
+        .iter()
+        .enumerate()
+        .filter(|(_, size)| **size > 1)
+    {
+        let name = task
+            .numeric_variables()
+            .get(numeric_var_id)
+            .map(|variable| variable.name())
+            .unwrap_or("<unknown>");
+        let Some(parts) = factory.partitions().partitions(numeric_var_id) else {
+            continue;
+        };
+        let intervals = parts
+            .iter()
+            .enumerate()
+            .map(|(part_id, interval)| format!("p{part_id}:{interval:?}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        info!("  n{numeric_var_id}={name}, size={size}, {intervals}");
+    }
+    for (var_id, &size) in factory
+        .domain_sizes()
+        .iter()
+        .enumerate()
+        .filter(|(_, size)| **size > 1)
+    {
+        let name = task.get_variable_name(var_id).unwrap_or("<unknown>");
+        info!("  p{var_id}={name}, size={size}");
     }
 }
 
@@ -607,6 +653,12 @@ pub fn fix_flaws(
                 .flaw_treatment
                 .should_be_refined(&chosen, last_refined.unwrap())
         {
+            let dependent_numeric_refinement =
+                if matches!(config.flaw_kind, FlawKind::TargetCentered) {
+                    DependentNumericRefinement::All
+                } else {
+                    DependentNumericRefinement::One
+                };
             let flaw_refined = try_refine_from_flaw(
                 task,
                 &chosen,
@@ -618,7 +670,7 @@ pub fn fix_flaws(
                 domain_sizes,
                 partitions,
                 numeric_domain_sizes,
-                DependentNumericRefinement::One,
+                dependent_numeric_refinement,
             )?;
 
             if let Some(flaw_refined) = flaw_refined {

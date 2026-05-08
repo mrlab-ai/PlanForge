@@ -631,6 +631,7 @@ fn parse_flaw_kind(value: &str) -> Result<FlawKind, String> {
         "sequence_progression" => Ok(FlawKind::SequenceProgression),
         "sequence_regression" => Ok(FlawKind::SequenceRegression),
         "sequence_bidirectional" => Ok(FlawKind::SequenceBidirectional),
+        "target_centered" => Ok(FlawKind::TargetCentered),
         _ => Err(format!("invalid FlawKind `{value}`")),
     }
 }
