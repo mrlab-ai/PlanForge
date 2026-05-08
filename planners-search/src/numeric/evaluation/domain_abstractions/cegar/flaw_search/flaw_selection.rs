@@ -104,6 +104,7 @@ pub enum FlawTreatmentVariants {
     OneSplitPerAtom,
     OneSplitPerVariable,
     MaxRefinedSingleAtom,
+    MinGrowthSingleAtom,
     MaxRefinedPreferringProp,
     ClosestToGoal,
     BalanceMaxRefinedAndClosestToGoal,
@@ -117,6 +118,7 @@ impl fmt::Display for FlawTreatmentVariants {
             Self::OneSplitPerAtom => write!(f, "one_split_per_atom"),
             Self::OneSplitPerVariable => write!(f, "one_split_per_variable"),
             Self::MaxRefinedSingleAtom => write!(f, "max_refined_single_atom"),
+            Self::MinGrowthSingleAtom => write!(f, "min_growth_single_atom"),
             Self::MaxRefinedPreferringProp => write!(f, "max_refined_preferring_prop"),
             Self::ClosestToGoal => write!(f, "closest_to_goal"),
             Self::BalanceMaxRefinedAndClosestToGoal => {
@@ -158,6 +160,13 @@ impl FlawTreatment for FlawTreatmentVariants {
                 1,
                 rng,
             ),
+            FlawTreatmentVariants::MinGrowthSingleAtom => fix_single_flaw_min_growth(
+                flaws,
+                comparison_var_ids,
+                domain_sizes,
+                numeric_domain_sizes,
+                rng,
+            ),
             Self::MaxRefinedPreferringProp => fix_single_flaw_max_refined(
                 flaws,
                 comparison_var_ids,
@@ -194,6 +203,7 @@ impl FlawTreatment for FlawTreatmentVariants {
             FlawTreatmentVariants::OneSplitPerAtom => true,
             FlawTreatmentVariants::OneSplitPerVariable => true,
             FlawTreatmentVariants::MaxRefinedSingleAtom => false,
+            FlawTreatmentVariants::MinGrowthSingleAtom => false,
             FlawTreatmentVariants::MaxRefinedPreferringProp => false,
             FlawTreatmentVariants::ClosestToGoal => false,
             &FlawTreatmentVariants::BalanceMaxRefinedAndClosestToGoal => false,
@@ -216,6 +226,7 @@ impl FlawTreatment for FlawTreatmentVariants {
                 flaw_variable_key(flaw) == flaw_variable_key(last_refined)
             }
             FlawTreatmentVariants::MaxRefinedSingleAtom => false,
+            FlawTreatmentVariants::MinGrowthSingleAtom => false,
             FlawTreatmentVariants::MaxRefinedPreferringProp => false,
             FlawTreatmentVariants::ClosestToGoal => false,
             FlawTreatmentVariants::BalanceMaxRefinedAndClosestToGoal => false,
@@ -274,6 +285,9 @@ fn compute_max_refined(
     numeric_domain_sizes: &mut [usize],
     prop_multiplier: usize,
 ) -> (ChosenFlaws, usize) {
+    const NUMERIC_COMPARISON_FLAW_BONUS: usize = 1_000_000;
+    const REFINED_COMPARISON_FLAW_BONUS: usize = 100_000;
+
     let mut max_score = 0;
     let mut candidates: ChosenFlaws = Vec::with_capacity(flaws.len());
     for (idx, flaw) in flaws.iter().enumerate() {
@@ -287,17 +301,25 @@ fn compute_max_refined(
                 let var_id = pf.fact.var;
                 let base: usize = domain_sizes.get(var_id).copied().unwrap_or(0) * prop_multiplier;
                 if comparison_var_ids.contains(&var_id) && !pf.dependent_numeric_flaws.is_empty() {
-                    let mut best: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
+                    let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
                     for nf in pf.dependent_numeric_flaws.iter().cloned() {
                         let partitions = numeric_domain_sizes
                             .get(nf.numeric_var_id)
                             .copied()
                             .unwrap_or(0);
-                        best.entry(partitions).or_default().push(nf);
+                        by_partition_count.entry(partitions).or_default().push(nf);
                     }
-                    if let Some((&max_partitions, vec)) = best.iter().next_back() {
+                    if let Some((&min_partitions, vec)) = by_partition_count.iter().next() {
                         restricted_dep = Some(vec.clone());
-                        base + (max_partitions)
+                        let refined_bonus = if domain_sizes.get(var_id).copied().unwrap_or(0) > 1 {
+                            REFINED_COMPARISON_FLAW_BONUS
+                        } else {
+                            0
+                        };
+                        NUMERIC_COMPARISON_FLAW_BONUS
+                            .saturating_add(refined_bonus)
+                            .saturating_add(base)
+                            .saturating_add(min_partitions)
                     } else {
                         base
                     }
@@ -354,6 +376,95 @@ pub(super) fn fix_single_flaw_max_refined(
     candidates
 }
 
+fn growth_key_for_domain_size(current_size: usize) -> (usize, usize) {
+    let current_size = current_size.max(1);
+    (current_size + 1, current_size)
+}
+
+fn compare_growth_keys(left: (usize, usize), right: (usize, usize)) -> std::cmp::Ordering {
+    let left_cross = (left.0 as u128) * (right.1 as u128);
+    let right_cross = (right.0 as u128) * (left.1 as u128);
+    left_cross.cmp(&right_cross)
+}
+
+fn best_min_growth_dependent_flaws(
+    dependent_numeric_flaws: &[NumericFlaw],
+    numeric_domain_sizes: &[usize],
+) -> Option<(Vec<NumericFlaw>, (usize, usize))> {
+    let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
+    for nf in dependent_numeric_flaws.iter().cloned() {
+        let partitions = numeric_domain_sizes
+            .get(nf.numeric_var_id)
+            .copied()
+            .unwrap_or(1)
+            .max(1);
+        by_partition_count.entry(partitions).or_default().push(nf);
+    }
+    let (&max_partitions, flaws) = by_partition_count.iter().next_back()?;
+    Some((flaws.clone(), growth_key_for_domain_size(max_partitions)))
+}
+
+pub(super) fn fix_single_flaw_min_growth(
+    flaws: &[Flaw],
+    comparison_var_ids: &HashSet<usize>,
+    domain_sizes: &mut [usize],
+    numeric_domain_sizes: &mut [usize],
+    rng: &mut SmallRng,
+) -> ChosenFlaws {
+    let mut candidates: Vec<(FlawCandidate, (usize, usize))> = Vec::with_capacity(flaws.len());
+    for (idx, flaw) in flaws.iter().enumerate() {
+        let mut restricted_dep = None;
+        let growth = match flaw {
+            Flaw::Numeric(nf) => growth_key_for_domain_size(
+                numeric_domain_sizes
+                    .get(nf.numeric_var_id)
+                    .copied()
+                    .unwrap_or(1),
+            ),
+            Flaw::Propositional(pf) => {
+                let var_id = pf.fact.var;
+                let prop_size = domain_sizes.get(var_id).copied().unwrap_or(1).max(1);
+                let prop_growth = if comparison_var_ids.contains(&var_id) && prop_size >= 2 {
+                    (1, 1)
+                } else {
+                    growth_key_for_domain_size(prop_size)
+                };
+                if comparison_var_ids.contains(&var_id)
+                    && !pf.dependent_numeric_flaws.is_empty()
+                    && let Some((deps, dep_growth)) = best_min_growth_dependent_flaws(
+                        &pf.dependent_numeric_flaws,
+                        numeric_domain_sizes,
+                    )
+                {
+                    restricted_dep = Some(deps);
+                    (
+                        prop_growth.0.saturating_mul(dep_growth.0),
+                        prop_growth.1.saturating_mul(dep_growth.1),
+                    )
+                } else {
+                    prop_growth
+                }
+            }
+        };
+        candidates.push((
+            FlawCandidate {
+                idx,
+                score: 0,
+                restricted_dep,
+            },
+            growth,
+        ));
+    }
+    candidates.shuffle(rng);
+    candidates.sort_by(|(left, left_growth), (right, right_growth)| {
+        compare_growth_keys(*left_growth, *right_growth).then_with(|| left.idx.cmp(&right.idx))
+    });
+    candidates
+        .into_iter()
+        .map(|(candidate, _)| candidate)
+        .collect()
+}
+
 pub(super) fn fix_closest_to_goal(flaws: &[Flaw]) -> ChosenFlaws {
     let mut candidates: Vec<FlawCandidate> = (0..flaws.len())
         .map(|i| FlawCandidate {
@@ -396,4 +507,98 @@ pub(super) fn fix_balance_max_refined_closest_to_goal(
     });
 
     candidates
+}
+
+#[cfg(test)]
+mod tests {
+    use planners_sas::numeric::numeric_task::ExplicitFact;
+    use rand::SeedableRng;
+
+    use super::*;
+    use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::PropFlaw;
+
+    fn prop_flaw(var: usize, deps: Vec<NumericFlaw>) -> Flaw {
+        Flaw::Propositional(PropFlaw {
+            fact: ExplicitFact::new(var, 0),
+            dependent_numeric_flaws: deps,
+            step: 0,
+        })
+    }
+
+    fn numeric_flaw(var: usize) -> NumericFlaw {
+        NumericFlaw {
+            numeric_var_id: var,
+            value: 0.0,
+            include_in_lower: true,
+            step: 0,
+        }
+    }
+
+    #[test]
+    fn max_refined_prefers_numeric_dependent_comparison_flaws() {
+        let flaws = vec![
+            prop_flaw(1, Vec::new()),
+            prop_flaw(0, vec![numeric_flaw(0)]),
+        ];
+        let comparison_var_ids = HashSet::from([0]);
+        let mut domain_sizes = vec![1, 2];
+        let mut numeric_domain_sizes = vec![1];
+        let mut rng = SmallRng::seed_from_u64(1);
+
+        let chosen = fix_single_flaw_max_refined(
+            &flaws,
+            &comparison_var_ids,
+            &mut domain_sizes,
+            &mut numeric_domain_sizes,
+            1,
+            &mut rng,
+        );
+
+        assert_eq!(chosen[0].idx, 1);
+    }
+
+    #[test]
+    fn max_refined_continues_least_refined_dependent_numeric_view() {
+        let flaws = vec![prop_flaw(0, vec![numeric_flaw(0), numeric_flaw(1)])];
+        let comparison_var_ids = HashSet::from([0]);
+        let mut domain_sizes = vec![2];
+        let mut numeric_domain_sizes = vec![7, 2];
+
+        let (chosen, _) = compute_max_refined(
+            &flaws,
+            &comparison_var_ids,
+            &mut domain_sizes,
+            &mut numeric_domain_sizes,
+            1,
+        );
+
+        let restricted = chosen[0]
+            .restricted_dep
+            .as_ref()
+            .expect("comparison flaw should restrict dependent numeric flaws");
+        assert_eq!(restricted, &vec![numeric_flaw(1)]);
+    }
+
+    #[test]
+    fn min_growth_continues_most_refined_dependent_numeric_view() {
+        let flaws = vec![prop_flaw(0, vec![numeric_flaw(0), numeric_flaw(1)])];
+        let comparison_var_ids = HashSet::from([0]);
+        let mut domain_sizes = vec![2];
+        let mut numeric_domain_sizes = vec![7, 2];
+        let mut rng = SmallRng::seed_from_u64(1);
+
+        let chosen = fix_single_flaw_min_growth(
+            &flaws,
+            &comparison_var_ids,
+            &mut domain_sizes,
+            &mut numeric_domain_sizes,
+            &mut rng,
+        );
+
+        let restricted = chosen[0]
+            .restricted_dep
+            .as_ref()
+            .expect("comparison flaw should restrict dependent numeric flaws");
+        assert_eq!(restricted, &vec![numeric_flaw(0)]);
+    }
 }

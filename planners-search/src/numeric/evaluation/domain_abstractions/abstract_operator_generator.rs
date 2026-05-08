@@ -730,8 +730,14 @@ impl AbstractOperatorGenerator {
             // Drain the dirty state — the fresh build subsumes it.
             let _ = cache.take_dirty_state();
         } else {
-            let (dirty_propositional_vars, _dirty_numeric) = cache.take_dirty_state();
-            if !dirty_propositional_vars.is_empty() {
+            let (dirty_propositional_vars, dirty_numeric) = cache.take_dirty_state();
+            if dirty_numeric {
+                for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
+                    let entry = &mut cache.per_operator[concrete_op_id];
+                    entry.dependencies = self.compute_operator_dependencies(op);
+                    entry.skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
+                }
+            } else if !dirty_propositional_vars.is_empty() {
                 for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
                     let entry = &mut cache.per_operator[concrete_op_id];
                     let prop_dirty = entry

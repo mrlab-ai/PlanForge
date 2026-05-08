@@ -640,6 +640,7 @@ fn parse_flaw_treatment(value: &str) -> Result<FlawTreatmentVariants, String> {
         "one_split_per_atom" => Ok(FlawTreatmentVariants::OneSplitPerAtom),
         "one_split_per_variable" => Ok(FlawTreatmentVariants::OneSplitPerVariable),
         "max_refined_single_atom" => Ok(FlawTreatmentVariants::MaxRefinedSingleAtom),
+        "min_growth_single_atom" => Ok(FlawTreatmentVariants::MinGrowthSingleAtom),
         "max_refined_preferring_prop" => Ok(FlawTreatmentVariants::MaxRefinedPreferringProp),
         "closest_to_goal" => Ok(FlawTreatmentVariants::ClosestToGoal),
         "balance_max_refined_and_closest_to_goal" => {
@@ -682,6 +683,7 @@ fn parse_portfolio_strategy(value: &str) -> Result<PortfolioStrategy, String> {
         "complementary" => Ok(PortfolioStrategy::Complementary),
         "region_landmarks" => Ok(PortfolioStrategy::RegionLandmarks),
         "backward_goals" => Ok(PortfolioStrategy::BackwardGoals),
+        "forward_backward_goals" => Ok(PortfolioStrategy::ForwardBackwardGoals),
         _ => Err(format!("invalid PortfolioStrategy `{value}`")),
     }
 }

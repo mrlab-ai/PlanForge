@@ -354,9 +354,7 @@ impl Cegar {
             iteration += 1;
         }
 
-        if matches!(config.flaw_kind, FlawKind::TargetCentered)
-            || std::env::var_os("DA_DUMP_FINAL_ABSTRACTION").is_some()
-        {
+        if config.debug || std::env::var_os("DA_DUMP_FINAL_ABSTRACTION").is_some() {
             log_final_target_centered_abstraction(task, &factory);
         }
 
@@ -643,8 +641,15 @@ pub fn fix_flaws(
     let mut refined_summary = RefinementSummary::default();
     let mut last_refined = None;
     for cand in chosen_flaws {
+        let dependent_numeric_refinement = if matches!(config.flaw_kind, FlawKind::TargetCentered) {
+            DependentNumericRefinement::All
+        } else {
+            DependentNumericRefinement::One
+        };
         let mut chosen = flaws[cand.idx].clone();
-        if let (Flaw::Propositional(pf), Some(restricted)) = (&mut chosen, cand.restricted_dep) {
+        if dependent_numeric_refinement != DependentNumericRefinement::All
+            && let (Flaw::Propositional(pf), Some(restricted)) = (&mut chosen, cand.restricted_dep)
+        {
             pf.dependent_numeric_flaws = restricted;
         }
 
@@ -653,12 +658,6 @@ pub fn fix_flaws(
                 .flaw_treatment
                 .should_be_refined(&chosen, last_refined.unwrap())
         {
-            let dependent_numeric_refinement =
-                if matches!(config.flaw_kind, FlawKind::TargetCentered) {
-                    DependentNumericRefinement::All
-                } else {
-                    DependentNumericRefinement::One
-                };
             let flaw_refined = try_refine_from_flaw(
                 task,
                 &chosen,

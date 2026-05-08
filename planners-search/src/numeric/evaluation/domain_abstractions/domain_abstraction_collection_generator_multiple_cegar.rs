@@ -2,6 +2,7 @@
 mod tests;
 
 use std::cell::{Ref, RefMut};
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -94,6 +95,7 @@ pub enum PortfolioStrategy {
     Complementary,
     RegionLandmarks,
     BackwardGoals,
+    ForwardBackwardGoals,
 }
 
 impl fmt::Display for PortfolioStrategy {
@@ -104,7 +106,20 @@ impl fmt::Display for PortfolioStrategy {
             Self::Complementary => write!(f, "complementary"),
             Self::RegionLandmarks => write!(f, "region_landmarks"),
             Self::BackwardGoals => write!(f, "backward_goals"),
+            Self::ForwardBackwardGoals => write!(f, "forward_backward_goals"),
         }
+    }
+}
+
+impl PortfolioStrategy {
+    fn uses_ranked_goals(self) -> bool {
+        matches!(
+            self,
+            Self::Complementary
+                | Self::RegionLandmarks
+                | Self::BackwardGoals
+                | Self::ForwardBackwardGoals
+        )
     }
 }
 
@@ -298,7 +313,11 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         let mut goals: Vec<_> = (0..task.get_num_goals())
             .map(|goal_id| task.get_goal_fact(goal_id).clone())
             .collect();
-        goals.shuffle(&mut rng);
+        if self.config.portfolio_strategy.uses_ranked_goals() {
+            goals.sort_by(|left, right| compare_goals_for_collection(task, left, right));
+        } else {
+            goals.shuffle(&mut rng);
+        }
         let blacklist_candidates =
             collect_blacklist_candidate_var_ids(task, self.config.blacklist_option);
 
@@ -387,7 +406,11 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let initial_seed_splits = if full_goal_task {
                 Vec::new()
             } else {
-                self.initial_seed_splits(generation_task, seed_iteration)
+                self.initial_seed_splits_for_goal_count(
+                    generation_task,
+                    seed_iteration,
+                    goals.len(),
+                )
             };
             let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
                 split_blacklisted_variables(generation_task, blacklisted_var_ids);
@@ -402,7 +425,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             } else {
                 None
             };
-            let flaw_kind = self.flaw_kind_for_iteration(iteration);
+            let flaw_kind = self.flaw_kind_for_goal_count(goals.len(), iteration);
             let seed_descriptions = initial_seed_splits
                 .iter()
                 .map(seed_split_description)
@@ -518,10 +541,20 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         Some(selected_var_ids)
     }
 
+    #[cfg(test)]
     fn initial_seed_splits(
         &self,
         task: &dyn AbstractNumericTask,
         iteration: usize,
+    ) -> Vec<InitialSeedSplit> {
+        self.initial_seed_splits_for_goal_count(task, iteration, task.get_num_goals())
+    }
+
+    fn initial_seed_splits_for_goal_count(
+        &self,
+        task: &dyn AbstractNumericTask,
+        iteration: usize,
+        goal_count: usize,
     ) -> Vec<InitialSeedSplit> {
         match self.config.portfolio_strategy {
             PortfolioStrategy::Standard => return Vec::new(),
@@ -534,6 +567,13 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             }
             PortfolioStrategy::BackwardGoals => {
                 return self.backward_goal_seed_splits(task);
+            }
+            PortfolioStrategy::ForwardBackwardGoals => {
+                if self.forward_backward_uses_target_centered_for_goal_count(goal_count, iteration)
+                {
+                    return self.backward_goal_seed_splits(task);
+                }
+                return Vec::new();
             }
         }
 
@@ -569,7 +609,12 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         seeds
     }
 
+    #[cfg(test)]
     fn flaw_kind_for_iteration(&self, iteration: usize) -> FlawKind {
+        self.flaw_kind_for_goal_count(0, iteration)
+    }
+
+    fn flaw_kind_for_goal_count(&self, goal_count: usize, iteration: usize) -> FlawKind {
         match self.config.portfolio_strategy {
             PortfolioStrategy::Standard => return self.config.flaw_kind,
             PortfolioStrategy::Complementary => {
@@ -580,6 +625,13 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             }
             PortfolioStrategy::RegionLandmarks => return FlawKind::SequenceBidirectional,
             PortfolioStrategy::BackwardGoals => return FlawKind::TargetCentered,
+            PortfolioStrategy::ForwardBackwardGoals => {
+                if self.forward_backward_uses_target_centered_for_goal_count(goal_count, iteration)
+                {
+                    return FlawKind::TargetCentered;
+                }
+                return self.config.flaw_kind;
+            }
             PortfolioStrategy::ViewDiverse => {}
         }
         if iteration % 2 == 1 {
@@ -595,7 +647,21 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             PortfolioStrategy::RegionLandmarks => true,
             PortfolioStrategy::Standard
             | PortfolioStrategy::ViewDiverse
-            | PortfolioStrategy::BackwardGoals => false,
+            | PortfolioStrategy::BackwardGoals
+            | PortfolioStrategy::ForwardBackwardGoals => false,
+        }
+    }
+
+    fn forward_backward_uses_target_centered_for_goal_count(
+        &self,
+        goal_count: usize,
+        iteration: usize,
+    ) -> bool {
+        let many_goal_task = goal_count >= 6;
+        if many_goal_task {
+            iteration % 3 != 1
+        } else {
+            iteration % 3 == 0
         }
     }
 
@@ -729,10 +795,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 .filter(|op| operator_has_unconditional_effect(op, goal))
             {
                 for precondition in op.preconditions() {
-                    seeds.push(InitialSeedSplit::Propositional {
-                        var_id: precondition.var,
-                        value: precondition.value,
-                    });
                     for requirement in target_centered_requirements_for_comparison_fact(
                         task,
                         &comparison_index,
@@ -1473,6 +1535,60 @@ fn approximate_distance_from_initial(
             }
         })
         .sum()
+}
+
+fn compare_goals_for_collection(
+    task: &dyn AbstractNumericTask,
+    left: &ExplicitFact,
+    right: &ExplicitFact,
+) -> Ordering {
+    let left_distance = estimate_goal_distance_from_initial(task, left);
+    let right_distance = estimate_goal_distance_from_initial(task, right);
+    right_distance
+        .total_cmp(&left_distance)
+        .then_with(|| left.var.cmp(&right.var))
+        .then_with(|| left.value.cmp(&right.value))
+}
+
+fn estimate_goal_distance_from_initial(task: &dyn AbstractNumericTask, goal: &ExplicitFact) -> f64 {
+    let Ok(comparison_index) = ComparisonAxiomIndex::from_task(task) else {
+        return 0.0;
+    };
+    let initial_numeric = task.get_initial_numeric_state_values();
+    let mut best_direct = 0.0f64;
+    let direct_requirements = target_centered_requirements_for_comparison_fact(
+        task,
+        &comparison_index,
+        goal,
+        &initial_numeric,
+    );
+    if !direct_requirements.is_empty() {
+        best_direct = approximate_distance_from_initial(&direct_requirements, &initial_numeric);
+    }
+
+    let mut best_achiever = 0.0f64;
+    for op in task
+        .get_operators()
+        .iter()
+        .filter(|op| operator_has_unconditional_effect(op, goal))
+    {
+        let mut requirements = Vec::new();
+        for precondition in op.preconditions() {
+            requirements.extend(target_centered_requirements_for_comparison_fact(
+                task,
+                &comparison_index,
+                precondition,
+                &initial_numeric,
+            ));
+        }
+        merge_numeric_requirements(&mut requirements);
+        best_achiever = best_achiever.max(approximate_distance_from_initial(
+            &requirements,
+            &initial_numeric,
+        ));
+    }
+
+    best_direct.max(best_achiever)
 }
 
 fn shell_seed_splits(

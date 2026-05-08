@@ -2662,7 +2662,7 @@ impl DomainAbstractionFactory {
         operators: &[AbstractOperator],
         match_tree: &MatchTree,
         goal_facts: &[ExplicitFact],
-        initial_state_hash: usize,
+        _initial_state_hash: usize,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
         comparison_var_ids: &[usize],
@@ -2762,23 +2762,18 @@ impl DomainAbstractionFactory {
                         &mut cached_comparison_state_count,
                     )?;
 
-                let representative_predecessor = possible_predecessors.iter().copied().max();
-
                 for pred in possible_predecessors.iter().copied() {
                     debug_assert!(pred < num_states, "predecessor hash does not fit usize");
 
                     if alternative_cost + 1e-12 < distances[pred] {
                         distances[pred] = alternative_cost;
                         generating_op_ids[pred] = Some(op_id);
-                        if pred == initial_state_hash || Some(pred) == representative_predecessor {
-                            heap.push((
-                                Reverse(
-                                    NotNan::new(alternative_cost)
-                                        .context("alternative cost is NaN")?,
-                                ),
-                                pred,
-                            ));
-                        }
+                        heap.push((
+                            Reverse(
+                                NotNan::new(alternative_cost).context("alternative cost is NaN")?,
+                            ),
+                            pred,
+                        ));
                     }
                 }
             }
