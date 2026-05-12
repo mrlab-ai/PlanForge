@@ -8,6 +8,7 @@ use planners_sas::numeric::numeric_task::{
 };
 
 use super::*;
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::SplitDirection;
 
 #[test]
 fn progression_flaws_find_precondition_violation() {
@@ -62,7 +63,7 @@ fn progression_flaws_find_precondition_violation() {
     // Make the stored wildcard plan invalid in the concrete initial state.
     task.set_initial_propositional_state_values(vec![1]);
 
-    let flaws = get_progression_flaws(&task, factory.partitions(), &plan).unwrap();
+    let flaws = get_progression_flaws(&task, factory.partitions(), &plan, SplitDirection::Forward).unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 0)),
@@ -124,7 +125,7 @@ fn progression_flaws_find_goal_violation() {
 
     task.set_initial_propositional_state_values(vec![0]);
 
-    let flaws = get_progression_flaws(&task, factory.partitions(), &plan).unwrap();
+    let flaws = get_progression_flaws(&task, factory.partitions(), &plan, SplitDirection::Forward).unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 2)),
@@ -214,9 +215,43 @@ fn progression_flaws_find_numeric_deviation_flaw() {
         ],
     };
 
-    let flaws = get_progression_flaws(&task, &partitions, &plan).unwrap();
+    let forward_flaws =
+        get_progression_flaws(&task, &partitions, &plan, SplitDirection::Forward).unwrap();
     assert!(
-        flaws.iter().any(|f| matches!(f, Flaw::Numeric(_))),
+        forward_flaws.iter().any(|f| matches!(f, Flaw::Numeric(_))),
         "expected a numeric deviation flaw"
     );
+
+    // Forward direction splits at the *concrete current* value (-10.0).
+    let forward_numeric = forward_flaws
+        .iter()
+        .find_map(|f| match f {
+            Flaw::Numeric(nf) => Some(nf),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(forward_numeric.value, -10.0);
+
+    // Backward direction splits at the *boundary* of the expected target
+    // interval regressed by the operator's effect (+3): boundary 0.0 (the
+    // lower bound of the UPPER partition (5, +inf) is unbounded on the lower
+    // side, so the regressed split aligns with -5.0 - 3.0 = -8.0, the lower
+    // boundary of the upper partition `(-5, +inf)`).
+    let backward_flaws =
+        get_progression_flaws(&task, &partitions, &plan, SplitDirection::Backward).unwrap();
+    let backward_numeric = backward_flaws
+        .iter()
+        .find_map(|f| match f {
+            Flaw::Numeric(nf) => Some(nf),
+            _ => None,
+        })
+        .expect("backward direction should also produce a numeric flaw");
+    assert_ne!(
+        backward_numeric.value, forward_numeric.value,
+        "backward split should differ from forward concrete-value split"
+    );
+    // The regressed boundary for the UPPER partition `(-5, +inf)` mapped back
+    // through `+3` lands at `-5 - 3 = -8.0`; the boundary is open on the lower
+    // side so include_in_lower flips to true on the regressed side.
+    assert_eq!(backward_numeric.value, -8.0);
 }

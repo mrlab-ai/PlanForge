@@ -28,7 +28,8 @@ use super::numeric_context::{
 use super::transition_cost_partitioning::{
     AbstractOperatorCostBudget, AbstractOperatorCostFunction, AbstractOperatorFootprint,
     AbstractTransition, AbstractTransitionCostFunction, AbstractTransitionSystem,
-    ConcreteOperatorFootprint, NonAllocableFootprintReason, StateRegion, TransitionResidualCosts,
+    ConcreteOperatorFootprint, FiniteSupportConfig, NonAllocableFootprintReason, StateRegion,
+    TransitionResidualCosts,
 };
 use super::utils;
 
@@ -983,6 +984,7 @@ impl DomainAbstractionFactory {
         &self,
         task: &dyn AbstractNumericTask,
         operators: &[AbstractOperator],
+        finite_support: &FiniteSupportConfig,
     ) -> Result<Vec<AbstractOperatorFootprint>> {
         operators
             .iter()
@@ -992,7 +994,12 @@ impl DomainAbstractionFactory {
                     .iter()
                     .copied()
                     .map(|concrete_op_id| {
-                        self.build_concrete_operator_footprint(task, operator, concrete_op_id)
+                        self.build_concrete_operator_footprint(
+                            task,
+                            operator,
+                            concrete_op_id,
+                            finite_support,
+                        )
                     })
                     .collect::<Result<Vec<_>>>()?;
                 Ok(AbstractOperatorFootprint { labels })
@@ -1005,17 +1012,29 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         abstract_operator: &AbstractOperator,
         concrete_op_id: usize,
+        finite_support: &FiniteSupportConfig,
     ) -> Result<ConcreteOperatorFootprint> {
         let concrete_operator = task.get_operators().get(concrete_op_id).with_context(|| {
             format!("abstract operator references missing concrete operator {concrete_op_id}")
         })?;
         let abstract_source_region =
             self.state_region_from_facts(task, &abstract_operator.preconditions)?;
+        // `state_region_from_facts` already initializes numeric intervals to
+        // `Interval::unbounded()` for variables that have no partition fact in
+        // the operator's preconditions, and to the partition's interval for
+        // variables that do (which includes affected vars and variables pulled
+        // in via comparison-axiom preconditions).
+        //
+        // The loop below tightens affected-variable intervals further by
+        // intersecting with the inverse target image. For non-affected
+        // variables that are pinned by a partition fact, the partition
+        // interval is the tightest superset of the concrete preimage we can
+        // recover at this layer, so we keep it. Wiping it back to unbounded
+        // would still be admissible, but it would force the cost-partitioning
+        // overlap check to treat distinct partitions as universally
+        // overlapping on those axes, which is the over-conservativeness that
+        // hides per-region cost claims.
         let mut source_region = abstract_source_region.clone();
-        source_region
-            .numeric
-            .iter_mut()
-            .for_each(|interval| *interval = Interval::unbounded());
         let target_region =
             self.state_region_from_facts(task, &abstract_operator.regression_preconditions)?;
         let mut non_allocable_reason = None;
@@ -1068,9 +1087,13 @@ impl DomainAbstractionFactory {
                 effect_image.inverse,
             );
             precision_count += 1;
-            if interval_is_finite(source_region.numeric[numeric_var_id]) {
+            let preimage = source_region.numeric[numeric_var_id];
+            if interval_is_finite(preimage) && finite_support_stealable(preimage, finite_support) {
                 has_finite_changed_source = true;
             } else {
+                // Either an infinite preimage or a finite-but-too-wide one. Both
+                // have the same admissibility consequence: this label cannot
+                // safely steal cost under the finite-support gate.
                 has_infinite_changed_source = true;
             }
         }
@@ -1391,6 +1414,14 @@ impl DomainAbstractionFactory {
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
         let mut representative_predecessor_cache_by_op: Vec<HashMap<usize, Option<usize>>> =
             (0..operators.len()).map(|_| HashMap::new()).collect();
+        // Debug-only triple-uniqueness witness: every pushed AbstractTransition
+        // must have a unique `(abstract_op_id, source_hash, target_hash)`. The
+        // construction loop guarantees this by iterating `target_hash` × applicable
+        // `abstract_op_id` and picking exactly one representative source — making
+        // the assertion redundant in correct code, but explicit here so any future
+        // change to the loop that violates the invariant fails fast.
+        #[cfg(debug_assertions)]
+        let mut seen_transition_triples: HashSet<(usize, usize, usize)> = HashSet::new();
 
         for target_hash in 0..num_states {
             if target_hash % 64 == 0 {
@@ -1443,6 +1474,15 @@ impl DomainAbstractionFactory {
                     if source_hash >= num_states || source_hash == target_hash {
                         continue;
                     }
+                    #[cfg(debug_assertions)]
+                    {
+                        let triple = (abstract_op_id, source_hash, target_hash);
+                        debug_assert!(
+                            seen_transition_triples.insert(triple),
+                            "duplicate AbstractTransition triple {:?}",
+                            triple
+                        );
+                    }
                     let transition_id = transitions.len();
                     transitions.push(AbstractTransition {
                         transition_id,
@@ -1453,6 +1493,45 @@ impl DomainAbstractionFactory {
                     });
                     backward[target_hash].push(transition_id);
                     forward[source_hash].push(transition_id);
+                }
+            }
+        }
+
+        // Tight invariant: within one abstraction, every transition sharing an
+        // `abstract_op_id` must have identical numeric source and target regions.
+        // The partition-fact enumeration in `abstract_operator_generator.rs`
+        // (build_abstract_operators → enumerate_partition_combos) bakes the
+        // numeric (source_partition, target_partition) pair into the abstract
+        // operator's identity, so two transitions sharing the abstract op can
+        // only differ in propositional wildcard dimensions of `source_hash` /
+        // `target_hash`. This homogeneity is the property that lets the
+        // finite-support cost-partitioning gate decide stealability per abstract
+        // op rather than per individual transition.
+        #[cfg(debug_assertions)]
+        if materialize_state_regions {
+            let mut representative_per_op: HashMap<usize, (usize, usize)> = HashMap::new();
+            for transition in &transitions {
+                match representative_per_op.get(&transition.abstract_op_id) {
+                    Some(&(rep_src_hash, rep_tgt_hash)) => {
+                        debug_assert_eq!(
+                            state_regions[rep_src_hash].numeric,
+                            state_regions[transition.source_hash].numeric,
+                            "abstract_op_id {} has transitions with differing numeric source regions",
+                            transition.abstract_op_id
+                        );
+                        debug_assert_eq!(
+                            state_regions[rep_tgt_hash].numeric,
+                            state_regions[transition.target_hash].numeric,
+                            "abstract_op_id {} has transitions with differing numeric target regions",
+                            transition.abstract_op_id
+                        );
+                    }
+                    None => {
+                        representative_per_op.insert(
+                            transition.abstract_op_id,
+                            (transition.source_hash, transition.target_hash),
+                        );
+                    }
                 }
             }
         }
@@ -2356,36 +2435,53 @@ impl DomainAbstractionFactory {
         operators: &[AbstractOperator],
         comparison_var_ids: &[usize],
     ) -> Vec<OperatorComparisonSemantics> {
-        let mut comparison_dependencies: HashMap<usize, Vec<usize>> = HashMap::new();
+        // Invert `comparison var → [numeric var]` into `numeric var → [comparison var]`
+        // so that the per-operator inner loop scales with the operator's
+        // (small) changed-numeric-var set instead of the entire set of
+        // comparison vars. The previous implementation did
+        // `O(operators × comparison_vars × log changed_vars)` HashMap lookups;
+        // this is `O(operators × changed_vars × comparisons_per_var)` with
+        // pure Vec indexing.
+        // All call sites pass `self.comparison_var_ids()`, so every
+        // `tree.affected_var_id` is in `comparison_var_ids`. We don't filter
+        // here; if a future caller passes a strict subset we'll need to add
+        // it back.
+        debug_assert!(
+            self.comparison_trees
+                .iter()
+                .all(|t| comparison_var_ids.contains(&t.affected_var_id)),
+            "comparison_var_ids must contain every comparison tree's affected_var_id"
+        );
+        let num_numeric_vars = task.numeric_variables().len();
+        let mut comp_vars_by_numeric: Vec<Vec<usize>> = vec![Vec::new(); num_numeric_vars];
         for tree in &self.comparison_trees {
-            let mut deps = tree.regular_numeric_var_dependencies(task);
-            deps.sort_unstable();
-            deps.dedup();
-            comparison_dependencies.insert(tree.affected_var_id, deps);
+            let deps = tree.regular_numeric_var_dependencies(task);
+            for &dep in &deps {
+                if dep < num_numeric_vars {
+                    comp_vars_by_numeric[dep].push(tree.affected_var_id);
+                }
+            }
+        }
+        for list in &mut comp_vars_by_numeric {
+            if list.len() > 1 {
+                list.sort_unstable();
+                list.dedup();
+            }
         }
 
         operators
             .iter()
             .map(|op| {
-                let mut changed_numeric_vars = op.changed_numeric_vars.clone();
-                changed_numeric_vars.sort_unstable();
-                changed_numeric_vars.dedup();
-
-                let mut affected_comparison_var_ids = Vec::new();
-                for &comparison_var_id in comparison_var_ids {
-                    let affected =
-                        comparison_dependencies
-                            .get(&comparison_var_id)
-                            .is_some_and(|deps| {
-                                deps.iter()
-                                    .any(|dep| changed_numeric_vars.binary_search(dep).is_ok())
-                            });
-                    if affected {
-                        affected_comparison_var_ids.push(comparison_var_id);
+                let mut affected_comparison_var_ids: Vec<usize> = Vec::new();
+                for &numeric_var in &op.changed_numeric_vars {
+                    if let Some(comp_vars) = comp_vars_by_numeric.get(numeric_var) {
+                        affected_comparison_var_ids.extend_from_slice(comp_vars);
                     }
                 }
-                affected_comparison_var_ids.sort_unstable();
-                affected_comparison_var_ids.dedup();
+                if affected_comparison_var_ids.len() > 1 {
+                    affected_comparison_var_ids.sort_unstable();
+                    affected_comparison_var_ids.dedup();
+                }
 
                 OperatorComparisonSemantics {
                     affected_comparison_var_ids,
@@ -3485,6 +3581,18 @@ fn interval_is_finite(interval: Interval) -> bool {
 
 fn interval_is_singleton(interval: Interval) -> bool {
     interval.lower == interval.upper && interval.lower_closed && interval.upper_closed
+}
+
+/// Width-threshold gate for the finite-support cost-partitioning extension.
+///
+/// Returns `true` iff the interval is a singleton, or iff its width fits inside
+/// `cfg.max_stealable_width`. Caller must have already established that the
+/// interval is finite — infinite intervals are rejected upstream.
+fn finite_support_stealable(interval: Interval, cfg: &FiniteSupportConfig) -> bool {
+    if interval_is_singleton(interval) {
+        return true;
+    }
+    (interval.upper - interval.lower) <= cfg.max_stealable_width
 }
 
 fn changed_source_precision(

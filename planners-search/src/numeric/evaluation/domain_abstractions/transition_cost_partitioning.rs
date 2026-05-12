@@ -1,9 +1,28 @@
+//! Transition-cost partitioning for numeric-planning domain abstractions.
+//!
+//! Each [`ConcreteOperatorFootprint::source_region`] stores the *regressed
+//! preimage source* of an abstract operator's effect — the intersection of the
+//! abstract source region with the inverse image of the abstract target region
+//! under the operator's numeric effect (computed in
+//! `domain_abstraction_factory::build_concrete_operator_footprint`).
+//!
+//! [`ConcreteOperatorFootprint::allocable`] encodes finite-support
+//! stealability: it is `true` iff the preimage's relevant numeric dimensions
+//! are bounded and narrow enough to allow this transition to steal cost from
+//! the residual pool. The "narrow enough" threshold is configurable via
+//! [`FiniteSupportConfig::max_stealable_width`]; the default (`INFINITY`)
+//! reproduces the prior finite-vs-infinite gate exactly.
+//!
+//! Non-allocable footprints must carry zero saturated cost; this invariant is
+//! enforced by [`TransitionResidualCosts::reduce_by_abstract_operator_footprints`].
+
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, ensure};
 use planners_sas::numeric::numeric_task::ExplicitFact;
 use planners_sas::numeric::utils::float_tolerance;
+use serde::{Deserialize, Serialize};
 
 use super::comparison_expression::Interval;
 
@@ -11,6 +30,29 @@ const EPSILON: f64 = 1e-9;
 const ABSTRACT_OPERATOR_REGION_HASH: usize = usize::MAX;
 const MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 4096;
 const MAX_TOTAL_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 50_000;
+
+/// Configuration for the finite-support gate on transition stealability.
+///
+/// An abstract transition is allowed to "steal" cost (have a positive
+/// saturated cost in the cost-partitioning) only when every relevant numeric
+/// dimension of its regressed preimage source is either a singleton or has
+/// width at most [`max_stealable_width`](Self::max_stealable_width).
+///
+/// The default `max_stealable_width = f64::INFINITY` reproduces the legacy
+/// finite-vs-infinite behavior: every finite preimage passes, every infinite
+/// preimage fails.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct FiniteSupportConfig {
+    pub max_stealable_width: f64,
+}
+
+impl Default for FiniteSupportConfig {
+    fn default() -> Self {
+        Self {
+            max_stealable_width: f64::INFINITY,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransition {
@@ -236,6 +278,99 @@ struct OperatorResidual {
     uniform_cost_cache: Cell<Option<f64>>,
     transition_cost_cache: RefCell<HashMap<TransitionQueryKey, CachedCost>>,
     full_reduction_index: RefCell<Option<FullReductionIndex>>,
+    /// Lazy sorted index over `reductions` for fast candidate enumeration in
+    /// `max_overlap_reduction`. Indexes reductions by the lower bound of their
+    /// source-region interval on a chosen primary numeric dimension. Built on
+    /// first query after the `generation` advances; invalidated implicitly by
+    /// the generation-mismatch check.
+    sorted_index: RefCell<Option<SortedReductionIndex>>,
+}
+
+/// A per-`OperatorResidual` sorted view that lets `max_overlap_reduction`
+/// enumerate only the reductions whose primary-dim interval could overlap a
+/// query's primary-dim interval, instead of scanning all `reductions` linearly.
+///
+/// The primary dim is chosen at build time as the numeric dimension with the
+/// highest number of distinct lower bounds across the reductions. For
+/// operator-residuals where every reduction has the same lower bound on every
+/// dim (e.g. only one reduction stored), `primary_dim` is `None` and the
+/// fallback is a full scan.
+#[derive(Debug)]
+struct SortedReductionIndex {
+    /// Indices into `reductions`, sorted by the chosen primary dim's lower bound.
+    sorted: Vec<usize>,
+    primary_dim: Option<usize>,
+    generation: u64,
+}
+
+impl SortedReductionIndex {
+    fn build(reductions: &[ResidualReduction], generation: u64) -> Self {
+        let primary_dim = Self::choose_primary_dim(reductions);
+        let mut sorted: Vec<usize> = (0..reductions.len()).collect();
+        if let Some(dim) = primary_dim {
+            sorted.sort_by(|&a, &b| {
+                let la = reductions[a].condition.region.source.numeric[dim].lower;
+                let lb = reductions[b].condition.region.source.numeric[dim].lower;
+                la.partial_cmp(&lb).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+        Self {
+            sorted,
+            primary_dim,
+            generation,
+        }
+    }
+
+    fn choose_primary_dim(reductions: &[ResidualReduction]) -> Option<usize> {
+        if reductions.len() < 2 {
+            return None;
+        }
+        let first = &reductions[0].condition.region.source.numeric;
+        let num_dims = first.len();
+        let mut best_dim: Option<usize> = None;
+        let mut best_distinct = 1usize;
+        for dim in 0..num_dims {
+            let mut distinct: HashSet<u64> = HashSet::with_capacity(reductions.len().min(64));
+            for r in reductions {
+                distinct.insert(r.condition.region.source.numeric[dim].lower.to_bits());
+            }
+            if distinct.len() > best_distinct {
+                best_distinct = distinct.len();
+                best_dim = Some(dim);
+            }
+        }
+        best_dim
+    }
+
+    /// Pre-filter reductions by their primary-dim interval. Returns indices into
+    /// `reductions` for entries that could overlap the query on the primary dim.
+    /// May return false positives (cleared by the full overlap check downstream);
+    /// must not return false negatives.
+    fn candidates(
+        &self,
+        reductions: &[ResidualReduction],
+        query: Option<&TransitionCondition>,
+    ) -> Vec<usize> {
+        let Some(dim) = self.primary_dim else {
+            return self.sorted.clone();
+        };
+        let Some(q) = query else {
+            return self.sorted.clone();
+        };
+        let q_iv = &q.region.source.numeric[dim];
+        // Binary search: first `i` where reductions[sorted[i]].lower > q.upper.
+        // Everything before is a candidate up to the further upper-bound filter.
+        let end = self.sorted.partition_point(|&i| {
+            reductions[i].condition.region.source.numeric[dim].lower <= q_iv.upper
+        });
+        self.sorted[..end]
+            .iter()
+            .copied()
+            .filter(|&i| {
+                reductions[i].condition.region.source.numeric[dim].upper >= q_iv.lower
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -304,6 +439,10 @@ enum FullReductionIndexKind {
     Numeric {
         feature: RegionFeature,
         intervals: Vec<IndexedInterval>,
+        /// `prefix_max_upper[i]` is the maximum `interval.upper` across
+        /// `intervals[..=i]`. Lets `lookup_full_reduction_overlap` short-circuit
+        /// when no candidate's upper bound can reach the query's lower bound.
+        prefix_max_upper: Vec<f64>,
     },
 }
 
@@ -357,6 +496,7 @@ impl TransitionResidualCosts {
                 uniform_cost_cache: Cell::new(None),
                 transition_cost_cache: RefCell::new(HashMap::new()),
                 full_reduction_index: RefCell::new(None),
+                sorted_index: RefCell::new(None),
             })
             .collect();
         Self { operator_residuals }
@@ -392,8 +532,7 @@ impl TransitionResidualCosts {
                 if let Some(cost) = residual.uniform_cost_cache.get() {
                     return cost;
                 }
-                let reduction =
-                    max_overlap_reduction(None, &residual.reductions, residual.base_cost);
+                let reduction = max_overlap_reduction(None, residual, residual.base_cost);
                 let cost = (residual.base_cost - reduction).max(0.0);
                 residual.uniform_cost_cache.set(Some(cost));
                 cost
@@ -553,8 +692,7 @@ impl TransitionResidualCosts {
             );
             return cost;
         }
-        let reduction =
-            max_overlap_reduction(Some(&query), &residual.reductions, residual.base_cost);
+        let reduction = max_overlap_reduction(Some(&query), residual, residual.base_cost);
         let cost = (residual.base_cost - reduction).max(0.0);
         residual.transition_cost_cache.borrow_mut().insert(
             key,
@@ -996,6 +1134,28 @@ impl OperatorResidual {
         self.uniform_cost_cache.set(None);
         self.transition_cost_cache.borrow_mut().clear();
         self.full_reduction_index.borrow_mut().take();
+        self.sorted_index.borrow_mut().take();
+    }
+
+    /// Ensure the sorted candidate index is built and up to date with the
+    /// current generation. Returns `Some(_)` only when the index has at least
+    /// `primary_dim` set (i.e. there is some discriminating numeric axis).
+    /// Returns `None` when no discriminating dim was found — callers fall back
+    /// to a full linear scan, which is correct and is the best we can do for
+    /// trivially small reduction sets.
+    fn ensure_sorted_index(&self) -> bool {
+        let needs_build = {
+            let borrow = self.sorted_index.borrow();
+            match borrow.as_ref() {
+                Some(index) => index.generation != self.generation.get(),
+                None => true,
+            }
+        };
+        if needs_build {
+            *self.sorted_index.borrow_mut() =
+                Some(SortedReductionIndex::build(&self.reductions, self.generation.get()));
+        }
+        true
     }
 
     fn lookup_full_reduction_overlap(&self, query: &TransitionCondition) -> Option<bool> {
@@ -1024,12 +1184,36 @@ impl OperatorResidual {
                     }
                 }
             }
-            FullReductionIndexKind::Numeric { feature, intervals } => {
+            FullReductionIndexKind::Numeric {
+                feature,
+                intervals,
+                prefix_max_upper,
+            } => {
                 let query_interval = interval_for_feature(&query.region, *feature)?;
-                for indexed in intervals {
-                    if interval_starts_after(&indexed.interval, query_interval) {
-                        break;
-                    }
+                // Binary-search for the first indexed interval whose lower
+                // strictly starts after the query — everything past that point
+                // cannot overlap and can be skipped without inspection. Without
+                // this, queries whose lower lies above every stored lower would
+                // walk the entire intervals vector before hitting `break`.
+                let end = intervals.partition_point(|indexed| {
+                    !interval_starts_after(&indexed.interval, query_interval)
+                });
+                // Short-circuit: if the max upper among the candidate prefix is
+                // strictly below the query's lower, no candidate can overlap.
+                // This is the dominant case when the query sits *above* the
+                // stored intervals (e.g. a single-goal abstraction querying
+                // high-y cells against a full-goal abstraction that only refined
+                // low-y cells). We deliberately use `<` rather than `<=` so a
+                // closed boundary on either endpoint still falls through to the
+                // exact overlap check below.
+                if end > 0 && prefix_max_upper[end - 1] < query_interval.lower {
+                    return if index.all_reductions_full {
+                        Some(false)
+                    } else {
+                        None
+                    };
+                }
+                for indexed in &intervals[..end] {
                     if !intervals_overlap(indexed.interval, *query_interval) {
                         continue;
                     }
@@ -1306,7 +1490,17 @@ fn build_full_reduction_index(
                     .total_cmp(&right.interval.lower)
                     .then_with(|| left.interval.upper.total_cmp(&right.interval.upper))
             });
-            FullReductionIndexKind::Numeric { feature, intervals }
+            let mut prefix_max_upper: Vec<f64> = Vec::with_capacity(intervals.len());
+            let mut running = f64::NEG_INFINITY;
+            for indexed in &intervals {
+                running = running.max(indexed.interval.upper);
+                prefix_max_upper.push(running);
+            }
+            FullReductionIndexKind::Numeric {
+                feature,
+                intervals,
+                prefix_max_upper,
+            }
         }
     };
     Some(FullReductionIndex {
@@ -1445,14 +1639,29 @@ fn intervals_overlap(left: Interval, right: Interval) -> bool {
 
 fn max_overlap_reduction(
     query: Option<&TransitionCondition>,
-    reductions: &[ResidualReduction],
+    residual: &OperatorResidual,
     cap: f64,
 ) -> f64 {
     if !cap.is_finite() || cap <= EPSILON {
         return 0.0;
     }
+    let reductions = &residual.reductions;
+    if reductions.is_empty() {
+        return 0.0;
+    }
+    residual.ensure_sorted_index();
+    let index_ref = residual.sorted_index.borrow();
+    let candidates: Vec<usize> = match index_ref.as_ref() {
+        Some(index) => index.candidates(reductions, query),
+        None => (0..reductions.len()).collect(),
+    };
+    drop(index_ref);
+    if candidates.is_empty() {
+        return 0.0;
+    }
     let mut has_subcap_reduction = false;
-    if reductions.iter().any(|reduction| {
+    if candidates.iter().any(|&i| {
+        let reduction = &reductions[i];
         has_subcap_reduction |= reduction.amount < cap - EPSILON;
         reduction.amount >= cap - EPSILON
             && query.is_none_or(|query| {
@@ -1465,8 +1674,9 @@ fn max_overlap_reduction(
     if !has_subcap_reduction {
         return 0.0;
     }
-    let mut relevant: Vec<&ResidualReduction> = reductions
+    let mut relevant: Vec<&ResidualReduction> = candidates
         .iter()
+        .map(|&i| &reductions[i])
         .filter(|reduction| {
             query.is_none_or(|query| {
                 compatible_identities(query, &reduction.condition)

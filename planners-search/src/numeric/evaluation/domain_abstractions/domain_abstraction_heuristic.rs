@@ -2,6 +2,7 @@
 mod tests;
 
 use std::cell::RefCell;
+use std::sync::OnceLock;
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
@@ -17,6 +18,11 @@ use super::utils;
 pub(crate) const COMPARISON_TRUE_VAL: usize = 0;
 pub(crate) const COMPARISON_FALSE_VAL: usize = 1;
 pub(crate) const COMPARISON_UNKNOWN_VAL: usize = 2;
+
+fn fast_hash_enabled() -> bool {
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| std::env::var_os("DA_NO_FAST_HASH").is_none())
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct DomainAbstractionLookupScratch {
@@ -94,8 +100,17 @@ pub(crate) fn compute_collection_abstract_state_ids(
         None => None,
     };
 
+    // When no abstraction in this collection projects the task, the
+    // registry's axiom evaluator has already materialized every comparison
+    // axiom's truth value into `scratch.prop[affected_var_id]`. In that case
+    // we can read those bits directly and skip the per-state `ComparisonTree`
+    // walks entirely — that walk shows up as ~10% of total CPU on sailing.
+    // `DA_NO_FAST_HASH=1` disables this for A/B benchmarking.
+    let prop_has_resolved_comparisons =
+        matches!(shared_projection, Some(None)) && fast_hash_enabled();
+
     scratch.comparisons.clear();
-    if scratch.required_domain_ids.len() > 1 {
+    if !prop_has_resolved_comparisons && scratch.required_domain_ids.len() > 1 {
         if let (Some(&first_id), Some(numeric_values)) =
             (scratch.required_domain_ids.first(), shared_numeric_values)
         {
@@ -116,6 +131,7 @@ pub(crate) fn compute_collection_abstract_state_ids(
                 &scratch.numeric,
                 shared_numeric_values,
                 &scratch.comparisons,
+                prop_has_resolved_comparisons,
             )?);
         }
     } else if let Some(required_ids) = required_ids {
@@ -129,6 +145,7 @@ pub(crate) fn compute_collection_abstract_state_ids(
                 &scratch.numeric,
                 shared_numeric_values,
                 &scratch.comparisons,
+                prop_has_resolved_comparisons,
             )?);
         }
     }
@@ -142,15 +159,22 @@ fn hash_with_shared_values(
     numeric_values: &[f64],
     shared_numeric_values: Option<&[f64]>,
     comparison_values: &[Option<usize>],
+    prop_has_resolved_comparisons: bool,
 ) -> Result<usize, EvaluationError> {
     if let Some(shared_numeric_values) = shared_numeric_values {
-        heuristic.abstract_state_hash_from_projected_state_values_with_comparisons(
+        heuristic.compute_abstract_hash_from_projected_state_values_inner(
             prop_values,
             shared_numeric_values,
-            comparison_values,
+            Some(comparison_values),
+            prop_has_resolved_comparisons,
         )
     } else {
-        heuristic.abstract_state_hash_from_state_values(prop_values, numeric_values)
+        heuristic.compute_abstract_hash_inner(
+            prop_values,
+            numeric_values,
+            None,
+            prop_has_resolved_comparisons,
+        )
     }
 }
 
@@ -260,16 +284,21 @@ impl DomainAbstractionHeuristic {
                 "numeric value for var {num_var_id} must be finite, got {value}"
             )));
         }
-        let parts = self
-            .abstraction
-            .factory
-            .partitions()
-            .partitions(num_var_id)
-            .ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "missing partitions for numeric var {num_var_id}"
-                ))
-            })?;
+        let partitions = self.abstraction.factory.partitions();
+        // Fast path: equispaced layouts (sailing-style after CEGAR splits)
+        // can resolve the partition index with a single division instead of
+        // a tolerant binary search. Falls through to the slow path if the
+        // descriptor rejects the value or no descriptor is available.
+        if let Some(desc) = partitions.equispaced(num_var_id)
+            && let Some(idx) = desc.lookup(value)
+        {
+            return Ok(idx);
+        }
+        let parts = partitions.partitions(num_var_id).ok_or_else(|| {
+            EvaluationError::InvalidState(format!(
+                "missing partitions for numeric var {num_var_id}"
+            ))
+        })?;
         utils::partition_for_value(parts, value).ok_or_else(|| {
             EvaluationError::InvalidState(format!(
                 "numeric value {value} not contained in any partition for var {num_var_id}"
@@ -411,8 +440,8 @@ impl DomainAbstractionHeuristic {
         // when the state was registered. We can skip the per-evaluation
         // re-evaluation of `ComparisonTree`s entirely.
         // Set DA_NO_FAST_HASH=1 to disable for A/B benchmarking.
-        let prop_has_resolved_comparisons = self.abstraction.task_projection.is_none()
-            && std::env::var_os("DA_NO_FAST_HASH").is_none();
+        let prop_has_resolved_comparisons =
+            self.abstraction.task_projection.is_none() && fast_hash_enabled();
         self.compute_abstract_hash_inner(&prop, &numeric, None, prop_has_resolved_comparisons)
     }
 

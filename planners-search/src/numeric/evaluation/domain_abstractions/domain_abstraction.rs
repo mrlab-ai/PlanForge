@@ -8,16 +8,23 @@ use planners_sas::numeric::numeric_task::{
 };
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
+use super::utils::EquispacedPartitioning;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumericPartitions {
     partitions_by_numeric_var: Vec<Vec<Interval>>,
+    /// Per-var cached descriptor for O(1) `partition_for_value` lookup.
+    /// `Some` when the layout is contiguous + uniform-width + at most one
+    /// unbounded tail on each side; otherwise `None` and callers fall back to
+    /// the tolerant binary search. Rebuilt whenever the partitions mutate
+    /// (`split_at`, `merge_at`, …) — keep this in sync with the `Vec<Interval>`.
+    equispaced_by_numeric_var: Vec<Option<EquispacedPartitioning>>,
 }
 
 impl NumericPartitions {
     pub fn trivial(task: &dyn AbstractNumericTask) -> Self {
         let initial_numeric_values = task.get_initial_numeric_state_values();
-        let partitions_by_numeric_var = task
+        let partitions_by_numeric_var: Vec<Vec<Interval>> = task
             .numeric_variables()
             .iter()
             .enumerate()
@@ -33,14 +40,18 @@ impl NumericPartitions {
                 _ => vec![Interval::unbounded()],
             })
             .collect();
+        let equispaced_by_numeric_var = compute_equispaced(&partitions_by_numeric_var);
         Self {
             partitions_by_numeric_var,
+            equispaced_by_numeric_var,
         }
     }
 
     pub fn with_partitions(partitions_by_numeric_var: Vec<Vec<Interval>>) -> Self {
+        let equispaced_by_numeric_var = compute_equispaced(&partitions_by_numeric_var);
         Self {
             partitions_by_numeric_var,
+            equispaced_by_numeric_var,
         }
     }
 
@@ -48,6 +59,12 @@ impl NumericPartitions {
         self.partitions_by_numeric_var
             .get(numeric_var_id)
             .map(|v| v.as_slice())
+    }
+
+    pub(crate) fn equispaced(&self, numeric_var_id: usize) -> Option<&EquispacedPartitioning> {
+        self.equispaced_by_numeric_var
+            .get(numeric_var_id)
+            .and_then(Option::as_ref)
     }
 
     pub fn partition_interval(
@@ -117,8 +134,20 @@ impl NumericPartitions {
 
         parts[part_id] = lower;
         parts.insert(part_id + 1, upper);
+        // Cache is per-var; recompute only the affected entry.
+        self.equispaced_by_numeric_var[numeric_var_id] =
+            EquispacedPartitioning::detect(&self.partitions_by_numeric_var[numeric_var_id]);
         true
     }
+}
+
+fn compute_equispaced(
+    partitions_by_numeric_var: &[Vec<Interval>],
+) -> Vec<Option<EquispacedPartitioning>> {
+    partitions_by_numeric_var
+        .iter()
+        .map(|parts| EquispacedPartitioning::detect(parts))
+        .collect()
 }
 
 fn intervals_overlap(a: Interval, b: Interval) -> bool {

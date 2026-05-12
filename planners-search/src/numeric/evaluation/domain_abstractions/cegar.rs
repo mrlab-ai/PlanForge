@@ -18,9 +18,10 @@ use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, ExplicitFact, NumericType, Operator,
 };
 
-use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw, get_flaws};
+use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw};
 
 pub use flaw_search::FlawKind;
+pub use flaw_search::SplitDirection;
 pub use flaw_search::flaw_selection::{FlawTreatment, FlawTreatmentVariants, InitSplitMethod};
 
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::{
@@ -37,6 +38,7 @@ use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanRe
 use super::domain_abstraction_heuristic::{
     COMPARISON_FALSE_VAL, COMPARISON_TRUE_VAL, COMPARISON_UNKNOWN_VAL,
 };
+use super::transition_cost_partitioning::FiniteSupportConfig;
 use super::utils::{compute_abstraction_size_u128, debug_print_refinement_summary};
 
 #[derive(Debug, Clone)]
@@ -56,6 +58,15 @@ pub struct CegarConfig {
     pub blacklisted_numeric_var_ids: HashSet<usize>,
     pub transform_linear_task: bool,
     pub initial_seed_splits: Vec<InitialSeedSplit>,
+    /// Width threshold for the finite-support transition-cost-partitioning
+    /// gate applied when the abstraction's operator footprints are built. The
+    /// default reproduces the legacy finite-vs-infinite behavior.
+    pub finite_support: FiniteSupportConfig,
+    /// How numeric flaw split values are chosen: `Forward` keeps the legacy
+    /// concrete-value split; `Backward` places splits at the boundary derived
+    /// from the regressed-target / required interval. When `None`, the flaw
+    /// kind's default ([`FlawKind::default_split_direction`]) is used.
+    pub split_direction: Option<SplitDirection>,
 }
 
 impl Default for CegarConfig {
@@ -76,6 +87,8 @@ impl Default for CegarConfig {
             blacklisted_numeric_var_ids: HashSet::new(),
             transform_linear_task: false,
             initial_seed_splits: Vec::new(),
+            finite_support: FiniteSupportConfig::default(),
+            split_direction: None,
         }
     }
 }
@@ -284,14 +297,21 @@ impl Cegar {
             let real_check_time = Duration::ZERO;
 
             let flaw_start = Instant::now();
-            let flaws = get_flaws(
-                task,
-                &factory.partitions,
-                &factory.domain_mapping,
-                plan,
-                self.config.flaw_kind,
-            )
-            .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
+            let direction = self
+                .config
+                .split_direction
+                .unwrap_or_else(|| self.config.flaw_kind.default_split_direction());
+            let flaws = self
+                .config
+                .flaw_kind
+                .get_flaws_with_direction(
+                    task,
+                    &factory.partitions,
+                    &factory.domain_mapping,
+                    plan,
+                    direction,
+                )
+                .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
             let flaw_time = flaw_start.elapsed();
             if config.debug {
                 super::utils::debug_print_flaws(&flaws);

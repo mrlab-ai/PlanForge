@@ -106,7 +106,11 @@ impl DomainAbstractionGenerator {
             .build_abstract_operators(transformed_task)
             .context("failed to build abstract operators")?;
         let abstract_operator_footprints = factory
-            .build_abstract_operator_footprints(transformed_task, &abstract_operators)
+            .build_abstract_operator_footprints(
+                transformed_task,
+                &abstract_operators,
+                &self.config.finite_support,
+            )
             .context("failed to build abstract-operator footprints")?;
         let distance_table = factory
             .build_distance_table_with_operators(

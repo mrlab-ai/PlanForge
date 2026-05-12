@@ -26,9 +26,11 @@ use super::domain_abstraction_heuristic::{
     compute_collection_abstract_state_ids,
 };
 use super::transition_cost_partitioning::{
-    AbstractOperatorCostBudget, AbstractOperatorFootprint, NonAllocableFootprintReason,
-    TransitionResidualCosts,
+    AbstractOperatorCostBudget, AbstractOperatorCostFunction, AbstractOperatorFootprint,
+    NonAllocableFootprintReason, TransitionResidualCosts,
 };
+#[cfg(test)]
+use super::transition_cost_partitioning::FiniteSupportConfig;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -124,7 +126,12 @@ impl Default for ScpOnlineConfig {
             max_time: 200.0,
             table_construction_max_time: 30.0,
             max_size: usize::MAX,
-            interval: 10_000,
+            // Default: build the SCP heuristic once at evaluation 0 and never
+            // rebuild during search. Periodic rebuilds proved expensive enough
+            // to dominate per-state cost on label-SCP and abstract-op CP alike.
+            // Configure a finite `interval` only when targeted state-specific
+            // re-orderings are worth the rebuild time (rarely, in practice).
+            interval: usize::MAX,
             combine_labels: false,
             collection_config,
             use_numeric_pdbs: false,
@@ -136,7 +143,12 @@ impl Default for ScpOnlineConfig {
             pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
             scoring_function: ScoringFunction::MaxHeuristicPerStolenCosts,
             order_generator: OrderGenerator::Greedy,
-            order_optimization_max_time: 0.0,
+            // Spend a budget on the diversified-candidate + hill-climbing
+            // ordering at preprocessing. With `interval = usize::MAX` the SCP
+            // is only built once, so this runs at most once per search; the
+            // resulting initial-state h is materially better than the random
+            // greedy ordering's, especially under abstract-operator CP.
+            order_optimization_max_time: 5.0,
             saturator: Saturator::All,
             random_seed,
             use_abstract_operator_cost_partitioning: false,
@@ -477,25 +489,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             })
             .collect();
 
-        if use_abstract_operator_cost_partitioning
-            && abstractions.iter().any(|abstraction| {
-                abstraction.metadata.portfolio_strategy.as_deref() == Some("complementary")
-            })
-        {
-            order.sort_by(|&a, &b| {
-                let a_inactive = current_h.get(a).copied().unwrap_or(0.0) <= 1e-9;
-                let b_inactive = current_h.get(b).copied().unwrap_or(0.0) <= 1e-9;
-                a_inactive
-                    .cmp(&b_inactive)
-                    .then_with(|| {
-                        abstraction_collection_iteration(abstractions, a)
-                            .cmp(&abstraction_collection_iteration(abstractions, b))
-                    })
-                    .then_with(|| a.cmp(&b))
-            });
-            return order;
-        }
-
         let scores: Vec<f64> = (0..total)
             .map(|abs_id| {
                 let h = current_h[abs_id];
@@ -709,6 +702,19 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             && state.start_time.elapsed() >= Duration::from_secs_f64(self.config.max_time);
 
         if state.improve_heuristic && (time_limit_reached || state.size_kb >= self.config.max_size)
+        {
+            state.improve_heuristic = false;
+        }
+
+        // With a one-shot `interval` (e.g. `usize::MAX`), we only ever rebuild
+        // the CP at evaluation 0. Once that CP exists, holding the entire
+        // abstraction collection — including the per-operator footprints
+        // (~1.6 GB on sailing prob_1_11) — is pure dead weight for the rest
+        // of search. Flip the flag here so `release_abstractions_if_finished`
+        // drops them.
+        if state.improve_heuristic
+            && !state.cp_heuristics.is_empty()
+            && self.config.interval == usize::MAX
         {
             state.improve_heuristic = false;
         }
@@ -1152,6 +1158,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             &table.distances,
                             &tcf.operator_costs,
                             abstract_state_ids,
+                        );
+                        log_movement_abstract_operator_costs(
+                            pos,
+                            abstraction,
+                            abstraction_task,
+                            &tcf,
+                            &remaining_costs,
                         );
                         if should_skip_zero_current_table(
                             "all",
@@ -2421,6 +2434,83 @@ fn log_transition_residual_summary(remaining_costs: &TransitionResidualCosts) {
     );
 }
 
+/// Per-abstraction debug print of every abstract operator for the seven sailing
+/// movement operators (or any operator whose concrete name starts with `go_`).
+/// For each abstract op, logs the underlying numeric source-region preimage,
+/// the residual cost the abstract op saw at distance-table time (i.e. base cost
+/// minus reductions filed by abstractions processed earlier in the SCP order),
+/// and the saturated cost this abstraction reserved on the abstract op.
+///
+/// Gated by `tracing::Level::DEBUG` so it can be turned on with
+/// `--log-level debug` without changing the source. With sailing's roughly
+/// 25 000+ abstract operators per abstraction, the output is large; users
+/// looking at it typically `grep` for the operator name and a specific
+/// abstraction id.
+fn log_movement_abstract_operator_costs(
+    abstraction_id: usize,
+    abstraction: &DomainAbstraction,
+    abstraction_task: &dyn AbstractNumericTask,
+    tcf: &AbstractOperatorCostFunction,
+    remaining_costs: &TransitionResidualCosts,
+) {
+    if !enabled!(Level::DEBUG) {
+        return;
+    }
+    let concrete_operators = abstraction_task.get_operators();
+    for (abstract_op_id, (_abstract_op, footprints)) in abstraction
+        .abstract_operators
+        .iter()
+        .zip(abstraction.abstract_operator_footprints.iter())
+        .enumerate()
+    {
+        let saturated = tcf
+            .operator_costs
+            .get(abstract_op_id)
+            .copied()
+            .unwrap_or(0.0);
+        for footprint in &footprints.labels {
+            let Some(op) = concrete_operators.get(footprint.concrete_op_id) else {
+                continue;
+            };
+            if !op.name().starts_with("go_") {
+                continue;
+            }
+            let residual = remaining_costs.cost_for_operator_footprint(
+                abstraction_id,
+                abstract_op_id,
+                footprint,
+            );
+            let bounded_dims: Vec<String> = footprint
+                .source_region
+                .numeric
+                .iter()
+                .enumerate()
+                .filter(|(_, iv)| iv.lower.is_finite() || iv.upper.is_finite())
+                .map(|(var_id, iv)| {
+                    format!(
+                        "n{var_id}={}{},{}{}",
+                        if iv.lower_closed { "[" } else { "(" },
+                        iv.lower,
+                        iv.upper,
+                        if iv.upper_closed { "]" } else { ")" }
+                    )
+                })
+                .collect();
+            tracing::debug!(
+                "scp_online debug movement op abstraction={abstraction_id} \
+                 abstract_op_id={abstract_op_id} concrete_op_id={} name={} \
+                 allocable={} bounded_source=[{}] pre_sat_residual={:.3} saturated={:.3}",
+                footprint.concrete_op_id,
+                op.name(),
+                footprint.allocable,
+                bounded_dims.join(", "),
+                residual,
+                saturated,
+            );
+        }
+    }
+}
+
 impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
     fn compute_heuristic(
         &self,
@@ -2725,8 +2815,11 @@ mod handcrafted_sailing_tests {
         )?;
         let mut operator_generator = factory.make_operator_generator(transformed_task, false)?;
         let abstract_operators = operator_generator.build_abstract_operators(transformed_task)?;
-        let abstract_operator_footprints =
-            factory.build_abstract_operator_footprints(transformed_task, &abstract_operators)?;
+        let abstract_operator_footprints = factory.build_abstract_operator_footprints(
+            transformed_task,
+            &abstract_operators,
+            &FiniteSupportConfig::default(),
+        )?;
         let distance_table = factory.build_distance_table_with_operators(
             transformed_task,
             &operator_generator,

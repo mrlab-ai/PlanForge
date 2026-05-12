@@ -10,8 +10,9 @@ use planners_sas::numeric::{
     utils::int_packer::IntDoublePacker,
 };
 
+use super::target_centered::{dependent_numeric_flaws_backward, preimage_split_for_expected_successor};
 use super::{
-    Flaw, NumericFlaw, PropFlaw, can_split_numeric_var,
+    Flaw, NumericFlaw, PropFlaw, SplitDirection, can_split_numeric_var,
     dependent_numeric_flaws_for_comparison_prop_var, state::progress,
 };
 use crate::numeric::evaluation::domain_abstractions::{
@@ -20,11 +21,18 @@ use crate::numeric::evaluation::domain_abstractions::{
     utils::{fact_is_hold, get_initial_state, make_prop_state_packer, partition_for_value},
 };
 
+/// Walk the wildcard plan and emit flaws using the chosen split direction.
+///
+/// `direction` selects how the *value* of each numeric flaw is chosen:
+/// [`SplitDirection::Forward`] keeps the legacy progression behavior
+/// (concrete value); [`SplitDirection::Backward`] places splits at boundaries
+/// derived from the regressed-target / required interval.
 #[allow(unused_assignments)]
 pub fn get_progression_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
     wildcard_plan: &WildcardPlanResult,
+    direction: SplitDirection,
 ) -> Result<Vec<Flaw>> {
     let comparison_index = ComparisonAxiomIndex::from_task(task)
         .map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
@@ -61,6 +69,7 @@ pub fn get_progression_flaws(
                 &prop_state,
                 &numeric_state,
                 step,
+                direction,
             );
             if operator_flaws.is_empty() {
                 (next_prop_state, next_numeric_state, flawed) = progress_and_get_deviation_flaws(
@@ -73,6 +82,7 @@ pub fn get_progression_flaws(
                     partitions,
                     &mut collected_flaws,
                     step,
+                    direction,
                 )?;
                 if !flawed {
                     collected_flaws.clear();
@@ -104,6 +114,7 @@ pub fn get_progression_flaws(
         &prop_state,
         &numeric_state,
         step,
+        direction,
     );
 
     Ok(goal_flaws)
@@ -121,6 +132,7 @@ pub(crate) fn progress_and_get_deviation_flaws(
     partitions: &NumericPartitions,
     collected_flaws: &mut Vec<Flaw>,
     step: usize,
+    direction: SplitDirection,
 ) -> Result<OptionalPropAndNumStateAndFlawed> {
     let mut next_prop_state = prop_state.to_vec();
     let mut next_numeric_state = numeric_state.to_vec();
@@ -140,6 +152,7 @@ pub(crate) fn progress_and_get_deviation_flaws(
         expected_abs_numeric_state,
         partitions,
         step,
+        direction,
     );
     if !deviation_flaws.is_empty() {
         collected_flaws.extend(deviation_flaws);
@@ -149,6 +162,14 @@ pub(crate) fn progress_and_get_deviation_flaws(
     Ok((Some(next_prop_state), Some(next_numeric_state), flawed))
 }
 
+/// Emit numeric deviation flaws for an operator whose abstract successor
+/// differs from the concrete one.
+///
+/// In `Forward` direction the flaw is split at the *concrete current* value
+/// using direction-of-change to pick `include_in_lower`. In `Backward`
+/// direction the flaw is split at the boundary of the regressed target
+/// interval — the split that separates the cell containing the regressed
+/// preimage support from the rest of the source cell.
 pub fn get_progression_numeric_deviation_flaws(
     op: &Operator,
     numeric_current_state: &[f64],
@@ -156,6 +177,7 @@ pub fn get_progression_numeric_deviation_flaws(
     abstract_numeric_successor_state: &[usize],
     partitions: &NumericPartitions,
     step: usize,
+    direction: SplitDirection,
 ) -> Vec<Flaw> {
     let mut flaws: Vec<Flaw> = Vec::new();
 
@@ -163,12 +185,19 @@ pub fn get_progression_numeric_deviation_flaws(
         .len()
         .min(abstract_numeric_successor_state.len());
     for var_id in 0..num_vars {
-        let operator_modified_var = op
-            .assignment_effects()
-            .iter()
-            .any(|eff| eff.affected_var_id() == var_id);
-        if !operator_modified_var {
-            continue;
+        // Forward direction only emits a flaw if the operator actually
+        // modifies this variable. Backward inspects every variable whose
+        // concrete successor disagrees with the abstract one — this matches
+        // the legacy target-centered behavior, which also covered effects
+        // routed through derived/axiom variables.
+        if direction == SplitDirection::Forward {
+            let operator_modified_var = op
+                .assignment_effects()
+                .iter()
+                .any(|eff| eff.affected_var_id() == var_id);
+            if !operator_modified_var {
+                continue;
+            }
         }
 
         let abstract_value = abstract_numeric_successor_state[var_id];
@@ -193,25 +222,60 @@ pub fn get_progression_numeric_deviation_flaws(
             continue;
         }
 
-        let operator_increased_value = concrete_next_value > concrete_current_value;
-        let mut include_in_lower = !operator_increased_value;
+        match direction {
+            SplitDirection::Forward => {
+                let operator_increased_value = concrete_next_value > concrete_current_value;
+                let mut include_in_lower = !operator_increased_value;
 
-        if can_split_numeric_var(partitions, var_id, concrete_current_value, include_in_lower) {
-            flaws.push(Flaw::Numeric(NumericFlaw {
-                numeric_var_id: var_id,
-                value: concrete_current_value,
-                include_in_lower,
-                step,
-            }));
-        } else {
-            include_in_lower = !include_in_lower;
-            if can_split_numeric_var(partitions, var_id, concrete_current_value, include_in_lower) {
-                flaws.push(Flaw::Numeric(NumericFlaw {
-                    numeric_var_id: var_id,
-                    value: concrete_current_value,
+                if can_split_numeric_var(
+                    partitions,
+                    var_id,
+                    concrete_current_value,
                     include_in_lower,
-                    step,
-                }));
+                ) {
+                    flaws.push(Flaw::Numeric(NumericFlaw {
+                        numeric_var_id: var_id,
+                        value: concrete_current_value,
+                        include_in_lower,
+                        step,
+                    }));
+                } else {
+                    include_in_lower = !include_in_lower;
+                    if can_split_numeric_var(
+                        partitions,
+                        var_id,
+                        concrete_current_value,
+                        include_in_lower,
+                    ) {
+                        flaws.push(Flaw::Numeric(NumericFlaw {
+                            numeric_var_id: var_id,
+                            value: concrete_current_value,
+                            include_in_lower,
+                            step,
+                        }));
+                    }
+                }
+            }
+            SplitDirection::Backward => {
+                let Some(expected_interval) = parts.get(abstract_value).copied() else {
+                    continue;
+                };
+                let delta = concrete_next_value - concrete_current_value;
+                let Some((value, include_in_lower)) = preimage_split_for_expected_successor(
+                    expected_interval,
+                    concrete_next_value,
+                    delta,
+                ) else {
+                    continue;
+                };
+                if can_split_numeric_var(partitions, var_id, value, include_in_lower) {
+                    flaws.push(Flaw::Numeric(NumericFlaw {
+                        numeric_var_id: var_id,
+                        value,
+                        include_in_lower,
+                        step,
+                    }));
+                }
             }
         }
     }
@@ -229,34 +293,26 @@ pub fn get_progression_precondition_flaws(
     buffer: &[u64],
     numeric_state: &[f64],
     step: usize,
+    direction: SplitDirection,
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for pre in op.preconditions().iter() {
         if !fact_is_hold(pre, packer, buffer) {
-            let prop_var_id = pre.var;
-            let dependent_numeric_flaws =
-                if comparison_index.is_comparison_axiom_variable(prop_var_id) {
-                    dependent_numeric_flaws_for_comparison_prop_var(
-                        task,
-                        partitions,
-                        comparison_index,
-                        prop_var_id,
-                        numeric_state,
-                        step,
-                    )
-                } else {
-                    vec![]
-                };
-            out.push(Flaw::Propositional(PropFlaw {
-                fact: pre.clone(),
-                dependent_numeric_flaws,
+            out.push(build_prop_flaw_for_fact(
+                task,
+                partitions,
+                comparison_index,
+                pre,
+                numeric_state,
                 step,
-            }));
+                direction,
+            ));
         }
     }
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn get_goal_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
@@ -265,6 +321,7 @@ pub fn get_goal_flaws(
     buffer: &[u64],
     numeric_state: &[f64],
     step: usize,
+    direction: SplitDirection,
 ) -> Vec<Flaw> {
     let num_goals = task.get_num_goals();
     let mut out: Vec<Flaw> = Vec::new();
@@ -279,25 +336,15 @@ pub fn get_goal_flaws(
             continue;
         }
         if !fact_is_hold(goal_fact, packer, buffer) && seen.insert(goal_fact.clone()) {
-            let prop_var_id = goal_fact.var;
-            let dependent_numeric_flaws =
-                if comparison_index.is_comparison_axiom_variable(prop_var_id) {
-                    dependent_numeric_flaws_for_comparison_prop_var(
-                        task,
-                        partitions,
-                        comparison_index,
-                        prop_var_id,
-                        numeric_state,
-                        step,
-                    )
-                } else {
-                    vec![]
-                };
-            out.push(Flaw::Propositional(PropFlaw {
-                fact: goal_fact.clone(),
-                dependent_numeric_flaws,
+            out.push(build_prop_flaw_for_fact(
+                task,
+                partitions,
+                comparison_index,
+                goal_fact,
+                numeric_state,
                 step,
-            }));
+                direction,
+            ));
         }
     }
 
@@ -311,27 +358,59 @@ pub fn get_goal_flaws(
         }
         for pre in ax.conditions().iter() {
             if !fact_is_hold(pre, packer, buffer) && seen.insert(pre.clone()) {
-                let prop_var_id = pre.var;
-                let dependent_numeric_flaws =
-                    if comparison_index.is_comparison_axiom_variable(prop_var_id) {
-                        dependent_numeric_flaws_for_comparison_prop_var(
-                            task,
-                            partitions,
-                            comparison_index,
-                            prop_var_id,
-                            numeric_state,
-                            step,
-                        )
-                    } else {
-                        vec![]
-                    };
-                out.push(Flaw::Propositional(PropFlaw {
-                    fact: pre.clone(),
-                    dependent_numeric_flaws,
+                out.push(build_prop_flaw_for_fact(
+                    task,
+                    partitions,
+                    comparison_index,
+                    pre,
+                    numeric_state,
                     step,
-                }));
+                    direction,
+                ));
             }
         }
     }
     out
+}
+
+/// Build a propositional flaw for `fact`, attaching dependent numeric flaws
+/// when `fact` references a comparison-axiom propositional variable. The
+/// dependent flaws are computed forward (concrete-value split per variable)
+/// or backward (boundary-aligned shell splits) according to `direction`.
+fn build_prop_flaw_for_fact(
+    task: &dyn AbstractNumericTask,
+    partitions: &NumericPartitions,
+    comparison_index: &ComparisonAxiomIndex,
+    fact: &ExplicitFact,
+    numeric_state: &[f64],
+    step: usize,
+    direction: SplitDirection,
+) -> Flaw {
+    let dependent_numeric_flaws = if comparison_index.is_comparison_axiom_variable(fact.var) {
+        match direction {
+            SplitDirection::Forward => dependent_numeric_flaws_for_comparison_prop_var(
+                task,
+                partitions,
+                comparison_index,
+                fact.var,
+                numeric_state,
+                step,
+            ),
+            SplitDirection::Backward => dependent_numeric_flaws_backward(
+                task,
+                partitions,
+                comparison_index,
+                fact,
+                numeric_state,
+                step,
+            ),
+        }
+    } else {
+        Vec::new()
+    };
+    Flaw::Propositional(PropFlaw {
+        fact: fact.clone(),
+        dependent_numeric_flaws,
+        step,
+    })
 }

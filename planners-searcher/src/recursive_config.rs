@@ -1,5 +1,5 @@
 use planners_search::numeric::evaluation::domain_abstractions::cegar::{
-    FlawKind, FlawTreatmentVariants,
+    FlawKind, FlawTreatmentVariants, SplitDirection,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -684,6 +684,22 @@ fn parse_portfolio_strategy(value: &str) -> Result<PortfolioStrategy, String> {
     }
 }
 
+fn parse_split_direction(value: &str) -> Result<Option<SplitDirection>, String> {
+    match value {
+        "default" => Ok(None),
+        "forward" => Ok(Some(SplitDirection::Forward)),
+        "backward" => Ok(Some(SplitDirection::Backward)),
+        _ => Err(format!("invalid SplitDirection `{value}`")),
+    }
+}
+
+fn format_split_direction(value: Option<SplitDirection>) -> String {
+    match value {
+        None => "default".to_string(),
+        Some(direction) => direction.to_string(),
+    }
+}
+
 macro_rules! field_usize {
     ($name:literal, $ty:ty, $field:ident) => {
         Field {
@@ -1162,6 +1178,25 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
                 Ok(())
             },
             format: |config| config.collection_config.portfolio_strategy.to_string(),
+        },
+        Field {
+            name: "split_direction",
+            apply: |config, value| {
+                config.collection_config.split_direction = parse_split_direction(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_split_direction(config.collection_config.split_direction),
+        },
+        Field {
+            name: "max_stealable_width",
+            apply: |config, value| {
+                config.collection_config.finite_support.max_stealable_width =
+                    parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                format_f64_or_infinity(config.collection_config.finite_support.max_stealable_width)
+            },
         },
     ]
 }

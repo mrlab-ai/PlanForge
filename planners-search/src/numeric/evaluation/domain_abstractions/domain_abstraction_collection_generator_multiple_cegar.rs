@@ -24,6 +24,8 @@ use crate::numeric::evaluation::domain_abstractions::cegar::FlawKind;
 
 use super::cegar::CegarConfig;
 use super::cegar::InitialSeedSplit;
+use super::cegar::SplitDirection;
+use super::transition_cost_partitioning::FiniteSupportConfig;
 pub use super::cegar::flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
 use super::cegar::flaw_search::numeric_requirement_for_comparison_fact;
 use super::comparison_expression::{CompOp, Interval};
@@ -130,6 +132,11 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub numeric_split_strategy: NumericSplitStrategy,
     pub transform_linear_task: bool,
     pub portfolio_strategy: PortfolioStrategy,
+    pub finite_support: FiniteSupportConfig,
+    /// Overrides `FlawKind`'s default split direction when set; otherwise the
+    /// flaw kind chooses its own default (`Forward` for everything except
+    /// `TargetCentered`, which defaults to `Backward`).
+    pub split_direction: Option<SplitDirection>,
 }
 
 impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
@@ -155,6 +162,8 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             numeric_split_strategy: NumericSplitStrategy::Standard,
             transform_linear_task: false,
             portfolio_strategy: PortfolioStrategy::Standard,
+            finite_support: FiniteSupportConfig::default(),
+            split_direction: None,
         }
     }
 }
@@ -285,6 +294,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             blacklisted_numeric_var_ids,
             transform_linear_task: self.config.transform_linear_task,
             initial_seed_splits,
+            finite_support: self.config.finite_support,
+            split_direction: self.config.split_direction,
         }
     }
 

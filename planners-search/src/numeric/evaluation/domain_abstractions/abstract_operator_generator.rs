@@ -1229,21 +1229,30 @@ fn enumerate_partition_combos(
         // its changes can't affect any comparison axiom, no interval or
         // cascade work is needed — emit directly. Mirrors the C++ early-exit
         // before the optimistic filtering pass.
+        //
+        // `source_partition_facts`/`target_partition_facts`/`changed_numeric_vars`
+        // are pushed in ascending `var_id` order along the recursion (driven by
+        // `per_var`, which is `0..num_numeric_vars`), and each numeric var
+        // appears at most once. The classic `sort + dedup` after clone was a
+        // safety net for already-sorted unique data — pure overhead.
         if !op_has_comparison_preconditions && !any_changed_var_affects_comparison {
-            let mut source_facts = source_partition_facts.clone();
-            let mut target_facts = target_partition_facts.clone();
-            source_facts.sort();
-            source_facts.dedup();
-            target_facts.sort();
-            target_facts.dedup();
-            let mut changed_vars = changed_numeric_vars.clone();
-            changed_vars.sort_unstable();
-            changed_vars.dedup();
+            debug_assert!(
+                source_partition_facts.windows(2).all(|w| w[0] <= w[1]),
+                "source_partition_facts must be sorted by construction"
+            );
+            debug_assert!(
+                target_partition_facts.windows(2).all(|w| w[0] <= w[1]),
+                "target_partition_facts must be sorted by construction"
+            );
+            debug_assert!(
+                changed_numeric_vars.windows(2).all(|w| w[0] < w[1]),
+                "changed_numeric_vars must be strictly ascending by construction"
+            );
             out.push(TransitionInfo {
-                source_partition_facts: source_facts,
-                target_partition_facts: target_facts,
+                source_partition_facts: source_partition_facts.clone(),
+                target_partition_facts: target_partition_facts.clone(),
                 prevail_facts: Vec::new(),
-                changed_numeric_vars: changed_vars,
+                changed_numeric_vars: changed_numeric_vars.clone(),
             });
             return Ok(());
         }
@@ -1286,13 +1295,22 @@ fn enumerate_partition_combos(
             vec![ComparisonTransitionFacts::default()]
         };
 
-        let mut changed_vars = changed_numeric_vars.clone();
-        changed_vars.sort_unstable();
-        changed_vars.dedup();
+        // `changed_numeric_vars` is built by the recursion in ascending order
+        // with no duplicates (see fast-path debug_assert). The legacy
+        // sort+dedup here was redundant.
+        debug_assert!(
+            changed_numeric_vars.windows(2).all(|w| w[0] < w[1]),
+            "changed_numeric_vars must be strictly ascending by construction"
+        );
         for comparison_facts in comparison_variants {
             let mut source_facts = source_partition_facts.clone();
             let mut target_facts = target_partition_facts.clone();
             let mut prevail_facts = comparison_facts.prevail_facts;
+            // Comparison cascade facts may introduce out-of-order entries when
+            // extended onto the (already-sorted) partition facts, so keep the
+            // sort+dedup here. `prevail_facts` originates from
+            // `compute_comparison_precondition_transition_variants` and may
+            // also be unordered.
             source_facts.extend(comparison_facts.source_facts);
             target_facts.extend(comparison_facts.target_facts);
             source_facts.sort();
@@ -1305,7 +1323,7 @@ fn enumerate_partition_combos(
                 source_partition_facts: source_facts,
                 target_partition_facts: target_facts,
                 prevail_facts,
-                changed_numeric_vars: changed_vars.clone(),
+                changed_numeric_vars: changed_numeric_vars.clone(),
             });
         }
         return Ok(());
@@ -1314,17 +1332,15 @@ fn enumerate_partition_combos(
     let (var_id, transitions) = &per_var[pos];
     let var_id = *var_id;
     let abs_var_id = num_props + var_id;
-    let var_is_affected = affected_numeric_vars.contains(&var_id);
     for &(src, tgt) in transitions {
         source_partition_facts.push(ExplicitFact::new(abs_var_id, src));
         target_partition_facts.push(ExplicitFact::new(abs_var_id, tgt));
         combo_scratch.push((var_id, src, tgt));
-        let pushed_changed = if var_is_affected {
-            changed_numeric_vars.push(var_id);
-            true
-        } else {
-            false
-        };
+        // `changed_numeric_vars` is seeded with the full set of affected
+        // numeric vars at the top of the operator (see
+        // `changed_numeric_vars_for_semantics`); re-pushing here would only
+        // create duplicates that the legacy code then had to sort+dedup at
+        // the leaf. The set is the same for every combo of this operator.
 
         enumerate_partition_combos(
             task,
@@ -1348,9 +1364,6 @@ fn enumerate_partition_combos(
         source_partition_facts.pop();
         target_partition_facts.pop();
         combo_scratch.pop();
-        if pushed_changed {
-            changed_numeric_vars.pop();
-        }
     }
     Ok(())
 }

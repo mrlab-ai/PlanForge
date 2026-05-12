@@ -1,3 +1,22 @@
+//! CEGAR flaw search and refinement-value selection.
+//!
+//! The flaw-emission walk is shared between progression and target-centered
+//! enumeration: [`progression::get_progression_flaws`] iterates the wildcard
+//! plan once and dispatches the per-flaw split-value choice through a
+//! [`SplitDirection`] parameter. `Forward` reproduces the concrete-value
+//! split used by classical progression CEGAR; `Backward` reuses the
+//! goal-directed boundary primitives in [`target_centered`] to place each
+//! split at the boundary derived from the regressed-target / required
+//! interval.
+//!
+//! For label-SCP-unfriendly numeric domains the recommended configuration is
+//! `FlawTreatmentVariants::MaxRefinedSingleAtom` (sticky-by-min-growth flaw
+//! selection) combined with `SplitDirection::Backward` and a tight
+//! `FiniteSupportConfig::max_stealable_width` on the cost-partitioning side.
+//! These choices are independent: `SplitDirection` controls how the
+//! abstraction is *refined*; `FiniteSupportConfig` controls which transitions
+//! may *steal cost* at evaluation time.
+
 pub mod flaw_selection;
 pub mod progression;
 pub mod regression;
@@ -24,7 +43,6 @@ use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::sequenc
     SequenceDirection, get_sequence_flaws,
 };
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::FlawSearchState;
-use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::target_centered::get_target_centered_flaws;
 use crate::numeric::evaluation::domain_abstractions::comparison_expression::{CompOp, Interval};
 use crate::numeric::evaluation::domain_abstractions::domain_abstraction::{
     ComparisonAxiomIndex, NumericPartitions,
@@ -64,6 +82,39 @@ impl Flaw {
     }
 }
 
+/// Direction of the split value computed for a numeric flaw.
+///
+/// `Forward` matches today's progression behavior: when a precondition,
+/// goal, or deviation flaw is detected, the split is placed at the *concrete*
+/// value that produced the flaw. `Backward` matches the target-centered
+/// behavior: the split is placed at the *boundary* derived from the
+/// regressed target / required interval, separating the cell containing the
+/// goal-directed region from the cell that does not.
+///
+/// The direction is orthogonal to [`FlawKind`]: it selects how a split value
+/// is chosen, not which iteration of the flaw search is run.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SplitDirection {
+    Forward,
+    Backward,
+}
+
+impl Default for SplitDirection {
+    fn default() -> Self {
+        SplitDirection::Forward
+    }
+}
+
+impl fmt::Display for SplitDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Forward => write!(f, "forward"),
+            Self::Backward => write!(f, "backward"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FlawKind {
@@ -89,6 +140,18 @@ impl fmt::Display for FlawKind {
 }
 
 impl FlawKind {
+    /// Default split-value direction associated with this flaw-search variant.
+    ///
+    /// `TargetCentered` defaults to `Backward` (boundary splits); all other
+    /// variants default to `Forward` (concrete-value splits). Callers may
+    /// override via [`get_flaws_with_direction`].
+    pub fn default_split_direction(self) -> SplitDirection {
+        match self {
+            Self::TargetCentered => SplitDirection::Backward,
+            _ => SplitDirection::Forward,
+        }
+    }
+
     pub fn get_flaws(
         &self,
         task: &dyn AbstractNumericTask,
@@ -96,8 +159,27 @@ impl FlawKind {
         domain_mapping: &DomainMapping,
         wildcard_plan: &WildcardPlanResult,
     ) -> Result<Vec<Flaw>> {
+        self.get_flaws_with_direction(
+            task,
+            partitions,
+            domain_mapping,
+            wildcard_plan,
+            self.default_split_direction(),
+        )
+    }
+
+    pub fn get_flaws_with_direction(
+        &self,
+        task: &dyn AbstractNumericTask,
+        partitions: &NumericPartitions,
+        domain_mapping: &DomainMapping,
+        wildcard_plan: &WildcardPlanResult,
+        direction: SplitDirection,
+    ) -> Result<Vec<Flaw>> {
         match self {
-            Self::Progression => get_progression_flaws(task, partitions, wildcard_plan),
+            Self::Progression | Self::TargetCentered => {
+                get_progression_flaws(task, partitions, wildcard_plan, direction)
+            }
             Self::Regression => {
                 let mut flaws =
                     get_regression_flaws(task, partitions, domain_mapping, wildcard_plan);
@@ -106,7 +188,7 @@ impl FlawKind {
                 if let Ok(ref flaws_ok) = flaws
                     && flaws_ok.is_empty()
                 {
-                    flaws = get_progression_flaws(task, partitions, wildcard_plan);
+                    flaws = get_progression_flaws(task, partitions, wildcard_plan, direction);
                 }
 
                 flaws
@@ -133,7 +215,6 @@ impl FlawKind {
                 wildcard_plan,
                 SequenceDirection::Bidirectional,
             ),
-            Self::TargetCentered => get_target_centered_flaws(task, partitions, wildcard_plan),
         }
     }
 }
