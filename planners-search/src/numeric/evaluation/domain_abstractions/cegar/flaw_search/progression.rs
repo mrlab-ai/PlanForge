@@ -10,7 +10,10 @@ use planners_sas::numeric::{
     utils::int_packer::IntDoublePacker,
 };
 
-use super::target_centered::{dependent_numeric_flaws_backward, preimage_split_for_expected_successor};
+use super::target_centered::{
+    dependent_numeric_flaws_backward, numeric_effect_deltas,
+    preimage_split_for_expected_successor,
+};
 use super::{
     Flaw, NumericFlaw, PropFlaw, SplitDirection, can_split_numeric_var,
     dependent_numeric_flaws_for_comparison_prop_var, state::progress,
@@ -40,6 +43,13 @@ pub fn get_progression_flaws(
     let state_packer = make_prop_state_packer(task);
     let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
 
+    // `target_centered_shell_flaws` (in the `Backward` direction) needs the
+    // per-numeric-var stack of operator effect deltas. The legacy code
+    // recomputed the entire `task.get_operators() × assignment_effects` scan
+    // on every call — 36% of total CPU on minecraft. Compute once here and
+    // thread through the flaw helpers below.
+    let deltas = numeric_effect_deltas(task);
+
     let (mut prop_state, mut numeric_state) =
         get_initial_state(task, &state_packer, &axiom_evaluator)?;
     let mut next_prop_state = None;
@@ -62,6 +72,7 @@ pub fn get_progression_flaws(
             };
             let operator_flaws = get_progression_precondition_flaws(
                 task,
+                &deltas,
                 partitions,
                 &comparison_index,
                 op,
@@ -80,6 +91,7 @@ pub fn get_progression_flaws(
                     &axiom_evaluator,
                     op,
                     partitions,
+                    &deltas,
                     &mut collected_flaws,
                     step,
                     direction,
@@ -108,6 +120,7 @@ pub fn get_progression_flaws(
 
     let goal_flaws = get_goal_flaws(
         task,
+        &deltas,
         partitions,
         &comparison_index,
         &state_packer,
@@ -130,6 +143,7 @@ pub(crate) fn progress_and_get_deviation_flaws(
     axiom_evaluator: &AxiomEvaluator<'_>,
     op: &Operator,
     partitions: &NumericPartitions,
+    _deltas: &std::collections::HashMap<usize, Vec<f64>>,
     collected_flaws: &mut Vec<Flaw>,
     step: usize,
     direction: SplitDirection,
@@ -286,6 +300,7 @@ pub fn get_progression_numeric_deviation_flaws(
 #[allow(clippy::too_many_arguments)]
 pub fn get_progression_precondition_flaws(
     task: &dyn AbstractNumericTask,
+    deltas: &std::collections::HashMap<usize, Vec<f64>>,
     partitions: &NumericPartitions,
     comparison_index: &ComparisonAxiomIndex,
     op: &Operator,
@@ -300,6 +315,7 @@ pub fn get_progression_precondition_flaws(
         if !fact_is_hold(pre, packer, buffer) {
             out.push(build_prop_flaw_for_fact(
                 task,
+                deltas,
                 partitions,
                 comparison_index,
                 pre,
@@ -315,6 +331,7 @@ pub fn get_progression_precondition_flaws(
 #[allow(clippy::too_many_arguments)]
 pub fn get_goal_flaws(
     task: &dyn AbstractNumericTask,
+    deltas: &std::collections::HashMap<usize, Vec<f64>>,
     partitions: &NumericPartitions,
     comparison_index: &ComparisonAxiomIndex,
     packer: &IntDoublePacker,
@@ -338,6 +355,7 @@ pub fn get_goal_flaws(
         if !fact_is_hold(goal_fact, packer, buffer) && seen.insert(goal_fact.clone()) {
             out.push(build_prop_flaw_for_fact(
                 task,
+                deltas,
                 partitions,
                 comparison_index,
                 goal_fact,
@@ -360,6 +378,7 @@ pub fn get_goal_flaws(
             if !fact_is_hold(pre, packer, buffer) && seen.insert(pre.clone()) {
                 out.push(build_prop_flaw_for_fact(
                     task,
+                    deltas,
                     partitions,
                     comparison_index,
                     pre,
@@ -379,6 +398,7 @@ pub fn get_goal_flaws(
 /// or backward (boundary-aligned shell splits) according to `direction`.
 fn build_prop_flaw_for_fact(
     task: &dyn AbstractNumericTask,
+    deltas: &std::collections::HashMap<usize, Vec<f64>>,
     partitions: &NumericPartitions,
     comparison_index: &ComparisonAxiomIndex,
     fact: &ExplicitFact,
@@ -398,6 +418,7 @@ fn build_prop_flaw_for_fact(
             ),
             SplitDirection::Backward => dependent_numeric_flaws_backward(
                 task,
+                deltas,
                 partitions,
                 comparison_index,
                 fact,

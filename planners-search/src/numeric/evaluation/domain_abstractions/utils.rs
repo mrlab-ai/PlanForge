@@ -629,8 +629,13 @@ fn debug_print_concrete_trace(
             tries += 1;
 
             let applicable = if let Some(idx) = comparison_index.as_ref() {
+                // Debug-trace only; we use Forward direction which does not
+                // consult `deltas`, so an empty map is fine here.
+                let deltas: std::collections::HashMap<usize, Vec<f64>> =
+                    std::collections::HashMap::new();
                 get_progression_precondition_flaws(
                     task,
+                    &deltas,
                     partitions,
                     idx,
                     op,

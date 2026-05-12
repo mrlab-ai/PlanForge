@@ -2,6 +2,7 @@
 mod tests;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, ensure};
 
@@ -24,7 +25,11 @@ const COMPARISON_UNKNOWN_VAL: usize = 2;
 
 pub type DomainMapping = Vec<Vec<usize>>;
 
-#[derive(Debug, Clone)]
+/// Per-(skeleton × transition) candidate. The four `Vec` fields are reused
+/// across `build_candidate_from_transition` calls via a scratch instance held
+/// in `build_abstract_operators` — minecraft CEGAR runs ~10⁷
+/// candidate-builds and the per-call allocations dominated the build phase.
+#[derive(Debug, Clone, Default)]
 struct AbstractOperatorCandidate {
     concrete_op_id: usize,
     cost: f64,
@@ -286,12 +291,6 @@ impl AbstractOperatorFinalizer {
     }
 }
 
-fn has_in_list_conflict(facts: &[ExplicitFact]) -> bool {
-    facts
-        .windows(2)
-        .any(|w| w[0].var == w[1].var && w[0].value != w[1].value)
-}
-
 fn has_cross_list_conflict(a: &[ExplicitFact], b: &[ExplicitFact]) -> bool {
     let mut i = 0;
     let mut j = 0;
@@ -321,110 +320,215 @@ fn transition_vars_match(pre_pairs: &[ExplicitFact], eff_pairs: &[ExplicitFact])
             .all(|(pre, eff)| pre.var == eff.var)
 }
 
-fn fact_value_for_var(facts: &[ExplicitFact], var_id: usize) -> Option<usize> {
-    facts
-        .binary_search_by_key(&var_id, |f| f.var)
-        .ok()
-        .map(|idx| facts[idx].value)
-}
 
+/// Fill `candidate` with the merged result of `skeleton` and `trans`. Returns
+/// `true` on success; `false` when the skeleton and transition are
+/// incompatible (in which case the candidate should not be pushed).
+///
+/// The candidate's `Vec` fields are *reused* across calls — the caller owns a
+/// single scratch candidate and reuses its allocations on every invocation,
+/// which (combined with the merge-instead-of-sort logic below) removes the
+/// per-call `Vec::with_capacity(...)` overhead that dominated minecraft's
+/// CEGAR build phase.
 fn build_candidate_from_transition(
     skeleton: &AbstractOperatorSkeleton,
     trans: &TransitionInfo,
-) -> Option<AbstractOperatorCandidate> {
-    let mut extended_pre_pairs =
-        Vec::with_capacity(skeleton.pre_pairs.len() + trans.source_partition_facts.len());
-    extended_pre_pairs.extend_from_slice(&skeleton.pre_pairs);
-    let mut extended_eff_pairs =
-        Vec::with_capacity(skeleton.eff_pairs.len() + trans.target_partition_facts.len());
-    extended_eff_pairs.extend_from_slice(&skeleton.eff_pairs);
-    let mut extended_prev_pairs =
-        Vec::with_capacity(skeleton.prev_pairs.len() + trans.prevail_facts.len());
-    extended_prev_pairs.extend_from_slice(&skeleton.prev_pairs);
+    candidate: &mut AbstractOperatorCandidate,
+) -> bool {
+    // INVARIANTS used below to avoid per-call sort + dedup
+    // (they fire several million times during minecraft CEGAR):
+    //
+    // * `skeleton.{prev,pre,eff}_pairs` are sorted-by-var and unique-by-var
+    //   (see `multiply_out_propositional` and `fact_value_for_var`'s
+    //   binary_search precondition).
+    // * `trans.source_partition_facts`, `trans.target_partition_facts`,
+    //   `trans.prevail_facts` are sorted+deduped (see
+    //   `enumerate_partition_combos`).
+    //
+    // We can therefore merge instead of sort+dedup: the merged outputs are
+    // built in-order with O(n+m) work and no `Vec::sort()` cost.
+    debug_assert!(
+        skeleton.pre_pairs.windows(2).all(|w| w[0].var < w[1].var),
+        "skeleton.pre_pairs must be strictly ascending by var"
+    );
+    debug_assert!(
+        skeleton.eff_pairs.windows(2).all(|w| w[0].var < w[1].var),
+        "skeleton.eff_pairs must be strictly ascending by var"
+    );
+    debug_assert!(
+        skeleton.prev_pairs.windows(2).all(|w| w[0].var < w[1].var),
+        "skeleton.prev_pairs must be strictly ascending by var"
+    );
+    debug_assert!(
+        trans.source_partition_facts
+            .windows(2)
+            .all(|w| w[0].var <= w[1].var),
+        "TransitionInfo.source_partition_facts must be sorted by var"
+    );
+    debug_assert!(
+        trans.target_partition_facts
+            .windows(2)
+            .all(|w| w[0].var <= w[1].var),
+        "TransitionInfo.target_partition_facts must be sorted by var"
+    );
+    debug_assert!(
+        trans.prevail_facts.windows(2).all(|w| w[0].var <= w[1].var),
+        "TransitionInfo.prevail_facts must be sorted by var"
+    );
 
-    let mut source_pos = 0;
-    let mut target_pos = 0;
-    while source_pos < trans.source_partition_facts.len()
-        || target_pos < trans.target_partition_facts.len()
-    {
-        let source = trans.source_partition_facts.get(source_pos);
-        let target = trans.target_partition_facts.get(target_pos);
-        let var_id = match (source, target) {
-            (Some(src), Some(tgt)) => src.var.min(tgt.var),
-            (Some(src), None) => src.var,
-            (None, Some(tgt)) => tgt.var,
-            (None, None) => unreachable!(),
-        };
+    // Reuse the candidate's vecs as the merge output buffers.
+    candidate.prev_pairs.clear();
+    candidate.pre_pairs.clear();
+    candidate.eff_pairs.clear();
+    candidate.changed_numeric_vars.clear();
 
-        if let Some(src) = source
-            && src.var == var_id
-        {
-            if let Some(existing) = fact_value_for_var(&skeleton.pre_pairs, var_id) {
-                if existing != src.value {
-                    return None;
+    let extended_pre_pairs = &mut candidate.pre_pairs;
+    let extended_eff_pairs = &mut candidate.eff_pairs;
+    let extended_prev_pairs = &mut candidate.prev_pairs;
+
+    let mut sk_pre = skeleton.pre_pairs.as_slice();
+    let mut sk_eff = skeleton.eff_pairs.as_slice();
+    let mut src = trans.source_partition_facts.as_slice();
+    let mut tgt = trans.target_partition_facts.as_slice();
+
+    while !sk_pre.is_empty() || !src.is_empty() {
+        let push_sk = match (sk_pre.first(), src.first()) {
+            (Some(a), Some(b)) => match a.var.cmp(&b.var) {
+                std::cmp::Ordering::Less => true,
+                std::cmp::Ordering::Greater => false,
+                std::cmp::Ordering::Equal => {
+                    if a.value != b.value {
+                        return false;
+                    }
+                    true
                 }
-            } else {
-                extended_pre_pairs.push(src.clone());
-            }
+            },
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => break,
+        };
+        let var_id = if push_sk {
+            let a = sk_pre.first().unwrap();
+            extended_pre_pairs.push(a.clone());
+            let v = a.var;
+            sk_pre = &sk_pre[1..];
+            v
+        } else {
+            let b = src.first().unwrap();
+            extended_pre_pairs.push(b.clone());
+            let v = b.var;
+            src = &src[1..];
+            v
+        };
+        while sk_pre.first().is_some_and(|f| f.var == var_id) {
+            sk_pre = &sk_pre[1..];
         }
-        if let Some(tgt) = target
-            && tgt.var == var_id
-            && fact_value_for_var(&skeleton.eff_pairs, var_id).is_none()
-        {
-            extended_eff_pairs.push(tgt.clone());
-        }
-
-        while trans
-            .source_partition_facts
-            .get(source_pos)
-            .is_some_and(|f| f.var == var_id)
-        {
-            source_pos += 1;
-        }
-        while trans
-            .target_partition_facts
-            .get(target_pos)
-            .is_some_and(|f| f.var == var_id)
-        {
-            target_pos += 1;
+        while src.first().is_some_and(|f| f.var == var_id) {
+            src = &src[1..];
         }
     }
-    extended_prev_pairs.extend_from_slice(&trans.prevail_facts);
 
-    extended_pre_pairs.sort();
-    extended_eff_pairs.sort();
-    extended_prev_pairs.sort();
-    extended_pre_pairs.dedup();
-    extended_eff_pairs.dedup();
-    extended_prev_pairs.dedup();
+    while !sk_eff.is_empty() || !tgt.is_empty() {
+        let push_sk = match (sk_eff.first(), tgt.first()) {
+            (Some(a), Some(b)) => match a.var.cmp(&b.var) {
+                std::cmp::Ordering::Less => true,
+                std::cmp::Ordering::Greater => false,
+                std::cmp::Ordering::Equal => {
+                    // Skeleton already pins this var's effect — the legacy
+                    // code dropped the trans target via its `is_none()`
+                    // guard. We do the same: take the skeleton entry, skip
+                    // both sides for this var.
+                    true
+                }
+            },
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => break,
+        };
+        let var_id = if push_sk {
+            let a = sk_eff.first().unwrap();
+            extended_eff_pairs.push(a.clone());
+            let v = a.var;
+            sk_eff = &sk_eff[1..];
+            v
+        } else {
+            let b = tgt.first().unwrap();
+            extended_eff_pairs.push(b.clone());
+            let v = b.var;
+            tgt = &tgt[1..];
+            v
+        };
+        while sk_eff.first().is_some_and(|f| f.var == var_id) {
+            sk_eff = &sk_eff[1..];
+        }
+        while tgt.first().is_some_and(|f| f.var == var_id) {
+            tgt = &tgt[1..];
+        }
+    }
 
-    if has_in_list_conflict(&extended_pre_pairs)
-        || has_in_list_conflict(&extended_eff_pairs)
-        || has_in_list_conflict(&extended_prev_pairs)
-        || has_cross_list_conflict(&extended_pre_pairs, &extended_prev_pairs)
-        || has_cross_list_conflict(&extended_prev_pairs, &extended_eff_pairs)
-        || !transition_vars_match(&extended_pre_pairs, &extended_eff_pairs)
+    // Merge skeleton.prev_pairs and trans.prevail_facts (both sorted+
+    // deduped; may overlap). Legacy `sort + dedup` collapsed exact-equal
+    // facts; same-var-different-value would have been caught by the
+    // subsequent `has_in_list_conflict` check — replicate that here.
+    let mut sk_prev = skeleton.prev_pairs.as_slice();
+    let mut trv = trans.prevail_facts.as_slice();
+    let mut prev_conflict = false;
+    while !sk_prev.is_empty() || !trv.is_empty() {
+        match (sk_prev.first(), trv.first()) {
+            (Some(a), Some(b)) => match a.var.cmp(&b.var) {
+                std::cmp::Ordering::Less => {
+                    extended_prev_pairs.push(a.clone());
+                    sk_prev = &sk_prev[1..];
+                }
+                std::cmp::Ordering::Greater => {
+                    extended_prev_pairs.push(b.clone());
+                    trv = &trv[1..];
+                }
+                std::cmp::Ordering::Equal => {
+                    if a.value != b.value {
+                        prev_conflict = true;
+                    }
+                    extended_prev_pairs.push(a.clone());
+                    let v = a.var;
+                    sk_prev = &sk_prev[1..];
+                    while trv.first().is_some_and(|f| f.var == v) {
+                        trv = &trv[1..];
+                    }
+                }
+            },
+            (Some(_), None) => {
+                let a = sk_prev.first().unwrap();
+                extended_prev_pairs.push(a.clone());
+                sk_prev = &sk_prev[1..];
+            }
+            (None, Some(_)) => {
+                let b = trv.first().unwrap();
+                extended_prev_pairs.push(b.clone());
+                trv = &trv[1..];
+            }
+            (None, None) => break,
+        }
+    }
+
+    if prev_conflict
+        || has_cross_list_conflict(extended_pre_pairs, extended_prev_pairs)
+        || has_cross_list_conflict(extended_prev_pairs, extended_eff_pairs)
+        || !transition_vars_match(extended_pre_pairs, extended_eff_pairs)
     {
-        return None;
+        return false;
     }
 
     let cost_bits = float_tolerance::canonical_bits(skeleton.cost);
-    let signature_hash = compute_signature_hash(
-        &extended_prev_pairs,
-        &extended_pre_pairs,
-        &extended_eff_pairs,
-        cost_bits,
-    );
-    Some(AbstractOperatorCandidate {
-        concrete_op_id: skeleton.concrete_op_id,
-        cost: skeleton.cost,
-        prev_pairs: extended_prev_pairs,
-        pre_pairs: extended_pre_pairs,
-        eff_pairs: extended_eff_pairs,
-        changed_numeric_vars: trans.changed_numeric_vars.clone(),
-        cost_bits,
-        signature_hash,
-    })
+    let signature_hash =
+        compute_signature_hash(extended_prev_pairs, extended_pre_pairs, extended_eff_pairs, cost_bits);
+    candidate.concrete_op_id = skeleton.concrete_op_id;
+    candidate.cost = skeleton.cost;
+    candidate
+        .changed_numeric_vars
+        .extend_from_slice(&trans.changed_numeric_vars);
+    candidate.cost_bits = cost_bits;
+    candidate.signature_hash = signature_hash;
+    true
 }
 
 fn materialize_skeletons_into(
@@ -432,6 +536,7 @@ fn materialize_skeletons_into(
     generator: &mut AbstractOperatorGenerator,
     skeletons: &[AbstractOperatorSkeleton],
     finalizer: &mut AbstractOperatorFinalizer,
+    candidate_scratch: &mut AbstractOperatorCandidate,
 ) -> Result<()> {
     let Some(first) = skeletons.first() else {
         return Ok(());
@@ -447,8 +552,8 @@ fn materialize_skeletons_into(
         debug_assert_eq!(skeleton.ass_effects, first.ass_effects);
         debug_assert_eq!(skeleton.op_preconditions, first.op_preconditions);
         for trans in &transitions {
-            if let Some(candidate) = build_candidate_from_transition(skeleton, trans) {
-                finalizer.push_candidate(&candidate);
+            if build_candidate_from_transition(skeleton, trans, candidate_scratch) {
+                finalizer.push_candidate(candidate_scratch);
             }
         }
     }
@@ -477,6 +582,19 @@ pub struct AbstractOperatorGenerator {
     comparisons_by_numeric_dep: Vec<Vec<usize>>,
     derived_prop_vars: HashSet<usize>,
     combine_labels: bool,
+    /// Per-operator scratch buffers reused across `build_branch_for_operator`
+    /// calls. Each entry is sized to `num_variables` and the buffer is
+    /// cleared by overwriting at use sites — `vec![None; n]` on every
+    /// operator was a noticeable allocator hot spot on minecraft (`_int_malloc`
+    /// at ~9% of total CPU was dominated by `from_elem<Option<usize>>`).
+    precondition_on_var_scratch: Vec<Option<usize>>,
+    effect_on_var_scratch: Vec<Option<usize>>,
+    /// Cached operator costs, indexed by concrete operator id. The metric
+    /// expression is evaluated once over the initial numeric state per
+    /// operator (in `DomainAbstractionFactory::new`) and shared via `Arc`
+    /// across every per-iteration generator. Recomputing per call cost ~8%
+    /// of total CPU on minecraft before this cache.
+    cached_operator_costs: Arc<[f64]>,
 }
 
 impl AbstractOperatorGenerator {
@@ -569,6 +687,12 @@ impl AbstractOperatorGenerator {
             .map(|ax| ax.get_affected_var_id())
             .collect();
 
+        let num_variables = task.get_num_variables();
+        let cached_operator_costs: Arc<[f64]> = task
+            .get_operators()
+            .iter()
+            .map(|op| metric_operator_cost_from_initial_values(task, op))
+            .collect();
         Ok(Self {
             domain_mapping,
             domain_sizes,
@@ -580,7 +704,36 @@ impl AbstractOperatorGenerator {
             comparisons_by_numeric_dep,
             derived_prop_vars,
             combine_labels,
+            precondition_on_var_scratch: vec![None; num_variables],
+            effect_on_var_scratch: vec![None; num_variables],
+            cached_operator_costs,
         })
+    }
+
+    /// Same as `new`, but with a pre-built operator-cost cache supplied by the
+    /// caller. `DomainAbstractionFactory` uses this so the per-task cost scan
+    /// happens once at factory construction and is shared (via `Arc`) across
+    /// every per-CEGAR-iteration generator.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_cached_costs(
+        task: &dyn AbstractNumericTask,
+        domain_mapping: DomainMapping,
+        domain_sizes: Vec<usize>,
+        partitions: NumericPartitions,
+        numeric_domain_sizes: Vec<usize>,
+        combine_labels: bool,
+        cached_operator_costs: Arc<[f64]>,
+    ) -> Result<Self> {
+        let mut generator = Self::new(
+            task,
+            domain_mapping,
+            domain_sizes,
+            partitions,
+            numeric_domain_sizes,
+            combine_labels,
+        )?;
+        generator.cached_operator_costs = cached_operator_costs;
+        Ok(generator)
     }
 
     /// Convenience constructor that mirrors numeric-fd's default setup when no CEGAR mapping
@@ -652,9 +805,16 @@ impl AbstractOperatorGenerator {
     ) -> Result<Vec<AbstractOperator>> {
         let mut finalizer =
             AbstractOperatorFinalizer::new(self.combine_labels, &self.hash_multipliers);
+        let mut candidate_scratch = AbstractOperatorCandidate::default();
         for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
             let skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
-            materialize_skeletons_into(task, self, &skeletons, &mut finalizer)?;
+            materialize_skeletons_into(
+                task,
+                self,
+                &skeletons,
+                &mut finalizer,
+                &mut candidate_scratch,
+            )?;
         }
 
         Ok(finalizer.into_operators())
@@ -666,23 +826,21 @@ impl AbstractOperatorGenerator {
         op: &Operator,
         concrete_op_id: usize,
     ) -> Result<Vec<AbstractOperatorSkeleton>> {
-        let (unconditional_effects, conditional_effects): (Vec<&Effect>, Vec<&Effect>) =
-            op.effects().iter().partition(|e| e.conditions().is_empty());
-
-        let (_unconditional_ass, conditional_ass): (
-            Vec<&AssignmentEffect>,
-            Vec<&AssignmentEffect>,
-        ) = op
-            .assignment_effects()
-            .iter()
-            .partition(|e| !e.is_conditional());
-
-        ensure!(
-            conditional_effects.is_empty() && conditional_ass.is_empty(),
-            "numeric-fd parity: conditional propositional or numeric effects are unsupported in abstract operator generation"
-        );
-
+        // All effects must be unconditional (the legacy code partitioned
+        // into conditional/unconditional vectors and then asserted
+        // conditional was empty — 4 allocations per operator just to fail
+        // fast). Walk the slice once instead.
+        for eff in op.effects() {
+            ensure!(
+                eff.conditions().is_empty(),
+                "numeric-fd parity: conditional propositional or numeric effects are unsupported in abstract operator generation"
+            );
+        }
         for eff in op.assignment_effects() {
+            ensure!(
+                !eff.is_conditional(),
+                "numeric-fd parity: conditional propositional or numeric effects are unsupported in abstract operator generation"
+            );
             let rhs_var_id = eff.var_id();
             ensure!(
                 rhs_var_id < task.numeric_variables().len(),
@@ -698,6 +856,8 @@ impl AbstractOperatorGenerator {
             );
         }
 
+        // Build a thin `&[&Effect]` view without collecting.
+        let unconditional_effects: Vec<&Effect> = op.effects().iter().collect();
         let ass_effects = op.assignment_effects().clone();
         build_branch_for_operator(
             task,
@@ -815,39 +975,60 @@ fn build_branch_for_operator(
     concrete_op_id: usize,
     generator: &mut AbstractOperatorGenerator,
 ) -> Result<Vec<AbstractOperatorSkeleton>> {
-    let abstract_cost = abstract_operator_cost(task, op);
+    let abstract_cost = generator
+        .cached_operator_costs
+        .get(concrete_op_id)
+        .copied()
+        .unwrap_or_else(|| abstract_operator_cost(task, op));
     let num_variables = task.get_num_variables();
-    let mut precondition_on_var: Vec<Option<usize>> = vec![None; num_variables];
-    let mut effect_on_var: Vec<Option<usize>> = vec![None; num_variables];
+    // Reuse per-operator scratch buffers stored on the generator instead of
+    // `vec![None; num_variables]` per call. We have to reset the slots
+    // touched on the previous call; the bookkeeping below tracks them.
+    let pre_scratch = &mut generator.precondition_on_var_scratch;
+    if pre_scratch.len() < num_variables {
+        pre_scratch.resize(num_variables, None);
+    }
+    let mut touched_pre: Vec<usize> = Vec::with_capacity(merged_preconditions.len());
+    for pre in merged_preconditions {
+        let var_id = pre.var;
+        if var_id >= pre_scratch.len() {
+            continue;
+        }
+        if generator.domain_sizes.get(var_id).copied().unwrap_or(0) <= 1 {
+            pre_scratch[var_id] = Some(0);
+            touched_pre.push(var_id);
+            continue;
+        }
+        let mapping = &generator.domain_mapping[var_id];
+        let abs_val = mapping[pre.value];
+        pre_scratch[var_id] = Some(abs_val);
+        touched_pre.push(var_id);
+    }
 
+    let eff_scratch = &mut generator.effect_on_var_scratch;
+    if eff_scratch.len() < num_variables {
+        eff_scratch.resize(num_variables, None);
+    }
+    let mut touched_eff: Vec<usize> = Vec::with_capacity(effects.len());
     let mut prev_pairs: Vec<ExplicitFact> = Vec::new();
     let mut pre_pairs: Vec<ExplicitFact> = Vec::new();
     let mut eff_pairs: Vec<ExplicitFact> = Vec::new();
     let mut effects_without_pre: Vec<ExplicitFact> = Vec::new();
 
-    for pre in merged_preconditions {
-        let var_id = pre.var;
-        if generator.variable_is_trivial(var_id) {
-            precondition_on_var[var_id] = Some(0);
-            continue;
-        }
-        let abs_val = generator.abstract_value(var_id, pre.value);
-        precondition_on_var[var_id] = Some(abs_val);
-    }
-
     for eff in effects {
         let var_id = eff.var_id();
-        if generator.variable_is_trivial(var_id) {
+        if generator.domain_sizes.get(var_id).copied().unwrap_or(0) <= 1 {
             continue;
         }
 
         debug_assert!(!generator.derived_prop_vars.contains(&eff.var_id()));
 
-        let abs_val = generator.abstract_value(var_id, eff.value());
-        let pre = precondition_on_var[var_id];
+        let abs_val = generator.domain_mapping[var_id][eff.value()];
+        let pre = generator.precondition_on_var_scratch[var_id];
         if let Some(pre_val) = pre {
             if pre_val != abs_val {
-                effect_on_var[var_id] = Some(abs_val);
+                generator.effect_on_var_scratch[var_id] = Some(abs_val);
+                touched_eff.push(var_id);
                 eff_pairs.push(ExplicitFact::new(var_id, abs_val));
             }
         } else {
@@ -861,21 +1042,20 @@ fn build_branch_for_operator(
             continue;
         }
         let abs_val = generator.abstract_value(var_id, pre.value);
-        if effect_on_var[var_id].is_some() {
+        if generator.effect_on_var_scratch[var_id].is_some() {
             pre_pairs.push(ExplicitFact::new(var_id, abs_val));
         } else if !generator.derived_prop_vars.contains(&(var_id)) {
             prev_pairs.push(ExplicitFact::new(var_id, abs_val));
         }
     }
 
-    for pre in merged_preconditions {
-        let var_id = pre.var;
-        if generator.variable_is_trivial(var_id) {
-            continue;
-        }
-        if generator.derived_prop_vars.contains(&(var_id)) {
-            continue;
-        }
+    // Clear only the slots we touched, so subsequent calls start clean
+    // without re-zeroing the whole vector.
+    for &v in &touched_pre {
+        generator.precondition_on_var_scratch[v] = None;
+    }
+    for &v in &touched_eff {
+        generator.effect_on_var_scratch[v] = None;
     }
 
     multiply_out_propositional(

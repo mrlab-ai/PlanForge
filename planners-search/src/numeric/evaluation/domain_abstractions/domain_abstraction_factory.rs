@@ -3,6 +3,7 @@ mod tests;
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -12,6 +13,7 @@ use rand::{SeedableRng, rngs::SmallRng};
 
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType, Operator,
+    metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::utils::float_tolerance;
 
@@ -314,6 +316,12 @@ pub struct DomainAbstractionFactory {
     pub numeric_domain_sizes: Vec<usize>,
     comparison_index: Option<ComparisonAxiomIndex>,
     comparison_trees: Vec<ComparisonTree>,
+    /// Per-concrete-operator metric cost, evaluated once over the initial
+    /// numeric state. The cost is task-deterministic, so caching here (and
+    /// sharing the `Arc` into every per-iteration `AbstractOperatorGenerator`)
+    /// avoids the `task.get_operators() × assignment_effects` scan that
+    /// `metric_operator_cost_from_initial_values` does on every call.
+    cached_operator_costs: Arc<[f64]>,
 }
 
 impl DomainAbstractionFactory {
@@ -390,6 +398,11 @@ impl DomainAbstractionFactory {
             comparison_trees.push(tree);
         }
 
+        let cached_operator_costs: Arc<[f64]> = task
+            .get_operators()
+            .iter()
+            .map(|op| metric_operator_cost_from_initial_values(task, op))
+            .collect();
         Ok(Self {
             domain_mapping,
             domain_sizes,
@@ -397,7 +410,12 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes,
             comparison_index,
             comparison_trees,
+            cached_operator_costs,
         })
+    }
+
+    pub fn cached_operator_costs(&self) -> &Arc<[f64]> {
+        &self.cached_operator_costs
     }
 
     pub fn partitions(&self) -> &NumericPartitions {
@@ -429,13 +447,14 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
     ) -> Result<AbstractOperatorGenerator> {
-        AbstractOperatorGenerator::new(
+        AbstractOperatorGenerator::new_with_cached_costs(
             task,
             self.domain_mapping.clone(),
             self.domain_sizes.clone(),
             self.partitions.clone(),
             self.numeric_domain_sizes.clone(),
             combine_labels,
+            Arc::clone(&self.cached_operator_costs),
         )
     }
 
