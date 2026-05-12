@@ -58,9 +58,19 @@ const COMPARISON_ENUMERATION_CACHE_MAX_STATES: usize = 10_000_000;
 /// `Vec::to_vec`/`collect` allocations dominated `_int_malloc`. The new
 /// table is a `HashMap<u64, Vec<usize>>` with an identity hasher: lookup is
 /// a single load + probe, no allocation, no hash function.
+/// Cache value for `enumerate_states_with_evaluated_comparisons_cached`.
+/// `states` is the enumerated predecessor set; `representative` is the
+/// largest entry, precomputed at insertion so the Dijkstra inner loop
+/// doesn't recompute it on every heap relaxation.
+#[derive(Clone)]
+struct CachedEnumeration {
+    states: Arc<[usize]>,
+    representative: Option<usize>,
+}
+
 type ComparisonEnumerationCache = HashMap<
     u64,
-    Arc<[usize]>,
+    CachedEnumeration,
     std::hash::BuildHasherDefault<planners_sas::numeric::state_registry::IdentityU64Hasher>,
 >;
 
@@ -2108,7 +2118,7 @@ impl DomainAbstractionFactory {
                         &mut cached_comparison_state_count,
                     )?;
 
-                for &source_hash in possible_predecessors.iter() {
+                for &source_hash in possible_predecessors.states.iter() {
                     if table.generating_op_ids.get(source_hash).copied().flatten()
                         != Some(abstract_op_id)
                     {
@@ -2689,10 +2699,10 @@ impl DomainAbstractionFactory {
         fixed_comparisons: &[ExplicitFact],
         cache: &mut ComparisonEnumerationCache,
         cached_state_count: &mut usize,
-    ) -> Result<Arc<[usize]>> {
+    ) -> Result<CachedEnumeration> {
         let key = comparison_enumeration_signature(base_state_hash, fixed_comparisons);
-        if let Some(states) = cache.get(&key) {
-            return Ok(Arc::clone(states));
+        if let Some(entry) = cache.get(&key) {
+            return Ok(entry.clone());
         }
 
         let states = self.enumerate_states_with_evaluated_comparisons(
@@ -2703,14 +2713,18 @@ impl DomainAbstractionFactory {
             comparison_var_ids,
             fixed_comparisons,
         )?;
-        let states: Arc<[usize]> = Arc::from(states);
+        let representative = states.iter().copied().max();
+        let entry = CachedEnumeration {
+            states: Arc::from(states),
+            representative,
+        };
         if cache.len() < COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES
-            && *cached_state_count + states.len() <= COMPARISON_ENUMERATION_CACHE_MAX_STATES
+            && *cached_state_count + entry.states.len() <= COMPARISON_ENUMERATION_CACHE_MAX_STATES
         {
-            *cached_state_count += states.len();
-            cache.insert(key, Arc::clone(&states));
+            *cached_state_count += entry.states.len();
+            cache.insert(key, entry.clone());
         }
-        Ok(states)
+        Ok(entry)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2989,7 +3003,7 @@ impl DomainAbstractionFactory {
                 &mut comparison_enumeration_cache,
                 &mut cached_comparison_state_count,
             )?;
-            if !alts.contains(&state_hash) {
+            if !alts.states.contains(&state_hash) {
                 continue;
             }
             distances[state_hash] = 0.0;
@@ -3040,8 +3054,8 @@ impl DomainAbstractionFactory {
                         &mut cached_comparison_state_count,
                     )?;
 
-                let representative_predecessor = possible_predecessors.iter().copied().max();
-                for pred in possible_predecessors.iter().copied() {
+                let representative_predecessor = possible_predecessors.representative;
+                for pred in possible_predecessors.states.iter().copied() {
                     debug_assert!(pred < num_states, "predecessor hash does not fit usize");
 
                     if alternative_cost + 1e-12 < distances[pred] {
@@ -3106,7 +3120,7 @@ impl DomainAbstractionFactory {
                 &mut comparison_enumeration_cache,
                 &mut cached_comparison_state_count,
             )?;
-            if !alts.contains(&state_hash) {
+            if !alts.states.contains(&state_hash) {
                 continue;
             }
             distances[state_hash] = 0.0;
@@ -3159,9 +3173,9 @@ impl DomainAbstractionFactory {
                         &mut comparison_enumeration_cache,
                         &mut cached_comparison_state_count,
                     )?;
-                let representative_predecessor = possible_predecessors.iter().copied().max();
+                let representative_predecessor = possible_predecessors.representative;
 
-                for pred in possible_predecessors.iter().copied() {
+                for pred in possible_predecessors.states.iter().copied() {
                     debug_assert!(pred < num_states, "predecessor hash does not fit usize");
                     if alternative_cost + 1e-12 < distances[pred] {
                         distances[pred] = alternative_cost;
