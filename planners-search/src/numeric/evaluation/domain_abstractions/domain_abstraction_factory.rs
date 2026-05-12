@@ -46,11 +46,52 @@ const COMPARISON_UNKNOWN_VAL: usize = 2;
 const COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES: usize = 2_000_000;
 const COMPARISON_ENUMERATION_CACHE_MAX_STATES: usize = 10_000_000;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ComparisonEnumerationKey {
+/// Cache used by `enumerate_states_with_evaluated_comparisons_cached`. Keyed
+/// by a precomputed 64-bit signature of `(base_state_hash, fixed_comparisons)`
+/// — `comparison_var_ids` is intentionally omitted because every call site
+/// in this factory passes the same slice (`self.comparison_var_ids()`), so it
+/// doesn't disambiguate.
+///
+/// The previous design hashed a `(usize, Vec<usize>, Vec<(usize, usize)>)`
+/// struct via SipHash on every cache lookup; on a 200k-state minecraft build
+/// `sip::Hasher::write` reached 11% of total CPU and the per-lookup
+/// `Vec::to_vec`/`collect` allocations dominated `_int_malloc`. The new
+/// table is a `HashMap<u64, Vec<usize>>` with an identity hasher: lookup is
+/// a single load + probe, no allocation, no hash function.
+type ComparisonEnumerationCache = HashMap<
+    u64,
+    Arc<[usize]>,
+    std::hash::BuildHasherDefault<planners_sas::numeric::state_registry::IdentityU64Hasher>,
+>;
+
+#[inline]
+fn comparison_enumeration_signature(
     base_state_hash: usize,
-    comparison_var_ids: Vec<usize>,
-    fixed_comparisons: Vec<(usize, usize)>,
+    fixed_comparisons: &[ExplicitFact],
+) -> u64 {
+    // FNV-1a u64 mix + a SplitMix64 finalizer for even bit distribution
+    // (same construction as `compute_signature_hash` for abstract operators).
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x00000100000001B3;
+
+    let mut h = FNV_OFFSET;
+    h ^= base_state_hash as u64;
+    h = h.wrapping_mul(FNV_PRIME);
+    h ^= fixed_comparisons.len() as u64;
+    h = h.wrapping_mul(FNV_PRIME);
+    for fact in fixed_comparisons {
+        h ^= fact.var as u64;
+        h = h.wrapping_mul(FNV_PRIME);
+        h ^= fact.value as u64;
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51afd7ed558ccd);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
+    h ^= h >> 33;
+    h
 }
 
 fn current_time_seed() -> u64 {
@@ -2022,8 +2063,8 @@ impl DomainAbstractionFactory {
         let comparison_preconditions =
             comparison_preconditions_by_operator(operators, &comparison_var_ids);
         let mut saturated = vec![0.0_f64; operators.len()];
-        let mut comparison_enumeration_cache: HashMap<ComparisonEnumerationKey, Vec<usize>> =
-            HashMap::new();
+        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
+            ComparisonEnumerationCache::default();
         let mut cached_comparison_state_count = 0usize;
         let mut applicable_operator_ids = Vec::new();
 
@@ -2067,7 +2108,7 @@ impl DomainAbstractionFactory {
                         &mut cached_comparison_state_count,
                     )?;
 
-                for source_hash in possible_predecessors {
+                for &source_hash in possible_predecessors.iter() {
                     if table.generating_op_ids.get(source_hash).copied().flatten()
                         != Some(abstract_op_id)
                     {
@@ -2646,19 +2687,12 @@ impl DomainAbstractionFactory {
         hash_multipliers: &[usize],
         comparison_var_ids: &[usize],
         fixed_comparisons: &[ExplicitFact],
-        cache: &mut HashMap<ComparisonEnumerationKey, Vec<usize>>,
+        cache: &mut ComparisonEnumerationCache,
         cached_state_count: &mut usize,
-    ) -> Result<Vec<usize>> {
-        let key = ComparisonEnumerationKey {
-            base_state_hash,
-            comparison_var_ids: comparison_var_ids.to_vec(),
-            fixed_comparisons: fixed_comparisons
-                .iter()
-                .map(|fact| (fact.var, fact.value))
-                .collect(),
-        };
+    ) -> Result<Arc<[usize]>> {
+        let key = comparison_enumeration_signature(base_state_hash, fixed_comparisons);
         if let Some(states) = cache.get(&key) {
-            return Ok(states.clone());
+            return Ok(Arc::clone(states));
         }
 
         let states = self.enumerate_states_with_evaluated_comparisons(
@@ -2669,11 +2703,12 @@ impl DomainAbstractionFactory {
             comparison_var_ids,
             fixed_comparisons,
         )?;
+        let states: Arc<[usize]> = Arc::from(states);
         if cache.len() < COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES
             && *cached_state_count + states.len() <= COMPARISON_ENUMERATION_CACHE_MAX_STATES
         {
             *cached_state_count += states.len();
-            cache.insert(key, states.clone());
+            cache.insert(key, Arc::clone(&states));
         }
         Ok(states)
     }
@@ -2930,8 +2965,8 @@ impl DomainAbstractionFactory {
         core_vars.dedup();
 
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-        let mut comparison_enumeration_cache: HashMap<ComparisonEnumerationKey, Vec<usize>> =
-            HashMap::new();
+        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
+            ComparisonEnumerationCache::default();
         let mut cached_comparison_state_count = 0usize;
 
         // Initialize with feasible goal states.
@@ -3045,8 +3080,8 @@ impl DomainAbstractionFactory {
     ) -> Result<f64> {
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-        let mut comparison_enumeration_cache: HashMap<ComparisonEnumerationKey, Vec<usize>> =
-            HashMap::new();
+        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
+            ComparisonEnumerationCache::default();
         let mut cached_comparison_state_count = 0usize;
 
         for state_hash in 0..num_states {
