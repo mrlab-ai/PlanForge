@@ -2899,6 +2899,13 @@ impl DomainAbstractionFactory {
             // edge (P, c=UNKNOWN) → (P, c=definite) in backward direction,
             // so that ops with `eff = c = UNKNOWN` can later route their
             // backward predecessors through (P, c=UNKNOWN).
+            //
+            // Unidirectional: we do NOT propagate (P, c=UNKNOWN) → (P, c=T)
+            // / (P, c=F) because the forward axiom only goes UNKNOWN →
+            // definite. Adding the reverse breaks tightness on instances
+            // where (P, c=T) and (P, c=F) have genuinely different
+            // distances (plant-watering, sailing prob_1_2), even though
+            // it would be admissible.
             for &(var, mult, delta_t, delta_f) in &axiom_var_data {
                 let bit_value = (state_hash / mult) % 3;
                 let delta = if bit_value == super::domain_abstraction_heuristic::COMPARISON_TRUE_VAL
@@ -2918,8 +2925,6 @@ impl DomainAbstractionFactory {
                 let unknown_hash = unknown_i as usize;
                 if d + 1e-12 < distances[unknown_hash] {
                     distances[unknown_hash] = d;
-                    // No generating op for axiom edges; inherit from source
-                    // so plan extraction can still trace back.
                     generating_op_ids[unknown_hash] = generating_op_ids[state_hash];
                     heap.push((
                         Reverse(NotNan::new(d).context("axiom-propagated distance is NaN")?),
