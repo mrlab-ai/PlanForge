@@ -1711,32 +1711,21 @@ fn compute_comparison_transition_facts(
     affected_numeric_vars: &HashSet<usize>,
 ) -> Result<Vec<ComparisonTransitionFacts>> {
     // For every comparison axiom `c` in the abstraction's hash whose
-    // numeric deps are all bound by this combo, produce one or two
-    // (src_bit, tgt_bit) variants per side: a deterministic bit when
-    // `tree.evaluate_interval(...)` returns `Some(_)`, both bits (fan-out)
-    // when it returns `None` (interval admits both values). Each operator
-    // variant carries a fixed `(c_src_abs, c_tgt_abs)` pair so the abstract
-    // operator's hash_effect is deterministic and the factory/saturator/
-    // Dijkstra can all use `state_hash + op.hash_effect` directly.
+    // numeric deps overlap this combo's bound set, emit exactly one
+    // (src_bit, tgt_bit) pair determined by the optimistic homomorphism α:
+    // ambiguous interval (`evaluate_interval` returns `None`) → TRUE,
+    // deterministic FALSE → FALSE. This matches the same α used to map
+    // concrete states to abstract hashes at search time, so the abstract
+    // state (P, optimistic_bits) is exactly the image of every concrete
+    // state in P under α. No fan-out, no phantom FALSE-bit states.
     //
-    // The fan-out is necessary for admissibility: a concrete trajectory
-    // with c=FALSE→c=FALSE on an ambiguous partition combo must have an
-    // abstract counterpart. Without the FALSE→FALSE variant, the abstract
-    // state space disconnects c=FALSE-bit goal regions from initial states
-    // whose `near pX` axioms evaluate concretely to FALSE — producing
-    // standalone_h=∞ on deeply-refined abstractions like prob_1_11 @ 1M.
+    // For comparisons whose deps are *not* bound, the op wildcards them
+    // and their bits are framed through unchanged.
     //
-    // For comparisons whose deps are *not* all bound, this op wildcards
-    // them (no fact in pre/eff/prev). `op.hash_effect` has zero delta on
-    // those comparison dimensions, so source and target have the same bit
-    // — frame semantics. Other operators (which change those deps) carry
-    // the bit transition.
-    //
-    // Filter by operator preconditions: if any comparison precondition
-    // contradicts the optimistic-admits check on source intervals
-    // (interval admits *only* the opposite bit), the whole combo is dead
-    // — return an empty Vec. Otherwise, each emitted variant must agree
-    // with the precondition; variants whose src_bit disagrees are dropped.
+    // Filter by operator preconditions: if any comparison precondition is
+    // incompatible with optimistic α on the source intervals, the operator
+    // can't fire on any α-preimage of this combo's source — return an
+    // empty Vec.
     let Some(index) = &generator.comparison_index else {
         return Ok(vec![ComparisonTransitionFacts::default()]);
     };
@@ -1769,19 +1758,13 @@ fn compute_comparison_transition_facts(
         }
     }
 
-    // Build the list of comparisons whose deps are bound by this combo,
-    // and the per-comparison variant choices.
-    struct CompVariant {
-        var_id: usize,
-        src_choices: Vec<usize>, // abstract values for c at source
-        tgt_choices: Vec<usize>, // abstract values for c at target
-    }
-    let mut comp_variants: Vec<CompVariant> = Vec::new();
     let precondition_required: HashMap<usize, usize> = op_preconditions
         .iter()
         .filter(|p| generator.derived_prop_vars.contains(&p.var))
         .map(|p| (p.var, generator.abstract_value(p.var, p.value)))
         .collect();
+
+    let mut facts = ComparisonTransitionFacts::default();
 
     for tree in &generator.comparison_trees {
         let var_id = tree.affected_var_id;
@@ -1789,22 +1772,11 @@ fn compute_comparison_transition_facts(
             continue;
         }
         let deps = tree.regular_numeric_var_dependencies(task);
-        // Emit a (src_bit, tgt_bit) fan-out for `c` if and only if the
-        // operator could change `c`'s value — i.e., at least one of `c`'s
-        // numeric deps is bound by this combo (either affected by the
-        // operator's numeric effects or identity-iterated because some
-        // *other* comparison's deps overlap). For comparisons whose deps
-        // are entirely outside the combo's bound set, the operator's
-        // hash_effect has zero delta on `c`'s dimension, so source and
-        // target inherit the same `c` bit from the state (frame), which is
-        // exactly what we want.
-        //
-        // Note: the `eval_interval` consumers below tolerate unrefined deps
-        // — their default interval (unbounded) is filled by
-        // `prepare_comparison_tree_inputs_for_combo_into`, which makes the
-        // optimistic eval ambiguous and fans out into both bits. That is
-        // both admissible and the only way to keep concrete trajectories
-        // representable when a dep is wildcarded in this abstraction.
+        // Emit a (src_bit, tgt_bit) pair for `c` only if the operator can
+        // change `c`'s value — i.e., at least one of `c`'s numeric deps is
+        // bound by this combo. For comparisons whose deps are entirely
+        // outside the bound set, `op.hash_effect` has zero delta on `c`'s
+        // dimension and the bit is framed through.
         if !deps.iter().any(|d| affected_numeric_vars.contains(d)) {
             continue;
         }
@@ -1814,59 +1786,48 @@ fn compute_comparison_transition_facts(
         let true_abs = generator.domain_mapping[var_id][COMPARISON_TRUE_VAL];
         let false_abs = generator.domain_mapping[var_id][COMPARISON_FALSE_VAL];
 
-        let mut src_choices: Vec<usize> = match src_eval {
-            Some(true) => vec![true_abs],
-            Some(false) => vec![false_abs],
-            None => vec![true_abs, false_abs],
+        // Optimistic α: ambiguous → TRUE, deterministic FALSE → FALSE.
+        // The bit we emit is determined by α alone, never by the operator's
+        // concrete precondition. On ambiguous partitions, concrete states
+        // with either c-bit map to the optimistic (TRUE) abstract state, so
+        // the abstract operator must fire from src_abs=TRUE regardless of
+        // the operator's c precondition — α "relaxes" the precondition,
+        // which is necessary for admissibility: c=FALSE concrete states on
+        // ambiguous partitions must have an abstract image.
+        let src_abs = match src_eval {
+            Some(false) => false_abs,
+            _ => true_abs,
         };
-        let tgt_choices: Vec<usize> = match tgt_eval {
-            Some(true) => vec![true_abs],
-            Some(false) => vec![false_abs],
-            None => vec![true_abs, false_abs],
+        let tgt_abs = match tgt_eval {
+            Some(false) => false_abs,
+            _ => true_abs,
         };
 
-        // Enforce comparison preconditions on the source side.
+        // Filter only when the source partition is deterministic and rules
+        // out the precondition entirely — i.e. no concrete state in P_src
+        // could fire this operator. Dropping in the ambiguous case would
+        // leave concrete c=required-bit states with no abstract image,
+        // breaking admissibility.
         if let Some(&required_abs) = precondition_required.get(&var_id) {
-            src_choices.retain(|&v| v == required_abs);
-            if src_choices.is_empty() {
+            let deterministic_disagree = match src_eval {
+                Some(true) => required_abs == false_abs,
+                Some(false) => required_abs == true_abs,
+                None => false,
+            };
+            if deterministic_disagree {
                 return Ok(Vec::new());
             }
         }
 
-        comp_variants.push(CompVariant {
-            var_id,
-            src_choices,
-            tgt_choices,
-        });
-    }
-
-    // Cartesian product over comparison variants. For each comparison emit
-    // each (src_choice × tgt_choice) into its own ComparisonTransitionFacts;
-    // same bit on both sides goes into prevail_facts, different bits go
-    // into source_facts/target_facts.
-    let mut out: Vec<ComparisonTransitionFacts> =
-        vec![ComparisonTransitionFacts::default()];
-    for cv in &comp_variants {
-        let mut next: Vec<ComparisonTransitionFacts> =
-            Vec::with_capacity(out.len() * cv.src_choices.len() * cv.tgt_choices.len());
-        for facts in &out {
-            for &src_abs in &cv.src_choices {
-                for &tgt_abs in &cv.tgt_choices {
-                    let mut clone = facts.clone();
-                    if src_abs == tgt_abs {
-                        clone.prevail_facts.push(ExplicitFact::new(cv.var_id, src_abs));
-                    } else {
-                        clone.source_facts.push(ExplicitFact::new(cv.var_id, src_abs));
-                        clone.target_facts.push(ExplicitFact::new(cv.var_id, tgt_abs));
-                    }
-                    next.push(clone);
-                }
-            }
+        if src_abs == tgt_abs {
+            facts.prevail_facts.push(ExplicitFact::new(var_id, src_abs));
+        } else {
+            facts.source_facts.push(ExplicitFact::new(var_id, src_abs));
+            facts.target_facts.push(ExplicitFact::new(var_id, tgt_abs));
         }
-        out = next;
     }
 
-    Ok(out)
+    Ok(vec![facts])
 }
 
 
