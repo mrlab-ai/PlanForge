@@ -2955,45 +2955,57 @@ impl DomainAbstractionFactory {
                 continue;
             }
 
-            // numeric-fd parity: from this state, also relax the
-            // (P, c=UNKNOWN) sibling for every comparison var c whose
-            // current bit is definite. This implements the 0-cost axiom
-            // edge (P, c=UNKNOWN) → (P, c=definite) in backward direction,
-            // so that ops with `eff = c = UNKNOWN` can later route their
-            // backward predecessors through (P, c=UNKNOWN).
+            // Bidirectional 0-cost axiom propagation between (P, c=*) bits
+            // at the same partition. With α(s) mapping comparison vars to
+            // UNKNOWN at lookup time, we want d[(P, c=UNKNOWN)] to reflect
+            // the cheapest path from any c bit at partition P. This is
+            // required for CONSISTENCY:
             //
-            // Unidirectional: we do NOT propagate (P, c=UNKNOWN) → (P, c=T)
-            // / (P, c=F) because the forward axiom only goes UNKNOWN →
-            // definite. Adding the reverse breaks tightness on instances
-            // where (P, c=T) and (P, c=F) have genuinely different
-            // distances (plant-watering, sailing prob_1_2), even though
-            // it would be admissible.
-            for &(var, mult, delta_t, delta_f) in &axiom_var_data {
-                let bit_value = (state_hash / mult) % 3;
-                let delta = if bit_value == super::domain_abstraction_heuristic::COMPARISON_TRUE_VAL
-                {
-                    delta_t
-                } else if bit_value
-                    == super::domain_abstraction_heuristic::COMPARISON_FALSE_VAL
-                {
-                    delta_f
-                } else {
-                    continue;
-                };
-                let unknown_i = state_hash as isize + delta;
-                if unknown_i < 0 || unknown_i as usize >= num_states {
+            // Concrete plan s_0 → s_1 → ... → s_n. Some ops have
+            // comparison-axiom preconditions (c=T) that survive as prevail
+            // facts (case C in the smart emission) — backward Dijkstra fires
+            // those ops only from states with c=T, never c=UNKNOWN. So d at
+            // (P_i, c=T) reflects case-C-using paths, but d at
+            // (P_i, c=UNKNOWN) misses them unless we propagate
+            // (P, c=T) → (P, c=UNKNOWN). Without this propagation, h(s)
+            // can exceed h*(s) (e.g. drone pfile1: A* pops f-layers past
+            // the optimal plan cost).
+            //
+            // Propagate `d` to ALL other c-bit siblings at the same
+            // partition, regardless of which bit we're at. Iterate the
+            // full `0..size` range (handles CEGAR-collapsed domains where
+            // size < 3 because of `apply_initial_goal_splits` merging
+            // FALSE+UNKNOWN). All c bits at a partition become
+            // axiom-equivalent (d constant). This is admissible (only
+            // ever lowers d at sibling bits) and consistent (constant d
+            // across siblings satisfies the triangle inequality
+            // automatically along axiom edges).
+            for &(var, mult, _delta_t, _delta_f) in &axiom_var_data {
+                let size = self.domain_sizes.get(var).copied().unwrap_or(0);
+                if size <= 1 {
                     continue;
                 }
-                let unknown_hash = unknown_i as usize;
-                if d + 1e-12 < distances[unknown_hash] {
-                    distances[unknown_hash] = d;
-                    generating_op_ids[unknown_hash] = generating_op_ids[state_hash];
-                    heap.push((
-                        Reverse(NotNan::new(d).context("axiom-propagated distance is NaN")?),
-                        unknown_hash,
-                    ));
+                let bit_value = (state_hash / mult) % size;
+                for other_bit in 0..size {
+                    if other_bit == bit_value {
+                        continue;
+                    }
+                    let delta = (other_bit as isize - bit_value as isize) * mult as isize;
+                    let other_i = state_hash as isize + delta;
+                    ensure!(
+                        other_i >= 0 && (other_i as usize) < num_states,
+                        "axiom-sibling hash out of range: state_hash={state_hash}, mult={mult}, size={size}, bit_value={bit_value}, other_bit={other_bit}"
+                    );
+                    let other_hash = other_i as usize;
+                    if d + 1e-12 < distances[other_hash] {
+                        distances[other_hash] = d;
+                        generating_op_ids[other_hash] = generating_op_ids[state_hash];
+                        heap.push((
+                            Reverse(NotNan::new(d).context("axiom-propagated distance is NaN")?),
+                            other_hash,
+                        ));
+                    }
                 }
-                let _ = var;
             }
 
             match_tree.get_applicable_operator_ids(state_hash, &mut applicable_operator_ids);
