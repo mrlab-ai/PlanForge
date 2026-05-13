@@ -1930,6 +1930,39 @@ fn compute_comparison_transition_facts(
         let f_src = tree.lhs_minus_rhs_interval(source_inputs);
         let f_tgt = tree.lhs_minus_rhs_interval(target_inputs);
 
+        // Fast path: if the operator's *net* effect on `f = lhs - rhs` is
+        // zero (e.g. `go_north_east` with Δy=Δx=+5 leaves `y - x` unchanged),
+        // `c` cannot flip. Treat as wildcard (case 1) or prevail (case 2/3)
+        // depending on precondition — instead of emitting two prevail
+        // variants (T,T) and (F,F) that cross-product with every other
+        // comparison. Cuts per-combo emission for sailing by ~2^22 on
+        // diagonal moves.
+        let zero_shift = !f_src.is_empty()
+            && !f_tgt.is_empty()
+            && (f_tgt.lower - f_src.lower).abs() < 1e-9
+            && (f_tgt.upper - f_src.upper).abs() < 1e-9
+            && f_src.lower.is_finite()
+            && f_src.upper.is_finite();
+        if zero_shift {
+            if let Some(req_abs) = required {
+                // Precondition + frame: emit prevail at req_abs.
+                let admits = if req_abs == true_abs {
+                    tree.evaluate_interval_admits_true(source_inputs)
+                } else {
+                    tree.evaluate_interval_admits_false(source_inputs)
+                };
+                if !admits {
+                    return Ok(Vec::new());
+                }
+                variants.push(CompVariant {
+                    var_id,
+                    pairs: vec![(req_abs, req_abs)],
+                });
+            }
+            // No precondition: wildcard, no fact emitted.
+            continue;
+        }
+
         // Determine which src bits are admitted by P_src.
         let src_admitted: Vec<usize> = match src_eval {
             Some(true) => vec![true_abs],
