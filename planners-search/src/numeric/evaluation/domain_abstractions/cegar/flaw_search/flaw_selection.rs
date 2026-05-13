@@ -301,6 +301,14 @@ fn compute_max_refined(
                 let var_id = pf.fact.var;
                 let base: usize = domain_sizes.get(var_id).copied().unwrap_or(0) * prop_multiplier;
                 if comparison_var_ids.contains(&var_id) && !pf.dependent_numeric_flaws.is_empty() {
+                    // numeric-fd parity: pick the *most-refined* dependent
+                    // numeric var (sticky refinement). Score by its partition
+                    // count; restrict refinement to deps at that maximum so
+                    // CEGAR deepens the leader instead of spreading work
+                    // across deps. Previously this used `.iter().next()`
+                    // (min partitions), which inverted the intended semantics
+                    // and caused refinement to lag the leader on every
+                    // iteration for tight half-space comparisons.
                     let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
                     for nf in pf.dependent_numeric_flaws.iter().cloned() {
                         let partitions = numeric_domain_sizes
@@ -309,7 +317,7 @@ fn compute_max_refined(
                             .unwrap_or(0);
                         by_partition_count.entry(partitions).or_default().push(nf);
                     }
-                    if let Some((&min_partitions, vec)) = by_partition_count.iter().next() {
+                    if let Some((&max_partitions, vec)) = by_partition_count.iter().next_back() {
                         restricted_dep = Some(vec.clone());
                         let refined_bonus = if domain_sizes.get(var_id).copied().unwrap_or(0) > 1 {
                             REFINED_COMPARISON_FLAW_BONUS
@@ -319,7 +327,7 @@ fn compute_max_refined(
                         NUMERIC_COMPARISON_FLAW_BONUS
                             .saturating_add(refined_bonus)
                             .saturating_add(base)
-                            .saturating_add(min_partitions)
+                            .saturating_add(max_partitions)
                     } else {
                         base
                     }
