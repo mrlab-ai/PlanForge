@@ -1352,9 +1352,12 @@ fn compute_hash_effects_with_preconditions(
             let mut transitions: Vec<(usize, usize)> = pairs.into_iter().collect();
             transitions.sort_unstable();
             per_var.push((v, transitions));
-        } else {
-            // Unaffected refined regular numeric variable: C++ frames it with
-            // identity partition transitions instead of wildcarding it.
+        } else if needed_numeric_vars.contains(&v) {
+            // Unaffected refined regular numeric variable that is still needed
+            // to evaluate a comparison precondition or a comparison bit whose
+            // other dependencies can change. Frame it with identity partition
+            // transitions so the comparison evaluation sees the precise source
+            // and target partition.
             let transitions: Vec<(usize, usize)> = (0..num_parts).map(|p| (p, p)).collect();
             per_var.push((v, transitions));
         }
