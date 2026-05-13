@@ -2856,11 +2856,77 @@ impl DomainAbstractionFactory {
             }
         }
 
+        // Precompute per-comparison-var hash delta for the axiom edge
+        // (P, c=definite) → (P, c=UNKNOWN). The axiom edge in backward
+        // direction relaxes d(P, c=UNKNOWN) ≤ d(P, c=definite) + 0, so we
+        // process it inline alongside operator expansion.
+        let comparison_var_ids_set: HashSet<usize> = self
+            .comparison_trees
+            .iter()
+            .map(|tree| tree.affected_var_id)
+            .collect();
+        let mut axiom_var_data: Vec<(usize, usize, isize, isize)> = Vec::new();
+        for &var in &comparison_var_ids_set {
+            let size = self.domain_sizes.get(var).copied().unwrap_or(0);
+            if size < 3 {
+                continue;
+            }
+            let mult = hash_multipliers.get(var).copied().unwrap_or(0);
+            if mult == 0 {
+                continue;
+            }
+            let to_unknown_from_true = (super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL
+                as isize
+                - super::domain_abstraction_heuristic::COMPARISON_TRUE_VAL as isize)
+                * mult as isize;
+            let to_unknown_from_false = (super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL
+                as isize
+                - super::domain_abstraction_heuristic::COMPARISON_FALSE_VAL as isize)
+                * mult as isize;
+            axiom_var_data.push((var, mult, to_unknown_from_true, to_unknown_from_false));
+        }
+
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
         while let Some((Reverse(d), state_hash)) = heap.pop() {
             let d = d.into_inner();
             if d > distances[state_hash] + 1e-12 {
                 continue;
+            }
+
+            // numeric-fd parity: from this state, also relax the
+            // (P, c=UNKNOWN) sibling for every comparison var c whose
+            // current bit is definite. This implements the 0-cost axiom
+            // edge (P, c=UNKNOWN) → (P, c=definite) in backward direction,
+            // so that ops with `eff = c = UNKNOWN` can later route their
+            // backward predecessors through (P, c=UNKNOWN).
+            for &(var, mult, delta_t, delta_f) in &axiom_var_data {
+                let bit_value = (state_hash / mult) % 3;
+                let delta = if bit_value == super::domain_abstraction_heuristic::COMPARISON_TRUE_VAL
+                {
+                    delta_t
+                } else if bit_value
+                    == super::domain_abstraction_heuristic::COMPARISON_FALSE_VAL
+                {
+                    delta_f
+                } else {
+                    continue;
+                };
+                let unknown_i = state_hash as isize + delta;
+                if unknown_i < 0 || unknown_i as usize >= num_states {
+                    continue;
+                }
+                let unknown_hash = unknown_i as usize;
+                if d + 1e-12 < distances[unknown_hash] {
+                    distances[unknown_hash] = d;
+                    // No generating op for axiom edges; inherit from source
+                    // so plan extraction can still trace back.
+                    generating_op_ids[unknown_hash] = generating_op_ids[state_hash];
+                    heap.push((
+                        Reverse(NotNan::new(d).context("axiom-propagated distance is NaN")?),
+                        unknown_hash,
+                    ));
+                }
+                let _ = var;
             }
 
             match_tree.get_applicable_operator_ids(state_hash, &mut applicable_operator_ids);

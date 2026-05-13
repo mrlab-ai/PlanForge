@@ -1963,14 +1963,10 @@ fn compute_comparison_transition_facts(
             continue;
         }
 
+        let unknown_abs = generator.domain_mapping[var_id][COMPARISON_UNKNOWN_VAL];
+
         // Determine which src bits are admitted by P_src.
         let src_admitted: Vec<usize> = match src_eval {
-            Some(true) => vec![true_abs],
-            Some(false) => vec![false_abs],
-            None => vec![true_abs, false_abs],
-        };
-        // Determine which tgt bits are admitted by P_tgt.
-        let tgt_admitted: Vec<usize> = match tgt_eval {
             Some(true) => vec![true_abs],
             Some(false) => vec![false_abs],
             None => vec![true_abs, false_abs],
@@ -1987,21 +1983,38 @@ fn compute_comparison_transition_facts(
             return Ok(Vec::new());
         }
 
-        // Cross-product src × tgt, filtered by threshold-aware preimage check.
-        // For each (b_s, b_t), only keep the pair if there's a concrete x in
-        // src such that c(x)=b_s AND c(x+Δ)=b_t — i.e., the variant has at
-        // least one concrete trajectory. This kills phantom shortcuts
-        // (variants admitted by the intervals individually but not jointly).
-        let mut pairs: Vec<(usize, usize)> =
-            Vec::with_capacity(src_after_pre.len() * tgt_admitted.len());
-        for &s in &src_after_pre {
-            let b_s_is_true = s == true_abs;
-            for &t in &tgt_admitted {
-                let b_t_is_true = t == true_abs;
-                if variant_has_concrete_preimage(
-                    tree.op, f_src, f_tgt, b_s_is_true, b_t_is_true,
-                ) {
-                    pairs.push((s, t));
+        // numeric-fd-style "reset c to unknown" when target is ambiguous —
+        // collapses the (b_s × b_t) fan-out from 4 to 1-2 variants per c.
+        // Each emitted variant has eff = c = UNKNOWN at target; a separate
+        // post-Dijkstra axiom-propagation pass then resolves (P, c=UNKNOWN)
+        // distances into (P, c=T) and (P, c=F) via 0-cost axiom edges.
+        //
+        // For deterministic-target combos we still emit (b_s, b_t) directly
+        // — no need for an unknown intermediate.
+        let mut pairs: Vec<(usize, usize)> = Vec::with_capacity(src_after_pre.len());
+        match tgt_eval {
+            Some(_) => {
+                // Deterministic target — use the threshold-aware preimage
+                // filter on each (b_s, b_t) candidate. b_t is uniquely
+                // determined by tgt_eval.
+                let b_t = if tgt_eval == Some(true) { true_abs } else { false_abs };
+                let b_t_is_true = tgt_eval == Some(true);
+                for &b_s in &src_after_pre {
+                    let b_s_is_true = b_s == true_abs;
+                    if variant_has_concrete_preimage(
+                        tree.op, f_src, f_tgt, b_s_is_true, b_t_is_true,
+                    ) {
+                        pairs.push((b_s, b_t));
+                    }
+                }
+            }
+            None => {
+                // Ambiguous target — emit one variant per admitted src bit,
+                // with target = UNKNOWN. The threshold-aware filter doesn't
+                // apply (the variant covers both b_t = T and b_t = F via the
+                // unknown placeholder + axiom resolution).
+                for &b_s in &src_after_pre {
+                    pairs.push((b_s, unknown_abs));
                 }
             }
         }
