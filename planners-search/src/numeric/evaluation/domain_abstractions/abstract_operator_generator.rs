@@ -1384,12 +1384,49 @@ fn compute_hash_effects_with_preconditions(
     let mut source_intervals_buf: Vec<Interval> = Vec::new();
     let mut target_intervals_buf: Vec<Interval> = Vec::new();
 
+    // The set of numeric vars whose partition is pinned by this combo —
+    // affected (with effect transitions) ∪ needed (with identity transitions)
+    // ∪ deps with domain_size==1 (treated as the unbounded singleton
+    // partition; covered by the default-fill in
+    // `prepare_comparison_tree_inputs_for_combo_into`). Passing only
+    // `affected_numeric_vars` here drops bit transitions for comparisons
+    // whose deps span both affected and identity-iterated vars; skipping
+    // domain_size==1 deps drops them when the var hasn't been refined yet
+    // but the comparison still needs to emit its source→target bit
+    // transition based on the optimistic eval over the default (unbounded)
+    // interval.
+    let mut bound_numeric_vars: HashSet<usize> = per_var.iter().map(|(v, _)| *v).collect();
+    bound_numeric_vars.extend(needed_numeric_vars.iter().copied());
+    bound_numeric_vars.extend(affected_numeric_vars.iter().copied());
+    if let Some(index) = &generator.comparison_index {
+        // Treat *every* comparison axiom that's in the abstraction's hash
+        // and whose deps overlap the combo's bound set as fully bound: any
+        // unrefined dep already has the unbounded default interval filled
+        // by `prepare_comparison_tree_inputs_for_combo_into`, which is the
+        // correct (admissible, fully fan-out) input for the optimistic
+        // eval.
+        let snapshot: Vec<usize> = bound_numeric_vars.iter().copied().collect();
+        for tree in &generator.comparison_trees {
+            let var_id = tree.affected_var_id;
+            if generator.domain_sizes.get(var_id).copied().unwrap_or(1) <= 1 {
+                continue;
+            }
+            let deps = tree.regular_numeric_var_dependencies(task);
+            if deps.iter().any(|d| snapshot.contains(d)) {
+                for dep in &deps {
+                    bound_numeric_vars.insert(*dep);
+                }
+            }
+        }
+        let _ = index;
+    }
+
     enumerate_partition_combos(
         task,
         generator,
         op_preconditions,
         &per_var,
-        &affected_numeric_vars,
+        &bound_numeric_vars,
         num_props,
         op_has_comparison_preconditions,
         any_changed_var_affects_comparison,
@@ -1752,7 +1789,23 @@ fn compute_comparison_transition_facts(
             continue;
         }
         let deps = tree.regular_numeric_var_dependencies(task);
-        if !deps.iter().all(|d| affected_numeric_vars.contains(d)) {
+        // Emit a (src_bit, tgt_bit) fan-out for `c` if and only if the
+        // operator could change `c`'s value — i.e., at least one of `c`'s
+        // numeric deps is bound by this combo (either affected by the
+        // operator's numeric effects or identity-iterated because some
+        // *other* comparison's deps overlap). For comparisons whose deps
+        // are entirely outside the combo's bound set, the operator's
+        // hash_effect has zero delta on `c`'s dimension, so source and
+        // target inherit the same `c` bit from the state (frame), which is
+        // exactly what we want.
+        //
+        // Note: the `eval_interval` consumers below tolerate unrefined deps
+        // — their default interval (unbounded) is filled by
+        // `prepare_comparison_tree_inputs_for_combo_into`, which makes the
+        // optimistic eval ambiguous and fans out into both bits. That is
+        // both admissible and the only way to keep concrete trajectories
+        // representable when a dep is wildcarded in this abstraction.
+        if !deps.iter().any(|d| affected_numeric_vars.contains(d)) {
             continue;
         }
 
