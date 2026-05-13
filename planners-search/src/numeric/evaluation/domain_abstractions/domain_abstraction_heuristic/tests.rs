@@ -66,7 +66,6 @@ fn resolved_propositional_value_recomputes_comparison_axioms_from_numeric_state(
         &tree_by_var,
         &tree_lens,
         None,
-        None,
     )
     .unwrap();
 

@@ -14,7 +14,7 @@ use planners_sas::numeric::numeric_task::{
 };
 use planners_sas::numeric::utils::float_tolerance;
 
-use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
+use super::comparison_expression::{ArithOp, CompOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees;
 use super::utils;
@@ -1702,6 +1702,134 @@ struct ComparisonTransitionFacts {
 /// Returns `Ok(None)` if the combo is dead — a concrete operator's
 /// comparison precondition is unsatisfiable on the source intervals
 /// (interval admits only the opposite value).
+/// Returns `true` iff variant `(b_s, b_t)` for comparison `c: lhs op_c rhs`
+/// has a non-empty concrete preimage in `f_src = lhs(src) - rhs(src)` after
+/// the operator's deterministic shift on `f`.
+///
+/// Domain-agnostic threshold-aware filter that eliminates phantom shortcuts:
+/// for half-space comparisons (≤, <, ≥, >), `f` is linear in numeric vars
+/// and the operator's net effect on `f` is the constant shift
+/// Δ_f = f_tgt − f_src (taken on either endpoint of `f_src` — equal for
+/// linear shifts). The joint constraint `c(x)=b_s ∧ c(x+Δ)=b_t` reduces to
+/// `f(x) ∈ b_s_region ∩ (b_t_region − Δ_f)`. We check that this set
+/// overlaps `f_src`.
+///
+/// For non-linear comparisons (e.g. `≠`, `=`, products of vars), the shift
+/// isn't constant and the joint constraint can't be reduced to a 1-D
+/// interval; we conservatively admit the variant (admissible but possibly
+/// looser).
+fn variant_has_concrete_preimage(
+    op_c: CompOp,
+    f_src: Interval,
+    f_tgt: Interval,
+    b_s_is_true: bool,
+    b_t_is_true: bool,
+) -> bool {
+    if f_src.is_empty() || f_tgt.is_empty() {
+        return false;
+    }
+    // Derive Δ_f from the two interval endpoints. For a linear shift, both
+    // .lower and .upper shift by the same amount; if they disagree (non-
+    // linear comparison or partition slack), we fall back to admit
+    // conservatively (admissible but possibly looser).
+    let delta_lower = f_tgt.lower - f_src.lower;
+    let delta_upper = f_tgt.upper - f_src.upper;
+    let linear_shift = (delta_lower - delta_upper).abs() < 1e-9
+        && delta_lower.is_finite()
+        && delta_upper.is_finite();
+    if !linear_shift {
+        return true;
+    }
+    let delta_f = delta_lower;
+
+    // Translate `c=b at src` and `c=b at tgt` into a set of disjoint
+    // intervals on `f`. `c=b at tgt` means c(x+Δ)=b iff f(x+Δ) op_c 0 iff
+    // f(x) op_c -Δ_f — i.e., the target region is the source region shifted
+    // by −Δ_f along the `f` axis.
+    let src_region = f_region_for_bit(op_c, b_s_is_true, 0.0);
+    let tgt_region = f_region_for_bit(op_c, b_t_is_true, -delta_f);
+
+    // Variant is realizable iff f_src ∩ src_region ∩ tgt_region is
+    // non-empty. Iterate over the (at most 2 × 2 = 4) interval pairs.
+    for &s in &src_region {
+        for &t in &tgt_region {
+            if let Some(i) = interval_intersect(s, t)
+                && let Some(j) = interval_intersect(i, f_src)
+                && !j.is_empty()
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// `c=b` region on `f` for comparison `c: lhs op rhs` (so `f = lhs - rhs`,
+/// `c=T iff f op 0`). Returns 1–2 disjoint intervals, optionally translated
+/// along `f` by `shift` (used to convert a target-side region to source-side
+/// coordinates via `f → f - shift`, which equals the target region's
+/// pre-image under the operator's net Δ_f shift on `f`).
+fn f_region_for_bit(op_c: CompOp, b_is_true: bool, shift: f64) -> Vec<Interval> {
+    use CompOp::*;
+    let neg_inf = f64::NEG_INFINITY;
+    let pos_inf = f64::INFINITY;
+    let mk = |lo: f64, hi: f64, lc: bool, hc: bool| -> Interval {
+        Interval::new(lo + shift, hi + shift, lc, hc)
+    };
+    match (op_c, b_is_true) {
+        // ≤: T iff f ≤ 0; F iff f > 0.
+        (Le, true) => vec![mk(neg_inf, 0.0, false, true)],
+        (Le, false) => vec![mk(0.0, pos_inf, false, false)],
+        // <: T iff f < 0; F iff f ≥ 0.
+        (Lt, true) => vec![mk(neg_inf, 0.0, false, false)],
+        (Lt, false) => vec![mk(0.0, pos_inf, true, false)],
+        // ≥: T iff f ≥ 0; F iff f < 0.
+        (Ge, true) => vec![mk(0.0, pos_inf, true, false)],
+        (Ge, false) => vec![mk(neg_inf, 0.0, false, false)],
+        // >: T iff f > 0; F iff f ≤ 0.
+        (Gt, true) => vec![mk(0.0, pos_inf, false, false)],
+        (Gt, false) => vec![mk(neg_inf, 0.0, false, true)],
+        // =: T iff f = 0; F iff f ≠ 0 (two half-rays).
+        (Eq, true) => vec![mk(0.0, 0.0, true, true)],
+        (Eq, false) => vec![
+            mk(neg_inf, 0.0, false, false),
+            mk(0.0, pos_inf, false, false),
+        ],
+        // ≠: T iff f ≠ 0; F iff f = 0.
+        (Ne, true) => vec![
+            mk(neg_inf, 0.0, false, false),
+            mk(0.0, pos_inf, false, false),
+        ],
+        (Ne, false) => vec![mk(0.0, 0.0, true, true)],
+    }
+}
+
+fn interval_intersect(a: Interval, b: Interval) -> Option<Interval> {
+    if a.is_empty() || b.is_empty() {
+        return None;
+    }
+    let (lo, lo_closed) = if a.lower > b.lower {
+        (a.lower, a.lower_closed)
+    } else if b.lower > a.lower {
+        (b.lower, b.lower_closed)
+    } else {
+        (a.lower, a.lower_closed && b.lower_closed)
+    };
+    let (hi, hi_closed) = if a.upper < b.upper {
+        (a.upper, a.upper_closed)
+    } else if b.upper < a.upper {
+        (b.upper, b.upper_closed)
+    } else {
+        (a.upper, a.upper_closed && b.upper_closed)
+    };
+    let candidate = Interval::new(lo, hi, lo_closed, hi_closed);
+    if candidate.is_empty() {
+        None
+    } else {
+        Some(candidate)
+    }
+}
+
 fn compute_comparison_transition_facts(
     task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
@@ -1710,61 +1838,54 @@ fn compute_comparison_transition_facts(
     target_inputs: &[Interval],
     affected_numeric_vars: &HashSet<usize>,
 ) -> Result<Vec<ComparisonTransitionFacts>> {
-    // For every comparison axiom `c` in the abstraction's hash whose
-    // numeric deps overlap this combo's bound set, emit exactly one
-    // (src_bit, tgt_bit) pair determined by the optimistic homomorphism α:
-    // ambiguous interval (`evaluate_interval` returns `None`) → TRUE,
-    // deterministic FALSE → FALSE. This matches the same α used to map
-    // concrete states to abstract hashes at search time, so the abstract
-    // state (P, optimistic_bits) is exactly the image of every concrete
-    // state in P under α. No fan-out, no phantom FALSE-bit states.
+    // Non-optimistic homomorphism α: every concrete state s maps to a
+    // unique abstract state (P, [c_i(s)]_i) whose comparison bits are the
+    // concrete evaluations on s's numeric values. For each comparison c in
+    // the abstraction's hash we decide what (src_bit, tgt_bit) variants to
+    // emit per (P_src, P_tgt) combo. Six scenarios indexed by:
     //
-    // For comparisons whose deps are *not* bound, the op wildcards them
-    // and their bits are framed through unchanged.
+    //   * op has precondition on c (None / required T / required F)
+    //   * op affects c's deps (no / yes)
     //
-    // Filter by operator preconditions: if any comparison precondition is
-    // incompatible with optimistic α on the source intervals, the operator
-    // can't fire on any α-preimage of this combo's source — return an
-    // empty Vec.
-    let Some(index) = &generator.comparison_index else {
+    // Case 1 (no precondition, no deps overlap): comparison is wildcarded.
+    //   No fact emitted; hash delta on c = 0 (frame); op fires from any bit.
+    //
+    // Case 2/3 (precondition c=X, no deps overlap): emit a prevail fact
+    //   c=X on both source and target. Hash delta on c = 0. Op fires only
+    //   from (P, c=X) abstract states.
+    //
+    // Case 4 (no precondition, deps overlap): evaluate src/tgt intervals.
+    //   Emit one variant per non-empty (b_s, b_t) pair admitted by the
+    //   intervals. Deterministic→one variant; ambiguous→fan out the
+    //   ambiguous side.
+    //
+    // Case 5/6 (precondition c=X, deps overlap): like case 4 but with
+    //   src_bit constrained to X (drop variants whose src_bit ≠ X when X
+    //   is deterministically excluded on this combo).
+    //
+    // Fan-out is bounded: 2 variants per ambiguous side, 4 max per
+    // comparison. With K comparisons the worst case is 4^K per combo —
+    // but ambiguity only happens on partitions straddling a threshold,
+    // which CEGAR refines out. Default is one variant per comparison.
+    if generator.comparison_index.is_none() {
         return Ok(vec![ComparisonTransitionFacts::default()]);
-    };
-
-    // Early dead-combo check on comparison preconditions whose deps are
-    // not in `affected_numeric_vars` (we won't compute a deterministic
-    // src bit for them; rely on admits-check).
-    for precondition in op_preconditions {
-        if !generator.derived_prop_vars.contains(&precondition.var) {
-            continue;
-        }
-        let var_id = precondition.var;
-        let Some(tree) = index.comparison_tree(var_id) else {
-            continue;
-        };
-        let deps = tree.regular_numeric_var_dependencies(task);
-        if deps.iter().all(|d| affected_numeric_vars.contains(d)) {
-            continue;
-        }
-        let required_abs = generator.abstract_value(var_id, precondition.value);
-        let required_true =
-            required_abs == generator.domain_mapping[var_id][COMPARISON_TRUE_VAL];
-        let source_admits = if required_true {
-            tree.evaluate_interval_admits_true(source_inputs)
-        } else {
-            tree.evaluate_interval_admits_false(source_inputs)
-        };
-        if !source_admits {
-            return Ok(Vec::new());
-        }
     }
 
+    // Index preconditions by comparison var id.
     let precondition_required: HashMap<usize, usize> = op_preconditions
         .iter()
         .filter(|p| generator.derived_prop_vars.contains(&p.var))
         .map(|p| (p.var, generator.abstract_value(p.var, p.value)))
         .collect();
 
-    let mut facts = ComparisonTransitionFacts::default();
+    // For each comparison in the abstraction's hash, compute the set of
+    // (src_bit, tgt_bit) variants to emit. Later we cross-product across
+    // comparisons.
+    struct CompVariant {
+        var_id: usize,
+        pairs: Vec<(usize, usize)>, // (src_abs, tgt_abs) bit pairs
+    }
+    let mut variants: Vec<CompVariant> = Vec::new();
 
     for tree in &generator.comparison_trees {
         let var_id = tree.affected_var_id;
@@ -1772,62 +1893,116 @@ fn compute_comparison_transition_facts(
             continue;
         }
         let deps = tree.regular_numeric_var_dependencies(task);
-        // Emit a (src_bit, tgt_bit) pair for `c` only if the operator can
-        // change `c`'s value — i.e., at least one of `c`'s numeric deps is
-        // bound by this combo. For comparisons whose deps are entirely
-        // outside the bound set, `op.hash_effect` has zero delta on `c`'s
-        // dimension and the bit is framed through.
-        if !deps.iter().any(|d| affected_numeric_vars.contains(d)) {
+        let deps_overlap_combo = deps.iter().any(|d| affected_numeric_vars.contains(d));
+
+        let true_abs = generator.domain_mapping[var_id][COMPARISON_TRUE_VAL];
+        let false_abs = generator.domain_mapping[var_id][COMPARISON_FALSE_VAL];
+        let required = precondition_required.get(&var_id).copied();
+
+        if !deps_overlap_combo {
+            // Cases 1, 2, 3: op cannot change c.
+            if let Some(req_abs) = required {
+                // Case 2/3: emit prevail c=req on both sides.
+                // Dead-combo check: source interval must admit the required
+                // bit (i.e., there's at least one concrete state in P_src
+                // that satisfies the precondition).
+                let admits = if req_abs == true_abs {
+                    tree.evaluate_interval_admits_true(source_inputs)
+                } else {
+                    tree.evaluate_interval_admits_false(source_inputs)
+                };
+                if !admits {
+                    return Ok(Vec::new());
+                }
+                variants.push(CompVariant {
+                    var_id,
+                    pairs: vec![(req_abs, req_abs)],
+                });
+            }
+            // Case 1: no precondition, no emission. Hash delta on c = 0
+            // (frame), bit may take any value in source/target.
             continue;
         }
 
+        // Cases 4/5/6: op affects c's deps. Evaluate intervals.
         let src_eval = tree.evaluate_interval(source_inputs);
         let tgt_eval = tree.evaluate_interval(target_inputs);
-        let true_abs = generator.domain_mapping[var_id][COMPARISON_TRUE_VAL];
-        let false_abs = generator.domain_mapping[var_id][COMPARISON_FALSE_VAL];
+        let f_src = tree.lhs_minus_rhs_interval(source_inputs);
+        let f_tgt = tree.lhs_minus_rhs_interval(target_inputs);
 
-        // Optimistic α: ambiguous → TRUE, deterministic FALSE → FALSE.
-        // The bit we emit is determined by α alone, never by the operator's
-        // concrete precondition. On ambiguous partitions, concrete states
-        // with either c-bit map to the optimistic (TRUE) abstract state, so
-        // the abstract operator must fire from src_abs=TRUE regardless of
-        // the operator's c precondition — α "relaxes" the precondition,
-        // which is necessary for admissibility: c=FALSE concrete states on
-        // ambiguous partitions must have an abstract image.
-        let src_abs = match src_eval {
-            Some(false) => false_abs,
-            _ => true_abs,
+        // Determine which src bits are admitted by P_src.
+        let src_admitted: Vec<usize> = match src_eval {
+            Some(true) => vec![true_abs],
+            Some(false) => vec![false_abs],
+            None => vec![true_abs, false_abs],
         };
-        let tgt_abs = match tgt_eval {
-            Some(false) => false_abs,
-            _ => true_abs,
+        // Determine which tgt bits are admitted by P_tgt.
+        let tgt_admitted: Vec<usize> = match tgt_eval {
+            Some(true) => vec![true_abs],
+            Some(false) => vec![false_abs],
+            None => vec![true_abs, false_abs],
         };
 
-        // Filter only when the source partition is deterministic and rules
-        // out the precondition entirely — i.e. no concrete state in P_src
-        // could fire this operator. Dropping in the ambiguous case would
-        // leave concrete c=required-bit states with no abstract image,
-        // breaking admissibility.
-        if let Some(&required_abs) = precondition_required.get(&var_id) {
-            let deterministic_disagree = match src_eval {
-                Some(true) => required_abs == false_abs,
-                Some(false) => required_abs == true_abs,
-                None => false,
-            };
-            if deterministic_disagree {
-                return Ok(Vec::new());
+        // Enforce precondition on the source side (cases 5/6).
+        let src_after_pre: Vec<usize> = if let Some(req_abs) = required {
+            src_admitted.into_iter().filter(|&b| b == req_abs).collect()
+        } else {
+            src_admitted
+        };
+        if src_after_pre.is_empty() {
+            // No concrete state in P_src satisfies the precondition.
+            return Ok(Vec::new());
+        }
+
+        // Cross-product src × tgt, filtered by threshold-aware preimage check.
+        // For each (b_s, b_t), only keep the pair if there's a concrete x in
+        // src such that c(x)=b_s AND c(x+Δ)=b_t — i.e., the variant has at
+        // least one concrete trajectory. This kills phantom shortcuts
+        // (variants admitted by the intervals individually but not jointly).
+        let mut pairs: Vec<(usize, usize)> =
+            Vec::with_capacity(src_after_pre.len() * tgt_admitted.len());
+        for &s in &src_after_pre {
+            let b_s_is_true = s == true_abs;
+            for &t in &tgt_admitted {
+                let b_t_is_true = t == true_abs;
+                if variant_has_concrete_preimage(
+                    tree.op, f_src, f_tgt, b_s_is_true, b_t_is_true,
+                ) {
+                    pairs.push((s, t));
+                }
             }
         }
-
-        if src_abs == tgt_abs {
-            facts.prevail_facts.push(ExplicitFact::new(var_id, src_abs));
-        } else {
-            facts.source_facts.push(ExplicitFact::new(var_id, src_abs));
-            facts.target_facts.push(ExplicitFact::new(var_id, tgt_abs));
+        if pairs.is_empty() {
+            // No variant survives the joint preimage check — operator is
+            // effectively dead on this combo.
+            return Ok(Vec::new());
         }
+        variants.push(CompVariant { var_id, pairs });
     }
 
-    Ok(vec![facts])
+    // Cross-product across comparisons. Each variant slot contributes its
+    // pairs; total = product of |pairs|. Build the output Vec of
+    // ComparisonTransitionFacts, one per cartesian combination.
+    let mut out: Vec<ComparisonTransitionFacts> = vec![ComparisonTransitionFacts::default()];
+    for cv in &variants {
+        let mut next: Vec<ComparisonTransitionFacts> =
+            Vec::with_capacity(out.len() * cv.pairs.len());
+        for facts in &out {
+            for &(src_abs, tgt_abs) in &cv.pairs {
+                let mut clone = facts.clone();
+                if src_abs == tgt_abs {
+                    clone.prevail_facts.push(ExplicitFact::new(cv.var_id, src_abs));
+                } else {
+                    clone.source_facts.push(ExplicitFact::new(cv.var_id, src_abs));
+                    clone.target_facts.push(ExplicitFact::new(cv.var_id, tgt_abs));
+                }
+                next.push(clone);
+            }
+        }
+        out = next;
+    }
+
+    Ok(out)
 }
 
 

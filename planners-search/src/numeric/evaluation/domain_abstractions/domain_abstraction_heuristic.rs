@@ -11,7 +11,7 @@ use planners_sas::numeric::numeric_task::Operator;
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 
 use super::abstracted_task::DomainAbstractionTaskProjection;
-use super::comparison_expression::{ComparisonTree, ComparisonTreeNode, Interval};
+use super::comparison_expression::{ComparisonTree, ComparisonTreeNode};
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::utils;
 
@@ -272,49 +272,6 @@ impl DomainAbstractionHeuristic {
 
     pub fn task_projection(&self) -> Option<&DomainAbstractionTaskProjection> {
         self.abstraction.task_projection.as_ref()
-    }
-
-    /// Builds the per-numeric-var partition-interval vector for the given
-    /// state's projected numeric values. Used by the heuristic's α to
-    /// evaluate comparison axioms optimistically over partition intervals.
-    /// We rely on `NumericPartitions`: constants have a singleton-partition
-    /// layout; regular numerics have one or more partitions; derived
-    /// numerics are filled afterwards by
-    /// `fill_derived_numeric_intervals_from_comparison_trees`.
-    fn build_partition_intervals_for_state(
-        &self,
-        numeric_values: &[f64],
-    ) -> Result<Vec<Interval>, EvaluationError> {
-        let partitions = self.abstraction.factory.partitions();
-        let mut out: Vec<Interval> = Vec::with_capacity(numeric_values.len());
-        for (numeric_var_id, &value) in numeric_values.iter().enumerate() {
-            let Some(parts) = partitions.partitions(numeric_var_id) else {
-                out.push(Interval::unbounded());
-                continue;
-            };
-            if parts.len() == 1 {
-                // Trivial partition (constant or unrefined regular):
-                // use it as-is. Constants get their singleton; unrefined
-                // regulars get unbounded.
-                out.push(parts[0]);
-                continue;
-            }
-            if !value.is_finite() || value.is_nan() {
-                out.push(Interval::unbounded());
-                continue;
-            }
-            let part_id = utils::partition_for_value(parts, value).ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "numeric value {value} not contained in any partition for var {numeric_var_id}"
-                ))
-            })?;
-            out.push(parts[part_id]);
-        }
-        super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees(
-            self.abstraction.factory.comparison_trees(),
-            &mut out,
-        );
-        Ok(out)
     }
 
     fn numeric_partition_for_projected_value(
@@ -583,19 +540,13 @@ impl DomainAbstractionHeuristic {
         }
 
         let mut prop_index: usize = 0;
-        // Always-optimistic comparison-bit evaluation: build the state's
-        // partition intervals once, then resolve each active prop var
-        // (comparison axioms included) against those intervals with
-        // `None`/`Some(true)` → `TRUE` semantics. This matches the
-        // operator generator's `compute_comparison_transition_facts` and
-        // the factory's `compute_initial_state_hash_determined`, so
-        // α(s) is a homomorphism that agrees with what CEGAR refined.
-        // The previous "fast path" using `prop_has_resolved_comparisons`
-        // read concrete axiom values from the registry, which disagreed
-        // with the partition-interval semantics on values that lie on a
-        // partition boundary or in an ambiguous partition.
+        // Concrete-evaluation α for every comparison axiom: evaluate each
+        // comparison tree on the state's *concrete numeric values* (singleton
+        // intervals → deterministic bit). This is the homomorphism: α(s) maps
+        // every concrete s to its true (P, c-bits). The factory's
+        // `compute_initial_state_hash_determined` and the operator generator's
+        // `compute_comparison_transition_facts` use the same semantics.
         let _ = prop_has_resolved_comparisons;
-        let partition_intervals = self.build_partition_intervals_for_state(numeric_values)?;
         for &var in &self.active_prop_vars {
             let concrete_val = resolved_propositional_value(
                 var,
@@ -605,7 +556,6 @@ impl DomainAbstractionHeuristic {
                 &self.comparison_tree_by_var,
                 &self.comparison_tree_required_lens,
                 comparison_values,
-                Some(&partition_intervals),
             )?;
             let abs_val = abstract_propositional_value(var, concrete_val, mapping)?;
             prop_index += multipliers[var] * abs_val;
@@ -639,7 +589,6 @@ impl DomainAbstractionHeuristic {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolved_propositional_value(
     var: usize,
     stored_val: usize,
@@ -648,7 +597,6 @@ fn resolved_propositional_value(
     comparison_tree_by_var: &[Option<usize>],
     comparison_tree_required_lens: &[usize],
     comparison_values: Option<&[Option<usize>]>,
-    partition_intervals: Option<&[Interval]>,
 ) -> Result<usize, EvaluationError> {
     if let Some(value) = comparison_values
         .and_then(|values| values.get(var))
@@ -662,25 +610,8 @@ fn resolved_propositional_value(
     };
     let tree = &comparison_trees[tree_id];
 
-    // Optimistic interval eval on the state's partition intervals: only
-    // `Some(false)` (the partition admits no value where the comparison
-    // holds) pins the bit to FALSE; `Some(true)` and `None` (ambiguous)
-    // both resolve to TRUE. This matches the abstract-state semantics CEGAR
-    // refined against — the factory's `compute_initial_state_hash_determined`
-    // and the operator generator's `compute_comparison_transition_facts`
-    // both use the same rule.
-    if let Some(intervals) = partition_intervals {
-        let bit_is_false = matches!(tree.evaluate_interval(intervals), Some(false));
-        return Ok(if bit_is_false {
-            COMPARISON_FALSE_VAL
-        } else {
-            COMPARISON_TRUE_VAL
-        });
-    }
-
-    // Fallback (no partition intervals available): evaluate concretely on
-    // the singleton numeric values. Used by external callers that pass
-    // raw values without the partition context.
+    // Concrete evaluation on the state's numeric values. This is the
+    // deterministic α-image of the concrete state's comparison bit.
     let eval = evaluate_comparison_tree_on_concrete_numeric_state(
         tree,
         numeric,

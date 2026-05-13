@@ -2208,60 +2208,12 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes.len()
         );
 
-        // Optimistic evaluation of every comparison axiom on the initial
-        // state's *partition* intervals. "Always optimistic" — ambiguous
-        // partitions resolve to `TRUE`. The heuristic's `compute_abstract_hash`
-        // uses the same semantics for any state it queries, so α(init_concrete)
-        // matches the factory's init hash and A* reads the distance CEGAR
-        // refined. This is the homomorphism property the user requires: any
-        // concrete state's α is determined entirely by its partition + the
-        // optimistic comparison-bit eval over the partition's intervals.
-        let num_numeric = task.numeric_variables().len();
-        let mut init_partition_intervals: Vec<Interval> = Vec::with_capacity(num_numeric);
-        for (numeric_var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
-            match numeric_var.get_type() {
-                NumericType::Constant => {
-                    let value = float_tolerance::canonicalize(num_init[numeric_var_id]);
-                    init_partition_intervals.push(Interval::singleton(value));
-                }
-                NumericType::Derived => {
-                    init_partition_intervals.push(Interval::unbounded());
-                }
-                _ => {
-                    if numeric_var_id < numeric_domain_sizes.len() {
-                        let val = float_tolerance::canonicalize(num_init[numeric_var_id]);
-                        let parts = self
-                            .partitions
-                            .partitions(numeric_var_id)
-                            .with_context(|| {
-                                format!("missing partitions for numeric var {numeric_var_id}")
-                            })?;
-                        let part_id =
-                            utils::partition_for_value(parts, val).with_context(|| {
-                                format!(
-                                    "initial numeric value {val} not contained in any partition for numeric var {numeric_var_id}"
-                                )
-                            })?;
-                        let iv = self
-                            .partitions
-                            .partition_interval(numeric_var_id, part_id)
-                            .with_context(|| {
-                                format!(
-                                    "missing partition interval for var {numeric_var_id} part {part_id}"
-                                )
-                            })?;
-                        init_partition_intervals.push(iv);
-                    } else {
-                        init_partition_intervals.push(Interval::unbounded());
-                    }
-                }
-            }
-        }
-        super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees(
-            &self.comparison_trees,
-            &mut init_partition_intervals,
-        );
-
+        // Concrete eval of every comparison axiom on the initial concrete
+        // numeric state. α(init) is the deterministic image of the concrete
+        // initial state — each comparison evaluates to a definite bit on the
+        // concrete numeric values (intervals are singletons). The heuristic's
+        // `compute_abstract_hash` does the same for *any* concrete state, so
+        // the homomorphism α maps every concrete state to its true bits.
         let comparison_var_ids: HashSet<usize> = comparison_var_ids.iter().copied().collect();
         let mut index: usize = 0;
         for var in 0..num_props {
@@ -2272,11 +2224,12 @@ impl DomainAbstractionFactory {
                     .iter()
                     .find(|tree| tree.affected_var_id == var)
                 {
-                    // Optimistic: only `Some(false)` pins the bit to FALSE;
-                    // `Some(true)` and `None` both resolve to TRUE.
-                    match tree.evaluate_interval(&init_partition_intervals) {
+                    match super::numeric_context::evaluate_comparison_tree_from_initial_state(
+                        task, tree,
+                    )? {
+                        Some(true) => COMPARISON_TRUE_VAL,
                         Some(false) => COMPARISON_FALSE_VAL,
-                        _ => COMPARISON_TRUE_VAL,
+                        None => prop_init[var],
                     }
                 } else {
                     prop_init[var]

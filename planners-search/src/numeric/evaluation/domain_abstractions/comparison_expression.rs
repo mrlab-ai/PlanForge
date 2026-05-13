@@ -927,6 +927,19 @@ impl ComparisonTree {
         self.op.apply_interval(lhs, rhs)
     }
 
+    /// Returns the interval of `f = lhs - rhs` evaluated on `inputs`.
+    /// Used by abstract-operator-variant filtering to check whether a given
+    /// `(src_bit, tgt_bit)` pair has a non-empty concrete preimage: the
+    /// comparison `c: lhs op rhs` is equivalent to `f op 0`, and the
+    /// operator's net effect on `f` is a constant shift Δ_f (for linear
+    /// comparisons), so the joint constraint `c(x)=b_s ∧ c(x+Δ)=b_t`
+    /// reduces to a 1-D interval check on `f`.
+    pub fn lhs_minus_rhs_interval(&self, inputs: &[Interval]) -> Interval {
+        let lhs = self.eval_node_interval(self.left_root, inputs);
+        let rhs = self.eval_node_interval(self.right_root, inputs);
+        ArithOp::Sub.apply_interval(lhs, rhs)
+    }
+
     /// Optimistic interval evaluation for abstract operator construction.
     ///
     /// Returns `true` iff **some** concrete numeric assignment that maps
