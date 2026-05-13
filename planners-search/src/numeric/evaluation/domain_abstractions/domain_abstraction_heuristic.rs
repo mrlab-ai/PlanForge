@@ -285,15 +285,17 @@ impl DomainAbstractionHeuristic {
             )));
         }
         let partitions = self.abstraction.factory.partitions();
-        // Fast path: equispaced layouts (sailing-style after CEGAR splits)
-        // can resolve the partition index with a single division instead of
-        // a tolerant binary search. Falls through to the slow path if the
-        // descriptor rejects the value or no descriptor is available.
-        if let Some(desc) = partitions.equispaced(num_var_id)
-            && let Some(idx) = desc.lookup(value)
-        {
-            return Ok(idx);
-        }
+        // NOTE: the equispaced fast path is intentionally disabled because
+        // its `(value - base) / step` cast does not respect partition
+        // boundary closed/open flags. For values exactly on a partition
+        // boundary (which happens for every CEGAR-induced split since
+        // splits land at concrete state values), the equispaced lookup can
+        // return a different partition than the tolerant `partition_for_value`
+        // used by `compute_initial_state_hash_determined`. That mismatch
+        // makes the heuristic's α(init_concrete) differ from CEGAR's
+        // init_state_hash, so `distances[α(init)]` returns a value that
+        // CEGAR never tightened — producing h(init) < plan_cost even when
+        // CEGAR converged with no flaws.
         let parts = partitions.partitions(num_var_id).ok_or_else(|| {
             EvaluationError::InvalidState(format!(
                 "missing partitions for numeric var {num_var_id}"

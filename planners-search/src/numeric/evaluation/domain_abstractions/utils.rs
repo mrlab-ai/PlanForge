@@ -399,6 +399,14 @@ impl EquispacedPartitioning {
     /// on the relevant side, e.g., a constant-pinned numeric var that drifted
     /// out of range — that is a real error, the same one `partition_for_value`
     /// reports by returning `None`).
+    ///
+    /// Currently unused: the cast-based body lookup does not respect
+    /// per-interval closed/open boundary flags, so values that land exactly
+    /// on a partition boundary can disagree with the tolerant
+    /// `partition_for_value` and produce a different abstract hash than
+    /// CEGAR's `compute_initial_state_hash_determined`. See the note on
+    /// `NumericPartitions::equispaced` for context.
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn lookup(&self, value: f64) -> Option<usize> {
         if !value.is_finite() {

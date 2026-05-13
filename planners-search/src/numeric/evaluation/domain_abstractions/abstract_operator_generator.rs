@@ -1243,6 +1243,8 @@ fn compute_hash_effects_with_preconditions(
     // where most concrete operators do not query most refined numerics.
     let mut needed_numeric_vars: HashSet<usize> = HashSet::new();
     if let Some(index) = &generator.comparison_index {
+        // Deps of comparison-axiom preconditions are needed so we can filter
+        // dead combos via optimistic eval on source intervals.
         for pre in op_preconditions {
             if !generator.derived_prop_vars.contains(&pre.var) {
                 continue;
@@ -1250,6 +1252,28 @@ fn compute_hash_effects_with_preconditions(
             if let Some(tree) = index.comparison_tree(pre.var) {
                 for dep in tree.regular_numeric_var_dependencies(task) {
                     needed_numeric_vars.insert(dep);
+                }
+            }
+        }
+        // For every comparison axiom that is *in* the abstraction's hash
+        // (domain_size > 1) AND has at least one dep in `affected_numeric_vars`,
+        // we need to know **all** of its deps' partitions in this combo so we
+        // can emit a deterministic source→target bit transition. Otherwise the
+        // operator wildcards the comparison var (no fact in pre/eff/prev), and
+        // because `op.hash_effect` has no delta on that var, the source and
+        // target end up with the same bit even though the bit *should* flip
+        // when the affected dep crosses a value-relevant partition boundary —
+        // disconnecting "comparison = TRUE" states from the initial state and
+        // producing standalone_h = ∞ on deeply-refined abstractions.
+        for tree in &generator.comparison_trees {
+            let var_id = tree.affected_var_id;
+            if generator.domain_sizes.get(var_id).copied().unwrap_or(1) <= 1 {
+                continue;
+            }
+            let deps = tree.regular_numeric_var_dependencies(task);
+            if deps.iter().any(|d| affected_numeric_vars.contains(d)) {
+                for dep in &deps {
+                    needed_numeric_vars.insert(*dep);
                 }
             }
         }
@@ -1437,8 +1461,12 @@ fn enumerate_partition_combos(
             return Ok(());
         }
 
-        // Otherwise we need the source intervals to (a) prune via the
-        // comparison-precondition index and (b) compute cascade facts.
+        // Slow path: either the operator has a comparison-axiom precondition
+        // (we must source-side filter), or this combo's numeric changes can
+        // affect at least one comparison axiom (we must emit bit transitions
+        // into the operator). We always need the source intervals here, and
+        // we always need the target intervals to evaluate the comparison bit
+        // at the target partition combo.
         prepare_comparison_tree_inputs_for_combo_into(
             task,
             generator,
@@ -1446,51 +1474,43 @@ fn enumerate_partition_combos(
             false,
             source_intervals_buf,
         )?;
-        if op_has_comparison_preconditions
-            && let Some(index) = &generator.comparison_index
-            && op_preconditions
-                .iter()
-                .any(|pre| index.precondition_is_contradicted(pre, source_intervals_buf))
-        {
+        prepare_comparison_tree_inputs_for_combo_into(
+            task,
+            generator,
+            combo_scratch,
+            true,
+            target_intervals_buf,
+        )?;
+
+        let variants = compute_comparison_transition_facts(
+            task,
+            generator,
+            op_preconditions,
+            source_intervals_buf,
+            target_intervals_buf,
+            affected_numeric_vars,
+        )?;
+
+        // Empty Vec = combo is dead (a precondition is contradicted on this
+        // combo's source side, or every variant got pruned).
+        if variants.is_empty() {
             return Ok(());
         }
 
-        let comparison_variants = if op_has_comparison_preconditions {
-            prepare_comparison_tree_inputs_for_combo_into(
-                task,
-                generator,
-                combo_scratch,
-                true,
-                target_intervals_buf,
-            )?;
-            compute_comparison_precondition_transition_variants(
-                task,
-                generator,
-                op_preconditions,
-                combo_scratch,
-                source_intervals_buf,
-                target_intervals_buf,
-            )?
-        } else {
-            vec![ComparisonTransitionFacts::default()]
-        };
-
         // `changed_numeric_vars` is built by the recursion in ascending order
-        // with no duplicates (see fast-path debug_assert). The legacy
-        // sort+dedup here was redundant.
+        // with no duplicates (see fast-path debug_assert).
         debug_assert!(
             changed_numeric_vars.windows(2).all(|w| w[0] < w[1]),
             "changed_numeric_vars must be strictly ascending by construction"
         );
-        for comparison_facts in comparison_variants {
+
+        for comparison_facts in variants {
             let mut source_facts = source_partition_facts.clone();
             let mut target_facts = target_partition_facts.clone();
             let mut prevail_facts = comparison_facts.prevail_facts;
-            // Comparison cascade facts may introduce out-of-order entries when
-            // extended onto the (already-sorted) partition facts, so keep the
-            // sort+dedup here. `prevail_facts` originates from
-            // `compute_comparison_precondition_transition_variants` and may
-            // also be unordered.
+            // Comparison-axiom facts may introduce out-of-order entries when
+            // extended onto the (already-sorted) partition facts, so keep
+            // the sort+dedup here.
             source_facts.extend(comparison_facts.source_facts);
             target_facts.extend(comparison_facts.target_facts);
             source_facts.sort();
@@ -1620,109 +1640,182 @@ struct ComparisonTransitionFacts {
     prevail_facts: Vec<ExplicitFact>,
 }
 
-fn comparison_target_values(
-    tree: &ComparisonTree,
-    inputs: &[Interval],
-    affected_var_id: usize,
-    domain_mapping: &DomainMapping,
-) -> Vec<usize> {
-    let mut values = match tree.evaluate_interval(inputs) {
-        Some(true) => vec![domain_mapping[affected_var_id][COMPARISON_TRUE_VAL]],
-        Some(false) => vec![domain_mapping[affected_var_id][COMPARISON_FALSE_VAL]],
-        None => vec![
-            domain_mapping[affected_var_id][COMPARISON_TRUE_VAL],
-            domain_mapping[affected_var_id][COMPARISON_FALSE_VAL],
-        ],
-    };
-    values.sort_unstable();
-    values.dedup();
-    values
-}
-
-fn compute_comparison_precondition_transition_variants(
+/// Bake comparison-axiom bit transitions into the abstract operator at
+/// construction time.
+///
+/// For each comparison axiom whose regular numeric dependencies are *all*
+/// bound by this operator's numeric partition combo (i.e., the deps are in
+/// `affected_numeric_vars`), evaluate the comparison tree optimistically on
+/// the source intervals and target intervals (interval-admits-only-FALSE →
+/// `FALSE`; anything else → `TRUE`). Emit the resulting bit transition into
+/// `source_facts` + `target_facts` (when the bit changes) or `prevail_facts`
+/// (when it stays the same). Comparison axioms with unbound deps are
+/// wildcarded by the operator (no fact emitted) — their bit is preserved
+/// frame-style by the operator's hash effect.
+///
+/// Why bake the bits in: with comparison values encoded in pre/eff/prev,
+/// `op.hash_effect` carries the delta on the comparison-var dimensions, so
+/// `source_hash = target_hash + op.hash_effect` is a direct one-to-one
+/// arithmetic step at traversal time. Callers no longer need the
+/// `reset_comparison_vars_to_unknown_except` + `enumerate_states_with_evaluated_comparisons`
+/// dance to recover the source's comparison bits — that dance was the
+/// source of the factory↔saturator asymmetry that triggered the `2 > 1`
+/// invariant and h=∞ on `prob_2_x`.
+///
+/// Returns `Ok(None)` if the combo is dead — a concrete operator's
+/// comparison precondition is unsatisfiable on the source intervals
+/// (interval admits only the opposite value).
+fn compute_comparison_transition_facts(
     task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
     op_preconditions: &[ExplicitFact],
-    combo: &[(usize, usize, usize)],
     source_inputs: &[Interval],
     target_inputs: &[Interval],
+    affected_numeric_vars: &HashSet<usize>,
 ) -> Result<Vec<ComparisonTransitionFacts>> {
+    // For every comparison axiom `c` in the abstraction's hash whose
+    // numeric deps are all bound by this combo, produce one or two
+    // (src_bit, tgt_bit) variants per side: a deterministic bit when
+    // `tree.evaluate_interval(...)` returns `Some(_)`, both bits (fan-out)
+    // when it returns `None` (interval admits both values). Each operator
+    // variant carries a fixed `(c_src_abs, c_tgt_abs)` pair so the abstract
+    // operator's hash_effect is deterministic and the factory/saturator/
+    // Dijkstra can all use `state_hash + op.hash_effect` directly.
+    //
+    // The fan-out is necessary for admissibility: a concrete trajectory
+    // with c=FALSE→c=FALSE on an ambiguous partition combo must have an
+    // abstract counterpart. Without the FALSE→FALSE variant, the abstract
+    // state space disconnects c=FALSE-bit goal regions from initial states
+    // whose `near pX` axioms evaluate concretely to FALSE — producing
+    // standalone_h=∞ on deeply-refined abstractions like prob_1_11 @ 1M.
+    //
+    // For comparisons whose deps are *not* all bound, this op wildcards
+    // them (no fact in pre/eff/prev). `op.hash_effect` has zero delta on
+    // those comparison dimensions, so source and target have the same bit
+    // — frame semantics. Other operators (which change those deps) carry
+    // the bit transition.
+    //
+    // Filter by operator preconditions: if any comparison precondition
+    // contradicts the optimistic-admits check on source intervals
+    // (interval admits *only* the opposite bit), the whole combo is dead
+    // — return an empty Vec. Otherwise, each emitted variant must agree
+    // with the precondition; variants whose src_bit disagrees are dropped.
     let Some(index) = &generator.comparison_index else {
         return Ok(vec![ComparisonTransitionFacts::default()]);
     };
 
-    let mut variants = vec![ComparisonTransitionFacts::default()];
+    // Early dead-combo check on comparison preconditions whose deps are
+    // not in `affected_numeric_vars` (we won't compute a deterministic
+    // src bit for them; rely on admits-check).
     for precondition in op_preconditions {
         if !generator.derived_prop_vars.contains(&precondition.var) {
             continue;
         }
-        let Some(tree) = index.comparison_tree(precondition.var) else {
+        let var_id = precondition.var;
+        let Some(tree) = index.comparison_tree(var_id) else {
             continue;
         };
-        let source_value = match tree.evaluate_interval(source_inputs) {
-            Some(false) => return Ok(Vec::new()),
-            Some(true) | None => generator.domain_mapping[precondition.var][COMPARISON_TRUE_VAL],
+        let deps = tree.regular_numeric_var_dependencies(task);
+        if deps.iter().all(|d| affected_numeric_vars.contains(d)) {
+            continue;
+        }
+        let required_abs = generator.abstract_value(var_id, precondition.value);
+        let required_true =
+            required_abs == generator.domain_mapping[var_id][COMPARISON_TRUE_VAL];
+        let source_admits = if required_true {
+            tree.evaluate_interval_admits_true(source_inputs)
+        } else {
+            tree.evaluate_interval_admits_false(source_inputs)
         };
-        let precondition_value = generator.abstract_value(precondition.var, precondition.value);
-        if source_value != precondition_value {
+        if !source_admits {
             return Ok(Vec::new());
         }
-
-        let dependency_changed = comparison_dependency_partition_changed(task, tree, combo);
-        let target_values = if dependency_changed {
-            comparison_target_values(
-                tree,
-                target_inputs,
-                precondition.var,
-                &generator.domain_mapping,
-            )
-        } else {
-            vec![precondition_value]
-        };
-
-        let mut next = Vec::with_capacity(variants.len() * target_values.len().max(1));
-        for variant in variants {
-            if dependency_changed {
-                for &target_value in &target_values {
-                    let mut branch = variant.clone();
-                    branch
-                        .source_facts
-                        .push(ExplicitFact::new(precondition.var, precondition_value));
-                    branch
-                        .target_facts
-                        .push(ExplicitFact::new(precondition.var, target_value));
-                    next.push(branch);
-                }
-            } else {
-                let mut branch = variant;
-                branch
-                    .prevail_facts
-                    .push(ExplicitFact::new(precondition.var, precondition_value));
-                next.push(branch);
-            }
-        }
-        variants = next;
     }
 
-    Ok(variants)
+    // Build the list of comparisons whose deps are bound by this combo,
+    // and the per-comparison variant choices.
+    struct CompVariant {
+        var_id: usize,
+        src_choices: Vec<usize>, // abstract values for c at source
+        tgt_choices: Vec<usize>, // abstract values for c at target
+    }
+    let mut comp_variants: Vec<CompVariant> = Vec::new();
+    let precondition_required: HashMap<usize, usize> = op_preconditions
+        .iter()
+        .filter(|p| generator.derived_prop_vars.contains(&p.var))
+        .map(|p| (p.var, generator.abstract_value(p.var, p.value)))
+        .collect();
+
+    for tree in &generator.comparison_trees {
+        let var_id = tree.affected_var_id;
+        if generator.domain_sizes.get(var_id).copied().unwrap_or(1) <= 1 {
+            continue;
+        }
+        let deps = tree.regular_numeric_var_dependencies(task);
+        if !deps.iter().all(|d| affected_numeric_vars.contains(d)) {
+            continue;
+        }
+
+        let src_eval = tree.evaluate_interval(source_inputs);
+        let tgt_eval = tree.evaluate_interval(target_inputs);
+        let true_abs = generator.domain_mapping[var_id][COMPARISON_TRUE_VAL];
+        let false_abs = generator.domain_mapping[var_id][COMPARISON_FALSE_VAL];
+
+        let mut src_choices: Vec<usize> = match src_eval {
+            Some(true) => vec![true_abs],
+            Some(false) => vec![false_abs],
+            None => vec![true_abs, false_abs],
+        };
+        let tgt_choices: Vec<usize> = match tgt_eval {
+            Some(true) => vec![true_abs],
+            Some(false) => vec![false_abs],
+            None => vec![true_abs, false_abs],
+        };
+
+        // Enforce comparison preconditions on the source side.
+        if let Some(&required_abs) = precondition_required.get(&var_id) {
+            src_choices.retain(|&v| v == required_abs);
+            if src_choices.is_empty() {
+                return Ok(Vec::new());
+            }
+        }
+
+        comp_variants.push(CompVariant {
+            var_id,
+            src_choices,
+            tgt_choices,
+        });
+    }
+
+    // Cartesian product over comparison variants. For each comparison emit
+    // each (src_choice × tgt_choice) into its own ComparisonTransitionFacts;
+    // same bit on both sides goes into prevail_facts, different bits go
+    // into source_facts/target_facts.
+    let mut out: Vec<ComparisonTransitionFacts> =
+        vec![ComparisonTransitionFacts::default()];
+    for cv in &comp_variants {
+        let mut next: Vec<ComparisonTransitionFacts> =
+            Vec::with_capacity(out.len() * cv.src_choices.len() * cv.tgt_choices.len());
+        for facts in &out {
+            for &src_abs in &cv.src_choices {
+                for &tgt_abs in &cv.tgt_choices {
+                    let mut clone = facts.clone();
+                    if src_abs == tgt_abs {
+                        clone.prevail_facts.push(ExplicitFact::new(cv.var_id, src_abs));
+                    } else {
+                        clone.source_facts.push(ExplicitFact::new(cv.var_id, src_abs));
+                        clone.target_facts.push(ExplicitFact::new(cv.var_id, tgt_abs));
+                    }
+                    next.push(clone);
+                }
+            }
+        }
+        out = next;
+    }
+
+    Ok(out)
 }
 
-#[allow(unused)]
-fn comparison_dependency_partition_changed(
-    task: &dyn AbstractNumericTask,
-    tree: &ComparisonTree,
-    combo: &[(usize, usize, usize)],
-) -> bool {
-    tree.regular_numeric_var_dependencies(task)
-        .into_iter()
-        .any(|var_id| {
-            combo
-                .iter()
-                .any(|(changed_var_id, source_partition, target_partition)| {
-                    *changed_var_id == var_id && source_partition != target_partition
-                })
-        })
-}
 
 fn compute_hash_multipliers(
     domain_sizes: &[usize],

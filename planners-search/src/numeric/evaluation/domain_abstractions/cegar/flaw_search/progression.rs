@@ -238,8 +238,36 @@ pub fn get_progression_numeric_deviation_flaws(
 
         match direction {
             SplitDirection::Forward => {
-                let operator_increased_value = concrete_next_value > concrete_current_value;
-                let mut include_in_lower = !operator_increased_value;
+                // Deviation-flaw split rule (forward direction):
+                //
+                // Let `I` be the partition containing the concrete predecessor
+                // value `d` (= `concrete_current_value`), `K` the partition
+                // containing the concrete successor `d + c`
+                // (= `correct_abstract_value`), and `J` the partition the
+                // abstract trace went to (= `abstract_value`). A deviation
+                // flaw means `J != K`. Split `I` at `d`, putting `d` in:
+                //   - the **lower** half (`[a, d]`, `(d, b]`) if `J > K`
+                //     (the abstract overshot — restricts the spurious operator
+                //     to firing only from states strictly above `d`),
+                //   - the **upper** half (`[a, d)`, `[d, b]`) if `J < K`
+                //     (the abstract undershot — restricts the spurious operator
+                //     to firing only from states strictly below `d`).
+                //
+                // The rule is the same regardless of the sign of `c`: for
+                // increasing effects (`c > 0`) the abstract J can be too far
+                // up or too far down relative to K; same for decreasing
+                // effects (`c < 0`) — see the table in CEGAR-design notes.
+                // What matters is the index comparison `J vs K`, not the sign
+                // of `c`.
+                //
+                // Non-recurrence: after the split, `d` is in only one of the
+                // two halves; the spurious operator's source-cell condition no
+                // longer includes states reachable from `d`, so this exact
+                // (var, value=d, include_in_lower) flaw cannot recur in the
+                // next iteration unless the split was a no-op — which
+                // `can_split_numeric_var` rules out before we emit.
+                let j_above_k = abstract_value > correct_abstract_value;
+                let mut include_in_lower = j_above_k;
 
                 if can_split_numeric_var(
                     partitions,
@@ -254,6 +282,12 @@ pub fn get_progression_numeric_deviation_flaws(
                         step,
                     }));
                 } else {
+                    // The principal side is on an existing partition boundary
+                    // and cannot be split (would yield an empty cell). Try
+                    // the opposite side as a fallback. If neither side
+                    // produces a valid split, the flaw is permanently
+                    // unresolvable at this point — emit nothing so the same
+                    // flaw cannot recur infinitely in CEGAR's loop.
                     include_in_lower = !include_in_lower;
                     if can_split_numeric_var(
                         partitions,

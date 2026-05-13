@@ -23,8 +23,7 @@ use super::abstract_operator_generator::{
 use super::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::{
-    evaluate_comparison_tree_from_initial_state,
-    prepare_comparison_tree_inputs_from_abstract_state,
+    evaluate_comparison_tree_from_initial_state, prepare_comparison_tree_inputs_from_abstract_state,
     prepare_comparison_tree_inputs_from_abstract_state_into,
 };
 use super::transition_cost_partitioning::{
@@ -1460,10 +1459,6 @@ impl DomainAbstractionFactory {
             operators,
             &comparison_var_ids,
         );
-        let comparison_semantics =
-            self.comparison_semantics_by_operator(task, operators, &comparison_var_ids);
-        let comparison_preconditions =
-            comparison_preconditions_by_operator(operators, &comparison_var_ids);
 
         let mut transitions: Vec<AbstractTransition> = Vec::new();
         transitions.reserve(num_states);
@@ -1482,14 +1477,12 @@ impl DomainAbstractionFactory {
         }
         let duplicate_transition_attempts = 0usize;
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
-        let mut representative_predecessor_cache_by_op: Vec<HashMap<usize, Option<usize>>> =
-            (0..operators.len()).map(|_| HashMap::new()).collect();
         // Debug-only triple-uniqueness witness: every pushed AbstractTransition
-        // must have a unique `(abstract_op_id, source_hash, target_hash)`. The
-        // construction loop guarantees this by iterating `target_hash` × applicable
-        // `abstract_op_id` and picking exactly one representative source — making
-        // the assertion redundant in correct code, but explicit here so any future
-        // change to the loop that violates the invariant fails fast.
+        // must have a unique `(abstract_op_id, source_hash, target_hash)`. Now
+        // that comparison-axiom bits are baked into operators via pre/eff/prev
+        // facts, the source hash is fully determined by
+        // `target_hash + op.hash_effect`, so each (target, op) yields a single
+        // transition by construction.
         #[cfg(debug_assertions)]
         let mut seen_transition_triples: HashSet<(usize, usize, usize)> = HashSet::new();
 
@@ -1500,70 +1493,38 @@ impl DomainAbstractionFactory {
             match_tree.get_applicable_operator_ids(target_hash, &mut applicable_operator_ids);
             for &abstract_op_id in &applicable_operator_ids {
                 let op = &operators[abstract_op_id];
-                let semantics = &comparison_semantics[abstract_op_id];
-                let comparison_reset_vars = comparison_vars_to_reset_for_operator(
-                    semantics,
-                    &comparison_preconditions[abstract_op_id],
-                );
-                let target_base = self.reset_comparison_vars_to_unknown_except(
+                // Comparison bits live inside the operator's pre/eff facts, so
+                // `op.hash_effect` already carries the comparison-var deltas.
+                // The match-tree filter guarantees `target_hash` is consistent
+                // with `op`'s effect values (including comparison effects);
+                // applying `op.hash_effect` recovers the unique source hash.
+                let predecessor_i64 = target_hash as i64 + op.hash_effect as i64;
+                if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
+                    continue;
+                }
+                let source_hash = predecessor_i64 as usize;
+                if source_hash == target_hash {
+                    continue;
+                }
+                #[cfg(debug_assertions)]
+                {
+                    let triple = (abstract_op_id, source_hash, target_hash);
+                    debug_assert!(
+                        seen_transition_triples.insert(triple),
+                        "duplicate AbstractTransition triple {:?}",
+                        triple
+                    );
+                }
+                let transition_id = transitions.len();
+                transitions.push(AbstractTransition {
+                    transition_id,
+                    abstract_op_id,
+                    concrete_op_ids: op.concrete_op_ids.clone(),
+                    source_hash,
                     target_hash,
-                    hash_multipliers,
-                    &comparison_reset_vars,
-                    &[],
-                )?;
-                let predecessor_base_i64 = target_base as i64 + op.hash_effect as i64;
-                if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
-                    continue;
-                }
-                let predecessor_base = predecessor_base_i64 as usize;
-                let source_hash = if let Some(cached) =
-                    representative_predecessor_cache_by_op[abstract_op_id].get(&predecessor_base)
-                {
-                    *cached
-                } else {
-                    let representative = self
-                        .enumerate_states_with_evaluated_comparisons(
-                            predecessor_base,
-                            task,
-                            numeric_domain_sizes,
-                            hash_multipliers,
-                            &comparison_reset_vars,
-                            &comparison_preconditions[abstract_op_id],
-                        )?
-                        .into_iter()
-                        .max();
-                    representative_predecessor_cache_by_op[abstract_op_id]
-                        .insert(predecessor_base, representative);
-                    representative
-                };
-
-                let Some(source_hash) = source_hash else {
-                    continue;
-                };
-                {
-                    if source_hash >= num_states || source_hash == target_hash {
-                        continue;
-                    }
-                    #[cfg(debug_assertions)]
-                    {
-                        let triple = (abstract_op_id, source_hash, target_hash);
-                        debug_assert!(
-                            seen_transition_triples.insert(triple),
-                            "duplicate AbstractTransition triple {:?}",
-                            triple
-                        );
-                    }
-                    let transition_id = transitions.len();
-                    transitions.push(AbstractTransition {
-                        transition_id,
-                        abstract_op_id,
-                        concrete_op_ids: op.concrete_op_ids.clone(),
-                        source_hash,
-                        target_hash,
-                    });
-                    backward[target_hash].push(transition_id);
-                    forward[source_hash].push(transition_id);
-                }
+                });
+                backward[target_hash].push(transition_id);
+                forward[source_hash].push(transition_id);
             }
         }
 
@@ -1606,25 +1567,23 @@ impl DomainAbstractionFactory {
             }
         }
 
+        // Goal states are simply those whose hash matches the goal facts.
+        // The old self-consistency check via
+        // `enumerate_states_with_evaluated_comparisons` filtered to states
+        // whose comparison bits agreed with the (potentially ambiguous)
+        // interval evaluation — that filtering is no longer needed because
+        // operators only land transitions in states with the *optimistic*
+        // comparison bit, and the initial state hash is computed with the
+        // same optimistic semantics, so every reachable state has
+        // self-consistent bits by construction.
         let mut goal_state_hashes = Vec::new();
         for state_hash in 0..num_states {
-            if !self.is_goal_state(
+            if self.is_goal_state(
                 state_hash,
                 &goal_facts,
                 numeric_domain_sizes,
                 hash_multipliers,
             ) {
-                continue;
-            }
-            let alts = self.enumerate_states_with_evaluated_comparisons(
-                state_hash,
-                task,
-                numeric_domain_sizes,
-                hash_multipliers,
-                &comparison_var_ids,
-                &[],
-            )?;
-            if alts.contains(&state_hash) {
                 goal_state_hashes.push(state_hash);
             }
         }
@@ -1662,15 +1621,9 @@ impl DomainAbstractionFactory {
             operators,
             &comparison_var_ids,
         );
-        let comparison_semantics =
-            self.comparison_semantics_by_operator(task, operators, &comparison_var_ids);
-        let comparison_preconditions =
-            comparison_preconditions_by_operator(operators, &comparison_var_ids);
         let mut seen_operator_ids = vec![false; task.get_operators().len()];
         let mut num_seen = 0usize;
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
-        let mut representative_predecessor_cache_by_op: Vec<HashMap<usize, Option<usize>>> =
-            (0..operators.len()).map(|_| HashMap::new()).collect();
 
         for target_hash in 0..num_states {
             if target_hash % 64 == 0 {
@@ -1689,46 +1642,12 @@ impl DomainAbstractionFactory {
                 {
                     continue;
                 }
-                let semantics = &comparison_semantics[abstract_op_id];
-                let comparison_reset_vars = comparison_vars_to_reset_for_operator(
-                    semantics,
-                    &comparison_preconditions[abstract_op_id],
-                );
-                let target_base = self.reset_comparison_vars_to_unknown_except(
-                    target_hash,
-                    hash_multipliers,
-                    &comparison_reset_vars,
-                    &[],
-                )?;
-                let predecessor_base_i64 = target_base as i64 + op.hash_effect as i64;
-                if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
+                let predecessor_i64 = target_hash as i64 + op.hash_effect as i64;
+                if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
-                let predecessor_base = predecessor_base_i64 as usize;
-                let source_hash = if let Some(cached) =
-                    representative_predecessor_cache_by_op[abstract_op_id].get(&predecessor_base)
-                {
-                    *cached
-                } else {
-                    let representative = self
-                        .enumerate_states_with_evaluated_comparisons(
-                            predecessor_base,
-                            task,
-                            numeric_domain_sizes,
-                            hash_multipliers,
-                            &comparison_reset_vars,
-                            &comparison_preconditions[abstract_op_id],
-                        )?
-                        .into_iter()
-                        .max();
-                    representative_predecessor_cache_by_op[abstract_op_id]
-                        .insert(predecessor_base, representative);
-                    representative
-                };
-                let Some(source_hash) = source_hash else {
-                    continue;
-                };
-                if source_hash >= num_states || source_hash == target_hash {
+                let source_hash = predecessor_i64 as usize;
+                if source_hash == target_hash {
                     continue;
                 }
                 for &op_id in &op.concrete_op_ids {
@@ -2039,7 +1958,7 @@ impl DomainAbstractionFactory {
     #[allow(clippy::too_many_arguments)]
     fn compute_saturated_abstract_operator_costs_from_operators_inner(
         &self,
-        task: &dyn AbstractNumericTask,
+        _task: &dyn AbstractNumericTask,
         generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
         operator_costs: &[f64],
@@ -2068,14 +1987,7 @@ impl DomainAbstractionFactory {
             None
         };
         let match_tree = prebuilt_match_tree.unwrap_or_else(|| owned_match_tree.as_ref().unwrap());
-        let comparison_semantics =
-            self.comparison_semantics_by_operator(task, operators, &comparison_var_ids);
-        let comparison_preconditions =
-            comparison_preconditions_by_operator(operators, &comparison_var_ids);
         let mut saturated = vec![0.0_f64; operators.len()];
-        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
-            ComparisonEnumerationCache::default();
-        let mut cached_comparison_state_count = 0usize;
         let mut applicable_operator_ids = Vec::new();
 
         for target_hash in 0..num_states {
@@ -2090,58 +2002,30 @@ impl DomainAbstractionFactory {
             match_tree.get_applicable_operator_ids(target_hash, &mut applicable_operator_ids);
             for &abstract_op_id in &applicable_operator_ids {
                 let op = &operators[abstract_op_id];
-                let semantics = &comparison_semantics[abstract_op_id];
-                let comparison_reset_vars = comparison_vars_to_reset_for_operator(
-                    semantics,
-                    &comparison_preconditions[abstract_op_id],
-                );
-                let target_base = self.reset_comparison_vars_to_unknown_except(
-                    target_hash,
-                    generator.hash_multipliers(),
-                    &comparison_reset_vars,
-                    &[],
-                )?;
-                let predecessor_base_i64 = target_base as i64 + op.hash_effect as i64;
-                if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
+                // Comparison-axiom bits live in op.pre/eff/prev, so the source
+                // hash is fully determined by `target_hash + op.hash_effect`.
+                let predecessor_i64 = target_hash as i64 + op.hash_effect as i64;
+                if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
-                let predecessor_base = predecessor_base_i64 as usize;
-                let possible_predecessors = self
-                    .enumerate_states_with_evaluated_comparisons_cached(
-                        predecessor_base,
-                        task,
-                        generator.numeric_domain_sizes(),
-                        generator.hash_multipliers(),
-                        &comparison_reset_vars,
-                        &comparison_preconditions[abstract_op_id],
-                        &mut comparison_enumeration_cache,
-                        &mut cached_comparison_state_count,
-                    )?;
-
-                for &source_hash in possible_predecessors.states.iter() {
-                    if table.generating_op_ids.get(source_hash).copied().flatten()
-                        != Some(abstract_op_id)
-                    {
-                        continue;
-                    }
+                let source_hash = predecessor_i64 as usize;
+                if table.generating_op_ids.get(source_hash).copied().flatten()
+                    == Some(abstract_op_id)
+                {
                     let source_h = table.distances[source_hash];
-                    if !source_h.is_finite() {
-                        continue;
+                    if source_h.is_finite() {
+                        let mut needed = source_h - target_h;
+                        if needed < 0.0 {
+                            needed = 0.0;
+                        }
+                        ensure!(
+                            needed <= operator_costs[abstract_op_id] + 1e-7,
+                            "saturated abstract-operator cost exceeds residual abstract-operator cost: {} > {}",
+                            needed,
+                            operator_costs[abstract_op_id]
+                        );
+                        saturated[abstract_op_id] = saturated[abstract_op_id].max(needed);
                     }
-                    let mut needed = source_h - target_h;
-                    if needed < 0.0 && needed > -1e-9 {
-                        needed = 0.0;
-                    }
-                    if needed < 0.0 {
-                        needed = 0.0;
-                    }
-                    ensure!(
-                        needed <= operator_costs[abstract_op_id] + 1e-7,
-                        "saturated abstract-operator cost exceeds residual abstract-operator cost: {} > {}",
-                        needed,
-                        operator_costs[abstract_op_id]
-                    );
-                    saturated[abstract_op_id] = saturated[abstract_op_id].max(needed);
                 }
             }
         }
@@ -2170,10 +2054,6 @@ impl DomainAbstractionFactory {
             operators,
             &comparison_var_ids,
         );
-        let comparison_semantics =
-            self.comparison_semantics_by_operator(task, operators, &comparison_var_ids);
-        let comparison_preconditions =
-            comparison_preconditions_by_operator(operators, &comparison_var_ids);
 
         let mut applicable_operator_ids = Vec::new();
         for target_hash in 0..num_states {
@@ -2185,42 +2065,19 @@ impl DomainAbstractionFactory {
             match_tree.get_applicable_operator_ids(target_hash, &mut applicable_operator_ids);
             for &abstract_op_id in &applicable_operator_ids {
                 let op = &operators[abstract_op_id];
-                let semantics = &comparison_semantics[abstract_op_id];
-                let comparison_reset_vars = comparison_vars_to_reset_for_operator(
-                    semantics,
-                    &comparison_preconditions[abstract_op_id],
-                );
-                let target_base = self.reset_comparison_vars_to_unknown_except(
-                    target_hash,
-                    generator.hash_multipliers(),
-                    &comparison_reset_vars,
-                    &[],
-                )?;
-                let predecessor_base_i64 = target_base as i64 + op.hash_effect as i64;
-                if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
+                // Comparison-axiom bits are baked into the operator's
+                // pre/eff/prev facts, so `op.hash_effect` already includes
+                // their delta. Source hash is fully determined.
+                let predecessor_i64 = target_hash as i64 + op.hash_effect as i64;
+                if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
-                let predecessor_base = predecessor_base_i64 as usize;
-                let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
-                    predecessor_base,
-                    task,
-                    generator.numeric_domain_sizes(),
-                    generator.hash_multipliers(),
-                    &comparison_reset_vars,
-                    &comparison_preconditions[abstract_op_id],
-                )?;
-
-                for pred in possible_predecessors {
-                    if table.generating_op_ids.get(pred).copied().flatten() != Some(abstract_op_id)
-                    {
-                        continue;
-                    }
-                    let Some(&src_h) = table.distances.get(pred) else {
-                        continue;
-                    };
-                    if !src_h.is_finite() {
-                        continue;
-                    }
+                let source_hash = predecessor_i64 as usize;
+                if table.generating_op_ids.get(source_hash).copied().flatten()
+                    == Some(abstract_op_id)
+                    && let Some(&src_h) = table.distances.get(source_hash)
+                    && src_h.is_finite()
+                {
                     let needed = (src_h - target_h).max(0.0);
                     for &op_id in &op.concrete_op_ids {
                         if let Some(slot) = saturated_costs.get_mut(op_id) {
@@ -2351,6 +2208,14 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes.len()
         );
 
+        // Concrete eval of every comparison axiom on the initial concrete
+        // numeric state. This is what the heuristic's `compute_abstract_hash`
+        // does for *any* concrete state — so the initial-state hash must use
+        // the same semantics or A*'s lookup at the initial state disagrees
+        // with what CEGAR refined. Operators emit fan-out variants for both
+        // bits when the partition's interval is ambiguous, so the abstract
+        // state corresponding to the concretely-evaluated bit is always
+        // present and reachable.
         let comparison_var_ids: HashSet<usize> = comparison_var_ids.iter().copied().collect();
         let mut index: usize = 0;
         for var in 0..num_props {
@@ -2508,14 +2373,7 @@ impl DomainAbstractionFactory {
         // Invert `comparison var → [numeric var]` into `numeric var → [comparison var]`
         // so that the per-operator inner loop scales with the operator's
         // (small) changed-numeric-var set instead of the entire set of
-        // comparison vars. The previous implementation did
-        // `O(operators × comparison_vars × log changed_vars)` HashMap lookups;
-        // this is `O(operators × changed_vars × comparisons_per_var)` with
-        // pure Vec indexing.
-        // All call sites pass `self.comparison_var_ids()`, so every
-        // `tree.affected_var_id` is in `comparison_var_ids`. We don't filter
-        // here; if a future caller passes a strict subset we'll need to add
-        // it back.
+        // comparison vars.
         debug_assert!(
             self.comparison_trees
                 .iter()
@@ -2950,14 +2808,14 @@ impl DomainAbstractionFactory {
     #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
     fn compute_distances_and_generating_ops(
         &self,
-        task: &dyn AbstractNumericTask,
+        _task: &dyn AbstractNumericTask,
         operators: &[AbstractOperator],
         match_tree: &MatchTree,
         goal_facts: &[ExplicitFact],
         _initial_state_hash: usize,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
-        comparison_var_ids: &[usize],
+        _comparison_var_ids: &[usize],
         num_states: usize,
     ) -> Result<(Vec<f64>, Vec<Option<usize>>)> {
         let num_props = self.domain_sizes.len();
@@ -2979,41 +2837,25 @@ impl DomainAbstractionFactory {
         core_vars.dedup();
 
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
-            ComparisonEnumerationCache::default();
-        let mut cached_comparison_state_count = 0usize;
 
-        // Initialize with feasible goal states.
+        // Initialize with goal states. With comparison-axiom bits baked into
+        // every operator's pre/eff/prev, the old self-consistency filter via
+        // `enumerate_states_with_evaluated_comparisons_cached` is moot: every
+        // reachable state already has the optimistic bits its partition
+        // implies (the operators only land in such states, and the initial
+        // state hash is computed with the same optimistic semantics).
         for state_hash in 0..num_states {
-            if !self.is_goal_state(
+            if self.is_goal_state(
                 state_hash,
                 goal_facts,
                 numeric_domain_sizes,
                 hash_multipliers,
             ) {
-                continue;
+                distances[state_hash] = 0.0;
+                heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
             }
-            let alts = self.enumerate_states_with_evaluated_comparisons_cached(
-                state_hash,
-                task,
-                numeric_domain_sizes,
-                hash_multipliers,
-                comparison_var_ids,
-                &[],
-                &mut comparison_enumeration_cache,
-                &mut cached_comparison_state_count,
-            )?;
-            if !alts.states.contains(&state_hash) {
-                continue;
-            }
-            distances[state_hash] = 0.0;
-            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
         }
 
-        let comparison_semantics =
-            self.comparison_semantics_by_operator(task, operators, comparison_var_ids);
-        let comparison_preconditions =
-            comparison_preconditions_by_operator(operators, comparison_var_ids);
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
         while let Some((Reverse(d), state_hash)) = heap.pop() {
             let d = d.into_inner();
@@ -3024,53 +2866,30 @@ impl DomainAbstractionFactory {
             match_tree.get_applicable_operator_ids(state_hash, &mut applicable_operator_ids);
             for &op_id in &applicable_operator_ids {
                 let op = &operators[op_id];
-                let semantics = &comparison_semantics[op_id];
                 ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
                 let alternative_cost = d + op.cost;
-                let comparison_reset_vars = comparison_vars_to_reset_for_operator(
-                    semantics,
-                    &comparison_preconditions[op_id],
-                );
-                let target_base = self.reset_comparison_vars_to_unknown_except(
-                    state_hash,
-                    hash_multipliers,
-                    &comparison_reset_vars,
-                    &[],
-                )?;
-                let predecessor_base_i64 = target_base as i64 + op.hash_effect as i64;
-                if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
+                // Backward Dijkstra: relax (predecessor -> state_hash) via op.
+                // With comparison bits in pre/eff/prev, `op.hash_effect`
+                // already accounts for every variable's source-vs-target
+                // delta, so the unique predecessor is just
+                // `state_hash + op.hash_effect`.
+                let predecessor_i64 = state_hash as i64 + op.hash_effect as i64;
+                if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
-                let predecessor_base = predecessor_base_i64 as usize;
-                let possible_predecessors = self
-                    .enumerate_states_with_evaluated_comparisons_cached(
-                        predecessor_base,
-                        task,
-                        numeric_domain_sizes,
-                        hash_multipliers,
-                        &comparison_reset_vars,
-                        &comparison_preconditions[op_id],
-                        &mut comparison_enumeration_cache,
-                        &mut cached_comparison_state_count,
-                    )?;
+                let pred = predecessor_i64 as usize;
+                debug_assert!(pred < num_states, "predecessor hash does not fit usize");
 
-                let representative_predecessor = possible_predecessors.representative;
-                for pred in possible_predecessors.states.iter().copied() {
-                    debug_assert!(pred < num_states, "predecessor hash does not fit usize");
-
-                    if alternative_cost + 1e-12 < distances[pred] {
-                        distances[pred] = alternative_cost;
-                        generating_op_ids[pred] = Some(op_id);
-                        if Some(pred) == representative_predecessor {
-                            heap.push((
-                                Reverse(
-                                    NotNan::new(alternative_cost)
-                                        .context("alternative cost is NaN")?,
-                                ),
-                                pred,
-                            ));
-                        }
-                    }
+                if alternative_cost + 1e-12 < distances[pred] {
+                    distances[pred] = alternative_cost;
+                    generating_op_ids[pred] = Some(op_id);
+                    heap.push((
+                        Reverse(
+                            NotNan::new(alternative_cost)
+                                .context("alternative cost is NaN")?,
+                        ),
+                        pred,
+                    ));
                 }
             }
         }

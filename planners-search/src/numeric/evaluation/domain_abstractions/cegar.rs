@@ -33,7 +33,7 @@ use crate::numeric::evaluation::domain_abstractions::utils::{
 
 use super::abstract_operator_generator::DomainMapping;
 use super::comparison_expression::Interval;
-use super::domain_abstraction::NumericPartitions;
+use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
 use super::domain_abstraction_heuristic::{
     COMPARISON_FALSE_VAL, COMPARISON_TRUE_VAL, COMPARISON_UNKNOWN_VAL,
@@ -1133,6 +1133,53 @@ fn apply_initial_goal_splits(
         }
         if let Some(slot) = domain_sizes.get_mut(var_id) {
             *slot = new_domain_size;
+        }
+    }
+
+    // For every goal-side comparison-axiom prop var (the conditions of the
+    // goal axiom, expanded by `goal_variable_values`), also seed numeric
+    // splits at the initial concrete numeric value of each of the axiom's
+    // regular numeric dependencies. Without this, the initial abstraction
+    // contains the comparison-axiom prop vars at binary resolution but the
+    // underlying numerics are unrefined — so no operator can flip the
+    // comparison bit, and the abstract initial state cannot reach the goal.
+    // CEGAR then bails with "abstract dead end at iteration 1" before it
+    // could refine the numeric to enable reachability.
+    if let Ok(index) = ComparisonAxiomIndex::from_task(task) {
+        let init_numeric = task.get_initial_numeric_state_values();
+        for fact in goal_variable_values(task) {
+            let Some(tree) = index.comparison_tree(fact.var) else {
+                continue;
+            };
+            for numeric_var_id in tree.regular_numeric_var_dependencies(task) {
+                if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
+                    continue;
+                }
+                let Some(numeric_var) = task.numeric_variables().get(numeric_var_id) else {
+                    continue;
+                };
+                if numeric_var.get_type() != &NumericType::Regular {
+                    continue;
+                }
+                if !can_refine_numeric_variable(
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    numeric_var_id,
+                    initial_max_abstraction_size,
+                ) {
+                    continue;
+                }
+                let Some(&init_value) = init_numeric.get(numeric_var_id) else {
+                    continue;
+                };
+                let include_in_lower = rng.gen_range(0..2) == 0;
+                if partitions.split_at(numeric_var_id, init_value, include_in_lower)
+                    && let Some(parts) = partitions.partitions(numeric_var_id)
+                    && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id)
+                {
+                    *slot = parts.len();
+                }
+            }
         }
     }
 }

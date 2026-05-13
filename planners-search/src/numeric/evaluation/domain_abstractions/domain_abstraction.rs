@@ -61,6 +61,18 @@ impl NumericPartitions {
             .map(|v| v.as_slice())
     }
 
+    /// Equispaced-partition descriptor for `numeric_var_id`, if its current
+    /// layout fits the `EquispacedPartitioning` shape.
+    ///
+    /// Currently unused: the previous fast-path consumer was the heuristic's
+    /// `numeric_partition_for_projected_value`, which fell out of sync with
+    /// the tolerant `partition_for_value` on values that lie *exactly* on a
+    /// partition boundary (the cast-based lookup ignores the per-interval
+    /// closed/open flags, so boundary-aligned values — i.e., every CEGAR
+    /// split point — could land in the wrong partition). Kept because the
+    /// descriptor is still maintained on `split_at`; a future fix that makes
+    /// `EquispacedPartitioning::lookup` boundary-aware can re-enable it.
+    #[allow(dead_code)]
     pub(crate) fn equispaced(&self, numeric_var_id: usize) -> Option<&EquispacedPartitioning> {
         self.equispaced_by_numeric_var
             .get(numeric_var_id)
@@ -202,11 +214,16 @@ impl ComparisonAxiomIndex {
         self.trees.get(tree_idx)
     }
 
-    /// Returns `true` if the given propositional precondition is *definitively* contradicted
-    /// by evaluating its comparison axiom over the provided numeric intervals.
+    /// Returns `true` if the given propositional precondition cannot be
+    /// satisfied by any concrete numeric assignment in `numeric_intervals`.
     ///
-    /// This mirrors numeric-fd's “optimistic filtering”: reject only if definite contradiction;
-    /// unknown (`None`) never contradicts.
+    /// Uses the optimistic interval semantics that the rest of operator
+    /// construction relies on: a `TRUE` precondition is contradicted only
+    /// when the interval admits no value making the comparison true
+    /// (`evaluate_interval == Some(false)`); a `FALSE` precondition is
+    /// contradicted only when the interval admits no value making the
+    /// comparison false (`evaluate_interval == Some(true)`). Concrete
+    /// axiom values are recomputed per state during heuristic evaluation.
     pub fn precondition_is_contradicted(
         &self,
         pre: &ExplicitFact,
@@ -217,14 +234,10 @@ impl ComparisonAxiomIndex {
             return false;
         };
 
-        let required_truth = match pre.value {
-            0 => Some(true),
-            1 => Some(false),
-            _ => None,
-        };
-        match tree.evaluate_interval(numeric_intervals) {
-            Some(actual_truth) => required_truth.is_some_and(|truth| actual_truth != truth),
-            None => false,
+        match pre.value {
+            0 => !tree.evaluate_interval_admits_true(numeric_intervals),
+            1 => !tree.evaluate_interval_admits_false(numeric_intervals),
+            _ => false,
         }
     }
 }

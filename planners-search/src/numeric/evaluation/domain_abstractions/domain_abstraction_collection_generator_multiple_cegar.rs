@@ -537,15 +537,13 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         goal_count: usize,
         iteration: usize,
     ) -> bool {
-        if self.uses_full_goal_task(goal_count, iteration) {
-            return false;
-        }
-        let many_goal_task = goal_count >= 6;
-        if many_goal_task {
-            iteration % 3 != 1
-        } else {
-            iteration % 3 == 0
-        }
+        // Target-centered (backward) splits place split points at the
+        // boundaries of the regressed goal-required interval, which is the
+        // natural granularity for goal-focused single-fact abstractions in
+        // the complementary portfolio. Every non-full-goal abstraction uses
+        // target-centered; only the full-goal-task (iteration 1) uses
+        // forward/progression splits.
+        !self.uses_full_goal_task(goal_count, iteration)
     }
 
     fn backward_goal_seed_splits(&self, task: &dyn AbstractNumericTask) -> Vec<InitialSeedSplit> {

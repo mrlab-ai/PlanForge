@@ -927,6 +927,31 @@ impl ComparisonTree {
         self.op.apply_interval(lhs, rhs)
     }
 
+    /// Optimistic interval evaluation for abstract operator construction.
+    ///
+    /// Returns `true` iff **some** concrete numeric assignment that maps
+    /// into `inputs` would make the comparison hold. Specifically:
+    /// - strict `Some(true)`  → `true`  (every value satisfies, so some does)
+    /// - strict `Some(false)` → `false` (no value satisfies)
+    /// - strict `None` (mixed) → `true` (at least one value satisfies)
+    ///
+    /// This is the "TRUE is possible" predicate used to decide whether an
+    /// abstract operator's comparison-axiom precondition is satisfiable on
+    /// a given partition interval. Concrete axiom values are still
+    /// recomputed per state during heuristic evaluation, so admissibility
+    /// is preserved.
+    pub fn evaluate_interval_admits_true(&self, inputs: &[Interval]) -> bool {
+        self.evaluate_interval(inputs) != Some(false)
+    }
+
+    /// Companion of `evaluate_interval_admits_true`: returns `true` iff
+    /// some concrete numeric assignment in `inputs` would make the
+    /// comparison evaluate to FALSE. Used to decide whether a `FALSE`
+    /// precondition is satisfiable.
+    pub fn evaluate_interval_admits_false(&self, inputs: &[Interval]) -> bool {
+        self.evaluate_interval(inputs) != Some(true)
+    }
+
     pub fn evaluate_interval_and_fill(&self, intervals: &mut [Interval]) -> Option<bool> {
         let lhs = self.eval_node_interval_and_fill(self.left_root, intervals);
         let rhs = self.eval_node_interval_and_fill(self.right_root, intervals);
