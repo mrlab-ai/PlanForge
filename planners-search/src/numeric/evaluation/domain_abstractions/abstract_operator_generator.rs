@@ -14,7 +14,7 @@ use planners_sas::numeric::numeric_task::{
 };
 use planners_sas::numeric::utils::float_tolerance;
 
-use super::comparison_expression::{ArithOp, CompOp, ComparisonTree, Interval};
+use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees;
 use super::utils;
@@ -1758,134 +1758,6 @@ struct ComparisonTransitionFacts {
 /// Returns `Ok(None)` if the combo is dead — a concrete operator's
 /// comparison precondition is unsatisfiable on the source intervals
 /// (interval admits only the opposite value).
-/// Returns `true` iff variant `(b_s, b_t)` for comparison `c: lhs op_c rhs`
-/// has a non-empty concrete preimage in `f_src = lhs(src) - rhs(src)` after
-/// the operator's deterministic shift on `f`.
-///
-/// Domain-agnostic threshold-aware filter that eliminates phantom shortcuts:
-/// for half-space comparisons (≤, <, ≥, >), `f` is linear in numeric vars
-/// and the operator's net effect on `f` is the constant shift
-/// Δ_f = f_tgt − f_src (taken on either endpoint of `f_src` — equal for
-/// linear shifts). The joint constraint `c(x)=b_s ∧ c(x+Δ)=b_t` reduces to
-/// `f(x) ∈ b_s_region ∩ (b_t_region − Δ_f)`. We check that this set
-/// overlaps `f_src`.
-///
-/// For non-linear comparisons (e.g. `≠`, `=`, products of vars), the shift
-/// isn't constant and the joint constraint can't be reduced to a 1-D
-/// interval; we conservatively admit the variant (admissible but possibly
-/// looser).
-fn variant_has_concrete_preimage(
-    op_c: CompOp,
-    f_src: Interval,
-    f_tgt: Interval,
-    b_s_is_true: bool,
-    b_t_is_true: bool,
-) -> bool {
-    if f_src.is_empty() || f_tgt.is_empty() {
-        return false;
-    }
-    // Derive Δ_f from the two interval endpoints. For a linear shift, both
-    // .lower and .upper shift by the same amount; if they disagree (non-
-    // linear comparison or partition slack), we fall back to admit
-    // conservatively (admissible but possibly looser).
-    let delta_lower = f_tgt.lower - f_src.lower;
-    let delta_upper = f_tgt.upper - f_src.upper;
-    let linear_shift = (delta_lower - delta_upper).abs() < 1e-9
-        && delta_lower.is_finite()
-        && delta_upper.is_finite();
-    if !linear_shift {
-        return true;
-    }
-    let delta_f = delta_lower;
-
-    // Translate `c=b at src` and `c=b at tgt` into a set of disjoint
-    // intervals on `f`. `c=b at tgt` means c(x+Δ)=b iff f(x+Δ) op_c 0 iff
-    // f(x) op_c -Δ_f — i.e., the target region is the source region shifted
-    // by −Δ_f along the `f` axis.
-    let src_region = f_region_for_bit(op_c, b_s_is_true, 0.0);
-    let tgt_region = f_region_for_bit(op_c, b_t_is_true, -delta_f);
-
-    // Variant is realizable iff f_src ∩ src_region ∩ tgt_region is
-    // non-empty. Iterate over the (at most 2 × 2 = 4) interval pairs.
-    for &s in &src_region {
-        for &t in &tgt_region {
-            if let Some(i) = interval_intersect(s, t)
-                && let Some(j) = interval_intersect(i, f_src)
-                && !j.is_empty()
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// `c=b` region on `f` for comparison `c: lhs op rhs` (so `f = lhs - rhs`,
-/// `c=T iff f op 0`). Returns 1–2 disjoint intervals, optionally translated
-/// along `f` by `shift` (used to convert a target-side region to source-side
-/// coordinates via `f → f - shift`, which equals the target region's
-/// pre-image under the operator's net Δ_f shift on `f`).
-fn f_region_for_bit(op_c: CompOp, b_is_true: bool, shift: f64) -> Vec<Interval> {
-    use CompOp::*;
-    let neg_inf = f64::NEG_INFINITY;
-    let pos_inf = f64::INFINITY;
-    let mk = |lo: f64, hi: f64, lc: bool, hc: bool| -> Interval {
-        Interval::new(lo + shift, hi + shift, lc, hc)
-    };
-    match (op_c, b_is_true) {
-        // ≤: T iff f ≤ 0; F iff f > 0.
-        (Le, true) => vec![mk(neg_inf, 0.0, false, true)],
-        (Le, false) => vec![mk(0.0, pos_inf, false, false)],
-        // <: T iff f < 0; F iff f ≥ 0.
-        (Lt, true) => vec![mk(neg_inf, 0.0, false, false)],
-        (Lt, false) => vec![mk(0.0, pos_inf, true, false)],
-        // ≥: T iff f ≥ 0; F iff f < 0.
-        (Ge, true) => vec![mk(0.0, pos_inf, true, false)],
-        (Ge, false) => vec![mk(neg_inf, 0.0, false, false)],
-        // >: T iff f > 0; F iff f ≤ 0.
-        (Gt, true) => vec![mk(0.0, pos_inf, false, false)],
-        (Gt, false) => vec![mk(neg_inf, 0.0, false, true)],
-        // =: T iff f = 0; F iff f ≠ 0 (two half-rays).
-        (Eq, true) => vec![mk(0.0, 0.0, true, true)],
-        (Eq, false) => vec![
-            mk(neg_inf, 0.0, false, false),
-            mk(0.0, pos_inf, false, false),
-        ],
-        // ≠: T iff f ≠ 0; F iff f = 0.
-        (Ne, true) => vec![
-            mk(neg_inf, 0.0, false, false),
-            mk(0.0, pos_inf, false, false),
-        ],
-        (Ne, false) => vec![mk(0.0, 0.0, true, true)],
-    }
-}
-
-fn interval_intersect(a: Interval, b: Interval) -> Option<Interval> {
-    if a.is_empty() || b.is_empty() {
-        return None;
-    }
-    let (lo, lo_closed) = if a.lower > b.lower {
-        (a.lower, a.lower_closed)
-    } else if b.lower > a.lower {
-        (b.lower, b.lower_closed)
-    } else {
-        (a.lower, a.lower_closed && b.lower_closed)
-    };
-    let (hi, hi_closed) = if a.upper < b.upper {
-        (a.upper, a.upper_closed)
-    } else if b.upper < a.upper {
-        (b.upper, b.upper_closed)
-    } else {
-        (a.upper, a.upper_closed && b.upper_closed)
-    };
-    let candidate = Interval::new(lo, hi, lo_closed, hi_closed);
-    if candidate.is_empty() {
-        None
-    } else {
-        Some(candidate)
-    }
-}
-
 fn compute_comparison_transition_facts(
     task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
