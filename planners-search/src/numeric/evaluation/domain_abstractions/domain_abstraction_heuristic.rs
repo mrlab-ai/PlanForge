@@ -547,8 +547,11 @@ impl DomainAbstractionHeuristic {
         // UNKNOWN} per c, never F; and d(P, c=UNKNOWN) ≤ d(P, c=T) by the
         // forward axiom UNKNOWN → T. Probing at the UNKNOWN representative
         // is therefore an admissible lower bound on the concrete-bit
-        // distance, no matter whether α(s).c is T or F. For non-comparison
-        // propositional vars, use the concrete value as before.
+        // distance, no matter whether α(s).c is T or F.
+        //
+        // CEGAR may collapse the 3-valued comparison domain to size 2 in
+        // some abstractions, so use `mapping[var][CONCRETE_UNKNOWN]` to get
+        // the active abstract value rather than the literal concrete 2.
         let _ = prop_has_resolved_comparisons;
         for &var in &self.active_prop_vars {
             let is_comparison_var = self
@@ -558,7 +561,16 @@ impl DomainAbstractionHeuristic {
                 .flatten()
                 .is_some();
             let abs_val = if is_comparison_var {
-                COMPARISON_UNKNOWN_VAL
+                let var_mapping = mapping.get(var).ok_or_else(|| {
+                    EvaluationError::InvalidState(format!(
+                        "comparison var {var} missing in domain mapping"
+                    ))
+                })?;
+                *var_mapping.get(COMPARISON_UNKNOWN_VAL).ok_or_else(|| {
+                    EvaluationError::InvalidState(format!(
+                        "comparison var {var} domain mapping has no UNKNOWN slot: {var_mapping:?}"
+                    ))
+                })?
             } else {
                 let concrete_val = resolved_propositional_value(
                     var,

@@ -2215,16 +2215,23 @@ impl DomainAbstractionFactory {
         // unidirectional axiom edge UNKNOWN → definite. Probing at
         // UNKNOWN is an admissible lower bound regardless of α(init)'s
         // concrete c bits.
+        //
+        // Use `domain_mapping[var][COMPARISON_UNKNOWN_VAL]` rather than the
+        // raw concrete UNKNOWN value: CEGAR may have collapsed the
+        // 3-valued comparison domain to size 2 (TRUE separate, FALSE+UNKNOWN
+        // merged) — see `apply_initial_goal_splits`. The mapping carries the
+        // active abstract value for UNKNOWN regardless of size.
         let comparison_var_ids: HashSet<usize> = comparison_var_ids.iter().copied().collect();
         let mut index: usize = 0;
         for var in 0..num_props {
             let mult = hash_multipliers[var];
             let abs_val = if comparison_var_ids.contains(&var) {
-                debug_assert!(
-                    self.domain_sizes[var] >= 3,
-                    "comparison var {var} must have a 3-valued domain (T/F/UNKNOWN)"
+                let mapping = &self.domain_mapping[var];
+                ensure!(
+                    mapping.len() > COMPARISON_UNKNOWN_VAL,
+                    "comparison var {var} domain_mapping missing UNKNOWN slot: {mapping:?}"
                 );
-                COMPARISON_UNKNOWN_VAL
+                mapping[COMPARISON_UNKNOWN_VAL]
             } else {
                 *self.domain_mapping[var]
                     .get(prop_init[var])
@@ -2951,25 +2958,26 @@ impl DomainAbstractionFactory {
                     continue;
                 }
                 let mut pred = predecessor_i64 as usize;
+                // Mask each affected c's bit on the predecessor hash to the
+                // abstract UNKNOWN value. Use `domain_mapping[c][CONCRETE_UNKNOWN]`
+                // because CEGAR may collapse the 3-valued comparison domain
+                // to size 2 — see `apply_initial_goal_splits`.
                 for &c_var in &op.affected_comparison_ids {
                     let mult = hash_multipliers[c_var];
                     let size = self.domain_sizes[c_var];
-                    debug_assert!(
-                        size >= 3,
-                        "affected comparison var must have 3-valued domain (T/F/UNKNOWN)"
+                    let mapping = &self.domain_mapping[c_var];
+                    ensure!(
+                        mapping.len() > super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL,
+                        "affected comparison var {c_var} has no UNKNOWN mapping: {mapping:?}"
                     );
+                    let unknown_abs = mapping[super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL];
                     let current_bit = (pred / mult) % size;
-                    if current_bit
-                        != super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL
-                    {
-                        let delta = (super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL
-                            as isize
-                            - current_bit as isize)
-                            * mult as isize;
+                    if current_bit != unknown_abs {
+                        let delta = (unknown_abs as isize - current_bit as isize) * mult as isize;
                         let masked = pred as isize + delta;
                         debug_assert!(
                             masked >= 0 && (masked as usize) < num_states,
-                            "predecessor hash out of range after UNKNOWN mask: c_var={c_var}"
+                            "predecessor hash out of range after UNKNOWN mask: c_var={c_var}, current_bit={current_bit}, unknown_abs={unknown_abs}"
                         );
                         pred = masked as usize;
                     }
