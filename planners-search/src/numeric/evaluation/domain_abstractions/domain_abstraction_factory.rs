@@ -2656,40 +2656,84 @@ impl DomainAbstractionFactory {
                 "generating operator {op_id} is not applicable in abstract state {current_hash}"
             );
 
-            // Recompute successors on-the-fly like numeric-fd.
+            // Smart plan extraction.
+            //
+            //   backward step: predecessor = state + hash_effect, then mask
+            //                  op.affected_comparison_ids → UNKNOWN.
+            //
+            // The backward mask conflates source states differing only in
+            // their affected-c bits (each ∈ {T, UNKNOWN} per the
+            // backward-reachable invariant) into one predecessor entry
+            // d[mask(state + hash_effect)] = d[state] + cost. To extract a
+            // forward plan we must enumerate the 2^|affected_c| candidates
+            // (each bit either T or UNKNOWN) and pick the one whose stored
+            // distance satisfies the cost relation.
+            let _ = semantics;
             let candidate_hash_effect = op.hash_effect;
-            let base_successor = (current_hash as i32).wrapping_sub(candidate_hash_effect) as usize;
-            let comparison_reset_vars =
-                comparison_vars_to_reset_for_operator(semantics, &comparison_preconditions[op_id]);
-
-            let base_successor = self.reset_comparison_vars_to_unknown_except(
-                base_successor,
-                hash_multipliers,
-                &comparison_reset_vars,
-                &[],
-            )?;
-
-            let possible_successors = self.enumerate_states_with_evaluated_comparisons(
-                base_successor,
-                task,
-                numeric_domain_sizes,
-                hash_multipliers,
-                &comparison_reset_vars,
-                &[],
-            )?;
-
+            let base_successor =
+                (current_hash as i32).wrapping_sub(candidate_hash_effect) as usize;
             let cur_d = dist[current_hash];
             ensure!(cur_d.is_finite(), "current distance must be finite");
+
+            // Precompute per-affected-c (multiplier, T-abs, UNKNOWN-abs)
+            // and the current bit value in `base_successor` (which inherited
+            // current_hash's c bits since hash_effect has 0 contribution on
+            // affected dims).
+            let mut affected_meta: Vec<(usize, usize, usize, usize)> = Vec::with_capacity(
+                op.affected_comparison_ids.len(),
+            );
+            for &c_var in &op.affected_comparison_ids {
+                let mult = hash_multipliers[c_var];
+                let size = domain_sizes[c_var];
+                let mapping = generator.domain_mapping().get(c_var).with_context(|| {
+                    format!("missing domain mapping for affected comparison var {c_var}")
+                })?;
+                ensure!(
+                    mapping.len() > super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL,
+                    "comparison var {c_var} has no UNKNOWN slot in domain_mapping"
+                );
+                let unknown_abs =
+                    mapping[super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL];
+                let true_abs = mapping[super::domain_abstraction_heuristic::COMPARISON_TRUE_VAL];
+                let current_bit = (base_successor / mult) % size;
+                affected_meta.push((mult, current_bit, true_abs, unknown_abs));
+            }
+            ensure!(
+                affected_meta.len() < 24,
+                "plan-extraction enumeration would exceed 2^24 candidates (|affected|={})",
+                affected_meta.len()
+            );
+
+            // Enumerate 2^|affected| bit assignments. Skip seen / out-of-range
+            // candidates. Pick the one whose distance satisfies the cost
+            // relation; tie-break by largest hash (matches numeric-fd parity).
             let mut chosen_successor: Option<usize> = None;
             let mut lowest_so_far = cur_d;
-            for &cand in &possible_successors {
+            let n_assignments = 1usize << affected_meta.len();
+            for assignment in 0..n_assignments {
+                let mut cand = base_successor;
+                for (i, &(mult, current_bit, true_abs, unknown_abs)) in
+                    affected_meta.iter().enumerate()
+                {
+                    let target_abs = if (assignment >> i) & 1 == 0 {
+                        true_abs
+                    } else {
+                        unknown_abs
+                    };
+                    if current_bit != target_abs {
+                        let delta = (target_abs as isize - current_bit as isize) * mult as isize;
+                        let masked = cand as isize + delta;
+                        ensure!(
+                            masked >= 0 && (masked as usize) < dist.len(),
+                            "plan-extraction enumeration produced out-of-range candidate"
+                        );
+                        cand = masked as usize;
+                    }
+                }
                 if cand == current_hash {
                     continue;
                 }
                 if seen_states.contains(&cand) {
-                    continue;
-                }
-                if cand >= dist.len() {
                     continue;
                 }
                 let cd = dist[cand];
@@ -2705,7 +2749,9 @@ impl DomainAbstractionFactory {
             }
             let successor_hash = chosen_successor.with_context(|| {
                 format!(
-                    "no successor satisfies dist equation for state {current_hash} with op {op_id}"
+                    "plan-extraction: no successor satisfies dist equation for state {current_hash} with op {op_id} (cur_d={cur_d}, op.cost={}, |affected|={})",
+                    op.cost,
+                    op.affected_comparison_ids.len()
                 )
             })?;
             ensure!(
@@ -2714,12 +2760,16 @@ impl DomainAbstractionFactory {
             );
             ensure!(
                 (lowest_so_far - cur_d + op.cost).abs() <= 1e-6,
-                "chosen successor violates C++ plan-extraction distance relation"
+                "chosen successor violates plan-extraction distance relation"
             );
+            let base_successor = successor_hash;
             let required_cost = op.cost;
 
-            // Collect cheapest concrete ops like numeric-fd does: from the first
-            // matching abstract operator group only.
+            // Collect cheapest concrete ops. For smart-design ops, the
+            // candidate connects (current_hash → base_successor) iff
+            //   mask_unknown(base_successor + cand.hash_effect,
+            //                cand.affected_comparison_ids) == current_hash
+            // (mirror of the backward Dijkstra step).
             let mut step: Vec<usize> = Vec::new();
             let mut applicable_operator_ids: Vec<usize> = Vec::new();
             match_tree.get_applicable_operator_ids(base_successor, &mut applicable_operator_ids);
@@ -2727,7 +2777,7 @@ impl DomainAbstractionFactory {
                 let cand_op = operators
                     .get(cand_op_id)
                     .with_context(|| format!("candidate op id out of bounds: {cand_op_id}"))?;
-                let cand_semantics = &comparison_semantics[cand_op_id];
+                let _ = comparison_semantics;
                 if (cand_op.cost - required_cost).abs() > 1e-9 {
                     continue;
                 }
@@ -2738,20 +2788,34 @@ impl DomainAbstractionFactory {
                 )? {
                     continue;
                 }
-                let base_predecessor =
+                let mut cand_pred =
                     (base_successor as i32).wrapping_add(cand_op.hash_effect) as usize;
-                let possible_predecessors = self.enumerate_states_with_evaluated_comparisons(
-                    base_predecessor,
-                    task,
-                    numeric_domain_sizes,
-                    hash_multipliers,
-                    &comparison_vars_to_reset_for_operator(
-                        cand_semantics,
-                        &comparison_preconditions[cand_op_id],
-                    ),
-                    &comparison_preconditions[cand_op_id],
-                )?;
-                if possible_predecessors.contains(&current_hash) {
+                for &c_var in &cand_op.affected_comparison_ids {
+                    let mult = hash_multipliers[c_var];
+                    let size = domain_sizes[c_var];
+                    let mapping = generator.domain_mapping().get(c_var).with_context(|| {
+                        format!("missing domain mapping for affected comparison var {c_var}")
+                    })?;
+                    ensure!(
+                        mapping.len()
+                            > super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL,
+                        "comparison var {c_var} has no UNKNOWN slot in domain_mapping"
+                    );
+                    let unknown_abs =
+                        mapping[super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL];
+                    let current_bit = (cand_pred / mult) % size;
+                    if current_bit != unknown_abs {
+                        let delta =
+                            (unknown_abs as isize - current_bit as isize) * mult as isize;
+                        let masked = cand_pred as isize + delta;
+                        ensure!(
+                            masked >= 0 && (masked as usize) < dist.len(),
+                            "concrete-step extraction: predecessor hash out of range after UNKNOWN mask"
+                        );
+                        cand_pred = masked as usize;
+                    }
+                }
+                if cand_pred == current_hash {
                     step = cand_op.concrete_op_ids.clone();
                     step.sort_unstable();
                     step.dedup();
