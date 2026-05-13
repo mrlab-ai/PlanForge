@@ -58,16 +58,9 @@ fn resolved_propositional_value_recomputes_comparison_axioms_from_numeric_state(
 
     let tree_by_var = vec![Some(0)];
     let tree_lens = vec![comparison_tree_numeric_len(&tree)];
-    let concrete_val = resolved_propositional_value(
-        0,
-        2,
-        &[2.0, 1.0],
-        &[tree],
-        &tree_by_var,
-        &tree_lens,
-        None,
-    )
-    .unwrap();
+    let concrete_val =
+        resolved_propositional_value(0, 2, &[2.0, 1.0], &[tree], &tree_by_var, &tree_lens, None)
+            .unwrap();
 
     assert_eq!(concrete_val, COMPARISON_TRUE_VAL);
 }

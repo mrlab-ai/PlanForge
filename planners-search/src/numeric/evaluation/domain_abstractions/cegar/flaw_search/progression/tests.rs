@@ -63,7 +63,8 @@ fn progression_flaws_find_precondition_violation() {
     // Make the stored wildcard plan invalid in the concrete initial state.
     task.set_initial_propositional_state_values(vec![1]);
 
-    let flaws = get_progression_flaws(&task, factory.partitions(), &plan, SplitDirection::Forward).unwrap();
+    let flaws =
+        get_progression_flaws(&task, factory.partitions(), &plan, SplitDirection::Forward).unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 0)),
@@ -125,7 +126,8 @@ fn progression_flaws_find_goal_violation() {
 
     task.set_initial_propositional_state_values(vec![0]);
 
-    let flaws = get_progression_flaws(&task, factory.partitions(), &plan, SplitDirection::Forward).unwrap();
+    let flaws =
+        get_progression_flaws(&task, factory.partitions(), &plan, SplitDirection::Forward).unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 2)),

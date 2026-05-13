@@ -58,13 +58,11 @@ const COMPARISON_ENUMERATION_CACHE_MAX_STATES: usize = 10_000_000;
 /// table is a `HashMap<u64, Vec<usize>>` with an identity hasher: lookup is
 /// a single load + probe, no allocation, no hash function.
 /// Cache value for `enumerate_states_with_evaluated_comparisons_cached`.
-/// `states` is the enumerated predecessor set; `representative` is the
-/// largest entry, precomputed at insertion so the Dijkstra inner loop
-/// doesn't recompute it on every heap relaxation.
+/// `states` is the full enumerated predecessor set. The C++ design relaxes
+/// every predecessor, not only a representative.
 #[derive(Clone)]
 struct CachedEnumeration {
     states: Arc<[usize]>,
-    representative: Option<usize>,
 }
 
 type ComparisonEnumerationCache = HashMap<
@@ -134,11 +132,6 @@ struct MatchTree {
     numeric_domain_sizes: Vec<usize>,
     hash_multipliers: Vec<usize>,
     root: MatchTreeNode,
-}
-
-#[derive(Debug, Clone, Default)]
-struct OperatorComparisonSemantics {
-    affected_comparison_var_ids: Vec<usize>,
 }
 
 fn domain_size_for_var(
@@ -2208,40 +2201,30 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes.len()
         );
 
-        // Smart α: comparison axiom vars in the abstraction's hash always
-        // map to UNKNOWN at lookup time. By construction the
-        // backward-reachable abstract state space has c ∈ {T, UNKNOWN}
-        // per c (never F), and d(P, c=UNKNOWN) ≤ d(P, c=T) by the
-        // unidirectional axiom edge UNKNOWN → definite. Probing at
-        // UNKNOWN is an admissible lower bound regardless of α(init)'s
-        // concrete c bits.
-        //
-        // Use `domain_mapping[var][COMPARISON_UNKNOWN_VAL]` rather than the
-        // raw concrete UNKNOWN value: CEGAR may have collapsed the
-        // 3-valued comparison domain to size 2 (TRUE separate, FALSE+UNKNOWN
-        // merged) — see `apply_initial_goal_splits`. The mapping carries the
-        // active abstract value for UNKNOWN regardless of size.
-        let comparison_var_ids: HashSet<usize> = comparison_var_ids.iter().copied().collect();
         let mut index: usize = 0;
         for var in 0..num_props {
             let mult = hash_multipliers[var];
-            let abs_val = if comparison_var_ids.contains(&var) {
-                let mapping = &self.domain_mapping[var];
-                ensure!(
-                    mapping.len() > COMPARISON_UNKNOWN_VAL,
-                    "comparison var {var} domain_mapping missing UNKNOWN slot: {mapping:?}"
-                );
-                mapping[COMPARISON_UNKNOWN_VAL]
+            let concrete_value = if comparison_var_ids.contains(&var)
+                && let Some(tree) = self
+                    .comparison_index
+                    .as_ref()
+                    .and_then(|index| index.comparison_tree(var))
+            {
+                if tree.evaluate_point(&num_init) {
+                    COMPARISON_TRUE_VAL
+                } else {
+                    COMPARISON_FALSE_VAL
+                }
             } else {
-                *self.domain_mapping[var]
-                    .get(prop_init[var])
-                    .with_context(|| {
-                        format!(
-                            "missing mapping for propositional var {var} value index {}",
-                            prop_init[var]
-                        )
-                    })?
+                prop_init[var]
             };
+            let abs_val = *self.domain_mapping[var]
+                .get(concrete_value)
+                .with_context(|| {
+                    format!(
+                        "missing mapping for propositional var {var} value index {concrete_value}"
+                    )
+                })?;
             index += mult * abs_val;
         }
 
@@ -2319,101 +2302,6 @@ impl DomainAbstractionFactory {
                 .context("comparison reset hash overflow")?;
         }
         Ok(out)
-    }
-
-    fn abstract_value_of_prop_var(
-        &self,
-        state_hash: usize,
-        hash_multipliers: &[usize],
-        var_id: usize,
-    ) -> Result<usize> {
-        ensure!(
-            var_id < self.domain_sizes.len(),
-            "propositional var id out of range: {var_id}"
-        );
-        ensure!(
-            var_id < hash_multipliers.len(),
-            "missing hash multiplier for propositional var {var_id}"
-        );
-        let domain_size = self.domain_sizes[var_id];
-        ensure!(
-            domain_size > 0,
-            "domain size must be > 0 for propositional var {var_id}"
-        );
-        Ok((state_hash / hash_multipliers[var_id]) % domain_size)
-    }
-
-    fn state_satisfies_comparison_facts(
-        &self,
-        state_hash: usize,
-        hash_multipliers: &[usize],
-        facts: &[ExplicitFact],
-    ) -> Result<bool> {
-        for fact in facts {
-            if self.domain_sizes[fact.var] <= 1 {
-                continue;
-            }
-            if self.abstract_value_of_prop_var(state_hash, hash_multipliers, fact.var)?
-                != fact.value
-            {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
-    fn comparison_semantics_by_operator(
-        &self,
-        task: &dyn AbstractNumericTask,
-        operators: &[AbstractOperator],
-        comparison_var_ids: &[usize],
-    ) -> Vec<OperatorComparisonSemantics> {
-        // Invert `comparison var → [numeric var]` into `numeric var → [comparison var]`
-        // so that the per-operator inner loop scales with the operator's
-        // (small) changed-numeric-var set instead of the entire set of
-        // comparison vars.
-        debug_assert!(
-            self.comparison_trees
-                .iter()
-                .all(|t| comparison_var_ids.contains(&t.affected_var_id)),
-            "comparison_var_ids must contain every comparison tree's affected_var_id"
-        );
-        let num_numeric_vars = task.numeric_variables().len();
-        let mut comp_vars_by_numeric: Vec<Vec<usize>> = vec![Vec::new(); num_numeric_vars];
-        for tree in &self.comparison_trees {
-            let deps = tree.regular_numeric_var_dependencies(task);
-            for &dep in &deps {
-                if dep < num_numeric_vars {
-                    comp_vars_by_numeric[dep].push(tree.affected_var_id);
-                }
-            }
-        }
-        for list in &mut comp_vars_by_numeric {
-            if list.len() > 1 {
-                list.sort_unstable();
-                list.dedup();
-            }
-        }
-
-        operators
-            .iter()
-            .map(|op| {
-                let mut affected_comparison_var_ids: Vec<usize> = Vec::new();
-                for &numeric_var in &op.changed_numeric_vars {
-                    if let Some(comp_vars) = comp_vars_by_numeric.get(numeric_var) {
-                        affected_comparison_var_ids.extend_from_slice(comp_vars);
-                    }
-                }
-                if affected_comparison_var_ids.len() > 1 {
-                    affected_comparison_var_ids.sort_unstable();
-                    affected_comparison_var_ids.dedup();
-                }
-
-                OperatorComparisonSemantics {
-                    affected_comparison_var_ids,
-                }
-            })
-            .collect()
     }
 
     #[allow(unused)]
@@ -2569,10 +2457,8 @@ impl DomainAbstractionFactory {
             comparison_var_ids,
             fixed_comparisons,
         )?;
-        let representative = states.iter().copied().max();
         let entry = CachedEnumeration {
             states: Arc::from(states),
-            representative,
         };
         if cache.len() < COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES
             && *cached_state_count + entry.states.len() <= COMPARISON_ENUMERATION_CACHE_MAX_STATES
@@ -2604,8 +2490,9 @@ impl DomainAbstractionFactory {
         let generating_op = &table.generating_op_ids;
         let comparison_preconditions =
             comparison_preconditions_by_operator(operators, comparison_var_ids);
-        let comparison_semantics =
-            self.comparison_semantics_by_operator(task, operators, comparison_var_ids);
+        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
+            ComparisonEnumerationCache::default();
+        let mut cached_comparison_state_count = 0usize;
 
         let mut current_hash = table.initial_state_hash;
         if current_hash >= dist.len() || !dist[current_hash].is_finite() {
@@ -2646,90 +2533,34 @@ impl DomainAbstractionFactory {
             let op = operators
                 .get(op_id)
                 .with_context(|| format!("generating op id out of bounds: {op_id}"))?;
-            let semantics = &comparison_semantics[op_id];
-            ensure!(
-                self.state_satisfies_comparison_facts(
-                    current_hash,
-                    hash_multipliers,
-                    &comparison_preconditions[op_id],
-                )?,
-                "generating operator {op_id} is not applicable in abstract state {current_hash}"
-            );
-
-            // Smart plan extraction.
-            //
-            //   backward step: predecessor = state + hash_effect, then mask
-            //                  op.affected_comparison_ids → UNKNOWN.
-            //
-            // The backward mask conflates source states differing only in
-            // their affected-c bits (each ∈ {T, UNKNOWN} per the
-            // backward-reachable invariant) into one predecessor entry
-            // d[mask(state + hash_effect)] = d[state] + cost. To extract a
-            // forward plan we must enumerate the 2^|affected_c| candidates
-            // (each bit either T or UNKNOWN) and pick the one whose stored
-            // distance satisfies the cost relation.
-            let _ = semantics;
             let candidate_hash_effect = op.hash_effect;
-            let base_successor =
-                (current_hash as i32).wrapping_sub(candidate_hash_effect) as usize;
+            let base_successor_i64 = current_hash as i64 - candidate_hash_effect as i64;
+            ensure!(
+                base_successor_i64 >= 0 && base_successor_i64 < dist.len() as i64,
+                "plan-extraction base successor out of range for state {current_hash} with op {op_id}"
+            );
+            let base_successor = self.reset_comparison_vars_to_unknown_except(
+                base_successor_i64 as usize,
+                hash_multipliers,
+                comparison_var_ids,
+                &[],
+            )?;
+            let possible_successors = self.enumerate_states_with_evaluated_comparisons_cached(
+                base_successor,
+                task,
+                numeric_domain_sizes,
+                hash_multipliers,
+                comparison_var_ids,
+                &[],
+                &mut comparison_enumeration_cache,
+                &mut cached_comparison_state_count,
+            )?;
             let cur_d = dist[current_hash];
             ensure!(cur_d.is_finite(), "current distance must be finite");
 
-            // Precompute per-affected-c (multiplier, T-abs, UNKNOWN-abs)
-            // and the current bit value in `base_successor` (which inherited
-            // current_hash's c bits since hash_effect has 0 contribution on
-            // affected dims).
-            let mut affected_meta: Vec<(usize, usize, usize, usize)> = Vec::with_capacity(
-                op.affected_comparison_ids.len(),
-            );
-            for &c_var in &op.affected_comparison_ids {
-                let mult = hash_multipliers[c_var];
-                let size = domain_sizes[c_var];
-                let mapping = generator.domain_mapping().get(c_var).with_context(|| {
-                    format!("missing domain mapping for affected comparison var {c_var}")
-                })?;
-                ensure!(
-                    mapping.len() > super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL,
-                    "comparison var {c_var} has no UNKNOWN slot in domain_mapping"
-                );
-                let unknown_abs =
-                    mapping[super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL];
-                let true_abs = mapping[super::domain_abstraction_heuristic::COMPARISON_TRUE_VAL];
-                let current_bit = (base_successor / mult) % size;
-                affected_meta.push((mult, current_bit, true_abs, unknown_abs));
-            }
-            ensure!(
-                affected_meta.len() < 24,
-                "plan-extraction enumeration would exceed 2^24 candidates (|affected|={})",
-                affected_meta.len()
-            );
-
-            // Enumerate 2^|affected| bit assignments. Skip seen / out-of-range
-            // candidates. Pick the one whose distance satisfies the cost
-            // relation; tie-break by largest hash (matches numeric-fd parity).
             let mut chosen_successor: Option<usize> = None;
             let mut lowest_so_far = cur_d;
-            let n_assignments = 1usize << affected_meta.len();
-            for assignment in 0..n_assignments {
-                let mut cand = base_successor;
-                for (i, &(mult, current_bit, true_abs, unknown_abs)) in
-                    affected_meta.iter().enumerate()
-                {
-                    let target_abs = if (assignment >> i) & 1 == 0 {
-                        true_abs
-                    } else {
-                        unknown_abs
-                    };
-                    if current_bit != target_abs {
-                        let delta = (target_abs as isize - current_bit as isize) * mult as isize;
-                        let masked = cand as isize + delta;
-                        ensure!(
-                            masked >= 0 && (masked as usize) < dist.len(),
-                            "plan-extraction enumeration produced out-of-range candidate"
-                        );
-                        cand = masked as usize;
-                    }
-                }
+            for cand in possible_successors.states.iter().copied() {
                 if cand == current_hash {
                     continue;
                 }
@@ -2749,9 +2580,8 @@ impl DomainAbstractionFactory {
             }
             let successor_hash = chosen_successor.with_context(|| {
                 format!(
-                    "plan-extraction: no successor satisfies dist equation for state {current_hash} with op {op_id} (cur_d={cur_d}, op.cost={}, |affected|={})",
-                    op.cost,
-                    op.affected_comparison_ids.len()
+                    "plan-extraction: no successor satisfies dist equation for state {current_hash} with op {op_id} (cur_d={cur_d}, op.cost={})",
+                    op.cost
                 )
             })?;
             ensure!(
@@ -2762,14 +2592,8 @@ impl DomainAbstractionFactory {
                 (lowest_so_far - cur_d + op.cost).abs() <= 1e-6,
                 "chosen successor violates plan-extraction distance relation"
             );
-            let base_successor = successor_hash;
             let required_cost = op.cost;
 
-            // Collect cheapest concrete ops. For smart-design ops, the
-            // candidate connects (current_hash → base_successor) iff
-            //   mask_unknown(base_successor + cand.hash_effect,
-            //                cand.affected_comparison_ids) == current_hash
-            // (mirror of the backward Dijkstra step).
             let mut step: Vec<usize> = Vec::new();
             let mut applicable_operator_ids: Vec<usize> = Vec::new();
             match_tree.get_applicable_operator_ids(base_successor, &mut applicable_operator_ids);
@@ -2777,45 +2601,25 @@ impl DomainAbstractionFactory {
                 let cand_op = operators
                     .get(cand_op_id)
                     .with_context(|| format!("candidate op id out of bounds: {cand_op_id}"))?;
-                let _ = comparison_semantics;
                 if (cand_op.cost - required_cost).abs() > 1e-9 {
                     continue;
                 }
-                if !self.state_satisfies_comparison_facts(
-                    current_hash,
-                    hash_multipliers,
-                    &comparison_preconditions[cand_op_id],
-                )? {
+                let cand_pred_i64 = base_successor as i64 + cand_op.hash_effect as i64;
+                if cand_pred_i64 < 0 || cand_pred_i64 >= dist.len() as i64 {
                     continue;
                 }
-                let mut cand_pred =
-                    (base_successor as i32).wrapping_add(cand_op.hash_effect) as usize;
-                for &c_var in &cand_op.affected_comparison_ids {
-                    let mult = hash_multipliers[c_var];
-                    let size = domain_sizes[c_var];
-                    let mapping = generator.domain_mapping().get(c_var).with_context(|| {
-                        format!("missing domain mapping for affected comparison var {c_var}")
-                    })?;
-                    ensure!(
-                        mapping.len()
-                            > super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL,
-                        "comparison var {c_var} has no UNKNOWN slot in domain_mapping"
-                    );
-                    let unknown_abs =
-                        mapping[super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL];
-                    let current_bit = (cand_pred / mult) % size;
-                    if current_bit != unknown_abs {
-                        let delta =
-                            (unknown_abs as isize - current_bit as isize) * mult as isize;
-                        let masked = cand_pred as isize + delta;
-                        ensure!(
-                            masked >= 0 && (masked as usize) < dist.len(),
-                            "concrete-step extraction: predecessor hash out of range after UNKNOWN mask"
-                        );
-                        cand_pred = masked as usize;
-                    }
-                }
-                if cand_pred == current_hash {
+                let possible_predecessors = self
+                    .enumerate_states_with_evaluated_comparisons_cached(
+                        cand_pred_i64 as usize,
+                        task,
+                        numeric_domain_sizes,
+                        hash_multipliers,
+                        comparison_var_ids,
+                        &comparison_preconditions[cand_op_id],
+                        &mut comparison_enumeration_cache,
+                        &mut cached_comparison_state_count,
+                    )?;
+                if possible_predecessors.states.contains(&current_hash) {
                     step = cand_op.concrete_op_ids.clone();
                     step.sort_unstable();
                     step.dedup();
@@ -2870,84 +2674,50 @@ impl DomainAbstractionFactory {
     #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
     fn compute_distances_and_generating_ops(
         &self,
-        _task: &dyn AbstractNumericTask,
+        task: &dyn AbstractNumericTask,
         operators: &[AbstractOperator],
         match_tree: &MatchTree,
         goal_facts: &[ExplicitFact],
         _initial_state_hash: usize,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
-        _comparison_var_ids: &[usize],
+        comparison_var_ids: &[usize],
         num_states: usize,
     ) -> Result<(Vec<f64>, Vec<Option<usize>>)> {
-        let num_props = self.domain_sizes.len();
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
         let mut generating_op_ids: Vec<Option<usize>> = vec![None; num_states];
-
-        let mut core_vars: Vec<usize> = Vec::new();
-        for (v, &dom) in self.domain_sizes.iter().enumerate() {
-            if dom > 1 {
-                core_vars.push(v);
-            }
-        }
-        for (n, &dom) in numeric_domain_sizes.iter().enumerate() {
-            if dom > 1 {
-                core_vars.push(num_props + n);
-            }
-        }
-        core_vars.sort_unstable();
-        core_vars.dedup();
-
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
+            ComparisonEnumerationCache::default();
+        let mut cached_comparison_state_count = 0usize;
 
-        // Initialize with goal states. With comparison-axiom bits baked into
-        // every operator's pre/eff/prev, the old self-consistency filter via
-        // `enumerate_states_with_evaluated_comparisons_cached` is moot: every
-        // reachable state already has the optimistic bits its partition
-        // implies (the operators only land in such states, and the initial
-        // state hash is computed with the same optimistic semantics).
         for state_hash in 0..num_states {
-            if self.is_goal_state(
+            if !self.is_goal_state(
                 state_hash,
                 goal_facts,
                 numeric_domain_sizes,
                 hash_multipliers,
             ) {
+                continue;
+            }
+            let alts = self.enumerate_states_with_evaluated_comparisons_cached(
+                state_hash,
+                task,
+                numeric_domain_sizes,
+                hash_multipliers,
+                comparison_var_ids,
+                &[],
+                &mut comparison_enumeration_cache,
+                &mut cached_comparison_state_count,
+            )?;
+            if alts.states.contains(&state_hash) {
                 distances[state_hash] = 0.0;
                 heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
             }
         }
 
-        // Precompute per-comparison-var hash delta for the axiom edge
-        // (P, c=definite) → (P, c=UNKNOWN). The axiom edge in backward
-        // direction relaxes d(P, c=UNKNOWN) ≤ d(P, c=definite) + 0, so we
-        // process it inline alongside operator expansion.
-        let comparison_var_ids_set: HashSet<usize> = self
-            .comparison_trees
-            .iter()
-            .map(|tree| tree.affected_var_id)
-            .collect();
-        let mut axiom_var_data: Vec<(usize, usize, isize, isize)> = Vec::new();
-        for &var in &comparison_var_ids_set {
-            let size = self.domain_sizes.get(var).copied().unwrap_or(0);
-            if size < 3 {
-                continue;
-            }
-            let mult = hash_multipliers.get(var).copied().unwrap_or(0);
-            if mult == 0 {
-                continue;
-            }
-            let to_unknown_from_true = (super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL
-                as isize
-                - super::domain_abstraction_heuristic::COMPARISON_TRUE_VAL as isize)
-                * mult as isize;
-            let to_unknown_from_false = (super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL
-                as isize
-                - super::domain_abstraction_heuristic::COMPARISON_FALSE_VAL as isize)
-                * mult as isize;
-            axiom_var_data.push((var, mult, to_unknown_from_true, to_unknown_from_false));
-        }
-
+        let comparison_preconditions =
+            comparison_preconditions_by_operator(operators, comparison_var_ids);
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
         while let Some((Reverse(d), state_hash)) = heap.pop() {
             let d = d.into_inner();
@@ -2955,121 +2725,45 @@ impl DomainAbstractionFactory {
                 continue;
             }
 
-            // Bidirectional 0-cost axiom propagation between (P, c=*) bits
-            // at the same partition. With α(s) mapping comparison vars to
-            // UNKNOWN at lookup time, we want d[(P, c=UNKNOWN)] to reflect
-            // the cheapest path from any c bit at partition P. This is
-            // required for CONSISTENCY:
-            //
-            // Concrete plan s_0 → s_1 → ... → s_n. Some ops have
-            // comparison-axiom preconditions (c=T) that survive as prevail
-            // facts (case C in the smart emission) — backward Dijkstra fires
-            // those ops only from states with c=T, never c=UNKNOWN. So d at
-            // (P_i, c=T) reflects case-C-using paths, but d at
-            // (P_i, c=UNKNOWN) misses them unless we propagate
-            // (P, c=T) → (P, c=UNKNOWN). Without this propagation, h(s)
-            // can exceed h*(s) (e.g. drone pfile1: A* pops f-layers past
-            // the optimal plan cost).
-            //
-            // Propagate `d` to ALL other c-bit siblings at the same
-            // partition, regardless of which bit we're at. Iterate the
-            // full `0..size` range (handles CEGAR-collapsed domains where
-            // size < 3 because of `apply_initial_goal_splits` merging
-            // FALSE+UNKNOWN). All c bits at a partition become
-            // axiom-equivalent (d constant). This is admissible (only
-            // ever lowers d at sibling bits) and consistent (constant d
-            // across siblings satisfies the triangle inequality
-            // automatically along axiom edges).
-            for &(var, mult, _delta_t, _delta_f) in &axiom_var_data {
-                let size = self.domain_sizes.get(var).copied().unwrap_or(0);
-                if size <= 1 {
-                    continue;
-                }
-                let bit_value = (state_hash / mult) % size;
-                for other_bit in 0..size {
-                    if other_bit == bit_value {
-                        continue;
-                    }
-                    let delta = (other_bit as isize - bit_value as isize) * mult as isize;
-                    let other_i = state_hash as isize + delta;
-                    ensure!(
-                        other_i >= 0 && (other_i as usize) < num_states,
-                        "axiom-sibling hash out of range: state_hash={state_hash}, mult={mult}, size={size}, bit_value={bit_value}, other_bit={other_bit}"
-                    );
-                    let other_hash = other_i as usize;
-                    if d + 1e-12 < distances[other_hash] {
-                        distances[other_hash] = d;
-                        generating_op_ids[other_hash] = generating_op_ids[state_hash];
-                        heap.push((
-                            Reverse(NotNan::new(d).context("axiom-propagated distance is NaN")?),
-                            other_hash,
-                        ));
-                    }
-                }
-            }
-
-            match_tree.get_applicable_operator_ids(state_hash, &mut applicable_operator_ids);
+            let base_state = self.reset_comparison_vars_to_unknown_except(
+                state_hash,
+                hash_multipliers,
+                comparison_var_ids,
+                &[],
+            )?;
+            match_tree.get_applicable_operator_ids(base_state, &mut applicable_operator_ids);
             for &op_id in &applicable_operator_ids {
                 let op = &operators[op_id];
                 ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
                 let alternative_cost = d + op.cost;
-                // Backward Dijkstra step:
-                //
-                // 1. Compute the predecessor base by applying `op.hash_effect`
-                //    — this accounts for every paired pre/eff fact and every
-                //    prevail. For comparison vars that this op can change but
-                //    does NOT pin (`affected_comparison_ids`), the
-                //    `hash_effect` is 0 on c's dim, so `pred_base` inherits
-                //    the current state's c bit.
-                //
-                // 2. Mask each c in `affected_comparison_ids` to UNKNOWN on
-                //    the predecessor hash — the op's forward semantics reset
-                //    the bit to UNKNOWN, so backward the predecessor's c bit
-                //    must be UNKNOWN regardless of the current state's c.
-                //    This is the max-hash representative for c (UNKNOWN = 2,
-                //    the largest digit), consistent with the design that
-                //    backward-reachable states have c ∈ {T, UNKNOWN}.
-                let predecessor_i64 = state_hash as i64 + op.hash_effect as i64;
+                let predecessor_i64 = base_state as i64 + op.hash_effect as i64;
                 if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
-                let mut pred = predecessor_i64 as usize;
-                // Mask each affected c's bit on the predecessor hash to the
-                // abstract UNKNOWN value. Use `domain_mapping[c][CONCRETE_UNKNOWN]`
-                // because CEGAR may collapse the 3-valued comparison domain
-                // to size 2 — see `apply_initial_goal_splits`.
-                for &c_var in &op.affected_comparison_ids {
-                    let mult = hash_multipliers[c_var];
-                    let size = self.domain_sizes[c_var];
-                    let mapping = &self.domain_mapping[c_var];
-                    ensure!(
-                        mapping.len() > super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL,
-                        "affected comparison var {c_var} has no UNKNOWN mapping: {mapping:?}"
-                    );
-                    let unknown_abs = mapping[super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL];
-                    let current_bit = (pred / mult) % size;
-                    if current_bit != unknown_abs {
-                        let delta = (unknown_abs as isize - current_bit as isize) * mult as isize;
-                        let masked = pred as isize + delta;
-                        debug_assert!(
-                            masked >= 0 && (masked as usize) < num_states,
-                            "predecessor hash out of range after UNKNOWN mask: c_var={c_var}, current_bit={current_bit}, unknown_abs={unknown_abs}"
-                        );
-                        pred = masked as usize;
-                    }
-                }
-                debug_assert!(pred < num_states, "predecessor hash does not fit usize");
+                let possible_predecessors = self
+                    .enumerate_states_with_evaluated_comparisons_cached(
+                        predecessor_i64 as usize,
+                        task,
+                        numeric_domain_sizes,
+                        hash_multipliers,
+                        comparison_var_ids,
+                        &comparison_preconditions[op_id],
+                        &mut comparison_enumeration_cache,
+                        &mut cached_comparison_state_count,
+                    )?;
 
-                if alternative_cost + 1e-12 < distances[pred] {
-                    distances[pred] = alternative_cost;
-                    generating_op_ids[pred] = Some(op_id);
-                    heap.push((
-                        Reverse(
-                            NotNan::new(alternative_cost)
-                                .context("alternative cost is NaN")?,
-                        ),
-                        pred,
-                    ));
+                for pred in possible_predecessors.states.iter().copied() {
+                    debug_assert!(pred < num_states, "predecessor hash does not fit usize");
+                    if alternative_cost + 1e-12 < distances[pred] {
+                        distances[pred] = alternative_cost;
+                        generating_op_ids[pred] = Some(op_id);
+                        heap.push((
+                            Reverse(
+                                NotNan::new(alternative_cost).context("alternative cost is NaN")?,
+                            ),
+                            pred,
+                        ));
+                    }
                 }
             }
         }
@@ -3126,8 +2820,6 @@ impl DomainAbstractionFactory {
             heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
         }
 
-        let comparison_semantics =
-            self.comparison_semantics_by_operator(task, operators, comparison_var_ids);
         let comparison_preconditions =
             comparison_preconditions_by_operator(operators, comparison_var_ids);
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
@@ -3143,17 +2835,12 @@ impl DomainAbstractionFactory {
             match_tree.get_applicable_operator_ids(state_hash, &mut applicable_operator_ids);
             for &op_id in &applicable_operator_ids {
                 let op = &operators[op_id];
-                let semantics = &comparison_semantics[op_id];
                 ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
                 let alternative_cost = d + op.cost;
-                let comparison_reset_vars = comparison_vars_to_reset_for_operator(
-                    semantics,
-                    &comparison_preconditions[op_id],
-                );
                 let target_base = self.reset_comparison_vars_to_unknown_except(
                     state_hash,
                     hash_multipliers,
-                    &comparison_reset_vars,
+                    comparison_var_ids,
                     &[],
                 )?;
                 let predecessor_base_i64 = target_base as i64 + op.hash_effect as i64;
@@ -3167,26 +2854,22 @@ impl DomainAbstractionFactory {
                         task,
                         numeric_domain_sizes,
                         hash_multipliers,
-                        &comparison_reset_vars,
+                        comparison_var_ids,
                         &comparison_preconditions[op_id],
                         &mut comparison_enumeration_cache,
                         &mut cached_comparison_state_count,
                     )?;
-                let representative_predecessor = possible_predecessors.representative;
 
                 for pred in possible_predecessors.states.iter().copied() {
                     debug_assert!(pred < num_states, "predecessor hash does not fit usize");
                     if alternative_cost + 1e-12 < distances[pred] {
                         distances[pred] = alternative_cost;
-                        if pred == target_state_hash || Some(pred) == representative_predecessor {
-                            heap.push((
-                                Reverse(
-                                    NotNan::new(alternative_cost)
-                                        .context("alternative cost is NaN")?,
-                                ),
-                                pred,
-                            ));
-                        }
+                        heap.push((
+                            Reverse(
+                                NotNan::new(alternative_cost).context("alternative cost is NaN")?,
+                            ),
+                            pred,
+                        ));
                     }
                 }
             }
@@ -3447,21 +3130,6 @@ fn comparison_preconditions_by_operator(
         .iter()
         .map(|op| get_comparison_preconditions(op, comparison_var_ids))
         .collect()
-}
-
-fn comparison_vars_to_reset_for_operator(
-    semantics: &OperatorComparisonSemantics,
-    comparison_preconditions: &[ExplicitFact],
-) -> Vec<usize> {
-    let mut vars = semantics.affected_comparison_var_ids.clone();
-    vars.retain(|var_id| {
-        !comparison_preconditions
-            .iter()
-            .any(|fact| fact.var == *var_id)
-    });
-    vars.sort_unstable();
-    vars.dedup();
-    vars
 }
 
 fn transition_costs_from_abstract_operator_costs(

@@ -25,7 +25,6 @@ use crate::numeric::evaluation::domain_abstractions::cegar::FlawKind;
 use super::cegar::CegarConfig;
 use super::cegar::InitialSeedSplit;
 use super::cegar::SplitDirection;
-use super::transition_cost_partitioning::FiniteSupportConfig;
 pub use super::cegar::flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
 use super::cegar::flaw_search::numeric_requirement_for_comparison_fact;
 use super::comparison_expression::{CompOp, Interval};
@@ -34,6 +33,7 @@ use super::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, DomainAbstractionMetadata,
     prepare_domain_abstraction_task,
 };
+use super::transition_cost_partitioning::FiniteSupportConfig;
 use super::utils::compute_abstraction_size_u128;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]

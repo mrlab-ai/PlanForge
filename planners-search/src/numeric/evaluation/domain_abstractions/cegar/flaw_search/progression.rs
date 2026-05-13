@@ -11,8 +11,7 @@ use planners_sas::numeric::{
 };
 
 use super::target_centered::{
-    dependent_numeric_flaws_backward, numeric_effect_deltas,
-    preimage_split_for_expected_successor,
+    dependent_numeric_flaws_backward, numeric_effect_deltas, preimage_split_for_expected_successor,
 };
 use super::{
     Flaw, NumericFlaw, PropFlaw, SplitDirection, can_split_numeric_var,

@@ -25,12 +25,12 @@ use super::domain_abstraction_heuristic::{
     DomainAbstractionHeuristic, DomainAbstractionLookupScratch,
     compute_collection_abstract_state_ids,
 };
+#[cfg(test)]
+use super::transition_cost_partitioning::FiniteSupportConfig;
 use super::transition_cost_partitioning::{
     AbstractOperatorCostBudget, AbstractOperatorCostFunction, AbstractOperatorFootprint,
     NonAllocableFootprintReason, TransitionResidualCosts,
 };
-#[cfg(test)]
-use super::transition_cost_partitioning::FiniteSupportConfig;
 
 // ---------------------------------------------------------------------------
 // Configuration

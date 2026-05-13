@@ -37,13 +37,6 @@ struct AbstractOperatorCandidate {
     pre_pairs: Vec<ExplicitFact>,
     eff_pairs: Vec<ExplicitFact>,
     changed_numeric_vars: Vec<usize>,
-    /// Comparison axiom vars that the operator's numeric effects can
-    /// change but that are NOT pinned via pre/eff facts on this candidate.
-    /// Carried through to `AbstractOperator::affected_comparison_ids` so
-    /// backward Dijkstra can mask them onto the predecessor hash without
-    /// the op participating in pre/eff pairing. Ascending by var id,
-    /// duplicate-free.
-    affected_comparison_ids: Vec<usize>,
     /// `(cost_bits, FNV+SplitMix64 hash of prev+pre+eff+cost)`.
     /// Precomputed once at candidate creation so the candidate can be matched
     /// against the grouping map in `push_candidate` without re-walking its fact
@@ -71,13 +64,6 @@ pub struct AbstractOperator {
     pub regression_preconditions: Vec<ExplicitFact>,
     pub preconditions: Vec<ExplicitFact>,
     pub changed_numeric_vars: Vec<usize>,
-    /// Comparison axiom vars whose deps the operator's numeric effect can
-    /// change, that are NOT in the operator's preconditions. For these
-    /// vars the op resets the bit to `UNKNOWN` semantically; backward
-    /// Dijkstra masks them onto the predecessor hash at expansion time
-    /// (the source bit is wildcarded — neither in `preconditions` nor
-    /// `regression_preconditions`). Sorted by var id, no duplicates.
-    pub affected_comparison_ids: Vec<usize>,
 }
 
 impl AbstractOperator {
@@ -89,7 +75,6 @@ impl AbstractOperator {
         hash_multipliers: &[usize],
         concrete_op_ids: Vec<usize>,
         changed_numeric_vars: Vec<usize>,
-        affected_comparison_ids: Vec<usize>,
     ) -> Self {
         let mut preconditions: Vec<ExplicitFact> = pre_pairs.to_vec();
         preconditions.extend_from_slice(prev_pairs);
@@ -125,23 +110,6 @@ impl AbstractOperator {
             hash_effect += (new_val - old_val) * multiplier as i32;
         }
 
-        debug_assert!(
-            affected_comparison_ids.windows(2).all(|w| w[0] < w[1]),
-            "affected_comparison_ids must be strictly ascending by var: got {affected_comparison_ids:?}"
-        );
-        for c in &affected_comparison_ids {
-            debug_assert!(
-                preconditions.binary_search_by_key(c, |f| f.var).is_err(),
-                "affected_comparison_ids overlaps preconditions for var {c}: preconditions={preconditions:?}"
-            );
-            debug_assert!(
-                regression_preconditions
-                    .binary_search_by_key(c, |f| f.var)
-                    .is_err(),
-                "affected_comparison_ids overlaps regression_preconditions for var {c}: regression_preconditions={regression_preconditions:?}"
-            );
-        }
-
         Self {
             concrete_op_ids,
             cost,
@@ -149,7 +117,6 @@ impl AbstractOperator {
             regression_preconditions,
             preconditions,
             changed_numeric_vars,
-            affected_comparison_ids,
         }
     }
 }
@@ -160,12 +127,6 @@ pub struct TransitionInfo {
     pub target_partition_facts: Vec<ExplicitFact>,
     pub prevail_facts: Vec<ExplicitFact>,
     pub changed_numeric_vars: Vec<usize>,
-    /// Comparison axiom var ids whose deps overlap this transition's
-    /// `changed_numeric_vars` but which are NOT pinned via source/target/
-    /// prevail facts on this combo. The backward Dijkstra masks these onto
-    /// the predecessor hash at expansion time (source bit wildcarded —
-    /// not part of pre/eff/prev). Ascending by var id, duplicate-free.
-    pub affected_comparison_ids: Vec<usize>,
 }
 
 /// Stored signature per *operator* (post-grouping). Holding the original
@@ -304,7 +265,6 @@ impl AbstractOperatorFinalizer {
                 &self.hash_multipliers,
                 vec![candidate.concrete_op_id],
                 candidate.changed_numeric_vars.clone(),
-                candidate.affected_comparison_ids.clone(),
             ));
             self.stored_signatures
                 .push(StoredOperatorSignature::from_candidate(
@@ -323,7 +283,6 @@ impl AbstractOperatorFinalizer {
             &self.hash_multipliers,
             vec![candidate.concrete_op_id],
             candidate.changed_numeric_vars.clone(),
-            candidate.affected_comparison_ids.clone(),
         ));
     }
 
@@ -360,7 +319,6 @@ fn transition_vars_match(pre_pairs: &[ExplicitFact], eff_pairs: &[ExplicitFact])
             .zip(eff_pairs.iter())
             .all(|(pre, eff)| pre.var == eff.var)
 }
-
 
 /// Fill `candidate` with the merged result of `skeleton` and `trans`. Returns
 /// `true` on success; `false` when the skeleton and transition are
@@ -401,13 +359,15 @@ fn build_candidate_from_transition(
         "skeleton.prev_pairs must be strictly ascending by var"
     );
     debug_assert!(
-        trans.source_partition_facts
+        trans
+            .source_partition_facts
             .windows(2)
             .all(|w| w[0].var <= w[1].var),
         "TransitionInfo.source_partition_facts must be sorted by var"
     );
     debug_assert!(
-        trans.target_partition_facts
+        trans
+            .target_partition_facts
             .windows(2)
             .all(|w| w[0].var <= w[1].var),
         "TransitionInfo.target_partition_facts must be sorted by var"
@@ -560,17 +520,17 @@ fn build_candidate_from_transition(
     }
 
     let cost_bits = float_tolerance::canonical_bits(skeleton.cost);
-    let signature_hash =
-        compute_signature_hash(extended_prev_pairs, extended_pre_pairs, extended_eff_pairs, cost_bits);
+    let signature_hash = compute_signature_hash(
+        extended_prev_pairs,
+        extended_pre_pairs,
+        extended_eff_pairs,
+        cost_bits,
+    );
     candidate.concrete_op_id = skeleton.concrete_op_id;
     candidate.cost = skeleton.cost;
     candidate
         .changed_numeric_vars
         .extend_from_slice(&trans.changed_numeric_vars);
-    candidate.affected_comparison_ids.clear();
-    candidate
-        .affected_comparison_ids
-        .extend_from_slice(&trans.affected_comparison_ids);
     candidate.cost_bits = cost_bits;
     candidate.signature_hash = signature_hash;
     true
@@ -1094,6 +1054,21 @@ fn build_branch_for_operator(
         }
     }
 
+    // C++ parity: comparison-axiom preconditions are not regular prevail
+    // conditions. They constrain the source of the abstract operator, while
+    // the target side is reset to UNKNOWN so regression can re-evaluate the
+    // comparison from the target numeric partition.
+    for pre in merged_preconditions {
+        let var_id = pre.var;
+        if generator.variable_is_trivial(var_id) || !generator.derived_prop_vars.contains(&var_id) {
+            continue;
+        }
+        let source_abs = generator.abstract_value(var_id, pre.value);
+        let target_abs = generator.abstract_value(var_id, COMPARISON_UNKNOWN_VAL);
+        pre_pairs.push(ExplicitFact::new(var_id, source_abs));
+        eff_pairs.push(ExplicitFact::new(var_id, target_abs));
+    }
+
     // Clear only the slots we touched, so subsequent calls start clean
     // without re-zeroing the whole vector.
     for &v in &touched_pre {
@@ -1249,16 +1224,16 @@ fn compute_hash_effects_with_preconditions(
             target_partition_facts: Vec::new(),
             prevail_facts: Vec::new(),
             changed_numeric_vars: Vec::new(),
-            affected_comparison_ids: Vec::new(),
         }]);
     }
 
     let num_props = generator.domain_sizes.len();
 
-    // Enumerate transitions only for numeric variables whose partition value is
-    // needed by this operator. Other refined numeric variables are implicit
-    // frame variables: they are unchanged because the hash effect has no delta
-    // on their dimensions.
+    // C++ parity: enumerate every refined regular numeric variable. Affected
+    // variables get source->target transitions; unaffected refined variables
+    // get explicit identity transitions. Treating the latter as wildcards is
+    // too relaxed for the regression table and can create abstract dead ends
+    // for concrete-reachable states.
     let num_numeric_vars = generator.numeric_domain_sizes.len();
     let mut effects_by_var: Vec<Vec<&planners_sas::numeric::numeric_task::AssignmentEffect>> =
         vec![Vec::new(); num_numeric_vars];
@@ -1274,7 +1249,9 @@ fn compute_hash_effects_with_preconditions(
             continue;
         }
         effects_by_var[v].push(eff);
-        affected_numeric_vars.insert(v);
+        if generator.numeric_domain_sizes.get(v).copied().unwrap_or(1) > 1 {
+            affected_numeric_vars.insert(v);
+        }
     }
 
     // Compute the set of numeric vars that this operator's preconditions
@@ -1375,16 +1352,12 @@ fn compute_hash_effects_with_preconditions(
             let mut transitions: Vec<(usize, usize)> = pairs.into_iter().collect();
             transitions.sort_unstable();
             per_var.push((v, transitions));
-        } else if needed_numeric_vars.contains(&v) {
-            // Unaffected but referenced via a comparison precondition:
-            // enumerate identity transitions `p` -> `p` so the comparison
-            // can be evaluated on the partition interval.
+        } else {
+            // Unaffected refined regular numeric variable: C++ frames it with
+            // identity partition transitions instead of wildcarding it.
             let transitions: Vec<(usize, usize)> = (0..num_parts).map(|p| (p, p)).collect();
             per_var.push((v, transitions));
         }
-        // Otherwise: skip — the operator is wildcarded on `v`. Its
-        // hash effect on `v`'s dimension is 0, the match tree never queries
-        // `v`, and no comparison precondition depends on `v`.
     }
 
     if per_var.is_empty() {
@@ -1393,7 +1366,6 @@ fn compute_hash_effects_with_preconditions(
             target_partition_facts: Vec::new(),
             prevail_facts: Vec::new(),
             changed_numeric_vars: changed_numeric_vars_for_semantics,
-            affected_comparison_ids: Vec::new(),
         }]);
     }
 
@@ -1541,7 +1513,6 @@ fn enumerate_partition_combos(
                 target_partition_facts: target_partition_facts.clone(),
                 prevail_facts: Vec::new(),
                 changed_numeric_vars: changed_numeric_vars.clone(),
-                affected_comparison_ids: Vec::new(),
             });
             return Ok(());
         }
@@ -1609,7 +1580,6 @@ fn enumerate_partition_combos(
                 target_partition_facts: target_facts,
                 prevail_facts,
                 changed_numeric_vars: changed_numeric_vars.clone(),
-                affected_comparison_ids: comparison_facts.affected_comparison_ids,
             });
         }
         return Ok(());
@@ -1724,163 +1694,54 @@ struct ComparisonTransitionFacts {
     source_facts: Vec<ExplicitFact>,
     target_facts: Vec<ExplicitFact>,
     prevail_facts: Vec<ExplicitFact>,
-    /// Comparison axiom var ids whose deps overlap this combo's
-    /// `affected_numeric_vars` but which are NOT pinned in any of the three
-    /// fact lists above. These will surface on `TransitionInfo.
-    /// affected_comparison_ids` and `AbstractOperator.affected_comparison_ids`
-    /// so backward Dijkstra can mask them as UNKNOWN on the predecessor hash
-    /// without participating in match-tree filtering. Ascending, deduped.
-    affected_comparison_ids: Vec<usize>,
 }
 
-/// Bake comparison-axiom bit transitions into the abstract operator at
-/// construction time.
-///
-/// For each comparison axiom whose regular numeric dependencies are *all*
-/// bound by this operator's numeric partition combo (i.e., the deps are in
-/// `affected_numeric_vars`), evaluate the comparison tree optimistically on
-/// the source intervals and target intervals (interval-admits-only-FALSE →
-/// `FALSE`; anything else → `TRUE`). Emit the resulting bit transition into
-/// `source_facts` + `target_facts` (when the bit changes) or `prevail_facts`
-/// (when it stays the same). Comparison axioms with unbound deps are
-/// wildcarded by the operator (no fact emitted) — their bit is preserved
-/// frame-style by the operator's hash effect.
-///
-/// Why bake the bits in: with comparison values encoded in pre/eff/prev,
-/// `op.hash_effect` carries the delta on the comparison-var dimensions, so
-/// `source_hash = target_hash + op.hash_effect` is a direct one-to-one
-/// arithmetic step at traversal time. Callers no longer need the
-/// `reset_comparison_vars_to_unknown_except` + `enumerate_states_with_evaluated_comparisons`
-/// dance to recover the source's comparison bits — that dance was the
-/// source of the factory↔saturator asymmetry that triggered the `2 > 1`
-/// invariant and h=∞ on `prob_2_x`.
-///
-/// Returns `Ok(None)` if the combo is dead — a concrete operator's
-/// comparison precondition is unsatisfiable on the source intervals
-/// (interval admits only the opposite value).
 fn compute_comparison_transition_facts(
     task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
     op_preconditions: &[ExplicitFact],
     source_inputs: &[Interval],
-    _target_inputs: &[Interval],
+    target_inputs: &[Interval],
     affected_numeric_vars: &HashSet<usize>,
 ) -> Result<Vec<ComparisonTransitionFacts>> {
-    // Smart single-variant emission. For each comparison axiom var `c` in
-    // the abstraction's hash, the operator's interaction with `c` is one of
-    // four cases:
-    //
-    //   A. c not in op's preconditions AND op's effects can't change c's
-    //      deps:  true frame. Nothing emitted; source bit propagates
-    //             through hash_effect = 0 on c's dim.
-    //   B. c not in op's preconditions AND op's effects CAN change c's
-    //      deps:  c is added to `affected_comparison_ids`. Nothing emitted
-    //             in pre/eff/prev — match-tree wildcards c for the op
-    //             forward and backward. At Dijkstra time the backward
-    //             expansion masks c → UNKNOWN on the predecessor hash.
-    //   C. c in op's preconditions (must be c=T per the
-    //      `comparison_axiom_preconditions_are_always_true` debug assert)
-    //      AND op can't change c's deps: emit `prev c=T` (paired prevail).
-    //             Source must have c=T, target keeps c=T, no axiom reset.
-    //             Per user clarification — *not* C++'s reset-all, because
-    //             that would spuriously flip c on partitions where the op
-    //             doesn't even touch c's deps (the "save_person" bug:
-    //             c := x>10 on x ∈ [0, 15] would re-evaluate to either bit
-    //             after an op that doesn't change x).
-    //   D. c in op's preconditions AND op CAN change c's deps: emit
-    //      `pre c=T, eff c=UNKNOWN`. Source must have c=T (op fires from
-    //      c=T only); target has c=UNKNOWN; backward predecessor recovers
-    //      via the inline axiom edge in the Dijkstra loop.
-    //
-    // Dead-combo checks per c with a precondition: c=T must be admitted by
-    // the source-partition interval evaluation. If not, the operator
-    // cannot fire on this combo and we return an empty Vec to drop it.
-    //
-    // Returns exactly ONE `ComparisonTransitionFacts` per call (no
-    // cross-product across c's).
     if generator.comparison_index.is_none() {
         return Ok(vec![ComparisonTransitionFacts::default()]);
     }
 
-    // Index preconditions by comparison var id. Per the invariant
-    // (operator comparison preconditions can only be c=TRUE), assert that
-    // every comparison precondition value maps to the abstract TRUE bit.
     let precondition_required: HashMap<usize, usize> = op_preconditions
         .iter()
         .filter(|p| generator.derived_prop_vars.contains(&p.var))
         .map(|p| {
             let abs_val = generator.abstract_value(p.var, p.value);
-            debug_assert_eq!(
-                abs_val,
-                generator.domain_mapping[p.var][COMPARISON_TRUE_VAL],
-                "operator comparison-axiom precondition must be c=TRUE (got abs value {abs_val} for var {})",
-                p.var
-            );
             (p.var, abs_val)
         })
         .collect();
-
-    let mut facts = ComparisonTransitionFacts::default();
 
     for tree in &generator.comparison_trees {
         let var_id = tree.affected_var_id;
         if generator.domain_sizes.get(var_id).copied().unwrap_or(1) <= 1 {
             continue;
         }
-        let deps = tree.regular_numeric_var_dependencies(task);
-        let deps_overlap_combo = deps.iter().any(|d| affected_numeric_vars.contains(d));
 
         let true_abs = generator.domain_mapping[var_id][COMPARISON_TRUE_VAL];
-        let unknown_abs = generator.domain_mapping[var_id][COMPARISON_UNKNOWN_VAL];
-        let has_pre = precondition_required.get(&var_id).is_some();
+        let false_abs = generator.domain_mapping[var_id][COMPARISON_FALSE_VAL];
 
-        if has_pre {
-            // Cases C/D: precondition c=T. Source must admit c=T.
-            if !tree.evaluate_interval_admits_true(source_inputs) {
+        if let Some(&required_abs) = precondition_required.get(&var_id) {
+            if required_abs == true_abs {
+                if !tree.evaluate_interval_admits_true(source_inputs) {
+                    return Ok(Vec::new());
+                }
+            } else if required_abs == false_abs
+                && !tree.evaluate_interval_admits_false(source_inputs)
+            {
                 return Ok(Vec::new());
-            }
-        }
-
-        match (has_pre, deps_overlap_combo) {
-            (false, false) => {
-                // Case A: true frame. Nothing.
-            }
-            (false, true) => {
-                // Case B: op can change c, no precondition. Wildcard source
-                // via match-tree (no pre/eff fact). Mark affected.
-                facts.affected_comparison_ids.push(var_id);
-            }
-            (true, false) => {
-                // Case C: prevail c=T. Source and target both pinned at T.
-                facts
-                    .prevail_facts
-                    .push(ExplicitFact::new(var_id, true_abs));
-            }
-            (true, true) => {
-                // Case D: pre c=T, eff c=UNKNOWN. The bit is reset because
-                // the op can actually change c.
-                facts.source_facts.push(ExplicitFact::new(var_id, true_abs));
-                facts
-                    .target_facts
-                    .push(ExplicitFact::new(var_id, unknown_abs));
             }
         }
     }
 
-    // affected_comparison_ids is built in ascending order because
-    // `generator.comparison_trees` is iterated in stable order; the
-    // AbstractOperator invariant asserts strict ascending.
-    debug_assert!(
-        facts
-            .affected_comparison_ids
-            .windows(2)
-            .all(|w| w[0] < w[1]),
-        "affected_comparison_ids must be strictly ascending by construction"
-    );
-
-    Ok(vec![facts])
+    let _ = (task, target_inputs, affected_numeric_vars);
+    Ok(vec![ComparisonTransitionFacts::default()])
 }
-
 
 fn compute_hash_multipliers(
     domain_sizes: &[usize],

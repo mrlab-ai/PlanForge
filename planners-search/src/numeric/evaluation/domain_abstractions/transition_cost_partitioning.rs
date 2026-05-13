@@ -366,9 +366,7 @@ impl SortedReductionIndex {
         self.sorted[..end]
             .iter()
             .copied()
-            .filter(|&i| {
-                reductions[i].condition.region.source.numeric[dim].upper >= q_iv.lower
-            })
+            .filter(|&i| reductions[i].condition.region.source.numeric[dim].upper >= q_iv.lower)
             .collect()
     }
 }
@@ -1152,8 +1150,10 @@ impl OperatorResidual {
             }
         };
         if needs_build {
-            *self.sorted_index.borrow_mut() =
-                Some(SortedReductionIndex::build(&self.reductions, self.generation.get()));
+            *self.sorted_index.borrow_mut() = Some(SortedReductionIndex::build(
+                &self.reductions,
+                self.generation.get(),
+            ));
         }
         true
     }

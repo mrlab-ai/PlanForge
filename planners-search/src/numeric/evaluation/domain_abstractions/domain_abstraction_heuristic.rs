@@ -540,49 +540,18 @@ impl DomainAbstractionHeuristic {
         }
 
         let mut prop_index: usize = 0;
-        // Smart α: for every comparison axiom var in the abstraction's hash,
-        // look up the distance at the UNKNOWN bit. By construction (smart
-        // single-variant op emission + unidirectional axiom propagation),
-        // the backward-reachable abstract state space contains c ∈ {T,
-        // UNKNOWN} per c, never F; and d(P, c=UNKNOWN) ≤ d(P, c=T) by the
-        // forward axiom UNKNOWN → T. Probing at the UNKNOWN representative
-        // is therefore an admissible lower bound on the concrete-bit
-        // distance, no matter whether α(s).c is T or F.
-        //
-        // CEGAR may collapse the 3-valued comparison domain to size 2 in
-        // some abstractions, so use `mapping[var][CONCRETE_UNKNOWN]` to get
-        // the active abstract value rather than the literal concrete 2.
         let _ = prop_has_resolved_comparisons;
         for &var in &self.active_prop_vars {
-            let is_comparison_var = self
-                .comparison_tree_by_var
-                .get(var)
-                .copied()
-                .flatten()
-                .is_some();
-            let abs_val = if is_comparison_var {
-                let var_mapping = mapping.get(var).ok_or_else(|| {
-                    EvaluationError::InvalidState(format!(
-                        "comparison var {var} missing in domain mapping"
-                    ))
-                })?;
-                *var_mapping.get(COMPARISON_UNKNOWN_VAL).ok_or_else(|| {
-                    EvaluationError::InvalidState(format!(
-                        "comparison var {var} domain mapping has no UNKNOWN slot: {var_mapping:?}"
-                    ))
-                })?
-            } else {
-                let concrete_val = resolved_propositional_value(
-                    var,
-                    prop_values[var],
-                    numeric_values,
-                    self.abstraction.factory.comparison_trees(),
-                    &self.comparison_tree_by_var,
-                    &self.comparison_tree_required_lens,
-                    comparison_values,
-                )?;
-                abstract_propositional_value(var, concrete_val, mapping)?
-            };
+            let concrete_val = resolved_propositional_value(
+                var,
+                prop_values[var],
+                numeric_values,
+                self.abstraction.factory.comparison_trees(),
+                &self.comparison_tree_by_var,
+                &self.comparison_tree_required_lens,
+                comparison_values,
+            )?;
+            let abs_val = abstract_propositional_value(var, concrete_val, mapping)?;
             prop_index += multipliers[var] * abs_val;
         }
 
