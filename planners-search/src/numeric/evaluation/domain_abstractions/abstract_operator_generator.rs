@@ -37,6 +37,13 @@ struct AbstractOperatorCandidate {
     pre_pairs: Vec<ExplicitFact>,
     eff_pairs: Vec<ExplicitFact>,
     changed_numeric_vars: Vec<usize>,
+    /// Comparison axiom vars that the operator's numeric effects can
+    /// change but that are NOT pinned via pre/eff facts on this candidate.
+    /// Carried through to `AbstractOperator::affected_comparison_ids` so
+    /// backward Dijkstra can mask them onto the predecessor hash without
+    /// the op participating in pre/eff pairing. Ascending by var id,
+    /// duplicate-free.
+    affected_comparison_ids: Vec<usize>,
     /// `(cost_bits, FNV+SplitMix64 hash of prev+pre+eff+cost)`.
     /// Precomputed once at candidate creation so the candidate can be matched
     /// against the grouping map in `push_candidate` without re-walking its fact
@@ -64,6 +71,13 @@ pub struct AbstractOperator {
     pub regression_preconditions: Vec<ExplicitFact>,
     pub preconditions: Vec<ExplicitFact>,
     pub changed_numeric_vars: Vec<usize>,
+    /// Comparison axiom vars whose deps the operator's numeric effect can
+    /// change, that are NOT in the operator's preconditions. For these
+    /// vars the op resets the bit to `UNKNOWN` semantically; backward
+    /// Dijkstra masks them onto the predecessor hash at expansion time
+    /// (the source bit is wildcarded — neither in `preconditions` nor
+    /// `regression_preconditions`). Sorted by var id, no duplicates.
+    pub affected_comparison_ids: Vec<usize>,
 }
 
 impl AbstractOperator {
@@ -75,6 +89,7 @@ impl AbstractOperator {
         hash_multipliers: &[usize],
         concrete_op_ids: Vec<usize>,
         changed_numeric_vars: Vec<usize>,
+        affected_comparison_ids: Vec<usize>,
     ) -> Self {
         let mut preconditions: Vec<ExplicitFact> = pre_pairs.to_vec();
         preconditions.extend_from_slice(prev_pairs);
@@ -110,6 +125,23 @@ impl AbstractOperator {
             hash_effect += (new_val - old_val) * multiplier as i32;
         }
 
+        debug_assert!(
+            affected_comparison_ids.windows(2).all(|w| w[0] < w[1]),
+            "affected_comparison_ids must be strictly ascending by var: got {affected_comparison_ids:?}"
+        );
+        for c in &affected_comparison_ids {
+            debug_assert!(
+                preconditions.binary_search_by_key(c, |f| f.var).is_err(),
+                "affected_comparison_ids overlaps preconditions for var {c}: preconditions={preconditions:?}"
+            );
+            debug_assert!(
+                regression_preconditions
+                    .binary_search_by_key(c, |f| f.var)
+                    .is_err(),
+                "affected_comparison_ids overlaps regression_preconditions for var {c}: regression_preconditions={regression_preconditions:?}"
+            );
+        }
+
         Self {
             concrete_op_ids,
             cost,
@@ -117,6 +149,7 @@ impl AbstractOperator {
             regression_preconditions,
             preconditions,
             changed_numeric_vars,
+            affected_comparison_ids,
         }
     }
 }
@@ -127,6 +160,12 @@ pub struct TransitionInfo {
     pub target_partition_facts: Vec<ExplicitFact>,
     pub prevail_facts: Vec<ExplicitFact>,
     pub changed_numeric_vars: Vec<usize>,
+    /// Comparison axiom var ids whose deps overlap this transition's
+    /// `changed_numeric_vars` but which are NOT pinned via source/target/
+    /// prevail facts on this combo. The backward Dijkstra masks these onto
+    /// the predecessor hash at expansion time (source bit wildcarded —
+    /// not part of pre/eff/prev). Ascending by var id, duplicate-free.
+    pub affected_comparison_ids: Vec<usize>,
 }
 
 /// Stored signature per *operator* (post-grouping). Holding the original
@@ -265,6 +304,7 @@ impl AbstractOperatorFinalizer {
                 &self.hash_multipliers,
                 vec![candidate.concrete_op_id],
                 candidate.changed_numeric_vars.clone(),
+                candidate.affected_comparison_ids.clone(),
             ));
             self.stored_signatures
                 .push(StoredOperatorSignature::from_candidate(
@@ -283,6 +323,7 @@ impl AbstractOperatorFinalizer {
             &self.hash_multipliers,
             vec![candidate.concrete_op_id],
             candidate.changed_numeric_vars.clone(),
+            candidate.affected_comparison_ids.clone(),
         ));
     }
 
@@ -526,6 +567,10 @@ fn build_candidate_from_transition(
     candidate
         .changed_numeric_vars
         .extend_from_slice(&trans.changed_numeric_vars);
+    candidate.affected_comparison_ids.clear();
+    candidate
+        .affected_comparison_ids
+        .extend_from_slice(&trans.affected_comparison_ids);
     candidate.cost_bits = cost_bits;
     candidate.signature_hash = signature_hash;
     true
@@ -1204,6 +1249,7 @@ fn compute_hash_effects_with_preconditions(
             target_partition_facts: Vec::new(),
             prevail_facts: Vec::new(),
             changed_numeric_vars: Vec::new(),
+            affected_comparison_ids: Vec::new(),
         }]);
     }
 
@@ -1347,6 +1393,7 @@ fn compute_hash_effects_with_preconditions(
             target_partition_facts: Vec::new(),
             prevail_facts: Vec::new(),
             changed_numeric_vars: changed_numeric_vars_for_semantics,
+            affected_comparison_ids: Vec::new(),
         }]);
     }
 
@@ -1494,6 +1541,7 @@ fn enumerate_partition_combos(
                 target_partition_facts: target_partition_facts.clone(),
                 prevail_facts: Vec::new(),
                 changed_numeric_vars: changed_numeric_vars.clone(),
+                affected_comparison_ids: Vec::new(),
             });
             return Ok(());
         }
@@ -1561,6 +1609,7 @@ fn enumerate_partition_combos(
                 target_partition_facts: target_facts,
                 prevail_facts,
                 changed_numeric_vars: changed_numeric_vars.clone(),
+                affected_comparison_ids: comparison_facts.affected_comparison_ids,
             });
         }
         return Ok(());
@@ -1675,6 +1724,13 @@ struct ComparisonTransitionFacts {
     source_facts: Vec<ExplicitFact>,
     target_facts: Vec<ExplicitFact>,
     prevail_facts: Vec<ExplicitFact>,
+    /// Comparison axiom var ids whose deps overlap this combo's
+    /// `affected_numeric_vars` but which are NOT pinned in any of the three
+    /// fact lists above. These will surface on `TransitionInfo.
+    /// affected_comparison_ids` and `AbstractOperator.affected_comparison_ids`
+    /// so backward Dijkstra can mask them as UNKNOWN on the predecessor hash
+    /// without participating in match-tree filtering. Ascending, deduped.
+    affected_comparison_ids: Vec<usize>,
 }
 
 /// Bake comparison-axiom bit transitions into the abstract operator at
@@ -1835,57 +1891,64 @@ fn compute_comparison_transition_facts(
     generator: &AbstractOperatorGenerator,
     op_preconditions: &[ExplicitFact],
     source_inputs: &[Interval],
-    target_inputs: &[Interval],
+    _target_inputs: &[Interval],
     affected_numeric_vars: &HashSet<usize>,
 ) -> Result<Vec<ComparisonTransitionFacts>> {
-    // Non-optimistic homomorphism α: every concrete state s maps to a
-    // unique abstract state (P, [c_i(s)]_i) whose comparison bits are the
-    // concrete evaluations on s's numeric values. For each comparison c in
-    // the abstraction's hash we decide what (src_bit, tgt_bit) variants to
-    // emit per (P_src, P_tgt) combo. Six scenarios indexed by:
+    // Smart single-variant emission. For each comparison axiom var `c` in
+    // the abstraction's hash, the operator's interaction with `c` is one of
+    // four cases:
     //
-    //   * op has precondition on c (None / required T / required F)
-    //   * op affects c's deps (no / yes)
+    //   A. c not in op's preconditions AND op's effects can't change c's
+    //      deps:  true frame. Nothing emitted; source bit propagates
+    //             through hash_effect = 0 on c's dim.
+    //   B. c not in op's preconditions AND op's effects CAN change c's
+    //      deps:  c is added to `affected_comparison_ids`. Nothing emitted
+    //             in pre/eff/prev — match-tree wildcards c for the op
+    //             forward and backward. At Dijkstra time the backward
+    //             expansion masks c → UNKNOWN on the predecessor hash.
+    //   C. c in op's preconditions (must be c=T per the
+    //      `comparison_axiom_preconditions_are_always_true` debug assert)
+    //      AND op can't change c's deps: emit `prev c=T` (paired prevail).
+    //             Source must have c=T, target keeps c=T, no axiom reset.
+    //             Per user clarification — *not* C++'s reset-all, because
+    //             that would spuriously flip c on partitions where the op
+    //             doesn't even touch c's deps (the "save_person" bug:
+    //             c := x>10 on x ∈ [0, 15] would re-evaluate to either bit
+    //             after an op that doesn't change x).
+    //   D. c in op's preconditions AND op CAN change c's deps: emit
+    //      `pre c=T, eff c=UNKNOWN`. Source must have c=T (op fires from
+    //      c=T only); target has c=UNKNOWN; backward predecessor recovers
+    //      via the inline axiom edge in the Dijkstra loop.
     //
-    // Case 1 (no precondition, no deps overlap): comparison is wildcarded.
-    //   No fact emitted; hash delta on c = 0 (frame); op fires from any bit.
+    // Dead-combo checks per c with a precondition: c=T must be admitted by
+    // the source-partition interval evaluation. If not, the operator
+    // cannot fire on this combo and we return an empty Vec to drop it.
     //
-    // Case 2/3 (precondition c=X, no deps overlap): emit a prevail fact
-    //   c=X on both source and target. Hash delta on c = 0. Op fires only
-    //   from (P, c=X) abstract states.
-    //
-    // Case 4 (no precondition, deps overlap): evaluate src/tgt intervals.
-    //   Emit one variant per non-empty (b_s, b_t) pair admitted by the
-    //   intervals. Deterministic→one variant; ambiguous→fan out the
-    //   ambiguous side.
-    //
-    // Case 5/6 (precondition c=X, deps overlap): like case 4 but with
-    //   src_bit constrained to X (drop variants whose src_bit ≠ X when X
-    //   is deterministically excluded on this combo).
-    //
-    // Fan-out is bounded: 2 variants per ambiguous side, 4 max per
-    // comparison. With K comparisons the worst case is 4^K per combo —
-    // but ambiguity only happens on partitions straddling a threshold,
-    // which CEGAR refines out. Default is one variant per comparison.
+    // Returns exactly ONE `ComparisonTransitionFacts` per call (no
+    // cross-product across c's).
     if generator.comparison_index.is_none() {
         return Ok(vec![ComparisonTransitionFacts::default()]);
     }
 
-    // Index preconditions by comparison var id.
+    // Index preconditions by comparison var id. Per the invariant
+    // (operator comparison preconditions can only be c=TRUE), assert that
+    // every comparison precondition value maps to the abstract TRUE bit.
     let precondition_required: HashMap<usize, usize> = op_preconditions
         .iter()
         .filter(|p| generator.derived_prop_vars.contains(&p.var))
-        .map(|p| (p.var, generator.abstract_value(p.var, p.value)))
+        .map(|p| {
+            let abs_val = generator.abstract_value(p.var, p.value);
+            debug_assert_eq!(
+                abs_val,
+                generator.domain_mapping[p.var][COMPARISON_TRUE_VAL],
+                "operator comparison-axiom precondition must be c=TRUE (got abs value {abs_val} for var {})",
+                p.var
+            );
+            (p.var, abs_val)
+        })
         .collect();
 
-    // For each comparison in the abstraction's hash, compute the set of
-    // (src_bit, tgt_bit) variants to emit. Later we cross-product across
-    // comparisons.
-    struct CompVariant {
-        var_id: usize,
-        pairs: Vec<(usize, usize)>, // (src_abs, tgt_abs) bit pairs
-    }
-    let mut variants: Vec<CompVariant> = Vec::new();
+    let mut facts = ComparisonTransitionFacts::default();
 
     for tree in &generator.comparison_trees {
         let var_id = tree.affected_var_id;
@@ -1896,159 +1959,54 @@ fn compute_comparison_transition_facts(
         let deps_overlap_combo = deps.iter().any(|d| affected_numeric_vars.contains(d));
 
         let true_abs = generator.domain_mapping[var_id][COMPARISON_TRUE_VAL];
-        let false_abs = generator.domain_mapping[var_id][COMPARISON_FALSE_VAL];
-        let required = precondition_required.get(&var_id).copied();
-
-        if !deps_overlap_combo {
-            // Cases 1, 2, 3: op cannot change c.
-            if let Some(req_abs) = required {
-                // Case 2/3: emit prevail c=req on both sides.
-                // Dead-combo check: source interval must admit the required
-                // bit (i.e., there's at least one concrete state in P_src
-                // that satisfies the precondition).
-                let admits = if req_abs == true_abs {
-                    tree.evaluate_interval_admits_true(source_inputs)
-                } else {
-                    tree.evaluate_interval_admits_false(source_inputs)
-                };
-                if !admits {
-                    return Ok(Vec::new());
-                }
-                variants.push(CompVariant {
-                    var_id,
-                    pairs: vec![(req_abs, req_abs)],
-                });
-            }
-            // Case 1: no precondition, no emission. Hash delta on c = 0
-            // (frame), bit may take any value in source/target.
-            continue;
-        }
-
-        // Cases 4/5/6: op affects c's deps. Evaluate intervals.
-        let src_eval = tree.evaluate_interval(source_inputs);
-        let tgt_eval = tree.evaluate_interval(target_inputs);
-        let f_src = tree.lhs_minus_rhs_interval(source_inputs);
-        let f_tgt = tree.lhs_minus_rhs_interval(target_inputs);
-
-        // Fast path: if the operator's *net* effect on `f = lhs - rhs` is
-        // zero (e.g. `go_north_east` with Δy=Δx=+5 leaves `y - x` unchanged),
-        // `c` cannot flip. Treat as wildcard (case 1) or prevail (case 2/3)
-        // depending on precondition — instead of emitting two prevail
-        // variants (T,T) and (F,F) that cross-product with every other
-        // comparison. Cuts per-combo emission for sailing by ~2^22 on
-        // diagonal moves.
-        let zero_shift = !f_src.is_empty()
-            && !f_tgt.is_empty()
-            && (f_tgt.lower - f_src.lower).abs() < 1e-9
-            && (f_tgt.upper - f_src.upper).abs() < 1e-9
-            && f_src.lower.is_finite()
-            && f_src.upper.is_finite();
-        if zero_shift {
-            if let Some(req_abs) = required {
-                // Precondition + frame: emit prevail at req_abs.
-                let admits = if req_abs == true_abs {
-                    tree.evaluate_interval_admits_true(source_inputs)
-                } else {
-                    tree.evaluate_interval_admits_false(source_inputs)
-                };
-                if !admits {
-                    return Ok(Vec::new());
-                }
-                variants.push(CompVariant {
-                    var_id,
-                    pairs: vec![(req_abs, req_abs)],
-                });
-            }
-            // No precondition: wildcard, no fact emitted.
-            continue;
-        }
-
         let unknown_abs = generator.domain_mapping[var_id][COMPARISON_UNKNOWN_VAL];
+        let has_pre = precondition_required.get(&var_id).is_some();
 
-        // Determine which src bits are admitted by P_src.
-        let src_admitted: Vec<usize> = match src_eval {
-            Some(true) => vec![true_abs],
-            Some(false) => vec![false_abs],
-            None => vec![true_abs, false_abs],
-        };
-
-        // Enforce precondition on the source side (cases 5/6).
-        let src_after_pre: Vec<usize> = if let Some(req_abs) = required {
-            src_admitted.into_iter().filter(|&b| b == req_abs).collect()
-        } else {
-            src_admitted
-        };
-        if src_after_pre.is_empty() {
-            // No concrete state in P_src satisfies the precondition.
-            return Ok(Vec::new());
-        }
-
-        // numeric-fd-style "reset c to unknown" when target is ambiguous —
-        // collapses the (b_s × b_t) fan-out from 4 to 1-2 variants per c.
-        // Each emitted variant has eff = c = UNKNOWN at target; a separate
-        // post-Dijkstra axiom-propagation pass then resolves (P, c=UNKNOWN)
-        // distances into (P, c=T) and (P, c=F) via 0-cost axiom edges.
-        //
-        // For deterministic-target combos we still emit (b_s, b_t) directly
-        // — no need for an unknown intermediate.
-        let mut pairs: Vec<(usize, usize)> = Vec::with_capacity(src_after_pre.len());
-        match tgt_eval {
-            Some(_) => {
-                // Deterministic target — use the threshold-aware preimage
-                // filter on each (b_s, b_t) candidate. b_t is uniquely
-                // determined by tgt_eval.
-                let b_t = if tgt_eval == Some(true) { true_abs } else { false_abs };
-                let b_t_is_true = tgt_eval == Some(true);
-                for &b_s in &src_after_pre {
-                    let b_s_is_true = b_s == true_abs;
-                    if variant_has_concrete_preimage(
-                        tree.op, f_src, f_tgt, b_s_is_true, b_t_is_true,
-                    ) {
-                        pairs.push((b_s, b_t));
-                    }
-                }
-            }
-            None => {
-                // Ambiguous target — emit one variant per admitted src bit,
-                // with target = UNKNOWN. The threshold-aware filter doesn't
-                // apply (the variant covers both b_t = T and b_t = F via the
-                // unknown placeholder + axiom resolution).
-                for &b_s in &src_after_pre {
-                    pairs.push((b_s, unknown_abs));
-                }
+        if has_pre {
+            // Cases C/D: precondition c=T. Source must admit c=T.
+            if !tree.evaluate_interval_admits_true(source_inputs) {
+                return Ok(Vec::new());
             }
         }
-        if pairs.is_empty() {
-            // No variant survives the joint preimage check — operator is
-            // effectively dead on this combo.
-            return Ok(Vec::new());
+
+        match (has_pre, deps_overlap_combo) {
+            (false, false) => {
+                // Case A: true frame. Nothing.
+            }
+            (false, true) => {
+                // Case B: op can change c, no precondition. Wildcard source
+                // via match-tree (no pre/eff fact). Mark affected.
+                facts.affected_comparison_ids.push(var_id);
+            }
+            (true, false) => {
+                // Case C: prevail c=T. Source and target both pinned at T.
+                facts
+                    .prevail_facts
+                    .push(ExplicitFact::new(var_id, true_abs));
+            }
+            (true, true) => {
+                // Case D: pre c=T, eff c=UNKNOWN. The bit is reset because
+                // the op can actually change c.
+                facts.source_facts.push(ExplicitFact::new(var_id, true_abs));
+                facts
+                    .target_facts
+                    .push(ExplicitFact::new(var_id, unknown_abs));
+            }
         }
-        variants.push(CompVariant { var_id, pairs });
     }
 
-    // Cross-product across comparisons. Each variant slot contributes its
-    // pairs; total = product of |pairs|. Build the output Vec of
-    // ComparisonTransitionFacts, one per cartesian combination.
-    let mut out: Vec<ComparisonTransitionFacts> = vec![ComparisonTransitionFacts::default()];
-    for cv in &variants {
-        let mut next: Vec<ComparisonTransitionFacts> =
-            Vec::with_capacity(out.len() * cv.pairs.len());
-        for facts in &out {
-            for &(src_abs, tgt_abs) in &cv.pairs {
-                let mut clone = facts.clone();
-                if src_abs == tgt_abs {
-                    clone.prevail_facts.push(ExplicitFact::new(cv.var_id, src_abs));
-                } else {
-                    clone.source_facts.push(ExplicitFact::new(cv.var_id, src_abs));
-                    clone.target_facts.push(ExplicitFact::new(cv.var_id, tgt_abs));
-                }
-                next.push(clone);
-            }
-        }
-        out = next;
-    }
+    // affected_comparison_ids is built in ascending order because
+    // `generator.comparison_trees` is iterated in stable order; the
+    // AbstractOperator invariant asserts strict ascending.
+    debug_assert!(
+        facts
+            .affected_comparison_ids
+            .windows(2)
+            .all(|w| w[0] < w[1]),
+        "affected_comparison_ids must be strictly ascending by construction"
+    );
 
-    Ok(out)
+    Ok(vec![facts])
 }
 
 

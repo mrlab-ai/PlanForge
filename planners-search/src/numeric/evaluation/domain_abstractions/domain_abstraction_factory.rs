@@ -2208,42 +2208,33 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes.len()
         );
 
-        // Concrete eval of every comparison axiom on the initial concrete
-        // numeric state. α(init) is the deterministic image of the concrete
-        // initial state — each comparison evaluates to a definite bit on the
-        // concrete numeric values (intervals are singletons). The heuristic's
-        // `compute_abstract_hash` does the same for *any* concrete state, so
-        // the homomorphism α maps every concrete state to its true bits.
+        // Smart α: comparison axiom vars in the abstraction's hash always
+        // map to UNKNOWN at lookup time. By construction the
+        // backward-reachable abstract state space has c ∈ {T, UNKNOWN}
+        // per c (never F), and d(P, c=UNKNOWN) ≤ d(P, c=T) by the
+        // unidirectional axiom edge UNKNOWN → definite. Probing at
+        // UNKNOWN is an admissible lower bound regardless of α(init)'s
+        // concrete c bits.
         let comparison_var_ids: HashSet<usize> = comparison_var_ids.iter().copied().collect();
         let mut index: usize = 0;
         for var in 0..num_props {
             let mult = hash_multipliers[var];
-            let concrete_val = if comparison_var_ids.contains(&var) {
-                if let Some(tree) = self
-                    .comparison_trees
-                    .iter()
-                    .find(|tree| tree.affected_var_id == var)
-                {
-                    match super::numeric_context::evaluate_comparison_tree_from_initial_state(
-                        task, tree,
-                    )? {
-                        Some(true) => COMPARISON_TRUE_VAL,
-                        Some(false) => COMPARISON_FALSE_VAL,
-                        None => prop_init[var],
-                    }
-                } else {
-                    prop_init[var]
-                }
+            let abs_val = if comparison_var_ids.contains(&var) {
+                debug_assert!(
+                    self.domain_sizes[var] >= 3,
+                    "comparison var {var} must have a 3-valued domain (T/F/UNKNOWN)"
+                );
+                COMPARISON_UNKNOWN_VAL
             } else {
-                prop_init[var]
+                *self.domain_mapping[var]
+                    .get(prop_init[var])
+                    .with_context(|| {
+                        format!(
+                            "missing mapping for propositional var {var} value index {}",
+                            prop_init[var]
+                        )
+                    })?
             };
-            let abs_val = *self.domain_mapping[var]
-                .get(concrete_val)
-                .with_context(|| {
-                    format!(
-                        "missing mapping for propositional var {var} value index {concrete_val}"
-                    )
-                })?;
             index += mult * abs_val;
         }
 
@@ -2939,16 +2930,50 @@ impl DomainAbstractionFactory {
                 let op = &operators[op_id];
                 ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
                 let alternative_cost = d + op.cost;
-                // Backward Dijkstra: relax (predecessor -> state_hash) via op.
-                // With comparison bits in pre/eff/prev, `op.hash_effect`
-                // already accounts for every variable's source-vs-target
-                // delta, so the unique predecessor is just
-                // `state_hash + op.hash_effect`.
+                // Backward Dijkstra step:
+                //
+                // 1. Compute the predecessor base by applying `op.hash_effect`
+                //    — this accounts for every paired pre/eff fact and every
+                //    prevail. For comparison vars that this op can change but
+                //    does NOT pin (`affected_comparison_ids`), the
+                //    `hash_effect` is 0 on c's dim, so `pred_base` inherits
+                //    the current state's c bit.
+                //
+                // 2. Mask each c in `affected_comparison_ids` to UNKNOWN on
+                //    the predecessor hash — the op's forward semantics reset
+                //    the bit to UNKNOWN, so backward the predecessor's c bit
+                //    must be UNKNOWN regardless of the current state's c.
+                //    This is the max-hash representative for c (UNKNOWN = 2,
+                //    the largest digit), consistent with the design that
+                //    backward-reachable states have c ∈ {T, UNKNOWN}.
                 let predecessor_i64 = state_hash as i64 + op.hash_effect as i64;
                 if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
-                let pred = predecessor_i64 as usize;
+                let mut pred = predecessor_i64 as usize;
+                for &c_var in &op.affected_comparison_ids {
+                    let mult = hash_multipliers[c_var];
+                    let size = self.domain_sizes[c_var];
+                    debug_assert!(
+                        size >= 3,
+                        "affected comparison var must have 3-valued domain (T/F/UNKNOWN)"
+                    );
+                    let current_bit = (pred / mult) % size;
+                    if current_bit
+                        != super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL
+                    {
+                        let delta = (super::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL
+                            as isize
+                            - current_bit as isize)
+                            * mult as isize;
+                        let masked = pred as isize + delta;
+                        debug_assert!(
+                            masked >= 0 && (masked as usize) < num_states,
+                            "predecessor hash out of range after UNKNOWN mask: c_var={c_var}"
+                        );
+                        pred = masked as usize;
+                    }
+                }
                 debug_assert!(pred < num_states, "predecessor hash does not fit usize");
 
                 if alternative_cost + 1e-12 < distances[pred] {

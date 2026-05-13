@@ -375,6 +375,7 @@ fn unknown_comparison_preconditions_are_not_treated_as_fixed() {
             ExplicitFact::new(1, 7),
         ],
         changed_numeric_vars: vec![],
+        affected_comparison_ids: vec![],
     };
 
     let fixed = get_comparison_preconditions(&op, &[0]);
@@ -594,6 +595,7 @@ fn match_tree_indexes_comparison_variables() {
             regression_preconditions: vec![ExplicitFact::new(0, COMPARISON_TRUE_VAL)],
             preconditions: vec![ExplicitFact::new(0, COMPARISON_TRUE_VAL)],
             changed_numeric_vars: vec![],
+            affected_comparison_ids: vec![],
         },
         super::super::abstract_operator_generator::AbstractOperator {
             concrete_op_ids: vec![1],
@@ -602,6 +604,7 @@ fn match_tree_indexes_comparison_variables() {
             regression_preconditions: vec![ExplicitFact::new(0, COMPARISON_FALSE_VAL)],
             preconditions: vec![ExplicitFact::new(0, COMPARISON_FALSE_VAL)],
             changed_numeric_vars: vec![],
+            affected_comparison_ids: vec![],
         },
     ];
 
@@ -993,6 +996,7 @@ fn abstract_operator_footprint_keeps_finite_source_when_target_reaches_tail() {
         regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
+        affected_comparison_ids: vec![],
     };
 
     let footprints = factory
@@ -1026,6 +1030,7 @@ fn abstract_operator_footprint_tightens_source_by_inverse_target_image() {
         regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
+        affected_comparison_ids: vec![],
     };
 
     let footprints = factory
@@ -1055,6 +1060,7 @@ fn abstract_operator_footprint_rejects_empty_inverse_target_image() {
         regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
+        affected_comparison_ids: vec![],
     };
 
     let footprints = factory
@@ -1081,6 +1087,7 @@ fn abstract_operator_footprint_marks_unbounded_changed_tail_non_allocable() {
         regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
         changed_numeric_vars: vec![0],
+        affected_comparison_ids: vec![],
     };
 
     let footprints = factory
@@ -1147,6 +1154,7 @@ fn abstract_operator_footprint_allocates_operator_without_numeric_effects() {
         regression_preconditions: vec![ExplicitFact::new(0, 1)],
         preconditions: vec![ExplicitFact::new(0, 0)],
         changed_numeric_vars: vec![],
+        affected_comparison_ids: vec![],
     };
 
     let footprints = factory
@@ -1235,6 +1243,7 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
             ExplicitFact::new(y_abs_var, 0),
         ],
         changed_numeric_vars: vec![0, 1],
+        affected_comparison_ids: vec![],
     };
 
     let footprints = factory
@@ -1337,6 +1346,7 @@ fn abstract_operator_footprint_ignores_zero_additive_effect_dimension() {
             ExplicitFact::new(y_abs_var, 0),
         ],
         changed_numeric_vars: vec![0, 1],
+        affected_comparison_ids: vec![],
     };
 
     let footprints = factory
@@ -1377,6 +1387,7 @@ fn width_threshold_demotes_wide_finite_preimage_to_non_allocable() {
         regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
+        affected_comparison_ids: vec![],
     };
 
     // Width 1.0 fits inside default INFINITY threshold → allocable.
@@ -1421,6 +1432,7 @@ fn singleton_preimage_is_stealable_even_at_zero_threshold() {
         regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
+        affected_comparison_ids: vec![],
     };
 
     // The tightest possible non-trivial threshold still admits the singleton.

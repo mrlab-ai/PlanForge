@@ -540,24 +540,37 @@ impl DomainAbstractionHeuristic {
         }
 
         let mut prop_index: usize = 0;
-        // Concrete-evaluation α for every comparison axiom: evaluate each
-        // comparison tree on the state's *concrete numeric values* (singleton
-        // intervals → deterministic bit). This is the homomorphism: α(s) maps
-        // every concrete s to its true (P, c-bits). The factory's
-        // `compute_initial_state_hash_determined` and the operator generator's
-        // `compute_comparison_transition_facts` use the same semantics.
+        // Smart α: for every comparison axiom var in the abstraction's hash,
+        // look up the distance at the UNKNOWN bit. By construction (smart
+        // single-variant op emission + unidirectional axiom propagation),
+        // the backward-reachable abstract state space contains c ∈ {T,
+        // UNKNOWN} per c, never F; and d(P, c=UNKNOWN) ≤ d(P, c=T) by the
+        // forward axiom UNKNOWN → T. Probing at the UNKNOWN representative
+        // is therefore an admissible lower bound on the concrete-bit
+        // distance, no matter whether α(s).c is T or F. For non-comparison
+        // propositional vars, use the concrete value as before.
         let _ = prop_has_resolved_comparisons;
         for &var in &self.active_prop_vars {
-            let concrete_val = resolved_propositional_value(
-                var,
-                prop_values[var],
-                numeric_values,
-                self.abstraction.factory.comparison_trees(),
-                &self.comparison_tree_by_var,
-                &self.comparison_tree_required_lens,
-                comparison_values,
-            )?;
-            let abs_val = abstract_propositional_value(var, concrete_val, mapping)?;
+            let is_comparison_var = self
+                .comparison_tree_by_var
+                .get(var)
+                .copied()
+                .flatten()
+                .is_some();
+            let abs_val = if is_comparison_var {
+                COMPARISON_UNKNOWN_VAL
+            } else {
+                let concrete_val = resolved_propositional_value(
+                    var,
+                    prop_values[var],
+                    numeric_values,
+                    self.abstraction.factory.comparison_trees(),
+                    &self.comparison_tree_by_var,
+                    &self.comparison_tree_required_lens,
+                    comparison_values,
+                )?;
+                abstract_propositional_value(var, concrete_val, mapping)?
+            };
             prop_index += multipliers[var] * abs_val;
         }
 
