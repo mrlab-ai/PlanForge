@@ -4,7 +4,7 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
     VariableSubset,
 };
 use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
-    OrderGenerator, ScoringFunction,
+    FillScpConfig, OrderGenerator, ScoringFunction,
 };
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -95,6 +95,38 @@ fn parses_astar_canonical_domain_abstractions_with_named_options() {
 }
 
 #[test]
+fn parses_execute_entire_plan_flaw_kind() {
+    let spec =
+        parse_search_spec("astar(canonical_domain_abstractions(flaw_kind=execute_entire_plan))")
+            .unwrap();
+
+    let SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(config)) = &spec else {
+        panic!("expected canonical_domain_abstractions config");
+    };
+
+    assert_eq!(config.flaw_kind, FlawKind::ExecuteEntirePlan);
+    assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
+}
+
+#[test]
+fn parses_forward_partition_deviation_split_direction() {
+    let spec = parse_search_spec(
+        "astar(canonical_domain_abstractions(split_direction=forward_partition_deviation))",
+    )
+    .unwrap();
+
+    let SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(config)) = &spec else {
+        panic!("expected canonical_domain_abstractions config");
+    };
+
+    assert_eq!(
+        config.split_direction,
+        Some(SplitDirection::ForwardPartitionDeviation)
+    );
+    assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
+}
+
+#[test]
 fn parses_astar_scp_online_with_or_without_unit_parens() {
     assert_eq!(
         parse_search_spec("astar(scp_online)").unwrap(),
@@ -104,6 +136,66 @@ fn parses_astar_scp_online_with_or_without_unit_parens() {
         parse_search_spec("astar(scp_online())").unwrap(),
         SearchSpec::Astar(HeuristicSpec::ScpOnline(ScpOnlineConfig::default()))
     );
+}
+
+#[test]
+fn parses_astar_fill_scp_with_aliases() {
+    assert_eq!(
+        parse_search_spec("astar(fillSCP)").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::FillScp(FillScpConfig::default()))
+    );
+    assert_eq!(
+        parse_search_spec("astar(fill_scp())").unwrap(),
+        SearchSpec::Astar(HeuristicSpec::FillScp(FillScpConfig::default()))
+    );
+}
+
+#[test]
+fn parses_astar_fill_scp_with_named_options() {
+    let spec = parse_search_spec(
+        "astar(fillSCP(table_construction_max_time=34.5, use_abstract_operator_cost_partitioning=true, saturator=perimstar, scoring_function=max_heuristic, orders=random_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, split_direction=backward, random_seed=7, debug=true, precision=0.5, epsilon=0.25))",
+    )
+    .unwrap();
+
+    let SearchSpec::Astar(HeuristicSpec::FillScp(config)) = spec else {
+        panic!("expected fillSCP config");
+    };
+
+    assert_eq!(config.table_construction_max_time, 34.5);
+    assert!(config.use_abstract_operator_cost_partitioning);
+    assert_eq!(config.saturator, Saturator::Perimstar);
+    assert_eq!(config.scoring_function, ScoringFunction::MaxHeuristic);
+    assert_eq!(config.order_generator, OrderGenerator::Random);
+    assert_eq!(config.order_optimization_max_time, 1.5);
+    assert!(config.combine_labels);
+    assert_eq!(config.collection_config.max_collection_size, 123);
+    assert_eq!(config.collection_config.total_max_time, 4.5);
+    assert_eq!(
+        config.collection_config.blacklist_option,
+        VariableSubset::NonGoals
+    );
+    assert_eq!(
+        config.collection_config.init_split_quantity,
+        InitSplitQuantity::All
+    );
+    assert!(!config.collection_config.use_wildcard_plans);
+    assert_eq!(
+        config.collection_config.flaw_kind,
+        FlawKind::SequenceProgression
+    );
+    assert_eq!(
+        config.collection_config.split_direction,
+        Some(SplitDirection::Backward)
+    );
+    assert_eq!(
+        config.collection_config.portfolio_strategy,
+        PortfolioStrategy::Standard
+    );
+    assert_eq!(config.collection_config.random_seed, Some(7));
+    assert_eq!(config.random_seed, Some(7));
+    assert!(config.collection_config.debug);
+    assert_eq!(config.lmcut_config.precision, 0.5);
+    assert_eq!(config.lmcut_config.epsilon, 0.25);
 }
 
 #[test]

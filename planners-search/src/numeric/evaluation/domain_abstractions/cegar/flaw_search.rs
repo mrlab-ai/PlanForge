@@ -37,7 +37,9 @@ use serde::{Deserialize, Serialize};
 use super::determine_include_in_lower;
 use crate::numeric::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
 use crate::numeric::evaluation::domain_abstractions::cegar::determine_include_in_lower_for_flaw_search_state;
-use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::progression::get_progression_flaws;
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::progression::{
+    get_execute_entire_plan_flaws, get_progression_flaws,
+};
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::regression::get_regression_flaws;
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::sequence::{
     SequenceDirection, get_sequence_flaws,
@@ -97,6 +99,7 @@ impl Flaw {
 #[serde(rename_all = "snake_case")]
 pub enum SplitDirection {
     Forward,
+    ForwardPartitionDeviation,
     Backward,
 }
 
@@ -110,6 +113,7 @@ impl fmt::Display for SplitDirection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Forward => write!(f, "forward"),
+            Self::ForwardPartitionDeviation => write!(f, "forward_partition_deviation"),
             Self::Backward => write!(f, "backward"),
         }
     }
@@ -120,6 +124,7 @@ impl fmt::Display for SplitDirection {
 pub enum FlawKind {
     Progression,
     Regression,
+    ExecuteEntirePlan,
     SequenceProgression,
     SequenceRegression,
     SequenceBidirectional,
@@ -131,6 +136,7 @@ impl fmt::Display for FlawKind {
         match self {
             Self::Progression => write!(f, "progression"),
             Self::Regression => write!(f, "regression"),
+            Self::ExecuteEntirePlan => write!(f, "execute_entire_plan"),
             Self::SequenceProgression => write!(f, "sequence_progression"),
             Self::SequenceRegression => write!(f, "sequence_regression"),
             Self::SequenceBidirectional => write!(f, "sequence_bidirectional"),
@@ -192,6 +198,9 @@ impl FlawKind {
                 }
 
                 flaws
+            }
+            Self::ExecuteEntirePlan => {
+                get_execute_entire_plan_flaws(task, partitions, wildcard_plan, direction)
             }
             Self::SequenceProgression => get_sequence_flaws(
                 task,
