@@ -285,9 +285,6 @@ fn compute_max_refined(
     numeric_domain_sizes: &mut [usize],
     prop_multiplier: usize,
 ) -> (ChosenFlaws, usize) {
-    const NUMERIC_COMPARISON_FLAW_BONUS: usize = 1_000_000;
-    const REFINED_COMPARISON_FLAW_BONUS: usize = 100_000;
-
     let mut max_score = 0;
     let mut candidates: ChosenFlaws = Vec::with_capacity(flaws.len());
     for (idx, flaw) in flaws.iter().enumerate() {
@@ -301,14 +298,6 @@ fn compute_max_refined(
                 let var_id = pf.fact.var;
                 let base: usize = domain_sizes.get(var_id).copied().unwrap_or(0) * prop_multiplier;
                 if comparison_var_ids.contains(&var_id) && !pf.dependent_numeric_flaws.is_empty() {
-                    // numeric-fd parity: pick the *most-refined* dependent
-                    // numeric var (sticky refinement). Score by its partition
-                    // count; restrict refinement to deps at that maximum so
-                    // CEGAR deepens the leader instead of spreading work
-                    // across deps. Previously this used `.iter().next()`
-                    // (min partitions), which inverted the intended semantics
-                    // and caused refinement to lag the leader on every
-                    // iteration for tight half-space comparisons.
                     let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
                     for nf in pf.dependent_numeric_flaws.iter().cloned() {
                         let partitions = numeric_domain_sizes
@@ -319,15 +308,7 @@ fn compute_max_refined(
                     }
                     if let Some((&max_partitions, vec)) = by_partition_count.iter().next_back() {
                         restricted_dep = Some(vec.clone());
-                        let refined_bonus = if domain_sizes.get(var_id).copied().unwrap_or(0) > 1 {
-                            REFINED_COMPARISON_FLAW_BONUS
-                        } else {
-                            0
-                        };
-                        NUMERIC_COMPARISON_FLAW_BONUS
-                            .saturating_add(refined_bonus)
-                            .saturating_add(base)
-                            .saturating_add(max_partitions)
+                        base.saturating_add(max_partitions)
                     } else {
                         base
                     }
@@ -543,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn max_refined_prefers_numeric_dependent_comparison_flaws() {
+    fn max_refined_scores_comparison_flaws_like_numeric_fd() {
         let flaws = vec![
             prop_flaw(1, Vec::new()),
             prop_flaw(0, vec![numeric_flaw(0)]),
@@ -562,11 +543,11 @@ mod tests {
             &mut rng,
         );
 
-        assert_eq!(chosen[0].idx, 1);
+        assert_eq!(chosen[0].idx, 0);
     }
 
     #[test]
-    fn max_refined_continues_least_refined_dependent_numeric_view() {
+    fn max_refined_continues_most_refined_dependent_numeric_view() {
         let flaws = vec![prop_flaw(0, vec![numeric_flaw(0), numeric_flaw(1)])];
         let comparison_var_ids = HashSet::from([0]);
         let mut domain_sizes = vec![2];
@@ -584,7 +565,7 @@ mod tests {
             .restricted_dep
             .as_ref()
             .expect("comparison flaw should restrict dependent numeric flaws");
-        assert_eq!(restricted, &vec![numeric_flaw(1)]);
+        assert_eq!(restricted, &vec![numeric_flaw(0)]);
     }
 
     #[test]

@@ -104,6 +104,7 @@ fn empty_wildcard_plan_is_real_exactly_when_initial_state_is_goal() {
         abstract_state_hashes: vec![0],
         abstract_prop_states: vec![vec![0]],
         abstract_numeric_states: vec![vec![]],
+        abstract_operator_count: 0,
     };
     assert!(wildcard_plan_is_real(&task, &empty_plan).unwrap());
 
@@ -201,6 +202,7 @@ fn get_flaws_reports_numeric_deviation_flaw() {
         abstract_state_hashes: vec![],
         abstract_prop_states: vec![],
         abstract_numeric_states: vec![vec![0, 0, 0], vec![1, 0, 0]],
+        abstract_operator_count: 1,
     };
     let domain_mapping = vec![vec![0, 1], vec![0, 1]];
 

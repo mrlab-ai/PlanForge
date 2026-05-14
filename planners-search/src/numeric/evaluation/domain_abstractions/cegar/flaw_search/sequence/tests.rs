@@ -230,6 +230,7 @@ fn progression_sequence_flaws_find_numeric_deviation_flaw() {
             vec![0, 0, 0], // initial: x in LOWER
             vec![1, 0, 0], // expected after inc: x in UPPER
         ],
+        abstract_operator_count: 1,
     };
 
     let domain_mapping = vec![vec![0, 0, 0], vec![0, 0]];

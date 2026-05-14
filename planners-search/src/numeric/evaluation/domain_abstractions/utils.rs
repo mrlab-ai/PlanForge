@@ -228,18 +228,23 @@ fn interval_contains_value_tolerant(iv: &Interval, value: f64) -> bool {
         return false;
     }
 
+    // Parity-over-quality: exact match at partition boundaries, matching
+    // C++ numeric-FD's `get_partition_index`. Tolerant comparison drifted
+    // boundary-aligned values into the wrong partition relative to C++.
     let lower_ok = if iv.lower == f64::NEG_INFINITY {
         true
+    } else if iv.lower_closed {
+        value >= iv.lower
     } else {
-        let tolerance = float_tolerance::tolerance(value, iv.lower);
-        value > iv.lower + tolerance || (iv.lower_closed && (value - iv.lower).abs() <= tolerance)
+        value > iv.lower
     };
 
     let upper_ok = if iv.upper == f64::INFINITY {
         true
+    } else if iv.upper_closed {
+        value <= iv.upper
     } else {
-        let tolerance = float_tolerance::tolerance(value, iv.upper);
-        value < iv.upper - tolerance || (iv.upper_closed && (value - iv.upper).abs() <= tolerance)
+        value < iv.upper
     };
 
     lower_ok && upper_ok

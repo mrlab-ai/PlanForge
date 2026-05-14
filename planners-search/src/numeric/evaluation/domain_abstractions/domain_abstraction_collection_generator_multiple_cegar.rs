@@ -180,6 +180,38 @@ fn fmt_optional_seed(seed: Option<u64>) -> String {
     seed.map_or_else(|| "none".to_string(), |seed| seed.to_string())
 }
 
+fn refined_domain_stats(domain_sizes: &[usize]) -> (usize, u128) {
+    domain_sizes
+        .iter()
+        .copied()
+        .filter(|&size| size > 1)
+        .fold((0usize, 1u128), |(count, product), size| {
+            (count + 1, product.saturating_mul(size as u128))
+        })
+}
+
+fn refined_domain_detail(domain_sizes: &[usize]) -> String {
+    domain_sizes
+        .iter()
+        .enumerate()
+        .filter_map(|(var_id, &size)| (size > 1).then_some(format!("{var_id}:{size}")))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn plan_prefix_detail(plan_prefix: &[Vec<usize>]) -> String {
+    plan_prefix
+        .iter()
+        .map(|step| {
+            step.iter()
+                .map(|op_id| op_id.to_string())
+                .collect::<Vec<_>>()
+                .join("|")
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
 fn time_seed() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -411,6 +443,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 full_goal_task: Some(full_goal_task),
                 initial_seed_splits: seed_descriptions,
                 max_abstraction_size: Some(remaining_abstraction_size),
+                ..abstraction.metadata
             };
 
             let abstraction_size = compute_abstraction_size_u128(
@@ -425,19 +458,36 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 let consumed = abstraction_size.min(remaining_collection_size as u128) as usize;
                 remaining_collection_size = remaining_collection_size.saturating_sub(consumed);
                 generated_abstractions.push(abstraction);
+                let last = generated_abstractions
+                    .last()
+                    .expect("just pushed generated abstraction");
+                let (refined_prop_domains, prop_product) =
+                    refined_domain_stats(last.factory.domain_sizes());
+                let (refined_numeric_domains, numeric_product) =
+                    refined_domain_stats(last.factory.numeric_domain_sizes());
+                let refined_prop_detail = refined_domain_detail(last.factory.domain_sizes());
+                let refined_numeric_detail =
+                    refined_domain_detail(last.factory.numeric_domain_sizes());
+                let plan_prefix = plan_prefix_detail(&last.metadata.plan_prefix);
                 if self.config.debug {
-                    if let Some(last) = generated_abstractions.last() {
-                        log_collection_abstraction_debug(
-                            generated_abstractions.len() - 1,
-                            last,
-                            generation_task,
-                        );
-                    }
+                    log_collection_abstraction_debug(
+                        generated_abstractions.len() - 1,
+                        last,
+                        generation_task,
+                    );
                 }
                 info!(
-                    "domain abstraction collection: added abstraction at iteration {}, abstraction_size={}, elapsed={:.2}s, remaining_collection_size={}, next_max_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
+                    "domain abstraction collection: added abstraction at iteration {}, abstraction_size={}, abstract_operators={}, refined_prop_domains={}, prop_product={}, refined_prop_detail={}, refined_numeric_domains={}, numeric_product={}, refined_numeric_detail={}, plan_prefix={}, elapsed={:.2}s, remaining_collection_size={}, next_max_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
                     iteration,
                     abstraction_size,
+                    last.abstract_operators.len(),
+                    refined_prop_domains,
+                    prop_product,
+                    refined_prop_detail,
+                    refined_numeric_domains,
+                    numeric_product,
+                    refined_numeric_detail,
+                    plan_prefix,
                     start.elapsed().as_secs_f64(),
                     remaining_collection_size,
                     remaining_collection_size.min(self.config.max_abstraction_size),

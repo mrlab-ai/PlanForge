@@ -110,20 +110,33 @@ fn ensure_online_scp_deadline(deadline: Option<Instant>) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct MatchTreeNode {
+    var_id: Option<usize>,
+    var_domain_size: usize,
     value_children: Vec<Option<Box<MatchTreeNode>>>,
     wildcard_child: Option<Box<MatchTreeNode>>,
     ops: Vec<usize>,
 }
 
+impl Default for MatchTreeNode {
+    fn default() -> Self {
+        Self {
+            var_id: None,
+            var_domain_size: 0,
+            value_children: Vec::new(),
+            wildcard_child: None,
+            ops: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct MatchTree {
-    var_order: Vec<usize>,
     domain_sizes: Vec<usize>,
     numeric_domain_sizes: Vec<usize>,
     hash_multipliers: Vec<usize>,
-    root: MatchTreeNode,
+    root: Option<Box<MatchTreeNode>>,
 }
 
 fn domain_size_for_var(
@@ -141,11 +154,10 @@ fn domain_size_for_var(
     }
 }
 
-fn fact_value_for_var(facts: &[ExplicitFact], var: usize) -> Option<usize> {
-    facts
-        .binary_search_by_key(&var, |fact| fact.var)
-        .ok()
-        .map(|index| facts[index].value)
+fn ensure_match_tree_value_child(node: &mut MatchTreeNode, value: usize) {
+    if value >= node.value_children.len() {
+        node.value_children.resize_with(value + 1, || None);
+    }
 }
 
 impl MatchTree {
@@ -156,36 +168,11 @@ impl MatchTree {
         operators: &[AbstractOperator],
         _comparison_var_ids: &[usize],
     ) -> Self {
-        let total_vars = domain_sizes.len() + numeric_domain_sizes.len();
-        let mut var_counts = vec![0usize; total_vars];
-        for op in operators {
-            for f in op.regression_preconditions.iter() {
-                if f.var >= total_vars {
-                    continue;
-                }
-                let domain_size = domain_size_for_var(domain_sizes, numeric_domain_sizes, f.var);
-                if domain_size > 1 {
-                    var_counts[f.var] += 1;
-                }
-            }
-        }
-        let mut var_order: Vec<usize> = var_counts
-            .iter()
-            .enumerate()
-            .filter_map(|(var, &count)| (count > 0).then_some(var))
-            .collect();
-        var_order.sort_by(|&left, &right| {
-            var_counts[right]
-                .cmp(&var_counts[left])
-                .then_with(|| left.cmp(&right))
-        });
-
         let mut tree = Self {
-            var_order,
             domain_sizes: domain_sizes.to_vec(),
             numeric_domain_sizes: numeric_domain_sizes.to_vec(),
             hash_multipliers: hash_multipliers.to_vec(),
-            root: MatchTreeNode::default(),
+            root: None,
         };
 
         for (op_id, op) in operators.iter().enumerate() {
@@ -197,43 +184,70 @@ impl MatchTree {
 
     fn insert(&mut self, op_id: usize, conds: &[ExplicitFact]) {
         fn insert_rec(
-            node: &mut MatchTreeNode,
-            depth: usize,
-            var_order: &[usize],
+            node_slot: &mut Option<Box<MatchTreeNode>>,
+            pre_index: usize,
             conds: &[ExplicitFact],
             domain_sizes: &[usize],
             numeric_domain_sizes: &[usize],
             op_id: usize,
         ) {
-            if depth == var_order.len() {
+            let node = node_slot.get_or_insert_with(|| Box::new(MatchTreeNode::default()));
+            if pre_index == conds.len() {
                 node.ops.push(op_id);
                 return;
             }
-            let var = var_order[depth];
-            if let Some(val) = fact_value_for_var(conds, var) {
-                let domain_size = domain_size_for_var(domain_sizes, numeric_domain_sizes, var);
-                if node.value_children.len() < domain_size {
-                    node.value_children.resize_with(domain_size, || None);
-                }
-                let child = node.value_children[val]
-                    .get_or_insert_with(|| Box::new(MatchTreeNode::default()));
+
+            let fact = &conds[pre_index];
+            let domain_size = domain_size_for_var(domain_sizes, numeric_domain_sizes, fact.var);
+            if domain_size <= 1 {
                 insert_rec(
-                    child.as_mut(),
-                    depth + 1,
-                    var_order,
+                    node_slot,
+                    pre_index + 1,
+                    conds,
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    op_id,
+                );
+                return;
+            }
+
+            if node.var_id.is_some_and(|node_var| node_var > fact.var) {
+                let old_node = node_slot.take();
+                let mut value_children = Vec::new();
+                value_children.resize_with(domain_size, || None);
+                *node_slot = Some(Box::new(MatchTreeNode {
+                    var_id: Some(fact.var),
+                    var_domain_size: domain_size,
+                    value_children,
+                    wildcard_child: old_node,
+                    ops: Vec::new(),
+                }));
+            } else if node.var_id.is_none() {
+                node.var_id = Some(fact.var);
+                node.var_domain_size = domain_size;
+                node.value_children.resize_with(domain_size, || None);
+            }
+
+            let node = node_slot.as_mut().expect("match-tree node is initialized");
+            let node_var = node.var_id.expect("match-tree non-leaf has a var");
+            if node_var == fact.var {
+                ensure_match_tree_value_child(node, fact.value);
+                insert_rec(
+                    &mut node.value_children[fact.value],
+                    pre_index + 1,
                     conds,
                     domain_sizes,
                     numeric_domain_sizes,
                     op_id,
                 );
             } else {
-                let child = node
-                    .wildcard_child
-                    .get_or_insert_with(|| Box::new(MatchTreeNode::default()));
+                debug_assert!(
+                    node_var < fact.var,
+                    "C++ match tree insertion expects sorted regression preconditions"
+                );
                 insert_rec(
-                    child.as_mut(),
-                    depth + 1,
-                    var_order,
+                    &mut node.wildcard_child,
+                    pre_index,
                     conds,
                     domain_sizes,
                     numeric_domain_sizes,
@@ -245,7 +259,6 @@ impl MatchTree {
         insert_rec(
             &mut self.root,
             0,
-            &self.var_order,
             conds,
             &self.domain_sizes,
             &self.numeric_domain_sizes,
@@ -255,27 +268,22 @@ impl MatchTree {
 
     fn get_applicable_operator_ids(&self, state_hash: usize, out: &mut Vec<usize>) {
         out.clear();
-        self.collect_applicable(&self.root, 0, state_hash, out);
+        if let Some(root) = self.root.as_deref() {
+            self.collect_applicable(root, state_hash, out);
+        }
     }
 
-    fn collect_applicable(
-        &self,
-        node: &MatchTreeNode,
-        depth: usize,
-        state_hash: usize,
-        out: &mut Vec<usize>,
-    ) {
-        if depth == self.var_order.len() {
-            out.extend_from_slice(&node.ops);
+    fn collect_applicable(&self, node: &MatchTreeNode, state_hash: usize, out: &mut Vec<usize>) {
+        out.extend_from_slice(&node.ops);
+        let Some(var) = node.var_id else {
             return;
-        }
-        let var = self.var_order[depth];
+        };
         let actual = self.get_var_value(state_hash, var);
         if let Some(child) = node.value_children.get(actual).and_then(Option::as_deref) {
-            self.collect_applicable(child, depth + 1, state_hash, out);
+            self.collect_applicable(child, state_hash, out);
         }
         if let Some(child) = node.wildcard_child.as_deref() {
-            self.collect_applicable(child, depth + 1, state_hash, out);
+            self.collect_applicable(child, state_hash, out);
         }
     }
     fn get_var_value(&self, state_hash: usize, var: usize) -> usize {
@@ -341,6 +349,9 @@ pub struct WildcardPlanResult {
     pub abstract_prop_states: Vec<Vec<usize>>,
     // Decoded numeric partitions along path.
     pub abstract_numeric_states: Vec<Vec<usize>>,
+    // Total number of abstract operators produced for this plan computation.
+    // Diagnostic-only; used for parity tracing against numeric-FD.
+    pub abstract_operator_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -2644,8 +2655,6 @@ impl DomainAbstractionFactory {
                 };
                 if contains_current {
                     step = cand_op.concrete_op_ids.clone();
-                    step.sort_unstable();
-                    step.dedup();
                     if use_wildcard_plans {
                         if let Some(rng) = plan_step_rng.as_deref_mut() {
                             step.shuffle(rng);
@@ -2691,6 +2700,7 @@ impl DomainAbstractionFactory {
             abstract_state_hashes,
             abstract_prop_states,
             abstract_numeric_states,
+            abstract_operator_count: operators.len(),
         }))
     }
 
@@ -2701,7 +2711,7 @@ impl DomainAbstractionFactory {
         operators: &[AbstractOperator],
         match_tree: &MatchTree,
         goal_facts: &[ExplicitFact],
-        _initial_state_hash: usize,
+        initial_state_hash: usize,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
         comparison_var_ids: &[usize],
@@ -2794,22 +2804,28 @@ impl DomainAbstractionFactory {
 
                     for pred in possible_predecessors.iter().copied() {
                         debug_assert!(pred < num_states, "predecessor hash does not fit usize");
-                        if alternative_cost + 1e-12 < distances[pred] {
+                        if alternative_cost < distances[pred] {
                             distances[pred] = alternative_cost;
                             generating_op_ids[pred] = Some(op_id);
-                            heap.push((
-                                Reverse(
-                                    NotNan::new(alternative_cost)
-                                        .context("alternative cost is NaN")?,
-                                ),
-                                pred,
-                            ));
+                            let insert_into_heap = pred == initial_state_hash
+                                || !possible_predecessors
+                                    .iter()
+                                    .any(|&alt_state| alt_state > pred);
+                            if insert_into_heap {
+                                heap.push((
+                                    Reverse(
+                                        NotNan::new(alternative_cost)
+                                            .context("alternative cost is NaN")?,
+                                    ),
+                                    pred,
+                                ));
+                            }
                         }
                     }
                 } else {
                     let pred = predecessor_i64 as usize;
                     debug_assert!(pred < num_states, "predecessor hash does not fit usize");
-                    if alternative_cost + 1e-12 < distances[pred] {
+                    if alternative_cost < distances[pred] {
                         distances[pred] = alternative_cost;
                         generating_op_ids[pred] = Some(op_id);
                         heap.push((
@@ -3198,7 +3214,7 @@ fn get_comparison_preconditions(
 ) -> Vec<ExplicitFact> {
     let mut out: Vec<ExplicitFact> = Vec::new();
     for f in &op.preconditions {
-        if comparison_var_ids.contains(&f.var) && f.value != COMPARISON_UNKNOWN_VAL {
+        if comparison_var_ids.contains(&f.var) {
             out.push(f.clone());
         }
     }

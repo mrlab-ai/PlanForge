@@ -205,6 +205,7 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
         abstract_state_hashes: vec![],
         abstract_prop_states: vec![],
         abstract_numeric_states: vec![],
+        abstract_operator_count: 1,
     };
 
     let flaws =
