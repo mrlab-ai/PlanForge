@@ -8,4 +8,5 @@ license = "LGPL-3.0"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
+mimalloc = { version = "0.1", default-features = false }
 tracing = "0.1"
