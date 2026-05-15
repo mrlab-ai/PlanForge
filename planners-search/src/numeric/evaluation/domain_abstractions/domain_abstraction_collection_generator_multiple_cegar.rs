@@ -138,6 +138,11 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// flaw kind chooses its own default (`Forward` for everything except
     /// `TargetCentered`, which defaults to `Backward`).
     pub split_direction: Option<SplitDirection>,
+    /// Pass-through for `CegarConfig::compute_operator_footprints`. Default
+    /// `true`. SCP/fillSCP wrappers leave it on; canonical/max wrappers turn
+    /// it off to skip ~12 GB of per-concrete-op `StateRegion` storage on
+    /// large tasks like minecraft-sword-advanced/prob_30x30_5.
+    pub compute_operator_footprints: bool,
 }
 
 impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
@@ -165,6 +170,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             portfolio_strategy: PortfolioStrategy::Standard,
             finite_support: FiniteSupportConfig::default(),
             split_direction: None,
+            compute_operator_footprints: true,
         }
     }
 }
@@ -297,6 +303,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             initial_seed_splits,
             finite_support: self.config.finite_support,
             split_direction: self.config.split_direction,
+            compute_operator_footprints: self.config.compute_operator_footprints,
         }
     }
 

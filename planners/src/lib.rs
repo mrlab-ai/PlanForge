@@ -185,8 +185,14 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
             let heuristic_override = match heuristic {
                 planners_searcher::HeuristicSpec::Blind => None,
                 planners_searcher::HeuristicSpec::CanonicalDomainAbstractions(config) => {
+                    // Canonical reads only the per-abstraction distance table;
+                    // skip footprint construction to avoid ~12 GB of
+                    // per-concrete-op `StateRegion` storage on tasks with
+                    // hundreds of thousands of concrete operators.
+                    let mut config = config.clone();
+                    config.compute_operator_footprints = false;
                     let generator =
-                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
+                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
                     info!("Building canonical domain abstractions (CEGAR)...");
                     let abstractions = generator.generate_collection(task_ref).map_err(|e| {
                         std::io::Error::other(format!(
@@ -214,6 +220,9 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     config.flaw_treatment = domain_config.flaw_treatment;
                     config.init_split_method = domain_config.init_split_method;
                     config.transform_linear_task = domain_config.transform_linear_task;
+                    // Single DA reads only the distance table; footprints are
+                    // SCP-specific. Skip the per-concrete-op StateRegion cost.
+                    config.compute_operator_footprints = false;
 
                     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
                         std::io::Error::other(format!(
@@ -253,8 +262,12 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                 )
                     as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>),
                 planners_searcher::HeuristicSpec::MultiDomainAbstractions(config) => {
+                    // Max-of-abstractions reads only the distance tables;
+                    // footprints are SCP-only.
+                    let mut config = config.clone();
+                    config.compute_operator_footprints = false;
                     let generator =
-                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
+                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
                     info!("Building multiple domain abstractions (CEGAR)...");
                     let abstractions = generator.generate_collection(task_ref).map_err(|e| {
                         std::io::Error::other(format!(
