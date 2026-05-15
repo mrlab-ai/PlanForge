@@ -3711,10 +3711,19 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
 
         if self.is_numeric_axiom_var(fact.var()) {
-            let fact_name = self.task.get_fact_name(fact);
-            panic!(
-                "LM-cut numeric conditions do not support disequality comparison fact `{fact_name}`"
-            );
+            // Reached when either `ignore_numeric=true` (numeric tracking is disabled
+            // wholesale) or the fact references a numeric-axiom var that isn't a
+            // comparison axiom registered in `comparison_fact_to_condition_ids`
+            // (e.g. an assignment-axiom var, or a comparison var whose TRUE/value=0
+            // entry produced an empty condition list at build time).
+            //
+            // Dropping the precondition is an admissible relaxation: an operator
+            // whose numeric/axiom precondition we cannot model becomes easier to
+            // apply, never harder. Reachability over-approximates and the LM-cut
+            // sum of cut costs is still a valid lower bound on optimal plan cost.
+            // The prior `panic!` aborted whole searches on plant-watering/6_2_2
+            // and similar tasks where assignment-axiom preconditions surface.
+            return Vec::new();
         }
 
         vec![self.get_proposition_id(fact)]
