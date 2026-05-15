@@ -990,7 +990,17 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .get_propositional_goals(goal_index)
                 .map(|goals| self.build_precondition_ids(goals))
                 .unwrap_or_default();
-            let helper_numeric_condition_ids = self.numeric_helper.get_numeric_goals(goal_index);
+            // When `ignore_numeric=true`, `build_comparison_fact_condition_ids` and
+            // `add_linear_conditions` both return early without registering any numeric
+            // condition propositions, so helper goals over numeric vars would fail the
+            // lookup. Drop them silently in that mode — the heuristic intentionally
+            // ignores numerics, so omitting them is admissible (under-approximates the
+            // goal, never over-approximates).
+            let helper_numeric_condition_ids: Vec<usize> = if self.config.ignore_numeric {
+                Vec::new()
+            } else {
+                self.numeric_helper.get_numeric_goals(goal_index).to_vec()
+            };
             let helper_numeric_ids = helper_numeric_condition_ids
                 .iter()
                 .map(|&condition_id| {
