@@ -13,6 +13,9 @@ use tracing::{Level, debug, enabled, info};
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
+use crate::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
+    LandmarkCutNumericHeuristic, LmCutNumericConfig,
+};
 use crate::numeric::evaluation::pattern_databases::pattern_database::{
     PatternDatabase, PdbHeuristicConfig, PdbInternalHeuristic,
 };
@@ -29,7 +32,7 @@ use super::domain_abstraction_heuristic::{
 use super::transition_cost_partitioning::FiniteSupportConfig;
 use super::transition_cost_partitioning::{
     AbstractOperatorCostBudget, AbstractOperatorCostFunction, AbstractOperatorFootprint,
-    NonAllocableFootprintReason, TransitionResidualCosts,
+    LmCutResidualOperatorCostPartition, NonAllocableFootprintReason, TransitionResidualCosts,
 };
 
 // ---------------------------------------------------------------------------
@@ -113,6 +116,77 @@ pub struct ScpOnlineConfig {
     pub saturator: Saturator,
     pub random_seed: Option<u64>,
     pub use_abstract_operator_cost_partitioning: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct FillScpConfig {
+    pub table_construction_max_time: f64,
+    pub combine_labels: bool,
+    pub collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+    pub scoring_function: ScoringFunction,
+    pub order_generator: OrderGenerator,
+    pub order_optimization_max_time: f64,
+    pub saturator: Saturator,
+    pub random_seed: Option<u64>,
+    pub use_abstract_operator_cost_partitioning: bool,
+    pub lmcut_config: LmCutNumericConfig,
+}
+
+impl Default for FillScpConfig {
+    fn default() -> Self {
+        let collection_config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+            combine_labels: false,
+            portfolio_strategy:
+                super::domain_abstraction_collection_generator_multiple_cegar::PortfolioStrategy::Standard,
+            ..Default::default()
+        };
+        let random_seed = collection_config.random_seed;
+        Self {
+            table_construction_max_time: 30.0,
+            combine_labels: false,
+            collection_config,
+            scoring_function: ScoringFunction::MaxHeuristicPerStolenCosts,
+            order_generator: OrderGenerator::Greedy,
+            order_optimization_max_time: 5.0,
+            saturator: Saturator::All,
+            random_seed,
+            use_abstract_operator_cost_partitioning: false,
+            lmcut_config: LmCutNumericConfig::default(),
+        }
+    }
+}
+
+impl FillScpConfig {
+    pub fn force_full_goal_tasks(&mut self) {
+        self.collection_config.portfolio_strategy =
+            super::domain_abstraction_collection_generator_multiple_cegar::PortfolioStrategy::Standard;
+        self.collection_config.combine_labels = self.combine_labels;
+        self.random_seed = self.collection_config.random_seed;
+    }
+
+    fn as_scp_online_config(&self) -> ScpOnlineConfig {
+        ScpOnlineConfig {
+            max_time: 0.0,
+            table_construction_max_time: self.table_construction_max_time,
+            max_size: usize::MAX,
+            interval: usize::MAX,
+            combine_labels: self.combine_labels,
+            collection_config: self.collection_config.clone(),
+            use_numeric_pdbs: false,
+            max_pdb_states: 0,
+            max_pattern_size: 0,
+            only_interesting_patterns: true,
+            pdb_exploration_heuristic: PdbInternalHeuristic::Blind,
+            pdb_frontier_heuristic: PdbInternalHeuristic::Zero,
+            pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
+            scoring_function: self.scoring_function,
+            order_generator: self.order_generator,
+            order_optimization_max_time: self.order_optimization_max_time,
+            saturator: self.saturator,
+            random_seed: self.random_seed,
+            use_abstract_operator_cost_partitioning: self.use_abstract_operator_cost_partitioning,
+        }
+    }
 }
 
 impl Default for ScpOnlineConfig {
@@ -294,6 +368,198 @@ pub struct SaturatedCostPartitioningOnlineHeuristic<'task> {
     prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
     expanded_numeric_scratch: RefCell<Vec<f64>>,
+}
+
+pub struct FillScpHeuristic<'task> {
+    name: String,
+    abstraction_heuristics: Vec<DomainAbstractionHeuristic>,
+    cp_heuristic: CostPartitioningHeuristic,
+    lmcut_heuristic: LandmarkCutNumericHeuristic<'task>,
+    lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
+    component_ids_scratch: RefCell<Vec<Option<usize>>>,
+}
+
+impl<'task> FillScpHeuristic<'task> {
+    pub fn new(
+        name: Option<String>,
+        abstractions: Vec<DomainAbstraction>,
+        mut config: FillScpConfig,
+        task: &'task dyn AbstractNumericTask,
+    ) -> Result<Self, EvaluationError> {
+        config.force_full_goal_tasks();
+        let scp_config = config.as_scp_online_config();
+        let temp = SaturatedCostPartitioningOnlineHeuristic::new(
+            Some("fillSCP_scp_builder".to_string()),
+            abstractions.clone(),
+            Vec::new(),
+            scp_config,
+            task,
+        )?;
+        let num_domain_abstractions = abstractions.len();
+        let abstract_state_ids: Vec<Option<usize>> = abstractions
+            .iter()
+            .map(|abstraction| Some(abstraction.distance_table.initial_state_hash))
+            .collect();
+        let deadline = config
+            .table_construction_max_time
+            .is_finite()
+            .then(|| Instant::now() + Duration::from_secs_f64(config.table_construction_max_time));
+
+        let original_costs = temp.original_operator_costs.clone();
+        let mut order = {
+            let mut state = temp.state.borrow_mut();
+            temp.compute_order_for_state(
+                task,
+                &mut state,
+                &abstract_state_ids,
+                &abstractions,
+                num_domain_abstractions,
+                deadline,
+            )?
+        };
+        let standalone_current_h = {
+            let state = temp.state.borrow();
+            standalone_current_h_values(&state, &abstract_state_ids, num_domain_abstractions)
+        };
+        let (mut cp_heuristic, mut residual_costs, mut residual_partitions) = if config
+            .use_abstract_operator_cost_partitioning
+        {
+            let (cp, costs, partitions) = temp.build_abstract_operator_fill_scp(
+                task,
+                &abstractions,
+                &order,
+                &abstract_state_ids,
+                &standalone_current_h,
+                num_domain_abstractions,
+                &original_costs,
+                deadline,
+                config.saturator,
+            )?;
+            (cp, costs, Some(partitions))
+        } else {
+            let (cp, costs) = temp.build_label_fill_scp(
+                task,
+                &abstractions,
+                &order,
+                &abstract_state_ids,
+                num_domain_abstractions,
+                &original_costs,
+                deadline,
+            )?;
+            (cp, costs, None)
+        };
+        if config.order_optimization_max_time > 0.0 {
+            let optimization_deadline = config
+                .order_optimization_max_time
+                .is_finite()
+                .then(|| Instant::now() + Duration::from_secs_f64(config.order_optimization_max_time));
+            temp.optimize_order_with_hill_climbing(
+                task,
+                &abstractions,
+                &standalone_current_h,
+                num_domain_abstractions,
+                &original_costs,
+                &abstract_state_ids,
+                &mut order,
+                &mut cp_heuristic,
+                optimization_deadline,
+            )?;
+            (cp_heuristic, residual_costs, residual_partitions) = if config
+                .use_abstract_operator_cost_partitioning
+            {
+                let (cp, costs, partitions) = temp.build_abstract_operator_fill_scp(
+                    task,
+                    &abstractions,
+                    &order,
+                    &abstract_state_ids,
+                    &standalone_current_h,
+                    num_domain_abstractions,
+                    &original_costs,
+                    deadline,
+                    config.saturator,
+                )?;
+                (cp, costs, Some(partitions))
+            } else {
+                let (cp, costs) = temp.build_label_fill_scp(
+                    task,
+                    &abstractions,
+                    &order,
+                    &abstract_state_ids,
+                    num_domain_abstractions,
+                    &original_costs,
+                    deadline,
+                )?;
+                (cp, costs, None)
+            };
+        }
+        let lmcut_heuristic = LandmarkCutNumericHeuristic::from_config_with_residual_operator_cost_partitions(
+            task,
+            config.lmcut_config,
+            residual_partitions.is_none().then_some(residual_costs),
+            residual_partitions,
+        )
+        .map_err(EvaluationError::ComputationFailed)?;
+        let abstraction_heuristics = abstractions
+            .into_iter()
+            .enumerate()
+            .map(|(index, abstraction)| {
+                DomainAbstractionHeuristic::new(Some(format!("fillSCP_{index}")), abstraction)
+            })
+            .collect();
+
+        Ok(Self {
+            name: name.unwrap_or_else(|| "fillSCP".to_string()),
+            abstraction_heuristics,
+            cp_heuristic,
+            lmcut_heuristic,
+            lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
+            component_ids_scratch: RefCell::new(Vec::new()),
+        })
+    }
+
+    fn compute_abstract_state_ids_into(
+        &self,
+        eval_state: &EvaluationState<'_, '_>,
+        ids: &mut Vec<Option<usize>>,
+    ) -> Result<(), EvaluationError> {
+        ids.clear();
+        ids.resize(self.abstraction_heuristics.len(), None);
+        let mut scratch = self.lookup_scratch.borrow_mut();
+        compute_collection_abstract_state_ids(
+            &self.abstraction_heuristics,
+            eval_state,
+            None,
+            &mut scratch,
+        )?;
+        for (id, abstract_id) in scratch.abstract_state_ids.iter().copied().enumerate() {
+            ids[id] = abstract_id;
+        }
+        Ok(())
+    }
+}
+
+impl Heuristic for FillScpHeuristic<'_> {
+    fn compute_heuristic(
+        &self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
+        let mut component_ids = self.component_ids_scratch.borrow_mut();
+        self.compute_abstract_state_ids_into(eval_state, &mut component_ids)?;
+        let cp_h = self.cp_heuristic.compute_heuristic(&component_ids);
+        if cp_h.is_infinite() && cp_h.is_sign_positive() {
+            return Ok(cp_h);
+        }
+        let lmcut_h = self.lmcut_heuristic.compute_heuristic(eval_state)?;
+        Ok(cp_h + lmcut_h)
+    }
+
+    fn heuristic_name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn dead_ends_are_reliable(&self) -> bool {
+        true
+    }
 }
 
 impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
@@ -1788,6 +2054,404 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(cp)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn build_label_fill_scp(
+        &self,
+        task: &dyn AbstractNumericTask,
+        abstractions: &[DomainAbstraction],
+        order: &[usize],
+        abstract_state_ids: &[Option<usize>],
+        num_domain_abstractions: usize,
+        original_costs: &[f64],
+        deadline: Option<Instant>,
+    ) -> Result<(CostPartitioningHeuristic, Vec<f64>), EvaluationError> {
+        let mut cp = CostPartitioningHeuristic::default();
+        let mut remaining_costs: Vec<f64> = original_costs.to_vec();
+
+        for &pos in order {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                break;
+            }
+            if pos >= num_domain_abstractions {
+                continue;
+            }
+            let abstraction = &abstractions[pos];
+            info!(
+                "fillSCP: label CP step abstraction {pos}, abstract_states={}",
+                abstraction_state_count(abstraction)
+            );
+            match self.config.saturator {
+                Saturator::All => {
+                    let abstraction_task = abstraction.task_for_factory(task);
+                    let (distances, saturated) = Self::compute_domain_cp_entry(
+                        abstraction,
+                        abstraction_task,
+                        self.config.combine_labels,
+                        &remaining_costs,
+                    )?;
+                    log_label_table_summary(
+                        "fillSCP/all",
+                        pos,
+                        &distances,
+                        &saturated,
+                        abstract_state_ids,
+                    );
+                    if should_skip_zero_current_table(
+                        "fillSCP label all",
+                        pos,
+                        &distances,
+                        abstract_state_ids,
+                    ) {
+                        continue;
+                    }
+                    cp.add_h_values(pos, distances);
+                    reduce_costs(&mut remaining_costs, &saturated)?;
+                }
+                Saturator::Perim => {
+                    let h_cap = abstract_state_ids
+                        .get(pos)
+                        .copied()
+                        .flatten()
+                        .and_then(|sid| {
+                            let abstraction_task = abstraction.task_for_factory(task);
+                            abstraction
+                                .factory
+                                .build_goal_distances_for_goals(
+                                    abstraction_task,
+                                    self.config.combine_labels,
+                                    &remaining_costs,
+                                    &abstraction.distance_table.goal_facts,
+                                )
+                                .ok()
+                                .and_then(|t| t.distances.get(sid).copied())
+                        })
+                        .unwrap_or(f64::INFINITY);
+                    let abstraction_task = abstraction.task_for_factory(task);
+                    let (distances, saturated) = Self::compute_domain_perim_entry(
+                        abstraction,
+                        abstraction_task,
+                        self.config.combine_labels,
+                        &remaining_costs,
+                        h_cap,
+                    )?;
+                    log_label_table_summary(
+                        "fillSCP/perim",
+                        pos,
+                        &distances,
+                        &saturated,
+                        abstract_state_ids,
+                    );
+                    if should_skip_zero_current_table(
+                        "fillSCP label perim",
+                        pos,
+                        &distances,
+                        abstract_state_ids,
+                    ) {
+                        continue;
+                    }
+                    cp.add_h_values(pos, distances);
+                    reduce_costs(&mut remaining_costs, &saturated)?;
+                }
+                Saturator::Perimstar => {
+                    let h_cap = abstract_state_ids
+                        .get(pos)
+                        .copied()
+                        .flatten()
+                        .and_then(|sid| {
+                            let abstraction_task = abstraction.task_for_factory(task);
+                            abstraction
+                                .factory
+                                .build_goal_distances_for_goals(
+                                    abstraction_task,
+                                    self.config.combine_labels,
+                                    &remaining_costs,
+                                    &abstraction.distance_table.goal_facts,
+                                )
+                                .ok()
+                                .and_then(|t| t.distances.get(sid).copied())
+                        })
+                        .unwrap_or(f64::INFINITY);
+                    let abstraction_task = abstraction.task_for_factory(task);
+                    let (perim_distances, perim_saturated) = Self::compute_domain_perim_entry(
+                        abstraction,
+                        abstraction_task,
+                        self.config.combine_labels,
+                        &remaining_costs,
+                        h_cap,
+                    )?;
+                    if !should_skip_zero_current_table(
+                        "fillSCP label perimstar/perim",
+                        pos,
+                        &perim_distances,
+                        abstract_state_ids,
+                    ) {
+                        cp.add_h_values(pos, perim_distances);
+                        reduce_costs(&mut remaining_costs, &perim_saturated)?;
+                    }
+
+                    let (all_distances, all_saturated) = Self::compute_domain_cp_entry(
+                        abstraction,
+                        abstraction_task,
+                        self.config.combine_labels,
+                        &remaining_costs,
+                    )?;
+                    if should_skip_zero_current_table(
+                        "fillSCP label perimstar/all",
+                        pos,
+                        &all_distances,
+                        abstract_state_ids,
+                    ) {
+                        continue;
+                    }
+                    cp.add_h_values(pos, all_distances);
+                    reduce_costs(&mut remaining_costs, &all_saturated)?;
+                }
+            }
+        }
+
+        Ok((cp, remaining_costs))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_abstract_operator_fill_scp(
+        &self,
+        task: &dyn AbstractNumericTask,
+        abstractions: &[DomainAbstraction],
+        order: &[usize],
+        abstract_state_ids: &[Option<usize>],
+        _standalone_current_h: &[f64],
+        num_domain_abstractions: usize,
+        original_costs: &[f64],
+        deadline: Option<Instant>,
+        saturator: Saturator,
+    ) -> Result<
+        (
+            CostPartitioningHeuristic,
+            Vec<f64>,
+            Vec<LmCutResidualOperatorCostPartition>,
+        ),
+        EvaluationError,
+    > {
+        let mut cp = CostPartitioningHeuristic::default();
+        let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
+
+        for &pos in order {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                break;
+            }
+            if pos >= num_domain_abstractions {
+                continue;
+            }
+            let abstraction = &abstractions[pos];
+            info!(
+                "fillSCP: abstract-operator CP step abstraction {pos}, abstract_states={}, metadata={}",
+                abstraction_state_count(abstraction),
+                abstraction_metadata_summary(abstraction),
+            );
+            log_abstract_operator_footprint_summary(pos, &abstraction.abstract_operator_footprints);
+            let abstraction_task = abstraction.task_for_factory(task);
+            match saturator {
+                Saturator::All => {
+                    let (table, tcf) = abstraction
+                        .factory
+                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
+                            abstraction_task,
+                            abstraction.combine_labels,
+                            &abstraction.abstract_operators,
+                            &abstraction.abstract_operator_footprints,
+                            None,
+                            None,
+                            &remaining_costs,
+                            pos,
+                            abstract_state_ids.get(pos).copied().flatten(),
+                            None,
+                            deadline,
+                        )
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to compute fillSCP abstract-operator table: {error:#}"
+                            ))
+                        })?;
+                    log_transition_table_summary(
+                        "fillSCP/all",
+                        pos,
+                        &table.distances,
+                        &tcf.operator_costs,
+                        abstract_state_ids,
+                    );
+                    if should_skip_zero_current_table(
+                        "fillSCP abstract-operator all",
+                        pos,
+                        &table.distances,
+                        abstract_state_ids,
+                    ) {
+                        continue;
+                    }
+                    cp.add_h_values(pos, table.distances);
+                    remaining_costs
+                        .reduce_by_abstract_operator_footprints(
+                            pos,
+                            &abstraction.abstract_operator_footprints,
+                            None,
+                            &tcf,
+                        )
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to reduce fillSCP abstract-operator residual costs: {error:#}"
+                            ))
+                        })?;
+                    log_transition_residual_summary(&remaining_costs);
+                }
+                Saturator::Perim => {
+                    let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
+                    let (table, tcf) = abstraction
+                        .factory
+                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
+                            abstraction_task,
+                            abstraction.combine_labels,
+                            &abstraction.abstract_operators,
+                            &abstraction.abstract_operator_footprints,
+                            None,
+                            None,
+                            &remaining_costs,
+                            pos,
+                            cap_state_id,
+                            cap_state_id,
+                            deadline,
+                        )
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to compute fillSCP abstract-operator PERIM table: {error:#}"
+                            ))
+                        })?;
+                    log_transition_table_summary(
+                        "fillSCP/perim",
+                        pos,
+                        &table.distances,
+                        &tcf.operator_costs,
+                        abstract_state_ids,
+                    );
+                    if should_skip_zero_current_table(
+                        "fillSCP abstract-operator perim",
+                        pos,
+                        &table.distances,
+                        abstract_state_ids,
+                    ) {
+                        continue;
+                    }
+                    cp.add_h_values(pos, table.distances);
+                    remaining_costs
+                        .reduce_by_abstract_operator_footprints(
+                            pos,
+                            &abstraction.abstract_operator_footprints,
+                            None,
+                            &tcf,
+                        )
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to reduce fillSCP abstract-operator PERIM residual costs: {error:#}"
+                            ))
+                        })?;
+                    log_transition_residual_summary(&remaining_costs);
+                }
+                Saturator::Perimstar => {
+                    let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
+                    let (perim_table, perim_tcf) = abstraction
+                        .factory
+                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
+                            abstraction_task,
+                            abstraction.combine_labels,
+                            &abstraction.abstract_operators,
+                            &abstraction.abstract_operator_footprints,
+                            None,
+                            None,
+                            &remaining_costs,
+                            pos,
+                            cap_state_id,
+                            cap_state_id,
+                            deadline,
+                        )
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to compute fillSCP abstract-operator Perim step for Perimstar: {error:#}"
+                            ))
+                        })?;
+                    if !should_skip_zero_current_table(
+                        "fillSCP abstract-operator perimstar/perim",
+                        pos,
+                        &perim_table.distances,
+                        abstract_state_ids,
+                    ) {
+                        cp.add_h_values(pos, perim_table.distances);
+                        remaining_costs
+                            .reduce_by_abstract_operator_footprints(
+                                pos,
+                                &abstraction.abstract_operator_footprints,
+                                None,
+                                &perim_tcf,
+                            )
+                            .map_err(|error| {
+                                EvaluationError::ComputationFailed(format!(
+                                    "failed to reduce fillSCP abstract-operator Perim residual costs: {error:#}"
+                                ))
+                            })?;
+                        log_transition_residual_summary(&remaining_costs);
+                    }
+
+                    let (all_table, all_tcf) = abstraction
+                        .factory
+                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
+                            abstraction_task,
+                            abstraction.combine_labels,
+                            &abstraction.abstract_operators,
+                            &abstraction.abstract_operator_footprints,
+                            None,
+                            None,
+                            &remaining_costs,
+                            pos,
+                            cap_state_id,
+                            None,
+                            deadline,
+                        )
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to compute fillSCP abstract-operator All step for Perimstar: {error:#}"
+                            ))
+                        })?;
+                    if should_skip_zero_current_table(
+                        "fillSCP abstract-operator perimstar/all",
+                        pos,
+                        &all_table.distances,
+                        abstract_state_ids,
+                    ) {
+                        continue;
+                    }
+                    cp.add_h_values(pos, all_table.distances);
+                    remaining_costs
+                        .reduce_by_abstract_operator_footprints(
+                            pos,
+                            &abstraction.abstract_operator_footprints,
+                            None,
+                            &all_tcf,
+                        )
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to reduce fillSCP abstract-operator All residual costs: {error:#}"
+                            ))
+                        })?;
+                    log_transition_residual_summary(&remaining_costs);
+                }
+            }
+        }
+
+        let residual_partitions = remaining_costs.operator_cost_partitions_for_lmcut(4, 4);
+        Ok((
+            cp,
+            remaining_costs.operator_costs_for_label_cp(),
+            residual_partitions,
+        ))
+    }
+
     fn add_label_pdb_step(
         &self,
         cp: &mut CostPartitioningHeuristic,
@@ -2614,6 +3278,7 @@ mod handcrafted_sailing_tests {
                 full_goal_task: Some(false),
                 initial_seed_splits: spec.seed_splits.iter().map(seed_description).collect(),
                 max_abstraction_size: Some(10_000),
+                ..DomainAbstractionMetadata::default()
             };
             let states = abstraction_state_count(&abstraction);
             assert!(

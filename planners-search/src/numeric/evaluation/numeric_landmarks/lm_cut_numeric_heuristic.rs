@@ -14,6 +14,7 @@ use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
 
 use super::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
+use crate::numeric::evaluation::domain_abstractions::transition_cost_partitioning::LmCutResidualOperatorCostPartition;
 
 // PARITY(numeric-fd): `lmcutnumeric()` in search strings goes through the option
 // parser, so `LmCutNumericConfig::default()` must match the parser defaults rather
@@ -93,6 +94,28 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
         task: &'task dyn AbstractNumericTask,
         config: LmCutNumericConfig,
     ) -> Result<Self, String> {
+        Self::from_config_with_fixed_operator_costs(task, config, None)
+    }
+
+    pub fn from_config_with_fixed_operator_costs(
+        task: &'task dyn AbstractNumericTask,
+        config: LmCutNumericConfig,
+        fixed_operator_costs: Option<Vec<f64>>,
+    ) -> Result<Self, String> {
+        Self::from_config_with_residual_operator_cost_partitions(
+            task,
+            config,
+            fixed_operator_costs,
+            None,
+        )
+    }
+
+    pub fn from_config_with_residual_operator_cost_partitions(
+        task: &'task dyn AbstractNumericTask,
+        config: LmCutNumericConfig,
+        fixed_operator_costs: Option<Vec<f64>>,
+        residual_operator_cost_partitions: Option<Vec<LmCutResidualOperatorCostPartition>>,
+    ) -> Result<Self, String> {
         if config.precision < 0.0 {
             return Err("lmcutnumeric precision must be non-negative".to_string());
         }
@@ -106,7 +129,14 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
             name: "lmcutnumeric".to_string(),
             task,
             config,
-            landmark_generator: RefCell::new(LandmarkCutLandmarks::new(task, config)),
+            landmark_generator: RefCell::new(
+                LandmarkCutLandmarks::new_with_residual_operator_cost_partitions(
+                    task,
+                    config,
+                    fixed_operator_costs,
+                    residual_operator_cost_partitions,
+                ),
+            ),
             prop_scratch: RefCell::new(Vec::new()),
             state_value_cache: RefCell::new(Vec::new()),
         })

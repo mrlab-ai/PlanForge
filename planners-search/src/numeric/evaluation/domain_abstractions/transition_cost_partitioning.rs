@@ -270,6 +270,18 @@ pub struct TransitionResidualCosts {
     operator_residuals: Vec<OperatorResidual>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct LmCutResidualOperatorCostPartition {
+    pub fallback_cost: f64,
+    pub variants: Vec<LmCutResidualCostVariant>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LmCutResidualCostVariant {
+    pub cost: f64,
+    pub source_region: StateRegion,
+}
+
 #[derive(Debug)]
 struct OperatorResidual {
     base_cost: f64,
@@ -534,6 +546,51 @@ impl TransitionResidualCosts {
                 let cost = (residual.base_cost - reduction).max(0.0);
                 residual.uniform_cost_cache.set(Some(cost));
                 cost
+            })
+            .collect()
+    }
+
+    pub fn operator_cost_partitions_for_lmcut(
+        &self,
+        max_variants_per_operator: usize,
+        max_guard_conditions_per_variant: usize,
+    ) -> Vec<LmCutResidualOperatorCostPartition> {
+        let uniform_costs = self.operator_costs_for_label_cp();
+        self.operator_residuals
+            .iter()
+            .enumerate()
+            .map(|(op_id, residual)| {
+                let fallback_cost = residual.base_cost.max(0.0);
+                if residual.reductions.is_empty()
+                    || residual.reductions.len() > max_variants_per_operator
+                {
+                    return LmCutResidualOperatorCostPartition {
+                        fallback_cost: uniform_costs.get(op_id).copied().unwrap_or(fallback_cost),
+                        variants: Vec::new(),
+                    };
+                }
+
+                let mut variants = Vec::with_capacity(residual.reductions.len());
+                for reduction in &residual.reductions {
+                    if !lmcut_residual_region_is_compact(
+                        &reduction.condition.region.source,
+                        max_guard_conditions_per_variant,
+                    ) {
+                        return LmCutResidualOperatorCostPartition {
+                            fallback_cost: uniform_costs.get(op_id).copied().unwrap_or(fallback_cost),
+                            variants: Vec::new(),
+                        };
+                    }
+                    variants.push(LmCutResidualCostVariant {
+                        cost: (residual.base_cost - reduction.amount).max(0.0),
+                        source_region: reduction.condition.region.source.clone(),
+                    });
+                }
+
+                LmCutResidualOperatorCostPartition {
+                    fallback_cost,
+                    variants,
+                }
             })
             .collect()
     }
@@ -1932,6 +1989,23 @@ fn subtract_cost(cost: f64, saturated: f64) -> Result<f64> {
         );
         Ok(reduced)
     }
+}
+
+fn lmcut_residual_region_is_compact(region: &StateRegion, max_guard_conditions: usize) -> bool {
+    let prop_guards = region
+        .propositions
+        .iter()
+        .filter(|values| values.len() == 1)
+        .count();
+    let numeric_guards = region
+        .numeric
+        .iter()
+        .map(|interval| {
+            usize::from(interval.lower.is_finite()) + usize::from(interval.upper.is_finite())
+        })
+        .sum::<usize>();
+    let guards = prop_guards + numeric_guards;
+    guards > 0 && guards <= max_guard_conditions
 }
 
 fn prop_regions_overlap(left: &[Vec<usize>], right: &[Vec<usize>]) -> bool {
