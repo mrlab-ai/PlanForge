@@ -9,7 +9,7 @@ mod tests;
 use crate::numeric::{
     evaluation::heuristic::BlindHeuristic,
     evaluation::{EvaluationError, EvaluationState, Heuristic},
-    successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node},
+    successor_generator::{ApplicableOperator, SuccessorTree},
 };
 use ordered_float::OrderedFloat;
 use planners_sas::numeric::numeric_task::{
@@ -198,7 +198,7 @@ pub trait SearchEngine {
 pub struct AStarSearch<'a> {
     task: &'a dyn AbstractNumericTask,
     state_registry: StateRegistry<'a>,
-    successor_generator: Box<dyn Node<'a> + 'a>,
+    successor_generator: SuccessorTree<'a>,
     operator_costs: Vec<f64>,
     /// Cached `task.metric().use_metric()` so per-successor cost selection
     /// does not chase the trait vtable.
@@ -237,14 +237,8 @@ pub struct AStarSearch<'a> {
 
 impl<'a> AStarSearch<'a> {
     /// Create a successor generator for the given task.
-    fn create_successor_generator(task: &'a dyn AbstractNumericTask) -> Box<dyn Node<'a> + 'a> {
-        let mut queue = VecDeque::new();
-        for (op_id, operator) in task.get_operators().iter().enumerate() {
-            queue.push_back((operator, op_id));
-        }
-
-        let mut generator = GroundedSuccessorGenerator::new(task);
-        generator.construct(&mut 0, &mut queue).unwrap()
+    fn create_successor_generator(task: &'a dyn AbstractNumericTask) -> SuccessorTree<'a> {
+        SuccessorTree::new(task)
     }
 
     /// Create a new A* search instance.

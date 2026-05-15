@@ -37,7 +37,7 @@ use planners_search::numeric::evaluation::{EvaluationResult, Evaluator};
 use planners_search::numeric::open_lists::{OpenList, SearchNode, TieBreakingOpenList};
 use planners_search::numeric::search_engine::{compute_effective_operator_costs, SearchResult, SearchStatus};
 use planners_search::numeric::search_engine::{AStarSearch, SearchEngine};
-use planners_search::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node};
+use planners_search::numeric::successor_generator::{ApplicableOperator, SuccessorTree};
 use planners_searcher::*;
 use planners_translator::*;
 use std::cmp::Reverse;
@@ -388,16 +388,8 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     Ok(result)
 }
 
-fn build_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn Node<'a> + 'a> {
-    let mut queue = VecDeque::new();
-    for (op_id, operator) in task.get_operators().iter().enumerate() {
-        queue.push_back((operator, op_id));
-    }
-
-    let mut generator = GroundedSuccessorGenerator::new(task);
-    generator
-        .construct(&mut 0, &mut queue)
-        .expect("successor generator construction must succeed")
+fn build_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> SuccessorTree<'a> {
+    SuccessorTree::new(task)
 }
 
 fn state_is_goal(
