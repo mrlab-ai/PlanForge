@@ -2191,11 +2191,21 @@ impl DomainAbstractionFactory {
                 }
                 let base_predecessor = predecessor_i64 as usize;
 
+                // Saturate over ALL applicable transitions, not just those chosen by
+                // Dijkstra as the generating op for the source state. Mirrors
+                // numeric-fd `DomainAbstraction::compute_saturated_costs`
+                // (cost_saturation/domain_abstraction.cc:872-902) which iterates
+                // every label transition with `for_each_label_transition`.
+                //
+                // The previous "generator-only" filter under-saturated: an
+                // operator applicable at a non-generating source still needs cost
+                // ≥ (src_h - target_h) to be admissible in the next abstraction's
+                // residual, but skipping it left that cost in the residual and let
+                // subsequent abstractions over-allocate, producing sum h > h* on
+                // plant-watering/prob_6_2_2 (32-47 across seeds vs optimal 32).
                 let consider_source = |source_hash: usize,
                                            saturated_costs: &mut [f64]| {
-                    if table.generating_op_ids.get(source_hash).copied().flatten()
-                        == Some(abstract_op_id)
-                        && let Some(&src_h) = table.distances.get(source_hash)
+                    if let Some(&src_h) = table.distances.get(source_hash)
                         && src_h.is_finite()
                     {
                         let needed = (src_h - target_h).max(0.0);

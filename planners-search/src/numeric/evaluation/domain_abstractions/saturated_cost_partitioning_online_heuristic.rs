@@ -162,6 +162,14 @@ impl FillScpConfig {
             super::domain_abstraction_collection_generator_multiple_cegar::PortfolioStrategy::Standard;
         self.collection_config.combine_labels = self.combine_labels;
         self.random_seed = self.collection_config.random_seed;
+        // Label-mode fillSCP only consumes per-abstraction distance tables — it never
+        // touches `ConcreteOperatorFootprint`. Building those footprints during CEGAR
+        // is pure memory bloat (the same per-concrete-op `StateRegion` cost that
+        // canonical/max already skip via 468f06a). Disable it unconditionally for
+        // the label-CP path.
+        if !self.use_abstract_operator_cost_partitioning {
+            self.collection_config.compute_operator_footprints = false;
+        }
     }
 
     fn as_scp_online_config(&self) -> ScpOnlineConfig {
