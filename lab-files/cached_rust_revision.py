@@ -57,7 +57,7 @@ class CachedRustPlannerRevision(CachedRevision):
             except Exception:
                 pass  # stripping is optional
 
-    def get_binary_path(self, binary_name="planners"):
+    def get_binary_path(self, binary_name="planforge"):
         """
         Return path to compiled binary inside experiment.
         """

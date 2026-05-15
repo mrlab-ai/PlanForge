@@ -1,0 +1,24 @@
+[package]
+name = "planforge-searcher"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+
+[[bin]]
+name = "planforge-searcher"
+doc = false
+
+[dependencies]
+planforge-sas = { path = "../planforge-sas" }
+planforge-search = { path = "../planforge-search" }
+planforge-cli-utils = { path = "../planforge-cli-utils" }
+clap = { version = "4", features = ["derive"] }
+time = "0.3"
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "fmt",
+    "std",
+    "time",
+] }
+serde = { version = "1", features = ["derive"] }

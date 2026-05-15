@@ -322,28 +322,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "planners"
+name = "planforge"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "libc",
  "ordered-float",
- "planners-cli-utils",
- "planners-preprocess",
- "planners-preprocessor",
- "planners-sas",
- "planners-search",
- "planners-searcher",
- "planners-translate",
- "planners-translator",
+ "planforge-cli-utils",
+ "planforge-preprocess",
+ "planforge-preprocessor",
+ "planforge-sas",
+ "planforge-search",
+ "planforge-searcher",
+ "planforge-translate",
+ "planforge-translator",
  "time",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "planners-cli-utils"
+name = "planforge-cli-utils"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -354,28 +354,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "planners-preprocess"
+name = "planforge-preprocess"
 version = "0.1.0"
 dependencies = [
  "tracing",
 ]
 
 [[package]]
-name = "planners-preprocessor"
+name = "planforge-preprocessor"
 version = "0.1.0"
 dependencies = [
  "clap",
- "planners-cli-utils",
- "planners-preprocess",
- "planners-sas",
- "planners-translator",
+ "planforge-cli-utils",
+ "planforge-preprocess",
+ "planforge-sas",
+ "planforge-translator",
  "time",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "planners-sas"
+name = "planforge-sas"
 version = "0.1.0"
 dependencies = [
  "nom 8.0.0",
@@ -383,16 +383,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "planners-search"
+name = "planforge-search"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "itertools",
  "libc",
  "ordered-float",
- "planners-preprocess",
- "planners-sas",
- "planners-translator",
+ "planforge-preprocess",
+ "planforge-sas",
+ "planforge-translator",
  "rand",
  "rustc-hash",
  "serde",
@@ -401,13 +401,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "planners-searcher"
+name = "planforge-searcher"
 version = "0.1.0"
 dependencies = [
  "clap",
- "planners-cli-utils",
- "planners-sas",
- "planners-search",
+ "planforge-cli-utils",
+ "planforge-sas",
+ "planforge-search",
  "serde",
  "time",
  "tracing",
@@ -415,7 +415,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "planners-translate"
+name = "planforge-translate"
 version = "0.1.0"
 dependencies = [
  "itertools",
@@ -425,14 +425,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "planners-translator"
+name = "planforge-translator"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "planners-cli-utils",
- "planners-preprocess",
- "planners-translate",
+ "planforge-cli-utils",
+ "planforge-preprocess",
+ "planforge-translate",
  "time",
  "tracing",
  "tracing-subscriber",
@@ -616,11 +616,11 @@ name = "tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "planners-preprocess",
- "planners-sas",
- "planners-search",
- "planners-translate",
- "planners-translator",
+ "planforge-preprocess",
+ "planforge-sas",
+ "planforge-search",
+ "planforge-translate",
+ "planforge-translator",
  "serde_json",
 ]
 

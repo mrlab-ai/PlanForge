@@ -1,0 +1,21 @@
+[package]
+name = "planforge-search"
+version = "0.1.0"
+edition = "2024"
+license = "LGPL-3.0"
+
+[dependencies]
+planforge-sas = { path = "../planforge-sas" }
+planforge-preprocess = { path = "../planforge-preprocess" }
+libc = "0.2"
+tracing = "0.1"
+ordered-float = "5.1.0"
+anyhow = "1"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+itertools = "0.13"
+rand = { version = "0.8", features = ["small_rng"] }
+rustc-hash = "2"
+
+[dev-dependencies]
+planforge-translator = { path = "../planforge-translator" }

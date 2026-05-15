@@ -1,0 +1,24 @@
+[package]
+name = "planforge-translator"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+
+[[bin]]
+name = "planforge-translator"
+doc = false
+
+[dependencies]
+planforge-translate = { path = "../planforge-translate" }
+planforge-preprocess = { path = "../planforge-preprocess" }
+planforge-cli-utils = { path = "../planforge-cli-utils" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+time = "0.3"
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "fmt",
+    "std",
+    "time",
+] }
