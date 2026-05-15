@@ -1649,6 +1649,51 @@ impl DomainAbstractionFactory {
             }
         }
 
+        // Cascade-relevance: an operator is also relevant to this abstraction
+        // if it modifies a numeric variable that feeds a comparison-axiom prop
+        // var refined in this abstraction. The hash_effect-based check above
+        // misses these because `compute_comparison_transition_facts` does not
+        // bake cascade source/target facts into operator pre/eff. Mirrors
+        // numeric-FD's `TaskInfo::operator_is_active`
+        // (cost_saturation/projection.cc:421-425). Without this, canonical's
+        // additive-subset check claims two abstractions disjoint when they
+        // share a cascade-only operator, and summing their heuristics
+        // double-counts that operator's cost — producing an inadmissible
+        // canonical heuristic (sailing/plant-watering reproducers).
+        if !comparison_var_ids.is_empty() {
+            let mut cascade_numeric_deps: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
+            for &cmp_var_id in &comparison_var_ids {
+                if let Some(tree) = self
+                    .comparison_trees
+                    .iter()
+                    .find(|t| t.affected_var_id == cmp_var_id)
+                {
+                    for dep in tree.regular_numeric_var_dependencies(task) {
+                        cascade_numeric_deps.insert(dep);
+                    }
+                }
+            }
+            if !cascade_numeric_deps.is_empty() {
+                for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
+                    if seen_operator_ids
+                        .get(concrete_op_id)
+                        .copied()
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    if op
+                        .assignment_effects()
+                        .iter()
+                        .any(|eff| cascade_numeric_deps.contains(&eff.affected_var_id()))
+                    {
+                        seen_operator_ids[concrete_op_id] = true;
+                    }
+                }
+            }
+        }
+
         Ok(seen_operator_ids
             .into_iter()
             .enumerate()
