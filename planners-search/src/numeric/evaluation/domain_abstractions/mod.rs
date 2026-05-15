@@ -13,4 +13,5 @@ pub mod cegar;
 pub mod domain_abstraction_factory;
 pub mod domain_abstraction_generator;
 pub mod domain_abstraction_heuristic;
+pub mod memory_padding;
 pub mod utils;

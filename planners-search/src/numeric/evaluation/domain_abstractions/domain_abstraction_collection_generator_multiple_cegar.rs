@@ -33,6 +33,7 @@ use super::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, DomainAbstractionMetadata,
     prepare_domain_abstraction_task,
 };
+use super::memory_padding;
 use super::transition_cost_partitioning::FiniteSupportConfig;
 use super::utils::compute_abstraction_size_u128;
 
@@ -466,6 +467,18 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     "domain abstraction collection: stopping early at iteration {iteration} \
                      because abstraction's wildcard plan is a real concrete plan \
                      (solved_by_self=true)"
+                );
+                break;
+            }
+            // Memory safety net (mirrors numeric-FD's
+            // `utils::extra_memory_padding`). Once RSS approaches the
+            // configured ceiling, drop the reserved padding so the search
+            // engine still has headroom, and bail out of further
+            // abstraction generation.
+            if !memory_padding::poll_and_release_if_exceeded() {
+                info!(
+                    "domain abstraction collection: stopping at iteration {iteration} \
+                     because the memory padding was released (RSS limit reached)"
                 );
                 break;
             }
