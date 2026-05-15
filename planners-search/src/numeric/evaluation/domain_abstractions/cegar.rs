@@ -62,6 +62,15 @@ pub struct CegarConfig {
     /// gate applied when the abstraction's operator footprints are built. The
     /// default reproduces the legacy finite-vs-infinite behavior.
     pub finite_support: FiniteSupportConfig,
+    /// When false, `DomainAbstractionGenerator::generate_prepared` skips
+    /// building the `Vec<AbstractOperatorFootprint>`. Footprints are only
+    /// consumed by abstract-operator transition-cost partitioning
+    /// (SCP / fillSCP); for canonical-max and other heuristics that read
+    /// only the distance table they are pure memory bloat — on
+    /// minecraft-sword-advanced/prob_30x30_5 they account for ~12 GB of
+    /// per-concrete-op `StateRegion` storage. Default `true` for
+    /// backward-compat; the canonical/max wrappers flip this off.
+    pub compute_operator_footprints: bool,
     /// How numeric flaw split values are chosen: `Forward` keeps the legacy
     /// concrete-value split; `Backward` places splits at the boundary derived
     /// from the regressed-target / required interval. When `None`, the flaw
@@ -89,6 +98,7 @@ impl Default for CegarConfig {
             initial_seed_splits: Vec::new(),
             finite_support: FiniteSupportConfig::default(),
             split_direction: None,
+            compute_operator_footprints: true,
         }
     }
 }

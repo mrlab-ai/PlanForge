@@ -112,13 +112,22 @@ impl DomainAbstractionGenerator {
         let abstract_operators = operator_generator
             .build_abstract_operators(transformed_task)
             .context("failed to build abstract operators")?;
-        let abstract_operator_footprints = factory
-            .build_abstract_operator_footprints(
-                transformed_task,
-                &abstract_operators,
-                &self.config.finite_support,
-            )
-            .context("failed to build abstract-operator footprints")?;
+        let abstract_operator_footprints = if self.config.compute_operator_footprints {
+            factory
+                .build_abstract_operator_footprints(
+                    transformed_task,
+                    &abstract_operators,
+                    &self.config.finite_support,
+                )
+                .context("failed to build abstract-operator footprints")?
+        } else {
+            // Heuristics that read only the distance table (canonical, max,
+            // single domain abstraction) do not consume footprints; skipping
+            // saves ~12 GB on minecraft-sword-advanced/prob_30x30_5. SCP /
+            // fillSCP / abstract-operator cost partitioning leave the flag
+            // on and pay the cost.
+            Vec::new()
+        };
         let distance_table = factory
             .build_distance_table_with_operators(
                 transformed_task,
