@@ -13,8 +13,8 @@ fn main() -> std::io::Result<()> {
     // `memory_padding::poll_and_release_if_exceeded` once per abstraction
     // and stops cleanly if the RSS limit is exceeded. Configurable via
     // `DA_MEMORY_PADDING_MB` (default 512 MB) and `DA_MEMORY_LIMIT_MB`
-    // (default padding × 16, i.e. ~8 GB headroom).
-    planners_search::numeric::evaluation::domain_abstractions::memory_padding::reserve_memory_padding();
+    // (default derives from `--max-memory`, leaving ~10% headroom).
+    planners_search::numeric::evaluation::domain_abstractions::memory_padding::reserve_memory_padding(cli.max_memory);
     #[cfg(unix)]
     if !cli.internal_run {
         return run_wrapped_process(&cli);
