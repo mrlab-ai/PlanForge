@@ -134,12 +134,18 @@ struct OpenEntry {
     g_value: f64,
     state_id: StateID,
     insertion_order: usize,
+    /// `true` iff the operator that generated this successor was reported
+    /// as a preferred (helpful) action by the heuristic for the parent
+    /// state. Used as a tie-break inside a single queue, and as the queue
+    /// selector for dual-queue GBFS.
+    is_preferred: bool,
 }
 
 impl PartialEq for OpenEntry {
     fn eq(&self, other: &Self) -> bool {
         self.f_value == other.f_value
             && self.h_value == other.h_value
+            && self.is_preferred == other.is_preferred
             && self.insertion_order == other.insertion_order
     }
 }
@@ -154,38 +160,85 @@ impl PartialOrd for OpenEntry {
 
 impl Ord for OpenEntry {
     fn cmp(&self, other: &Self) -> Ordering {
+        // BinaryHeap is a max-heap; we invert so smaller `f` pops first.
+        // `is_preferred` is a *forward* comparison: `true > false`, so a
+        // preferred entry compares greater (pops sooner) at equal `f`.
         other
             .f_value
             .cmp(&self.f_value)
+            .then_with(|| self.is_preferred.cmp(&other.is_preferred))
             .then_with(|| other.h_value.cmp(&self.h_value))
             .then_with(|| other.insertion_order.cmp(&self.insertion_order))
     }
 }
 
-#[derive(Debug, Default)]
+/// Open list with a primary heap and an optional "preferred-first"
+/// secondary heap.
+///
+/// When `use_preferred_first` is `true` (GBFS with a heuristic that emits
+/// preferred operators), entries flagged as preferred go into
+/// `preferred_heap` and `pop` drains that heap first. This is the
+/// canonical FF/FD dual-queue lazy-greedy ordering: states reached via a
+/// helpful action are expanded ahead of the rest, which empirically
+/// dwarfs the speedup of a tie-break-only integration.
+///
+/// When `use_preferred_first` is `false` (A\*), only `regular_heap` is
+/// used; preferred-ness still participates in `OpenEntry`'s `Ord` as a
+/// tie-break between `f` and `h`, which is safe for admissibility since
+/// it only reorders entries with identical `f`.
+#[derive(Debug)]
 struct AStarOpenList {
-    heap: BinaryHeap<OpenEntry>,
+    regular_heap: BinaryHeap<OpenEntry>,
+    preferred_heap: BinaryHeap<OpenEntry>,
+    use_preferred_first: bool,
     next_insertion_order: usize,
 }
 
 impl AStarOpenList {
-    fn insert(&mut self, state_id: StateID, g_value: f64, h_value: f64, f_value: f64) {
-        self.heap.push(OpenEntry {
+    fn new(use_preferred_first: bool) -> Self {
+        Self {
+            regular_heap: BinaryHeap::new(),
+            preferred_heap: BinaryHeap::new(),
+            use_preferred_first,
+            next_insertion_order: 0,
+        }
+    }
+
+    fn insert(
+        &mut self,
+        state_id: StateID,
+        g_value: f64,
+        h_value: f64,
+        f_value: f64,
+        is_preferred: bool,
+    ) {
+        let entry = OpenEntry {
             f_value: OrderedFloat(f_value),
             h_value: OrderedFloat(h_value),
             g_value,
             state_id,
             insertion_order: self.next_insertion_order,
-        });
+            is_preferred,
+        };
         self.next_insertion_order += 1;
+        if self.use_preferred_first && is_preferred {
+            self.preferred_heap.push(entry);
+        } else {
+            self.regular_heap.push(entry);
+        }
     }
 
     fn pop(&mut self) -> Option<OpenEntry> {
-        self.heap.pop()
+        if self.use_preferred_first
+            && let Some(entry) = self.preferred_heap.pop()
+        {
+            return Some(entry);
+        }
+        self.regular_heap.pop()
     }
 
     fn is_empty(&self) -> bool {
-        self.heap.is_empty()
+        self.regular_heap.is_empty() && self.preferred_heap.is_empty()
     }
 }
 
@@ -236,6 +289,14 @@ pub struct AStarSearch<'a> {
     // Search components.
     open_list: AStarOpenList,
     search_nodes: Vec<Option<SearchNodeInfo>>,
+    /// Per-state cache of preferred operator IDs reported by the
+    /// heuristic for that state, indexed by `state_id`. Populated right
+    /// after `evaluate_state` returns `Ok` (so the snapshot is captured
+    /// before the heuristic's internal cache is overwritten by the next
+    /// state's evaluation). Read back when the state is *expanded* — we
+    /// then mark each successor's open-list entry as preferred iff the
+    /// operator that generated it is in this set.
+    preferred_op_ids_by_state: Vec<Option<Box<[u32]>>>,
 
     // Evaluators.
     heuristic: Box<dyn Heuristic + 'a>,
@@ -347,14 +408,21 @@ impl<'a> AStarSearch<'a> {
         let heuristic_name = heuristic.name();
 
         let use_metric = task.metric().use_metric();
+        // Dual-queue preferred-first ordering is the FF default for GBFS.
+        // The `PLANFORGE_NO_PREFERRED` environment variable forces it off
+        // for A/B benchmarking; it doesn't affect correctness, only the
+        // open-list pop order.
+        let use_preferred_first = priority_mode == PriorityMode::Gbfs
+            && env::var_os("PLANFORGE_NO_PREFERRED").is_none();
         Self {
             task,
             state_registry,
             successor_generator,
             operator_costs,
             use_metric,
-            open_list: AStarOpenList::default(),
+            open_list: AStarOpenList::new(use_preferred_first),
             search_nodes: Vec::new(),
+            preferred_op_ids_by_state: Vec::new(),
             heuristic,
             heuristic_name,
             priority_mode,
@@ -417,6 +485,26 @@ impl<'a> AStarSearch<'a> {
     fn set_search_node_info(&mut self, state_id: StateID, info: SearchNodeInfo) {
         self.ensure_search_node_capacity(state_id);
         self.search_nodes[state_id] = Some(info);
+    }
+
+    fn store_preferred_op_ids(&mut self, state_id: StateID, ids: Vec<usize>) {
+        if state_id >= self.preferred_op_ids_by_state.len() {
+            self.preferred_op_ids_by_state.resize_with(state_id + 1, || None);
+        }
+        if ids.is_empty() {
+            self.preferred_op_ids_by_state[state_id] = None;
+        } else {
+            let packed: Box<[u32]> = ids.into_iter().map(|x| x as u32).collect();
+            self.preferred_op_ids_by_state[state_id] = Some(packed);
+        }
+    }
+
+    /// Remove and return the cached preferred-op IDs for `state_id`, if any.
+    /// We `take` rather than borrow because the only consumer is the
+    /// expansion step, after which the IDs aren't needed again unless the
+    /// state is reopened — in which case `evaluate_state` will resnapshot.
+    fn take_preferred_op_ids(&mut self, state_id: StateID) -> Option<Box<[u32]>> {
+        self.preferred_op_ids_by_state.get_mut(state_id).and_then(Option::take)
     }
 
     fn terminal_result(&self, status: SearchStatus, start_time: &Instant) -> SearchResult {
@@ -680,6 +768,13 @@ impl<'a> AStarSearch<'a> {
             0.0 // Initial state.
         };
 
+        // Snapshot of this parent's preferred-operator IDs. Reading via
+        // `take` is intentional: once we've started expanding `state` we
+        // won't need them again unless the node is reopened, in which case
+        // `evaluate_state` will resnapshot. Using `take` also reclaims the
+        // boxed slice's memory eagerly.
+        let parent_preferred_ids = self.take_preferred_op_ids(state_id);
+
         self.populate_applicable_operators(&state);
         let mut applicable_operators = std::mem::take(&mut self.applicable_operators_buffer);
         let trace_initial_successors =
@@ -758,11 +853,29 @@ impl<'a> AStarSearch<'a> {
                 self.nodes_reopened += 1;
             }
 
+            // Is this successor reached via one of the parent's
+            // preferred (helpful) operators? We use the parent snapshot
+            // taken above; per-successor it's a small linear scan, but
+            // helpful-action lists from FF are typically tiny (single
+            // digits), so this is cheap compared to evaluating the
+            // successor.
+            let is_preferred = parent_preferred_ids
+                .as_deref()
+                .is_some_and(|ids| ids.contains(&(operator_id as u32)));
+
             // Evaluate and add to open list.
             if let Ok(evaluation) = self.evaluate_state(&succ_state, new_g_value) {
                 if !improved_duplicate {
                     self.nodes_evaluated += 1;
                 }
+
+                // Snapshot the heuristic's preferred-operator IDs for the
+                // successor *now*, before any other state's evaluation
+                // overwrites the heuristic's internal scratch. Stored on
+                // `preferred_op_ids_by_state[succ_state_id]` and read back
+                // when this successor is later expanded.
+                let preferred_ids = self.heuristic.get_preferred_operator_ids();
+                self.store_preferred_op_ids(succ_state_id, preferred_ids);
 
                 if trace_evaluated_successors {
                     debug!(
@@ -824,6 +937,7 @@ impl<'a> AStarSearch<'a> {
                     new_g_value,
                     evaluation.h_value,
                     evaluation.f_value,
+                    is_preferred,
                 );
             }
         }
@@ -862,11 +976,19 @@ impl<'a> SearchEngine for AStarSearch<'a> {
                 }
 
                 if !initial_evaluation.is_dead_end {
+                    // The initial state has no parent operator, so
+                    // "preferred-via-parent" is vacuously false. Still
+                    // snapshot the initial state's own preferred IDs so
+                    // its successors can be classified.
+                    let initial_id = initial_state.get_id();
+                    let initial_preferred = self.heuristic.get_preferred_operator_ids();
+                    self.store_preferred_op_ids(initial_id, initial_preferred);
                     self.open_list.insert(
-                        initial_state.get_id(),
+                        initial_id,
                         0.0,
                         initial_evaluation.h_value,
                         initial_evaluation.f_value,
+                        false,
                     );
                 }
 

@@ -298,15 +298,15 @@ pub struct FfHeuristic<'task> {
     num_facts: usize,
     num_numeric: usize,
     scratch: RefCell<ScratchBuffers>,
-    /// Cache of the most recently extracted helpful-action set. Populated
-    /// at the end of every `compute_heuristic`; returned by
-    /// `get_preferred_operators`. We don't key by state-id because the
-    /// search engine guarantees `compute_heuristic` is invoked on a state
-    /// before `get_preferred_operators` is asked about it, and the
-    /// `EvaluationState` carries the same state pointer through both
-    /// calls — so the cache is fresh for the only call pattern that
-    /// matters.
-    last_helpful_actions: RefCell<Vec<planforge_sas::numeric::numeric_task::Operator>>,
+    /// Cache of the task-operator indices of helpful actions for the most
+    /// recently evaluated state. Populated at the end of every
+    /// `compute_heuristic`. The search engine reads it once per state via
+    /// `get_preferred_operator_ids` and stores the IDs on the search node;
+    /// from there on it does integer-membership tests, not `Operator`
+    /// clones. `get_preferred_operators` (the `Operator`-returning trait
+    /// method) is still implemented by cloning from the task on demand,
+    /// for callers that want full operator objects.
+    last_helpful_action_ids: RefCell<Vec<usize>>,
 }
 
 impl<'task> FfHeuristic<'task> {
@@ -696,8 +696,51 @@ impl<'task> FfHeuristic<'task> {
         let num_ops = op_preconditions.len();
 
         // 6. Build achiever index. Propositional add-effects: straightforward
-        //    op → fact mapping. Comparison-axiom TRUE facts: only ops whose
-        //    numeric effects can push the envelope in the right direction.
+        //    op → fact mapping. Comparison-axiom TRUE facts: ops whose
+        //    numeric effects can push the envelope in the right direction
+        //    *or* whose effects feed (transitively, via Sum/Difference
+        //    assignment axioms) into a numeric the comparison axiom
+        //    references.
+        //
+        //    The transitive case matters when a goal compares a *derived*
+        //    numeric (e.g. `total_poured = Σ poured`). Real operators
+        //    update the base var (`poured plant1`), and the assignment
+        //    axiom propagates that into the derived `total_poured`. The
+        //    RPG forward pass already handles this (via
+        //    `propagate_assignment_axioms`), but the achiever index used
+        //    by `extract_relaxed_plan` previously only matched direct
+        //    effect-to-axiom-var hits — so derived-var goals had empty
+        //    achiever lists and the relaxed plan was empty, h collapsed
+        //    to zero, and FF degenerated to BFS on tasks like
+        //    plant-watering.
+        //
+        //    For the transitive case we omit the direction check: under
+        //    the unbounded-firing relaxation Plus/Minus effects push both
+        //    sides to ±∞ anyway, and tracking sign-flipping through a
+        //    Difference chain accurately for every base var would
+        //    duplicate `propagate_assignment_axioms` logic. Registering
+        //    over-eagerly only adds candidates; the cheapest-supporter
+        //    pick still has to be at a usable layer.
+        let depends_on = compute_numeric_dependency_closure(num_numeric, &assignment_axioms);
+        let mut axioms_via_derived: Vec<Vec<AxiomIdx>> = vec![Vec::new(); num_numeric];
+        for (idx, ax) in comparison_axioms.iter().enumerate() {
+            for &base in &depends_on[ax.left_var] {
+                if base != ax.left_var
+                    && base != ax.right_var
+                    && !axioms_via_derived[base].contains(&idx)
+                {
+                    axioms_via_derived[base].push(idx);
+                }
+            }
+            for &base in &depends_on[ax.right_var] {
+                if base != ax.left_var
+                    && base != ax.right_var
+                    && !axioms_via_derived[base].contains(&idx)
+                {
+                    axioms_via_derived[base].push(idx);
+                }
+            }
+        }
         let mut achievers: Vec<Vec<OpId>> = vec![Vec::new(); num_facts];
         for (op_id, effs) in op_effects.iter().enumerate() {
             for &fid in effs {
@@ -712,6 +755,8 @@ impl<'task> FfHeuristic<'task> {
                         eff.affected_var
                     ));
                 }
+                // Direct: comparison axioms that name `affected_var`
+                // explicitly.
                 for &axiom_idx in &axioms_touching_var[eff.affected_var] {
                     let axiom = &comparison_axioms[axiom_idx];
                     if !axiom_needs_direction(
@@ -722,13 +767,17 @@ impl<'task> FfHeuristic<'task> {
                         continue;
                     }
                     let true_fact = axiom.true_fact;
-                    if achievers[true_fact].last() != Some(&op_id) {
-                        // dedup against the most recent insertion only —
-                        // operator-with-multiple-effects-on-same-axiom would
-                        // otherwise repeat itself.
-                        if !achievers[true_fact].contains(&op_id) {
-                            achievers[true_fact].push(op_id);
-                        }
+                    if !achievers[true_fact].contains(&op_id) {
+                        achievers[true_fact].push(op_id);
+                    }
+                }
+                // Transitive: comparison axioms reachable through one or
+                // more `Sum`/`Difference` assignment axioms.
+                for &axiom_idx in &axioms_via_derived[eff.affected_var] {
+                    let axiom = &comparison_axioms[axiom_idx];
+                    let true_fact = axiom.true_fact;
+                    if !achievers[true_fact].contains(&op_id) {
+                        achievers[true_fact].push(op_id);
                     }
                 }
             }
@@ -784,7 +833,7 @@ impl<'task> FfHeuristic<'task> {
                 num_numeric,
                 num_axioms_for_scratch,
             )),
-            last_helpful_actions: RefCell::new(Vec::new()),
+            last_helpful_action_ids: RefCell::new(Vec::new()),
         })
     }
 
@@ -1180,7 +1229,13 @@ impl<'task> FfHeuristic<'task> {
         for layer in (1..=max_layer).rev() {
             let goals_here = std::mem::take(&mut scratch.goals_at_layer[layer as usize]);
             for fid in goals_here {
-                let target_op_layer = layer - 1;
+                // `fire_operator` writes effects at `op_first_layer` — i.e.
+                // operator and effect share a layer in this single-counter
+                // convention (an op whose last precondition is at fact
+                // layer `L` fires at `L+1` and its effects appear at
+                // `L+1`). So an op that achieves `fid` at fact layer
+                // `layer` has `op_first_layer == layer`, not `layer - 1`.
+                let target_op_layer = layer;
                 let mut best_op: Option<OpId> = None;
                 let mut best_cost = f64::INFINITY;
                 for &op_id in &self.achievers[fid] {
@@ -1242,10 +1297,15 @@ impl<'task> FfHeuristic<'task> {
         plan_cost
     }
 
-    /// "Helpful actions" — operators in the extracted relaxed plan that
-    /// fire at layer 0 (i.e. are *applicable in the current concrete
-    /// state*). These are the operators the search engine should
-    /// preferentially try next.
+    /// Task-operator indices of "helpful actions" — operators in the
+    /// extracted relaxed plan that are *applicable in the current
+    /// concrete state*. These are the operators the search engine
+    /// should preferentially try next.
+    ///
+    /// In this layer convention an op is applicable-now iff all its
+    /// preconditions are at fact layer 0 (the initial-fact layer), which
+    /// means the op fires at layer 1. Zero-precondition ops fire at
+    /// layer 0 — also applicable. So we accept `op_first_layer ∈ {0, 1}`.
     ///
     /// We restrict to operators with a `task_idx` so callers see real
     /// task operators, not the synthetic conditional-effect or
@@ -1253,28 +1313,65 @@ impl<'task> FfHeuristic<'task> {
     /// plan implicitly pull their parent into the plan (via the
     /// in-extraction `op_parent` accounting), so the parent's
     /// `op_task_idx` is what surfaces here.
-    fn collect_helpful_actions(
-        &self,
-        scratch: &ScratchBuffers,
-    ) -> Vec<planforge_sas::numeric::numeric_task::Operator> {
+    fn collect_helpful_action_ids(&self, scratch: &ScratchBuffers) -> Vec<usize> {
         let mut out = Vec::new();
-        let task_ops = self.task.get_operators();
         for op_id in 0..self.op_preconditions.len() {
             if !scratch.in_plan[op_id] {
                 continue;
             }
-            if scratch.op_first_layer[op_id] != 0 {
+            let op_layer = scratch.op_first_layer[op_id];
+            if op_layer < 0 || op_layer > 1 {
                 continue;
             }
-            let Some(task_idx) = self.op_task_idx[op_id] else {
-                continue;
-            };
-            if let Some(op) = task_ops.get(task_idx) {
-                out.push(op.clone());
+            if let Some(task_idx) = self.op_task_idx[op_id] {
+                out.push(task_idx);
             }
         }
         out
     }
+}
+
+/// Transitive numeric-var dependency closure. `depends_on[v]` lists every
+/// numeric var `u` such that `v`'s value is computed (directly or
+/// recursively) from `u` via `Sum`/`Difference` assignment axioms.
+///
+/// `v` always depends on itself. The closure converges in at most
+/// `num_numeric` iterations because each iteration that adds *anything*
+/// strictly grows at least one `depends_on[v]` set, and each set is
+/// bounded by `num_numeric`.
+fn compute_numeric_dependency_closure(
+    num_numeric: usize,
+    assignment_axioms: &[AssignmentAxiomDesc],
+) -> Vec<Vec<NumVarId>> {
+    let mut sets: Vec<HashSet<NumVarId>> = (0..num_numeric)
+        .map(|v| {
+            let mut s = HashSet::new();
+            s.insert(v);
+            s
+        })
+        .collect();
+    loop {
+        let mut changed = false;
+        for ax in assignment_axioms {
+            // Snapshot the operands' current closures, then union into
+            // the affected var. The clone is intentional — borrowing
+            // `sets` mutably for the destination while also reading from
+            // it for the sources would need split-borrow gymnastics that
+            // aren't worth it for a one-shot construction step.
+            let left = sets[ax.left_var].clone();
+            let right = sets[ax.right_var].clone();
+            let dst = &mut sets[ax.affected_var];
+            for v in left.into_iter().chain(right.into_iter()) {
+                if dst.insert(v) {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    sets.into_iter().map(|s| s.into_iter().collect()).collect()
 }
 
 /// Does the direction in which `affected_var`'s envelope can move
@@ -1322,7 +1419,7 @@ impl<'task> Heuristic for FfHeuristic<'task> {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         if eval_state.is_goal() {
-            self.last_helpful_actions.borrow_mut().clear();
+            self.last_helpful_action_ids.borrow_mut().clear();
             return Ok(0.0);
         }
         let registry = eval_state.state_registry().ok_or_else(|| {
@@ -1334,17 +1431,17 @@ impl<'task> Heuristic for FfHeuristic<'task> {
         scratch.reset();
         let goal_layer = self.build_rpg(eval_state, registry, &mut scratch)?;
         if goal_layer == i32::MAX {
-            self.last_helpful_actions.borrow_mut().clear();
+            self.last_helpful_action_ids.borrow_mut().clear();
             return Err(EvaluationError::DeadEnd { reliable: false });
         }
         if goal_layer == 0 {
-            self.last_helpful_actions.borrow_mut().clear();
+            self.last_helpful_action_ids.borrow_mut().clear();
             return Ok(0.0);
         }
         let cost = self.extract_relaxed_plan(&mut scratch);
-        // Snapshot helpful actions for the get_preferred_operators call
-        // the search engine will issue immediately after this returns.
-        *self.last_helpful_actions.borrow_mut() = self.collect_helpful_actions(&scratch);
+        // Snapshot helpful-action IDs for the get_preferred_operator_ids
+        // call the search engine will issue immediately after this returns.
+        *self.last_helpful_action_ids.borrow_mut() = self.collect_helpful_action_ids(&scratch);
         Ok(cost)
     }
 
@@ -1357,7 +1454,15 @@ impl<'task> Heuristic for FfHeuristic<'task> {
         // snapshot from there. If the engine queries without an
         // intervening `compute_heuristic`, the snapshot is stale — but
         // that's a contract violation, not a fallback.
-        self.last_helpful_actions.borrow().clone()
+        let ids = self.last_helpful_action_ids.borrow();
+        let task_ops = self.task.get_operators();
+        ids.iter()
+            .filter_map(|&task_idx| task_ops.get(task_idx).cloned())
+            .collect()
+    }
+
+    fn get_preferred_operator_ids(&self) -> Vec<usize> {
+        self.last_helpful_action_ids.borrow().clone()
     }
 
     fn heuristic_name(&self) -> String {

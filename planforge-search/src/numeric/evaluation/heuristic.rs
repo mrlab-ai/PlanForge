@@ -63,6 +63,21 @@ pub trait Heuristic: Evaluator {
         vec![]
     }
 
+    /// Get the task-operator indices of preferred operators for the most
+    /// recently evaluated state.
+    ///
+    /// The search engine snapshots this immediately after `compute_heuristic`
+    /// returns and stores the IDs on the successor's search-node record.
+    /// Returning indices instead of cloned `Operator`s lets the engine
+    /// check "was operator `O` preferred by my parent?" with a constant-time
+    /// integer comparison and avoids cloning per-state precondition vectors.
+    ///
+    /// The default returns an empty vector for heuristics that do not
+    /// implement preferred operators.
+    fn get_preferred_operator_ids(&self) -> Vec<usize> {
+        vec![]
+    }
+
     /// Return the cost type used by this heuristic.
     fn get_cost_type(&self) -> CostType {
         CostType::Normal
@@ -222,5 +237,9 @@ impl<H: Heuristic> Heuristic for CachedHeuristic<H> {
 
     fn get_preferred_operators(&self, state: &ConcreteState) -> Vec<Operator> {
         self.inner.get_preferred_operators(state)
+    }
+
+    fn get_preferred_operator_ids(&self) -> Vec<usize> {
+        self.inner.get_preferred_operator_ids()
     }
 }
