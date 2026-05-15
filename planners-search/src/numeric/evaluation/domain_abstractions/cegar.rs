@@ -33,7 +33,7 @@ use crate::numeric::evaluation::domain_abstractions::utils::{
 
 use super::abstract_operator_generator::DomainMapping;
 use super::comparison_expression::Interval;
-use super::domain_abstraction::NumericPartitions;
+use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
 use super::domain_abstraction_heuristic::{
     COMPARISON_FALSE_VAL, COMPARISON_TRUE_VAL, COMPARISON_UNKNOWN_VAL,
@@ -315,47 +315,6 @@ impl Cegar {
             let flaw_time = flaw_start.elapsed();
             if config.debug {
                 super::utils::debug_print_flaws(&flaws);
-                // Per-iteration parity diagnostics: ops, plan, flaws.
-                info!(
-                    "ITER_INFO iter={iteration} ops={} plan_len={} flaws={}",
-                    plan.abstract_operator_count,
-                    plan.wildcard_plan.len(),
-                    flaws.len()
-                );
-                // Compact partition state summary for parity tracing.
-                let mut pstate = String::new();
-                for (vid, &sz) in factory.domain_sizes.iter().enumerate() {
-                    if sz > 1 {
-                        pstate.push_str(&format!("p{vid}:{sz} "));
-                    }
-                }
-                for (vid, &sz) in factory.numeric_domain_sizes.iter().enumerate() {
-                    if sz > 1 {
-                        pstate.push_str(&format!("n{vid}:{sz} "));
-                    }
-                }
-                info!("ITER_PSTATE iter={iteration} {}", pstate.trim());
-                for (i, flaw) in flaws.iter().enumerate() {
-                    match flaw {
-                        Flaw::Propositional(pf) => {
-                            let deps: Vec<(usize, f64, bool)> = pf
-                                .dependent_numeric_flaws
-                                .iter()
-                                .map(|d| (d.numeric_var_id, d.value, d.include_in_lower))
-                                .collect();
-                            info!(
-                                "ITER_FLAW iter={iteration} {i}: PropFlaw var={} val={} deps={:?}",
-                                pf.fact.var, pf.fact.value, deps
-                            );
-                        }
-                        Flaw::Numeric(nf) => {
-                            info!(
-                                "ITER_FLAW iter={iteration} {i}: NumericFlaw var={} val={} include_in_lower={}",
-                                nf.numeric_var_id, nf.value, nf.include_in_lower
-                            );
-                        }
-                    }
-                }
             }
             if flaws.is_empty() {
                 break;
@@ -593,26 +552,6 @@ fn can_refine_propositional_variable(
         .unwrap_or(false)
 }
 
-fn can_refine_propositional_variable_from_size(
-    total_size: u128,
-    domain_sizes: &[usize],
-    var_id: usize,
-    new_domain_size: usize,
-    max_abstraction_size: usize,
-) -> bool {
-    let Some(&old_domain_size) = domain_sizes.get(var_id) else {
-        return false;
-    };
-    if old_domain_size == 0 || new_domain_size == 0 {
-        return false;
-    }
-    let reduced = total_size / (old_domain_size as u128);
-    reduced
-        .checked_mul(new_domain_size as u128)
-        .map(|candidate| candidate <= max_abstraction_size as u128)
-        .unwrap_or(false)
-}
-
 fn can_refine_numeric_variable(
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
@@ -635,28 +574,9 @@ fn can_refine_numeric_variable(
         .unwrap_or(false)
 }
 
-fn can_refine_numeric_variable_from_size(
-    total_size: u128,
-    numeric_domain_sizes: &[usize],
-    numeric_var_id: usize,
-    max_abstraction_size: usize,
-) -> bool {
-    let Some(&old_partition_count) = numeric_domain_sizes.get(numeric_var_id) else {
-        return false;
-    };
-    if old_partition_count == 0 {
-        return false;
-    }
-    let reduced = total_size / (old_partition_count as u128);
-    reduced
-        .checked_mul((old_partition_count as u128) + 1)
-        .map(|candidate| candidate <= max_abstraction_size as u128)
-        .unwrap_or(false)
-}
-
-fn can_refine_propositional_variable_from_size_with_blacklist(
-    total_size: u128,
+fn can_refine_propositional_variable_with_blacklist(
     domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
     var_id: usize,
     new_domain_size: usize,
     max_abstraction_size: usize,
@@ -669,9 +589,9 @@ fn can_refine_propositional_variable_from_size_with_blacklist(
     if comparison_var_ids.contains(&var_id) && domain_sizes.get(var_id).copied().unwrap_or(0) >= 2 {
         return true;
     }
-    if can_refine_propositional_variable_from_size(
-        total_size,
+    if can_refine_propositional_variable(
         domain_sizes,
+        numeric_domain_sizes,
         var_id,
         new_domain_size,
         max_abstraction_size,
@@ -683,8 +603,8 @@ fn can_refine_propositional_variable_from_size_with_blacklist(
     }
 }
 
-fn can_refine_numeric_variable_from_size_with_blacklist(
-    total_size: u128,
+fn can_refine_numeric_variable_with_blacklist(
+    domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
     numeric_var_id: usize,
     max_abstraction_size: usize,
@@ -693,8 +613,8 @@ fn can_refine_numeric_variable_from_size_with_blacklist(
     if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
         return false;
     }
-    if can_refine_numeric_variable_from_size(
-        total_size,
+    if can_refine_numeric_variable(
+        domain_sizes,
         numeric_domain_sizes,
         numeric_var_id,
         max_abstraction_size,
@@ -776,23 +696,9 @@ pub fn fix_flaws(
                 partitions,
                 numeric_domain_sizes,
                 dependent_numeric_refinement,
-                rng,
             )?;
 
             if let Some(flaw_refined) = flaw_refined {
-                if config.debug {
-                    let picked_desc = match &chosen {
-                        Flaw::Propositional(pf) => format!(
-                            "PropFlaw var={} val={}",
-                            pf.fact.var, pf.fact.value
-                        ),
-                        Flaw::Numeric(nf) => format!(
-                            "NumericFlaw var={} val={} include_in_lower={}",
-                            nf.numeric_var_id, nf.value, nf.include_in_lower
-                        ),
-                    };
-                    info!("PICK idx={} score={} {picked_desc}", cand.idx, cand.score);
-                }
                 refined_summary.merge(flaw_refined);
                 if !config.flaw_treatment.refine_all() {
                     return Ok(refined_summary);
@@ -818,41 +724,12 @@ fn try_refine_from_flaw(
     partitions: &mut NumericPartitions,
     numeric_domain_sizes: &mut [usize],
     dependent_numeric_refinement: DependentNumericRefinement,
-    rng: &mut SmallRng,
 ) -> Result<Option<RefinementSummary>> {
-    fn current_abstraction_size_u128(
-        domain_sizes: &[usize],
-        numeric_domain_sizes: &[usize],
-    ) -> u128 {
-        abstraction_size_u128(domain_sizes, numeric_domain_sizes).unwrap_or(u128::MAX)
-    }
-
-    fn split_numeric_flaw_like_numeric_fd(
-        partitions: &mut NumericPartitions,
-        numeric_domain_sizes: &mut [usize],
-        numeric_var_id: usize,
-        value: f64,
-        include_in_lower: bool,
-    ) -> bool {
-        let split_applied = partitions.split_at(numeric_var_id, value, include_in_lower)
-            || partitions.split_at(numeric_var_id, value, !include_in_lower);
-        if split_applied
-            && let Some(parts) = partitions.partitions(numeric_var_id)
-            && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id)
-        {
-            *slot = parts.len();
-        }
-        split_applied
-    }
-
-    let mut current_abstraction_size =
-        current_abstraction_size_u128(domain_sizes, numeric_domain_sizes);
-
     match flaw {
         Flaw::Numeric(nf) => {
             let var_id = nf.numeric_var_id;
-            if !can_refine_numeric_variable_from_size_with_blacklist(
-                current_abstraction_size,
+            if !can_refine_numeric_variable_with_blacklist(
+                domain_sizes,
                 numeric_domain_sizes,
                 var_id,
                 config.max_abstraction_size,
@@ -860,16 +737,12 @@ fn try_refine_from_flaw(
             ) {
                 return Ok(None);
             }
-            if split_numeric_flaw_like_numeric_fd(
-                partitions,
-                numeric_domain_sizes,
-                var_id,
-                nf.value,
-                nf.include_in_lower,
-            ) {
-                current_abstraction_size =
-                    current_abstraction_size_u128(domain_sizes, numeric_domain_sizes);
-                let _ = current_abstraction_size;
+            if partitions.split_at(var_id, nf.value, nf.include_in_lower) {
+                if let Some(parts) = partitions.partitions(var_id)
+                    && let Some(slot) = numeric_domain_sizes.get_mut(var_id)
+                {
+                    *slot = parts.len();
+                }
                 let mut refined = RefinementSummary::default();
                 refined.mark_numeric(var_id);
                 return Ok(Some(refined));
@@ -917,9 +790,9 @@ fn try_refine_from_flaw(
             let mut changed = false;
 
             if comparison_var_ids.contains(&var_id) {
-                if !can_refine_propositional_variable_from_size_with_blacklist(
-                    current_abstraction_size,
+                if !can_refine_propositional_variable_with_blacklist(
                     domain_sizes,
+                    numeric_domain_sizes,
                     var_id,
                     2,
                     config.max_abstraction_size,
@@ -947,10 +820,6 @@ fn try_refine_from_flaw(
                     domain_mapping[var_id][2] = 0;
                     changed = true;
                 }
-                if changed {
-                    current_abstraction_size =
-                        current_abstraction_size_u128(domain_sizes, numeric_domain_sizes);
-                }
                 let _ = old_size; // Keep structure similar to numeric-fd; size tracking handled elsewhere.
             } else {
                 let abs_size = domain_sizes[var_id];
@@ -962,9 +831,9 @@ fn try_refine_from_flaw(
                 if domain_mapping[var_id].get(value).copied().unwrap_or(0) != 0 {
                     return Ok(None);
                 }
-                if !can_refine_propositional_variable_from_size_with_blacklist(
-                    current_abstraction_size,
+                if !can_refine_propositional_variable_with_blacklist(
                     domain_sizes,
+                    numeric_domain_sizes,
                     var_id,
                     abs_size + 1,
                     config.max_abstraction_size,
@@ -976,8 +845,6 @@ fn try_refine_from_flaw(
 
                 domain_mapping[var_id][value] = abs_size;
                 domain_sizes[var_id] = abs_size + 1;
-                current_abstraction_size =
-                    current_abstraction_size_u128(domain_sizes, numeric_domain_sizes);
                 changed = true;
             }
 
@@ -990,59 +857,41 @@ fn try_refine_from_flaw(
                 if changed {
                     refined.mark_propositional(var_id);
                 }
-                let mut dependent_numeric_order: Vec<usize> =
-                    (0..pf.dependent_numeric_flaws.len()).collect();
-                if config.debug {
-                    let raw: Vec<usize> = pf.dependent_numeric_flaws.iter().map(|d| d.numeric_var_id).collect();
-                    info!("DEP_LIST prop_var={} raw={:?}", pf.fact.var, raw);
-                }
-                if dependent_numeric_refinement == DependentNumericRefinement::One {
-                    dependent_numeric_order.shuffle(rng);
-                }
+                let iter: Box<dyn Iterator<Item = &NumericFlaw>> =
+                    match dependent_numeric_refinement {
+                        DependentNumericRefinement::None => Box::new(std::iter::empty()),
+                        DependentNumericRefinement::All => {
+                            Box::new(pf.dependent_numeric_flaws.iter())
+                        }
+                        DependentNumericRefinement::One => {
+                            Box::new(pf.dependent_numeric_flaws.iter())
+                        }
+                    };
 
-                let mut probe_log: Vec<(usize, f64, bool, &'static str)> = Vec::new();
-                for dep_idx in dependent_numeric_order {
-                    let dep = &pf.dependent_numeric_flaws[dep_idx];
+                for dep in iter {
                     let num_id = dep.numeric_var_id;
 
-                    if !can_refine_numeric_variable_from_size_with_blacklist(
-                        current_abstraction_size,
+                    if !can_refine_numeric_variable_with_blacklist(
+                        domain_sizes,
                         numeric_domain_sizes,
                         num_id,
                         config.max_abstraction_size,
                         blacklisted_numeric_var_ids,
                     ) {
-                        if config.debug {
-                            probe_log.push((num_id, dep.value, dep.include_in_lower, "no_room"));
-                        }
                         continue;
                     }
 
-                    if split_numeric_flaw_like_numeric_fd(
-                        partitions,
-                        numeric_domain_sizes,
-                        num_id,
-                        dep.value,
-                        dep.include_in_lower,
-                    ) {
-                        if config.debug {
-                            probe_log.push((num_id, dep.value, dep.include_in_lower, "ok"));
+                    if partitions.split_at(num_id, dep.value, dep.include_in_lower) {
+                        if let Some(parts) = partitions.partitions(num_id)
+                            && let Some(slot) = numeric_domain_sizes.get_mut(num_id)
+                        {
+                            *slot = parts.len();
                         }
-                        current_abstraction_size =
-                            current_abstraction_size_u128(domain_sizes, numeric_domain_sizes);
                         any_numeric_changed = true;
                         refined.mark_numeric(num_id);
                         if dependent_numeric_refinement == DependentNumericRefinement::One {
-                            if config.debug {
-                                info!(
-                                    "DEP_PROBE prop_var={var_id} probes={:?}",
-                                    probe_log
-                                );
-                            }
                             break;
                         }
-                    } else if config.debug {
-                        probe_log.push((num_id, dep.value, dep.include_in_lower, "split_fail"));
                     }
                 }
                 return Ok((any_numeric_changed || changed).then_some(refined));
@@ -1287,9 +1136,52 @@ fn apply_initial_goal_splits(
         }
     }
 
-    // numeric-FD only applies explicit initial splits requested through
-    // init_split_var_ids. Goal comparison variables do not implicitly seed their
-    // dependent numeric variables here; CEGAR introduces those splits from flaws.
+    // For every goal-side comparison-axiom prop var (the conditions of the
+    // goal axiom, expanded by `goal_variable_values`), also seed numeric
+    // splits at the initial concrete numeric value of each of the axiom's
+    // regular numeric dependencies. Without this, the initial abstraction
+    // contains the comparison-axiom prop vars at binary resolution but the
+    // underlying numerics are unrefined — so no operator can flip the
+    // comparison bit, and the abstract initial state cannot reach the goal.
+    // CEGAR then bails with "abstract dead end at iteration 1" before it
+    // could refine the numeric to enable reachability.
+    if let Ok(index) = ComparisonAxiomIndex::from_task(task) {
+        let init_numeric = task.get_initial_numeric_state_values();
+        for fact in goal_variable_values(task) {
+            let Some(tree) = index.comparison_tree(fact.var) else {
+                continue;
+            };
+            for numeric_var_id in tree.regular_numeric_var_dependencies(task) {
+                if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
+                    continue;
+                }
+                let Some(numeric_var) = task.numeric_variables().get(numeric_var_id) else {
+                    continue;
+                };
+                if numeric_var.get_type() != &NumericType::Regular {
+                    continue;
+                }
+                if !can_refine_numeric_variable(
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    numeric_var_id,
+                    initial_max_abstraction_size,
+                ) {
+                    continue;
+                }
+                let Some(&init_value) = init_numeric.get(numeric_var_id) else {
+                    continue;
+                };
+                let include_in_lower = rng.gen_range(0..2) == 0;
+                if partitions.split_at(numeric_var_id, init_value, include_in_lower)
+                    && let Some(parts) = partitions.partitions(numeric_var_id)
+                    && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id)
+                {
+                    *slot = parts.len();
+                }
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

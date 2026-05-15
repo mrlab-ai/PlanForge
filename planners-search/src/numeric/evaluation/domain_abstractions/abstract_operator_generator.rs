@@ -3,7 +3,6 @@ mod tests;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, ensure};
 
@@ -14,7 +13,6 @@ use planners_sas::numeric::numeric_task::{
     metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::utils::float_tolerance;
-use tracing::info;
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
@@ -224,8 +222,6 @@ struct AbstractOperatorFinalizer {
     /// Most buckets hold a single index; collisions degrade gracefully via
     /// the small-vec scan and `StoredOperatorSignature::matches_candidate`.
     grouping: SignatureMap,
-    pushed_candidates: usize,
-    grouped_candidates: usize,
 }
 
 impl AbstractOperatorFinalizer {
@@ -236,13 +232,10 @@ impl AbstractOperatorFinalizer {
             operators: Vec::new(),
             stored_signatures: Vec::new(),
             grouping: SignatureMap::default(),
-            pushed_candidates: 0,
-            grouped_candidates: 0,
         }
     }
 
     fn push_candidate(&mut self, candidate: &AbstractOperatorCandidate) {
-        self.pushed_candidates += 1;
         if self.combine_labels {
             // Hash and cost bits are precomputed at candidate-creation time.
             let cost_bits = candidate.cost_bits;
@@ -258,7 +251,6 @@ impl AbstractOperatorFinalizer {
                             .extend(candidate.changed_numeric_vars.iter().copied());
                         operator.changed_numeric_vars.sort_unstable();
                         operator.changed_numeric_vars.dedup();
-                        self.grouped_candidates += 1;
                         return;
                     }
                 }
@@ -299,23 +291,22 @@ impl AbstractOperatorFinalizer {
     }
 }
 
-fn has_duplicate_fact_conflict(facts: &[ExplicitFact]) -> bool {
-    for i in 0..facts.len() {
-        for j in i + 1..facts.len() {
-            if facts[i].var == facts[j].var && facts[i].value != facts[j].value {
+fn has_cross_list_conflict(a: &[ExplicitFact], b: &[ExplicitFact]) -> bool {
+    let mut i = 0;
+    let mut j = 0;
+    while i < a.len() && j < b.len() {
+        let va = a[i].var;
+        let vb = b[j].var;
+        if va < vb {
+            i += 1;
+        } else if vb < va {
+            j += 1;
+        } else {
+            if a[i].value != b[j].value {
                 return true;
             }
-        }
-    }
-    false
-}
-
-fn has_cross_list_conflict_unordered(a: &[ExplicitFact], b: &[ExplicitFact]) -> bool {
-    for left in a {
-        for right in b {
-            if left.var == right.var && left.value != right.value {
-                return true;
-            }
+            i += 1;
+            j += 1;
         }
     }
     false
@@ -343,49 +334,196 @@ fn build_candidate_from_transition(
     trans: &TransitionInfo,
     candidate: &mut AbstractOperatorCandidate,
 ) -> bool {
-    if trans.source_partition_facts.len() != trans.target_partition_facts.len() {
-        return false;
-    }
+    // INVARIANTS used below to avoid per-call sort + dedup
+    // (they fire several million times during minecraft CEGAR):
+    //
+    // * `skeleton.{prev,pre,eff}_pairs` are sorted-by-var and unique-by-var
+    //   (see `multiply_out_propositional` and `fact_value_for_var`'s
+    //   binary_search precondition).
+    // * `trans.source_partition_facts`, `trans.target_partition_facts`,
+    //   `trans.prevail_facts` are sorted+deduped (see
+    //   `enumerate_partition_combos`).
+    //
+    // We can therefore merge instead of sort+dedup: the merged outputs are
+    // built in-order with O(n+m) work and no `Vec::sort()` cost.
+    debug_assert!(
+        skeleton.pre_pairs.windows(2).all(|w| w[0].var < w[1].var),
+        "skeleton.pre_pairs must be strictly ascending by var"
+    );
+    debug_assert!(
+        skeleton.eff_pairs.windows(2).all(|w| w[0].var < w[1].var),
+        "skeleton.eff_pairs must be strictly ascending by var"
+    );
+    debug_assert!(
+        skeleton.prev_pairs.windows(2).all(|w| w[0].var < w[1].var),
+        "skeleton.prev_pairs must be strictly ascending by var"
+    );
+    debug_assert!(
+        trans
+            .source_partition_facts
+            .windows(2)
+            .all(|w| w[0].var <= w[1].var),
+        "TransitionInfo.source_partition_facts must be sorted by var"
+    );
+    debug_assert!(
+        trans
+            .target_partition_facts
+            .windows(2)
+            .all(|w| w[0].var <= w[1].var),
+        "TransitionInfo.target_partition_facts must be sorted by var"
+    );
+    debug_assert!(
+        trans.prevail_facts.windows(2).all(|w| w[0].var <= w[1].var),
+        "TransitionInfo.prevail_facts must be sorted by var"
+    );
 
+    // Reuse the candidate's vecs as the merge output buffers.
     candidate.prev_pairs.clear();
     candidate.pre_pairs.clear();
     candidate.eff_pairs.clear();
     candidate.changed_numeric_vars.clear();
 
-    candidate.pre_pairs.extend_from_slice(&skeleton.pre_pairs);
-    candidate.eff_pairs.extend_from_slice(&skeleton.eff_pairs);
-    candidate.prev_pairs.extend_from_slice(&skeleton.prev_pairs);
+    let extended_pre_pairs = &mut candidate.pre_pairs;
+    let extended_eff_pairs = &mut candidate.eff_pairs;
+    let extended_prev_pairs = &mut candidate.prev_pairs;
 
-    for (source, target) in trans
-        .source_partition_facts
-        .iter()
-        .zip(trans.target_partition_facts.iter())
-    {
-        if source.var != target.var {
-            return false;
+    let mut sk_pre = skeleton.pre_pairs.as_slice();
+    let mut sk_eff = skeleton.eff_pairs.as_slice();
+    let mut src = trans.source_partition_facts.as_slice();
+    let mut tgt = trans.target_partition_facts.as_slice();
+
+    while !sk_pre.is_empty() || !src.is_empty() {
+        let push_sk = match (sk_pre.first(), src.first()) {
+            (Some(a), Some(b)) => match a.var.cmp(&b.var) {
+                std::cmp::Ordering::Less => true,
+                std::cmp::Ordering::Greater => false,
+                std::cmp::Ordering::Equal => {
+                    if a.value != b.value {
+                        return false;
+                    }
+                    true
+                }
+            },
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => break,
+        };
+        let var_id = if push_sk {
+            let a = sk_pre.first().unwrap();
+            extended_pre_pairs.push(a.clone());
+            let v = a.var;
+            sk_pre = &sk_pre[1..];
+            v
+        } else {
+            let b = src.first().unwrap();
+            extended_pre_pairs.push(b.clone());
+            let v = b.var;
+            src = &src[1..];
+            v
+        };
+        while sk_pre.first().is_some_and(|f| f.var == var_id) {
+            sk_pre = &sk_pre[1..];
         }
-        if !skeleton.pre_pairs.iter().any(|fact| fact.var == source.var) {
-            candidate.pre_pairs.push(source.clone());
-            candidate.eff_pairs.push(target.clone());
+        while src.first().is_some_and(|f| f.var == var_id) {
+            src = &src[1..];
         }
     }
-    candidate.prev_pairs.extend_from_slice(&trans.prevail_facts);
 
-    if has_duplicate_fact_conflict(&candidate.pre_pairs)
-        || has_duplicate_fact_conflict(&candidate.eff_pairs)
-        || has_duplicate_fact_conflict(&candidate.prev_pairs)
-        || has_cross_list_conflict_unordered(&candidate.pre_pairs, &candidate.prev_pairs)
-        || has_cross_list_conflict_unordered(&candidate.prev_pairs, &candidate.eff_pairs)
-        || !transition_vars_match(&candidate.pre_pairs, &candidate.eff_pairs)
+    while !sk_eff.is_empty() || !tgt.is_empty() {
+        let push_sk = match (sk_eff.first(), tgt.first()) {
+            (Some(a), Some(b)) => match a.var.cmp(&b.var) {
+                std::cmp::Ordering::Less => true,
+                std::cmp::Ordering::Greater => false,
+                std::cmp::Ordering::Equal => {
+                    // Skeleton already pins this var's effect — the legacy
+                    // code dropped the trans target via its `is_none()`
+                    // guard. We do the same: take the skeleton entry, skip
+                    // both sides for this var.
+                    true
+                }
+            },
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => break,
+        };
+        let var_id = if push_sk {
+            let a = sk_eff.first().unwrap();
+            extended_eff_pairs.push(a.clone());
+            let v = a.var;
+            sk_eff = &sk_eff[1..];
+            v
+        } else {
+            let b = tgt.first().unwrap();
+            extended_eff_pairs.push(b.clone());
+            let v = b.var;
+            tgt = &tgt[1..];
+            v
+        };
+        while sk_eff.first().is_some_and(|f| f.var == var_id) {
+            sk_eff = &sk_eff[1..];
+        }
+        while tgt.first().is_some_and(|f| f.var == var_id) {
+            tgt = &tgt[1..];
+        }
+    }
+
+    // Merge skeleton.prev_pairs and trans.prevail_facts (both sorted+
+    // deduped; may overlap). Legacy `sort + dedup` collapsed exact-equal
+    // facts; same-var-different-value would have been caught by the
+    // subsequent `has_in_list_conflict` check — replicate that here.
+    let mut sk_prev = skeleton.prev_pairs.as_slice();
+    let mut trv = trans.prevail_facts.as_slice();
+    let mut prev_conflict = false;
+    while !sk_prev.is_empty() || !trv.is_empty() {
+        match (sk_prev.first(), trv.first()) {
+            (Some(a), Some(b)) => match a.var.cmp(&b.var) {
+                std::cmp::Ordering::Less => {
+                    extended_prev_pairs.push(a.clone());
+                    sk_prev = &sk_prev[1..];
+                }
+                std::cmp::Ordering::Greater => {
+                    extended_prev_pairs.push(b.clone());
+                    trv = &trv[1..];
+                }
+                std::cmp::Ordering::Equal => {
+                    if a.value != b.value {
+                        prev_conflict = true;
+                    }
+                    extended_prev_pairs.push(a.clone());
+                    let v = a.var;
+                    sk_prev = &sk_prev[1..];
+                    while trv.first().is_some_and(|f| f.var == v) {
+                        trv = &trv[1..];
+                    }
+                }
+            },
+            (Some(_), None) => {
+                let a = sk_prev.first().unwrap();
+                extended_prev_pairs.push(a.clone());
+                sk_prev = &sk_prev[1..];
+            }
+            (None, Some(_)) => {
+                let b = trv.first().unwrap();
+                extended_prev_pairs.push(b.clone());
+                trv = &trv[1..];
+            }
+            (None, None) => break,
+        }
+    }
+
+    if prev_conflict
+        || has_cross_list_conflict(extended_pre_pairs, extended_prev_pairs)
+        || has_cross_list_conflict(extended_prev_pairs, extended_eff_pairs)
+        || !transition_vars_match(extended_pre_pairs, extended_eff_pairs)
     {
         return false;
     }
 
     let cost_bits = float_tolerance::canonical_bits(skeleton.cost);
     let signature_hash = compute_signature_hash(
-        &candidate.prev_pairs,
-        &candidate.pre_pairs,
-        &candidate.eff_pairs,
+        extended_prev_pairs,
+        extended_pre_pairs,
+        extended_eff_pairs,
         cost_bits,
     );
     candidate.concrete_op_id = skeleton.concrete_op_id;
@@ -404,9 +542,9 @@ fn materialize_skeletons_into(
     skeletons: &[AbstractOperatorSkeleton],
     finalizer: &mut AbstractOperatorFinalizer,
     candidate_scratch: &mut AbstractOperatorCandidate,
-) -> Result<(usize, usize)> {
+) -> Result<()> {
     let Some(first) = skeletons.first() else {
-        return Ok((0, 0));
+        return Ok(());
     };
     let transitions = compute_hash_effects_with_preconditions(
         task,
@@ -415,18 +553,16 @@ fn materialize_skeletons_into(
         &first.ass_effects,
     )?;
 
-    let mut built_candidates = 0usize;
     for skeleton in skeletons {
         debug_assert_eq!(skeleton.ass_effects, first.ass_effects);
         debug_assert_eq!(skeleton.op_preconditions, first.op_preconditions);
         for trans in &transitions {
             if build_candidate_from_transition(skeleton, trans, candidate_scratch) {
                 finalizer.push_candidate(candidate_scratch);
-                built_candidates += 1;
             }
         }
     }
-    Ok((transitions.len(), built_candidates))
+    Ok(())
 }
 
 #[allow(unused)]
@@ -448,8 +584,7 @@ pub struct AbstractOperatorGenerator {
     partitions: NumericPartitions,
     comparison_index: Option<ComparisonAxiomIndex>,
     comparison_trees: Vec<ComparisonTree>,
-    direct_comparisons_by_numeric_var: Vec<Vec<usize>>,
-    numeric_var_can_affect_comparison: Vec<bool>,
+    comparisons_by_numeric_dep: Vec<Vec<usize>>,
     derived_prop_vars: HashSet<usize>,
     combine_labels: bool,
     /// Per-operator scratch buffers reused across `build_branch_for_operator`
@@ -538,10 +673,18 @@ impl AbstractOperatorGenerator {
             comparison_trees.push(tree);
         }
 
-        let direct_comparisons_by_numeric_var =
-            build_direct_comparisons_by_numeric_var(task, &comparison_trees)?;
-        let numeric_var_can_affect_comparison =
-            build_numeric_var_can_affect_comparison(task, &comparison_trees)?;
+        let mut comparisons_by_numeric_dep: Vec<Vec<usize>> =
+            vec![Vec::new(); task.numeric_variables().len()];
+        for (tree_idx, tree) in comparison_trees.iter().enumerate() {
+            for dep in tree.regular_numeric_var_dependencies(task) {
+                ensure!(
+                    dep < comparisons_by_numeric_dep.len(),
+                    "comparison tree depends on numeric var {dep}, but only {} numeric vars exist",
+                    comparisons_by_numeric_dep.len()
+                );
+                comparisons_by_numeric_dep[dep].push(tree_idx);
+            }
+        }
 
         let derived_prop_vars: HashSet<usize> = task
             .comparison_axioms()
@@ -563,8 +706,7 @@ impl AbstractOperatorGenerator {
             partitions,
             comparison_index,
             comparison_trees,
-            direct_comparisons_by_numeric_var,
-            numeric_var_can_affect_comparison,
+            comparisons_by_numeric_dep,
             derived_prop_vars,
             combine_labels,
             precondition_on_var_scratch: vec![None; num_variables],
@@ -666,77 +808,21 @@ impl AbstractOperatorGenerator {
         &mut self,
         task: &dyn AbstractNumericTask,
     ) -> Result<Vec<AbstractOperator>> {
-        let stats_enabled = std::env::var_os("DA_OPERATOR_STATS").is_some();
-        let per_op_log = std::env::var_os("DA_OP_PER_CONCRETE").is_some();
-        let start = stats_enabled.then(Instant::now);
         let mut finalizer =
             AbstractOperatorFinalizer::new(self.combine_labels, &self.hash_multipliers);
         let mut candidate_scratch = AbstractOperatorCandidate::default();
-        let mut skeleton_count = 0usize;
-        let mut transition_count = 0usize;
-        let mut built_candidate_count = 0usize;
-        let mut max_transitions_for_operator = 0usize;
-        let mut max_candidates_for_operator = 0usize;
-        let mut max_transition_operator = 0usize;
-        let mut max_candidate_operator = 0usize;
         for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
             let skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
-            skeleton_count += skeletons.len();
-            let (transitions, built_candidates) = materialize_skeletons_into(
+            materialize_skeletons_into(
                 task,
                 self,
                 &skeletons,
                 &mut finalizer,
                 &mut candidate_scratch,
             )?;
-            transition_count += transitions;
-            built_candidate_count += built_candidates;
-            if transitions > max_transitions_for_operator {
-                max_transitions_for_operator = transitions;
-                max_transition_operator = concrete_op_id;
-            }
-            if built_candidates > max_candidates_for_operator {
-                max_candidates_for_operator = built_candidates;
-                max_candidate_operator = concrete_op_id;
-            }
         }
 
-        let pushed_candidates = finalizer.pushed_candidates;
-        let grouped_candidates = finalizer.grouped_candidates;
-        let operators = finalizer.into_operators();
-        if per_op_log {
-            let mut by_concrete: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
-            for op in &operators {
-                for &cid in &op.concrete_op_ids {
-                    *by_concrete.entry(cid).or_default() += 1;
-                }
-            }
-            info!("OPS_PER_CONCRETE total={} {:?}", operators.len(), by_concrete);
-            for (i, op) in operators.iter().enumerate() {
-                info!(
-                    "OP idx={i} cost={} hash={} cids={:?} pre={:?} reg_pre={:?}",
-                    op.cost, op.hash_effect, op.concrete_op_ids, op.preconditions, op.regression_preconditions
-                );
-            }
-        }
-        if let Some(start) = start {
-            info!(
-                "abstract operator generation stats: concrete_ops={}, skeletons={}, transition_sets={}, candidates={}, grouped_candidates={}, final_operators={}, max_transitions_per_op={}@{}, max_candidates_per_op={}@{}, elapsed={:.3}s",
-                task.get_operators().len(),
-                skeleton_count,
-                transition_count,
-                pushed_candidates.max(built_candidate_count),
-                grouped_candidates,
-                operators.len(),
-                max_transitions_for_operator,
-                max_transition_operator,
-                max_candidates_for_operator,
-                max_candidate_operator,
-                start.elapsed().as_secs_f64(),
-            );
-        }
-
-        Ok(operators)
+        Ok(finalizer.into_operators())
     }
 
     fn build_for_concrete_operator(
@@ -810,81 +896,6 @@ impl AbstractOperatorGenerator {
             )
         })
     }
-}
-
-fn build_direct_comparisons_by_numeric_var(
-    task: &dyn AbstractNumericTask,
-    comparison_trees: &[ComparisonTree],
-) -> Result<Vec<Vec<usize>>> {
-    let num_numeric = task.numeric_variables().len();
-    let mut out = vec![Vec::new(); num_numeric];
-    for (tree_idx, tree) in comparison_trees.iter().enumerate() {
-        for numeric_var_id in [tree.left_numeric_var_id, tree.right_numeric_var_id] {
-            ensure!(
-                numeric_var_id < num_numeric,
-                "comparison tree references numeric var {numeric_var_id}, but only {num_numeric} numeric vars exist",
-            );
-            if task.numeric_variables()[numeric_var_id].get_type() != &NumericType::Constant
-                && !out[numeric_var_id].contains(&tree_idx)
-            {
-                out[numeric_var_id].push(tree_idx);
-            }
-        }
-    }
-    Ok(out)
-}
-
-fn build_numeric_var_can_affect_comparison(
-    task: &dyn AbstractNumericTask,
-    comparison_trees: &[ComparisonTree],
-) -> Result<Vec<bool>> {
-    let num_numeric = task.numeric_variables().len();
-    let mut axiom_dependencies: Vec<Vec<usize>> = vec![Vec::new(); num_numeric];
-    for axiom in task.assignment_axioms() {
-        let derived = axiom.get_affected_var_id();
-        ensure!(
-            derived < num_numeric,
-            "assignment axiom affected numeric var {derived}, but only {num_numeric} numeric vars exist",
-        );
-        for dep in [axiom.get_left_var_id(), axiom.get_right_var_id()] {
-            ensure!(
-                dep < num_numeric,
-                "assignment axiom dependency numeric var {dep}, but only {num_numeric} numeric vars exist",
-            );
-            if !axiom_dependencies[derived].contains(&dep) {
-                axiom_dependencies[derived].push(dep);
-            }
-        }
-    }
-
-    let mut can_affect = vec![false; num_numeric];
-    let mut queue: Vec<usize> = Vec::new();
-    for tree in comparison_trees {
-        for numeric_var_id in [tree.left_numeric_var_id, tree.right_numeric_var_id] {
-            ensure!(
-                numeric_var_id < num_numeric,
-                "comparison tree references numeric var {numeric_var_id}, but only {num_numeric} numeric vars exist",
-            );
-            if task.numeric_variables()[numeric_var_id].get_type() != &NumericType::Constant
-                && !can_affect[numeric_var_id]
-            {
-                can_affect[numeric_var_id] = true;
-                queue.push(numeric_var_id);
-            }
-        }
-    }
-    let mut pos = 0;
-    while pos < queue.len() {
-        let numeric_var_id = queue[pos];
-        pos += 1;
-        for &dep in &axiom_dependencies[numeric_var_id] {
-            if !can_affect[dep] {
-                can_affect[dep] = true;
-                queue.push(dep);
-            }
-        }
-    }
-    Ok(can_affect)
 }
 
 #[allow(unused)]
@@ -1245,10 +1256,14 @@ fn compute_hash_effects_with_preconditions(
 
     // Compute the set of numeric vars that this operator's preconditions
     // *transitively* depend on through comparison-axiom-derived propositional
-    // variables. This is still needed for comparison filtering/cascades, but
-    // it does not control identity framing: numeric-FD enumerates identity
-    // transitions for every refined regular numeric variable that the
-    // operator does not affect.
+    // variables. A refined numeric var that is neither affected by the
+    // operator nor referenced by any of its comparison preconditions has no
+    // observable role: the operator's effect on its abstract-state hash is
+    // 0 along that dimension, and the match tree never queries the var. We
+    // can therefore omit it from the cartesian product entirely (treating it
+    // as a wildcard at the abstract-operator level), which can shrink the
+    // transition count by orders of magnitude in domains like minecraft
+    // where most concrete operators do not query most refined numerics.
     let mut needed_numeric_vars: HashSet<usize> = HashSet::new();
     if let Some(index) = &generator.comparison_index {
         // Deps of comparison-axiom preconditions are needed so we can filter
@@ -1310,41 +1325,39 @@ fn compute_hash_effects_with_preconditions(
         let effs = &effects_by_var[v];
         if let Some(eff) = effs.first() {
             let rhs = eff.var_id();
-            ensure!(
-                rhs < task.numeric_variables().len(),
-                "assignment effect rhs numeric var {rhs} out of bounds for {} numeric variables",
-                task.numeric_variables().len()
-            );
-            ensure!(
-                task.numeric_variables()[rhs].get_type() == &NumericType::Constant,
-                "assignment effect rhs numeric var {rhs} is not constant"
-            );
-            let rhs_value = task
-                .get_initial_numeric_state_values()
-                .get(rhs)
-                .copied()
-                .with_context(|| format!("missing initial value for rhs numeric var {rhs}"))?;
-            let rhs_iv = Interval::singleton(float_tolerance::canonicalize(rhs_value));
+            let rhs_parts = generator
+                .partitions
+                .partitions(rhs)
+                .map(|partitions| partitions.len())
+                .ok_or_else(|| anyhow!("missing partitions for rhs numeric var {rhs}"))?;
 
             let mut pairs: HashSet<(usize, usize)> = HashSet::new();
             for src in 0..num_parts {
-                let targets =
-                    generator
+                for rhs_part in 0..rhs_parts {
+                    let rhs_iv = generator
                         .partitions
-                        .reachable_partitions(v, src, eff.operation(), rhs_iv);
-                for tgt in targets {
-                    pairs.insert((src, tgt));
+                        .partition_interval(rhs, rhs_part)
+                        .with_context(|| {
+                            format!("missing partition interval for rhs var {rhs} part {rhs_part}")
+                        })?;
+                    let targets =
+                        generator
+                            .partitions
+                            .reachable_partitions(v, src, eff.operation(), rhs_iv);
+                    for tgt in targets {
+                        pairs.insert((src, tgt));
+                    }
                 }
             }
             let mut transitions: Vec<(usize, usize)> = pairs.into_iter().collect();
             transitions.sort_unstable();
             per_var.push((v, transitions));
-        } else {
-            // C++ parity: every refined, unaffected regular numeric variable
-            // is framed with identity partition transitions. This keeps the
-            // operator signature and match-tree preconditions tied to the same
-            // abstract dimensions as numeric-FD instead of wildcarding
-            // unrelated refined numeric variables.
+        } else if needed_numeric_vars.contains(&v) {
+            // Unaffected refined regular numeric variable that is still needed
+            // to evaluate a comparison precondition or a comparison bit whose
+            // other dependencies can change. Frame it with identity partition
+            // transitions so the comparison evaluation sees the precise source
+            // and target partition.
             let transitions: Vec<(usize, usize)> = (0..num_parts).map(|p| (p, p)).collect();
             per_var.push((v, transitions));
         }
@@ -1375,10 +1388,9 @@ fn compute_hash_effects_with_preconditions(
     let any_changed_var_affects_comparison = ass_effects.iter().any(|eff| {
         let v = eff.affected_var_id();
         generator
-            .numeric_var_can_affect_comparison
+            .comparisons_by_numeric_dep
             .get(v)
-            .copied()
-            .unwrap_or(false)
+            .is_some_and(|trees| !trees.is_empty())
     });
 
     // Backtracking enumeration. Following the C++ reference, we share the
@@ -1394,12 +1406,49 @@ fn compute_hash_effects_with_preconditions(
     let mut source_intervals_buf: Vec<Interval> = Vec::new();
     let mut target_intervals_buf: Vec<Interval> = Vec::new();
 
+    // The set of numeric vars whose partition is pinned by this combo —
+    // affected (with effect transitions) ∪ needed (with identity transitions)
+    // ∪ deps with domain_size==1 (treated as the unbounded singleton
+    // partition; covered by the default-fill in
+    // `prepare_comparison_tree_inputs_for_combo_into`). Passing only
+    // `affected_numeric_vars` here drops bit transitions for comparisons
+    // whose deps span both affected and identity-iterated vars; skipping
+    // domain_size==1 deps drops them when the var hasn't been refined yet
+    // but the comparison still needs to emit its source→target bit
+    // transition based on the optimistic eval over the default (unbounded)
+    // interval.
+    let mut bound_numeric_vars: HashSet<usize> = per_var.iter().map(|(v, _)| *v).collect();
+    bound_numeric_vars.extend(needed_numeric_vars.iter().copied());
+    bound_numeric_vars.extend(affected_numeric_vars.iter().copied());
+    if let Some(index) = &generator.comparison_index {
+        // Treat *every* comparison axiom that's in the abstraction's hash
+        // and whose deps overlap the combo's bound set as fully bound: any
+        // unrefined dep already has the unbounded default interval filled
+        // by `prepare_comparison_tree_inputs_for_combo_into`, which is the
+        // correct (admissible, fully fan-out) input for the optimistic
+        // eval.
+        let snapshot: Vec<usize> = bound_numeric_vars.iter().copied().collect();
+        for tree in &generator.comparison_trees {
+            let var_id = tree.affected_var_id;
+            if generator.domain_sizes.get(var_id).copied().unwrap_or(1) <= 1 {
+                continue;
+            }
+            let deps = tree.regular_numeric_var_dependencies(task);
+            if deps.iter().any(|d| snapshot.contains(d)) {
+                for dep in &deps {
+                    bound_numeric_vars.insert(*dep);
+                }
+            }
+        }
+        let _ = index;
+    }
+
     enumerate_partition_combos(
         task,
         generator,
         op_preconditions,
         &per_var,
-        &affected_numeric_vars,
+        &bound_numeric_vars,
         num_props,
         op_has_comparison_preconditions,
         any_changed_var_affects_comparison,
@@ -1496,7 +1545,6 @@ fn enumerate_partition_combos(
             task,
             generator,
             op_preconditions,
-            combo_scratch,
             source_intervals_buf,
             target_intervals_buf,
             affected_numeric_vars,
@@ -1516,12 +1564,6 @@ fn enumerate_partition_combos(
         );
 
         for comparison_facts in variants {
-            ensure!(
-                comparison_facts.source_facts.len() == comparison_facts.target_facts.len(),
-                "comparison source/target transition fact count mismatch: {} vs {}",
-                comparison_facts.source_facts.len(),
-                comparison_facts.target_facts.len()
-            );
             let mut source_facts = source_partition_facts.clone();
             let mut target_facts = target_partition_facts.clone();
             let mut prevail_facts = comparison_facts.prevail_facts;
@@ -1661,7 +1703,6 @@ fn compute_comparison_transition_facts(
     task: &dyn AbstractNumericTask,
     generator: &AbstractOperatorGenerator,
     op_preconditions: &[ExplicitFact],
-    combo: &[(usize, usize, usize)],
     source_inputs: &[Interval],
     target_inputs: &[Interval],
     affected_numeric_vars: &HashSet<usize>,
@@ -1670,12 +1711,13 @@ fn compute_comparison_transition_facts(
         return Ok(vec![ComparisonTransitionFacts::default()]);
     }
 
-    // Map: comparison-axiom prop var -> required CONCRETE value (TRUE / FALSE).
-    // Stores the operator's precondition concrete value directly, independent of
-    // whether the prop var has been refined. The previous abstract-value mapping
-    // collapsed at size 1 (true_abs == false_abs), making the filter unsound for
-    // unrefined comparison-axiom preconditions and matching C++ numeric-FD only
-    // for refined vars.
+    // Filter on the concrete TRUE/FALSE precondition value, not the abstract
+    // mapping. With abstract values, refinement size 1 collapses
+    // `true_abs == false_abs` and the filter is unsound; the previous
+    // `domain_sizes <= 1` skip masked this by bypassing the check for
+    // unrefined comparison vars, letting operator combos that violate
+    // comparison-axiom preconditions through and inflating operator counts
+    // relative to numeric-FD.
     let precondition_required: HashMap<usize, usize> = op_preconditions
         .iter()
         .filter(|p| generator.derived_prop_vars.contains(&p.var))
@@ -1698,223 +1740,8 @@ fn compute_comparison_transition_facts(
         }
     }
 
-    // C++ parity: derived comparison cascade facts are not baked into operator
-    // pre/eff. In numeric-FD, source cascades are always empty (the call passes
-    // old==new partitions), and the pairing loop iterates by source-fact index,
-    // so target-only cascade facts are never reached. CEGAR's regression path
-    // resets comparison vars to UNKNOWN before match-tree lookup and recomputes
-    // them from numeric state. The previous Rust behavior added source+target
-    // cascade facts, over-specifying operators and inflating the operator count.
-    let _ = (task, combo, source_inputs, target_inputs, affected_numeric_vars);
+    let _ = (task, target_inputs, affected_numeric_vars);
     Ok(vec![ComparisonTransitionFacts::default()])
-}
-
-fn changed_partition_map(
-    combo: &[(usize, usize, usize)],
-    affected_numeric_vars: &HashSet<usize>,
-) -> HashMap<usize, (usize, usize)> {
-    combo
-        .iter()
-        .filter_map(|&(var_id, src, tgt)| {
-            affected_numeric_vars
-                .contains(&var_id)
-                .then_some((var_id, (src, tgt)))
-        })
-        .collect()
-}
-
-fn append_direct_comparison_transitions(
-    generator: &AbstractOperatorGenerator,
-    changed_partitions: &HashMap<usize, (usize, usize)>,
-    source_inputs: &[Interval],
-    target_inputs: &[Interval],
-    out: &mut ComparisonTransitionFacts,
-) {
-    let mut affected_tree_ids: Vec<usize> = Vec::new();
-    for &numeric_var_id in changed_partitions.keys() {
-        if let Some(tree_ids) = generator.direct_comparisons_by_numeric_var.get(numeric_var_id) {
-            affected_tree_ids.extend(tree_ids.iter().copied());
-        }
-    }
-    affected_tree_ids.sort_unstable();
-    affected_tree_ids.dedup();
-
-    for tree_id in affected_tree_ids {
-        let Some(tree) = generator.comparison_trees.get(tree_id) else {
-            continue;
-        };
-        let var_id = tree.affected_var_id;
-        if generator.domain_sizes.get(var_id).copied().unwrap_or(1) <= 1 {
-            continue;
-        }
-        let left_change = changed_partitions.get(&tree.left_numeric_var_id);
-        let right_change = changed_partitions.get(&tree.right_numeric_var_id);
-        if left_change.is_none() && right_change.is_none() {
-            continue;
-        }
-        let partition_changed = left_change.is_some_and(|(old, new)| old != new)
-            || right_change.is_some_and(|(old, new)| old != new);
-        if !partition_changed {
-            continue;
-        }
-        append_known_comparison_transition(generator, tree, source_inputs, target_inputs, out);
-    }
-}
-
-fn append_assignment_comparison_transitions(
-    task: &dyn AbstractNumericTask,
-    generator: &AbstractOperatorGenerator,
-    changed_partitions: &HashMap<usize, (usize, usize)>,
-    source_inputs: &[Interval],
-    target_inputs: &[Interval],
-    out: &mut ComparisonTransitionFacts,
-) -> Result<()> {
-    for axiom in task.assignment_axioms() {
-        let left_var = axiom.get_left_var_id();
-        let right_var = axiom.get_right_var_id();
-        let Some(&(left_old, left_new)) = changed_partitions.get(&left_var) else {
-            continue;
-        };
-        let Some(&(right_old, right_new)) = changed_partitions.get(&right_var) else {
-            continue;
-        };
-        if left_old == left_new && right_old == right_new {
-            continue;
-        }
-
-        let derived_var = axiom.get_affected_var_id();
-        let old_range = assignment_axiom_interval(
-            generator,
-            left_var,
-            left_old,
-            right_var,
-            right_old,
-            axiom.get_operator(),
-        )?;
-        let new_range = assignment_axiom_interval(
-            generator,
-            left_var,
-            left_new,
-            right_var,
-            right_new,
-            axiom.get_operator(),
-        )?;
-        let Some(old_partition) = first_overlapping_partition(generator, derived_var, old_range)
-        else {
-            continue;
-        };
-        let Some(new_partition) = first_overlapping_partition(generator, derived_var, new_range)
-        else {
-            continue;
-        };
-        if old_partition == new_partition {
-            continue;
-        }
-
-        let mut source_with_assignment = source_inputs.to_vec();
-        let mut target_with_assignment = target_inputs.to_vec();
-        if derived_var >= source_with_assignment.len()
-            || derived_var >= target_with_assignment.len()
-        {
-            continue;
-        }
-        source_with_assignment[derived_var] = old_range;
-        target_with_assignment[derived_var] = new_range;
-
-        for tree in &generator.comparison_trees {
-            let var_id = tree.affected_var_id;
-            if generator.domain_sizes.get(var_id).copied().unwrap_or(1) <= 1 {
-                continue;
-            }
-            if tree.left_numeric_var_id != derived_var && tree.right_numeric_var_id != derived_var {
-                continue;
-            }
-            append_known_comparison_transition(
-                generator,
-                tree,
-                &source_with_assignment,
-                &target_with_assignment,
-                out,
-            );
-        }
-    }
-    Ok(())
-}
-
-fn append_known_comparison_transition(
-    generator: &AbstractOperatorGenerator,
-    tree: &ComparisonTree,
-    source_inputs: &[Interval],
-    target_inputs: &[Interval],
-    out: &mut ComparisonTransitionFacts,
-) {
-    let Some(source_fact) = comparison_fact_from_interval_result(
-        generator,
-        tree.affected_var_id,
-        tree.evaluate_interval(source_inputs),
-    ) else {
-        return;
-    };
-    let Some(target_fact) = comparison_fact_from_interval_result(
-        generator,
-        tree.affected_var_id,
-        tree.evaluate_interval(target_inputs),
-    ) else {
-        return;
-    };
-    out.source_facts.push(source_fact);
-    out.target_facts.push(target_fact);
-}
-
-fn comparison_fact_from_interval_result(
-    generator: &AbstractOperatorGenerator,
-    var_id: usize,
-    result: Option<bool>,
-) -> Option<ExplicitFact> {
-    let concrete_value = match result? {
-        true => COMPARISON_FALSE_VAL,
-        false => COMPARISON_TRUE_VAL,
-    };
-    Some(ExplicitFact::new(
-        var_id,
-        generator.abstract_value(var_id, concrete_value),
-    ))
-}
-
-fn assignment_axiom_interval(
-    generator: &AbstractOperatorGenerator,
-    left_var: usize,
-    left_partition: usize,
-    right_var: usize,
-    right_partition: usize,
-    operator: &CalOperator,
-) -> Result<Interval> {
-    let left = generator
-        .partitions
-        .partition_interval(left_var, left_partition)
-        .with_context(|| {
-            format!("missing partition interval for var {left_var} part {left_partition}")
-        })?;
-    let right = generator
-        .partitions
-        .partition_interval(right_var, right_partition)
-        .with_context(|| {
-            format!("missing partition interval for var {right_var} part {right_partition}")
-        })?;
-    let interval = arith_op_from_axiom(operator).apply_interval(left, right);
-    Ok(Interval::new(interval.lower, interval.upper, true, false))
-}
-
-fn first_overlapping_partition(
-    generator: &AbstractOperatorGenerator,
-    var_id: usize,
-    interval: Interval,
-) -> Option<usize> {
-    generator
-        .partitions
-        .partitions(var_id)?
-        .iter()
-        .position(|partition| partition.intersects(&interval))
 }
 
 fn compute_hash_multipliers(
