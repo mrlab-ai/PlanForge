@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
 };
+use planners_sas::numeric::utils::float_tolerance;
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::utils::EquispacedPartitioning;
@@ -30,7 +31,9 @@ impl NumericPartitions {
             .enumerate()
             .map(|(i, v)| match v.get_type() {
                 NumericType::Constant => {
-                    let value = *initial_numeric_values.get(i).unwrap_or(&f64::NAN);
+                    let value = float_tolerance::canonicalize(
+                        *initial_numeric_values.get(i).unwrap_or(&f64::NAN),
+                    );
                     if value.is_finite() {
                         vec![Interval::singleton(value)]
                     } else {
