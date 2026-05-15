@@ -29,7 +29,13 @@ fn padding_cell() -> &'static Mutex<Option<Vec<u8>>> {
 
 /// Reserves the memory padding at startup. Subsequent calls are no-ops.
 /// `padding_mb=0` disables the mechanism.
-pub fn reserve_memory_padding() {
+///
+/// `cli_max_memory_bytes`, if provided, derives a safe `DA_MEMORY_LIMIT_MB`
+/// that triggers comfortably before any external limit (e.g. slurm's
+/// `memory_per_cpu`) does. We aim for ~90% of the CLI-supplied
+/// `--max-memory`; the explicit `DA_MEMORY_LIMIT_MB` env var still wins
+/// if set.
+pub fn reserve_memory_padding(cli_max_memory_bytes: Option<u64>) {
     let padding_mb: usize = std::env::var("DA_MEMORY_PADDING_MB")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -37,9 +43,21 @@ pub fn reserve_memory_padding() {
     if padding_mb == 0 {
         return;
     }
-    let limit_mb: u64 = std::env::var("DA_MEMORY_LIMIT_MB")
+    let env_limit_mb: Option<u64> = std::env::var("DA_MEMORY_LIMIT_MB")
         .ok()
-        .and_then(|v| v.parse().ok())
+        .and_then(|v| v.parse().ok());
+    let cli_limit_mb: Option<u64> = cli_max_memory_bytes.map(|bytes| {
+        // Leave a buffer between our self-imposed ceiling and whatever
+        // the external runtime (slurm/cgroup) enforces. The polling cadence
+        // in `poll_and_release_if_exceeded` only fires between CEGAR
+        // collection iterations, so RSS can spike between polls; a 10%
+        // buffer (or 256 MB, whichever is larger) covers that drift.
+        let bytes_mb = bytes / (1024 * 1024);
+        let buffer = bytes_mb.checked_div(10).unwrap_or(0).max(256);
+        bytes_mb.saturating_sub(buffer)
+    });
+    let limit_mb: u64 = env_limit_mb
+        .or(cli_limit_mb)
         .unwrap_or(padding_mb as u64 * 16);
     LIMIT_BYTES
         .set(limit_mb.saturating_mul(1024 * 1024))
