@@ -22,7 +22,9 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
 };
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planners_search::numeric::evaluation::domain_abstractions::max_domain_abstraction_heuristic::MaxDomainAbstractionHeuristic;
-use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::SaturatedCostPartitioningOnlineHeuristic;
+use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
+    FillScpHeuristic, SaturatedCostPartitioningOnlineHeuristic,
+};
 use planners_search::numeric::evaluation::evaluator::EvaluationState;
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbHeuristic;
@@ -311,6 +313,29 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                             "failed to construct scp_online heuristic: {e}"
                         ))
                     })?;
+                    Some(Box::new(h)
+                        as Box<
+                            dyn planners_search::numeric::evaluation::Heuristic + '_,
+                        >)
+                }
+                planners_searcher::HeuristicSpec::FillScp(config) => {
+                    let mut fill_config = config.clone();
+                    fill_config.force_full_goal_tasks();
+                    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+                        fill_config.collection_config.clone(),
+                    );
+                    info!("Building fillSCP domain abstractions (CEGAR)...");
+                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
+                        std::io::Error::other(format!(
+                            "failed to build fillSCP domain abstractions: {e:#}"
+                        ))
+                    })?;
+                    let h = FillScpHeuristic::new(None, abstractions, fill_config, task_ref)
+                        .map_err(|e| {
+                            std::io::Error::other(format!(
+                                "failed to construct fillSCP heuristic: {e}"
+                            ))
+                        })?;
                     Some(Box::new(h)
                         as Box<
                             dyn planners_search::numeric::evaluation::Heuristic + '_,
