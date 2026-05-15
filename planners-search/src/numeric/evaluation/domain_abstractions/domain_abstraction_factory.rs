@@ -2111,23 +2111,28 @@ impl DomainAbstractionFactory {
                     continue;
                 }
                 let source_hash = predecessor_i64 as usize;
-                if table.generating_op_ids.get(source_hash).copied().flatten()
-                    == Some(abstract_op_id)
-                {
-                    let source_h = table.distances[source_hash];
-                    if source_h.is_finite() {
-                        let mut needed = source_h - target_h;
-                        if needed < 0.0 {
-                            needed = 0.0;
-                        }
-                        ensure!(
-                            needed <= operator_costs[abstract_op_id] + 1e-7,
-                            "saturated abstract-operator cost exceeds residual abstract-operator cost: {} > {}",
-                            needed,
-                            operator_costs[abstract_op_id]
-                        );
-                        saturated[abstract_op_id] = saturated[abstract_op_id].max(needed);
+                // Saturate over ALL applicable transitions, not just those
+                // chosen by Dijkstra as the generating op (the label-CP
+                // analogue at compute_saturated_costs:2196 had the same bug).
+                // Filtering to generators only under-saturates: an op
+                // applicable at a non-generating source still needs cost
+                // ≥ (src_h - target_h) in subsequent abstractions' residuals;
+                // skipping it lets later abstractions over-charge and sum
+                // past h* (plant-watering prob_6_2_2 AOCP mode: 38-47 vs
+                // optimal 32 across seeds).
+                let source_h = table.distances[source_hash];
+                if source_h.is_finite() {
+                    let mut needed = source_h - target_h;
+                    if needed < 0.0 {
+                        needed = 0.0;
                     }
+                    ensure!(
+                        needed <= operator_costs[abstract_op_id] + 1e-7,
+                        "saturated abstract-operator cost exceeds residual abstract-operator cost: {} > {}",
+                        needed,
+                        operator_costs[abstract_op_id]
+                    );
+                    saturated[abstract_op_id] = saturated[abstract_op_id].max(needed);
                 }
             }
         }
