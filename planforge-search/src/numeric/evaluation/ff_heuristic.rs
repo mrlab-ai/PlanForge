@@ -1,60 +1,81 @@
-//! Fast-Forward (h_FF) heuristic with monotonic numeric relaxation.
+//! Fast-Forward (h_FF) heuristic with faithful Metric-FF numeric relaxation.
 //!
-//! Classical Hoffmann/Nebel relaxed-plan heuristic, extended with Metric-FF
-//! style monotonic tracking of numeric variables. For each state:
+//! Standard relaxed-plan heuristic of Hoffmann & Nebel (JAIR 2001), extended
+//! per Hoffmann's Metric-FF (JAIR 2003) to handle numeric preconditions and
+//! effects under a monotonic relaxation.
 //!
-//!  1. Build a forward relaxed planning graph (RPG). Each layer adds
-//!     propositional facts achievable through some operator's effects and
-//!     newly-true comparison-axiom facts achievable through the per-
-//!     numeric-var max/min envelope.
-//!  2. Stop when every goal fact (including comparison-axiom-TRUE goal
-//!     facts) is in the RPG or no progress is made.
-//!  3. Backward-chain from the goal facts to pick supporters per layer;
-//!     `h_FF(s)` is the total cost of the operators in the extracted
-//!     relaxed plan.
+//! # Algorithm
 //!
-//! Numeric relaxation model: every numeric variable tracks a pair
-//! `(max_reachable, min_reachable)` initialized from the current state.
-//! Operator assignment effects update them monotonically:
+//!  1. Build the relaxed planning graph layer by layer. Each numeric
+//!     variable carries a `(max_reachable, min_reachable)` envelope updated
+//!     by operator assignment effects. Comparison axioms (`(>= x v)` etc.)
+//!     become available when the envelope makes them satisfiable.
+//!  2. Stop once every goal fact is in the graph or no further progress is
+//!     possible.
+//!  3. Backward-chain greedy cheapest supporters from the goal layer; the
+//!     extracted set of operators is the relaxed plan, and `h_FF(s)` is its
+//!     summed cost.
 //!
-//!  * `Plus(a, rhs)`: relax `a` upward by `max[rhs]` if positive, downward
-//!     by `-min[rhs]` if negative.
-//!  * `Minus(a, rhs)`: symmetric.
-//!  * `Assign(a, rhs)`: `max[a] := max(max[a], max[rhs])` and
-//!     `min[a] := min(min[a], min[rhs])`.
-//!  * `Times` / `Divide`: dropped — bounding these monotonically requires
-//!     sign-aware case analysis the first pass doesn't do; treating them
-//!     as no-ops is sound (relaxation only ever drops constraints, never
-//!     adds them) but leaves them off the heuristic's radar.
+//! # Faithfulness vs. fast-path shortcuts
 //!
-//! Comparison axioms (e.g. `(>= x v)`) become *available* as soon as the
-//! relaxed numeric envelope makes them satisfiable: `(>= x v)` is true
-//! when `max[x] >= min[v]` etc. Once available the comparison-axiom
-//! TRUE fact behaves like any other RPG fact. Its achievers are the
-//! operators whose assignment effects touch the LHS or RHS numeric
-//! variable, which is what relaxed-plan extraction picks from.
+//! This module does not silently drop or weaken constraints when input
+//! semantics fall outside the modelled subset. Specifically:
 //!
-//! Reference: Hoffmann & Nebel, *The FF Planning System*, JAIR 2001;
-//! Hoffmann, *The Metric-FF Planning System*, JAIR 2003.
+//!   * Conditional propositional and conditional numeric effects are
+//!     expanded into "synthetic" pseudo-operators. A synthetic operator
+//!     inherits the parent's propositional preconditions, adds the
+//!     conditional effect's own conditions on top, and carries the
+//!     conditional effect itself. Synthetic operators are zero-cost — they
+//!     fire for free once their parent is in the plan — and adding one to
+//!     the relaxed plan implicitly adds its parent for cost-counting
+//!     purposes.
+//!   * `Times` / `Divide` assignment effects are not soundly bounded by a
+//!     direction-agnostic monotonic relaxation (sign-flips break it). The
+//!     constructor returns an error if any such effect is encountered;
+//!     callers must not request `ff()` on tasks that use these operations.
+//!     Better an explicit error than a silently unsound heuristic.
+//!   * Numeric-axiom-var preconditions on `FALSE` / `UNKNOWN` values are
+//!     dropped from the relaxation — this is a *design property* of the
+//!     delete relaxation (it only ever adds facts) rather than a fallback,
+//!     and is the standard Metric-FF treatment.
+//!
+//! # Per-axiom achiever scoping
+//!
+//! For comparison-axiom TRUE facts, only operators whose numeric effects
+//! actually move the envelope in the direction required by the axiom are
+//! registered as candidate achievers. For `(>= x v)` the achievers are
+//! operators that can grow `max[x]` or shrink `min[v]`; for `(<= x v)`
+//! they are operators that can shrink `min[x]` or grow `max[v]`; for
+//! `(== x v)` either direction qualifies; `(!= x v)` is trivially
+//! satisfiable in the relaxation. The direction of an effect is computed
+//! statically from the assignment operation and the right-hand-side
+//! variable's type (`Constant` types give an exact sign; other types are
+//! assumed bidirectional).
+//!
+//! References:
+//!   * Hoffmann & Nebel, *The FF Planning System*, JAIR 2001.
+//!   * Hoffmann, *The Metric-FF Planning System*, JAIR 2003.
 
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
-use planforge_sas::numeric::axioms::ComparisonOperator;
+use planforge_sas::numeric::axioms::{CalOperator, ComparisonOperator};
 use planforge_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
     metric_operator_cost_from_initial_values,
 };
+use planforge_sas::numeric::state_registry::StateRegistry;
 
 type FactId = usize;
 type OpId = usize;
 type NumVarId = usize;
+type AxiomIdx = usize;
 
 const COMPARISON_TRUE_VALUE: usize = 0;
 
-/// Monotonic-relaxation entry for one numeric variable.
+/// Monotonic-relaxation envelope for one numeric variable.
 #[derive(Debug, Clone, Copy)]
 struct NumericRange {
     max: f64,
@@ -66,13 +87,40 @@ impl NumericRange {
         Self { max: v, min: v }
     }
 
+    /// Returns `true` if `other` widens this range.
     fn join(&mut self, other: NumericRange) -> bool {
         let new_max = if other.max > self.max { other.max } else { self.max };
         let new_min = if other.min < self.min { other.min } else { self.min };
-        let changed = new_max > self.max + f64::EPSILON || new_min < self.min - f64::EPSILON;
+        // Use bit-pattern inequality rather than `> self.max + EPSILON` so
+        // `+∞ vs finite max` reads as "widened" without an arithmetic-on-
+        // infinity ambiguity.
+        let changed = new_max.to_bits() != self.max.to_bits()
+            || new_min.to_bits() != self.min.to_bits();
         self.max = new_max;
         self.min = new_min;
         changed
+    }
+}
+
+/// Monotonic direction in which an assignment effect can push the affected
+/// variable's envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EffectDirection {
+    /// Effect can grow `max[affected]` (and may also shrink `min[affected]`).
+    GrowMax,
+    /// Effect can shrink `min[affected]` (only).
+    ShrinkMin,
+    /// Effect could move either bound — typically because the RHS is a live
+    /// numeric variable whose sign is not statically determined.
+    Both,
+}
+
+impl EffectDirection {
+    fn includes_grow_max(self) -> bool {
+        matches!(self, EffectDirection::GrowMax | EffectDirection::Both)
+    }
+    fn includes_shrink_min(self) -> bool {
+        matches!(self, EffectDirection::ShrinkMin | EffectDirection::Both)
     }
 }
 
@@ -81,6 +129,20 @@ struct AssignmentEffectDesc {
     affected_var: NumVarId,
     operation: AssignmentOperation,
     rhs_var: NumVarId,
+    direction: EffectDirection,
+}
+
+/// Per-state-propagation descriptor for a single assignment axiom. The
+/// axiom computes `affected := left ∘ right` where `∘` is `Sum` or
+/// `Difference`. Multiplicative axioms (`Product` / `Division`) are
+/// rejected at construction — they don't admit a sign-agnostic monotonic
+/// bound.
+#[derive(Debug, Clone)]
+struct AssignmentAxiomDesc {
+    affected_var: NumVarId,
+    left_var: NumVarId,
+    right_var: NumVarId,
+    op: CalOperator,
 }
 
 #[derive(Debug, Clone)]
@@ -93,8 +155,7 @@ struct ComparisonAxiomDesc {
     op: ComparisonOperator,
 }
 
-/// Per-state RPG buffers reused across `compute_heuristic` calls to avoid
-/// re-allocating on every search node.
+/// Per-state RPG buffers reused across `compute_heuristic` calls.
 struct ScratchBuffers {
     fact_first_layer: Vec<i32>,
     op_remaining_preconditions: Vec<i32>,
@@ -104,8 +165,6 @@ struct ScratchBuffers {
     seen: Vec<bool>,
     in_plan: Vec<bool>,
     numeric: Vec<NumericRange>,
-    /// Per-comparison-axiom: layer at which it first became satisfiable
-    /// (i32::MAX if never). Tracked so achiever lookup is layer-aware.
     axiom_first_layer: Vec<i32>,
 }
 
@@ -147,42 +206,42 @@ impl ScratchBuffers {
 }
 
 pub struct FfHeuristic<'task> {
-    /// Phantom borrow of the task — `FfHeuristic` is constructed from a
-    /// `&'task dyn AbstractNumericTask` and all field data is derived from
-    /// it, so the heuristic mustn't outlive that borrow.
     _task: std::marker::PhantomData<&'task ()>,
-    /// Per-operator propositional preconditions (numeric-axiom-var
-    /// preconditions are encoded as comparison-axiom-TRUE facts instead).
+    /// Per-(real or synthetic)-operator propositional preconditions.
     op_preconditions: Vec<Vec<FactId>>,
-    /// Per-operator propositional add-effects (numeric-axiom-var effects
-    /// don't appear here — they're driven by the axioms).
+    /// Per-operator propositional add-effects.
     op_effects: Vec<Vec<FactId>>,
-    /// Per-operator monotonic numeric effects (Plus / Minus / Assign with
-    /// constant or live RHS).
+    /// Per-operator monotonic numeric effects.
     op_numeric_effects: Vec<Vec<AssignmentEffectDesc>>,
+    /// Real cost of each operator. Synthetic (conditional-effect) ops are
+    /// `0` — their parent's cost is paid via `op_parent`.
     op_cost: Vec<f64>,
-    /// All goal facts (propositional and comparison-axiom-TRUE).
+    /// For each synthetic op, the real-op index whose cost should be paid
+    /// when this synthetic appears in the relaxed plan. `None` for real
+    /// ops; `Some(parent_real_op_id)` for synthetics.
+    op_parent: Vec<Option<OpId>>,
     goal_facts: Vec<FactId>,
-    /// For each fact, list of operators that achieve it. For propositional
-    /// facts: ops whose add-effects include it. For comparison-axiom-TRUE
-    /// facts: ops whose numeric effects touch the LHS or RHS numeric
-    /// variable.
+    /// For each fact, list of operators that can achieve it under the
+    /// monotonic relaxation. For propositional facts: ops with that fact
+    /// in their add-list. For comparison-axiom TRUE facts: ops whose
+    /// numeric effects can push the envelope in the direction the axiom
+    /// requires (see `register_axiom_achievers`).
     achievers: Vec<Vec<OpId>>,
     /// For each fact id, the operators that have it as a precondition.
     consumers: Vec<Vec<OpId>>,
     fact_var_value: Vec<(usize, usize)>,
-    /// Numeric variables initial values for `Constant` types (used by
-    /// numeric init so we don't need a state registry to read constants).
-    constant_numeric: Vec<Option<f64>>,
-    /// Comparison axioms in declaration order; indexed by `ComparisonAxiomDesc`.
+    /// `fact_to_axiom[fid]` is `Some(axiom_idx)` iff this fact represents
+    /// a comparison-axiom TRUE value; `None` for ordinary prop facts.
+    fact_to_axiom: Vec<Option<AxiomIdx>>,
     comparison_axioms: Vec<ComparisonAxiomDesc>,
-    /// For each numeric var: indices into `comparison_axioms` for axioms
-    /// that mention this var (LHS or RHS). Lets us re-evaluate only the
-    /// affected axioms after a numeric effect.
-    axioms_touching_var: Vec<Vec<usize>>,
-    /// FactId -> Some(axiom index) if this fact is a comparison-axiom-TRUE
-    /// fact; None for ordinary propositional facts.
-    fact_to_axiom: Vec<Option<usize>>,
+    /// Assignment axioms in topological (SAS axiom-layer) order. Each
+    /// describes a derived numeric variable as `affected := left ∘ right`
+    /// for `∘ ∈ {Sum, Difference}`.
+    assignment_axioms: Vec<AssignmentAxiomDesc>,
+    /// For each numeric var, indices of comparison axioms whose LHS or
+    /// RHS mentions it. Lets `fire_operator` re-evaluate only the affected
+    /// comparison axioms after a numeric update.
+    axioms_touching_var: Vec<Vec<AxiomIdx>>,
     num_facts: usize,
     num_numeric: usize,
     scratch: RefCell<ScratchBuffers>,
@@ -190,56 +249,62 @@ pub struct FfHeuristic<'task> {
 
 impl<'task> FfHeuristic<'task> {
     pub fn new(task: &'task dyn AbstractNumericTask) -> Result<Self, String> {
-        // 1. Identify numeric-axiom variables (driven by comparison or
-        //    assignment axioms). These don't get propositional facts —
-        //    except for the comparison-axiom TRUE value, which is what
-        //    other operators precondition on.
-        let mut numeric_axiom_vars: HashSet<usize> = HashSet::new();
+        // 1. Propositional variables that are *driven* by comparison
+        //    axioms. The axiom's TRUE value is added back to the FF fact
+        //    universe in step 2 below; the FALSE / UNKNOWN values are
+        //    dropped (the delete relaxation can only ever gain facts).
+        //
+        //    `AssignmentAxiom::get_affected_var_id` lives in the *numeric*
+        //    index namespace — it identifies a numeric variable whose
+        //    value is computed from others by the axiom, not a
+        //    propositional variable. Do not feed those indices into the
+        //    propositional bucket; conflating the namespaces silently
+        //    dropped legitimate prop facts in earlier versions.
+        let mut comparison_axiom_prop_vars: HashSet<usize> = HashSet::new();
         for axiom in task.comparison_axioms() {
-            numeric_axiom_vars.insert(axiom.get_affected_var_id());
-        }
-        for axiom in task.assignment_axioms() {
-            numeric_axiom_vars.insert(axiom.get_affected_var_id());
+            comparison_axiom_prop_vars.insert(axiom.get_affected_var_id());
         }
 
-        // 2. Enumerate facts:
-        //    - For each non-numeric-axiom variable, one FactId per value.
-        //    - For each comparison-axiom variable, exactly one FactId for
-        //      its TRUE value (FALSE / UNKNOWN values are dropped — the
-        //      relaxation is monotonic upward).
+        // 2. Enumerate propositional facts (one FactId per non-axiom-var
+        //    value) then comparison-axiom TRUE facts (one FactId per axiom).
         let num_props = task.variables().len();
         let mut fact_id_table: Vec<Vec<Option<FactId>>> = (0..num_props)
-            .map(|var_id| {
-                let var = &task.variables()[var_id];
-                vec![None; var.domain_size()]
-            })
+            .map(|var_id| vec![None; task.variables()[var_id].domain_size()])
             .collect();
         let mut fact_var_value: Vec<(usize, usize)> = Vec::new();
-        let mut fact_to_axiom: Vec<Option<usize>> = Vec::new();
+        let mut fact_to_axiom: Vec<Option<AxiomIdx>> = Vec::new();
 
-        let mut comparison_axioms = Vec::with_capacity(task.comparison_axioms().len());
         for var_id in 0..num_props {
-            if numeric_axiom_vars.contains(&var_id) {
+            if comparison_axiom_prop_vars.contains(&var_id) {
+                // Skip — only the TRUE value (registered in step 3) is
+                // representable under the monotonic relaxation.
                 continue;
             }
-            let range = task.variables()[var_id].domain_size();
-            for value in 0..range {
+            for value in 0..task.variables()[var_id].domain_size() {
                 let fid = fact_var_value.len();
                 fact_id_table[var_id][value] = Some(fid);
                 fact_var_value.push((var_id, value));
                 fact_to_axiom.push(None);
             }
         }
-        // Now add one FactId per comparison-axiom-TRUE fact and register the
-        // axiom descriptor.
+
+        let mut comparison_axioms = Vec::with_capacity(task.comparison_axioms().len());
         for (axiom_idx, axiom) in task.comparison_axioms().iter().enumerate() {
             let fid = fact_var_value.len();
             let affected = axiom.get_affected_var_id();
-            // Reserve a row entry for this variable's TRUE value so
-            // `map_fact` resolves it.
+            if affected >= num_props {
+                return Err(format!(
+                    "comparison axiom {axiom_idx} affects out-of-range variable {affected}"
+                ));
+            }
             let row = &mut fact_id_table[affected];
             if row.is_empty() {
                 *row = vec![None; task.variables()[affected].domain_size()];
+            }
+            if COMPARISON_TRUE_VALUE >= row.len() {
+                return Err(format!(
+                    "comparison axiom {axiom_idx} affected variable has no TRUE value"
+                ));
             }
             row[COMPARISON_TRUE_VALUE] = Some(fid);
             fact_var_value.push((affected, COMPARISON_TRUE_VALUE));
@@ -250,9 +315,6 @@ impl<'task> FfHeuristic<'task> {
                 right_var: axiom.get_right_var_id(),
                 op: axiom.get_operator().clone(),
             });
-            // (We intentionally do not silence un-used `axiom_idx` — the
-            // descriptor's storage order is the canonical axiom index.)
-            let _ = axiom_idx;
         }
         let num_facts = fact_var_value.len();
 
@@ -267,45 +329,128 @@ impl<'task> FfHeuristic<'task> {
             row[fact.value()]
         };
 
-        // 3. Index axioms by numeric-var membership so we don't have to
-        //    re-scan the full axiom list after every numeric update.
+        // 3. Axiom-by-var index.
         let num_numeric = task.numeric_variables().len();
-        let mut axioms_touching_var: Vec<Vec<usize>> = vec![Vec::new(); num_numeric];
+        let mut axioms_touching_var: Vec<Vec<AxiomIdx>> = vec![Vec::new(); num_numeric];
         for (idx, ax) in comparison_axioms.iter().enumerate() {
+            if ax.left_var >= num_numeric || ax.right_var >= num_numeric {
+                return Err(format!(
+                    "comparison axiom {idx} references out-of-range numeric variable \
+                     (left={}, right={}, num_numeric={num_numeric})",
+                    ax.left_var, ax.right_var
+                ));
+            }
             axioms_touching_var[ax.left_var].push(idx);
             if ax.right_var != ax.left_var {
                 axioms_touching_var[ax.right_var].push(idx);
             }
         }
 
-        // 4. Pre-compute per-operator preconditions / effects /
-        //    numeric-effect descriptors.
-        let operators = task.get_operators();
-        let mut op_preconditions = Vec::with_capacity(operators.len());
-        let mut op_effects = Vec::with_capacity(operators.len());
-        let mut op_numeric_effects = Vec::with_capacity(operators.len());
-        let mut op_cost = Vec::with_capacity(operators.len());
-        let mut achievers: Vec<Vec<OpId>> = vec![Vec::new(); num_facts];
-
-        for (op_idx, op) in operators.iter().enumerate() {
-            let preconditions: Vec<FactId> =
-                op.preconditions().iter().filter_map(map_fact).collect();
-
-            let mut effects: Vec<FactId> = Vec::new();
-            for eff in op.effects() {
-                if !eff.conditions().is_empty() {
-                    continue; // conditional effects: not modeled
+        // 3b. Assignment axioms. Each computes a derived numeric value from
+        //     two operand numerics; we'll re-propagate bounds through
+        //     these during the RPG forward pass.
+        let mut assignment_axioms: Vec<AssignmentAxiomDesc> = Vec::new();
+        for (axiom_idx, axiom) in task.assignment_axioms().iter().enumerate() {
+            let affected = axiom.get_affected_var_id();
+            let left = axiom.get_left_var_id();
+            let right = axiom.get_right_var_id();
+            if affected >= num_numeric || left >= num_numeric || right >= num_numeric {
+                return Err(format!(
+                    "assignment axiom {axiom_idx} references out-of-range numeric variable \
+                     (affected={affected}, left={left}, right={right}, num_numeric={num_numeric})"
+                ));
+            }
+            match axiom.get_operator() {
+                CalOperator::Sum | CalOperator::Difference => {
+                    assignment_axioms.push(AssignmentAxiomDesc {
+                        affected_var: affected,
+                        left_var: left,
+                        right_var: right,
+                        op: axiom.get_operator().clone(),
+                    });
                 }
-                if let Some(fid) = map_fact(&ExplicitFact::new(eff.var_id(), eff.value())) {
-                    effects.push(fid);
-                    achievers[fid].push(op_idx);
+                CalOperator::Product | CalOperator::Division => {
+                    return Err(format!(
+                        "assignment axiom {axiom_idx} uses unsupported {:?} operator. \
+                         Monotonic-relaxation bounds for multiplicative derived numerics \
+                         require sign-aware case analysis which this FF doesn't implement. \
+                         Pick a different heuristic for such tasks.",
+                        axiom.get_operator()
+                    ));
                 }
             }
+        }
 
-            // Numeric effects: keep only operations we can monotonically
-            // relax (Plus/Minus/Assign). Times and Divide require sign-
-            // aware bounding we don't implement; dropping is sound.
-            let mut numeric_effects = Vec::new();
+        // 4. Capture each Constant numeric variable's initial value so we
+        //    can classify effect directions at construction time.
+        let initial_numeric = task.get_initial_numeric_state_values();
+        let constant_value: Vec<Option<f64>> = task
+            .numeric_variables()
+            .iter()
+            .enumerate()
+            .map(|(idx, var)| match var.get_type() {
+                NumericType::Constant => Some(initial_numeric.get(idx).copied().ok_or_else(
+                    || format!("constant numeric variable {idx} missing initial value"),
+                )),
+                _ => None,
+            })
+            .map(|opt| opt.transpose())
+            .collect::<Result<_, _>>()?;
+        drop(initial_numeric);
+
+        let direction_of_effect = |op: &AssignmentOperation, rhs: NumVarId| -> EffectDirection {
+            // For Constant RHS the direction is exact. For non-constant
+            // RHS we cannot determine signs statically — the envelope is
+            // assumed bidirectional, which conservatively widens the
+            // achiever set without losing soundness.
+            let rhs_const = constant_value.get(rhs).copied().flatten();
+            match op {
+                AssignmentOperation::Plus => match rhs_const {
+                    Some(v) if v > 0.0 => EffectDirection::GrowMax,
+                    Some(v) if v < 0.0 => EffectDirection::ShrinkMin,
+                    Some(_) => EffectDirection::Both, // exact zero — no movement
+                    None => EffectDirection::Both,
+                },
+                AssignmentOperation::Minus => match rhs_const {
+                    Some(v) if v > 0.0 => EffectDirection::ShrinkMin,
+                    Some(v) if v < 0.0 => EffectDirection::GrowMax,
+                    Some(_) => EffectDirection::Both,
+                    None => EffectDirection::Both,
+                },
+                AssignmentOperation::Assign => EffectDirection::Both,
+                AssignmentOperation::Times | AssignmentOperation::Divide => {
+                    // These never reach `direction_of_effect`; rejected at
+                    // operator-collection time below.
+                    EffectDirection::Both
+                }
+            }
+        };
+
+        // 5. Operator collection. Each task operator becomes one "real" op
+        //    plus zero or more "synthetic" ops, one per conditional effect.
+        let operators = task.get_operators();
+        let mut op_preconditions: Vec<Vec<FactId>> = Vec::new();
+        let mut op_effects: Vec<Vec<FactId>> = Vec::new();
+        let mut op_numeric_effects: Vec<Vec<AssignmentEffectDesc>> = Vec::new();
+        let mut op_cost: Vec<f64> = Vec::new();
+        let mut op_parent: Vec<Option<OpId>> = Vec::new();
+
+        for (op_idx, op) in operators.iter().enumerate() {
+            let parent_preconds: Vec<FactId> =
+                op.preconditions().iter().filter_map(map_fact).collect();
+            let parent_op_id = op_preconditions.len();
+
+            // Parent op: unconditional propositional and numeric effects.
+            let mut parent_effects: Vec<FactId> = Vec::new();
+            for eff in op.effects() {
+                if !eff.conditions().is_empty() {
+                    continue;
+                }
+                if let Some(fid) = map_fact(&ExplicitFact::new(eff.var_id(), eff.value())) {
+                    parent_effects.push(fid);
+                }
+            }
+            let mut parent_numeric: Vec<AssignmentEffectDesc> = Vec::new();
             for assign in op.assignment_effects() {
                 if !assign.conditions().is_empty() {
                     continue;
@@ -314,140 +459,330 @@ impl<'task> FfHeuristic<'task> {
                     AssignmentOperation::Plus
                     | AssignmentOperation::Minus
                     | AssignmentOperation::Assign => {
-                        numeric_effects.push(AssignmentEffectDesc {
+                        parent_numeric.push(AssignmentEffectDesc {
                             affected_var: assign.affected_var_id(),
                             operation: assign.operation().clone(),
                             rhs_var: assign.var_id(),
+                            direction: direction_of_effect(
+                                assign.operation(),
+                                assign.var_id(),
+                            ),
                         });
                     }
-                    AssignmentOperation::Times | AssignmentOperation::Divide => {}
-                }
-            }
-
-            // Wire the operator as a potential achiever for any comparison
-            // axiom whose LHS or RHS variable it modifies. This is how
-            // comparison-axiom TRUE facts get supporters during relaxed-
-            // plan extraction.
-            for eff in &numeric_effects {
-                for axiom_idx in &axioms_touching_var[eff.affected_var] {
-                    let fid = comparison_axioms[*axiom_idx].true_fact;
-                    if !achievers[fid].contains(&op_idx) {
-                        achievers[fid].push(op_idx);
+                    AssignmentOperation::Times | AssignmentOperation::Divide => {
+                        return Err(format!(
+                            "operator {op_idx} (`{}`) uses unsupported {:?} assignment effect; \
+                             the monotonic relaxation can't soundly bound it. Pick a different \
+                             heuristic for tasks that need multiplicative numerics.",
+                            op.name(),
+                            assign.operation()
+                        ));
                     }
                 }
             }
+            let parent_cost =
+                metric_operator_cost_from_initial_values(task, op).max(0.0);
+            op_preconditions.push(parent_preconds.clone());
+            op_effects.push(parent_effects);
+            op_numeric_effects.push(parent_numeric);
+            op_cost.push(parent_cost);
+            op_parent.push(None);
 
-            let cost = metric_operator_cost_from_initial_values(task, op).max(0.0);
-            op_preconditions.push(preconditions);
-            op_effects.push(effects);
-            op_numeric_effects.push(numeric_effects);
-            op_cost.push(cost);
-        }
-
-        // 5. Goal facts.
-        let goal_facts: Vec<FactId> = (0..task.get_num_goals())
-            .filter_map(|i| {
-                let goal = task.get_goal_fact(i);
-                map_fact(goal)
-            })
-            .collect();
-
-        // 6. Constant numeric values (for relaxation init we read the live
-        //    state, but constants don't move — capture them once).
-        let initial_numeric = task.get_initial_numeric_state_values();
-        let constant_numeric: Vec<Option<f64>> = task
-            .numeric_variables()
-            .iter()
-            .enumerate()
-            .map(|(idx, var)| match var.get_type() {
-                NumericType::Constant => initial_numeric.get(idx).copied(),
-                _ => None,
-            })
-            .collect();
-        drop(initial_numeric);
-
-        // 7. Per-fact "operators that need it as a precondition" — built
-        //    once so the BFS doesn't re-scan every layer.
-        let mut consumers: Vec<Vec<OpId>> = vec![Vec::new(); num_facts];
-        for (op_idx, prec) in op_preconditions.iter().enumerate() {
-            for &fid in prec {
-                consumers[fid].push(op_idx);
+            // Synthetic ops: one per conditional effect. Cost is 0; parent
+            // is the real op above. Preconditions union the parent's with
+            // the conditional effect's own conditions.
+            for eff in op.effects() {
+                if eff.conditions().is_empty() {
+                    continue;
+                }
+                let cond_facts: Option<Vec<FactId>> =
+                    eff.conditions().iter().map(map_fact).collect();
+                let Some(cond_facts) = cond_facts else {
+                    // Conditional effect with at least one untracked
+                    // (numeric-axiom non-TRUE) condition — the relaxation
+                    // can't make it satisfiable; skip the synthetic.
+                    continue;
+                };
+                let mut precs = parent_preconds.clone();
+                precs.extend(cond_facts);
+                let mut effs = Vec::new();
+                if let Some(fid) = map_fact(&ExplicitFact::new(eff.var_id(), eff.value())) {
+                    effs.push(fid);
+                }
+                op_preconditions.push(precs);
+                op_effects.push(effs);
+                op_numeric_effects.push(Vec::new());
+                op_cost.push(0.0);
+                op_parent.push(Some(parent_op_id));
+            }
+            for assign in op.assignment_effects() {
+                if assign.conditions().is_empty() {
+                    continue;
+                }
+                let cond_facts: Option<Vec<FactId>> =
+                    assign.conditions().iter().map(map_fact).collect();
+                let Some(cond_facts) = cond_facts else {
+                    continue;
+                };
+                let numeric = match assign.operation() {
+                    AssignmentOperation::Plus
+                    | AssignmentOperation::Minus
+                    | AssignmentOperation::Assign => {
+                        vec![AssignmentEffectDesc {
+                            affected_var: assign.affected_var_id(),
+                            operation: assign.operation().clone(),
+                            rhs_var: assign.var_id(),
+                            direction: direction_of_effect(
+                                assign.operation(),
+                                assign.var_id(),
+                            ),
+                        }]
+                    }
+                    AssignmentOperation::Times | AssignmentOperation::Divide => {
+                        return Err(format!(
+                            "operator {op_idx} (`{}`) uses unsupported {:?} conditional \
+                             assignment effect.",
+                            op.name(),
+                            assign.operation()
+                        ));
+                    }
+                };
+                let mut precs = parent_preconds.clone();
+                precs.extend(cond_facts);
+                op_preconditions.push(precs);
+                op_effects.push(Vec::new());
+                op_numeric_effects.push(numeric);
+                op_cost.push(0.0);
+                op_parent.push(Some(parent_op_id));
             }
         }
 
+        // 5b. Propositional axioms (`task.axioms()`) — these derive a fact
+        //     (var_id, effect_value) when their `conditions` hold, with no
+        //     cost. Modeled as a zero-cost pseudo-operator. Both
+        //     `precondition_value` and `effect_value` matter: the axiom
+        //     fires for the var-value transition `precondition_value →
+        //     effect_value` once `conditions` are reached. Under the
+        //     monotonic relaxation we add the effect once.
+        for (axiom_idx, axiom) in task.axioms().iter().enumerate() {
+            // Effect: map `(var_id, effect_value)` to a FactId. Out-of-
+            // universe effects mean the axiom drives a value of a
+            // numeric-axiom variable, which the relaxation cannot
+            // represent; fail loudly rather than silently drop.
+            let Some(effect_fid) =
+                map_fact(&ExplicitFact::new(axiom.var_id(), axiom.effect_value()))
+            else {
+                return Err(format!(
+                    "propositional axiom {axiom_idx} effect on \
+                     variable {} value {} is unrepresentable in the FF \
+                     fact universe (likely a numeric-axiom-driven variable)",
+                    axiom.var_id(),
+                    axiom.effect_value()
+                ));
+            };
+            // Preconditions: the axiom's `conditions` *plus* the
+            // precondition-value assumption on the affected variable
+            // itself. Drop the latter if it's unmappable (e.g. the
+            // var's UNKNOWN value is not in the universe) — that's a
+            // designed-out value of the relaxation, not a fallback.
+            let mut precs: Vec<FactId> = Vec::new();
+            for cond in axiom.conditions() {
+                let Some(fid) = map_fact(cond) else {
+                    return Err(format!(
+                        "propositional axiom {axiom_idx} condition on \
+                         variable {} value {} is unrepresentable in the FF \
+                         fact universe",
+                        cond.var(),
+                        cond.value()
+                    ));
+                };
+                precs.push(fid);
+            }
+            if let Some(prec_fid) =
+                map_fact(&ExplicitFact::new(axiom.var_id(), axiom.precondition_value()))
+            {
+                precs.push(prec_fid);
+            }
+            op_preconditions.push(precs);
+            op_effects.push(vec![effect_fid]);
+            op_numeric_effects.push(Vec::new());
+            op_cost.push(0.0);
+            op_parent.push(None);
+        }
+
+        let num_ops = op_preconditions.len();
+
+        // 6. Build achiever index. Propositional add-effects: straightforward
+        //    op → fact mapping. Comparison-axiom TRUE facts: only ops whose
+        //    numeric effects can push the envelope in the right direction.
+        let mut achievers: Vec<Vec<OpId>> = vec![Vec::new(); num_facts];
+        for (op_id, effs) in op_effects.iter().enumerate() {
+            for &fid in effs {
+                achievers[fid].push(op_id);
+            }
+        }
+        for (op_id, numeric_effs) in op_numeric_effects.iter().enumerate() {
+            for eff in numeric_effs {
+                if eff.affected_var >= num_numeric {
+                    return Err(format!(
+                        "operator {op_id} effect on out-of-range numeric variable {}",
+                        eff.affected_var
+                    ));
+                }
+                for &axiom_idx in &axioms_touching_var[eff.affected_var] {
+                    let axiom = &comparison_axioms[axiom_idx];
+                    if !axiom_needs_direction(
+                        eff.affected_var,
+                        eff.direction,
+                        axiom,
+                    ) {
+                        continue;
+                    }
+                    let true_fact = axiom.true_fact;
+                    if achievers[true_fact].last() != Some(&op_id) {
+                        // dedup against the most recent insertion only —
+                        // operator-with-multiple-effects-on-same-axiom would
+                        // otherwise repeat itself.
+                        if !achievers[true_fact].contains(&op_id) {
+                            achievers[true_fact].push(op_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 7. Goals.
+        let goal_facts: Vec<FactId> = (0..task.get_num_goals())
+            .map(|i| {
+                let goal = task.get_goal_fact(i);
+                map_fact(goal).ok_or_else(|| {
+                    format!(
+                        "goal fact {goal:?} maps to no FactId — variable {} value {} not \
+                         in the FF fact universe (numeric-axiom non-TRUE goals are not \
+                         representable under the delete relaxation)",
+                        goal.var(),
+                        goal.value()
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
+
+        // 8. Consumer index for the BFS.
+        let mut consumers: Vec<Vec<OpId>> = vec![Vec::new(); num_facts];
+        for (op_id, prec) in op_preconditions.iter().enumerate() {
+            for &fid in prec {
+                consumers[fid].push(op_id);
+            }
+        }
+
+        let num_axioms_for_scratch = comparison_axioms.len();
         Ok(Self {
             _task: std::marker::PhantomData,
             op_preconditions,
             op_effects,
             op_numeric_effects,
             op_cost,
+            op_parent,
             goal_facts,
             achievers,
             consumers,
             fact_var_value,
-            constant_numeric,
-            comparison_axioms,
-            axioms_touching_var,
             fact_to_axiom,
+            comparison_axioms,
+            assignment_axioms,
+            axioms_touching_var,
             num_facts,
             num_numeric,
             scratch: RefCell::new(ScratchBuffers::new(
                 num_facts,
-                operators.len(),
-                task.numeric_variables().len(),
-                task.comparison_axioms().len(),
+                num_ops,
+                num_numeric,
+                num_axioms_for_scratch,
             )),
         })
     }
 
     fn state_holds_fact(
         &self,
-        eval_state: &EvaluationState<'_, '_>,
+        state: &planforge_sas::numeric::state_registry::ConcreteState,
+        registry: &StateRegistry<'_>,
         fid: FactId,
     ) -> bool {
         let (var, value) = self.fact_var_value[fid];
         let fact = ExplicitFact::new(var, value);
-        let Some(registry) = eval_state.state_registry() else {
-            return false;
-        };
-        fact.is_hold(eval_state.state(), registry)
+        fact.is_hold(state, registry)
     }
 
     fn initial_numeric_state(
         &self,
         eval_state: &EvaluationState<'_, '_>,
-    ) -> Vec<NumericRange> {
-        let mut out: Vec<NumericRange> = Vec::with_capacity(self.num_numeric);
-        if let Some(registry) = eval_state.state_registry() {
-            let mut buffer: Vec<f64> = Vec::new();
-            if registry
-                .fill_numeric_vars(eval_state.state(), &mut buffer)
-                .is_ok()
-            {
-                for v in buffer {
-                    out.push(NumericRange::singleton(v));
+        registry: &StateRegistry<'_>,
+    ) -> Result<Vec<NumericRange>, EvaluationError> {
+        let mut buffer: Vec<f64> = Vec::new();
+        registry
+            .fill_numeric_vars(eval_state.state(), &mut buffer)
+            .map_err(|err| {
+                EvaluationError::ComputationFailed(format!(
+                    "FF heuristic failed to read numeric state: {err:?}"
+                ))
+            })?;
+        if buffer.len() != self.num_numeric {
+            return Err(EvaluationError::ComputationFailed(format!(
+                "FF heuristic: numeric-state length ({}) disagrees with task numeric-variable \
+                 count ({})",
+                buffer.len(),
+                self.num_numeric
+            )));
+        }
+        Ok(buffer.into_iter().map(NumericRange::singleton).collect())
+    }
+
+    /// Propagate updated bounds through all assignment axioms until fixed
+    /// point. Each pass refreshes derived numeric ranges; subsequent passes
+    /// catch dependencies among derived vars. Returns the set of numeric
+    /// vars whose range was widened by this pass (useful so comparison-
+    /// axiom re-evaluation knows what to re-check).
+    fn propagate_assignment_axioms(
+        &self,
+        numeric: &mut [NumericRange],
+    ) -> HashSet<NumVarId> {
+        let mut dirty: HashSet<NumVarId> = HashSet::new();
+        loop {
+            let mut changed = false;
+            for ax in &self.assignment_axioms {
+                let l = numeric[ax.left_var];
+                let r = numeric[ax.right_var];
+                let new = match ax.op {
+                    CalOperator::Sum => NumericRange {
+                        max: l.max + r.max,
+                        min: l.min + r.min,
+                    },
+                    CalOperator::Difference => NumericRange {
+                        max: l.max - r.min,
+                        min: l.min - r.max,
+                    },
+                    CalOperator::Product | CalOperator::Division => {
+                        unreachable!(
+                            "Product/Division assignment axioms should have been rejected \
+                             at construction"
+                        );
+                    }
+                };
+                if numeric[ax.affected_var].join(new) {
+                    dirty.insert(ax.affected_var);
+                    changed = true;
                 }
             }
+            if !changed {
+                break;
+            }
         }
-        // Pad / fallback with declared constants for any missing entries.
-        while out.len() < self.num_numeric {
-            let idx = out.len();
-            let v = self
-                .constant_numeric
-                .get(idx)
-                .copied()
-                .flatten()
-                .unwrap_or(0.0);
-            out.push(NumericRange::singleton(v));
-        }
-        out.truncate(self.num_numeric);
-        out
+        dirty
     }
 
     fn evaluate_axiom(&self, axiom: &ComparisonAxiomDesc, numeric: &[NumericRange]) -> bool {
-        if axiom.left_var >= numeric.len() || axiom.right_var >= numeric.len() {
-            return false;
-        }
+        // `axiom.left_var` / `right_var` were range-checked at construction
+        // (see step 3); a panic here would mean a corrupt heuristic.
         let l = numeric[axiom.left_var];
         let r = numeric[axiom.right_var];
         match axiom.op {
@@ -457,10 +792,6 @@ impl<'task> FfHeuristic<'task> {
             ComparisonOperator::GreaterThanOrEqual => l.max >= r.min,
             ComparisonOperator::GreaterThan => l.max > r.min,
             ComparisonOperator::UnEqual => {
-                // Two ranges are unequal as soon as they don't coincide at
-                // a single point. With singleton-init, until any numeric
-                // effect fires, this matches the strict-equality test from
-                // the initial state.
                 l.min != l.max || r.min != r.max || l.min != r.min
             }
         }
@@ -471,9 +802,17 @@ impl<'task> FfHeuristic<'task> {
         eff: &AssignmentEffectDesc,
         numeric: &mut [NumericRange],
     ) -> bool {
-        if eff.rhs_var >= numeric.len() || eff.affected_var >= numeric.len() {
-            return false;
-        }
+        // Indices range-checked at construction (steps 3 & 6).
+        //
+        // Standard Metric-FF semantics: each numeric-grow operator fires
+        // *unboundedly many times* in the delete relaxation. So `Plus(var,
+        // +k)` reachability-wise pushes `max[var]` to `+∞`, not just by
+        // `+k`. Without this, "need N pours" can't be relaxed after one
+        // firing — the RPG stalls below the threshold and the heuristic
+        // declares dead-ends.
+        //
+        // `Assign(var, rhs)` is *not* iterable in the same sense — it
+        // overwrites once — so it stays at the range-union semantics.
         let rhs = numeric[eff.rhs_var];
         let prev = numeric[eff.affected_var];
         let new = match eff.operation {
@@ -484,52 +823,58 @@ impl<'task> FfHeuristic<'task> {
             AssignmentOperation::Plus => {
                 let mut next = prev;
                 if rhs.max > 0.0 {
-                    next.max = prev.max + rhs.max;
+                    next.max = f64::INFINITY;
                 }
                 if rhs.min < 0.0 {
-                    next.min = prev.min + rhs.min;
+                    next.min = f64::NEG_INFINITY;
                 }
                 next
             }
             AssignmentOperation::Minus => {
                 let mut next = prev;
                 if rhs.min < 0.0 {
-                    next.max = prev.max - rhs.min;
+                    next.max = f64::INFINITY;
                 }
                 if rhs.max > 0.0 {
-                    next.min = prev.min - rhs.max;
+                    next.min = f64::NEG_INFINITY;
                 }
                 next
             }
-            // Filtered out at construction; unreachable.
-            AssignmentOperation::Times | AssignmentOperation::Divide => prev,
+            AssignmentOperation::Times | AssignmentOperation::Divide => {
+                unreachable!(
+                    "Times/Divide assignment effects should have been rejected at construction"
+                );
+            }
         };
         numeric[eff.affected_var].join(new)
     }
 
-    /// Build the RPG. Returns the max layer at which a goal first appears,
-    /// or `i32::MAX` if some goal is never reached.
     fn build_rpg(
         &self,
         eval_state: &EvaluationState<'_, '_>,
+        registry: &StateRegistry<'_>,
         scratch: &mut ScratchBuffers,
-    ) -> i32 {
-        scratch.numeric = self.initial_numeric_state(eval_state);
+    ) -> Result<i32, EvaluationError> {
+        scratch.numeric = self.initial_numeric_state(eval_state, registry)?;
+        // The initial state already evaluates derived numerics correctly,
+        // but `fill_numeric_vars` returns singleton ranges for them. Run
+        // assignment-axiom propagation once so any wider-than-singleton
+        // bounds (e.g. uninitialized derived = -∞/+∞) settle to a
+        // consistent starting point.
+        let _ = self.propagate_assignment_axioms(&mut scratch.numeric);
 
         // Layer 0 propositional facts.
         for fid in 0..self.num_facts {
             if self.fact_to_axiom[fid].is_some() {
-                continue; // axiom facts evaluated below
+                continue;
             }
-            if self.state_holds_fact(eval_state, fid) {
+            if self.state_holds_fact(eval_state.state(), registry, fid) {
                 scratch.fact_first_layer[fid] = 0;
                 scratch.queue.push_back(fid);
             }
         }
 
-        // Layer 0 comparison-axiom TRUE facts: any axiom satisfied under
-        // the initial relaxed numeric envelope (which is just the live
-        // state).
+        // Layer 0 comparison-axiom TRUE facts.
         for (axiom_idx, axiom) in self.comparison_axioms.iter().enumerate() {
             if self.evaluate_axiom(axiom, &scratch.numeric) {
                 if scratch.fact_first_layer[axiom.true_fact] < 0 {
@@ -547,20 +892,17 @@ impl<'task> FfHeuristic<'task> {
         for (op_id, prec) in self.op_preconditions.iter().enumerate() {
             scratch.op_remaining_preconditions[op_id] = prec.len() as i32;
         }
-        // Empty-precondition operators fire immediately at layer 0.
+        // Empty-precondition operators fire at layer 0.
         for (op_id, prec) in self.op_preconditions.iter().enumerate() {
             if prec.is_empty() {
                 self.fire_operator(op_id, 0, scratch);
             }
         }
         if self.goal_satisfied(scratch) {
-            return self.goal_max_layer(scratch);
+            return Ok(self.goal_max_layer(scratch));
         }
 
-        // Main BFS loop: pop a newly-reached fact, decrement its consumer
-        // operators' remaining counters, fire any operators that just hit
-        // zero. Firing applies numeric effects, which can in turn unlock
-        // comparison-axiom TRUE facts.
+        // Main BFS loop.
         while let Some(fid) = scratch.queue.pop_front() {
             let fact_layer = scratch.fact_first_layer[fid];
             for &op_id in &self.consumers[fid] {
@@ -573,29 +915,24 @@ impl<'task> FfHeuristic<'task> {
                 }
             }
             if self.goal_satisfied(scratch) {
-                return self.goal_max_layer(scratch);
+                return Ok(self.goal_max_layer(scratch));
             }
         }
 
         if self.goal_satisfied(scratch) {
-            self.goal_max_layer(scratch)
+            Ok(self.goal_max_layer(scratch))
         } else {
-            i32::MAX
+            Ok(i32::MAX)
         }
     }
 
-    fn fire_operator(
-        &self,
-        op_id: OpId,
-        layer: i32,
-        scratch: &mut ScratchBuffers,
-    ) {
+    fn fire_operator(&self, op_id: OpId, layer: i32, scratch: &mut ScratchBuffers) {
         if scratch.op_first_layer[op_id] >= 0 {
             return;
         }
         scratch.op_first_layer[op_id] = layer;
 
-        // Propositional add-effects.
+        // Propositional adds.
         for &fid in &self.op_effects[op_id] {
             if scratch.fact_first_layer[fid] < 0 {
                 scratch.fact_first_layer[fid] = layer;
@@ -603,15 +940,25 @@ impl<'task> FfHeuristic<'task> {
             }
         }
 
-        // Numeric effects. Apply, then re-evaluate any axiom that touches
-        // the affected variable; newly-true axioms emit their TRUE fact at
-        // this layer.
-        let mut dirty_axioms: HashSet<usize> = HashSet::new();
+        // Numeric effects → assignment-axiom propagation → comparison-
+        // axiom re-evaluation.
+        let mut dirty_vars: HashSet<NumVarId> = HashSet::new();
         for eff in &self.op_numeric_effects[op_id] {
             if self.apply_numeric_effect(eff, &mut scratch.numeric) {
-                for &ax in &self.axioms_touching_var[eff.affected_var] {
-                    dirty_axioms.insert(ax);
-                }
+                dirty_vars.insert(eff.affected_var);
+            }
+        }
+        if !dirty_vars.is_empty() {
+            // Push the change through any assignment axioms; their
+            // affected variables join `dirty_vars` so the comparison-
+            // axiom touch index picks them up too.
+            let derived_changes = self.propagate_assignment_axioms(&mut scratch.numeric);
+            dirty_vars.extend(derived_changes);
+        }
+        let mut dirty_axioms: HashSet<AxiomIdx> = HashSet::new();
+        for var in &dirty_vars {
+            for &ax in &self.axioms_touching_var[*var] {
+                dirty_axioms.insert(ax);
             }
         }
         for axiom_idx in dirty_axioms {
@@ -643,10 +990,6 @@ impl<'task> FfHeuristic<'task> {
             .unwrap_or(0)
     }
 
-    /// Backward relaxed-plan extraction with greedy cheapest-supporter
-    /// selection. For each goal fact at its first-reachable layer, walk
-    /// layers high-to-low and pick a cheapest achiever per fact; add the
-    /// chosen achiever's preconditions to lower layers as new sub-goals.
     fn extract_relaxed_plan(&self, scratch: &mut ScratchBuffers) -> f64 {
         let max_layer = self.goal_max_layer(scratch);
         if max_layer < 0 {
@@ -687,9 +1030,20 @@ impl<'task> FfHeuristic<'task> {
                     if op_layer < 0 || op_layer > target_op_layer {
                         continue;
                     }
-                    let cost = self.op_cost[op_id];
-                    if cost < best_cost {
-                        best_cost = cost;
+                    // Effective cost for plan-picking: synthetic ops are
+                    // free *given* their parent, but charging the parent
+                    // here when not already in the plan is what FF does to
+                    // avoid the "free synthetic" loophole. Tie-breaking
+                    // still prefers the literally-cheapest op.
+                    let effective_cost = if let Some(parent) = self.op_parent[op_id]
+                        && !scratch.in_plan[parent]
+                    {
+                        self.op_cost[parent]
+                    } else {
+                        self.op_cost[op_id]
+                    };
+                    if effective_cost < best_cost {
+                        best_cost = effective_cost;
                         best_op = Some(op_id);
                     }
                 }
@@ -701,6 +1055,13 @@ impl<'task> FfHeuristic<'task> {
                 }
                 scratch.in_plan[op_id] = true;
                 plan_cost += self.op_cost[op_id];
+                // Synthetic ops pull their parent in for cost accounting.
+                if let Some(parent) = self.op_parent[op_id]
+                    && !scratch.in_plan[parent]
+                {
+                    scratch.in_plan[parent] = true;
+                    plan_cost += self.op_cost[parent];
+                }
                 for &pre_fid in &self.op_preconditions[op_id] {
                     if scratch.seen[pre_fid] {
                         continue;
@@ -721,6 +1082,41 @@ impl<'task> FfHeuristic<'task> {
     }
 }
 
+/// Does the direction in which `affected_var`'s envelope can move
+/// (under an effect with `direction`) advance the satisfaction of
+/// `axiom`?
+fn axiom_needs_direction(
+    affected_var: NumVarId,
+    direction: EffectDirection,
+    axiom: &ComparisonAxiomDesc,
+) -> bool {
+    let lhs = axiom.left_var == affected_var;
+    let rhs = axiom.right_var == affected_var;
+    if !lhs && !rhs {
+        return false;
+    }
+    match axiom.op {
+        ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
+            // need max[L] big or min[R] small
+            (lhs && direction.includes_grow_max())
+                || (rhs && direction.includes_shrink_min())
+        }
+        ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => {
+            // need min[L] small or max[R] big
+            (lhs && direction.includes_shrink_min())
+                || (rhs && direction.includes_grow_max())
+        }
+        ComparisonOperator::Equal => {
+            // any envelope movement on either side can help meet equality
+            true
+        }
+        ComparisonOperator::UnEqual => {
+            // any movement breaks equality
+            true
+        }
+    }
+}
+
 impl<'task> Heuristic for FfHeuristic<'task> {
     fn dead_ends_are_reliable(&self) -> bool {
         false
@@ -733,9 +1129,14 @@ impl<'task> Heuristic for FfHeuristic<'task> {
         if eval_state.is_goal() {
             return Ok(0.0);
         }
+        let registry = eval_state.state_registry().ok_or_else(|| {
+            EvaluationError::ComputationFailed(
+                "FF heuristic requires StateRegistry-backed EvaluationState".to_string(),
+            )
+        })?;
         let mut scratch = self.scratch.borrow_mut();
         scratch.reset();
-        let goal_layer = self.build_rpg(eval_state, &mut scratch);
+        let goal_layer = self.build_rpg(eval_state, registry, &mut scratch)?;
         if goal_layer == i32::MAX {
             return Err(EvaluationError::DeadEnd { reliable: false });
         }
