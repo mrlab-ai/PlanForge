@@ -164,6 +164,11 @@ struct ScratchBuffers {
     goals_at_layer: Vec<Vec<FactId>>,
     seen: Vec<bool>,
     in_plan: Vec<bool>,
+    /// Per-evaluation operator eligibility — `false` for ops whose
+    /// state-dependent preconditions don't hold in the current state.
+    /// Ineligible ops are skipped throughout the BFS and ignored as
+    /// achievers during relaxed-plan extraction.
+    op_eligible: Vec<bool>,
     numeric: Vec<NumericRange>,
     axiom_first_layer: Vec<i32>,
 }
@@ -178,6 +183,7 @@ impl ScratchBuffers {
             goals_at_layer: Vec::new(),
             seen: vec![false; num_facts],
             in_plan: vec![false; num_ops],
+            op_eligible: vec![true; num_ops],
             numeric: vec![NumericRange::singleton(0.0); num_numeric],
             axiom_first_layer: vec![-1; num_axioms],
         }
@@ -199,16 +205,41 @@ impl ScratchBuffers {
         for v in &mut self.in_plan {
             *v = false;
         }
+        for v in &mut self.op_eligible {
+            *v = true;
+        }
         for v in &mut self.axiom_first_layer {
             *v = -1;
         }
     }
 }
 
+/// A propositional precondition of an operator whose `(var, value)` doesn't
+/// have a `FactId` in the FF universe — typically a comparison-axiom
+/// variable at its `FALSE` or `UNKNOWN` value. Under monotonic relaxation
+/// these can only be satisfied at layer 0: once the axiom's TRUE fact is
+/// derived (or any other fact added) the relaxation cannot un-derive it.
+/// We therefore check them against the live initial state at evaluation
+/// time and disable the operator outright if any fails to hold.
+type StateDependentPrecond = (usize, usize);
+
 pub struct FfHeuristic<'task> {
-    _task: std::marker::PhantomData<&'task ()>,
+    /// Live borrow of the task — used to return cloned `Operator`s for the
+    /// helpful-action interface.
+    task: &'task dyn AbstractNumericTask,
+    /// For each (real or synthetic) operator in `op_preconditions`, the
+    /// index into `task.get_operators()` if it's a real operator (used for
+    /// helpful-action reporting), `None` for synthetic conditional-effect
+    /// pseudo-ops and propositional-axiom pseudo-ops (neither corresponds
+    /// to a task operator the search engine can execute directly).
+    op_task_idx: Vec<Option<usize>>,
     /// Per-(real or synthetic)-operator propositional preconditions.
     op_preconditions: Vec<Vec<FactId>>,
+    /// Per-operator preconditions whose value is not representable in the
+    /// FF universe (e.g. comparison-axiom FALSE). Checked at evaluation
+    /// time against the live state; if any fails the operator is excluded
+    /// from the RPG for that state. Not silently dropped.
+    op_state_deps: Vec<Vec<StateDependentPrecond>>,
     /// Per-operator propositional add-effects.
     op_effects: Vec<Vec<FactId>>,
     /// Per-operator monotonic numeric effects.
@@ -245,6 +276,15 @@ pub struct FfHeuristic<'task> {
     num_facts: usize,
     num_numeric: usize,
     scratch: RefCell<ScratchBuffers>,
+    /// Cache of the most recently extracted helpful-action set. Populated
+    /// at the end of every `compute_heuristic`; returned by
+    /// `get_preferred_operators`. We don't key by state-id because the
+    /// search engine guarantees `compute_heuristic` is invoked on a state
+    /// before `get_preferred_operators` is asked about it, and the
+    /// `EvaluationState` carries the same state pointer through both
+    /// calls — so the cache is fresh for the only call pattern that
+    /// matters.
+    last_helpful_actions: RefCell<Vec<planforge_sas::numeric::numeric_task::Operator>>,
 }
 
 impl<'task> FfHeuristic<'task> {
@@ -435,9 +475,23 @@ impl<'task> FfHeuristic<'task> {
         let mut op_cost: Vec<f64> = Vec::new();
         let mut op_parent: Vec<Option<OpId>> = Vec::new();
 
+        // Each parent operator may have state-dependent preconditions (e.g.
+        // require a comparison-axiom FALSE value); those are checked
+        // against the live state at evaluation time. Both the parent op
+        // and any synthetic conditional-effect ops derived from it inherit
+        // the parent's state-dependent preconds.
+        let mut op_state_deps: Vec<Vec<StateDependentPrecond>> = Vec::new();
+        let mut op_task_idx: Vec<Option<usize>> = Vec::new();
+
         for (op_idx, op) in operators.iter().enumerate() {
-            let parent_preconds: Vec<FactId> =
-                op.preconditions().iter().filter_map(map_fact).collect();
+            let mut parent_preconds: Vec<FactId> = Vec::new();
+            let mut parent_state_deps: Vec<StateDependentPrecond> = Vec::new();
+            for pre in op.preconditions() {
+                match map_fact(pre) {
+                    Some(fid) => parent_preconds.push(fid),
+                    None => parent_state_deps.push((pre.var(), pre.value())),
+                }
+            }
             let parent_op_id = op_preconditions.len();
 
             // Parent op: unconditional propositional and numeric effects.
@@ -483,47 +537,55 @@ impl<'task> FfHeuristic<'task> {
             let parent_cost =
                 metric_operator_cost_from_initial_values(task, op).max(0.0);
             op_preconditions.push(parent_preconds.clone());
+            op_state_deps.push(parent_state_deps.clone());
             op_effects.push(parent_effects);
             op_numeric_effects.push(parent_numeric);
             op_cost.push(parent_cost);
             op_parent.push(None);
+            op_task_idx.push(Some(op_idx));
 
             // Synthetic ops: one per conditional effect. Cost is 0; parent
-            // is the real op above. Preconditions union the parent's with
-            // the conditional effect's own conditions.
+            // is the real op above. Preconditions union the parent's
+            // mappable preconds with the conditional effect's own
+            // conditions; the parent's state-dependent preconds are
+            // inherited verbatim; the conditional effect's own conditions
+            // are split similarly into mappable / state-dependent.
             for eff in op.effects() {
                 if eff.conditions().is_empty() {
                     continue;
                 }
-                let cond_facts: Option<Vec<FactId>> =
-                    eff.conditions().iter().map(map_fact).collect();
-                let Some(cond_facts) = cond_facts else {
-                    // Conditional effect with at least one untracked
-                    // (numeric-axiom non-TRUE) condition — the relaxation
-                    // can't make it satisfiable; skip the synthetic.
-                    continue;
-                };
                 let mut precs = parent_preconds.clone();
-                precs.extend(cond_facts);
+                let mut state_deps = parent_state_deps.clone();
+                for cond in eff.conditions() {
+                    match map_fact(cond) {
+                        Some(fid) => precs.push(fid),
+                        None => state_deps.push((cond.var(), cond.value())),
+                    }
+                }
                 let mut effs = Vec::new();
                 if let Some(fid) = map_fact(&ExplicitFact::new(eff.var_id(), eff.value())) {
                     effs.push(fid);
                 }
                 op_preconditions.push(precs);
+                op_state_deps.push(state_deps);
                 op_effects.push(effs);
                 op_numeric_effects.push(Vec::new());
                 op_cost.push(0.0);
                 op_parent.push(Some(parent_op_id));
+                op_task_idx.push(None);
             }
             for assign in op.assignment_effects() {
                 if assign.conditions().is_empty() {
                     continue;
                 }
-                let cond_facts: Option<Vec<FactId>> =
-                    assign.conditions().iter().map(map_fact).collect();
-                let Some(cond_facts) = cond_facts else {
-                    continue;
-                };
+                let mut precs = parent_preconds.clone();
+                let mut state_deps = parent_state_deps.clone();
+                for cond in assign.conditions() {
+                    match map_fact(cond) {
+                        Some(fid) => precs.push(fid),
+                        None => state_deps.push((cond.var(), cond.value())),
+                    }
+                }
                 let numeric = match assign.operation() {
                     AssignmentOperation::Plus
                     | AssignmentOperation::Minus
@@ -547,13 +609,13 @@ impl<'task> FfHeuristic<'task> {
                         ));
                     }
                 };
-                let mut precs = parent_preconds.clone();
-                precs.extend(cond_facts);
                 op_preconditions.push(precs);
+                op_state_deps.push(state_deps);
                 op_effects.push(Vec::new());
                 op_numeric_effects.push(numeric);
                 op_cost.push(0.0);
                 op_parent.push(Some(parent_op_id));
+                op_task_idx.push(None);
             }
         }
 
@@ -582,32 +644,31 @@ impl<'task> FfHeuristic<'task> {
             };
             // Preconditions: the axiom's `conditions` *plus* the
             // precondition-value assumption on the affected variable
-            // itself. Drop the latter if it's unmappable (e.g. the
-            // var's UNKNOWN value is not in the universe) — that's a
-            // designed-out value of the relaxation, not a fallback.
+            // itself. Each precondition is split between the FF universe
+            // (`FactId`) and the state-dependent escape hatch (e.g. the
+            // axiom's pre-value is `UNKNOWN` which monotonic relaxation
+            // can't fabricate — check live at evaluation time).
             let mut precs: Vec<FactId> = Vec::new();
+            let mut state_deps: Vec<StateDependentPrecond> = Vec::new();
             for cond in axiom.conditions() {
-                let Some(fid) = map_fact(cond) else {
-                    return Err(format!(
-                        "propositional axiom {axiom_idx} condition on \
-                         variable {} value {} is unrepresentable in the FF \
-                         fact universe",
-                        cond.var(),
-                        cond.value()
-                    ));
-                };
-                precs.push(fid);
+                match map_fact(cond) {
+                    Some(fid) => precs.push(fid),
+                    None => state_deps.push((cond.var(), cond.value())),
+                }
             }
-            if let Some(prec_fid) =
-                map_fact(&ExplicitFact::new(axiom.var_id(), axiom.precondition_value()))
-            {
-                precs.push(prec_fid);
+            let pre_value_fact =
+                ExplicitFact::new(axiom.var_id(), axiom.precondition_value());
+            match map_fact(&pre_value_fact) {
+                Some(prec_fid) => precs.push(prec_fid),
+                None => state_deps.push((axiom.var_id(), axiom.precondition_value())),
             }
             op_preconditions.push(precs);
+            op_state_deps.push(state_deps);
             op_effects.push(vec![effect_fid]);
             op_numeric_effects.push(Vec::new());
             op_cost.push(0.0);
             op_parent.push(None);
+            op_task_idx.push(None);
         }
 
         let num_ops = op_preconditions.len();
@@ -677,8 +738,10 @@ impl<'task> FfHeuristic<'task> {
 
         let num_axioms_for_scratch = comparison_axioms.len();
         Ok(Self {
-            _task: std::marker::PhantomData,
+            task,
+            op_task_idx,
             op_preconditions,
+            op_state_deps,
             op_effects,
             op_numeric_effects,
             op_cost,
@@ -699,6 +762,7 @@ impl<'task> FfHeuristic<'task> {
                 num_numeric,
                 num_axioms_for_scratch,
             )),
+            last_helpful_actions: RefCell::new(Vec::new()),
         })
     }
 
@@ -855,6 +919,24 @@ impl<'task> FfHeuristic<'task> {
         registry: &StateRegistry<'_>,
         scratch: &mut ScratchBuffers,
     ) -> Result<i32, EvaluationError> {
+        // Operator eligibility from state-dependent preconditions. An op
+        // whose `(var, value)` precond is unrepresentable in the FF
+        // universe (typically a comparison-axiom FALSE / UNKNOWN value)
+        // is admissible in the relaxation iff the precondition is
+        // satisfied in the live state — the monotonic relaxation cannot
+        // make it true later. Mark such ops ineligible up front.
+        scratch.op_eligible.resize(self.op_preconditions.len(), true);
+        let live_state = eval_state.state();
+        for (op_id, deps) in self.op_state_deps.iter().enumerate() {
+            if deps.is_empty() {
+                continue;
+            }
+            let eligible = deps.iter().all(|&(var, value)| {
+                ExplicitFact::new(var, value).is_hold(live_state, registry)
+            });
+            scratch.op_eligible[op_id] = eligible;
+        }
+
         scratch.numeric = self.initial_numeric_state(eval_state, registry)?;
         // The initial state already evaluates derived numerics correctly,
         // but `fill_numeric_vars` returns singleton ranges for them. Run
@@ -892,9 +974,10 @@ impl<'task> FfHeuristic<'task> {
         for (op_id, prec) in self.op_preconditions.iter().enumerate() {
             scratch.op_remaining_preconditions[op_id] = prec.len() as i32;
         }
-        // Empty-precondition operators fire at layer 0.
+        // Empty-precondition operators fire at layer 0 — provided their
+        // state-dependent preconditions allow it.
         for (op_id, prec) in self.op_preconditions.iter().enumerate() {
-            if prec.is_empty() {
+            if prec.is_empty() && scratch.op_eligible[op_id] {
                 self.fire_operator(op_id, 0, scratch);
             }
         }
@@ -902,10 +985,18 @@ impl<'task> FfHeuristic<'task> {
             return Ok(self.goal_max_layer(scratch));
         }
 
-        // Main BFS loop.
+        // Main BFS loop. Ineligible operators never fire — their
+        // remaining-precondition counter is never decremented and they
+        // can't be triggered through the consumer index. (The
+        // counters were initialized above for every op, including
+        // ineligibles; the eligibility check here is cheap and keeps the
+        // ineligibles' state untouched.)
         while let Some(fid) = scratch.queue.pop_front() {
             let fact_layer = scratch.fact_first_layer[fid];
             for &op_id in &self.consumers[fid] {
+                if !scratch.op_eligible[op_id] {
+                    continue;
+                }
                 let remaining = &mut scratch.op_remaining_preconditions[op_id];
                 if *remaining > 0 {
                     *remaining -= 1;
@@ -1030,6 +1121,9 @@ impl<'task> FfHeuristic<'task> {
                     if op_layer < 0 || op_layer > target_op_layer {
                         continue;
                     }
+                    if !scratch.op_eligible[op_id] {
+                        continue;
+                    }
                     // Effective cost for plan-picking: synthetic ops are
                     // free *given* their parent, but charging the parent
                     // here when not already in the plan is what FF does to
@@ -1080,6 +1174,40 @@ impl<'task> FfHeuristic<'task> {
         }
         plan_cost
     }
+
+    /// "Helpful actions" — operators in the extracted relaxed plan that
+    /// fire at layer 0 (i.e. are *applicable in the current concrete
+    /// state*). These are the operators the search engine should
+    /// preferentially try next.
+    ///
+    /// We restrict to operators with a `task_idx` so callers see real
+    /// task operators, not the synthetic conditional-effect or
+    /// propositional-axiom pseudo-ops. Synthetics that appear in the
+    /// plan implicitly pull their parent into the plan (via the
+    /// in-extraction `op_parent` accounting), so the parent's
+    /// `op_task_idx` is what surfaces here.
+    fn collect_helpful_actions(
+        &self,
+        scratch: &ScratchBuffers,
+    ) -> Vec<planforge_sas::numeric::numeric_task::Operator> {
+        let mut out = Vec::new();
+        let task_ops = self.task.get_operators();
+        for op_id in 0..self.op_preconditions.len() {
+            if !scratch.in_plan[op_id] {
+                continue;
+            }
+            if scratch.op_first_layer[op_id] != 0 {
+                continue;
+            }
+            let Some(task_idx) = self.op_task_idx[op_id] else {
+                continue;
+            };
+            if let Some(op) = task_ops.get(task_idx) {
+                out.push(op.clone());
+            }
+        }
+        out
+    }
 }
 
 /// Does the direction in which `affected_var`'s envelope can move
@@ -1127,6 +1255,7 @@ impl<'task> Heuristic for FfHeuristic<'task> {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         if eval_state.is_goal() {
+            self.last_helpful_actions.borrow_mut().clear();
             return Ok(0.0);
         }
         let registry = eval_state.state_registry().ok_or_else(|| {
@@ -1138,12 +1267,30 @@ impl<'task> Heuristic for FfHeuristic<'task> {
         scratch.reset();
         let goal_layer = self.build_rpg(eval_state, registry, &mut scratch)?;
         if goal_layer == i32::MAX {
+            self.last_helpful_actions.borrow_mut().clear();
             return Err(EvaluationError::DeadEnd { reliable: false });
         }
         if goal_layer == 0 {
+            self.last_helpful_actions.borrow_mut().clear();
             return Ok(0.0);
         }
-        Ok(self.extract_relaxed_plan(&mut scratch))
+        let cost = self.extract_relaxed_plan(&mut scratch);
+        // Snapshot helpful actions for the get_preferred_operators call
+        // the search engine will issue immediately after this returns.
+        *self.last_helpful_actions.borrow_mut() = self.collect_helpful_actions(&scratch);
+        Ok(cost)
+    }
+
+    fn get_preferred_operators(
+        &self,
+        _state: &planforge_sas::numeric::state_registry::ConcreteState,
+    ) -> Vec<planforge_sas::numeric::numeric_task::Operator> {
+        // The search engine is expected to call `compute_heuristic` for a
+        // state before asking for its preferred operators; we serve the
+        // snapshot from there. If the engine queries without an
+        // intervening `compute_heuristic`, the snapshot is stale — but
+        // that's a contract violation, not a fallback.
+        self.last_helpful_actions.borrow().clone()
     }
 
     fn heuristic_name(&self) -> String {
