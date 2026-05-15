@@ -2719,8 +2719,16 @@ impl DomainAbstractionFactory {
                 if !cd.is_finite() {
                     return;
                 }
-                let valid_progress =
-                    (cd < cur_d && op.cost > 0.0) || ((cd - cur_d).abs() <= 1e-9 && op.cost == 0.0);
+                // Classify op cost with `float_tolerance::ABS_EPSILON` (1e-12) instead of strict
+                // 0/!=0 so canonicalization-snapped near-zero costs (state_registry.rs:1661 grid)
+                // don't fall through both branches. Mirrors numeric-fd's tolerant if/else
+                // structure (domain_abstraction_factory.cc:1500/1524).
+                let is_zero_cost = op.cost.abs() <= float_tolerance::ABS_EPSILON;
+                let valid_progress = if is_zero_cost {
+                    (cd - cur_d).abs() <= 1e-9
+                } else {
+                    cd < cur_d
+                };
                 if valid_progress && chosen_successor.is_none_or(|x| cand > x) {
                     chosen_successor = Some(cand);
                     lowest_so_far = cd;
