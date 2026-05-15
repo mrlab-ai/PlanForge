@@ -1,4 +1,4 @@
-use std::alloc::{GlobalAlloc, Layout, System};
+use std::alloc::{GlobalAlloc, Layout};
 use std::os::unix::process::ExitStatusExt;
 
 use std::sync::Once;
@@ -20,10 +20,22 @@ pub struct ReportingAllocator;
 #[global_allocator]
 pub static GLOBAL_ALLOCATOR: ReportingAllocator = ReportingAllocator;
 
+// Use `mimalloc` as the backing allocator instead of the system one
+// (glibc malloc on Linux). On large planning tasks the
+// successor-generator construction makes hundreds of thousands of small
+// allocations and frees most of them; glibc's main arena keeps those
+// pages mapped, inflating peak RSS by ~1.6 GB on
+// minecraft-sword-advanced/prob_30x30_5 even though the live heap is
+// far smaller. mimalloc decommits free pages much more aggressively,
+// returning RSS to roughly the working set (matching numeric-FD's
+// ~500 MB on the same task).
+#[cfg(unix)]
+static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[cfg(unix)]
 unsafe impl GlobalAlloc for ReportingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { System.alloc(layout) };
+        let ptr = unsafe { MIMALLOC.alloc(layout) };
         if ptr.is_null() {
             unsafe { report_out_of_memory_and_exit() };
         }
@@ -31,7 +43,7 @@ unsafe impl GlobalAlloc for ReportingAllocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { System.alloc_zeroed(layout) };
+        let ptr = unsafe { MIMALLOC.alloc_zeroed(layout) };
         if ptr.is_null() {
             unsafe { report_out_of_memory_and_exit() };
         }
@@ -39,7 +51,7 @@ unsafe impl GlobalAlloc for ReportingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
+        let new_ptr = unsafe { MIMALLOC.realloc(ptr, layout, new_size) };
         if new_ptr.is_null() {
             unsafe { report_out_of_memory_and_exit() };
         }
@@ -47,7 +59,7 @@ unsafe impl GlobalAlloc for ReportingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(ptr, layout) }
+        unsafe { MIMALLOC.dealloc(ptr, layout) }
     }
 }
 
