@@ -4,6 +4,7 @@ mod tests;
 pub mod flaw_search;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -209,7 +210,15 @@ impl Cegar {
         ensure!(config.max_iterations > 0, "max_iterations must be > 0");
 
         let start = Instant::now();
-        let mut rng = SmallRng::seed_from_u64(config.random_seed.unwrap_or_else(current_time_seed));
+        // Per-CEGAR-invocation seed diversification. The collection-generator hands every
+        // CEGAR call the same `config.random_seed`, so without this counter each abstraction
+        // would explore the identical RNG trajectory — defeating diversity. A process-wide
+        // counter xor'd (via splitmix-style mixing) into the seed gives every CEGAR a distinct
+        // initial state while remaining fully reproducible when `random_seed` is set.
+        static CEGAR_INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let invocation = CEGAR_INVOCATION_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base_seed = config.random_seed.unwrap_or_else(current_time_seed);
+        let mut rng = SmallRng::seed_from_u64(base_seed ^ splitmix64(invocation));
 
         let (mut domain_mapping, mut domain_sizes) = trivial_domain_mapping_and_sizes(task)
             .context("failed to build trivial domain mapping")?;
@@ -542,6 +551,17 @@ fn current_time_seed() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos() as u64)
         .unwrap_or(0x9e37_79b9_7f4a_7c15)
+}
+
+/// SplitMix64 bit-mixer — turns a low-entropy counter into a well-spread `u64` so xor'ing it
+/// into a base seed produces independent SmallRng streams across CEGAR invocations.
+#[inline]
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = x;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 
 fn shuffle_indices_with_rng<R: rand::Rng + ?Sized>(indices: &mut [usize], rng: &mut R) {
