@@ -47,14 +47,17 @@ pub fn reserve_memory_padding(cli_max_memory_bytes: Option<u64>) {
         .ok()
         .and_then(|v| v.parse().ok());
     let cli_limit_mb: Option<u64> = cli_max_memory_bytes.map(|bytes| {
-        // Leave a buffer between our self-imposed ceiling and whatever
-        // the external runtime (slurm/cgroup) enforces. The polling cadence
-        // in `poll_and_release_if_exceeded` only fires between CEGAR
-        // collection iterations, so RSS can spike between polls; a 10%
-        // buffer (or 256 MB, whichever is larger) covers that drift.
+        // Leave a small fixed buffer between our self-imposed ceiling and
+        // whatever the external runtime (slurm/cgroup) enforces. The
+        // polling cadence in `poll_and_release_if_exceeded` only fires
+        // between CEGAR collection iterations, so RSS can spike between
+        // polls; 128 MB covers a typical iteration's allocation drift
+        // while reclaiming most of the working set the previous 10%
+        // formula would have surrendered (pre-mimalloc this margin was
+        // effectively ~108 MB and the configuration worked).
+        const BUFFER_MB: u64 = 128;
         let bytes_mb = bytes / (1024 * 1024);
-        let buffer = bytes_mb.checked_div(10).unwrap_or(0).max(256);
-        bytes_mb.saturating_sub(buffer)
+        bytes_mb.saturating_sub(BUFFER_MB)
     });
     let limit_mb: u64 = env_limit_mb
         .or(cli_limit_mb)
