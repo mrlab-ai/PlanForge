@@ -13,6 +13,22 @@ pub const EXIT_TIMEOUT: i32 = 7;
 #[cfg(unix)]
 pub static OOM_REPORTED: AtomicBool = AtomicBool::new(false);
 
+// `GlobalAlloc` wrapper that delegates to `mimalloc` and intercepts
+// null returns to call `report_out_of_memory_and_exit` (graceful exit
+// with status 6, peak-memory log, etc.) rather than letting Rust abort.
+//
+// We can't use `std::alloc::set_alloc_error_hook` for the OOM path
+// because it's nightly-only (#51245), so wrapping the allocator at the
+// `GlobalAlloc` layer is the only stable way to redirect allocation
+// failures away from the default `intrinsics::abort`. The wrapper's
+// null check inlines into a single predicted-not-taken branch per
+// allocation — essentially free.
+//
+// mimalloc was chosen because, on tasks dominated by the
+// successor-generator's hundreds of thousands of small allocations,
+// it decommits free pages more aggressively than glibc's main arena
+// (matching numeric-FD's ~500 MB RSS on minecraft 30x30_5 vs glibc's
+// ~2 GB), and its small-allocation path is ~11% faster.
 #[cfg(unix)]
 pub struct ReportingAllocator;
 
@@ -20,15 +36,6 @@ pub struct ReportingAllocator;
 #[global_allocator]
 pub static GLOBAL_ALLOCATOR: ReportingAllocator = ReportingAllocator;
 
-// Use `mimalloc` as the backing allocator instead of the system one
-// (glibc malloc on Linux). On large planning tasks the
-// successor-generator construction makes hundreds of thousands of small
-// allocations and frees most of them; glibc's main arena keeps those
-// pages mapped, inflating peak RSS by ~1.6 GB on
-// minecraft-sword-advanced/prob_30x30_5 even though the live heap is
-// far smaller. mimalloc decommits free pages much more aggressively,
-// returning RSS to roughly the working set (matching numeric-FD's
-// ~500 MB on the same task).
 #[cfg(unix)]
 static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
