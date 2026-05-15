@@ -2077,6 +2077,7 @@ impl DomainAbstractionFactory {
 
         let num_states = table.distances.len();
         let comparison_var_ids = self.comparison_var_ids();
+        let comparison_branching = !comparison_var_ids.is_empty();
         let owned_match_tree = if prebuilt_match_tree.is_none() {
             Some(MatchTree::build(
                 generator.domain_sizes(),
@@ -2092,6 +2093,34 @@ impl DomainAbstractionFactory {
         let mut saturated = vec![0.0_f64; operators.len()];
         let mut applicable_operator_ids = Vec::new();
 
+        // Mirror `compute_distances_and_generating_ops`: under
+        // comparison-branching the regression Dijkstra resets each popped
+        // state's comparison-axiom bits to UNKNOWN before consulting the
+        // match tree, computes the natural predecessor from the reset
+        // form, and then expands every wildcard-consistent predecessor.
+        // Comparison-axiom prop vars are not directly written by
+        // operators (their values are derived from the predecessor's
+        // numeric intervals), so the "hash_effect alone determines the
+        // source" rationale that was here previously was wrong — under
+        // comparison-branching it both pulls in transitions Dijkstra
+        // never took (those with mismatched comparison bits on the
+        // target) and skips the very transitions Dijkstra used (the
+        // wildcard-enumerated predecessors). The mismatch made
+        // `saturated[abstract_op_id]` reflect `src_h - target_h` for
+        // transitions outside the cost partition that produced the
+        // distance table, so `sum_k h_k > h*` on plant-watering
+        // AOCP-fillSCP (prob_4_2_2: 34 vs 33, prob_5_1_2: 30 vs 24,
+        // prob_4_2_3: 32 vs 29, etc.).
+        let comparison_preconditions = if comparison_branching {
+            comparison_preconditions_by_operator(operators, &comparison_var_ids)
+        } else {
+            Vec::new()
+        };
+        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
+            ComparisonEnumerationCache::default();
+        let mut cached_comparison_state_count = 0usize;
+        let mut comparison_enumeration_scratch: Vec<usize> = Vec::new();
+
         for target_hash in 0..num_states {
             if target_hash % 64 == 0 {
                 ensure_online_scp_deadline(deadline)?;
@@ -2101,27 +2130,33 @@ impl DomainAbstractionFactory {
                 continue;
             }
 
-            match_tree.get_applicable_operator_ids(target_hash, &mut applicable_operator_ids);
+            let base_target = if comparison_branching {
+                self.reset_comparison_vars_to_unknown_except(
+                    target_hash,
+                    generator.hash_multipliers(),
+                    &comparison_var_ids,
+                    &[],
+                )?
+            } else {
+                target_hash
+            };
+
+            match_tree.get_applicable_operator_ids(base_target, &mut applicable_operator_ids);
             for &abstract_op_id in &applicable_operator_ids {
                 let op = &operators[abstract_op_id];
-                // Comparison-axiom bits live in op.pre/eff/prev, so the source
-                // hash is fully determined by `target_hash + op.hash_effect`.
-                let predecessor_i64 = target_hash as i64 + op.hash_effect as i64;
+                let predecessor_i64 = base_target as i64 + op.hash_effect as i64;
                 if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
-                let source_hash = predecessor_i64 as usize;
-                // Saturate over ALL applicable transitions, not just those
-                // chosen by Dijkstra as the generating op (the label-CP
-                // analogue at compute_saturated_costs:2196 had the same bug).
-                // Filtering to generators only under-saturates: an op
-                // applicable at a non-generating source still needs cost
-                // ≥ (src_h - target_h) in subsequent abstractions' residuals;
-                // skipping it lets later abstractions over-charge and sum
-                // past h* (plant-watering prob_6_2_2 AOCP mode: 38-47 vs
-                // optimal 32 across seeds).
-                let source_h = table.distances[source_hash];
-                if source_h.is_finite() {
+                let base_predecessor = predecessor_i64 as usize;
+
+                let consider_source = |source_hash: usize,
+                                            saturated: &mut [f64]|
+                 -> Result<()> {
+                    let source_h = table.distances[source_hash];
+                    if !source_h.is_finite() {
+                        return Ok(());
+                    }
                     let mut needed = source_h - target_h;
                     if needed < 0.0 {
                         needed = 0.0;
@@ -2133,6 +2168,27 @@ impl DomainAbstractionFactory {
                         operator_costs[abstract_op_id]
                     );
                     saturated[abstract_op_id] = saturated[abstract_op_id].max(needed);
+                    Ok(())
+                };
+
+                if comparison_branching {
+                    let possible_predecessors = self
+                        .enumerate_states_with_evaluated_comparisons_cached(
+                            base_predecessor,
+                            _task,
+                            generator.numeric_domain_sizes(),
+                            generator.hash_multipliers(),
+                            &comparison_var_ids,
+                            &comparison_preconditions[abstract_op_id],
+                            &mut comparison_enumeration_cache,
+                            &mut cached_comparison_state_count,
+                            &mut comparison_enumeration_scratch,
+                        )?;
+                    for &source_hash in possible_predecessors.iter() {
+                        consider_source(source_hash, &mut saturated)?;
+                    }
+                } else {
+                    consider_source(base_predecessor, &mut saturated)?;
                 }
             }
         }
