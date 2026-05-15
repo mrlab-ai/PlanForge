@@ -171,6 +171,23 @@ struct ScratchBuffers {
     op_eligible: Vec<bool>,
     numeric: Vec<NumericRange>,
     axiom_first_layer: Vec<i32>,
+    /// Reusable Vec for "numeric vars dirtied during the current
+    /// operator firing". Cleared at the start of each `fire_operator`
+    /// call so it doesn't accumulate.
+    dirty_vars_scratch: Vec<NumVarId>,
+    /// Reusable Vec for "comparison axioms to re-evaluate during the
+    /// current operator firing". Cleared at the start of each call.
+    dirty_axioms_scratch: Vec<AxiomIdx>,
+    /// Bitset over numeric vars, used by `fire_operator` to dedup the
+    /// push into `dirty_vars_scratch`. Entries are cleared in pairs with
+    /// the corresponding push so there's no global reset cost.
+    dirty_var_mark: Vec<bool>,
+    /// Bitset over comparison axioms, paired with `dirty_axioms_scratch`.
+    dirty_axiom_mark: Vec<bool>,
+    /// Reused propositional-state buffer for layer-0 fact resolution.
+    /// Eliminates the per-fact `state_packer.get` call by reading the
+    /// entire packed state once and indexing into the resulting Vec.
+    prop_state_values: Vec<usize>,
 }
 
 impl ScratchBuffers {
@@ -186,6 +203,11 @@ impl ScratchBuffers {
             op_eligible: vec![true; num_ops],
             numeric: vec![NumericRange::singleton(0.0); num_numeric],
             axiom_first_layer: vec![-1; num_axioms],
+            dirty_vars_scratch: Vec::new(),
+            dirty_axioms_scratch: Vec::new(),
+            dirty_var_mark: vec![false; num_numeric],
+            dirty_axiom_mark: vec![false; num_axioms],
+            prop_state_values: Vec::new(),
         }
     }
 
@@ -766,17 +788,6 @@ impl<'task> FfHeuristic<'task> {
         })
     }
 
-    fn state_holds_fact(
-        &self,
-        state: &planforge_sas::numeric::state_registry::ConcreteState,
-        registry: &StateRegistry<'_>,
-        fid: FactId,
-    ) -> bool {
-        let (var, value) = self.fact_var_value[fid];
-        let fact = ExplicitFact::new(var, value);
-        fact.is_hold(state, registry)
-    }
-
     fn initial_numeric_state(
         &self,
         eval_state: &EvaluationState<'_, '_>,
@@ -803,14 +814,17 @@ impl<'task> FfHeuristic<'task> {
 
     /// Propagate updated bounds through all assignment axioms until fixed
     /// point. Each pass refreshes derived numeric ranges; subsequent passes
-    /// catch dependencies among derived vars. Returns the set of numeric
-    /// vars whose range was widened by this pass (useful so comparison-
-    /// axiom re-evaluation knows what to re-check).
+    /// catch dependencies among derived vars. Pushes any numeric var
+    /// whose range was widened into `dirty_out` (dedup against
+    /// `dirty_mark`, which the caller is responsible for sizing and
+    /// clearing). Returns whether *anything* widened.
     fn propagate_assignment_axioms(
         &self,
         numeric: &mut [NumericRange],
-    ) -> HashSet<NumVarId> {
-        let mut dirty: HashSet<NumVarId> = HashSet::new();
+        dirty_out: &mut Vec<NumVarId>,
+        dirty_mark: &mut [bool],
+    ) -> bool {
+        let mut any_change = false;
         loop {
             let mut changed = false;
             for ax in &self.assignment_axioms {
@@ -833,15 +847,19 @@ impl<'task> FfHeuristic<'task> {
                     }
                 };
                 if numeric[ax.affected_var].join(new) {
-                    dirty.insert(ax.affected_var);
+                    if !dirty_mark[ax.affected_var] {
+                        dirty_mark[ax.affected_var] = true;
+                        dirty_out.push(ax.affected_var);
+                    }
                     changed = true;
+                    any_change = true;
                 }
             }
             if !changed {
                 break;
             }
         }
-        dirty
+        any_change
     }
 
     fn evaluate_axiom(&self, axiom: &ComparisonAxiomDesc, numeric: &[NumericRange]) -> bool {
@@ -942,15 +960,34 @@ impl<'task> FfHeuristic<'task> {
         // but `fill_numeric_vars` returns singleton ranges for them. Run
         // assignment-axiom propagation once so any wider-than-singleton
         // bounds (e.g. uninitialized derived = -∞/+∞) settle to a
-        // consistent starting point.
-        let _ = self.propagate_assignment_axioms(&mut scratch.numeric);
+        // consistent starting point. We don't care about which vars
+        // widened at this point — discard the dirty list afterwards.
+        scratch.dirty_vars_scratch.clear();
+        let _ = self.propagate_assignment_axioms(
+            &mut scratch.numeric,
+            &mut scratch.dirty_vars_scratch,
+            &mut scratch.dirty_var_mark,
+        );
+        for &v in &scratch.dirty_vars_scratch {
+            scratch.dirty_var_mark[v] = false;
+        }
+        scratch.dirty_vars_scratch.clear();
 
-        // Layer 0 propositional facts.
+        // Layer 0 propositional facts. Batch-read the entire packed
+        // propositional state once (`fill_state`), then index directly
+        // into the resulting Vec — saves O(num_facts) bound-checked
+        // `state_packer.get` calls per evaluation.
+        live_state.fill_state(registry, &mut scratch.prop_state_values);
         for fid in 0..self.num_facts {
             if self.fact_to_axiom[fid].is_some() {
                 continue;
             }
-            if self.state_holds_fact(eval_state.state(), registry, fid) {
+            let (var, value) = self.fact_var_value[fid];
+            if scratch
+                .prop_state_values
+                .get(var)
+                .is_some_and(|v| *v == value)
+            {
                 scratch.fact_first_layer[fid] = 0;
                 scratch.queue.push_back(fid);
             }
@@ -1031,39 +1068,69 @@ impl<'task> FfHeuristic<'task> {
             }
         }
 
+        let numeric_effects = &self.op_numeric_effects[op_id];
+        if numeric_effects.is_empty() {
+            // Skip the dirty-var / dirty-axiom plumbing entirely — the
+            // common case for purely-propositional operators.
+            return;
+        }
+
         // Numeric effects → assignment-axiom propagation → comparison-
-        // axiom re-evaluation.
-        let mut dirty_vars: HashSet<NumVarId> = HashSet::new();
-        for eff in &self.op_numeric_effects[op_id] {
-            if self.apply_numeric_effect(eff, &mut scratch.numeric) {
-                dirty_vars.insert(eff.affected_var);
+        // axiom re-evaluation. Uses preallocated scratch Vec+bitset for
+        // dirty-variable / dirty-axiom dedup rather than per-firing
+        // HashSet allocations.
+        scratch.dirty_vars_scratch.clear();
+        scratch.dirty_axioms_scratch.clear();
+        for eff in numeric_effects {
+            if self.apply_numeric_effect(eff, &mut scratch.numeric)
+                && !scratch.dirty_var_mark[eff.affected_var]
+            {
+                scratch.dirty_var_mark[eff.affected_var] = true;
+                scratch.dirty_vars_scratch.push(eff.affected_var);
             }
         }
-        if !dirty_vars.is_empty() {
-            // Push the change through any assignment axioms; their
-            // affected variables join `dirty_vars` so the comparison-
-            // axiom touch index picks them up too.
-            let derived_changes = self.propagate_assignment_axioms(&mut scratch.numeric);
-            dirty_vars.extend(derived_changes);
+        if scratch.dirty_vars_scratch.is_empty() {
+            return; // numeric envelope didn't actually widen
         }
-        let mut dirty_axioms: HashSet<AxiomIdx> = HashSet::new();
-        for var in &dirty_vars {
-            for &ax in &self.axioms_touching_var[*var] {
-                dirty_axioms.insert(ax);
-            }
-        }
-        for axiom_idx in dirty_axioms {
-            if scratch.axiom_first_layer[axiom_idx] >= 0 {
-                continue;
-            }
-            let axiom = &self.comparison_axioms[axiom_idx];
-            if self.evaluate_axiom(axiom, &scratch.numeric) {
-                scratch.axiom_first_layer[axiom_idx] = layer;
-                if scratch.fact_first_layer[axiom.true_fact] < 0 {
-                    scratch.fact_first_layer[axiom.true_fact] = layer;
-                    scratch.queue.push_back(axiom.true_fact);
+        // Propagate through assignment axioms; any newly-affected
+        // numeric var joins the dirty list so we don't miss its axioms.
+        // Re-use the same dirty Vec / mark — propagate_assignment_axioms
+        // appends and dedups against `dirty_var_mark`.
+        let _ = self.propagate_assignment_axioms(
+            &mut scratch.numeric,
+            &mut scratch.dirty_vars_scratch,
+            &mut scratch.dirty_var_mark,
+        );
+        // Collect distinct comparison-axiom indices touched.
+        for &var in &scratch.dirty_vars_scratch {
+            for &ax in &self.axioms_touching_var[var] {
+                if !scratch.dirty_axiom_mark[ax] {
+                    scratch.dirty_axiom_mark[ax] = true;
+                    scratch.dirty_axioms_scratch.push(ax);
                 }
             }
+        }
+        // Re-evaluate and emit; reset marks per axiom as we go so the
+        // scratch buffers stay clean for the next firing.
+        for i in 0..scratch.dirty_axioms_scratch.len() {
+            let axiom_idx = scratch.dirty_axioms_scratch[i];
+            if scratch.axiom_first_layer[axiom_idx] < 0 {
+                let axiom = &self.comparison_axioms[axiom_idx];
+                if self.evaluate_axiom(axiom, &scratch.numeric) {
+                    scratch.axiom_first_layer[axiom_idx] = layer;
+                    if scratch.fact_first_layer[axiom.true_fact] < 0 {
+                        scratch.fact_first_layer[axiom.true_fact] = layer;
+                        scratch.queue.push_back(axiom.true_fact);
+                    }
+                }
+            }
+        }
+        // Reset the marks we set this firing.
+        for &var in &scratch.dirty_vars_scratch {
+            scratch.dirty_var_mark[var] = false;
+        }
+        for &ax in &scratch.dirty_axioms_scratch {
+            scratch.dirty_axiom_mark[ax] = false;
         }
     }
 
