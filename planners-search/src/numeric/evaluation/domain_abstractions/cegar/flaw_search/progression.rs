@@ -324,16 +324,6 @@ pub fn get_progression_numeric_deviation_flaws(
         else {
             continue;
         };
-        if std::env::var_os("DA_DEV_PROBE").is_some() && (var_id == 24 || var_id == 25) {
-            tracing::info!(
-                "DEV_PROBE step={step} var={var_id} cur={} succ={} abs={} correct={} parts.len={}",
-                numeric_current_state.get(var_id).copied().unwrap_or(f64::NAN),
-                numeric_successor_state[var_id],
-                abstract_value,
-                correct_abstract_value,
-                parts.len()
-            );
-        }
         if abstract_value == correct_abstract_value {
             continue;
         }

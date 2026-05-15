@@ -33,7 +33,6 @@ pub struct DomainAbstractionMetadata {
     pub full_goal_task: Option<bool>,
     pub initial_seed_splits: Vec<String>,
     pub max_abstraction_size: Option<usize>,
-    pub plan_prefix: Vec<Vec<usize>>,
 }
 
 impl DomainAbstraction {
@@ -100,12 +99,6 @@ impl DomainAbstractionGenerator {
             .build_abstraction(transformed_task)
             .context("CEGAR failed to build abstraction")?;
 
-        let plan_prefix = outcome
-            .last_step
-            .wildcard_plan
-            .as_ref()
-            .map(|plan| plan.wildcard_plan.iter().take(8).cloned().collect())
-            .unwrap_or_default();
         let factory = outcome.final_state.factory;
         let mut operator_generator =
             factory.make_operator_generator(transformed_task, self.config.combine_labels)?;
@@ -169,10 +162,7 @@ impl DomainAbstractionGenerator {
             relevant_operator_ids,
             abstract_operators,
             abstract_operator_footprints,
-            metadata: DomainAbstractionMetadata {
-                plan_prefix,
-                ..DomainAbstractionMetadata::default()
-            },
+            metadata: DomainAbstractionMetadata::default(),
         })
     }
 }

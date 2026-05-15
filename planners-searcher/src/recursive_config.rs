@@ -27,7 +27,6 @@ pub struct DomainAbstractionConfig {
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub transform_linear_task: bool,
-    pub debug: bool,
 }
 
 impl Default for DomainAbstractionConfig {
@@ -42,7 +41,6 @@ impl Default for DomainAbstractionConfig {
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             transform_linear_task: false,
-            debug: false,
         }
     }
 }
@@ -765,7 +763,6 @@ fn domain_abstraction_fields() -> Vec<Field<DomainAbstractionConfig>> {
             DomainAbstractionConfig,
             transform_linear_task
         ),
-        field_bool!("debug", DomainAbstractionConfig, debug),
         Field {
             name: "random_seed",
             apply: |config, value| {
