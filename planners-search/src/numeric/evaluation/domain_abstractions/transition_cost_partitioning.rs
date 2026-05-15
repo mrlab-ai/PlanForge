@@ -63,9 +63,14 @@ pub struct AbstractTransition {
     pub target_hash: usize,
 }
 
+/// Sparse propositional active-set ID, narrowed to `u32` to halve the per-value
+/// storage cost of `StateRegion::propositions`. Variable / value IDs come from
+/// the SAS preprocessor, which already bounds them well below `u32::MAX`.
+pub type PropValueId = u32;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct StateRegion {
-    pub propositions: Vec<Vec<usize>>,
+    pub propositions: Vec<Vec<PropValueId>>,
     pub numeric: Vec<Interval>,
 }
 
@@ -415,7 +420,7 @@ struct TransitionRegionKey {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct StateRegionKey {
-    propositions: Vec<Vec<usize>>,
+    propositions: Vec<Vec<PropValueId>>,
     numeric: Vec<IntervalKey>,
 }
 
@@ -1229,7 +1234,7 @@ impl OperatorResidual {
             FullReductionIndexKind::Prop { feature, buckets } => {
                 let values = query_values_for_feature(&query.region, *feature)?;
                 for &value in values {
-                    let Some(bucket) = buckets.get(&value) else {
+                    let Some(bucket) = buckets.get(&(value as usize)) else {
                         continue;
                     };
                     if bucket.iter().any(|&reduction_id| {
@@ -1638,10 +1643,10 @@ fn singleton_value_for_feature(region: &TransitionRegion, feature: RegionFeature
         RegionFeature::TargetProp(var_id) => region.target.propositions.get(var_id)?,
         RegionFeature::SourceNumeric(_) | RegionFeature::TargetNumeric(_) => return None,
     };
-    (values.len() == 1).then_some(values[0])
+    (values.len() == 1).then_some(values[0] as usize)
 }
 
-fn query_values_for_feature(region: &TransitionRegion, feature: RegionFeature) -> Option<&[usize]> {
+fn query_values_for_feature(region: &TransitionRegion, feature: RegionFeature) -> Option<&[PropValueId]> {
     match feature {
         RegionFeature::SourceProp(var_id) => region.source.propositions.get(var_id),
         RegionFeature::TargetProp(var_id) => region.target.propositions.get(var_id),
@@ -2008,7 +2013,7 @@ fn lmcut_residual_region_is_compact(region: &StateRegion, max_guard_conditions: 
     guards > 0 && guards <= max_guard_conditions
 }
 
-fn prop_regions_overlap(left: &[Vec<usize>], right: &[Vec<usize>]) -> bool {
+fn prop_regions_overlap(left: &[Vec<PropValueId>], right: &[Vec<PropValueId>]) -> bool {
     if left.len() != right.len() {
         return false;
     }
@@ -2017,7 +2022,7 @@ fn prop_regions_overlap(left: &[Vec<usize>], right: &[Vec<usize>]) -> bool {
         .all(|(l, r)| sorted_value_sets_overlap(l, r))
 }
 
-fn sorted_value_sets_overlap(left: &[usize], right: &[usize]) -> bool {
+fn sorted_value_sets_overlap(left: &[PropValueId], right: &[PropValueId]) -> bool {
     let mut i = 0;
     let mut j = 0;
     while i < left.len() && j < right.len() {
@@ -2043,7 +2048,7 @@ mod tests {
 
     fn state_region(value: usize) -> StateRegion {
         StateRegion {
-            propositions: vec![vec![value]],
+            propositions: vec![vec![value as PropValueId]],
             numeric: vec![],
         }
     }

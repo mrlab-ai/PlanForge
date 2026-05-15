@@ -1820,7 +1820,7 @@ impl DomainAbstractionFactory {
         })
     }
 
-    fn full_propositional_region(&self) -> Result<Vec<Vec<usize>>> {
+    fn full_propositional_region(&self) -> Result<Vec<Vec<u32>>> {
         let mut region = Vec::with_capacity(self.domain_sizes.len());
         for var_id in 0..self.domain_sizes.len() {
             let mapping = self
@@ -1831,7 +1831,7 @@ impl DomainAbstractionFactory {
                 !mapping.is_empty(),
                 "empty concrete value set for propositional var {var_id}"
             );
-            region.push((0..mapping.len()).collect());
+            region.push((0..mapping.len() as u32).collect());
         }
         Ok(region)
     }
@@ -1840,7 +1840,7 @@ impl DomainAbstractionFactory {
         &self,
         var_id: usize,
         abstract_value: usize,
-    ) -> Result<Vec<usize>> {
+    ) -> Result<Vec<u32>> {
         // `filter_map().collect()` preallocates capacity matching the inner iterator's
         // upper-bound size_hint (here the full domain mapping length), so a var that
         // only has a handful of concrete values mapped to this abstract slot leaves
@@ -1854,9 +1854,9 @@ impl DomainAbstractionFactory {
             .iter()
             .enumerate()
             .filter_map(|(concrete_value, &mapped_value)| {
-                (mapped_value == abstract_value).then_some(concrete_value)
+                (mapped_value == abstract_value).then_some(concrete_value as u32)
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<u32>>();
         ensure!(
             !values.is_empty(),
             "empty concrete value set for var {var_id} abstract value {abstract_value}"
@@ -1869,7 +1869,7 @@ impl DomainAbstractionFactory {
         &self,
         state_hash: usize,
         hash_multipliers: &[usize],
-    ) -> Result<Vec<Vec<usize>>> {
+    ) -> Result<Vec<Vec<u32>>> {
         let mut region = Vec::with_capacity(self.domain_sizes.len());
         for (var_id, &domain_size) in self.domain_sizes.iter().enumerate() {
             ensure!(domain_size > 0, "domain size must be > 0 for var {var_id}");

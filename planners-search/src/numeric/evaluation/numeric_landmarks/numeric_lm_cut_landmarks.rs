@@ -859,7 +859,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let mut seen = BTreeSet::new();
         for (var, values) in source_region.propositions.iter().enumerate() {
             if values.len() == 1 {
-                let fact = ExplicitFact::new(var, values[0]);
+                let fact = ExplicitFact::new(var, values[0] as usize);
                 for proposition_id in self.precondition_proposition_ids(&fact) {
                     if seen.insert(proposition_id) {
                         ids.push(proposition_id);
