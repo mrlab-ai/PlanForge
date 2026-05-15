@@ -67,7 +67,7 @@ fn test_compute_effective_operator_costs_plus_constants() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact { var: 0, value: 0 },
+        ExplicitFact::new(0, 0),
     );
 
     let state_packer = IntDoublePacker::from_task(&task);

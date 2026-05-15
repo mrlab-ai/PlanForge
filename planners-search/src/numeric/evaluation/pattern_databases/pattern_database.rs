@@ -1029,7 +1029,7 @@ impl<'task> PatternDatabase<'task> {
     pub fn is_goal_state(&self, propositional: &[usize]) -> bool {
         (0..self.task.get_num_goals().max(0)).all(|goal_index| {
             let goal = self.task.get_goal_fact(goal_index);
-            propositional.get(goal.var).copied() == Some(goal.value)
+            propositional.get(goal.var()).copied() == Some(goal.value())
         })
     }
 

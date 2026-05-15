@@ -232,12 +232,12 @@ impl ComparisonAxiomIndex {
         pre: &ExplicitFact,
         numeric_intervals: &[Interval],
     ) -> bool {
-        let var_id = pre.var;
+        let var_id = pre.var();
         let Some(tree) = self.comparison_tree(var_id) else {
             return false;
         };
 
-        match pre.value {
+        match pre.value() {
             0 => !tree.evaluate_interval_admits_true(numeric_intervals),
             1 => !tree.evaluate_interval_admits_false(numeric_intervals),
             _ => false,

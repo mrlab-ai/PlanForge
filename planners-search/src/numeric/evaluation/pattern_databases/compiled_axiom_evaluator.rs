@@ -317,7 +317,7 @@ fn build_compiled_axiom_evaluator_data(
 
     for (index, axiom) in numeric_task.axioms().iter().enumerate() {
         for condition in axiom.conditions().iter() {
-            axiom_literals[condition.var][condition.value]
+            axiom_literals[condition.var()][condition.value()]
                 .condition_of
                 .push(index);
         }

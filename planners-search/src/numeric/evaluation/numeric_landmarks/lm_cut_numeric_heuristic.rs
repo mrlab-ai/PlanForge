@@ -160,7 +160,7 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
     fn is_goal_state(&self, propositional_values: &[usize]) -> bool {
         (0..self.task.get_num_goals()).all(|goal_index| {
             let goal = self.task.get_goal_fact(goal_index);
-            propositional_values.get(goal.var).copied() == Some(goal.value)
+            propositional_values.get(goal.var()).copied() == Some(goal.value())
         })
     }
 

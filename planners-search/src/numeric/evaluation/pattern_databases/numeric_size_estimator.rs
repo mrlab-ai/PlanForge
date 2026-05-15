@@ -112,7 +112,7 @@ fn collect_numeric_conditions(
     let mut conditions = Vec::new();
     for operator in task.get_operators() {
         for fact in operator.preconditions() {
-            let fact_var_id = fact.var;
+            let fact_var_id = fact.var();
             if !numeric_condition_vars.contains(&fact_var_id) {
                 continue;
             }
@@ -131,7 +131,7 @@ fn collect_numeric_conditions(
 
     for goal_id in 0..task.get_num_goals() {
         let goal = task.get_goal_fact(goal_id);
-        let goal_var_id = goal.var;
+        let goal_var_id = goal.var();
         if !numeric_condition_vars.contains(&goal_var_id) {
             continue;
         }

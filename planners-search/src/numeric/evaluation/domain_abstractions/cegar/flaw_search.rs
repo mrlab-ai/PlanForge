@@ -258,7 +258,7 @@ fn score_flaw(
             .copied()
             .unwrap_or(0),
         Flaw::Propositional(pf) => {
-            let var_id = pf.fact.var;
+            let var_id = pf.fact.var();
             let base = domain_sizes.get(var_id).copied().unwrap_or(0);
             let max_dep = pf
                 .dependent_numeric_flaws
@@ -360,11 +360,11 @@ pub(crate) fn numeric_requirement_for_comparison_fact(
     comparison_index: &ComparisonAxiomIndex,
     fact: &ExplicitFact,
 ) -> Option<(usize, Interval)> {
-    let tree = comparison_index.comparison_tree(fact.var)?;
+    let tree = comparison_index.comparison_tree(fact.var())?;
     let left = linearize_numeric_var(task, tree.left_numeric_var_id).ok()?;
     let right = linearize_numeric_var(task, tree.right_numeric_var_id).ok()?;
     let expression = left.subtract(&right);
-    let required_op = required_comparison_op(tree.op, fact.value)?;
+    let required_op = required_comparison_op(tree.op, fact.value())?;
     single_var_interval_for_linear_zero_comparison(&expression, required_op)
 }
 

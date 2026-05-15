@@ -398,7 +398,7 @@ pub fn get_progression_sequence_precondition_flaws(
     let mut out: Vec<Flaw> = Vec::new();
     for pre in op.preconditions().iter() {
         if !state.fact_is_hold(pre) {
-            let prop_var_id = pre.var;
+            let prop_var_id = pre.var();
             let dependent_numeric_flaws =
                 if comparison_index.is_comparison_axiom_variable(prop_var_id) {
                     dependent_numeric_flaws_in_interval_for_comparison_prop_var(
@@ -435,14 +435,14 @@ pub fn get_goal_sequence_flaws(
     let mut derived_goal_vars: BTreeSet<usize> = BTreeSet::new();
     for goal_id in 0..num_goals {
         let goal_fact = task.get_goal_fact(goal_id);
-        let goal_var = goal_fact.var;
+        let goal_var = goal_fact.var();
         let goal_is_derived = task.axioms().iter().any(|ax| ax.var_id() == goal_var);
         if goal_is_derived {
             derived_goal_vars.insert(goal_var);
             continue;
         }
         if !state.fact_is_hold(goal_fact) && seen.insert(goal_fact.clone()) {
-            let prop_var_id = goal_fact.var;
+            let prop_var_id = goal_fact.var();
             let dependent_numeric_flaws =
                 if comparison_index.is_comparison_axiom_variable(prop_var_id) {
                     dependent_numeric_flaws_in_interval_for_comparison_prop_var(
@@ -474,7 +474,7 @@ pub fn get_goal_sequence_flaws(
         }
         for pre in ax.conditions().iter() {
             if !state.fact_is_hold(pre) && seen.insert(pre.clone()) {
-                let prop_var_id = pre.var;
+                let prop_var_id = pre.var();
                 let dependent_numeric_flaws =
                     if comparison_index.is_comparison_axiom_variable(prop_var_id) {
                         dependent_numeric_flaws_in_interval_for_comparison_prop_var(

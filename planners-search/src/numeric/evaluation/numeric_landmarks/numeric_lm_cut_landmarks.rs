@@ -859,10 +859,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let mut seen = BTreeSet::new();
         for (var, values) in source_region.propositions.iter().enumerate() {
             if values.len() == 1 {
-                let fact = ExplicitFact {
-                    var,
-                    value: values[0],
-                };
+                let fact = ExplicitFact::new(var, values[0]);
                 for proposition_id in self.precondition_proposition_ids(&fact) {
                     if seen.insert(proposition_id) {
                         ids.push(proposition_id);
@@ -1004,7 +1001,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .collect::<Vec<_>>();
 
             if helper_propositional_ids.is_empty() && helper_numeric_ids.is_empty() {
-                if self.is_numeric_axiom_var(goal.var) {
+                if self.is_numeric_axiom_var(goal.var()) {
                     let _ = self.precondition_proposition_ids(goal);
                     continue;
                 }
@@ -1988,7 +1985,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .collect::<Vec<_>>();
 
         for conditional_effect in &helper_conditional_fact_effects {
-            if self.is_numeric_axiom_var(conditional_effect.add_fact.var) {
+            if self.is_numeric_axiom_var(conditional_effect.add_fact.var()) {
                 continue;
             }
             let mut extended_preconditions = precondition_ids.clone();
@@ -2011,8 +2008,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 "{} {}",
                 operator.name(),
                 self.get_proposition_name(
-                    conditional_effect.add_fact.var,
-                    conditional_effect.add_fact.value
+                    conditional_effect.add_fact.var(),
+                    conditional_effect.add_fact.value()
                 )
             );
             let conditional_operator = RelaxedOperator::new(
@@ -2032,7 +2029,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .get_action_add_list(operator_id)
             .into_iter()
             .flatten()
-            .filter(|fact| !self.is_numeric_axiom_var(fact.var))
+            .filter(|fact| !self.is_numeric_axiom_var(fact.var()))
             .map(|fact| self.get_proposition_id(fact))
             .collect::<Vec<_>>();
 
@@ -3287,7 +3284,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         conditions: &[ExplicitFact],
     ) -> bool {
         conditions.iter().all(|condition| {
-            propositional_values.get(condition.var).copied() == Some(condition.value)
+            propositional_values.get(condition.var()).copied() == Some(condition.value())
         })
     }
 
@@ -3326,7 +3323,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             0.0,
             format!(
                 "axiom {}",
-                self.get_proposition_name(effect_fact.var, effect_fact.value)
+                self.get_proposition_name(effect_fact.var(), effect_fact.value())
             ),
             false,
         );
@@ -3696,12 +3693,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn precondition_proposition_ids(&self, fact: &ExplicitFact) -> Vec<usize> {
         if !self.config.ignore_numeric {
-            if self.numeric_helper.is_comparison_axiom_var(fact.var) && fact.value > 0 {
+            if self.numeric_helper.is_comparison_axiom_var(fact.var()) && fact.value() > 0 {
                 return Vec::new();
             }
             if let Some(condition_ids) = self
                 .comparison_fact_to_condition_ids
-                .get(&(fact.var, fact.value))
+                .get(&(fact.var(), fact.value()))
             {
                 return condition_ids
                     .iter()
@@ -3713,7 +3710,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             }
         }
 
-        if self.is_numeric_axiom_var(fact.var) {
+        if self.is_numeric_axiom_var(fact.var()) {
             let fact_name = self.task.get_fact_name(fact);
             panic!(
                 "LM-cut numeric conditions do not support disequality comparison fact `{fact_name}`"
@@ -3742,7 +3739,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn get_proposition_id(&self, fact: &ExplicitFact) -> usize {
         self.numeric_helper
-            .get_proposition(fact.var, fact.value)
+            .get_proposition(fact.var(), fact.value())
             .map(|helper_id| helper_id + 2)
             .expect("helper proposition id must exist")
     }

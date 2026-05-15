@@ -1104,7 +1104,7 @@ impl<'task> ProjectedTask<'task> {
             self.axioms.clone(),
             self.comparison_axioms.clone(),
             self.assignment_axioms.clone(),
-            ExplicitFact { var: 0, value: 0 },
+            ExplicitFact::new(0, 0),
         )
     }
 
@@ -1553,7 +1553,7 @@ impl<'task> ProjectedTask<'task> {
     pub fn is_goal_state_values(&self, propositional_values: &[usize]) -> bool {
         self.goals
             .iter()
-            .all(|goal| propositional_values.get(goal.var).copied() == Some(goal.value))
+            .all(|goal| propositional_values.get(goal.var()).copied() == Some(goal.value()))
     }
 
     pub fn min_operator_cost(&self) -> f64 {
@@ -2144,10 +2144,10 @@ impl AbstractNumericTask for ProjectedTask<'_> {
     }
 
     fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
-        let Some(var_fact_names) = self.fact_names.get(fact.var) else {
+        let Some(var_fact_names) = self.fact_names.get(fact.var()) else {
             return "";
         };
-        var_fact_names.get(fact.value).map_or("", String::as_str)
+        var_fact_names.get(fact.value()).map_or("", String::as_str)
     }
 
     fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
@@ -2345,8 +2345,8 @@ fn cache_facts(facts: &[ExplicitFact]) -> Vec<CachedFact> {
     facts
         .iter()
         .map(|fact| CachedFact {
-            var_id: fact.var,
-            value: fact.value,
+            var_id: fact.var(),
+            value: fact.value(),
         })
         .collect()
 }
@@ -2658,15 +2658,15 @@ fn collect_cpp_like_projected_goal_fact(
     goals: &mut Vec<ExplicitFact>,
     visited_vars: &mut HashSet<usize>,
 ) -> Result<(), ProjectedTaskBuildError> {
-    if !visited_vars.insert(fact.var) {
+    if !visited_vars.insert(fact.var()) {
         return Ok(());
     }
 
     if let Some(comparison_axiom_id) = comparison_axiom_by_affected_var
-        .get(fact.var)
+        .get(fact.var())
         .and_then(|comparison_axiom_id| *comparison_axiom_id)
     {
-        let comparison_is_in_pattern = pattern_regular.contains(&fact.var);
+        let comparison_is_in_pattern = pattern_regular.contains(&fact.var());
         let numeric_goal_is_in_pattern = comparison_condition_var_id(
             task,
             comparison_axiom_id,
@@ -2677,7 +2677,7 @@ fn collect_cpp_like_projected_goal_fact(
         .is_some_and(|numeric_var_id| pattern_numeric.contains(&numeric_var_id));
         if comparison_is_in_pattern || numeric_goal_is_in_pattern {
             push_unique_mapping(
-                fact.var,
+                fact.var(),
                 projected_var_to_original,
                 original_var_to_projected,
             );
@@ -2687,13 +2687,13 @@ fn collect_cpp_like_projected_goal_fact(
     }
 
     if let Some(axiom_id) = propositional_axiom_by_affected_var
-        .get(fact.var)
+        .get(fact.var())
         .and_then(|axiom_id| *axiom_id)
     {
-        let fact_is_in_pattern = pattern_regular.contains(&fact.var);
+        let fact_is_in_pattern = pattern_regular.contains(&fact.var());
         if fact_is_in_pattern {
             push_unique_mapping(
-                fact.var,
+                fact.var(),
                 projected_var_to_original,
                 original_var_to_projected,
             );
@@ -2725,9 +2725,9 @@ fn collect_cpp_like_projected_goal_fact(
         return Ok(());
     }
 
-    if pattern_regular.contains(&fact.var) {
+    if pattern_regular.contains(&fact.var()) {
         push_unique_mapping(
-            fact.var,
+            fact.var(),
             projected_var_to_original,
             original_var_to_projected,
         );
@@ -3143,15 +3143,15 @@ fn is_constant_expression(
 
 fn project_fact(fact: &ExplicitFact, var_map: &[Option<usize>]) -> Option<ExplicitFact> {
     var_map
-        .get(fact.var)
+        .get(fact.var())
         .and_then(|mapped| *mapped)
-        .map(|mapped| ExplicitFact::new(mapped, fact.value))
+        .map(|mapped| ExplicitFact::new(mapped, fact.value()))
 }
 
 fn restore_fact(fact: &ExplicitFact, projected_to_original: &[usize]) -> Option<ExplicitFact> {
     projected_to_original
-        .get(fact.var)
-        .map(|&original| ExplicitFact::new(original, fact.value))
+        .get(fact.var())
+        .map(|&original| ExplicitFact::new(original, fact.value()))
 }
 
 fn project_effect(effect: &Effect, var_map: &[Option<usize>]) -> Option<Effect> {
@@ -3728,7 +3728,7 @@ fn normalize_projected_variable_layers(
         let mut layer = base_propositional_layer;
         for axiom in &axioms_by_var[var_id] {
             for condition in axiom.conditions() {
-                let condition_var = condition.var;
+                let condition_var = condition.var();
                 if condition_var >= layers.len() {
                     continue;
                 }

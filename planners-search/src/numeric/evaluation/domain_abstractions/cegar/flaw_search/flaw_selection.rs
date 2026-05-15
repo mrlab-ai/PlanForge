@@ -75,7 +75,7 @@ pub trait FlawTreatment {
 
 fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
     match flaw {
-        Flaw::Propositional(pf) => (0, pf.fact.var, pf.fact.value, 0, false),
+        Flaw::Propositional(pf) => (0, pf.fact.var(), pf.fact.value(), 0, false),
         Flaw::Numeric(nf) => (
             1,
             nf.numeric_var_id,
@@ -88,7 +88,7 @@ fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
 
 fn flaw_variable_key(flaw: &Flaw) -> (u8, usize) {
     match flaw {
-        Flaw::Propositional(pf) => (0, pf.fact.var),
+        Flaw::Propositional(pf) => (0, pf.fact.var()),
         Flaw::Numeric(nf) => (1, nf.numeric_var_id),
     }
 }
@@ -295,7 +295,7 @@ fn compute_max_refined(
                 .copied()
                 .unwrap_or(0),
             Flaw::Propositional(pf) => {
-                let var_id = pf.fact.var;
+                let var_id = pf.fact.var();
                 let base: usize = domain_sizes.get(var_id).copied().unwrap_or(0) * prop_multiplier;
                 if comparison_var_ids.contains(&var_id) && !pf.dependent_numeric_flaws.is_empty() {
                     let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
@@ -411,7 +411,7 @@ pub(super) fn fix_single_flaw_min_growth(
                     .unwrap_or(1),
             ),
             Flaw::Propositional(pf) => {
-                let var_id = pf.fact.var;
+                let var_id = pf.fact.var();
                 let prop_size = domain_sizes.get(var_id).copied().unwrap_or(1).max(1);
                 let prop_growth = if comparison_var_ids.contains(&var_id) && prop_size >= 2 {
                     (1, 1)

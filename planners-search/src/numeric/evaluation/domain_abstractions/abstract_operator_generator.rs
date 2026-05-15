@@ -79,7 +79,7 @@ impl AbstractOperator {
         let mut preconditions: Vec<ExplicitFact> = pre_pairs.to_vec();
         preconditions.extend_from_slice(prev_pairs);
         preconditions.sort();
-        debug_assert!(preconditions.windows(2).all(|w| w[0].var != w[1].var));
+        debug_assert!(preconditions.windows(2).all(|w| w[0].var() != w[1].var()));
 
         let mut regression_preconditions: Vec<ExplicitFact> = prev_pairs.to_vec();
         regression_preconditions.extend_from_slice(eff_pairs);
@@ -87,7 +87,7 @@ impl AbstractOperator {
         debug_assert!(
             regression_preconditions
                 .windows(2)
-                .all(|w| w[0].var != w[1].var)
+                .all(|w| w[0].var() != w[1].var())
         );
 
         debug_assert_eq!(
@@ -99,14 +99,14 @@ impl AbstractOperator {
         let mut hash_effect: i32 = 0;
         for (pre, eff) in pre_pairs.iter().zip(eff_pairs.iter()) {
             debug_assert_eq!(
-                pre.var, eff.var,
+                pre.var(), eff.var(),
                 "abstract operator transition var mismatch: pre={pre:?} eff={eff:?}"
             );
 
-            let var = pre.var;
+            let var = pre.var();
             let multiplier = hash_multipliers[var];
-            let new_val = pre.value as i32;
-            let old_val = eff.value as i32;
+            let new_val = pre.value() as i32;
+            let old_val = eff.value() as i32;
             hash_effect += (new_val - old_val) * multiplier as i32;
         }
 
@@ -180,9 +180,9 @@ fn compute_signature_hash(
         *hash ^= facts.len() as u64;
         *hash = hash.wrapping_mul(FNV_PRIME);
         for fact in facts {
-            *hash ^= fact.var as u64;
+            *hash ^= fact.var() as u64;
             *hash = hash.wrapping_mul(FNV_PRIME);
-            *hash ^= fact.value as u64;
+            *hash ^= fact.value() as u64;
             *hash = hash.wrapping_mul(FNV_PRIME);
         }
         *hash ^= 0xdeadbeef_cafef00d;
@@ -295,14 +295,14 @@ fn has_cross_list_conflict(a: &[ExplicitFact], b: &[ExplicitFact]) -> bool {
     let mut i = 0;
     let mut j = 0;
     while i < a.len() && j < b.len() {
-        let va = a[i].var;
-        let vb = b[j].var;
+        let va = a[i].var();
+        let vb = b[j].var();
         if va < vb {
             i += 1;
         } else if vb < va {
             j += 1;
         } else {
-            if a[i].value != b[j].value {
+            if a[i].value() != b[j].value() {
                 return true;
             }
             i += 1;
@@ -317,7 +317,7 @@ fn transition_vars_match(pre_pairs: &[ExplicitFact], eff_pairs: &[ExplicitFact])
         && pre_pairs
             .iter()
             .zip(eff_pairs.iter())
-            .all(|(pre, eff)| pre.var == eff.var)
+            .all(|(pre, eff)| pre.var() == eff.var())
 }
 
 /// Fill `candidate` with the merged result of `skeleton` and `trans`. Returns
@@ -347,33 +347,33 @@ fn build_candidate_from_transition(
     // We can therefore merge instead of sort+dedup: the merged outputs are
     // built in-order with O(n+m) work and no `Vec::sort()` cost.
     debug_assert!(
-        skeleton.pre_pairs.windows(2).all(|w| w[0].var < w[1].var),
+        skeleton.pre_pairs.windows(2).all(|w| w[0].var() < w[1].var()),
         "skeleton.pre_pairs must be strictly ascending by var"
     );
     debug_assert!(
-        skeleton.eff_pairs.windows(2).all(|w| w[0].var < w[1].var),
+        skeleton.eff_pairs.windows(2).all(|w| w[0].var() < w[1].var()),
         "skeleton.eff_pairs must be strictly ascending by var"
     );
     debug_assert!(
-        skeleton.prev_pairs.windows(2).all(|w| w[0].var < w[1].var),
+        skeleton.prev_pairs.windows(2).all(|w| w[0].var() < w[1].var()),
         "skeleton.prev_pairs must be strictly ascending by var"
     );
     debug_assert!(
         trans
             .source_partition_facts
             .windows(2)
-            .all(|w| w[0].var <= w[1].var),
+            .all(|w| w[0].var() <= w[1].var()),
         "TransitionInfo.source_partition_facts must be sorted by var"
     );
     debug_assert!(
         trans
             .target_partition_facts
             .windows(2)
-            .all(|w| w[0].var <= w[1].var),
+            .all(|w| w[0].var() <= w[1].var()),
         "TransitionInfo.target_partition_facts must be sorted by var"
     );
     debug_assert!(
-        trans.prevail_facts.windows(2).all(|w| w[0].var <= w[1].var),
+        trans.prevail_facts.windows(2).all(|w| w[0].var() <= w[1].var()),
         "TransitionInfo.prevail_facts must be sorted by var"
     );
 
@@ -394,11 +394,11 @@ fn build_candidate_from_transition(
 
     while !sk_pre.is_empty() || !src.is_empty() {
         let push_sk = match (sk_pre.first(), src.first()) {
-            (Some(a), Some(b)) => match a.var.cmp(&b.var) {
+            (Some(a), Some(b)) => match a.var().cmp(&b.var()) {
                 std::cmp::Ordering::Less => true,
                 std::cmp::Ordering::Greater => false,
                 std::cmp::Ordering::Equal => {
-                    if a.value != b.value {
+                    if a.value() != b.value() {
                         return false;
                     }
                     true
@@ -411,27 +411,27 @@ fn build_candidate_from_transition(
         let var_id = if push_sk {
             let a = sk_pre.first().unwrap();
             extended_pre_pairs.push(a.clone());
-            let v = a.var;
+            let v = a.var();
             sk_pre = &sk_pre[1..];
             v
         } else {
             let b = src.first().unwrap();
             extended_pre_pairs.push(b.clone());
-            let v = b.var;
+            let v = b.var();
             src = &src[1..];
             v
         };
-        while sk_pre.first().is_some_and(|f| f.var == var_id) {
+        while sk_pre.first().is_some_and(|f| f.var() == var_id) {
             sk_pre = &sk_pre[1..];
         }
-        while src.first().is_some_and(|f| f.var == var_id) {
+        while src.first().is_some_and(|f| f.var() == var_id) {
             src = &src[1..];
         }
     }
 
     while !sk_eff.is_empty() || !tgt.is_empty() {
         let push_sk = match (sk_eff.first(), tgt.first()) {
-            (Some(a), Some(b)) => match a.var.cmp(&b.var) {
+            (Some(a), Some(b)) => match a.var().cmp(&b.var()) {
                 std::cmp::Ordering::Less => true,
                 std::cmp::Ordering::Greater => false,
                 std::cmp::Ordering::Equal => {
@@ -449,20 +449,20 @@ fn build_candidate_from_transition(
         let var_id = if push_sk {
             let a = sk_eff.first().unwrap();
             extended_eff_pairs.push(a.clone());
-            let v = a.var;
+            let v = a.var();
             sk_eff = &sk_eff[1..];
             v
         } else {
             let b = tgt.first().unwrap();
             extended_eff_pairs.push(b.clone());
-            let v = b.var;
+            let v = b.var();
             tgt = &tgt[1..];
             v
         };
-        while sk_eff.first().is_some_and(|f| f.var == var_id) {
+        while sk_eff.first().is_some_and(|f| f.var() == var_id) {
             sk_eff = &sk_eff[1..];
         }
-        while tgt.first().is_some_and(|f| f.var == var_id) {
+        while tgt.first().is_some_and(|f| f.var() == var_id) {
             tgt = &tgt[1..];
         }
     }
@@ -476,7 +476,7 @@ fn build_candidate_from_transition(
     let mut prev_conflict = false;
     while !sk_prev.is_empty() || !trv.is_empty() {
         match (sk_prev.first(), trv.first()) {
-            (Some(a), Some(b)) => match a.var.cmp(&b.var) {
+            (Some(a), Some(b)) => match a.var().cmp(&b.var()) {
                 std::cmp::Ordering::Less => {
                     extended_prev_pairs.push(a.clone());
                     sk_prev = &sk_prev[1..];
@@ -486,13 +486,13 @@ fn build_candidate_from_transition(
                     trv = &trv[1..];
                 }
                 std::cmp::Ordering::Equal => {
-                    if a.value != b.value {
+                    if a.value() != b.value() {
                         prev_conflict = true;
                     }
                     extended_prev_pairs.push(a.clone());
-                    let v = a.var;
+                    let v = a.var();
                     sk_prev = &sk_prev[1..];
-                    while trv.first().is_some_and(|f| f.var == v) {
+                    while trv.first().is_some_and(|f| f.var() == v) {
                         trv = &trv[1..];
                     }
                 }
@@ -905,7 +905,7 @@ fn format_abstract_fact(
     fact: &ExplicitFact,
 ) -> String {
     let num_props = generator.domain_sizes.len();
-    let var_id = fact.var;
+    let var_id = fact.var();
     if var_id < num_props {
         let var_name = task.get_variable_name(var_id).unwrap_or("<unknown>");
         let concrete_size = task.get_variable_domain_size(var_id).unwrap_or(0);
@@ -915,19 +915,19 @@ fn format_abstract_fact(
             let Some(abs_val) = mapping.and_then(|m| m.get(concrete_val)).copied() else {
                 continue;
             };
-            if abs_val == fact.value {
+            if abs_val == fact.value() {
                 mapped_concretes.push(
-                    task.get_fact_name(&ExplicitFact::new(fact.var, concrete_val))
+                    task.get_fact_name(&ExplicitFact::new(fact.var(), concrete_val))
                         .to_string(),
                 );
             }
         }
         if mapped_concretes.is_empty() {
-            format!("var{var_id}({var_name})=abs{}", fact.value)
+            format!("var{var_id}({var_name})=abs{}", fact.value())
         } else {
             format!(
                 "var{var_id}({var_name})=abs{} => [{}]",
-                fact.value,
+                fact.value(),
                 mapped_concretes.join(" | ")
             )
         }
@@ -940,14 +940,14 @@ fn format_abstract_fact(
             .unwrap_or("<unknown>");
         let interval = generator
             .partitions
-            .partition_interval(numeric_var_id, fact.value);
+            .partition_interval(numeric_var_id, fact.value());
         match interval {
             Some(iv) => format!(
                 "num{numeric_var_id}({var_name})=p{}:{}",
-                fact.value,
+                fact.value(),
                 utils::fmt_interval(iv)
             ),
-            None => format!("num{numeric_var_id}({var_name})=p{}", fact.value),
+            None => format!("num{numeric_var_id}({var_name})=p{}", fact.value()),
         }
     }
 }
@@ -958,9 +958,9 @@ fn normalize_preconditions(mut preconditions: Vec<ExplicitFact>) -> Option<Vec<E
     let mut out: Vec<ExplicitFact> = Vec::with_capacity(preconditions.len());
     for pre in preconditions {
         if let Some(last) = out.last()
-            && last.var == pre.var
+            && last.var() == pre.var()
         {
-            if last.value != pre.value {
+            if last.value() != pre.value() {
                 return None;
             }
             continue;
@@ -995,7 +995,7 @@ fn build_branch_for_operator(
     }
     let mut touched_pre: Vec<usize> = Vec::with_capacity(merged_preconditions.len());
     for pre in merged_preconditions {
-        let var_id = pre.var;
+        let var_id = pre.var();
         if var_id >= pre_scratch.len() {
             continue;
         }
@@ -1005,7 +1005,7 @@ fn build_branch_for_operator(
             continue;
         }
         let mapping = &generator.domain_mapping[var_id];
-        let abs_val = mapping[pre.value];
+        let abs_val = mapping[pre.value()];
         pre_scratch[var_id] = Some(abs_val);
         touched_pre.push(var_id);
     }
@@ -1042,11 +1042,11 @@ fn build_branch_for_operator(
     }
 
     for pre in merged_preconditions {
-        let var_id = pre.var;
+        let var_id = pre.var();
         if generator.variable_is_trivial(var_id) {
             continue;
         }
-        let abs_val = generator.abstract_value(var_id, pre.value);
+        let abs_val = generator.abstract_value(var_id, pre.value());
         if generator.effect_on_var_scratch[var_id].is_some() {
             pre_pairs.push(ExplicitFact::new(var_id, abs_val));
         } else if !generator.derived_prop_vars.contains(&(var_id)) {
@@ -1059,11 +1059,11 @@ fn build_branch_for_operator(
     // the target side is reset to UNKNOWN so regression can re-evaluate the
     // comparison from the target numeric partition.
     for pre in merged_preconditions {
-        let var_id = pre.var;
+        let var_id = pre.var();
         if generator.variable_is_trivial(var_id) || !generator.derived_prop_vars.contains(&var_id) {
             continue;
         }
-        let source_abs = generator.abstract_value(var_id, pre.value);
+        let source_abs = generator.abstract_value(var_id, pre.value());
         let target_abs = generator.abstract_value(var_id, COMPARISON_UNKNOWN_VAL);
         pre_pairs.push(ExplicitFact::new(var_id, source_abs));
         eff_pairs.push(ExplicitFact::new(var_id, target_abs));
@@ -1114,21 +1114,21 @@ fn multiply_out_propositional(
     fn has_in_list_conflict(facts: &[ExplicitFact]) -> bool {
         facts
             .windows(2)
-            .any(|w| w[0].var == w[1].var && w[0].value != w[1].value)
+            .any(|w| w[0].var() == w[1].var() && w[0].value() != w[1].value())
     }
 
     fn has_cross_list_conflict(a: &[ExplicitFact], b: &[ExplicitFact]) -> bool {
         let mut i = 0;
         let mut j = 0;
         while i < a.len() && j < b.len() {
-            let va = a[i].var;
-            let vb = b[j].var;
+            let va = a[i].var();
+            let vb = b[j].var();
             if va < vb {
                 i += 1;
             } else if vb < va {
                 j += 1;
             } else {
-                if a[i].value != b[j].value {
+                if a[i].value() != b[j].value() {
                     return true;
                 }
                 i += 1;
@@ -1174,8 +1174,8 @@ fn multiply_out_propositional(
         }]);
     }
 
-    let var_id = effects_without_pre[pos].var;
-    let eff = effects_without_pre[pos].value;
+    let var_id = effects_without_pre[pos].var();
+    let eff = effects_without_pre[pos].value();
     let domain_size = generator.domain_sizes[var_id];
     let mut out: Vec<AbstractOperatorSkeleton> = Vec::new();
     for i in 0..domain_size {
@@ -1269,10 +1269,10 @@ fn compute_hash_effects_with_preconditions(
         // Deps of comparison-axiom preconditions are needed so we can filter
         // dead combos via optimistic eval on source intervals.
         for pre in op_preconditions {
-            if !generator.derived_prop_vars.contains(&pre.var) {
+            if !generator.derived_prop_vars.contains(&pre.var()) {
                 continue;
             }
-            if let Some(tree) = index.comparison_tree(pre.var) {
+            if let Some(tree) = index.comparison_tree(pre.var()) {
                 for dep in tree.regular_numeric_var_dependencies(task) {
                     needed_numeric_vars.insert(dep);
                 }
@@ -1378,7 +1378,7 @@ fn compute_hash_effects_with_preconditions(
     // this lets us short-circuit the interval/cascade work on every combo.
     let op_has_comparison_preconditions = op_preconditions
         .iter()
-        .any(|pre| generator.derived_prop_vars.contains(&pre.var));
+        .any(|pre| generator.derived_prop_vars.contains(&pre.var()));
 
     // Pre-decide the "this combo can possibly change a comparison's truth
     // value" flag at the level of the operator: any affected (changed)
@@ -1720,8 +1720,8 @@ fn compute_comparison_transition_facts(
     // relative to numeric-FD.
     let precondition_required: HashMap<usize, usize> = op_preconditions
         .iter()
-        .filter(|p| generator.derived_prop_vars.contains(&p.var))
-        .map(|p| (p.var, p.value))
+        .filter(|p| generator.derived_prop_vars.contains(&p.var()))
+        .map(|p| (p.var(), p.value()))
         .collect();
 
     for tree in &generator.comparison_trees {
