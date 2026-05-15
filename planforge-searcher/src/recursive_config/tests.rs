@@ -4,7 +4,7 @@ use planforge_search::numeric::evaluation::domain_abstractions::domain_abstracti
     VariableSubset,
 };
 use planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
-    FillScpConfig, OrderGenerator, ScoringFunction,
+    OrderGenerator, ScoringFunction,
 };
 use planforge_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planforge_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -135,18 +135,6 @@ fn parses_astar_scp_online_with_or_without_unit_parens() {
     assert_eq!(
         parse_search_spec("astar(scp_online())").unwrap(),
         SearchSpec::Astar(HeuristicSpec::ScpOnline(ScpOnlineConfig::default()))
-    );
-}
-
-#[test]
-fn parses_astar_fill_scp_with_aliases() {
-    assert_eq!(
-        parse_search_spec("astar(fillSCP)").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::FillScp(FillScpConfig::default()))
-    );
-    assert_eq!(
-        parse_search_spec("astar(fill_scp())").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::FillScp(FillScpConfig::default()))
     );
 }
 

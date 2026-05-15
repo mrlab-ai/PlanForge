@@ -81,13 +81,6 @@ Integration tests cover translator output, preprocessor invariants, state-regist
 
 `--max-memory` sets the process's `RLIMIT_AS`. Heuristic construction additionally consults a polled RSS limit derived from `--max-memory` so the planner can stop adding abstractions cleanly before any external (slurm, cgroup) limit fires. Search-loop polling is not yet wired through; long A\* runs near the memory ceiling can still be killed by external supervisors.
 
-## References
-
-- Helmert, M. *The Fast Downward planning system*. JAIR 2006.
-- Seipp, J. & Helmert, M. *Counterexample-guided cartesian abstraction refinement for classical planning*. JAIR 2018.
-- Helmert, M., Haslum, P., Hoffmann, J., & Nissim, R. *Merge-and-shrink abstraction*. JACM 2014.
-- Hoffmann, J. & Nebel, B. *The FF planning system*. JAIR 2001.
-
 ## License
 
 Binary crates are licensed under GPLv3; library crates under LGPLv3; integration tests under GPLv3; lab files under MIT. See individual `Cargo.toml` files and `LICENSE` for details.
