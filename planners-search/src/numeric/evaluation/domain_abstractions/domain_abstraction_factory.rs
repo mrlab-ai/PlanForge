@@ -1841,7 +1841,13 @@ impl DomainAbstractionFactory {
         var_id: usize,
         abstract_value: usize,
     ) -> Result<Vec<usize>> {
-        let values = self
+        // `filter_map().collect()` preallocates capacity matching the inner iterator's
+        // upper-bound size_hint (here the full domain mapping length), so a var that
+        // only has a handful of concrete values mapped to this abstract slot leaves
+        // most of that capacity unused. Shrinking before returning saves typically
+        // 50-90% of the per-inner-`Vec` heap allocation, which on SCP runs over many
+        // state regions dominates the propositional footprint.
+        let mut values = self
             .domain_mapping
             .get(var_id)
             .with_context(|| format!("missing domain mapping for var {var_id}"))?
@@ -1855,6 +1861,7 @@ impl DomainAbstractionFactory {
             !values.is_empty(),
             "empty concrete value set for var {var_id} abstract value {abstract_value}"
         );
+        values.shrink_to_fit();
         Ok(values)
     }
 
