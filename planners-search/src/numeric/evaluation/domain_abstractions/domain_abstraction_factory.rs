@@ -1463,13 +1463,33 @@ impl DomainAbstractionFactory {
         let duplicate_transition_attempts = 0usize;
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
         // Debug-only triple-uniqueness witness: every pushed AbstractTransition
-        // must have a unique `(abstract_op_id, source_hash, target_hash)`. Now
-        // that comparison-axiom bits are baked into operators via pre/eff/prev
-        // facts, the source hash is fully determined by
-        // `target_hash + op.hash_effect`, so each (target, op) yields a single
-        // transition by construction.
+        // must have a unique `(abstract_op_id, source_hash, target_hash)`.
         #[cfg(debug_assertions)]
         let mut seen_transition_triples: HashSet<(usize, usize, usize)> = HashSet::new();
+
+        // Cascade-aware predecessor enumeration. When the abstraction has
+        // refined comparison-axiom prop vars, an operator with `hash_effect=0`
+        // on those vars can still transition between abstract states because
+        // the comparison bit is evaluated from the post-update numeric state
+        // (see `compute_distances_and_generating_ops`, which calls
+        // `enumerate_states_with_evaluated_comparisons_cached` to find all
+        // predecessors compatible with the operator's comparison preconditions).
+        // Mirroring that here ensures the transition system records the same
+        // edges Dijkstra walks; otherwise SCP's per-op saturated cost is
+        // undercounted on cascade-only transitions, the residual stays high,
+        // subsequent abstractions over-saturate the same operator, and the
+        // sum exceeds the optimal — inadmissibility (plant-watering/prob_4_1_2
+        // h=31 reproducer with `scp_online`).
+        let comparison_branching = !comparison_var_ids.is_empty();
+        let comparison_preconditions = if comparison_branching {
+            comparison_preconditions_by_operator(operators, &comparison_var_ids)
+        } else {
+            Vec::new()
+        };
+        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
+            ComparisonEnumerationCache::default();
+        let mut cached_comparison_state_count = 0usize;
+        let mut comparison_enumeration_scratch: Vec<usize> = Vec::new();
 
         for target_hash in 0..num_states {
             if target_hash % 64 == 0 {
@@ -1478,38 +1498,83 @@ impl DomainAbstractionFactory {
             match_tree.get_applicable_operator_ids(target_hash, &mut applicable_operator_ids);
             for &abstract_op_id in &applicable_operator_ids {
                 let op = &operators[abstract_op_id];
-                // Comparison bits live inside the operator's pre/eff facts, so
-                // `op.hash_effect` already carries the comparison-var deltas.
-                // The match-tree filter guarantees `target_hash` is consistent
-                // with `op`'s effect values (including comparison effects);
-                // applying `op.hash_effect` recovers the unique source hash.
                 let predecessor_i64 = target_hash as i64 + op.hash_effect as i64;
                 if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
-                let source_hash = predecessor_i64 as usize;
-                if source_hash == target_hash {
-                    continue;
-                }
-                #[cfg(debug_assertions)]
-                {
-                    let triple = (abstract_op_id, source_hash, target_hash);
-                    debug_assert!(
-                        seen_transition_triples.insert(triple),
-                        "duplicate AbstractTransition triple {:?}",
-                        triple
+                let base_predecessor = predecessor_i64 as usize;
+
+                // Without comparison branching the predecessor is unique.
+                // With comparison branching, the comparison var bits in the
+                // predecessor hash are wildcarded — enumerate every state hash
+                // whose comparison-axiom variables are consistent with the
+                // operator's comparison preconditions.
+                let push_source = |source_hash: usize,
+                                       transitions: &mut Vec<AbstractTransition>,
+                                       backward: &mut Vec<Vec<usize>>,
+                                       forward: &mut Vec<Vec<usize>>,
+                                       #[cfg(debug_assertions)] seen: &mut HashSet<(
+                    usize,
+                    usize,
+                    usize,
+                )>| {
+                    if source_hash == target_hash {
+                        return;
+                    }
+                    #[cfg(debug_assertions)]
+                    {
+                        let triple = (abstract_op_id, source_hash, target_hash);
+                        debug_assert!(
+                            seen.insert(triple),
+                            "duplicate AbstractTransition triple {:?}",
+                            triple
+                        );
+                    }
+                    let transition_id = transitions.len();
+                    transitions.push(AbstractTransition {
+                        transition_id,
+                        abstract_op_id,
+                        concrete_op_ids: op.concrete_op_ids.clone(),
+                        source_hash,
+                        target_hash,
+                    });
+                    backward[target_hash].push(transition_id);
+                    forward[source_hash].push(transition_id);
+                };
+
+                if comparison_branching {
+                    let possible_predecessors = self
+                        .enumerate_states_with_evaluated_comparisons_cached(
+                            base_predecessor,
+                            task,
+                            numeric_domain_sizes,
+                            hash_multipliers,
+                            &comparison_var_ids,
+                            &comparison_preconditions[abstract_op_id],
+                            &mut comparison_enumeration_cache,
+                            &mut cached_comparison_state_count,
+                            &mut comparison_enumeration_scratch,
+                        )?;
+                    for &source_hash in possible_predecessors.iter() {
+                        push_source(
+                            source_hash,
+                            &mut transitions,
+                            &mut backward,
+                            &mut forward,
+                            #[cfg(debug_assertions)]
+                            &mut seen_transition_triples,
+                        );
+                    }
+                } else {
+                    push_source(
+                        base_predecessor,
+                        &mut transitions,
+                        &mut backward,
+                        &mut forward,
+                        #[cfg(debug_assertions)]
+                        &mut seen_transition_triples,
                     );
                 }
-                let transition_id = transitions.len();
-                transitions.push(AbstractTransition {
-                    transition_id,
-                    abstract_op_id,
-                    concrete_op_ids: op.concrete_op_ids.clone(),
-                    source_hash,
-                    target_hash,
-                });
-                backward[target_hash].push(transition_id);
-                forward[source_hash].push(transition_id);
             }
         }
 
@@ -2077,6 +2142,7 @@ impl DomainAbstractionFactory {
         let mut saturated_costs = vec![f64::NEG_INFINITY; num_operators];
 
         let comparison_var_ids = self.comparison_var_ids();
+        let comparison_branching = !comparison_var_ids.is_empty();
         let match_tree = MatchTree::build(
             generator.domain_sizes(),
             generator.numeric_domain_sizes(),
@@ -2084,6 +2150,23 @@ impl DomainAbstractionFactory {
             operators,
             &comparison_var_ids,
         );
+        // Mirror `compute_distances_and_generating_ops`: when comparison-axiom
+        // vars are refined, an operator's predecessor set is enumerated via
+        // wildcard expansion on the comparison bits, not just the single
+        // `target + hash_effect` hash. Without this, cascade-only transitions
+        // (e.g. an op that flips a comparison-axiom prop var only via its
+        // effect on a numeric dependency) are missed during saturation, the
+        // residual stays inflated, subsequent abstractions over-saturate the
+        // same operator, and `sum_a h_a > h*` — inadmissibility.
+        let comparison_preconditions = if comparison_branching {
+            comparison_preconditions_by_operator(operators, &comparison_var_ids)
+        } else {
+            Vec::new()
+        };
+        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
+            ComparisonEnumerationCache::default();
+        let mut cached_comparison_state_count = 0usize;
+        let mut comparison_enumeration_scratch: Vec<usize> = Vec::new();
 
         let mut applicable_operator_ids = Vec::new();
         for target_hash in 0..num_states {
@@ -2095,25 +2178,46 @@ impl DomainAbstractionFactory {
             match_tree.get_applicable_operator_ids(target_hash, &mut applicable_operator_ids);
             for &abstract_op_id in &applicable_operator_ids {
                 let op = &operators[abstract_op_id];
-                // Comparison-axiom bits are baked into the operator's
-                // pre/eff/prev facts, so `op.hash_effect` already includes
-                // their delta. Source hash is fully determined.
                 let predecessor_i64 = target_hash as i64 + op.hash_effect as i64;
                 if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
-                let source_hash = predecessor_i64 as usize;
-                if table.generating_op_ids.get(source_hash).copied().flatten()
-                    == Some(abstract_op_id)
-                    && let Some(&src_h) = table.distances.get(source_hash)
-                    && src_h.is_finite()
-                {
-                    let needed = (src_h - target_h).max(0.0);
-                    for &op_id in &op.concrete_op_ids {
-                        if let Some(slot) = saturated_costs.get_mut(op_id) {
-                            *slot = slot.max(needed);
+                let base_predecessor = predecessor_i64 as usize;
+
+                let consider_source = |source_hash: usize,
+                                           saturated_costs: &mut [f64]| {
+                    if table.generating_op_ids.get(source_hash).copied().flatten()
+                        == Some(abstract_op_id)
+                        && let Some(&src_h) = table.distances.get(source_hash)
+                        && src_h.is_finite()
+                    {
+                        let needed = (src_h - target_h).max(0.0);
+                        for &op_id in &op.concrete_op_ids {
+                            if let Some(slot) = saturated_costs.get_mut(op_id) {
+                                *slot = slot.max(needed);
+                            }
                         }
                     }
+                };
+
+                if comparison_branching {
+                    let possible_predecessors = self
+                        .enumerate_states_with_evaluated_comparisons_cached(
+                            base_predecessor,
+                            task,
+                            generator.numeric_domain_sizes(),
+                            generator.hash_multipliers(),
+                            &comparison_var_ids,
+                            &comparison_preconditions[abstract_op_id],
+                            &mut comparison_enumeration_cache,
+                            &mut cached_comparison_state_count,
+                            &mut comparison_enumeration_scratch,
+                        )?;
+                    for &source_hash in possible_predecessors.iter() {
+                        consider_source(source_hash, &mut saturated_costs);
+                    }
+                } else {
+                    consider_source(base_predecessor, &mut saturated_costs);
                 }
             }
         }
