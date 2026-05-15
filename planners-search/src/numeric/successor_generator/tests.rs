@@ -59,7 +59,7 @@ fn get_root_task() -> NumericRootTask {
     let axioms = Vec::new();
     let comparison_axioms = Vec::new();
     let assignment_axioms = Vec::new();
-    let global_constraint = ExplicitFact { var: 0, value: 0 };
+    let global_constraint = ExplicitFact::new(0, 0);
     NumericRootTask::new(
         version,
         metric,

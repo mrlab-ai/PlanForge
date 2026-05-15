@@ -314,7 +314,7 @@ fn build_compiled_axiom_evaluator_data(
     for i in 0..numeric_task.axioms().len() {
         let axiom: &PropositionalAxiom = &numeric_task.axioms()[i];
         for condition in axiom.conditions().iter() {
-            axiom_literals[condition.var][condition.value]
+            axiom_literals[condition.var()][condition.value()]
                 .condition_of
                 .push(i);
         }

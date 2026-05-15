@@ -3445,7 +3445,7 @@ mod handcrafted_sailing_tests {
         }
 
         let goal_vars = (0..transformed_task.get_num_goals())
-            .map(|goal_id| transformed_task.get_goal_fact(goal_id).var)
+            .map(|goal_id| transformed_task.get_goal_fact(goal_id).var())
             .collect::<HashSet<_>>();
         let domain_mapping = (0..transformed_task.get_num_variables())
             .map(|var_id| {

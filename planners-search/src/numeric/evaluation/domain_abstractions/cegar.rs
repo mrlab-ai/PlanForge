@@ -773,8 +773,8 @@ fn try_refine_from_flaw(
             Ok(None)
         }
         Flaw::Propositional(pf) => {
-            let var_id = pf.fact.var;
-            let value = pf.fact.value;
+            let var_id = pf.fact.var();
+            let value = pf.fact.value();
 
             // Bounds and conversion checks: these should hold in normal operation;
             // surface violations during debug builds but keep release behavior.
@@ -943,13 +943,13 @@ fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
     let mut goals = Vec::with_capacity(num_goals);
     for goal_idx in 0..num_goals {
         let goal = task.get_goal_fact(goal_idx);
-        if let Some(&axiom_idx) = goal_axiom_map.get(&goal.var) {
+        if let Some(&axiom_idx) = goal_axiom_map.get(&goal.var()) {
             let axiom = &task.axioms()[axiom_idx];
             for condition in axiom.conditions() {
-                goals.push(ExplicitFact::new(condition.var, condition.value));
+                goals.push(ExplicitFact::new(condition.var(), condition.value()));
             }
         } else {
-            goals.push(ExplicitFact::new(goal.var, goal.value));
+            goals.push(ExplicitFact::new(goal.var(), goal.value()));
         }
     }
     goals.sort_unstable();
@@ -1067,7 +1067,7 @@ fn apply_initial_goal_splits(
 ) {
     let goal_values: HashMap<usize, usize> = goal_variable_values(task)
         .into_iter()
-        .map(|v| (v.var, v.value))
+        .map(|v| (v.var(), v.value()))
         .collect();
     let num_prop_vars = task.variables().len();
     let mut candidate_var_ids: Vec<usize> = config
@@ -1171,7 +1171,7 @@ fn apply_initial_goal_splits(
     if let Ok(index) = ComparisonAxiomIndex::from_task(task) {
         let init_numeric = task.get_initial_numeric_state_values();
         for fact in goal_variable_values(task) {
-            let Some(tree) = index.comparison_tree(fact.var) else {
+            let Some(tree) = index.comparison_tree(fact.var()) else {
                 continue;
             };
             for numeric_var_id in tree.regular_numeric_var_dependencies(task) {

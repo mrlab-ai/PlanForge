@@ -20,7 +20,6 @@ use planners_sas::numeric::state_registry::{
 };
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
-use std::collections::VecDeque;
 use std::env;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info};

@@ -165,8 +165,8 @@ pub(crate) fn debug_print_flaws(flaws: &[Flaw]) {
             Flaw::Propositional(pf) => {
                 debug!(
                     "  {i}: PropFlaw fact=(var={}, val={}) deps={}",
-                    pf.fact.var,
-                    pf.fact.value,
+                    pf.fact.var(),
+                    pf.fact.value(),
                     pf.dependent_numeric_flaws.len()
                 );
                 for (j, nf) in pf.dependent_numeric_flaws.iter().enumerate() {
@@ -506,8 +506,8 @@ pub(crate) fn get_initial_state(
 }
 
 pub(crate) fn fact_is_hold(fact: &ExplicitFact, packer: &IntDoublePacker, buffer: &[u64]) -> bool {
-    let current = packer.get(buffer, fact.var) as usize;
-    current == fact.value
+    let current = packer.get(buffer, fact.var()) as usize;
+    current == fact.value()
 }
 
 pub(crate) fn debug_print_wildcard_plan(
@@ -746,19 +746,19 @@ fn trace_variable_scope(
                 continue;
             };
             for pre in op.preconditions().iter() {
-                prop_vars.insert(pre.var);
+                prop_vars.insert(pre.var());
             }
             for eff in op.effects().iter() {
                 prop_vars.insert(eff.var_id());
                 for c in eff.conditions().iter() {
-                    prop_vars.insert(c.var);
+                    prop_vars.insert(c.var());
                 }
             }
             for neff in op.assignment_effects().iter() {
                 num_vars.insert(neff.var_id());
                 num_vars.insert(neff.affected_var_id());
                 for c in neff.conditions().iter() {
-                    prop_vars.insert(c.var);
+                    prop_vars.insert(c.var());
                 }
             }
         }

@@ -84,13 +84,13 @@ impl<'a> FlawSearchState<'a> {
 
         for goal_id in 0..task.get_num_goals() {
             let goal_fact = task.get_goal_fact(goal_id);
-            let goal_var = goal_fact.var;
+            let goal_var = goal_fact.var();
             let goal_is_derived = task.axioms().iter().any(|ax| ax.var_id() == goal_var);
             if goal_is_derived {
                 derived_goal_vars.insert(goal_var);
                 continue;
             }
-            state.set_prop_value(goal_var, goal_fact.value);
+            state.set_prop_value(goal_var, goal_fact.value());
         }
 
         // Reconstruct (potentially hidden) goal conditions from propositional goal axioms.
@@ -103,7 +103,7 @@ impl<'a> FlawSearchState<'a> {
             }
             for pre in ax.conditions().iter() {
                 if seen.insert(pre.clone()) {
-                    state.set_prop_value(pre.var, pre.value);
+                    state.set_prop_value(pre.var(), pre.value());
                 }
             }
         }
@@ -129,7 +129,7 @@ impl<'a> FlawSearchState<'a> {
     }
 
     pub fn fact_is_hold(&self, fact: &ExplicitFact) -> bool {
-        self.value_is_hold_for_var(fact.var, fact.value)
+        self.value_is_hold_for_var(fact.var(), fact.value())
     }
 
     pub fn value_is_hold_for_var(&self, var: usize, value: usize) -> bool {
@@ -335,8 +335,8 @@ impl<'a> FlawSearchState<'a> {
         }
         // Propositional preconditions.
         for cond in op.preconditions() {
-            self.concrete_prop[cond.var] = Some(cond.value);
-            self.abstract_prop[cond.var] = Some(self.domain_mapping[cond.var][cond.value]);
+            self.concrete_prop[cond.var()] = Some(cond.value());
+            self.abstract_prop[cond.var()] = Some(self.domain_mapping[cond.var()][cond.value()]);
         }
 
         // Numeric assignment effects (conditional effects not supported).

@@ -167,7 +167,7 @@ impl MixedCausalGraph {
     fn compute_goal_distances(&mut self, task: &dyn AbstractNumericTask) {
         let mut queue = VecDeque::new();
         for goal_index in 0..task.get_num_goals() {
-            let goal_var = CausalGraphVariable::Regular(task.get_goal_fact(goal_index).var);
+            let goal_var = CausalGraphVariable::Regular(task.get_goal_fact(goal_index).var());
             if self.goal_distances.insert(goal_var, 0).is_none() {
                 queue.push_back(goal_var);
             }
@@ -236,14 +236,14 @@ fn cpp_operator_precondition_sources(
 ) -> Vec<CausalGraphVariable> {
     let mut sources = BTreeSet::new();
     for fact in preconditions {
-        if let Some(comparison_axiom_id) = comparison_axiom_id_for_var(task, fact.var) {
+        if let Some(comparison_axiom_id) = comparison_axiom_id_for_var(task, fact.var()) {
             if let Some(numeric_var_id) =
                 cpp_regular_numeric_condition_var_id(task, numeric_support, comparison_axiom_id)
             {
                 sources.insert(CausalGraphVariable::Numeric(numeric_var_id));
             }
-        } else if is_cpp_regular_propositional_var(task, fact.var) {
-            sources.insert(CausalGraphVariable::Regular(fact.var));
+        } else if is_cpp_regular_propositional_var(task, fact.var()) {
+            sources.insert(CausalGraphVariable::Regular(fact.var()));
         }
     }
     sources.into_iter().collect()

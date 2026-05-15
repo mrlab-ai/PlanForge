@@ -592,8 +592,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         for goal_id in 0..task.get_num_goals() {
             let goal = task.get_goal_fact(goal_id);
             seeds.push(InitialSeedSplit::Propositional {
-                var_id: goal.var,
-                value: goal.value,
+                var_id: goal.var(),
+                value: goal.value(),
             });
 
             for op in task
@@ -634,8 +634,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
 fn operator_has_unconditional_effect(op: &Operator, fact: &ExplicitFact) -> bool {
     op.effects().iter().any(|effect| {
         effect.conditions().is_empty()
-            && effect.var_id() == fact.var
-            && effect.value() == fact.value
+            && effect.var_id() == fact.var()
+            && effect.value() == fact.value()
     })
 }
 
@@ -811,7 +811,7 @@ fn target_centered_requirements_for_comparison_fact(
         }
     }
 
-    let Some(tree) = comparison_index.comparison_tree(fact.var) else {
+    let Some(tree) = comparison_index.comparison_tree(fact.var()) else {
         return Vec::new();
     };
     let Ok(left) = linearize_numeric_var(task, tree.left_numeric_var_id) else {
@@ -820,7 +820,7 @@ fn target_centered_requirements_for_comparison_fact(
     let Ok(right) = linearize_numeric_var(task, tree.right_numeric_var_id) else {
         return Vec::new();
     };
-    let Some(required_op) = required_comparison_op(tree.op, fact.value) else {
+    let Some(required_op) = required_comparison_op(tree.op, fact.value()) else {
         return Vec::new();
     };
 
@@ -960,8 +960,8 @@ fn compare_goals_for_collection(
     let right_distance = estimate_goal_distance_from_initial(task, right);
     right_distance
         .total_cmp(&left_distance)
-        .then_with(|| left.var.cmp(&right.var))
-        .then_with(|| left.value.cmp(&right.value))
+        .then_with(|| left.var().cmp(&right.var()))
+        .then_with(|| left.value().cmp(&right.value()))
 }
 
 fn estimate_goal_distance_from_initial(task: &dyn AbstractNumericTask, goal: &ExplicitFact) -> f64 {
@@ -1184,19 +1184,19 @@ fn goal_seed_splits(task: &dyn AbstractNumericTask) -> Vec<InitialSeedSplit> {
     let mut seeds = Vec::new();
     for goal_id in 0..task.get_num_goals() {
         let goal = task.get_goal_fact(goal_id);
-        if let Some(conditions) = goal_axiom_map.get(&goal.var) {
+        if let Some(conditions) = goal_axiom_map.get(&goal.var()) {
             seeds.extend(
                 conditions
                     .iter()
                     .map(|fact| InitialSeedSplit::Propositional {
-                        var_id: fact.var,
-                        value: fact.value,
+                        var_id: fact.var(),
+                        value: fact.value(),
                     }),
             );
         } else {
             seeds.push(InitialSeedSplit::Propositional {
-                var_id: goal.var,
-                value: goal.value,
+                var_id: goal.var(),
+                value: goal.value(),
             });
         }
     }
@@ -1233,7 +1233,7 @@ fn collect_goal_related_propositional_vars(task: &dyn AbstractNumericTask) -> Ha
         let condition_var_ids = axiom
             .conditions()
             .iter()
-            .map(|condition| condition.var)
+            .map(|condition| condition.var())
             .collect::<Vec<_>>();
         goal_axiom_map.insert(affected_var_id, condition_var_ids);
     }
@@ -1241,7 +1241,7 @@ fn collect_goal_related_propositional_vars(task: &dyn AbstractNumericTask) -> Ha
     let logic_axiom_effect_vars = collect_logic_axiom_effect_vars(task);
     let mut goal_related: HashSet<usize> = HashSet::new();
     for goal_id in 0..task.get_num_goals() {
-        let goal_var_id = task.get_goal_fact(goal_id).var;
+        let goal_var_id = task.get_goal_fact(goal_id).var();
         if let Some(preconditions) = goal_axiom_map.get(&goal_var_id) {
             goal_related.extend(preconditions.iter().copied());
         } else if !logic_axiom_effect_vars.contains(&goal_var_id) {

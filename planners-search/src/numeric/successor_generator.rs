@@ -196,7 +196,7 @@ impl<'a> TreeBuilder<'a> {
         for operator in operators.iter() {
             let mut condition: Vec<&ExplicitFact> = operator.preconditions().iter().collect();
             // PARITY(numeric-fd): sort conditions by variable id (only).
-            condition.sort_unstable_by_key(|f| f.var);
+            condition.sort_unstable_by_key(|f| f.var());
             conditions.push(condition);
             next_condition_by_operator.push(0);
         }
@@ -268,16 +268,16 @@ impl<'a> TreeBuilder<'a> {
                 } else {
                     all_ops_immediate = false;
                     let fact = &self.conditions[op_idx][condition_index];
-                    if fact.var == branch_var_id {
+                    if fact.var() == branch_var_id {
                         var_interesting = true;
                         let mut new_index = condition_index;
                         while new_index < self.conditions[op_idx].len()
-                            && self.conditions[op_idx][new_index].var == branch_var_id
+                            && self.conditions[op_idx][new_index].var() == branch_var_id
                         {
                             new_index += 1;
                         }
                         self.next_condition_by_operator[op_idx] = new_index;
-                        operators_for_value[fact.value].push_back(op_id);
+                        operators_for_value[fact.value()].push_back(op_id);
                     } else {
                         default_operators.push_back(op_id);
                     }

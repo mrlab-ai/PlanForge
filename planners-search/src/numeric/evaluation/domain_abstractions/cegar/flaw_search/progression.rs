@@ -457,7 +457,7 @@ pub fn get_goal_flaws(
     let mut derived_goal_vars: BTreeSet<usize> = BTreeSet::new();
     for goal_id in 0..num_goals {
         let goal_fact = task.get_goal_fact(goal_id);
-        let goal_var = goal_fact.var;
+        let goal_var = goal_fact.var();
         let goal_is_derived = task.axioms().iter().any(|ax| ax.var_id() == goal_var);
         if goal_is_derived {
             derived_goal_vars.insert(goal_var);
@@ -517,14 +517,14 @@ fn build_prop_flaw_for_fact(
     step: usize,
     direction: SplitDirection,
 ) -> Flaw {
-    let dependent_numeric_flaws = if comparison_index.is_comparison_axiom_variable(fact.var) {
+    let dependent_numeric_flaws = if comparison_index.is_comparison_axiom_variable(fact.var()) {
         match direction {
             SplitDirection::Forward | SplitDirection::ForwardPartitionDeviation => {
                 dependent_numeric_flaws_for_comparison_prop_var(
                     task,
                     partitions,
                     comparison_index,
-                    fact.var,
+                    fact.var(),
                     numeric_state,
                     step,
                 )

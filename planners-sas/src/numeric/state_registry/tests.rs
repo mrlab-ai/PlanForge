@@ -89,7 +89,7 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact { var: 0, value: 0 },
+        ExplicitFact::new(0, 0),
     );
 
     let state_packer = IntDoublePacker::from_task(&task);
@@ -167,7 +167,7 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact { var: 0, value: 0 },
+        ExplicitFact::new(0, 0),
     );
 
     let state_packer = IntDoublePacker::from_task(&task);

@@ -109,7 +109,7 @@ fn target_centered_linear_comparison_flaws(
     numeric_state: &[f64],
     step: usize,
 ) -> Vec<NumericFlaw> {
-    let Some(tree) = comparison_index.comparison_tree(fact.var) else {
+    let Some(tree) = comparison_index.comparison_tree(fact.var()) else {
         return Vec::new();
     };
     let Ok(left) = linearize_numeric_var(task, tree.left_numeric_var_id) else {
@@ -119,7 +119,7 @@ fn target_centered_linear_comparison_flaws(
         return Vec::new();
     };
     let expression = left.subtract(&right);
-    let Some(required_op) = required_comparison_op(tree.op, fact.value) else {
+    let Some(required_op) = required_comparison_op(tree.op, fact.value()) else {
         return Vec::new();
     };
 

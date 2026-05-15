@@ -82,7 +82,7 @@ impl VariableOrderFinder {
         let mut is_goal_variable = vec![false; task.variables().len()];
         for goal_index in 0..task.get_num_goals() {
             let goal = task.get_goal_fact(goal_index);
-            is_goal_variable[goal.var] = true;
+            is_goal_variable[goal.var()] = true;
         }
 
         let helper_space_len = numeric_support.helper_space_len(task);
@@ -211,7 +211,7 @@ impl VariableOrderFinder {
 
 fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) -> Vec<usize> {
     let mut goal_related: Vec<usize> = (0..task.get_num_goals())
-        .map(|goal_id| task.get_goal_fact(goal_id).var)
+        .map(|goal_id| task.get_goal_fact(goal_id).var())
         .collect();
     goal_related.sort_unstable();
     goal_related.dedup();
@@ -222,8 +222,8 @@ fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) ->
             let affected_var_id = axiom.var_id();
             if goal_related.binary_search(&affected_var_id).is_ok() {
                 for condition in axiom.conditions() {
-                    if goal_related.binary_search(&condition.var).is_err() {
-                        goal_related.push(condition.var);
+                    if goal_related.binary_search(&condition.var()).is_err() {
+                        goal_related.push(condition.var());
                         changed = true;
                     }
                 }

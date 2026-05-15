@@ -397,7 +397,7 @@ fn implicit_comparison_transition_requires_definite_change_on_both_sides() {
 
     let changed_cmp_ops: Vec<&AbstractOperator> = abs_ops
         .iter()
-        .filter(|op| op.regression_preconditions.iter().any(|fact| fact.var == 0))
+        .filter(|op| op.regression_preconditions.iter().any(|fact| fact.var() == 0))
         .collect();
     assert_eq!(changed_cmp_ops.len(), 1);
     assert_eq!(
@@ -701,8 +701,8 @@ fn derived_numeric_partitions_are_not_materialized_in_transitions() {
                 .contains(&ExplicitFact::new(0, 1))
     }));
     assert!(transitions.iter().all(|trans| {
-        trans.source_partition_facts.iter().all(|fact| fact.var < 3)
-            && trans.target_partition_facts.iter().all(|fact| fact.var < 3)
+        trans.source_partition_facts.iter().all(|fact| fact.var() < 3)
+            && trans.target_partition_facts.iter().all(|fact| fact.var() < 3)
             && !trans.changed_numeric_vars.contains(&3)
             && !trans.changed_numeric_vars.contains(&4)
     }));
@@ -959,7 +959,7 @@ fn assignment_axiom_chain_can_propagate_through_changed_var_and_constant() {
     assert!(
         abs_ops
             .iter()
-            .any(|op| op.regression_preconditions.iter().any(|fact| fact.var == 0)),
+            .any(|op| op.regression_preconditions.iter().any(|fact| fact.var() == 0)),
         "abs_ops={abs_ops:#?}"
     );
 }
@@ -1135,7 +1135,7 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
                 .source_partition_facts
                 .iter()
                 .chain(trans.target_partition_facts.iter())
-                .all(|fact| fact.var != 0)
+                .all(|fact| fact.var() != 0)
         }),
         "transitions={transitions:#?}"
     );

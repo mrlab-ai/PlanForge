@@ -79,9 +79,9 @@ fn comparison_enumeration_signature(
     h ^= fixed_comparisons.len() as u64;
     h = h.wrapping_mul(FNV_PRIME);
     for fact in fixed_comparisons {
-        h ^= fact.var as u64;
+        h ^= fact.var() as u64;
         h = h.wrapping_mul(FNV_PRIME);
-        h ^= fact.value as u64;
+        h ^= fact.value() as u64;
         h = h.wrapping_mul(FNV_PRIME);
     }
 
@@ -143,9 +143,9 @@ fn domain_size_for_var(
 
 fn fact_value_for_var(facts: &[ExplicitFact], var: usize) -> Option<usize> {
     facts
-        .binary_search_by_key(&var, |fact| fact.var)
+        .binary_search_by_key(&var, |fact| fact.var())
         .ok()
-        .map(|index| facts[index].value)
+        .map(|index| facts[index].value())
 }
 
 impl MatchTree {
@@ -160,12 +160,12 @@ impl MatchTree {
         let mut var_counts = vec![0usize; total_vars];
         for op in operators {
             for f in op.regression_preconditions.iter() {
-                if f.var >= total_vars {
+                if f.var() >= total_vars {
                     continue;
                 }
-                let domain_size = domain_size_for_var(domain_sizes, numeric_domain_sizes, f.var);
+                let domain_size = domain_size_for_var(domain_sizes, numeric_domain_sizes, f.var());
                 if domain_size > 1 {
-                    var_counts[f.var] += 1;
+                    var_counts[f.var()] += 1;
                 }
             }
         }
@@ -1792,11 +1792,11 @@ impl DomainAbstractionFactory {
         let mut numeric = vec![Interval::unbounded(); task.numeric_variables().len()];
 
         for fact in facts {
-            if fact.var < num_props {
-                propositions[fact.var] =
-                    self.concrete_values_for_abstract_value(fact.var, fact.value)?;
+            if fact.var() < num_props {
+                propositions[fact.var()] =
+                    self.concrete_values_for_abstract_value(fact.var(), fact.value())?;
             } else {
-                let numeric_var_id = fact.var - num_props;
+                let numeric_var_id = fact.var() - num_props;
                 ensure!(
                     numeric_var_id < numeric.len(),
                     "abstract-operator footprint fact references numeric var {numeric_var_id}, but task has {} numeric vars",
@@ -1804,11 +1804,11 @@ impl DomainAbstractionFactory {
                 );
                 numeric[numeric_var_id] = self
                     .partitions
-                    .partition_interval(numeric_var_id, fact.value)
+                    .partition_interval(numeric_var_id, fact.value())
                     .with_context(|| {
                         format!(
                             "missing interval for numeric var {numeric_var_id} partition {}",
-                            fact.value
+                            fact.value()
                         )
                     })?;
             }
@@ -2258,36 +2258,36 @@ impl DomainAbstractionFactory {
         let mut out: Vec<ExplicitFact> = Vec::new();
         for i in 0..task.get_num_goals() {
             let g = task.get_goal_fact(i);
-            let var = g.var;
+            let var = g.var();
             if let Some(&ax_idx) = goal_axiom_map.get(&var) {
                 let ax = &task.axioms()[ax_idx];
                 for cond in ax.conditions() {
-                    let v = cond.var;
+                    let v = cond.var();
                     if self.domain_sizes.get(v).copied().unwrap_or(1) <= 1 {
                         continue;
                     }
-                    let val = cond.value;
+                    let val = cond.value();
                     let mapped = self
                         .domain_mapping
                         .get(v)
                         .and_then(|m| m.get(val))
                         .copied()
-                        .unwrap_or(cond.value);
-                    out.push(ExplicitFact::new(cond.var, mapped));
+                        .unwrap_or(cond.value());
+                    out.push(ExplicitFact::new(cond.var(), mapped));
                 }
             } else {
-                let v = g.var;
+                let v = g.var();
                 if self.domain_sizes.get(v).copied().unwrap_or(1) <= 1 {
                     continue;
                 }
-                let val = g.value;
+                let val = g.value();
                 let mapped = self
                     .domain_mapping
                     .get(v)
                     .and_then(|m| m.get(val))
                     .copied()
-                    .unwrap_or(g.value);
-                out.push(ExplicitFact::new(g.var, mapped));
+                    .unwrap_or(g.value());
+                out.push(ExplicitFact::new(g.var(), mapped));
             }
         }
 
@@ -2303,8 +2303,8 @@ impl DomainAbstractionFactory {
     ) -> bool {
         let num_props = self.domain_sizes.len();
         for g in goals {
-            let var = g.var;
-            let expected = g.value;
+            let var = g.var();
+            let expected = g.value();
             let mult = hash_multipliers[var];
             let state = state_hash;
             let dom_size = if var < num_props {
@@ -2415,8 +2415,8 @@ impl DomainAbstractionFactory {
             let cur = (out / mult) % dom;
             let target_abs = if let Some(fixed_value) = fixed_comparisons
                 .iter()
-                .find(|fact| fact.var == var_id)
-                .map(|fact| fact.value)
+                .find(|fact| fact.var() == var_id)
+                .map(|fact| fact.value())
             {
                 ensure!(
                     fixed_value < dom,
@@ -2489,7 +2489,7 @@ impl DomainAbstractionFactory {
         // per-call `HashMap<usize, usize>` (with default SipHash + heap alloc) with
         // a stack-friendly slice scan.
         let is_fixed_var =
-            |var_id: usize| -> bool { fixed_comparisons.iter().any(|f| f.var == var_id) };
+            |var_id: usize| -> bool { fixed_comparisons.iter().any(|f| f.var() == var_id) };
         let is_evaluated_var = |var_id: usize| -> bool { comparison_var_ids.contains(&var_id) };
 
         // Build the numeric intervals for this abstract state ONCE, then
@@ -3347,7 +3347,7 @@ fn get_comparison_preconditions(
 ) -> Vec<ExplicitFact> {
     let mut out: Vec<ExplicitFact> = Vec::new();
     for f in &op.preconditions {
-        if comparison_var_ids.contains(&f.var) && f.value != COMPARISON_UNKNOWN_VAL {
+        if comparison_var_ids.contains(&f.var()) && f.value() != COMPARISON_UNKNOWN_VAL {
             out.push(f.clone());
         }
     }
