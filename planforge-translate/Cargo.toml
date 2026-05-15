@@ -1,0 +1,11 @@
+[package]
+name = "planforge-translate"
+version = "0.1.0"
+edition = "2024"
+license = "LGPL-3.0"
+
+[dependencies]
+tracing = "0.1"
+nom = "7"
+ordered-float = "5.1.0"
+itertools = "0.13"

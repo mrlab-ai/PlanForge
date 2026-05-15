@@ -6,10 +6,10 @@ edition = "2024"
 license = "GPL-3.0"
 
 [dependencies]
-planners-preprocess = { path = "../planners-preprocess" }
-planners-sas = { path = "../planners-sas" }
-planners-search = { path = "../planners-search" }
-planners-translate = { path = "../planners-translate" }
-planners-translator = { path = "../planners-translator" }
+planforge-preprocess = { path = "../planforge-preprocess" }
+planforge-sas = { path = "../planforge-sas" }
+planforge-search = { path = "../planforge-search" }
+planforge-translate = { path = "../planforge-translate" }
+planforge-translator = { path = "../planforge-translator" }
 anyhow = "1"
 serde_json = "1"

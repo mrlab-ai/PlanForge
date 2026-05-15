@@ -1,250 +1,86 @@
-# Numeric PlanneRS
-
-<pre>
-                ....... ...:.
-          .......@*#@...+#=#@..
-        ...@@%::-======-@##*@.
-    ....+@---=====:---====%#@-----........
-    ..@=*+========%@@*=====:@--.....----..
-    @*******=======+*=======:@..:----------.....
-  ..@**%@#**================-:@---------------..
-  ..@*******===============-==%@*------------:..
-  . @*#*****===================:@---------.........
-  ...*@******==============-====:@+---.........:++:..
-  ...*@@@@@*=================:====%@%......=+++++++:..
-  ....%@@@@@@@++++*+++=======-======:@@++++++++++++..
-    ...-----#*++++++++=============-===::=@++++++++...
-    ..:----:@+++++++=======================:@#+=......
-    ..:.....@....@+=======+....%-........:%%=:@....*##
-      .....#.  ..@==+===@.....%-............@=%%#####..
-    . ..-++*.  ...:*+%=%.   ..@@@@@@@@%+.....#=*%####.
-    ..++++++@...    .#@...   ..%======@#==@....-=@+... .
-    ..++++++@..*.@  ......-. ..%====@==-==%....===@
-    ..:++++++. .%@#..  ..@+....##****##*......@===@.*.
-    ..++++++   .@==....#=+..  ..............#===+@#*.
-      .+++++   .@#*+@:#*=+..     .@@@%....@====*+@#.
-      ..++++.  .@#@**+****..      @**=@.. ..=+++*%..
-      ...:...  .@%:*@@#**#..      %@++**.. ..@++@.
-          ..@....@@#@@#@**#........%*@%+++@....-@..
-      ..:@@@#%##@@@@@+%*#**@@@#*%%#%***##++++@@@@@..
-        ......+*%@@@@@@@@@@@@@@@@@@@@@@@@@#*-.. ..
-                ..   .....    ..  .        ........
+# planforge
 
-</pre>
+A grounded numeric planner written in Rust. Accepts PDDL or pre-translated SAS+ input and produces a sequential plan when one exists within the configured resource budget.
 
-[![Rust](https://img.shields.io/badge/rust-stable-brightgreen.svg)](https://www.rust-lang.org/)
+## Status
 
-A high-performance automated planning library written in Rust, designed as a modern replacement for Fast Downward with enhanced support for numeric planning.
+Production-quality on the admissible search and heuristic paths (A\* with blind, lmcutnumeric, pattern databases, canonical and SCP-based domain abstractions). Greedy best-first search and an FF-style relaxed-plan heuristic with Metric-FF monotonic numeric relaxation are also available. Preferred-operator integration is still planned.
 
-## 🚀 Features
+## Input formats
 
-### Current Implementation
+- **PDDL** — domain and problem files. The translator and preprocessor are invoked internally; intermediate SAS+ output is not exposed unless requested.
+- **SAS+** — pre-translated tasks (one positional argument). Useful for benchmarking, where the translator is run once and the search is run repeatedly.
 
-- ✅ **SAS+ Parser**: Complete parser for SAS+ files (classical and numeric)
-- ✅ **State Registry**: Efficient state management with deduplication
-- ✅ **Axiom Evaluation**: Support for propositional and arithmetic axioms
-- ✅ **Successor Generation**: Grounded successor generation with operator applicability
-- ✅ **Per-State Information**: Generic storage for associating data with states
-- ✅ **Numeric Planning**: Full support for numeric variables and operations
+## Heuristics
 
-### 🔧 Architecture
+- **Pattern databases** — projection-based goal-distance tables over selected variable subsets.
+- **Domain abstractions** — CEGAR-built abstractions with comparison-axiom-aware refinement. Multiple combination strategies are available:
+  - *Canonical* (max over compatible additive subsets).
+  - *Saturated cost partitioning* (SCP), including a fill-SCP variant that combines per-label SCP with LM-cut over residual costs.
+- **LM-cut** — numeric landmark-cut heuristic, usable standalone or as a residual-cost component inside SCP.
+- **FF** — Hoffmann/Nebel relaxed-plan heuristic with Metric-FF style monotonic numeric relaxation. Each numeric variable tracks a `(max_reachable, min_reachable)` envelope through the relaxed planning graph; comparison-axiom facts become available when the envelope makes them satisfiable. Non-admissible in general; useful as a fast guide for greedy search and competitive with blind on small numeric instances.
 
-- **Modular Design**: Clean separation between parsing, search, and utilities
-- **Memory Efficient**: Uses segmented vectors and smart caching
-- **Type Safe**: Leverages Rust's type system for compile-time guarantees
-- **Zero-Copy**: Minimal data copying with efficient reference management
+## Search
 
-## 🚧 Usage
+- **A\*** — admissible best-first search (`f = g + h`). The production path for guaranteed-optimal planning under an admissible heuristic.
+- **Greedy best-first search (GBFS)** — non-admissible best-first search (`f = h`). Often finds plans far faster than A\* with the same heuristic, at the cost of optimality.
+- **FF-style preferred operators** — planned.
 
-### Command Line Interface
+## Building
 
-```bash
-# Parse and analyze a SAS+ file
-cargo run --bin planners path/to/problem.sas
+Stable Rust, no nightly features:
 
-# Run with debug information
-cargo run --bin planners --log-level=debug path/to/problem.sas
+    cargo build --release
 
-# Run tests
-cargo test
+The primary binary is `target/release/planforge`. Smaller-scope binaries (`planforge-translator`, `planforge-preprocessor`, `planforge-searcher`) are built alongside it and are useful for staging.
 
-# Run specific test with output
-cargo test test_name -- --nocapture
-```
+## Running
 
-### Profiling
+Single-call PDDL pipeline:
 
-Enable debug function names in the `release` profile of Cargo.toml by adding the following line
+    planforge --search 'astar(canonical_domain_abstractions(...))' \
+              --max-time 30m --max-memory 8G \
+              domain.pddl problem.pddl
 
-```toml
-debug = "line-tables-only"
-```
+Pre-translated SAS+:
 
-**Run all command-lines to profile with the `--internal-run` argument**.
+    planforge --search 'astar(lmcutnumeric())' \
+              --max-time 30m --max-memory 8G \
+              task.sas
 
-```bash
-# Profile with flamegraph (requires cargo-flamegraph: cargo install flamegraph or the devenv profile)
-cargo flamegraph --bin planners -- <sas file here>
+Common options:
 
-# This will generate a flamegraph.svg file showing performance hotspots
-# Open flamegraph.svg in a web browser to view the interactive flame graph
+- `--search SPEC` — search algorithm with a heuristic configuration. Examples:
+  - `astar(blind())`
+  - `astar(lmcutnumeric())`
+  - `astar(canonical_domain_abstractions(...))`
+  - `astar(fillSCP(...))`
+  - `astar(ff())`
+  - `gbfs(ff())` — fast non-admissible search
+  - `gbfs(lmcutnumeric())`
+- `--max-time DURATION` — wall-clock budget (`30m`, `1h`, `45s`).
+- `--max-memory SIZE` — address-space cap (`8G`, `4096M`).
 
-# Alternatively, you use samply to get interactive analysis (already in the devenv profile).
-# The following command will run the profiling and open it in Firefox Profiler in the
-# default browser with a local server opened
-samply record command
+## Layout
 
-# Or you can save it in a file with the following command
-samply record --save-only -o file.json -- command
+Workspace crates:
 
-# And load it with the following one (unfortunately loading the json file
-# directly in Firefox Profiler does not get the symbol names).
-samply load file.json
+- `planforge` — top-level entry point and CLI.
+- `planforge-translator`, `planforge-preprocessor`, `planforge-searcher` — staged binaries for translator-only, preprocessor-only, and search-only invocations.
+- `planforge-translate`, `planforge-preprocess`, `planforge-search`, `planforge-sas` — the corresponding libraries.
+- `planforge-cli-utils` — shared CLI plumbing (exit codes, resource limits, allocator).
+- `tests` — integration tests.
 
+## Testing
 
-# Alternatively, you can use callgrind (but much slower):
-valgrind --tool=callgrind --callgrind-out-file=file.out command
+    cargo test
 
-# And then open the output file with kcachegrind
-kcachegrind file.out
-```
+Integration tests cover translator output, preprocessor invariants, state-registry deduplication, heuristic admissibility, and end-to-end planning on representative tasks.
 
-### Library Usage (Planned)
+## Resource limits
 
-```rust
-use numeric_planners::{parse_sas, StateRegistry, SearchAlgorithm};
+`--max-memory` sets the process's `RLIMIT_AS`. Heuristic construction additionally consults a polled RSS limit derived from `--max-memory` so the planner can stop adding abstractions cleanly before any external (slurm, cgroup) limit fires. Search-loop polling is not yet wired through; long A\* runs near the memory ceiling can still be killed by external supervisors.
 
-// Parse a planning problem
-let task = parse_sas("problem.sas")?;
+## License
 
-// Set up state management
-let mut registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
-let initial_state = registry.get_initial_state();
-
-// Run planning algorithm
-let solution = SearchAlgorithm::new().solve(&task, initial_state)?;
-```
-
-## 🎯 Roadmap
-
-### Phase 1: Core Infrastructure ✅
-
-- [x] SAS+ parsing with numeric extensions
-- [x] State representation and management
-- [x] Basic successor generation
-- [x] Axiom evaluation system
-
-### Phase 2: Search Algorithms 🔄
-
-- [x] A* search implementation
-- [ ] Greedy best-first search
-- [ ] Lazy search with deferred evaluation
-- [ ] Multi-threaded search algorithms
-
-### Phase 3: Heuristics 📋
-
-- [ ] Landmark-based heuristics
-- [x] Pattern database heuristics
-- [ ] Numeric planning heuristics (h^max, h^add)
-- [ ] Learning-based heuristics
-
-### Phase 4: Advanced Features 📋
-
-- [ ] PDDL parsing support
-- [ ] Python bindings via PyO3
-- [ ] Task transformations and preprocessing
-- [ ] Lifted planning support
-- [ ] Goal estimation and sampling
-
-### Phase 5: ML Integration 📋
-
-- [ ] Candle tensor library integration
-- [ ] State space sampling for learning
-- [ ] Serialization for training data
-- [ ] Neural network heuristic integration
-
-## 🔬 Technical Details
-
-### Performance Optimizations
-
-- **Segmented Vectors**: Memory-efficient storage for large datasets
-- **State Packing**: Compact representation using bit manipulation
-- **Caching**: Smart caching of frequently accessed data
-- **Zero-Allocation**: Minimal heap allocations in hot paths
-
-### Numeric Planning Support
-
-- **Variable Types**: Regular, constant, derived, and cost variables
-- **Operations**: Addition, subtraction, multiplication, division
-- **Axioms**: Arithmetic and comparison axioms
-- **Assignment Effects**: Complex numeric state updates
-
-## 🧪 Testing
-
-The project includes comprehensive tests covering:
-
-```bash
-# Run all tests
-cargo test
-
-# Run with output
-cargo test -- --nocapture
-```
-
-### Test Coverage
-
-- Parser validation with real SAS+ files
-- State registry operations and deduplication
-- Successor generation with numeric effects
-- Axiom evaluation correctness
-- Error handling and edge cases
-
-## 🤝 Contributing
-
-We welcome contributions!
-<!-- Please see our [contributing guidelines](CONTRIBUTING.md) for details. -->
-
-### Development Setup
-
-1. Install Rust (stable): <https://rustup.rs/>
-2. Clone the repository: `git clone https://github.com/mrlab-ai/numeric_planneRS.git`
-3. Run tests: `cargo test`
-4. Build: `cargo build --release`
-
-### Code Style
-
-- Follow standard Rust formatting: `cargo fmt`
-- Run clippy for lints: `cargo clippy`
-- Ensure tests pass: `cargo test`
-
-## 📚 References
-
-- [Fast Downward](https://www.fast-downward.org/) - Original planning system
-- [PDDL](https://planning.wiki/ref/pddl) - Planning Domain Definition Language (TODO: Is there a reference for numeric planning?)
-
-## 📄 License
-
-Binary crates in this project are licensed under GPLv3:
-
-- [planners](./planners)
-- [planners-translator](./planners-translator)
-- [planners-preprocessor](./planners-preprocessor)
-- [planners-searcher](./planners-searcher)
-
-Library crates in this project are licensed under LGPLv3:
-
-- [planners-cli-utils](./planners-cli-utils)
-- [planners-sas](./planners-sas)
-- [planners-translate](./planners-translate)
-- [planners-preprocess](./planners-preprocess)
-- [planners-search](./planners-search)
-
-Integration tests ([tests](./tests)) are licensed under GPLv3.
-
-Lab files ([lab-files](lab-files)) are licensed under MIT license.
-
-## 🏆 Acknowledgments
-
-- Fast Downward team for the original architecture and inspiration
-- Rust community for excellent tooling and documentation
-- Planning research community for algorithmic foundations
+Binary crates are licensed under GPLv3; library crates under LGPLv3; integration tests under GPLv3; lab files under MIT. See individual `Cargo.toml` files and `LICENSE` for details.

@@ -22,7 +22,7 @@ class RustPlannerAlgorithm:
     - CLI options
     """
 
-    def __init__(self, name, cached_revision, options, binary_name="planners"):
+    def __init__(self, name, cached_revision, options, binary_name="planforge"):
         self.name = name
         self.cached_revision = cached_revision
         self.options = options
@@ -129,7 +129,7 @@ class RustPlannerExperiment(Experiment):
         options,
         build_options=None,
         target="release",
-        binary_name="planners",
+        binary_name="planforge",
     ):
         if not isinstance(name, str):
             logging.critical(f"Algorithm name must be string: {name}")

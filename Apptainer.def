@@ -45,10 +45,10 @@ From: ubuntu:22.04
     rustup default stable
 
     cd /opt/src
-    cargo build --release --locked --bin planners
+    cargo build --release --locked --bin planforge
 
-    install -Dm755 target/release/planners /opt/planner/bin/planners
-    strip /opt/planner/bin/planners || true
+    install -Dm755 target/release/planforge /opt/planner/bin/planforge
+    strip /opt/planner/bin/planforge || true
 
     rm -rf /opt/cargo/registry /opt/cargo/git /opt/src/target
 
@@ -56,8 +56,8 @@ From: ubuntu:22.04
     set -eu
 
     if [ "$#" -lt 2 ]; then
-        echo "usage: apptainer run numeric-planners.sif DOMAIN.PDDL PROBLEM.PDDL [planner options]" >&2
-        echo "override the default search with: apptainer run --env SEARCH_CONFIG='astar(...)' numeric-planners.sif DOMAIN.PDDL PROBLEM.PDDL" >&2
+        echo "usage: apptainer run planforge.sif DOMAIN.PDDL PROBLEM.PDDL [planner options]" >&2
+        echo "override the default search with: apptainer run --env SEARCH_CONFIG='astar(...)' planforge.sif DOMAIN.PDDL PROBLEM.PDDL" >&2
         exit 2
     fi
 
@@ -65,7 +65,7 @@ From: ubuntu:22.04
     PROBLEM=$(realpath "$2")
     shift 2
 
-    RUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/numeric-planners.XXXXXX")
+    RUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/planforge.XXXXXX")
     cleanup() {
         rm -rf "$RUN_DIR"
     }
@@ -74,7 +74,7 @@ From: ubuntu:22.04
     cd "$RUN_DIR"
 
     set +e
-    /opt/planner/bin/planners --search "$SEARCH_CONFIG" "$@" "$DOMAIN" "$PROBLEM"
+    /opt/planner/bin/planforge --search "$SEARCH_CONFIG" "$@" "$DOMAIN" "$PROBLEM"
     STATUS=$?
     set -e
 
