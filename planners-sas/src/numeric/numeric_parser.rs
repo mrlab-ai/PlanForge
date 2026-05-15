@@ -552,10 +552,7 @@ fn parse_global_constraint(input: &str) -> IResult<&str, ExplicitFact> {
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_global_constraint")(input)?;
     let (input, _) = line_ending(input)?;
-    let constraint = ExplicitFact {
-        var: constraint_var_id,
-        value: constraning_value,
-    };
+    let constraint = ExplicitFact::new(constraint_var_id, constraning_value);
     Ok((input, constraint))
 }
 

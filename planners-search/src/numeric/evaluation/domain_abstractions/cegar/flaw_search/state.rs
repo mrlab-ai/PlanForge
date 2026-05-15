@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 
 use planners_sas::numeric::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
 };
-use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planners_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType};
 use planners_sas::numeric::utils::errors::{AxiomEvalError, InvalidIndex};
 use planners_sas::numeric::{
     axioms::AxiomEvaluator, numeric_task::Operator, utils::int_packer::IntDoublePacker,
@@ -71,16 +71,26 @@ impl<'a> FlawSearchState<'a> {
             domain_mapping,
             unbounded: true,
         };
+        let initial_numeric = task.get_initial_numeric_state_values();
+        for (numeric_var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
+            if matches!(
+                numeric_var.get_type(),
+                NumericType::Constant | NumericType::Cost
+            ) {
+                state.numeric[numeric_var_id] =
+                    Interval::singleton(initial_numeric[numeric_var_id]);
+            }
+        }
 
         for goal_id in 0..task.get_num_goals() {
             let goal_fact = task.get_goal_fact(goal_id);
-            let goal_var = goal_fact.var;
+            let goal_var = goal_fact.var();
             let goal_is_derived = task.axioms().iter().any(|ax| ax.var_id() == goal_var);
             if goal_is_derived {
                 derived_goal_vars.insert(goal_var);
                 continue;
             }
-            state.set_prop_value(goal_var, goal_fact.value);
+            state.set_prop_value(goal_var, goal_fact.value());
         }
 
         // Reconstruct (potentially hidden) goal conditions from propositional goal axioms.
@@ -93,7 +103,7 @@ impl<'a> FlawSearchState<'a> {
             }
             for pre in ax.conditions().iter() {
                 if seen.insert(pre.clone()) {
-                    state.set_prop_value(pre.var, pre.value);
+                    state.set_prop_value(pre.var(), pre.value());
                 }
             }
         }
@@ -119,7 +129,7 @@ impl<'a> FlawSearchState<'a> {
     }
 
     pub fn fact_is_hold(&self, fact: &ExplicitFact) -> bool {
-        self.value_is_hold_for_var(fact.var, fact.value)
+        self.value_is_hold_for_var(fact.var(), fact.value())
     }
 
     pub fn value_is_hold_for_var(&self, var: usize, value: usize) -> bool {
@@ -290,9 +300,16 @@ impl<'a> FlawSearchState<'a> {
 
             let assignment_var_id = eff.var_id();
             let affected_var_id = eff.affected_var_id();
-            if assignment_var_id >= self.numeric.len() || affected_var_id >= self.numeric.len() {
-                continue;
-            }
+            ensure!(
+                assignment_var_id < self.numeric.len(),
+                "assignment effect source numeric var {assignment_var_id} out of bounds for {} numeric vars",
+                self.numeric.len()
+            );
+            ensure!(
+                affected_var_id < self.numeric.len(),
+                "assignment effect target numeric var {affected_var_id} out of bounds for {} numeric vars",
+                self.numeric.len()
+            );
             let operand = self.numeric[assignment_var_id];
             self.numeric[affected_var_id].apply_op(eff.operation(), &operand);
         }
@@ -318,18 +335,22 @@ impl<'a> FlawSearchState<'a> {
         }
         // Propositional preconditions.
         for cond in op.preconditions() {
-            self.concrete_prop[cond.var] = Some(cond.value);
-            self.abstract_prop[cond.var] = Some(self.domain_mapping[cond.var][cond.value]);
+            self.concrete_prop[cond.var()] = Some(cond.value());
+            self.abstract_prop[cond.var()] = Some(self.domain_mapping[cond.var()][cond.value()]);
         }
 
         // Numeric assignment effects (conditional effects not supported).
-        if !self.unbounded {
-            for eff in op.assignment_effects().iter() {
-                let assignment_var_id = eff.var_id();
-                let affected_var_id = eff.affected_var_id();
-                let operand = self.numeric[assignment_var_id];
-                self.numeric[affected_var_id].apply_reverse_op(eff.operation(), &operand);
+        for eff in op.assignment_effects().iter() {
+            let assignment_var_id = eff.var_id();
+            let affected_var_id = eff.affected_var_id();
+            if assignment_var_id >= self.numeric.len() || affected_var_id >= self.numeric.len() {
+                continue;
             }
+            if self.numeric[affected_var_id] == UNBOUNDED_INTERVAL {
+                continue;
+            }
+            let operand = self.numeric[assignment_var_id];
+            self.numeric[affected_var_id].apply_reverse_op(eff.operation(), &operand);
         }
 
         Ok(())

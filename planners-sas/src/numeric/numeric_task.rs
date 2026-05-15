@@ -272,27 +272,50 @@ impl NumericVariable {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
+/// Variable/value pair. `u32` fields halve the per-fact footprint compared
+/// to `usize` on 64-bit targets (16 B → 8 B), at the cost of a hard 4 G
+/// ceiling on variable and value IDs — vastly above anything realistic
+/// planning tasks reach. The cap is checked at SAS-load time.
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct ExplicitFact {
-    pub var: usize,
-    pub value: usize,
+    var_id: u32,
+    value_id: u32,
 }
 
 impl ExplicitFact {
+    /// Constructor accepts `usize` to minimize call-site churn; values are
+    /// narrowed at construction. Out-of-range arguments are caught in
+    /// debug builds.
     pub fn new(var: usize, value: usize) -> Self {
-        ExplicitFact { var, value }
+        debug_assert!(var <= u32::MAX as usize, "ExplicitFact var {var} > u32::MAX");
+        debug_assert!(
+            value <= u32::MAX as usize,
+            "ExplicitFact value {value} > u32::MAX"
+        );
+        ExplicitFact {
+            var_id: var as u32,
+            value_id: value as u32,
+        }
+    }
+    #[inline(always)]
+    pub fn var(&self) -> usize {
+        self.var_id as usize
+    }
+    #[inline(always)]
+    pub fn value(&self) -> usize {
+        self.value_id as usize
     }
     pub fn is_hold(&self, state: &ConcreteState, state_registry: &StateRegistry) -> bool {
         let buffer = state.buffer(state_registry);
         let state_packer = state_registry.global_state_packer();
-        let value = state_packer.get(buffer, self.var);
-        value == self.value as u64
+        let value = state_packer.get(buffer, self.var());
+        value == self.value() as u64
     }
 }
 
 impl fmt::Debug for ExplicitFact {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Fact(var: {}, value: {})", self.var, self.value)
+        write!(f, "Fact(var: {}, value: {})", self.var(), self.value())
     }
 }
 
@@ -555,7 +578,7 @@ impl AssignmentEffect {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Operator {
-    name: String,
+    name: Box<str>,
     preconditions: Vec<ExplicitFact>,
     effects: Vec<Effect>,
     assignment_effects: Vec<AssignmentEffect>,
@@ -570,8 +593,13 @@ impl Operator {
         assignment_effects: Vec<AssignmentEffect>,
         cost: u64,
     ) -> Self {
+        // `Box<str>` is two words (ptr + len) vs `String`'s three words
+        // (ptr + len + cap) and drops spare capacity from any growth steps
+        // during parsing. For tasks with 10^6 operators this trims the
+        // task-loading peak by 20-30 MB. Names are immutable so we never
+        // need the `cap` field again.
         Operator {
-            name,
+            name: name.into_boxed_str(),
             preconditions,
             effects,
             assignment_effects,
@@ -587,7 +615,7 @@ impl Operator {
         for precondition in &self.preconditions {
             if !state
                 .iter()
-                .any(|fact| fact.var == precondition.var && fact.value == precondition.value)
+                .any(|fact| fact.var() == precondition.var() && fact.value() == precondition.value())
             {
                 return false;
             }
@@ -683,7 +711,7 @@ impl NumericRootTask {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum NumericType {
     Constant,
     Derived,
@@ -980,7 +1008,7 @@ fn finish_axiom_closure(
 fn facts_hold_values(propositional: &[usize], facts: &[ExplicitFact]) -> bool {
     facts
         .iter()
-        .all(|fact| propositional.get(fact.var).copied() == Some(fact.value))
+        .all(|fact| propositional.get(fact.var()).copied() == Some(fact.value()))
 }
 
 #[allow(unused)]

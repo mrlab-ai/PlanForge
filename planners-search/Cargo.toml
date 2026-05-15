@@ -16,3 +16,6 @@ serde = { version = "1", features = ["derive"] }
 itertools = "0.13"
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "2"
+
+[dev-dependencies]
+planners-translator = { path = "../planners-translator" }

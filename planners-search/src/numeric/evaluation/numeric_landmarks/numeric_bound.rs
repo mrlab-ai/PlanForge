@@ -794,13 +794,13 @@ impl NumericBound {
         let mut conditions = Vec::new();
 
         for precondition in operator.preconditions() {
-            if precondition.value > 0 {
+            if precondition.value() > 0 {
                 continue;
             }
 
             if let Some(helper_conditions) = self
                 .numeric_helper
-                .comparison_fact_conditions(precondition.var, 0)
+                .comparison_fact_conditions(precondition.var(), 0)
             {
                 conditions.extend(helper_conditions.iter().map(|condition| BoundCondition {
                     coefficients: self.project_coefficients(&condition.coefficients),

@@ -15,6 +15,7 @@ use planners_sas::numeric::numeric_task::{
     metric_operator_cost_from_initial_values,
 };
 use planners_sas::numeric::state_registry::{ConcreteState, StateRegistry};
+use planners_sas::numeric::utils::float_tolerance;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 
 use crate::numeric::evaluation::domain_abstractions::comparison_expression::{
@@ -528,8 +529,9 @@ impl PatternLookupProjection {
         bins.clear();
         bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
         for (numeric_index, lookup) in self.pattern_numeric_lookup.iter().enumerate() {
-            bins[numeric_index + 1] =
-                Self::numeric_value_from_expanded(lookup, expanded_numeric_values)?.to_bits();
+            bins[numeric_index + 1] = float_tolerance::canonical_bits(
+                Self::numeric_value_from_expanded(lookup, expanded_numeric_values)?,
+            );
         }
         Ok(())
     }
@@ -545,11 +547,11 @@ impl PatternLookupProjection {
         bins.clear();
         bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
         for (numeric_index, lookup) in self.pattern_numeric_lookup.iter().enumerate() {
-            bins[numeric_index + 1] = match *lookup {
+            let value = match *lookup {
                 ProjectedNumericLookup::Constant(value) => value,
                 ProjectedNumericLookup::Expanded(index) => expanded_numeric_values[index],
-            }
-            .to_bits();
+            };
+            bins[numeric_index + 1] = float_tolerance::canonical_bits(value);
         }
     }
 
@@ -593,7 +595,10 @@ impl PatternLookupProjection {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
-                Self::numeric_value_from_expanded(lookup, expanded_numeric_values)?.to_bits(),
+                packer.pack_double(Self::numeric_value_from_expanded(
+                    lookup,
+                    expanded_numeric_values,
+                )?),
             );
         }
 
@@ -1099,7 +1104,7 @@ impl<'task> ProjectedTask<'task> {
             self.axioms.clone(),
             self.comparison_axioms.clone(),
             self.assignment_axioms.clone(),
-            ExplicitFact { var: 0, value: 0 },
+            ExplicitFact::new(0, 0),
         )
     }
 
@@ -1307,11 +1312,10 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
-                self.projected_numeric_value_from_expanded_numeric(
+                packer.pack_double(self.projected_numeric_value_from_expanded_numeric(
                     projected_numeric_id,
                     expanded_numeric_values,
-                )?
-                .to_bits(),
+                )?),
             );
         }
 
@@ -1343,11 +1347,10 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 numeric_index + 1,
-                self.projected_numeric_value_from_expanded_numeric(
+                packer.pack_double(self.projected_numeric_value_from_expanded_numeric(
                     projected_numeric_id,
                     expanded_numeric_values,
-                )?
-                .to_bits(),
+                )?),
             );
         }
 
@@ -1374,12 +1377,12 @@ impl<'task> ProjectedTask<'task> {
         for (numeric_index, &projected_numeric_id) in
             self.pattern_numeric_projected_ids.iter().enumerate()
         {
-            bins[numeric_index + 1] = self
-                .projected_numeric_value_from_expanded_numeric(
+            bins[numeric_index + 1] = float_tolerance::canonical_bits(
+                self.projected_numeric_value_from_expanded_numeric(
                     projected_numeric_id,
                     expanded_numeric_values,
-                )?
-                .to_bits();
+                )?,
+            );
         }
 
         Ok(())
@@ -1550,7 +1553,7 @@ impl<'task> ProjectedTask<'task> {
     pub fn is_goal_state_values(&self, propositional_values: &[usize]) -> bool {
         self.goals
             .iter()
-            .all(|goal| propositional_values.get(goal.var).copied() == Some(goal.value))
+            .all(|goal| propositional_values.get(goal.var()).copied() == Some(goal.value()))
     }
 
     pub fn min_operator_cost(&self) -> f64 {
@@ -1701,13 +1704,12 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
-                self.projected_numeric_value_from_concrete_state(
+                packer.pack_double(self.projected_numeric_value_from_concrete_state(
                     projected_numeric_id,
                     state,
                     registry,
                     numeric_value_cache,
-                )?
-                .to_bits(),
+                )?),
             );
         }
 
@@ -1741,13 +1743,12 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 numeric_index + 1,
-                self.projected_numeric_value_from_concrete_state(
+                packer.pack_double(self.projected_numeric_value_from_concrete_state(
                     projected_numeric_id,
                     state,
                     registry,
                     numeric_value_cache,
-                )?
-                .to_bits(),
+                )?),
             );
         }
 
@@ -1776,14 +1777,13 @@ impl<'task> ProjectedTask<'task> {
         for (numeric_index, &projected_numeric_id) in
             self.pattern_numeric_projected_ids.iter().enumerate()
         {
-            bins[numeric_index + 1] = self
-                .projected_numeric_value_from_concrete_state(
+            bins[numeric_index + 1] =
+                float_tolerance::canonical_bits(self.projected_numeric_value_from_concrete_state(
                     projected_numeric_id,
                     state,
                     registry,
                     numeric_value_cache,
-                )?
-                .to_bits();
+                )?);
         }
 
         Ok(())
@@ -2144,10 +2144,10 @@ impl AbstractNumericTask for ProjectedTask<'_> {
     }
 
     fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
-        let Some(var_fact_names) = self.fact_names.get(fact.var) else {
+        let Some(var_fact_names) = self.fact_names.get(fact.var()) else {
             return "";
         };
-        var_fact_names.get(fact.value).map_or("", String::as_str)
+        var_fact_names.get(fact.value()).map_or("", String::as_str)
     }
 
     fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
@@ -2345,8 +2345,8 @@ fn cache_facts(facts: &[ExplicitFact]) -> Vec<CachedFact> {
     facts
         .iter()
         .map(|fact| CachedFact {
-            var_id: fact.var,
-            value: fact.value,
+            var_id: fact.var(),
+            value: fact.value(),
         })
         .collect()
 }
@@ -2658,15 +2658,15 @@ fn collect_cpp_like_projected_goal_fact(
     goals: &mut Vec<ExplicitFact>,
     visited_vars: &mut HashSet<usize>,
 ) -> Result<(), ProjectedTaskBuildError> {
-    if !visited_vars.insert(fact.var) {
+    if !visited_vars.insert(fact.var()) {
         return Ok(());
     }
 
     if let Some(comparison_axiom_id) = comparison_axiom_by_affected_var
-        .get(fact.var)
+        .get(fact.var())
         .and_then(|comparison_axiom_id| *comparison_axiom_id)
     {
-        let comparison_is_in_pattern = pattern_regular.contains(&fact.var);
+        let comparison_is_in_pattern = pattern_regular.contains(&fact.var());
         let numeric_goal_is_in_pattern = comparison_condition_var_id(
             task,
             comparison_axiom_id,
@@ -2675,10 +2675,9 @@ fn collect_cpp_like_projected_goal_fact(
             helper_id_by_source_numeric_var,
         )?
         .is_some_and(|numeric_var_id| pattern_numeric.contains(&numeric_var_id));
-        if comparison_is_in_pattern || numeric_goal_is_in_pattern
-        {
+        if comparison_is_in_pattern || numeric_goal_is_in_pattern {
             push_unique_mapping(
-                fact.var,
+                fact.var(),
                 projected_var_to_original,
                 original_var_to_projected,
             );
@@ -2688,13 +2687,13 @@ fn collect_cpp_like_projected_goal_fact(
     }
 
     if let Some(axiom_id) = propositional_axiom_by_affected_var
-        .get(fact.var)
+        .get(fact.var())
         .and_then(|axiom_id| *axiom_id)
     {
-        let fact_is_in_pattern = pattern_regular.contains(&fact.var);
+        let fact_is_in_pattern = pattern_regular.contains(&fact.var());
         if fact_is_in_pattern {
             push_unique_mapping(
-                fact.var,
+                fact.var(),
                 projected_var_to_original,
                 original_var_to_projected,
             );
@@ -2726,9 +2725,9 @@ fn collect_cpp_like_projected_goal_fact(
         return Ok(());
     }
 
-    if pattern_regular.contains(&fact.var) {
+    if pattern_regular.contains(&fact.var()) {
         push_unique_mapping(
-            fact.var,
+            fact.var(),
             projected_var_to_original,
             original_var_to_projected,
         );
@@ -3144,15 +3143,15 @@ fn is_constant_expression(
 
 fn project_fact(fact: &ExplicitFact, var_map: &[Option<usize>]) -> Option<ExplicitFact> {
     var_map
-        .get(fact.var)
+        .get(fact.var())
         .and_then(|mapped| *mapped)
-        .map(|mapped| ExplicitFact::new(mapped, fact.value))
+        .map(|mapped| ExplicitFact::new(mapped, fact.value()))
 }
 
 fn restore_fact(fact: &ExplicitFact, projected_to_original: &[usize]) -> Option<ExplicitFact> {
     projected_to_original
-        .get(fact.var)
-        .map(|&original| ExplicitFact::new(original, fact.value))
+        .get(fact.var())
+        .map(|&original| ExplicitFact::new(original, fact.value()))
 }
 
 fn project_effect(effect: &Effect, var_map: &[Option<usize>]) -> Option<Effect> {
@@ -3729,7 +3728,7 @@ fn normalize_projected_variable_layers(
         let mut layer = base_propositional_layer;
         for axiom in &axioms_by_var[var_id] {
             for condition in axiom.conditions() {
-                let condition_var = condition.var;
+                let condition_var = condition.var();
                 if condition_var >= layers.len() {
                     continue;
                 }

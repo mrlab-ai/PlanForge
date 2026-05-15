@@ -6,24 +6,34 @@ use std::collections::HashMap;
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
 };
+use planners_sas::numeric::utils::float_tolerance;
 
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
+use super::utils::EquispacedPartitioning;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumericPartitions {
     partitions_by_numeric_var: Vec<Vec<Interval>>,
+    /// Per-var cached descriptor for O(1) `partition_for_value` lookup.
+    /// `Some` when the layout is contiguous + uniform-width + at most one
+    /// unbounded tail on each side; otherwise `None` and callers fall back to
+    /// the tolerant binary search. Rebuilt whenever the partitions mutate
+    /// (`split_at`, `merge_at`, …) — keep this in sync with the `Vec<Interval>`.
+    equispaced_by_numeric_var: Vec<Option<EquispacedPartitioning>>,
 }
 
 impl NumericPartitions {
     pub fn trivial(task: &dyn AbstractNumericTask) -> Self {
         let initial_numeric_values = task.get_initial_numeric_state_values();
-        let partitions_by_numeric_var = task
+        let partitions_by_numeric_var: Vec<Vec<Interval>> = task
             .numeric_variables()
             .iter()
             .enumerate()
             .map(|(i, v)| match v.get_type() {
                 NumericType::Constant => {
-                    let value = *initial_numeric_values.get(i).unwrap_or(&f64::NAN);
+                    let value = float_tolerance::canonicalize(
+                        *initial_numeric_values.get(i).unwrap_or(&f64::NAN),
+                    );
                     if value.is_finite() {
                         vec![Interval::singleton(value)]
                     } else {
@@ -33,14 +43,18 @@ impl NumericPartitions {
                 _ => vec![Interval::unbounded()],
             })
             .collect();
+        let equispaced_by_numeric_var = compute_equispaced(&partitions_by_numeric_var);
         Self {
             partitions_by_numeric_var,
+            equispaced_by_numeric_var,
         }
     }
 
     pub fn with_partitions(partitions_by_numeric_var: Vec<Vec<Interval>>) -> Self {
+        let equispaced_by_numeric_var = compute_equispaced(&partitions_by_numeric_var);
         Self {
             partitions_by_numeric_var,
+            equispaced_by_numeric_var,
         }
     }
 
@@ -48,6 +62,24 @@ impl NumericPartitions {
         self.partitions_by_numeric_var
             .get(numeric_var_id)
             .map(|v| v.as_slice())
+    }
+
+    /// Equispaced-partition descriptor for `numeric_var_id`, if its current
+    /// layout fits the `EquispacedPartitioning` shape.
+    ///
+    /// Currently unused: the previous fast-path consumer was the heuristic's
+    /// `numeric_partition_for_projected_value`, which fell out of sync with
+    /// the tolerant `partition_for_value` on values that lie *exactly* on a
+    /// partition boundary (the cast-based lookup ignores the per-interval
+    /// closed/open flags, so boundary-aligned values — i.e., every CEGAR
+    /// split point — could land in the wrong partition). Kept because the
+    /// descriptor is still maintained on `split_at`; a future fix that makes
+    /// `EquispacedPartitioning::lookup` boundary-aware can re-enable it.
+    #[allow(dead_code)]
+    pub(crate) fn equispaced(&self, numeric_var_id: usize) -> Option<&EquispacedPartitioning> {
+        self.equispaced_by_numeric_var
+            .get(numeric_var_id)
+            .and_then(Option::as_ref)
     }
 
     pub fn partition_interval(
@@ -117,8 +149,20 @@ impl NumericPartitions {
 
         parts[part_id] = lower;
         parts.insert(part_id + 1, upper);
+        // Cache is per-var; recompute only the affected entry.
+        self.equispaced_by_numeric_var[numeric_var_id] =
+            EquispacedPartitioning::detect(&self.partitions_by_numeric_var[numeric_var_id]);
         true
     }
+}
+
+fn compute_equispaced(
+    partitions_by_numeric_var: &[Vec<Interval>],
+) -> Vec<Option<EquispacedPartitioning>> {
+    partitions_by_numeric_var
+        .iter()
+        .map(|parts| EquispacedPartitioning::detect(parts))
+        .collect()
 }
 
 fn intervals_overlap(a: Interval, b: Interval) -> bool {
@@ -173,29 +217,30 @@ impl ComparisonAxiomIndex {
         self.trees.get(tree_idx)
     }
 
-    /// Returns `true` if the given propositional precondition is *definitively* contradicted
-    /// by evaluating its comparison axiom over the provided numeric intervals.
+    /// Returns `true` if the given propositional precondition cannot be
+    /// satisfied by any concrete numeric assignment in `numeric_intervals`.
     ///
-    /// This mirrors numeric-fd's “optimistic filtering”: reject only if definite contradiction;
-    /// unknown (`None`) never contradicts.
+    /// Uses the optimistic interval semantics that the rest of operator
+    /// construction relies on: a `TRUE` precondition is contradicted only
+    /// when the interval admits no value making the comparison true
+    /// (`evaluate_interval == Some(false)`); a `FALSE` precondition is
+    /// contradicted only when the interval admits no value making the
+    /// comparison false (`evaluate_interval == Some(true)`). Concrete
+    /// axiom values are recomputed per state during heuristic evaluation.
     pub fn precondition_is_contradicted(
         &self,
         pre: &ExplicitFact,
         numeric_intervals: &[Interval],
     ) -> bool {
-        let var_id = pre.var;
+        let var_id = pre.var();
         let Some(tree) = self.comparison_tree(var_id) else {
             return false;
         };
 
-        let required_truth = match pre.value {
-            0 => Some(true),
-            1 => Some(false),
-            _ => None,
-        };
-        match tree.evaluate_interval(numeric_intervals) {
-            Some(actual_truth) => required_truth.is_some_and(|truth| actual_truth != truth),
-            None => false,
+        match pre.value() {
+            0 => !tree.evaluate_interval_admits_true(numeric_intervals),
+            1 => !tree.evaluate_interval_admits_false(numeric_intervals),
+            _ => false,
         }
     }
 }

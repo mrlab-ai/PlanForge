@@ -1,4 +1,5 @@
 pub mod abstract_operator_generator;
+pub mod abstracted_task;
 pub mod canonical_domain_abstraction_heuristic;
 pub mod comparison_expression;
 pub mod domain_abstraction;
@@ -12,4 +13,5 @@ pub mod cegar;
 pub mod domain_abstraction_factory;
 pub mod domain_abstraction_generator;
 pub mod domain_abstraction_heuristic;
+pub mod memory_padding;
 pub mod utils;

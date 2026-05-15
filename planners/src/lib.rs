@@ -22,7 +22,9 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
 };
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planners_search::numeric::evaluation::domain_abstractions::max_domain_abstraction_heuristic::MaxDomainAbstractionHeuristic;
-use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::SaturatedCostPartitioningOnlineHeuristic;
+use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
+    FillScpHeuristic, SaturatedCostPartitioningOnlineHeuristic,
+};
 use planners_search::numeric::evaluation::evaluator::EvaluationState;
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbHeuristic;
@@ -35,7 +37,7 @@ use planners_search::numeric::evaluation::{EvaluationResult, Evaluator};
 use planners_search::numeric::open_lists::{OpenList, SearchNode, TieBreakingOpenList};
 use planners_search::numeric::search_engine::{compute_effective_operator_costs, SearchResult, SearchStatus};
 use planners_search::numeric::search_engine::{AStarSearch, SearchEngine};
-use planners_search::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator, Node};
+use planners_search::numeric::successor_generator::{ApplicableOperator, SuccessorTree};
 use planners_searcher::*;
 use planners_translator::*;
 use std::cmp::Reverse;
@@ -183,8 +185,14 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
             let heuristic_override = match heuristic {
                 planners_searcher::HeuristicSpec::Blind => None,
                 planners_searcher::HeuristicSpec::CanonicalDomainAbstractions(config) => {
+                    // Canonical reads only the per-abstraction distance table;
+                    // skip footprint construction to avoid ~12 GB of
+                    // per-concrete-op `StateRegion` storage on tasks with
+                    // hundreds of thousands of concrete operators.
+                    let mut config = config.clone();
+                    config.compute_operator_footprints = false;
                     let generator =
-                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
+                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
                     info!("Building canonical domain abstractions (CEGAR)...");
                     let abstractions = generator.generate_collection(task_ref).map_err(|e| {
                         std::io::Error::other(format!(
@@ -207,14 +215,14 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     config.max_iterations = domain_config.max_iterations;
                     config.use_wildcard_plans = domain_config.use_wildcard_plans;
                     config.combine_labels = domain_config.combine_labels;
-                    config.random_seed = if domain_config.random_seed >= 0 {
-                        Some(domain_config.random_seed as u64)
-                    } else {
-                        None
-                    };
+                    config.random_seed = domain_config.random_seed;
                     config.flaw_kind = domain_config.flaw_kind;
                     config.flaw_treatment = domain_config.flaw_treatment;
                     config.init_split_method = domain_config.init_split_method;
+                    config.transform_linear_task = domain_config.transform_linear_task;
+                    // Single DA reads only the distance table; footprints are
+                    // SCP-specific. Skip the per-concrete-op StateRegion cost.
+                    config.compute_operator_footprints = false;
 
                     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
                         std::io::Error::other(format!(
@@ -254,8 +262,12 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                 )
                     as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>),
                 planners_searcher::HeuristicSpec::MultiDomainAbstractions(config) => {
+                    // Max-of-abstractions reads only the distance tables;
+                    // footprints are SCP-only.
+                    let mut config = config.clone();
+                    config.compute_operator_footprints = false;
                     let generator =
-                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
+                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
                     info!("Building multiple domain abstractions (CEGAR)...");
                     let abstractions = generator.generate_collection(task_ref).map_err(|e| {
                         std::io::Error::other(format!(
@@ -314,7 +326,33 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                             "failed to construct scp_online heuristic: {e}"
                         ))
                     })?;
-                    Some(Box::new(h) as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>)
+                    Some(Box::new(h)
+                        as Box<
+                            dyn planners_search::numeric::evaluation::Heuristic + '_,
+                        >)
+                }
+                planners_searcher::HeuristicSpec::FillScp(config) => {
+                    let mut fill_config = config.clone();
+                    fill_config.force_full_goal_tasks();
+                    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+                        fill_config.collection_config.clone(),
+                    );
+                    info!("Building fillSCP domain abstractions (CEGAR)...");
+                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
+                        std::io::Error::other(format!(
+                            "failed to build fillSCP domain abstractions: {e:#}"
+                        ))
+                    })?;
+                    let h = FillScpHeuristic::new(None, abstractions, fill_config, task_ref)
+                        .map_err(|e| {
+                            std::io::Error::other(format!(
+                                "failed to construct fillSCP heuristic: {e}"
+                            ))
+                        })?;
+                    Some(Box::new(h)
+                        as Box<
+                            dyn planners_search::numeric::evaluation::Heuristic + '_,
+                        >)
                 }
             };
 
@@ -350,16 +388,8 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     Ok(result)
 }
 
-fn build_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> Box<dyn Node<'a> + 'a> {
-    let mut queue = VecDeque::new();
-    for (op_id, operator) in task.get_operators().iter().enumerate() {
-        queue.push_back((operator, op_id));
-    }
-
-    let mut generator = GroundedSuccessorGenerator::new(task);
-    generator
-        .construct(&mut 0, &mut queue)
-        .expect("successor generator construction must succeed")
+fn build_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> SuccessorTree<'a> {
+    SuccessorTree::new(task)
 }
 
 fn state_is_goal(
@@ -943,6 +973,12 @@ fn run_da_debug(
         distance_table,
         hash_multipliers,
         combine_labels: config.combine_labels,
+        task_projection: None,
+        transformed_task: None,
+        relevant_operator_ids: Vec::new(),
+        abstract_operators: Vec::new(),
+        abstract_operator_footprints: Vec::new(),
+        metadata: Default::default(),
     };
     let heuristic = DomainAbstractionHeuristic::new(Some("da_debug".to_string()), abstraction);
 

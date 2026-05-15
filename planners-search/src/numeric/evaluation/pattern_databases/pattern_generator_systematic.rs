@@ -237,14 +237,14 @@ fn collect_seed_variables(
     for goal_index in 0..task.get_num_goals() {
         let goal = task.get_goal_fact(goal_index);
         if task
-            .get_variable_axiom_layer(goal.var)
+            .get_variable_axiom_layer(goal.var())
             .unwrap_or(None)
             .is_none()
         {
             push_seed_variable(
                 &mut seed_variables,
                 &mut seen,
-                CausalGraphVariable::Regular(goal.var),
+                CausalGraphVariable::Regular(goal.var()),
             );
         }
     }
@@ -300,7 +300,7 @@ fn is_pattern_numeric_candidate(
 
 fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) -> BTreeSet<usize> {
     let mut goal_related: BTreeSet<usize> = (0..task.get_num_goals())
-        .map(|goal_id| task.get_goal_fact(goal_id).var)
+        .map(|goal_id| task.get_goal_fact(goal_id).var())
         .collect();
 
     loop {
@@ -310,7 +310,7 @@ fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) ->
             let affected_var_id = axiom.var_id();
             if goal_related.contains(&affected_var_id) {
                 for condition in axiom.conditions() {
-                    changed |= goal_related.insert(condition.var);
+                    changed |= goal_related.insert(condition.var());
                 }
             }
         }

@@ -1,14 +1,16 @@
 use planners_search::numeric::evaluation::domain_abstractions::cegar::{
-    FlawKind, FlawTreatmentVariants,
+    FlawKind, FlawTreatmentVariants, SplitDirection,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, VariableSubset,
+    InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, PortfolioStrategy, VariableSubset,
 };
-use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig;
+use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
+    FillScpConfig, OrderGenerator, Saturator, ScoringFunction, ScpOnlineConfig,
+};
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use planners_search::numeric::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
@@ -20,10 +22,11 @@ pub struct DomainAbstractionConfig {
     pub max_iterations: usize,
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
-    pub random_seed: i32,
+    pub random_seed: Option<u64>,
     pub flaw_kind: FlawKind,
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
+    pub transform_linear_task: bool,
 }
 
 impl Default for DomainAbstractionConfig {
@@ -33,10 +36,11 @@ impl Default for DomainAbstractionConfig {
             max_iterations: 10_000,
             use_wildcard_plans: true,
             combine_labels: true,
-            random_seed: -1,
+            random_seed: None,
             flaw_kind: FlawKind::Progression,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
+            transform_linear_task: false,
         }
     }
 }
@@ -54,15 +58,17 @@ impl fmt::Display for DomainAbstractionConfig {
                 "flaw_kind={}, ",
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
+                "transform_linear_task={}, ",
             ),
             self.max_abstraction_size,
             self.max_iterations,
             self.use_wildcard_plans,
             self.combine_labels,
-            self.random_seed,
+            format_optional_seed(self.random_seed),
             self.flaw_kind,
             self.flaw_treatment,
             self.init_split_method,
+            self.transform_linear_task,
         )
     }
 }
@@ -85,6 +91,8 @@ pub enum HeuristicSpec {
     MultiDomainAbstractions(DomainAbstractionCollectionGeneratorMultipleCegarConfig),
     #[serde(rename = "scp_online")]
     ScpOnline(ScpOnlineConfig),
+    #[serde(rename = "fillscp")]
+    FillScp(FillScpConfig),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -129,6 +137,9 @@ impl fmt::Display for HeuristicSpec {
             }
             HeuristicSpec::ScpOnline(config) => {
                 write!(f, "{}", config.format_config_call("scp_online"))
+            }
+            HeuristicSpec::FillScp(config) => {
+                write!(f, "{}", config.format_config_call("fillSCP"))
             }
         }
     }
@@ -485,15 +496,6 @@ fn set_u64<T>(
     Ok(())
 }
 
-fn set_i32<T>(
-    slot: fn(&mut T) -> &mut i32,
-    config: &mut T,
-    value: &ConfigValue,
-) -> Result<(), String> {
-    *slot(config) = parse_i32(atom(value)?)?;
-    Ok(())
-}
-
 fn set_bool<T>(
     slot: fn(&mut T) -> &mut bool,
     config: &mut T,
@@ -526,16 +528,18 @@ fn parse_usize(value: &str) -> Result<usize, String> {
         .map_err(|_| format!("expected non-negative integer, got `{value}`"))
 }
 
-fn parse_i32(value: &str) -> Result<i32, String> {
-    value
-        .parse::<i32>()
-        .map_err(|_| format!("expected integer, got `{value}`"))
-}
-
 fn parse_u64(value: &str) -> Result<u64, String> {
     value
         .parse::<u64>()
         .map_err(|_| format!("expected non-negative integer, got `{value}`"))
+}
+
+fn parse_optional_seed(value: &str) -> Result<Option<u64>, String> {
+    if value.eq_ignore_ascii_case("none") {
+        Ok(None)
+    } else {
+        parse_u64(value).map(Some)
+    }
 }
 
 fn parse_f64_or_infinity(value: &str) -> Result<f64, String> {
@@ -556,6 +560,10 @@ fn format_f64_or_infinity(value: f64) -> String {
     }
 }
 
+fn format_optional_seed(seed: Option<u64>) -> String {
+    seed.map_or_else(|| "none".to_string(), |seed| seed.to_string())
+}
+
 fn parse_greedy_variable_order_type(value: &str) -> Result<GreedyVariableOrderType, String> {
     match value {
         "cg_goal_level" => Ok(GreedyVariableOrderType::CgGoalLevel),
@@ -571,6 +579,33 @@ fn parse_pdb_internal_heuristic(value: &str) -> Result<PdbInternalHeuristic, Str
         "blind" => Ok(PdbInternalHeuristic::Blind),
         "lmcut" => Ok(PdbInternalHeuristic::Lmcut),
         _ => Err(format!("invalid PdbInternalHeuristic `{value}`")),
+    }
+}
+
+fn parse_saturator(value: &str) -> Result<Saturator, String> {
+    match value {
+        "all" => Ok(Saturator::All),
+        "perim" => Ok(Saturator::Perim),
+        "perimstar" => Ok(Saturator::Perimstar),
+        _ => Err(format!("invalid Saturator `{value}`")),
+    }
+}
+
+fn parse_scoring_function(value: &str) -> Result<ScoringFunction, String> {
+    match value {
+        "max_heuristic" => Ok(ScoringFunction::MaxHeuristic),
+        "min_stolen_costs" => Ok(ScoringFunction::MinStolenCosts),
+        "max_heuristic_per_stolen_costs" => Ok(ScoringFunction::MaxHeuristicPerStolenCosts),
+        _ => Err(format!("invalid ScoringFunction `{value}`")),
+    }
+}
+
+fn parse_order_generator(value: &str) -> Result<OrderGenerator, String> {
+    match value {
+        "greedy_orders" | "greedy_orders()" => Ok(OrderGenerator::Greedy),
+        "dynamic_greedy_orders" | "dynamic_greedy_orders()" => Ok(OrderGenerator::DynamicGreedy),
+        "random_orders" | "random_orders()" => Ok(OrderGenerator::Random),
+        _ => Err(format!("invalid OrderGenerator `{value}`")),
     }
 }
 
@@ -596,9 +631,11 @@ fn parse_flaw_kind(value: &str) -> Result<FlawKind, String> {
     match value {
         "progression" => Ok(FlawKind::Progression),
         "regression" => Ok(FlawKind::Regression),
+        "execute_entire_plan" => Ok(FlawKind::ExecuteEntirePlan),
         "sequence_progression" => Ok(FlawKind::SequenceProgression),
         "sequence_regression" => Ok(FlawKind::SequenceRegression),
         "sequence_bidirectional" => Ok(FlawKind::SequenceBidirectional),
+        "target_centered" => Ok(FlawKind::TargetCentered),
         _ => Err(format!("invalid FlawKind `{value}`")),
     }
 }
@@ -609,6 +646,7 @@ fn parse_flaw_treatment(value: &str) -> Result<FlawTreatmentVariants, String> {
         "one_split_per_atom" => Ok(FlawTreatmentVariants::OneSplitPerAtom),
         "one_split_per_variable" => Ok(FlawTreatmentVariants::OneSplitPerVariable),
         "max_refined_single_atom" => Ok(FlawTreatmentVariants::MaxRefinedSingleAtom),
+        "min_growth_single_atom" => Ok(FlawTreatmentVariants::MinGrowthSingleAtom),
         "max_refined_preferring_prop" => Ok(FlawTreatmentVariants::MaxRefinedPreferringProp),
         "closest_to_goal" => Ok(FlawTreatmentVariants::ClosestToGoal),
         "balance_max_refined_and_closest_to_goal" => {
@@ -644,6 +682,31 @@ fn parse_numeric_split_strategy(value: &str) -> Result<NumericSplitStrategy, Str
     }
 }
 
+fn parse_portfolio_strategy(value: &str) -> Result<PortfolioStrategy, String> {
+    match value {
+        "standard" => Ok(PortfolioStrategy::Standard),
+        "complementary" => Ok(PortfolioStrategy::Complementary),
+        _ => Err(format!("invalid PortfolioStrategy `{value}`")),
+    }
+}
+
+fn parse_split_direction(value: &str) -> Result<Option<SplitDirection>, String> {
+    match value {
+        "default" => Ok(None),
+        "forward" => Ok(Some(SplitDirection::Forward)),
+        "forward_partition_deviation" => Ok(Some(SplitDirection::ForwardPartitionDeviation)),
+        "backward" => Ok(Some(SplitDirection::Backward)),
+        _ => Err(format!("invalid SplitDirection `{value}`")),
+    }
+}
+
+fn format_split_direction(value: Option<SplitDirection>) -> String {
+    match value {
+        None => "default".to_string(),
+        Some(direction) => direction.to_string(),
+    }
+}
+
 macro_rules! field_usize {
     ($name:literal, $ty:ty, $field:ident) => {
         Field {
@@ -658,15 +721,6 @@ macro_rules! field_u64 {
         Field {
             name: $name,
             apply: |config: &mut $ty, value| set_u64(|c| &mut c.$field, config, value),
-            format: |config: &$ty| config.$field.to_string(),
-        }
-    };
-}
-macro_rules! field_i32 {
-    ($name:literal, $ty:ty, $field:ident) => {
-        Field {
-            name: $name,
-            apply: |config: &mut $ty, value| set_i32(|c| &mut c.$field, config, value),
             format: |config: &$ty| config.$field.to_string(),
         }
     };
@@ -704,7 +758,19 @@ fn domain_abstraction_fields() -> Vec<Field<DomainAbstractionConfig>> {
             use_wildcard_plans
         ),
         field_bool!("combine_labels", DomainAbstractionConfig, combine_labels),
-        field_i32!("random_seed", DomainAbstractionConfig, random_seed),
+        field_bool!(
+            "transform_linear_task",
+            DomainAbstractionConfig,
+            transform_linear_task
+        ),
+        Field {
+            name: "random_seed",
+            apply: |config, value| {
+                config.random_seed = parse_optional_seed(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_optional_seed(config.random_seed),
+        },
         Field {
             name: "flaw_treatment",
             apply: |config, value| {
@@ -794,11 +860,14 @@ fn multi_domain_abstractions_fields()
             },
             format: |config| config.init_split_quantity.to_string(),
         },
-        field_i32!(
-            "random_seed",
-            DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-            random_seed
-        ),
+        Field {
+            name: "random_seed",
+            apply: |config, value| {
+                config.random_seed = parse_optional_seed(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_optional_seed(config.random_seed),
+        },
         field_bool!(
             "debug",
             DomainAbstractionCollectionGeneratorMultipleCegarConfig,
@@ -815,9 +884,9 @@ fn multi_domain_abstractions_fields()
             combine_labels
         ),
         field_bool!(
-            "deviation_flaws",
+            "transform_linear_task",
             DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-            deviation_flaws
+            transform_linear_task
         ),
         Field {
             name: "flaw_treatment",
@@ -826,6 +895,14 @@ fn multi_domain_abstractions_fields()
                 Ok(())
             },
             format: |config| config.flaw_treatment.to_string(),
+        },
+        Field {
+            name: "flaw_kind",
+            apply: |config, value| {
+                config.flaw_kind = parse_flaw_kind(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.flaw_kind.to_string(),
         },
         Field {
             name: "init_split_method",
@@ -843,19 +920,69 @@ fn multi_domain_abstractions_fields()
             },
             format: |config| config.numeric_split_strategy.to_string(),
         },
+        Field {
+            name: "portfolio_strategy",
+            apply: |config, value| {
+                config.portfolio_strategy = parse_portfolio_strategy(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.portfolio_strategy.to_string(),
+        },
+        Field {
+            name: "split_direction",
+            apply: |config, value| {
+                config.split_direction = parse_split_direction(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_split_direction(config.split_direction),
+        },
     ]
 }
 
 fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
     vec![
         field_f64!("max_time", ScpOnlineConfig, max_time),
+        field_f64!(
+            "table_construction_max_time",
+            ScpOnlineConfig,
+            table_construction_max_time
+        ),
         field_usize!("max_size", ScpOnlineConfig, max_size),
         field_usize!("interval", ScpOnlineConfig, interval),
         field_bool!("use_numeric_pdbs", ScpOnlineConfig, use_numeric_pdbs),
         field_bool!(
-            "use_transition_cost_partitioning",
+            "use_abstract_operator_cost_partitioning",
             ScpOnlineConfig,
-            use_transition_cost_partitioning
+            use_abstract_operator_cost_partitioning
+        ),
+        Field {
+            name: "saturator",
+            apply: |config, value| {
+                config.saturator = parse_saturator(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.saturator.to_string(),
+        },
+        Field {
+            name: "scoring_function",
+            apply: |config, value| {
+                config.scoring_function = parse_scoring_function(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.scoring_function.to_string(),
+        },
+        Field {
+            name: "orders",
+            apply: |config, value| {
+                config.order_generator = parse_order_generator(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.order_generator.to_string(),
+        },
+        field_f64!(
+            "order_optimization_max_time",
+            ScpOnlineConfig,
+            order_optimization_max_time
         ),
         field_usize!("max_pdb_states", ScpOnlineConfig, max_pdb_states),
         field_usize!("max_pattern_size", ScpOnlineConfig, max_pattern_size),
@@ -984,10 +1111,12 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
         Field {
             name: "random_seed",
             apply: |config, value| {
-                config.collection_config.random_seed = parse_i32(atom(value)?)?;
+                let random_seed = parse_optional_seed(atom(value)?)?;
+                config.collection_config.random_seed = random_seed;
+                config.random_seed = random_seed;
                 Ok(())
             },
-            format: |config| config.collection_config.random_seed.to_string(),
+            format: |config| format_optional_seed(config.collection_config.random_seed),
         },
         Field {
             name: "debug",
@@ -1016,20 +1145,20 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
             format: |config| config.combine_labels.to_string(),
         },
         Field {
-            name: "deviation_flaws",
-            apply: |config, value| {
-                config.collection_config.deviation_flaws = parse_bool(atom(value)?)?;
-                Ok(())
-            },
-            format: |config| config.collection_config.deviation_flaws.to_string(),
-        },
-        Field {
             name: "flaw_treatment",
             apply: |config, value| {
                 config.collection_config.flaw_treatment = parse_flaw_treatment(atom(value)?)?;
                 Ok(())
             },
             format: |config| config.collection_config.flaw_treatment.to_string(),
+        },
+        Field {
+            name: "flaw_kind",
+            apply: |config, value| {
+                config.collection_config.flaw_kind = parse_flaw_kind(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.flaw_kind.to_string(),
         },
         Field {
             name: "init_split_method",
@@ -1047,6 +1176,355 @@ fn scp_online_fields() -> Vec<Field<ScpOnlineConfig>> {
                 Ok(())
             },
             format: |config| config.collection_config.numeric_split_strategy.to_string(),
+        },
+        Field {
+            name: "transform_linear_task",
+            apply: |config, value| {
+                config.collection_config.transform_linear_task = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.transform_linear_task.to_string(),
+        },
+        Field {
+            name: "portfolio_strategy",
+            apply: |config, value| {
+                config.collection_config.portfolio_strategy =
+                    parse_portfolio_strategy(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.portfolio_strategy.to_string(),
+        },
+        Field {
+            name: "split_direction",
+            apply: |config, value| {
+                config.collection_config.split_direction = parse_split_direction(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_split_direction(config.collection_config.split_direction),
+        },
+        Field {
+            name: "max_stealable_width",
+            apply: |config, value| {
+                config.collection_config.finite_support.max_stealable_width =
+                    parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                format_f64_or_infinity(config.collection_config.finite_support.max_stealable_width)
+            },
+        },
+    ]
+}
+
+fn fill_scp_fields() -> Vec<Field<FillScpConfig>> {
+    vec![
+        field_f64!(
+            "table_construction_max_time",
+            FillScpConfig,
+            table_construction_max_time
+        ),
+        field_bool!(
+            "use_abstract_operator_cost_partitioning",
+            FillScpConfig,
+            use_abstract_operator_cost_partitioning
+        ),
+        Field {
+            name: "saturator",
+            apply: |config, value| {
+                config.saturator = parse_saturator(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.saturator.to_string(),
+        },
+        Field {
+            name: "scoring_function",
+            apply: |config, value| {
+                config.scoring_function = parse_scoring_function(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.scoring_function.to_string(),
+        },
+        Field {
+            name: "orders",
+            apply: |config, value| {
+                config.order_generator = parse_order_generator(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.order_generator.to_string(),
+        },
+        field_f64!(
+            "order_optimization_max_time",
+            FillScpConfig,
+            order_optimization_max_time
+        ),
+        Field {
+            name: "max_abstraction_size",
+            apply: |config, value| {
+                config.collection_config.max_abstraction_size = parse_usize(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.max_abstraction_size.to_string(),
+        },
+        Field {
+            name: "max_collection_size",
+            apply: |config, value| {
+                config.collection_config.max_collection_size = parse_usize(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.max_collection_size.to_string(),
+        },
+        Field {
+            name: "abstraction_generation_max_time",
+            apply: |config, value| {
+                config.collection_config.abstraction_generation_max_time =
+                    parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                format_f64_or_infinity(config.collection_config.abstraction_generation_max_time)
+            },
+        },
+        Field {
+            name: "total_max_time",
+            apply: |config, value| {
+                config.collection_config.total_max_time = parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_f64_or_infinity(config.collection_config.total_max_time),
+        },
+        Field {
+            name: "stagnation_limit",
+            apply: |config, value| {
+                config.collection_config.stagnation_limit = parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_f64_or_infinity(config.collection_config.stagnation_limit),
+        },
+        Field {
+            name: "blacklist_trigger_percentage",
+            apply: |config, value| {
+                config.collection_config.blacklist_trigger_percentage =
+                    parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                format_f64_or_infinity(config.collection_config.blacklist_trigger_percentage)
+            },
+        },
+        Field {
+            name: "enable_blacklist_on_stagnation",
+            apply: |config, value| {
+                config.collection_config.enable_blacklist_on_stagnation = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                config
+                    .collection_config
+                    .enable_blacklist_on_stagnation
+                    .to_string()
+            },
+        },
+        Field {
+            name: "blacklist_option",
+            apply: |config, value| {
+                config.collection_config.blacklist_option = parse_variable_subset(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.blacklist_option.to_string(),
+        },
+        Field {
+            name: "init_split_candidates",
+            apply: |config, value| {
+                config.collection_config.init_split_candidates =
+                    parse_variable_subset(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.init_split_candidates.to_string(),
+        },
+        Field {
+            name: "init_split_quantity",
+            apply: |config, value| {
+                config.collection_config.init_split_quantity =
+                    parse_init_split_quantity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.init_split_quantity.to_string(),
+        },
+        Field {
+            name: "random_seed",
+            apply: |config, value| {
+                let random_seed = parse_optional_seed(atom(value)?)?;
+                config.collection_config.random_seed = random_seed;
+                config.random_seed = random_seed;
+                Ok(())
+            },
+            format: |config| format_optional_seed(config.collection_config.random_seed),
+        },
+        Field {
+            name: "debug",
+            apply: |config, value| {
+                config.collection_config.debug = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.debug.to_string(),
+        },
+        Field {
+            name: "use_wildcard_plans",
+            apply: |config, value| {
+                config.collection_config.use_wildcard_plans = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.use_wildcard_plans.to_string(),
+        },
+        Field {
+            name: "combine_labels",
+            apply: |config, value| {
+                let combine_labels = parse_bool(atom(value)?)?;
+                config.combine_labels = combine_labels;
+                config.collection_config.combine_labels = combine_labels;
+                Ok(())
+            },
+            format: |config| config.combine_labels.to_string(),
+        },
+        Field {
+            name: "flaw_treatment",
+            apply: |config, value| {
+                config.collection_config.flaw_treatment = parse_flaw_treatment(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.flaw_treatment.to_string(),
+        },
+        Field {
+            name: "flaw_kind",
+            apply: |config, value| {
+                config.collection_config.flaw_kind = parse_flaw_kind(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.flaw_kind.to_string(),
+        },
+        Field {
+            name: "init_split_method",
+            apply: |config, value| {
+                config.collection_config.init_split_method = parse_init_split_method(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.init_split_method.to_string(),
+        },
+        Field {
+            name: "numeric_split_strategy",
+            apply: |config, value| {
+                config.collection_config.numeric_split_strategy =
+                    parse_numeric_split_strategy(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.numeric_split_strategy.to_string(),
+        },
+        Field {
+            name: "transform_linear_task",
+            apply: |config, value| {
+                config.collection_config.transform_linear_task = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.collection_config.transform_linear_task.to_string(),
+        },
+        Field {
+            name: "split_direction",
+            apply: |config, value| {
+                config.collection_config.split_direction = parse_split_direction(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_split_direction(config.collection_config.split_direction),
+        },
+        Field {
+            name: "max_stealable_width",
+            apply: |config, value| {
+                config.collection_config.finite_support.max_stealable_width =
+                    parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| {
+                format_f64_or_infinity(config.collection_config.finite_support.max_stealable_width)
+            },
+        },
+        Field {
+            name: "ceiling_less_than_one",
+            apply: |config, value| {
+                config.lmcut_config.ceiling_less_than_one = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.lmcut_config.ceiling_less_than_one.to_string(),
+        },
+        Field {
+            name: "ignore_numeric",
+            apply: |config, value| {
+                config.lmcut_config.ignore_numeric = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.lmcut_config.ignore_numeric.to_string(),
+        },
+        Field {
+            name: "random_pcf",
+            apply: |config, value| {
+                config.lmcut_config.random_pcf = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.lmcut_config.random_pcf.to_string(),
+        },
+        Field {
+            name: "irmax",
+            apply: |config, value| {
+                config.lmcut_config.irmax = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.lmcut_config.irmax.to_string(),
+        },
+        Field {
+            name: "disable_ma",
+            apply: |config, value| {
+                config.lmcut_config.disable_ma = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.lmcut_config.disable_ma.to_string(),
+        },
+        Field {
+            name: "use_second_order_simple",
+            apply: |config, value| {
+                config.lmcut_config.use_second_order_simple = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.lmcut_config.use_second_order_simple.to_string(),
+        },
+        Field {
+            name: "use_constant_assignment",
+            apply: |config, value| {
+                config.lmcut_config.use_constant_assignment = parse_bool(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.lmcut_config.use_constant_assignment.to_string(),
+        },
+        Field {
+            name: "bound_iterations",
+            apply: |config, value| {
+                config.lmcut_config.bound_iterations = parse_usize(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| config.lmcut_config.bound_iterations.to_string(),
+        },
+        Field {
+            name: "precision",
+            apply: |config, value| {
+                config.lmcut_config.precision = parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_f64_or_infinity(config.lmcut_config.precision),
+        },
+        Field {
+            name: "epsilon",
+            apply: |config, value| {
+                config.lmcut_config.epsilon = parse_f64_or_infinity(atom(value)?)?;
+                Ok(())
+            },
+            format: |config| format_f64_or_infinity(config.lmcut_config.epsilon),
         },
     ]
 }
@@ -1193,6 +1671,18 @@ impl FromConfig for ScpOnlineConfig {
     }
 }
 
+impl FromConfig for FillScpConfig {
+    fn config_fields() -> Vec<Field<Self>> {
+        fill_scp_fields()
+    }
+
+    fn from_config(call: &ConfigCall) -> Result<Self, String> {
+        let mut config = apply_config_fields(call, &Self::config_fields())?;
+        config.force_full_goal_tasks();
+        Ok(config)
+    }
+}
+
 impl FromConfig for GreedyPatternGeneratorConfig {
     fn config_fields() -> Vec<Field<Self>> {
         greedy_numeric_pdb_fields()
@@ -1261,6 +1751,14 @@ fn heuristic_registry() -> Vec<HeuristicPlugin> {
                     call,
                 )?))
             },
+        },
+        HeuristicPlugin {
+            name: "fillscp",
+            build: |call| Ok(HeuristicSpec::FillScp(FillScpConfig::from_config(call)?)),
+        },
+        HeuristicPlugin {
+            name: "fill_scp",
+            build: |call| Ok(HeuristicSpec::FillScp(FillScpConfig::from_config(call)?)),
         },
         HeuristicPlugin {
             name: "greedy_numeric_pdb",

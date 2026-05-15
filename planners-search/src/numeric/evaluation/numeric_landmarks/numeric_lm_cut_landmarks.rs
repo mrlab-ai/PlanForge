@@ -1,7 +1,9 @@
 use super::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use super::numeric_bound::NumericBound;
 use super::numeric_helper::{LinearNumericCondition as NumericCondition, NumericTaskHelper};
-use tracing::debug;
+use crate::numeric::evaluation::domain_abstractions::transition_cost_partitioning::{
+    LmCutResidualOperatorCostPartition, StateRegion,
+};
 use planners_sas::numeric::axioms::PropositionalAxiom;
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, Effect, ExplicitFact, Operator, metric_operator_cost_from_initial_values,
@@ -9,6 +11,7 @@ use planners_sas::numeric::numeric_task::{
 use planners_sas::numeric::utils::linear_effects::LinearExpression;
 use planners_sas::numeric::utils::linear_effects::LinearNumericEffect;
 use std::collections::{BTreeMap, BTreeSet};
+use tracing::debug;
 
 #[derive(Debug, Clone, Copy)]
 struct QueueEntry {
@@ -257,6 +260,9 @@ type ComputeLandmarksResult = (bool, f64, Option<Vec<Landmark>>);
 pub struct LandmarkCutLandmarks<'task> {
     task: &'task dyn AbstractNumericTask,
     config: LmCutNumericConfig,
+    fixed_operator_costs: Option<Vec<f64>>,
+    residual_operator_cost_partitions: Option<Vec<LmCutResidualOperatorCostPartition>>,
+    residual_variant_precondition_ids: Vec<Vec<Vec<usize>>>,
     propositions: Vec<RelaxedProposition>,
     proposition_runtime: Vec<PropositionRuntime>,
     proposition_precondition_of_data: Vec<usize>,
@@ -319,6 +325,23 @@ pub struct LandmarkCutLandmarks<'task> {
 #[allow(unused)]
 impl<'task> LandmarkCutLandmarks<'task> {
     pub fn new(task: &'task dyn AbstractNumericTask, config: LmCutNumericConfig) -> Self {
+        Self::new_with_fixed_operator_costs(task, config, None)
+    }
+
+    pub fn new_with_fixed_operator_costs(
+        task: &'task dyn AbstractNumericTask,
+        config: LmCutNumericConfig,
+        fixed_operator_costs: Option<Vec<f64>>,
+    ) -> Self {
+        Self::new_with_residual_operator_cost_partitions(task, config, fixed_operator_costs, None)
+    }
+
+    pub fn new_with_residual_operator_cost_partitions(
+        task: &'task dyn AbstractNumericTask,
+        config: LmCutNumericConfig,
+        fixed_operator_costs: Option<Vec<f64>>,
+        residual_operator_cost_partitions: Option<Vec<LmCutResidualOperatorCostPartition>>,
+    ) -> Self {
         // PARITY(numeric-fd): `random_pcf` is still blocked until the randomized supporter
         // selection path is ported. The other current feature flags are wired through the same
         // control-flow sites as the C++ implementation.
@@ -343,6 +366,9 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let mut result = Self {
             task,
             config,
+            fixed_operator_costs,
+            residual_operator_cost_partitions,
+            residual_variant_precondition_ids: Vec::new(),
             propositions: Vec::new(),
             proposition_runtime: Vec::new(),
             proposition_precondition_of_data: Vec::new(),
@@ -434,6 +460,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.operator_effect_id_data.clear();
         self.operator_effect_id_ranges.clear();
         self.original_to_relaxed_operators.clear();
+        self.residual_variant_precondition_ids.clear();
         self.goal_precondition_ids.clear();
         self.propositions.push(RelaxedProposition::new(
             self.artificial_precondition_id,
@@ -456,6 +483,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             );
         }
         self.build_numeric_conditions();
+        self.build_residual_variant_conditions();
         if debug_summary {
             debug!(
                 "LMCUT_DEBUG_STAGE after_numeric_conditions prop={} numeric_conditions={}",
@@ -802,6 +830,81 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
     }
 
+    fn build_residual_variant_conditions(&mut self) {
+        self.residual_variant_precondition_ids.clear();
+        let Some(partitions) = self.residual_operator_cost_partitions.clone() else {
+            return;
+        };
+        self.residual_variant_precondition_ids = Vec::with_capacity(partitions.len());
+        for (operator_id, partition) in partitions.iter().enumerate() {
+            let mut operator_variants = Vec::with_capacity(partition.variants.len());
+            for (variant_id, variant) in partition.variants.iter().enumerate() {
+                operator_variants.push(self.residual_region_precondition_ids(
+                    operator_id,
+                    variant_id,
+                    &variant.source_region,
+                ));
+            }
+            self.residual_variant_precondition_ids.push(operator_variants);
+        }
+    }
+
+    fn residual_region_precondition_ids(
+        &mut self,
+        operator_id: usize,
+        variant_id: usize,
+        source_region: &StateRegion,
+    ) -> Vec<usize> {
+        let mut ids = Vec::new();
+        let mut seen = BTreeSet::new();
+        for (var, values) in source_region.propositions.iter().enumerate() {
+            if values.len() == 1 {
+                let fact = ExplicitFact::new(var, values[0] as usize);
+                for proposition_id in self.precondition_proposition_ids(&fact) {
+                    if seen.insert(proposition_id) {
+                        ids.push(proposition_id);
+                    }
+                }
+            }
+        }
+        let num_numeric_vars = self.task.numeric_variables().len();
+        for (numeric_var_id, interval) in source_region.numeric.iter().enumerate() {
+            if interval.lower.is_finite() {
+                let mut expression = LinearExpression::zero(num_numeric_vars);
+                expression.coefficients[numeric_var_id] = 1.0;
+                expression.constant = -interval.lower;
+                let proposition_id =
+                    self.add_numeric_condition_proposition(NumericCondition::from_expression(
+                        expression,
+                        !interval.lower_closed,
+                        format!(
+                            "fillSCP residual op {operator_id} variant {variant_id} n{numeric_var_id} lower"
+                        ),
+                    ));
+                if seen.insert(proposition_id) {
+                    ids.push(proposition_id);
+                }
+            }
+            if interval.upper.is_finite() {
+                let mut expression = LinearExpression::zero(num_numeric_vars);
+                expression.coefficients[numeric_var_id] = -1.0;
+                expression.constant = interval.upper;
+                let proposition_id =
+                    self.add_numeric_condition_proposition(NumericCondition::from_expression(
+                        expression,
+                        !interval.upper_closed,
+                        format!(
+                            "fillSCP residual op {operator_id} variant {variant_id} n{numeric_var_id} upper"
+                        ),
+                    ));
+                if seen.insert(proposition_id) {
+                    ids.push(proposition_id);
+                }
+            }
+        }
+        ids
+    }
+
     fn build_relaxed_operators(&mut self) {
         let operators = self.task.get_operators();
         for (operator_id, operator) in operators.iter().enumerate() {
@@ -887,7 +990,17 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .get_propositional_goals(goal_index)
                 .map(|goals| self.build_precondition_ids(goals))
                 .unwrap_or_default();
-            let helper_numeric_condition_ids = self.numeric_helper.get_numeric_goals(goal_index);
+            // When `ignore_numeric=true`, `build_comparison_fact_condition_ids` and
+            // `add_linear_conditions` both return early without registering any numeric
+            // condition propositions, so helper goals over numeric vars would fail the
+            // lookup. Drop them silently in that mode — the heuristic intentionally
+            // ignores numerics, so omitting them is admissible (under-approximates the
+            // goal, never over-approximates).
+            let helper_numeric_condition_ids: Vec<usize> = if self.config.ignore_numeric {
+                Vec::new()
+            } else {
+                self.numeric_helper.get_numeric_goals(goal_index).to_vec()
+            };
             let helper_numeric_ids = helper_numeric_condition_ids
                 .iter()
                 .map(|&condition_id| {
@@ -898,7 +1011,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .collect::<Vec<_>>();
 
             if helper_propositional_ids.is_empty() && helper_numeric_ids.is_empty() {
-                if self.is_numeric_axiom_var(goal.var) {
+                if self.is_numeric_axiom_var(goal.var()) {
                     let _ = self.precondition_proposition_ids(goal);
                     continue;
                 }
@@ -1794,6 +1907,16 @@ impl<'task> LandmarkCutLandmarks<'task> {
             operator_id < self.task.get_operators().len(),
             "base operator cost is only defined for concrete operators"
         );
+        if let Some(costs) = &self.fixed_operator_costs {
+            return costs.get(operator_id).copied().unwrap_or(0.0).max(0.0);
+        }
+        if let Some(partitions) = &self.residual_operator_cost_partitions {
+            return partitions
+                .get(operator_id)
+                .map(|partition| partition.fallback_cost)
+                .unwrap_or(0.0)
+                .max(0.0);
+        }
         let mut operator_cost = metric_operator_cost_from_initial_values(self.task, operator);
 
         if self.task.is_linear_cost_operator(operator_id) && self.use_bounds {
@@ -1872,7 +1995,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .collect::<Vec<_>>();
 
         for conditional_effect in &helper_conditional_fact_effects {
-            if self.is_numeric_axiom_var(conditional_effect.add_fact.var) {
+            if self.is_numeric_axiom_var(conditional_effect.add_fact.var()) {
                 continue;
             }
             let mut extended_preconditions = precondition_ids.clone();
@@ -1895,8 +2018,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 "{} {}",
                 operator.name(),
                 self.get_proposition_name(
-                    conditional_effect.add_fact.var,
-                    conditional_effect.add_fact.value
+                    conditional_effect.add_fact.var(),
+                    conditional_effect.add_fact.value()
                 )
             );
             let conditional_operator = RelaxedOperator::new(
@@ -1916,7 +2039,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .get_action_add_list(operator_id)
             .into_iter()
             .flatten()
-            .filter(|fact| !self.is_numeric_axiom_var(fact.var))
+            .filter(|fact| !self.is_numeric_axiom_var(fact.var()))
             .map(|fact| self.get_proposition_id(fact))
             .collect::<Vec<_>>();
 
@@ -1926,7 +2049,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             } else {
                 precondition_ids.clone()
             },
-            base_effect_ids,
+            base_effect_ids.clone(),
             operator_id,
             base_cost,
             operator.name().to_string(),
@@ -1944,6 +2067,63 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .collect();
         relaxed_operator.assert_well_formed();
         self.relaxed_operators.push(relaxed_operator);
+
+        if let Some(partition) = self
+            .residual_operator_cost_partitions
+            .as_ref()
+            .and_then(|partitions| partitions.get(operator_id))
+            .cloned()
+        {
+            let variant_precondition_ids = self
+                .residual_variant_precondition_ids
+                .get(operator_id)
+                .cloned()
+                .unwrap_or_default();
+            for (variant_id, variant) in partition.variants.iter().enumerate() {
+                let mut guarded_precondition_ids = if precondition_ids.is_empty() {
+                    vec![self.artificial_precondition_id]
+                } else {
+                    precondition_ids.clone()
+                };
+                let mut seen: BTreeSet<usize> =
+                    guarded_precondition_ids.iter().copied().collect();
+                if let Some(guards) = variant_precondition_ids.get(variant_id) {
+                    for &guard_id in guards {
+                        if seen.insert(guard_id) {
+                            guarded_precondition_ids.push(guard_id);
+                        }
+                    }
+                }
+                let mut guarded_operator = RelaxedOperator::new(
+                    guarded_precondition_ids.clone(),
+                    base_effect_ids.clone(),
+                    operator_id,
+                    variant.cost,
+                    format!("{} residual {}", operator.name(), variant_id),
+                    false,
+                );
+                guarded_operator.assignment_effect_ids =
+                    unconditional_linear_assignment_effect_ids.clone();
+                guarded_operator.linear_assignment_effects = unconditional_linear_assignment_effect_ids
+                    .iter()
+                    .map(|&assignment_effect_id| {
+                        helper_linearized_assignment_effects
+                            .get(assignment_effect_id)
+                            .and_then(|effect| effect.clone())
+                            .expect("helper linearized assignment effect id must be valid")
+                    })
+                    .collect();
+                guarded_operator.assert_well_formed();
+                self.relaxed_operators.push(guarded_operator);
+                self.build_linear_operators(
+                    operator_id,
+                    operator,
+                    variant.cost,
+                    &guarded_precondition_ids,
+                    &helper_linearized_assignment_effects,
+                )?;
+            }
+        }
 
         self.build_linear_operators(
             operator_id,
@@ -3114,7 +3294,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         conditions: &[ExplicitFact],
     ) -> bool {
         conditions.iter().all(|condition| {
-            propositional_values.get(condition.var).copied() == Some(condition.value)
+            propositional_values.get(condition.var()).copied() == Some(condition.value())
         })
     }
 
@@ -3153,7 +3333,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             0.0,
             format!(
                 "axiom {}",
-                self.get_proposition_name(effect_fact.var, effect_fact.value)
+                self.get_proposition_name(effect_fact.var(), effect_fact.value())
             ),
             false,
         );
@@ -3523,12 +3703,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn precondition_proposition_ids(&self, fact: &ExplicitFact) -> Vec<usize> {
         if !self.config.ignore_numeric {
-            if self.numeric_helper.is_comparison_axiom_var(fact.var) && fact.value > 0 {
+            if self.numeric_helper.is_comparison_axiom_var(fact.var()) && fact.value() > 0 {
                 return Vec::new();
             }
             if let Some(condition_ids) = self
                 .comparison_fact_to_condition_ids
-                .get(&(fact.var, fact.value))
+                .get(&(fact.var(), fact.value()))
             {
                 return condition_ids
                     .iter()
@@ -3540,11 +3720,20 @@ impl<'task> LandmarkCutLandmarks<'task> {
             }
         }
 
-        if self.is_numeric_axiom_var(fact.var) {
-            let fact_name = self.task.get_fact_name(fact);
-            panic!(
-                "LM-cut numeric conditions do not support disequality comparison fact `{fact_name}`"
-            );
+        if self.is_numeric_axiom_var(fact.var()) {
+            // Reached when either `ignore_numeric=true` (numeric tracking is disabled
+            // wholesale) or the fact references a numeric-axiom var that isn't a
+            // comparison axiom registered in `comparison_fact_to_condition_ids`
+            // (e.g. an assignment-axiom var, or a comparison var whose TRUE/value=0
+            // entry produced an empty condition list at build time).
+            //
+            // Dropping the precondition is an admissible relaxation: an operator
+            // whose numeric/axiom precondition we cannot model becomes easier to
+            // apply, never harder. Reachability over-approximates and the LM-cut
+            // sum of cut costs is still a valid lower bound on optimal plan cost.
+            // The prior `panic!` aborted whole searches on plant-watering/6_2_2
+            // and similar tasks where assignment-axiom preconditions surface.
+            return Vec::new();
         }
 
         vec![self.get_proposition_id(fact)]
@@ -3569,7 +3758,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
     fn get_proposition_id(&self, fact: &ExplicitFact) -> usize {
         self.numeric_helper
-            .get_proposition(fact.var, fact.value)
+            .get_proposition(fact.var(), fact.value())
             .map(|helper_id| helper_id + 2)
             .expect("helper proposition id must exist")
     }

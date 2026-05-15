@@ -397,7 +397,7 @@ fn implicit_comparison_transition_requires_definite_change_on_both_sides() {
 
     let changed_cmp_ops: Vec<&AbstractOperator> = abs_ops
         .iter()
-        .filter(|op| op.regression_preconditions.iter().any(|fact| fact.var == 0))
+        .filter(|op| op.regression_preconditions.iter().any(|fact| fact.var() == 0))
         .collect();
     assert_eq!(changed_cmp_ops.len(), 1);
     assert_eq!(
@@ -483,6 +483,147 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
 }
 
 #[test]
+fn affected_numeric_var_stays_marked_changed_without_refined_partition() {
+    let variables = vec![ExplicitVariable::new(
+        3,
+        "cmp".into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        Some(0),
+        2,
+    )];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
+    ];
+    let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
+
+    let op = Operator::new(
+        "op".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 1.0],
+        vec![op.clone()],
+        vec![],
+        comparison_axioms,
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::unbounded()],
+        vec![Interval::singleton(1.0)],
+    ]);
+
+    let mut generator =
+        AbstractOperatorGenerator::new_with_identity_mapping(&task, partitions, vec![1, 1], false)
+            .unwrap();
+
+    let transitions = compute_hash_effects_with_preconditions(
+        &task,
+        &mut generator,
+        &[],
+        op.assignment_effects(),
+    )
+    .unwrap();
+
+    assert_eq!(transitions.len(), 1);
+    assert_eq!(transitions[0].source_partition_facts, Vec::new());
+    assert_eq!(transitions[0].target_partition_facts, Vec::new());
+    assert_eq!(transitions[0].changed_numeric_vars, vec![0]);
+}
+
+#[test]
+fn combined_labels_union_changed_numeric_vars() {
+    let variables: Vec<ExplicitVariable> = vec![];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("c1".into(), NumericType::Constant, None),
+    ];
+
+    let op_x = Operator::new(
+        "inc_x".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            2,
+            false,
+            vec![],
+        )],
+        1,
+    );
+    let op_y = Operator::new(
+        "inc_y".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            1,
+            AssignmentOperation::Plus,
+            2,
+            false,
+            vec![],
+        )],
+        1,
+    );
+
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0, 0.0, 1.0],
+        vec![op_x, op_y],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::unbounded()],
+        vec![Interval::unbounded()],
+        vec![Interval::singleton(1.0)],
+    ]);
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        vec![1, 1, 1],
+        true,
+    )
+    .unwrap();
+
+    let operators = generator.build_abstract_operators(&task).unwrap();
+
+    assert_eq!(operators.len(), 1);
+    assert_eq!(operators[0].concrete_op_ids, vec![0, 1]);
+    assert_eq!(operators[0].changed_numeric_vars, vec![0, 1]);
+}
+
+#[test]
 fn derived_numeric_partitions_are_not_materialized_in_transitions() {
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -560,8 +701,8 @@ fn derived_numeric_partitions_are_not_materialized_in_transitions() {
                 .contains(&ExplicitFact::new(0, 1))
     }));
     assert!(transitions.iter().all(|trans| {
-        trans.source_partition_facts.iter().all(|fact| fact.var < 3)
-            && trans.target_partition_facts.iter().all(|fact| fact.var < 3)
+        trans.source_partition_facts.iter().all(|fact| fact.var() < 3)
+            && trans.target_partition_facts.iter().all(|fact| fact.var() < 3)
             && !trans.changed_numeric_vars.contains(&3)
             && !trans.changed_numeric_vars.contains(&4)
     }));
@@ -818,7 +959,7 @@ fn assignment_axiom_chain_can_propagate_through_changed_var_and_constant() {
     assert!(
         abs_ops
             .iter()
-            .any(|op| op.regression_preconditions.iter().any(|fact| fact.var == 0)),
+            .any(|op| op.regression_preconditions.iter().any(|fact| fact.var() == 0)),
         "abs_ops={abs_ops:#?}"
     );
 }
@@ -994,7 +1135,7 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
                 .source_partition_facts
                 .iter()
                 .chain(trans.target_partition_facts.iter())
-                .all(|fact| fact.var != 0)
+                .all(|fact| fact.var() != 0)
         }),
         "transitions={transitions:#?}"
     );
@@ -1288,263 +1429,4 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
         err.to_string()
             .contains("assignment effects require constant RHS")
     );
-}
-
-fn trivial_mapping(task: &dyn AbstractNumericTask) -> (DomainMapping, Vec<usize>) {
-    let mut domain_mapping = Vec::with_capacity(task.get_num_variables());
-    let mut domain_sizes = Vec::with_capacity(task.get_num_variables());
-    for var_id in 0..task.get_num_variables() {
-        let size = task.get_variable_domain_size(var_id).unwrap();
-        domain_mapping.push(vec![0; size]);
-        domain_sizes.push(1);
-    }
-    (domain_mapping, domain_sizes)
-}
-
-#[test]
-fn incremental_cache_matches_full_rebuild_after_propositional_refinement() {
-    let variables = vec![ExplicitVariable::new(
-        2,
-        "v".into(),
-        vec!["0".into(), "1".into()],
-        None,
-        0,
-    )];
-    let op0 = Operator::new(
-        "set-a".into(),
-        vec![],
-        vec![Effect::new(vec![], 0, Some(0), 1)],
-        vec![],
-        1,
-    );
-    let op1 = Operator::new(
-        "set-b".into(),
-        vec![],
-        vec![Effect::new(vec![], 0, Some(0), 1)],
-        vec![],
-        1,
-    );
-
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![0],
-        vec![],
-        vec![op0, op1],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::new(0, 0),
-    );
-
-    let (domain_mapping, domain_sizes) = trivial_mapping(&task);
-    let partitions = NumericPartitions::trivial(&task);
-    let numeric_domain_sizes = Vec::new();
-    let mut warm_generator = AbstractOperatorGenerator::new(
-        &task,
-        domain_mapping.clone(),
-        domain_sizes.clone(),
-        partitions.clone(),
-        numeric_domain_sizes.clone(),
-        true,
-    )
-    .unwrap();
-    let mut cache = IncrementalAbstractOperatorCache::default();
-    let warm_ops = warm_generator
-        .build_abstract_operators_with_cache(&task, &mut cache)
-        .unwrap();
-    assert!(warm_ops.is_empty());
-
-    let mut refined_mapping = domain_mapping;
-    let mut refined_domain_sizes = domain_sizes;
-    refined_mapping[0][1] = 1;
-    refined_domain_sizes[0] = 2;
-
-    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
-    summary.refined_propositional_vars.insert(0);
-    cache.mark_refined(&summary);
-
-    let mut incremental_generator = AbstractOperatorGenerator::new(
-        &task,
-        refined_mapping.clone(),
-        refined_domain_sizes.clone(),
-        partitions.clone(),
-        numeric_domain_sizes.clone(),
-        true,
-    )
-    .unwrap();
-    let cached_ops = incremental_generator
-        .build_abstract_operators_with_cache(&task, &mut cache)
-        .unwrap();
-
-    let mut full_generator = AbstractOperatorGenerator::new(
-        &task,
-        refined_mapping,
-        refined_domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-        true,
-    )
-    .unwrap();
-    let full_ops = full_generator.build_abstract_operators(&task).unwrap();
-
-    assert_eq!(cached_ops, full_ops);
-    assert_eq!(cached_ops.len(), 1);
-    assert_eq!(cached_ops[0].concrete_op_ids, vec![0, 1]);
-}
-
-#[test]
-fn incremental_cache_matches_full_rebuild_after_numeric_refinement() {
-    let variables: Vec<ExplicitVariable> = vec![];
-    let numeric_variables = vec![
-        NumericVariable::new("x0".into(), NumericType::Regular, None),
-        NumericVariable::new("c1".into(), NumericType::Constant, None),
-    ];
-    let op = Operator::new(
-        "inc".into(),
-        vec![],
-        vec![],
-        vec![AssignmentEffect::new(
-            0,
-            AssignmentOperation::Plus,
-            1,
-            false,
-            vec![],
-        )],
-        1,
-    );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        variables,
-        numeric_variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![0.0, 1.0],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::new(0, 0),
-    );
-
-    let mut cache = IncrementalAbstractOperatorCache::default();
-    let initial_partitions = NumericPartitions::with_partitions(vec![
-        vec![Interval::unbounded()],
-        vec![Interval::singleton(1.0)],
-    ]);
-    let mut warm_generator = AbstractOperatorGenerator::new_with_identity_mapping(
-        &task,
-        initial_partitions,
-        vec![1, 1],
-        true,
-    )
-    .unwrap();
-    let _ = warm_generator
-        .build_abstract_operators_with_cache(&task, &mut cache)
-        .unwrap();
-
-    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
-    summary.refined_numeric_vars.insert(0);
-    cache.mark_refined(&summary);
-
-    let refined_partitions = NumericPartitions::with_partitions(vec![
-        vec![
-            Interval::new(f64::NEG_INFINITY, 0.0, false, false),
-            Interval::new(0.0, f64::INFINITY, true, false),
-        ],
-        vec![Interval::singleton(1.0)],
-    ]);
-    let mut incremental_generator = AbstractOperatorGenerator::new_with_identity_mapping(
-        &task,
-        refined_partitions.clone(),
-        vec![2, 1],
-        true,
-    )
-    .unwrap();
-    let cached_ops = incremental_generator
-        .build_abstract_operators_with_cache(&task, &mut cache)
-        .unwrap();
-
-    let mut full_generator = AbstractOperatorGenerator::new_with_identity_mapping(
-        &task,
-        refined_partitions,
-        vec![2, 1],
-        true,
-    )
-    .unwrap();
-    let full_ops = full_generator.build_abstract_operators(&task).unwrap();
-
-    assert_eq!(cached_ops, full_ops);
-}
-
-#[test]
-fn minecraft_output_incremental_cache_matches_full_rebuild() {
-    let task_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("test_outputs/minecraft.output");
-    let task = NumericRootTask::from_file(&task_path);
-
-    let (domain_mapping, domain_sizes) = trivial_mapping(&task);
-    let partitions = NumericPartitions::trivial(&task);
-    let numeric_domain_sizes = vec![1; task.numeric_variables().len()];
-
-    let mut cache = IncrementalAbstractOperatorCache::default();
-    let mut warm_generator = AbstractOperatorGenerator::new(
-        &task,
-        domain_mapping.clone(),
-        domain_sizes.clone(),
-        partitions.clone(),
-        numeric_domain_sizes.clone(),
-        true,
-    )
-    .unwrap();
-    let _ = warm_generator
-        .build_abstract_operators_with_cache(&task, &mut cache)
-        .unwrap();
-
-    let refined_var = (0..task.get_num_variables())
-        .find(|&var_id| task.get_variable_domain_size(var_id).unwrap_or(0) > 1)
-        .expect("minecraft fixture should have a non-trivial propositional variable");
-    let refine_value = 1usize;
-
-    let mut refined_mapping = domain_mapping;
-    let mut refined_domain_sizes = domain_sizes;
-    refined_mapping[refined_var][refine_value] = 1;
-    refined_domain_sizes[refined_var] = 2;
-
-    let mut summary = crate::numeric::evaluation::domain_abstractions::cegar::RefinementSummary::default();
-    summary.refined_propositional_vars.insert(refined_var);
-    cache.mark_refined(&summary);
-
-    let mut incremental_generator = AbstractOperatorGenerator::new(
-        &task,
-        refined_mapping.clone(),
-        refined_domain_sizes.clone(),
-        partitions.clone(),
-        numeric_domain_sizes.clone(),
-        true,
-    )
-    .unwrap();
-    let cached_ops = incremental_generator
-        .build_abstract_operators_with_cache(&task, &mut cache)
-        .unwrap();
-
-    let mut full_generator = AbstractOperatorGenerator::new(
-        &task,
-        refined_mapping,
-        refined_domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-        true,
-    )
-    .unwrap();
-    let full_ops = full_generator.build_abstract_operators(&task).unwrap();
-
-    assert_eq!(cached_ops, full_ops);
 }

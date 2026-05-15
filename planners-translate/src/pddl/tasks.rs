@@ -6,7 +6,9 @@ use tracing::{debug, warn};
 use super::actions::Action;
 use super::axioms::{Axiom, NumericAxiom};
 use super::conditions::{Atom, Condition, Conjunction};
-use super::f_expression::{FunctionAssignment, FunctionalExpression, NumericConstant, PrimitiveNumericExpression};
+use super::f_expression::{
+    FunctionAssignment, FunctionalExpression, NumericConstant, PrimitiveNumericExpression,
+};
 use super::functions::Function;
 use super::pddl_types::{Type, TypedObject};
 use super::predicates::Predicate;

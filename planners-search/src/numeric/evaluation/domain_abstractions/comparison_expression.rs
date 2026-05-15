@@ -519,8 +519,13 @@ impl CompOp {
         let max_lt_min = |amax: f64, amax_c: bool, bmin: f64, bmin_c: bool| -> bool {
             (amax < bmin) || (amax == bmin && (!amax_c || !bmin_c))
         };
-        let min_ge_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
-            (amin > bmax) || (amin == bmax && (amin_c && bmax_c))
+        // "Every value in A is >= every value in B." When amin == bmax the answer
+        // is always yes regardless of endpoint openness — in all four
+        // open/closed combinations, no x in A is < any y in B. The earlier
+        // `amin_c && bmax_c` clause was too strict and made e.g.
+        // `(0, +inf) < (-inf, 0)` evaluate to `None` where C++ returns `Some(false)`.
+        let min_ge_max = |amin: f64, _amin_c: bool, bmax: f64, _bmax_c: bool| -> bool {
+            amin >= bmax
         };
         let min_gt_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
             (amin > bmax) || (amin == bmax && (!amin_c || !bmax_c))
@@ -925,6 +930,44 @@ impl ComparisonTree {
         let lhs = self.eval_node_interval(self.left_root, inputs);
         let rhs = self.eval_node_interval(self.right_root, inputs);
         self.op.apply_interval(lhs, rhs)
+    }
+
+    /// Returns the interval of `f = lhs - rhs` evaluated on `inputs`.
+    /// Used by abstract-operator-variant filtering to check whether a given
+    /// `(src_bit, tgt_bit)` pair has a non-empty concrete preimage: the
+    /// comparison `c: lhs op rhs` is equivalent to `f op 0`, and the
+    /// operator's net effect on `f` is a constant shift Δ_f (for linear
+    /// comparisons), so the joint constraint `c(x)=b_s ∧ c(x+Δ)=b_t`
+    /// reduces to a 1-D interval check on `f`.
+    pub fn lhs_minus_rhs_interval(&self, inputs: &[Interval]) -> Interval {
+        let lhs = self.eval_node_interval(self.left_root, inputs);
+        let rhs = self.eval_node_interval(self.right_root, inputs);
+        ArithOp::Sub.apply_interval(lhs, rhs)
+    }
+
+    /// Optimistic interval evaluation for abstract operator construction.
+    ///
+    /// Returns `true` iff **some** concrete numeric assignment that maps
+    /// into `inputs` would make the comparison hold. Specifically:
+    /// - strict `Some(true)`  → `true`  (every value satisfies, so some does)
+    /// - strict `Some(false)` → `false` (no value satisfies)
+    /// - strict `None` (mixed) → `true` (at least one value satisfies)
+    ///
+    /// This is the "TRUE is possible" predicate used to decide whether an
+    /// abstract operator's comparison-axiom precondition is satisfiable on
+    /// a given partition interval. Concrete axiom values are still
+    /// recomputed per state during heuristic evaluation, so admissibility
+    /// is preserved.
+    pub fn evaluate_interval_admits_true(&self, inputs: &[Interval]) -> bool {
+        self.evaluate_interval(inputs) != Some(false)
+    }
+
+    /// Companion of `evaluate_interval_admits_true`: returns `true` iff
+    /// some concrete numeric assignment in `inputs` would make the
+    /// comparison evaluate to FALSE. Used to decide whether a `FALSE`
+    /// precondition is satisfiable.
+    pub fn evaluate_interval_admits_false(&self, inputs: &[Interval]) -> bool {
+        self.evaluate_interval(inputs) != Some(true)
     }
 
     pub fn evaluate_interval_and_fill(&self, intervals: &mut [Interval]) -> Option<bool> {

@@ -1,4 +1,4 @@
-use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::PropFlaw;
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::{PropFlaw, get_flaws};
 
 use super::*;
 use rand::{SeedableRng, rngs::SmallRng};

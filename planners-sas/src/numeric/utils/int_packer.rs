@@ -1,6 +1,7 @@
 use tracing::error;
 
 use crate::numeric::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType};
+use crate::numeric::utils::float_tolerance;
 
 #[cfg(test)]
 mod tests;
@@ -10,6 +11,9 @@ const BITS_PER_BIN: u64 = (std::mem::size_of::<u64>() * 8) as u64;
 fn get_bit_size_for_range(range: u64) -> u64 {
     if range == u64::MAX {
         return BITS_PER_BIN;
+    }
+    if range <= 1 {
+        return 1;
     }
     let mut num_bits = 0;
     while 1 << num_bits < range {
@@ -101,6 +105,19 @@ impl IntDoublePacker {
         self.num_bins
     }
 
+    /// Build a per-bin bit mask covering the slots of the variables in
+    /// `included_var_ids`. Useful for hashing/comparing buffers while ignoring
+    /// the bits owned by other (e.g. axiom-derived) variables.
+    pub fn build_var_subset_mask(&self, included_var_ids: &[usize]) -> Vec<u64> {
+        let mut mask = vec![0u64; self.num_bins];
+        for &var in included_var_ids {
+            if let Some(info) = self.var_infos.get(var) {
+                mask[info.bin_index] |= info.read_mask;
+            }
+        }
+        mask
+    }
+
     fn pack_one_bin(&mut self, ranges: &[u64], bits_to_var: &mut [Vec<usize>]) -> usize {
         self.num_bins += 1;
         let bin_index = self.num_bins - 1;
@@ -157,7 +174,7 @@ impl IntDoublePacker {
     }
 
     pub fn pack_double(&self, plain_double: f64) -> u64 {
-        plain_double.to_bits()
+        float_tolerance::canonical_bits(plain_double)
     }
 
     pub fn unpack_double(&self, packed_double: u64) -> f64 {

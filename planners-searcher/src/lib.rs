@@ -13,7 +13,9 @@ use planners_search::numeric::evaluation::domain_abstractions::domain_abstractio
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
 use planners_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planners_search::numeric::evaluation::domain_abstractions::max_domain_abstraction_heuristic::MaxDomainAbstractionHeuristic;
-use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::SaturatedCostPartitioningOnlineHeuristic;
+use planners_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
+    FillScpHeuristic, SaturatedCostPartitioningOnlineHeuristic,
+};
 use planners_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planners_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbHeuristic;
 use planners_search::numeric::evaluation::pattern_databases::pattern_generator_systematic::{
@@ -162,8 +164,15 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
             let heuristic_override = match heuristic {
                 crate::recursive_config::HeuristicSpec::Blind => None,
                 crate::recursive_config::HeuristicSpec::CanonicalDomainAbstractions(config) => {
+                    // Canonical reads only the per-abstraction distance table;
+                    // it never consumes operator footprints. Skip footprint
+                    // construction to avoid ~12 GB of per-concrete-op
+                    // `StateRegion` storage on tasks with hundreds of
+                    // thousands of concrete operators.
+                    let mut config = config.clone();
+                    config.compute_operator_footprints = false;
                     let generator =
-                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
+                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
                     info!("Building canonical domain abstractions (CEGAR)...");
                     let abstractions = generator.generate_collection(task_ref).map_err(|e| {
                         std::io::Error::other(format!(
@@ -186,14 +195,14 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                     config.max_iterations = domain_config.max_iterations;
                     config.use_wildcard_plans = domain_config.use_wildcard_plans;
                     config.combine_labels = domain_config.combine_labels;
-                    config.random_seed = if domain_config.random_seed >= 0 {
-                        Some(domain_config.random_seed as u64)
-                    } else {
-                        None
-                    };
+                    config.random_seed = domain_config.random_seed;
                     config.flaw_kind = domain_config.flaw_kind;
                     config.flaw_treatment = domain_config.flaw_treatment;
                     config.init_split_method = domain_config.init_split_method;
+                    config.transform_linear_task = domain_config.transform_linear_task;
+                    // Single DA reads only the distance table; footprints are
+                    // SCP-specific. Skip the per-concrete-op StateRegion cost.
+                    config.compute_operator_footprints = false;
 
                     let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
                         std::io::Error::other(format!(
@@ -237,8 +246,12 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 )
                     as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>),
                 crate::recursive_config::HeuristicSpec::MultiDomainAbstractions(config) => {
+                    // Max-of-abstractions reads only the distance tables;
+                    // footprints are SCP-only.
+                    let mut config = config.clone();
+                    config.compute_operator_footprints = false;
                     let generator =
-                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
+                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
                     info!("Building multiple domain abstractions (CEGAR)...");
                     let abstractions = generator.generate_collection(task_ref).map_err(|e| {
                         std::io::Error::other(format!(
@@ -297,7 +310,33 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                             "failed to construct scp_online heuristic: {e}"
                         ))
                     })?;
-                    Some(Box::new(h) as Box<dyn planners_search::numeric::evaluation::Heuristic + '_>)
+                    Some(Box::new(h)
+                        as Box<
+                            dyn planners_search::numeric::evaluation::Heuristic + '_,
+                        >)
+                }
+                crate::recursive_config::HeuristicSpec::FillScp(config) => {
+                    let mut fill_config = config.clone();
+                    fill_config.force_full_goal_tasks();
+                    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+                        fill_config.collection_config.clone(),
+                    );
+                    info!("Building fillSCP domain abstractions (CEGAR)...");
+                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
+                        std::io::Error::other(format!(
+                            "failed to build fillSCP domain abstractions: {e:#}"
+                        ))
+                    })?;
+                    let h = FillScpHeuristic::new(None, abstractions, fill_config, task_ref)
+                        .map_err(|e| {
+                            std::io::Error::other(format!(
+                                "failed to construct fillSCP heuristic: {e}"
+                            ))
+                        })?;
+                    Some(Box::new(h)
+                        as Box<
+                            dyn planners_search::numeric::evaluation::Heuristic + '_,
+                        >)
                 }
             };
 

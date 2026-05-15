@@ -296,7 +296,14 @@ fn regression_sequence_flaws_find_precondition_violation() {
     task.set_initial_propositional_state_values(vec![0]);
 
     let mut flaws = Vec::new();
-    get_sequence_regression_flaws(&task, &factory.domain_mapping, &plan, &mut flaws).unwrap();
+    get_sequence_regression_flaws(
+        &task,
+        &factory.partitions,
+        &factory.domain_mapping,
+        &plan,
+        &mut flaws,
+    )
+    .unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 1)),
@@ -358,7 +365,14 @@ fn regression_sequence_flaws_find_initial_state_violation() {
     task.set_initial_propositional_state_values(vec![1]);
 
     let mut flaws = Vec::new();
-    get_sequence_regression_flaws(&task, &factory.domain_mapping, &plan, &mut flaws).unwrap();
+    get_sequence_regression_flaws(
+        &task,
+        &factory.partitions,
+        &factory.domain_mapping,
+        &plan,
+        &mut flaws,
+    )
+    .unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 1)),

@@ -4,23 +4,25 @@ mod tests;
 pub mod flaw_search;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use planners_sas::numeric::axioms::AxiomEvaluator;
 use planners_sas::numeric::utils::int_packer::IntDoublePacker;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
-use tracing::debug;
+use tracing::{debug, info};
 
 use planners_sas::numeric::numeric_task::{
     AbstractNumericTask, ExplicitFact, NumericType, Operator,
 };
 
-use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw, get_flaws};
+use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw};
 
 pub use flaw_search::FlawKind;
+pub use flaw_search::SplitDirection;
 pub use flaw_search::flaw_selection::{FlawTreatment, FlawTreatmentVariants, InitSplitMethod};
 
 use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::state::{
@@ -30,13 +32,14 @@ use crate::numeric::evaluation::domain_abstractions::utils::{
     fact_is_hold, get_initial_state, make_prop_state_packer,
 };
 
-use super::abstract_operator_generator::{DomainMapping, IncrementalAbstractOperatorCache};
+use super::abstract_operator_generator::DomainMapping;
 use super::comparison_expression::Interval;
-use super::domain_abstraction::NumericPartitions;
+use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
 use super::domain_abstraction_heuristic::{
     COMPARISON_FALSE_VAL, COMPARISON_TRUE_VAL, COMPARISON_UNKNOWN_VAL,
 };
+use super::transition_cost_partitioning::FiniteSupportConfig;
 use super::utils::{compute_abstraction_size_u128, debug_print_refinement_summary};
 
 #[derive(Debug, Clone)]
@@ -54,6 +57,26 @@ pub struct CegarConfig {
     pub init_split_var_ids: Option<HashSet<usize>>,
     pub blacklisted_prop_var_ids: HashSet<usize>,
     pub blacklisted_numeric_var_ids: HashSet<usize>,
+    pub transform_linear_task: bool,
+    pub initial_seed_splits: Vec<InitialSeedSplit>,
+    /// Width threshold for the finite-support transition-cost-partitioning
+    /// gate applied when the abstraction's operator footprints are built. The
+    /// default reproduces the legacy finite-vs-infinite behavior.
+    pub finite_support: FiniteSupportConfig,
+    /// When false, `DomainAbstractionGenerator::generate_prepared` skips
+    /// building the `Vec<AbstractOperatorFootprint>`. Footprints are only
+    /// consumed by abstract-operator transition-cost partitioning
+    /// (SCP / fillSCP); for canonical-max and other heuristics that read
+    /// only the distance table they are pure memory bloat — on
+    /// minecraft-sword-advanced/prob_30x30_5 they account for ~12 GB of
+    /// per-concrete-op `StateRegion` storage. Default `true` for
+    /// backward-compat; the canonical/max wrappers flip this off.
+    pub compute_operator_footprints: bool,
+    /// How numeric flaw split values are chosen: `Forward` keeps the legacy
+    /// concrete-value split; `Backward` places splits at the boundary derived
+    /// from the regressed-target / required interval. When `None`, the flaw
+    /// kind's default ([`FlawKind::default_split_direction`]) is used.
+    pub split_direction: Option<SplitDirection>,
 }
 
 impl Default for CegarConfig {
@@ -72,8 +95,26 @@ impl Default for CegarConfig {
             init_split_var_ids: None,
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
+            transform_linear_task: false,
+            initial_seed_splits: Vec::new(),
+            finite_support: FiniteSupportConfig::default(),
+            split_direction: None,
+            compute_operator_footprints: true,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InitialSeedSplit {
+    Propositional {
+        var_id: usize,
+        value: usize,
+    },
+    Numeric {
+        numeric_var_id: usize,
+        value: f64,
+        include_in_lower: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -105,6 +146,14 @@ pub struct CegarStep {
 pub struct CegarOutcome {
     pub final_state: CegarState,
     pub last_step: CegarStep,
+    /// True iff CEGAR's loop exited because no flaws remained: the
+    /// abstract wildcard plan is therefore already a real concrete plan
+    /// (or the initial state is itself the goal, plan empty). When set,
+    /// `h_DA(init)` is exact for the optimal cost — admissible *and*
+    /// tight — so subsequent abstractions in the collection cannot
+    /// improve the canonical (max) heuristic at the initial state, and
+    /// the collection generator can stop early to save memory.
+    pub solved_by_self: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -161,7 +210,15 @@ impl Cegar {
         ensure!(config.max_iterations > 0, "max_iterations must be > 0");
 
         let start = Instant::now();
-        let mut rng = SmallRng::seed_from_u64(config.random_seed.unwrap_or_else(current_time_seed));
+        // Per-CEGAR-invocation seed diversification. The collection-generator hands every
+        // CEGAR call the same `config.random_seed`, so without this counter each abstraction
+        // would explore the identical RNG trajectory — defeating diversity. A process-wide
+        // counter xor'd (via splitmix-style mixing) into the seed gives every CEGAR a distinct
+        // initial state while remaining fully reproducible when `random_seed` is set.
+        static CEGAR_INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let invocation = CEGAR_INVOCATION_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base_seed = config.random_seed.unwrap_or_else(current_time_seed);
+        let mut rng = SmallRng::seed_from_u64(base_seed ^ splitmix64(invocation));
 
         let (mut domain_mapping, mut domain_sizes) = trivial_domain_mapping_and_sizes(task)
             .context("failed to build trivial domain mapping")?;
@@ -171,17 +228,30 @@ impl Cegar {
         let mut blacklisted_prop_var_ids = config.blacklisted_prop_var_ids.clone();
         let mut blacklisted_numeric_var_ids = config.blacklisted_numeric_var_ids.clone();
 
-        apply_initial_goal_splits(
-            task,
-            config,
-            &mut rng,
-            &blacklisted_prop_var_ids,
-            &blacklisted_numeric_var_ids,
-            &mut domain_mapping,
-            &mut domain_sizes,
-            &mut partitions,
-            &mut numeric_domain_sizes,
-        );
+        if config.initial_seed_splits.is_empty() {
+            apply_initial_goal_splits(
+                task,
+                config,
+                &mut rng,
+                &blacklisted_prop_var_ids,
+                &blacklisted_numeric_var_ids,
+                &mut domain_mapping,
+                &mut domain_sizes,
+                &mut partitions,
+                &mut numeric_domain_sizes,
+            );
+        } else {
+            apply_initial_seed_splits(
+                task,
+                config,
+                &blacklisted_prop_var_ids,
+                &blacklisted_numeric_var_ids,
+                &mut domain_mapping,
+                &mut domain_sizes,
+                &mut partitions,
+                &mut numeric_domain_sizes,
+            );
+        }
 
         let mut iteration: usize = 1;
 
@@ -195,8 +265,8 @@ impl Cegar {
         .with_context(|| {
             format!("failed to construct DomainAbstractionFactory (iteration {iteration})")
         })?;
-        let mut operator_cache = IncrementalAbstractOperatorCache::default();
         let mut wildcard_plan = None;
+        let mut solved_by_self = false;
 
         while iteration <= config.max_iterations {
             if let Some(max_time) = config.max_time
@@ -213,18 +283,20 @@ impl Cegar {
                 );
             }
 
+            let iteration_start = Instant::now();
+            let plan_start = Instant::now();
             wildcard_plan = factory
-                .compute_plan_with_rng_and_cache(
+                .compute_plan_with_rng(
                     task,
                     config.combine_labels,
                     config.debug,
                     config.use_wildcard_plans,
-                    Some(&mut operator_cache),
                     Some(&mut rng),
                 )
                 .with_context(|| {
                     format!("failed to compute abstract plan (iteration {iteration})")
                 })?;
+            let plan_time = plan_start.elapsed();
             if config.debug {
                 match wildcard_plan.as_ref() {
                     Some(plan) => super::utils::debug_print_wildcard_plan(
@@ -239,25 +311,43 @@ impl Cegar {
             }
 
             let Some(plan) = wildcard_plan.as_ref() else {
-                break;
+                let abstraction_size = compute_abstraction_size_u128(
+                    &factory.domain_sizes,
+                    &factory.numeric_domain_sizes,
+                )
+                .unwrap_or(u128::MAX);
+                bail!(
+                    "CEGAR produced an abstract dead end for the concrete initial state at iteration {iteration}; abstraction_size={abstraction_size}, prop_domains={:?}, numeric_domains={:?}",
+                    factory.domain_sizes,
+                    factory.numeric_domain_sizes
+                );
             };
-            if wildcard_plan_is_real(task, plan)? {
-                // There is a real plan in the abstract plan, perfect heuristic.
-                break;
-            }
+            let real_check_time = Duration::ZERO;
 
-            let flaws = get_flaws(
-                task,
-                &factory.partitions,
-                &factory.domain_mapping,
-                plan,
-                self.config.flaw_kind,
-            )
-            .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
+            let flaw_start = Instant::now();
+            let direction = self
+                .config
+                .split_direction
+                .unwrap_or_else(|| self.config.flaw_kind.default_split_direction());
+            let flaws = self
+                .config
+                .flaw_kind
+                .get_flaws_with_direction(
+                    task,
+                    &factory.partitions,
+                    &factory.domain_mapping,
+                    plan,
+                    direction,
+                )
+                .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
+            let flaw_time = flaw_start.elapsed();
             if config.debug {
                 super::utils::debug_print_flaws(&flaws);
             }
             if flaws.is_empty() {
+                // Plan has no flaws → it is a real concrete plan; flag for
+                // collection-level early exit.
+                solved_by_self = true;
                 break;
             }
 
@@ -266,6 +356,7 @@ impl Cegar {
             } else {
                 None
             };
+            let refine_start = Instant::now();
             let refined = fix_flaws(
                 &self.config,
                 task,
@@ -280,7 +371,7 @@ impl Cegar {
                 plan.wildcard_plan.len(),
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
-            operator_cache.mark_refined(&refined);
+            let refine_time = refine_start.elapsed();
             if config.debug {
                 let after_size = compute_abstraction_size_u128(
                     &factory.domain_sizes,
@@ -297,22 +388,91 @@ impl Cegar {
             if refined.is_empty() {
                 break;
             }
+            if config.debug {
+                let abstraction_size = compute_abstraction_size_u128(
+                    &factory.domain_sizes,
+                    &factory.numeric_domain_sizes,
+                )
+                .unwrap_or(u128::MAX);
+                info!(
+                    "CEGAR iteration {iteration}: plan_len={}, flaws={}, refined={:?}, size={}, elapsed={:.3}s, plan={:.3}s, real_check={:.3}s, flaws_time={:.3}s, refine={:.3}s",
+                    plan.wildcard_plan.len(),
+                    flaws.len(),
+                    refined,
+                    abstraction_size,
+                    iteration_start.elapsed().as_secs_f64(),
+                    plan_time.as_secs_f64(),
+                    real_check_time.as_secs_f64(),
+                    flaw_time.as_secs_f64(),
+                    refine_time.as_secs_f64()
+                );
+            }
 
             iteration += 1;
+        }
+
+        if config.debug || std::env::var_os("DA_DUMP_FINAL_ABSTRACTION").is_some() {
+            log_final_target_centered_abstraction(task, &factory);
         }
 
         let last_step = CegarStep { wildcard_plan };
         Ok(CegarOutcome {
             final_state: CegarState::new(factory, iteration),
             last_step,
+            solved_by_self,
         })
     }
 }
 
+fn log_final_target_centered_abstraction(
+    task: &dyn AbstractNumericTask,
+    factory: &DomainAbstractionFactory,
+) {
+    info!("target-centered domain abstraction final domains:");
+    for (numeric_var_id, &size) in factory
+        .numeric_domain_sizes()
+        .iter()
+        .enumerate()
+        .filter(|(_, size)| **size > 1)
+    {
+        let name = task
+            .numeric_variables()
+            .get(numeric_var_id)
+            .map(|variable| variable.name())
+            .unwrap_or("<unknown>");
+        let Some(parts) = factory.partitions().partitions(numeric_var_id) else {
+            continue;
+        };
+        let intervals = parts
+            .iter()
+            .enumerate()
+            .map(|(part_id, interval)| format!("p{part_id}:{interval:?}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        info!("  n{numeric_var_id}={name}, size={size}, {intervals}");
+    }
+    for (var_id, &size) in factory
+        .domain_sizes()
+        .iter()
+        .enumerate()
+        .filter(|(_, size)| **size > 1)
+    {
+        let name = task.get_variable_name(var_id).unwrap_or("<unknown>");
+        info!("  p{var_id}={name}, size={size}");
+    }
+}
+
+#[allow(dead_code)]
 fn wildcard_plan_is_real(
     task: &dyn AbstractNumericTask,
     wildcard_plan: &WildcardPlanResult,
 ) -> Result<bool> {
+    // Note for Martin:
+    // This verifies whether *any* concrete operator choice through a wildcard
+    // abstract plan is a real plan. For long wildcard plans the search is
+    // exponential in the number of equivalent concrete operators per step. On
+    // sailing it cost several seconds per CEGAR iteration once plans became
+    // long, so the CEGAR loop intentionally does not call this hot-path check.
     let state_packer = make_prop_state_packer(task);
     let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
 
@@ -326,11 +486,8 @@ fn wildcard_plan_is_real(
     last_state_per_layer[0] = Some((prop_state.clone(), numeric_state.clone()));
 
     let mut real_plan_exists = false;
-    // TODO: A set of dead ends could be used if `f64` could be hashed.
-    // let mut dead_ends: HashSet<ConcreteState> = HashSet::new();
     let mut current_step: usize = 0;
     let mut equiv_op_iterators = Vec::with_capacity(plan_length);
-    // Equivalent operators of the first layer.
     equiv_op_iterators.push(wildcard_plan.wildcard_plan[0].iter());
 
     loop {
@@ -346,63 +503,45 @@ fn wildcard_plan_is_real(
                     &mut prop_state,
                     &mut numeric_state,
                 )?;
-                // if dead_ends.contains((prop_state, numeric_state)) { // Go to the previous layer. }
                 current_step += 1;
                 if current_step == plan_length {
                     if is_goal(task, &prop_state, &state_packer) {
                         real_plan_exists = true;
                         break;
-                    } else {
-                        // Go to the previous layer.
-                        current_step -= 1;
-                        (prop_state, numeric_state) =
-                            last_state_per_layer[current_step].clone().unwrap();
-                        continue;
                     }
+                    current_step -= 1;
+                    (prop_state, numeric_state) =
+                        last_state_per_layer[current_step].clone().unwrap();
+                    continue;
                 }
                 last_state_per_layer[current_step] =
                     Some((prop_state.clone(), numeric_state.clone()));
-                // All operators must be tried again from this state.
                 equiv_op_iterators.push(wildcard_plan.wildcard_plan[current_step].iter());
-            } else {
-                // dead_ends.insert((prop_state, numeric_state));
-                continue;
             }
+        } else if current_step == 0 {
+            break;
         } else {
-            if current_step == 0 {
-                // All operators tried.
-                break;
-            } else {
-                // Go to the previous layer.
-                current_step -= 1;
-                equiv_op_iterators.pop();
-                (prop_state, numeric_state) = last_state_per_layer[current_step].clone().unwrap();
-                continue;
-            }
+            current_step -= 1;
+            equiv_op_iterators.pop();
+            (prop_state, numeric_state) = last_state_per_layer[current_step].clone().unwrap();
         }
     }
 
     Ok(real_plan_exists)
 }
 
+#[allow(dead_code)]
 fn is_applicable(buffer: &[u64], packer: &IntDoublePacker, op: &Operator) -> bool {
-    for pre in op.preconditions().iter() {
-        if !fact_is_hold(pre, packer, buffer) {
-            return false;
-        }
-    }
-
-    true
+    op.preconditions()
+        .iter()
+        .all(|pre| fact_is_hold(pre, packer, buffer))
 }
 
+#[allow(dead_code)]
 fn is_goal(task: &dyn AbstractNumericTask, buffer: &[u64], packer: &IntDoublePacker) -> bool {
-    for goal_fact in goal_variable_values(task) {
-        if !fact_is_hold(&goal_fact, packer, buffer) {
-            return false;
-        }
-    }
-
-    true
+    goal_variable_values(task)
+        .iter()
+        .all(|goal_fact| fact_is_hold(goal_fact, packer, buffer))
 }
 
 fn current_time_seed() -> u64 {
@@ -412,6 +551,17 @@ fn current_time_seed() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos() as u64)
         .unwrap_or(0x9e37_79b9_7f4a_7c15)
+}
+
+/// SplitMix64 bit-mixer — turns a low-entropy counter into a well-spread `u64` so xor'ing it
+/// into a base seed produces independent SmallRng streams across CEGAR invocations.
+#[inline]
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = x;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 
 fn shuffle_indices_with_rng<R: rand::Rng + ?Sized>(indices: &mut [usize], rng: &mut R) {
@@ -560,8 +710,15 @@ pub fn fix_flaws(
     let mut refined_summary = RefinementSummary::default();
     let mut last_refined = None;
     for cand in chosen_flaws {
+        let dependent_numeric_refinement = if matches!(config.flaw_kind, FlawKind::TargetCentered) {
+            DependentNumericRefinement::All
+        } else {
+            DependentNumericRefinement::One
+        };
         let mut chosen = flaws[cand.idx].clone();
-        if let (Flaw::Propositional(pf), Some(restricted)) = (&mut chosen, cand.restricted_dep) {
+        if dependent_numeric_refinement != DependentNumericRefinement::All
+            && let (Flaw::Propositional(pf), Some(restricted)) = (&mut chosen, cand.restricted_dep)
+        {
             pf.dependent_numeric_flaws = restricted;
         }
 
@@ -581,7 +738,7 @@ pub fn fix_flaws(
                 domain_sizes,
                 partitions,
                 numeric_domain_sizes,
-                DependentNumericRefinement::One,
+                dependent_numeric_refinement,
             )?;
 
             if let Some(flaw_refined) = flaw_refined {
@@ -636,8 +793,8 @@ fn try_refine_from_flaw(
             Ok(None)
         }
         Flaw::Propositional(pf) => {
-            let var_id = pf.fact.var;
-            let value = pf.fact.value;
+            let var_id = pf.fact.var();
+            let value = pf.fact.value();
 
             // Bounds and conversion checks: these should hold in normal operation;
             // surface violations during debug builds but keep release behavior.
@@ -806,13 +963,13 @@ fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
     let mut goals = Vec::with_capacity(num_goals);
     for goal_idx in 0..num_goals {
         let goal = task.get_goal_fact(goal_idx);
-        if let Some(&axiom_idx) = goal_axiom_map.get(&goal.var) {
+        if let Some(&axiom_idx) = goal_axiom_map.get(&goal.var()) {
             let axiom = &task.axioms()[axiom_idx];
             for condition in axiom.conditions() {
-                goals.push(ExplicitFact::new(condition.var, condition.value));
+                goals.push(ExplicitFact::new(condition.var(), condition.value()));
             }
         } else {
-            goals.push(ExplicitFact::new(goal.var, goal.value));
+            goals.push(ExplicitFact::new(goal.var(), goal.value()));
         }
     }
     goals.sort_unstable();
@@ -930,7 +1087,7 @@ fn apply_initial_goal_splits(
 ) {
     let goal_values: HashMap<usize, usize> = goal_variable_values(task)
         .into_iter()
-        .map(|v| (v.var, v.value))
+        .map(|v| (v.var(), v.value()))
         .collect();
     let num_prop_vars = task.variables().len();
     let mut candidate_var_ids: Vec<usize> = config
@@ -938,8 +1095,16 @@ fn apply_initial_goal_splits(
         .as_ref()
         .map(|var_ids| var_ids.iter().copied().collect())
         .unwrap_or_else(|| goal_values.keys().copied().collect());
-    candidate_var_ids.sort_unstable();
+    candidate_var_ids.sort_by_key(|var_id| {
+        let is_goal = *var_id < num_prop_vars && goal_values.contains_key(var_id);
+        (!is_goal, *var_id)
+    });
     candidate_var_ids.dedup();
+    let initial_max_abstraction_size = if config.init_split_var_ids.is_some() {
+        (config.max_abstraction_size / 2).max(1)
+    } else {
+        config.max_abstraction_size
+    };
 
     for encoded_var_id in candidate_var_ids {
         if encoded_var_id >= num_prop_vars {
@@ -963,6 +1128,14 @@ fn apply_initial_goal_splits(
             else {
                 continue;
             };
+            if !can_refine_numeric_variable(
+                domain_sizes,
+                numeric_domain_sizes,
+                numeric_var_id,
+                initial_max_abstraction_size,
+            ) {
+                continue;
+            }
             let include_in_lower = rng.gen_range(0..2) == 0;
             if partitions.split_at(numeric_var_id, init_value, include_in_lower)
                 && let Some(parts) = partitions.partitions(numeric_var_id)
@@ -994,7 +1167,7 @@ fn apply_initial_goal_splits(
             numeric_domain_sizes,
             var_id,
             new_domain_size,
-            config.max_abstraction_size,
+            initial_max_abstraction_size,
         ) {
             continue;
         }
@@ -1003,6 +1176,142 @@ fn apply_initial_goal_splits(
         }
         if let Some(slot) = domain_sizes.get_mut(var_id) {
             *slot = new_domain_size;
+        }
+    }
+
+    // For every goal-side comparison-axiom prop var (the conditions of the
+    // goal axiom, expanded by `goal_variable_values`), also seed numeric
+    // splits at the initial concrete numeric value of each of the axiom's
+    // regular numeric dependencies. Without this, the initial abstraction
+    // contains the comparison-axiom prop vars at binary resolution but the
+    // underlying numerics are unrefined — so no operator can flip the
+    // comparison bit, and the abstract initial state cannot reach the goal.
+    // CEGAR then bails with "abstract dead end at iteration 1" before it
+    // could refine the numeric to enable reachability.
+    if let Ok(index) = ComparisonAxiomIndex::from_task(task) {
+        let init_numeric = task.get_initial_numeric_state_values();
+        for fact in goal_variable_values(task) {
+            let Some(tree) = index.comparison_tree(fact.var()) else {
+                continue;
+            };
+            for numeric_var_id in tree.regular_numeric_var_dependencies(task) {
+                if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
+                    continue;
+                }
+                let Some(numeric_var) = task.numeric_variables().get(numeric_var_id) else {
+                    continue;
+                };
+                if numeric_var.get_type() != &NumericType::Regular {
+                    continue;
+                }
+                if !can_refine_numeric_variable(
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    numeric_var_id,
+                    initial_max_abstraction_size,
+                ) {
+                    continue;
+                }
+                let Some(&init_value) = init_numeric.get(numeric_var_id) else {
+                    continue;
+                };
+                let include_in_lower = rng.gen_range(0..2) == 0;
+                if partitions.split_at(numeric_var_id, init_value, include_in_lower)
+                    && let Some(parts) = partitions.partitions(numeric_var_id)
+                    && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id)
+                {
+                    *slot = parts.len();
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_initial_seed_splits(
+    task: &dyn AbstractNumericTask,
+    config: &CegarConfig,
+    blacklisted_prop_var_ids: &HashSet<usize>,
+    blacklisted_numeric_var_ids: &HashSet<usize>,
+    domain_mapping: &mut DomainMapping,
+    domain_sizes: &mut [usize],
+    partitions: &mut NumericPartitions,
+    numeric_domain_sizes: &mut [usize],
+) {
+    let comparison_var_ids: HashSet<usize> = task
+        .comparison_axioms()
+        .iter()
+        .map(|axiom| axiom.get_affected_var_id())
+        .collect();
+
+    for seed in &config.initial_seed_splits {
+        match *seed {
+            InitialSeedSplit::Numeric {
+                numeric_var_id,
+                value,
+                include_in_lower,
+            } => {
+                if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
+                    continue;
+                }
+                let Some(numeric_var) = task.numeric_variables().get(numeric_var_id) else {
+                    continue;
+                };
+                if numeric_var.get_type() != &NumericType::Regular {
+                    continue;
+                }
+                if !can_refine_numeric_variable(
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    numeric_var_id,
+                    config.max_abstraction_size,
+                ) {
+                    continue;
+                }
+                if partitions.split_at(numeric_var_id, value, include_in_lower)
+                    && let Some(parts) = partitions.partitions(numeric_var_id)
+                    && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id)
+                {
+                    *slot = parts.len();
+                }
+            }
+            InitialSeedSplit::Propositional { var_id, value } => {
+                if blacklisted_prop_var_ids.contains(&var_id) {
+                    continue;
+                }
+                let Ok(concrete_size) = task.get_variable_domain_size(var_id) else {
+                    continue;
+                };
+                if value >= concrete_size {
+                    continue;
+                }
+                let (new_domain_size, mapping) = if comparison_var_ids.contains(&var_id) {
+                    let mut mapping = vec![0; concrete_size];
+                    if !mapping.is_empty() {
+                        mapping[0] = 1;
+                    }
+                    (2, mapping)
+                } else {
+                    let mut mapping = vec![0; concrete_size];
+                    mapping[value] = 1;
+                    (2, mapping)
+                };
+                if !can_refine_propositional_variable(
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    var_id,
+                    new_domain_size,
+                    config.max_abstraction_size,
+                ) {
+                    continue;
+                }
+                if let Some(slot) = domain_mapping.get_mut(var_id) {
+                    *slot = mapping;
+                }
+                if let Some(slot) = domain_sizes.get_mut(var_id) {
+                    *slot = new_domain_size;
+                }
+            }
         }
     }
 }

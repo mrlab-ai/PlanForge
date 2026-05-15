@@ -89,7 +89,7 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact { var: 0, value: 0 },
+        ExplicitFact::new(0, 0),
     );
 
     let state_packer = IntDoublePacker::from_task(&task);
@@ -111,5 +111,82 @@ fn duplicate_state_keeps_better_metric_cost_information() {
             .transition_cost(&initial_state, &cheap_successor)
             .unwrap(),
         1.0
+    );
+}
+
+#[test]
+fn register_state_deduplicates_canonicalized_numeric_values() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v0".to_string(),
+        vec!["off".to_string(), "on".to_string()],
+        None,
+        0,
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("x".to_string(), NumericType::Regular, None),
+        NumericVariable::new("c1".to_string(), NumericType::Constant, None),
+        NumericVariable::new("c2".to_string(), NumericType::Constant, None),
+    ];
+    let add_c1 = Operator::new(
+        "add-c1".to_string(),
+        vec![],
+        vec![],
+        vec![crate::numeric::numeric_task::AssignmentEffect::new(
+            0,
+            crate::numeric::numeric_task::AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+    let add_c2 = Operator::new(
+        "add-c2".to_string(),
+        vec![],
+        vec![],
+        vec![crate::numeric::numeric_task::AssignmentEffect::new(
+            0,
+            crate::numeric::numeric_task::AssignmentOperation::Plus,
+            2,
+            false,
+            vec![],
+        )],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(false, None),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 0.1 + 0.2, 0.3],
+        vec![add_c1, add_c2],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let state_packer = IntDoublePacker::from_task(&task);
+    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
+    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+
+    let initial = state_registry.get_initial_state();
+    let first = state_registry
+        .get_successor_state(&initial, &task.get_operators()[0])
+        .unwrap();
+    let second = state_registry
+        .get_successor_state(&initial, &task.get_operators()[1])
+        .unwrap();
+
+    assert_eq!(first.get_id(), second.get_id());
+    assert_eq!(
+        state_registry
+            .get_numeric_var_value_unevaluated(&first, 0)
+            .unwrap(),
+        0.3
     );
 }

@@ -1,5 +1,5 @@
-use tracing::{debug, info};
 use planners_sas::numeric::numeric_task::AbstractNumericTask;
+use tracing::{debug, info};
 
 use super::pattern_database::PatternDatabase;
 use super::projected_task::{Pattern, ProjectedTask};

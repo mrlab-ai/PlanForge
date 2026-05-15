@@ -707,15 +707,15 @@ impl NumericTaskHelper {
         let mut seen_numeric = BTreeSet::new();
 
         for condition in preconditions {
-            let var_id = condition.var;
+            let var_id = condition.var();
             if !self.is_numeric_axiom_var(var_id) {
-                if seen_propositional.insert((condition.var, condition.value)) {
+                if seen_propositional.insert((condition.var(), condition.value())) {
                     propositional_facts.push(condition.clone());
                 }
                 continue;
             }
 
-            if condition.value > 0 {
+            if condition.value() > 0 {
                 continue;
             }
 
@@ -770,8 +770,8 @@ impl NumericTaskHelper {
     }
 
     pub(crate) fn condition_group_ids_for_numeric_fact(&self, fact: &ExplicitFact) -> Vec<usize> {
-        let var_id = fact.var;
-        if let Some(group_ids) = self.comparison_fact_condition_group_ids(var_id, fact.value) {
+        let var_id = fact.var();
+        if let Some(group_ids) = self.comparison_fact_condition_group_ids(var_id, fact.value()) {
             return group_ids.to_vec();
         }
         if let Some(group_ids) = self.goal_helper_numeric_condition_group_ids(var_id) {
@@ -969,7 +969,7 @@ impl NumericTaskHelper {
                     .iter()
                     .map(|effect| &effect.add_fact),
             ) {
-                if let Some(proposition_id) = self.get_proposition(fact.var, fact.value) {
+                if let Some(proposition_id) = self.get_proposition(fact.var(), fact.value()) {
                     self.proposition_add_action_ids[proposition_id].push(action_id);
                 }
             }
@@ -984,7 +984,7 @@ impl NumericTaskHelper {
             let mut precondition = vec![None; num_variables];
             let mut postcondition = vec![None; num_variables];
             for condition in operator.preconditions() {
-                precondition[condition.var] = Some(condition.value);
+                precondition[condition.var()] = Some(condition.value());
             }
             for effect in operator.effects() {
                 postcondition[effect.var_id()] = Some(effect.value());
@@ -1035,7 +1035,7 @@ impl NumericTaskHelper {
 
         let mut base_precondition_values = BTreeMap::new();
         for precondition in operator.preconditions() {
-            base_precondition_values.insert(precondition.var, precondition.value);
+            base_precondition_values.insert(precondition.var(), precondition.value());
         }
 
         for effect in operator.effects() {
@@ -1056,7 +1056,7 @@ impl NumericTaskHelper {
                     );
                 let mut extended_precondition_values = base_precondition_values.clone();
                 for condition in effect.conditions() {
-                    extended_precondition_values.insert(condition.var, condition.value);
+                    extended_precondition_values.insert(condition.var(), condition.value());
                 }
                 let del_fact = extended_precondition_values
                     .get(&(effect.var_id()))
@@ -1444,7 +1444,7 @@ impl NumericTaskHelper {
         for axiom in task.axioms() {
             let effect_var_id = axiom.var_id();
             for precondition in axiom.conditions() {
-                let precondition_var_id = precondition.var;
+                let precondition_var_id = precondition.var();
                 if self.is_comparison_axiom_var(precondition_var_id) {
                     axiom_table
                         .entry(effect_var_id)
@@ -1461,7 +1461,7 @@ impl NumericTaskHelper {
 
         for goal_index in 0..task.get_num_goals() {
             let goal = task.get_goal_fact(goal_index);
-            let goal_var_id = goal.var;
+            let goal_var_id = goal.var();
             let Some(helper_numeric_vars) = axiom_table.get(&goal_var_id) else {
                 continue;
             };
@@ -1654,10 +1654,10 @@ fn comparison_operator_for_fact_value(
 fn intersect_fact_lists(left: &[ExplicitFact], right: &[ExplicitFact]) -> Vec<ExplicitFact> {
     let right_set = right
         .iter()
-        .map(|fact| (fact.var, fact.value))
+        .map(|fact| (fact.var(), fact.value()))
         .collect::<BTreeSet<_>>();
     left.iter()
-        .filter(|fact| right_set.contains(&(fact.var, fact.value)))
+        .filter(|fact| right_set.contains(&(fact.var(), fact.value())))
         .cloned()
         .collect()
 }

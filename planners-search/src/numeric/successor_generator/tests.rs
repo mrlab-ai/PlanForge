@@ -59,7 +59,7 @@ fn get_root_task() -> NumericRootTask {
     let axioms = Vec::new();
     let comparison_axioms = Vec::new();
     let assignment_axioms = Vec::new();
-    let global_constraint = ExplicitFact { var: 0, value: 0 };
+    let global_constraint = ExplicitFact::new(0, 0);
     NumericRootTask::new(
         version,
         metric,
@@ -96,10 +96,11 @@ fn test_grounded_successor_generator() {
     let state_values = state.get_state(&state_registry);
     assert_eq!(state_values, [1, 1]);
 
-    let node = generator.construct(&mut 0, &mut queue).unwrap();
+    let root = generator.construct(&mut 0, &mut queue).unwrap();
+    let tree = generator.into_tree(root);
 
     let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
-    node.get_applicable_operators(&state_values[..], &mut applicable_operators);
+    tree.get_applicable_operators(&state_values[..], &mut applicable_operators);
 
     let applicable = Operator::new(
         String::from("drop"),
