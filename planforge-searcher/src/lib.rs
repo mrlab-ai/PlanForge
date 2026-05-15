@@ -158,10 +158,27 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
     let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
 
-    let result = match &cli.search {
-        crate::recursive_config::SearchSpec::Astar(heuristic) => {
+    // Both A* and GBFS go through identical heuristic construction; only the
+    // open-list priority differs. Project the search spec onto (heuristic,
+    // priority kind) and let the shared block below build the heuristic.
+    let (heuristic_spec, gbfs_priority) = match &cli.search {
+        crate::recursive_config::SearchSpec::Astar(h) => (h, false),
+        crate::recursive_config::SearchSpec::Gbfs(h) => (h, true),
+        crate::recursive_config::SearchSpec::DaDebug => {
+            return Err(std::io::Error::other(
+                "`da_debug()` is implemented in the `planforge` binary path, not `planforge-searcher`",
+            ));
+        }
+        crate::recursive_config::SearchSpec::AstarDaDebug => {
+            return Err(std::io::Error::other(
+                "`astar_da_debug()` is implemented in the `planforge` binary path, not `planforge-searcher`",
+            ));
+        }
+    };
+    let result = {
+        {
             let task_ref: &dyn AbstractNumericTask = &task;
-            let heuristic_override = match heuristic {
+            let heuristic_override = match heuristic_spec {
                 crate::recursive_config::HeuristicSpec::Blind => None,
                 crate::recursive_config::HeuristicSpec::CanonicalDomainAbstractions(config) => {
                     // Canonical reads only the per-abstraction distance table;
@@ -338,32 +355,41 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                             dyn planforge_search::numeric::evaluation::Heuristic + '_,
                         >)
                 }
+                crate::recursive_config::HeuristicSpec::Ff => Some(Box::new(
+                    planforge_search::numeric::evaluation::ff_heuristic::FfHeuristic::new(task_ref)
+                        .map_err(|e| {
+                            std::io::Error::other(format!("failed to construct ff heuristic: {e}"))
+                        })?,
+                )
+                    as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>),
             };
 
-            let mut search = AStarSearch::new(
-                task_ref,
-                state_registry,
-                heuristic_override,
-                if cli.internal_run { None } else { cli.max_time },
-                if cli.internal_run {
-                    None
-                } else {
-                    cli.max_memory
-                },
-            );
+            let time_limit = if cli.internal_run { None } else { cli.max_time };
+            let memory_limit = if cli.internal_run { None } else { cli.max_memory };
+            let mut search = if gbfs_priority {
+                AStarSearch::new_gbfs(
+                    task_ref,
+                    state_registry,
+                    heuristic_override,
+                    time_limit,
+                    memory_limit,
+                )
+            } else {
+                AStarSearch::new(
+                    task_ref,
+                    state_registry,
+                    heuristic_override,
+                    time_limit,
+                    memory_limit,
+                )
+            };
 
-            info!("Starting A* search with {:?}...", heuristic);
+            info!(
+                "Starting {} search with {:?}...",
+                if gbfs_priority { "GBFS" } else { "A*" },
+                heuristic_spec,
+            );
             search.search()
-        }
-        crate::recursive_config::SearchSpec::DaDebug => {
-            return Err(std::io::Error::other(
-                "`da_debug()` is implemented in the `planforge` binary path, not `planforge-searcher`",
-            ));
-        }
-        crate::recursive_config::SearchSpec::AstarDaDebug => {
-            return Err(std::io::Error::other(
-                "`astar_da_debug()` is implemented in the `planforge` binary path, not `planforge-searcher`",
-            ));
         }
     };
 

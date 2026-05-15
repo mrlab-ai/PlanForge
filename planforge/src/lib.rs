@@ -180,7 +180,14 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
 
     let result = match &cli.search {
-        planforge_searcher::SearchSpec::Astar(heuristic) => {
+        planforge_searcher::SearchSpec::Astar(heuristic)
+        | planforge_searcher::SearchSpec::Gbfs(heuristic) => {
+            // GBFS and A* share heuristic construction; only the open-list
+            // priority differs (h vs g+h).
+            let gbfs_priority = matches!(
+                &cli.search,
+                planforge_searcher::SearchSpec::Gbfs(_)
+            );
             let task_ref: &dyn AbstractNumericTask = &task;
             let heuristic_override = match heuristic {
                 planforge_searcher::HeuristicSpec::Blind => None,
@@ -354,21 +361,40 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                             dyn planforge_search::numeric::evaluation::Heuristic + '_,
                         >)
                 }
+                planforge_searcher::HeuristicSpec::Ff => Some(Box::new(
+                    planforge_search::numeric::evaluation::ff_heuristic::FfHeuristic::new(task_ref)
+                        .map_err(|e| {
+                            std::io::Error::other(format!("failed to construct ff heuristic: {e}"))
+                        })?,
+                )
+                    as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>),
             };
 
-            let mut search = AStarSearch::new(
-                task_ref,
-                state_registry,
-                heuristic_override,
-                if cli.internal_run { None } else { cli.max_time },
-                if cli.internal_run {
-                    None
-                } else {
-                    cli.max_memory
-                },
-            );
+            let time_limit = if cli.internal_run { None } else { cli.max_time };
+            let memory_limit = if cli.internal_run { None } else { cli.max_memory };
+            let mut search = if gbfs_priority {
+                AStarSearch::new_gbfs(
+                    task_ref,
+                    state_registry,
+                    heuristic_override,
+                    time_limit,
+                    memory_limit,
+                )
+            } else {
+                AStarSearch::new(
+                    task_ref,
+                    state_registry,
+                    heuristic_override,
+                    time_limit,
+                    memory_limit,
+                )
+            };
 
-            info!("Starting A* search with {:?}...", heuristic);
+            info!(
+                "Starting {} search with {:?}...",
+                if gbfs_priority { "GBFS" } else { "A*" },
+                heuristic,
+            );
             search.search()
         }
         planforge_searcher::SearchSpec::DaDebug => run_da_debug(

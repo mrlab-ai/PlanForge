@@ -4,7 +4,7 @@ A grounded numeric planner written in Rust. Accepts PDDL or pre-translated SAS+ 
 
 ## Status
 
-Production-quality on the core search and heuristic paths. Greedy best-first search and FF-style preferred-operator integration are planned and not yet available.
+Production-quality on the admissible search and heuristic paths (A\* with blind, lmcutnumeric, pattern databases, canonical and SCP-based domain abstractions). Greedy best-first search and an FF-style relaxed-plan heuristic are available; FF currently uses a propositional delete relaxation and treats numeric preconditions/effects as trivially satisfiable. A monotonic numeric relaxation (Metric-FF style) and preferred-operator integration are still planned.
 
 ## Input formats
 
@@ -18,11 +18,12 @@ Production-quality on the core search and heuristic paths. Greedy best-first sea
   - *Canonical* (max over compatible additive subsets).
   - *Saturated cost partitioning* (SCP), including a fill-SCP variant that combines per-label SCP with LM-cut over residual costs.
 - **LM-cut** — numeric landmark-cut heuristic, usable standalone or as a residual-cost component inside SCP.
+- **FF** — Hoffmann/Nebel relaxed-plan heuristic. Currently propositional only — numeric preconditions/effects are dropped from the relaxation. Non-admissible in general; useful as a fast guide for greedy search.
 
 ## Search
 
-- **A\*** — admissible search with the heuristics above. The current production path.
-- **Greedy best-first search (GBFS)** — planned.
+- **A\*** — admissible best-first search (`f = g + h`). The production path for guaranteed-optimal planning under an admissible heuristic.
+- **Greedy best-first search (GBFS)** — non-admissible best-first search (`f = h`). Often finds plans far faster than A\* with the same heuristic, at the cost of optimality.
 - **FF-style preferred operators** — planned.
 
 ## Building
@@ -49,11 +50,14 @@ Pre-translated SAS+:
 
 Common options:
 
-- `--search SPEC` — A\* with a heuristic configuration. Examples:
+- `--search SPEC` — search algorithm with a heuristic configuration. Examples:
   - `astar(blind())`
   - `astar(lmcutnumeric())`
   - `astar(canonical_domain_abstractions(...))`
   - `astar(fillSCP(...))`
+  - `astar(ff())`
+  - `gbfs(ff())` — fast non-admissible search
+  - `gbfs(lmcutnumeric())`
 - `--max-time DURATION` — wall-clock budget (`30m`, `1h`, `45s`).
 - `--max-memory SIZE` — address-space cap (`8G`, `4096M`).
 

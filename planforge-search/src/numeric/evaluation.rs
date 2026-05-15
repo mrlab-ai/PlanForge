@@ -6,6 +6,7 @@
 
 pub mod domain_abstractions;
 pub mod evaluator;
+pub mod ff_heuristic;
 pub mod g_evaluator;
 pub mod heuristic;
 pub mod numeric_landmarks;

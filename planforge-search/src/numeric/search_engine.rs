@@ -194,6 +194,36 @@ pub trait SearchEngine {
     fn print_initial_h_values(&mut self);
 }
 
+/// Priority-key construction for best-first search.
+///
+/// `Astar` uses `f = g + h`, the textbook admissible best-first key. `Gbfs`
+/// drops `g` from the key — successors are popped strictly in order of `h`,
+/// which is the greedy best-first variant. `g` is still accumulated for plan
+/// cost reporting; only the open-list priority changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PriorityMode {
+    Astar,
+    Gbfs,
+}
+
+impl PriorityMode {
+    #[inline]
+    fn priority_value(self, g_value: f64, h_value: f64) -> f64 {
+        match self {
+            PriorityMode::Astar => g_value + h_value,
+            PriorityMode::Gbfs => h_value,
+        }
+    }
+
+    #[inline]
+    fn priority_label(self) -> &'static str {
+        match self {
+            PriorityMode::Astar => "f",
+            PriorityMode::Gbfs => "h",
+        }
+    }
+}
+
 pub struct AStarSearch<'a> {
     task: &'a dyn AbstractNumericTask,
     state_registry: StateRegistry<'a>,
@@ -210,6 +240,7 @@ pub struct AStarSearch<'a> {
     // Evaluators.
     heuristic: Box<dyn Heuristic + 'a>,
     heuristic_name: String,
+    priority_mode: PriorityMode,
 
     // Configuration.
     time_limit: Option<Duration>,
@@ -247,6 +278,46 @@ impl<'a> AStarSearch<'a> {
         heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
+    ) -> Self {
+        Self::with_priority_mode(
+            task,
+            state_registry,
+            heuristic,
+            time_limit,
+            max_memory_bytes,
+            PriorityMode::Astar,
+        )
+    }
+
+    /// Create a new greedy best-first search instance. Identical to A* except
+    /// the open-list priority is `h` only — `g` is still tracked for plan cost
+    /// but not used in tie-breaking. GBFS is incomplete in pathological cases
+    /// and not admissible, but it solves many tasks far faster than A* with
+    /// the same heuristic.
+    pub fn new_gbfs(
+        task: &'a dyn AbstractNumericTask,
+        state_registry: StateRegistry<'a>,
+        heuristic: Option<Box<dyn Heuristic + 'a>>,
+        time_limit: Option<Duration>,
+        max_memory_bytes: Option<u64>,
+    ) -> Self {
+        Self::with_priority_mode(
+            task,
+            state_registry,
+            heuristic,
+            time_limit,
+            max_memory_bytes,
+            PriorityMode::Gbfs,
+        )
+    }
+
+    fn with_priority_mode(
+        task: &'a dyn AbstractNumericTask,
+        state_registry: StateRegistry<'a>,
+        heuristic: Option<Box<dyn Heuristic + 'a>>,
+        time_limit: Option<Duration>,
+        max_memory_bytes: Option<u64>,
+        priority_mode: PriorityMode,
     ) -> Self {
         let successor_generator = Self::create_successor_generator(task);
 
@@ -286,6 +357,7 @@ impl<'a> AStarSearch<'a> {
             search_nodes: Vec::new(),
             heuristic,
             heuristic_name,
+            priority_mode,
             time_limit,
             max_memory_bytes,
             initial_state: Some(initial_state),
@@ -368,6 +440,12 @@ impl<'a> AStarSearch<'a> {
     }
 
     fn maybe_print_f_value(&mut self, f_value: f64, start_time: &Instant) {
+        // For GBFS the priority is `h`, which is non-monotonic — the "next
+        // layer" abstraction doesn't apply. Skip; per-improvement progress is
+        // still reported via `maybe_report_heuristic_progress`.
+        if self.priority_mode == PriorityMode::Gbfs {
+            return;
+        }
         let f_layer = f_value as i64;
         if self.last_reported_f_layer == Some(f_layer) {
             return;
@@ -391,7 +469,8 @@ impl<'a> AStarSearch<'a> {
         };
 
         info!(
-            "f = {} [{} evaluated, {} expanded, t={:.6}s, {} KB]",
+            "{} = {} [{} evaluated, {} expanded, t={:.6}s, {} KB]",
+            self.priority_mode.priority_label(),
             f_layer,
             self.nodes_evaluated,
             self.nodes_expanded,
@@ -502,7 +581,7 @@ impl<'a> AStarSearch<'a> {
             }
             Ok(h_value) => SearchEvaluation {
                 h_value,
-                f_value: g_value + h_value,
+                f_value: self.priority_mode.priority_value(g_value, h_value),
                 g_value,
                 is_dead_end: false,
             },

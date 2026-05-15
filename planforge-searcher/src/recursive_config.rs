@@ -93,12 +93,15 @@ pub enum HeuristicSpec {
     ScpOnline(ScpOnlineConfig),
     #[serde(rename = "fillscp")]
     FillScp(FillScpConfig),
+    #[serde(rename = "ff")]
+    Ff,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchSpec {
     Astar(HeuristicSpec),
+    Gbfs(HeuristicSpec),
     #[serde(rename = "da_debug")]
     DaDebug,
     #[serde(rename = "astar_da_debug")]
@@ -141,6 +144,7 @@ impl fmt::Display for HeuristicSpec {
             HeuristicSpec::FillScp(config) => {
                 write!(f, "{}", config.format_config_call("fillSCP"))
             }
+            HeuristicSpec::Ff => write!(f, "ff()"),
         }
     }
 }
@@ -149,6 +153,7 @@ impl fmt::Display for SearchSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SearchSpec::Astar(h) => write!(f, "astar({h})"),
+            SearchSpec::Gbfs(h) => write!(f, "gbfs({h})"),
             SearchSpec::DaDebug => write!(f, "da_debug()"),
             SearchSpec::AstarDaDebug => write!(f, "astar_da_debug()"),
         }
@@ -1721,6 +1726,13 @@ fn heuristic_registry() -> Vec<HeuristicPlugin> {
             },
         },
         HeuristicPlugin {
+            name: "ff",
+            build: |call| {
+                ensure_no_args(call)?;
+                Ok(HeuristicSpec::Ff)
+            },
+        },
+        HeuristicPlugin {
             name: "domain_abstraction",
             build: |call| {
                 Ok(HeuristicSpec::DomainAbstraction(
@@ -1792,6 +1804,10 @@ fn search_registry() -> Vec<SearchPlugin> {
         SearchPlugin {
             name: "astar",
             build: |call| Ok(SearchSpec::Astar(AStarConfig::from_config(call)?.heuristic)),
+        },
+        SearchPlugin {
+            name: "gbfs",
+            build: |call| Ok(SearchSpec::Gbfs(AStarConfig::from_config(call)?.heuristic)),
         },
         SearchPlugin {
             name: "da_debug",
