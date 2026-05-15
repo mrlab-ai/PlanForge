@@ -33,6 +33,12 @@ pub struct DomainAbstractionMetadata {
     pub full_goal_task: Option<bool>,
     pub initial_seed_splits: Vec<String>,
     pub max_abstraction_size: Option<usize>,
+    /// CEGAR exited because the wildcard plan has no flaws — the abstract
+    /// plan is therefore a real concrete plan and `h(init)` equals the
+    /// optimal cost. Lets the collection generator stop early when one
+    /// such abstraction is built, since canonical (max) and SCP cannot
+    /// improve on a tight optimal heuristic at the initial state.
+    pub solved_by_self: bool,
 }
 
 impl DomainAbstraction {
@@ -99,6 +105,7 @@ impl DomainAbstractionGenerator {
             .build_abstraction(transformed_task)
             .context("CEGAR failed to build abstraction")?;
 
+        let solved_by_self = outcome.solved_by_self;
         let factory = outcome.final_state.factory;
         let mut operator_generator =
             factory.make_operator_generator(transformed_task, self.config.combine_labels)?;
@@ -162,7 +169,10 @@ impl DomainAbstractionGenerator {
             relevant_operator_ids,
             abstract_operators,
             abstract_operator_footprints,
-            metadata: DomainAbstractionMetadata::default(),
+            metadata: DomainAbstractionMetadata {
+                solved_by_self,
+                ..DomainAbstractionMetadata::default()
+            },
         })
     }
 }
