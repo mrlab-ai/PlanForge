@@ -135,6 +135,14 @@ pub struct CegarStep {
 pub struct CegarOutcome {
     pub final_state: CegarState,
     pub last_step: CegarStep,
+    /// True iff CEGAR's loop exited because no flaws remained: the
+    /// abstract wildcard plan is therefore already a real concrete plan
+    /// (or the initial state is itself the goal, plan empty). When set,
+    /// `h_DA(init)` is exact for the optimal cost — admissible *and*
+    /// tight — so subsequent abstractions in the collection cannot
+    /// improve the canonical (max) heuristic at the initial state, and
+    /// the collection generator can stop early to save memory.
+    pub solved_by_self: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -239,6 +247,7 @@ impl Cegar {
             format!("failed to construct DomainAbstractionFactory (iteration {iteration})")
         })?;
         let mut wildcard_plan = None;
+        let mut solved_by_self = false;
 
         while iteration <= config.max_iterations {
             if let Some(max_time) = config.max_time
@@ -317,6 +326,9 @@ impl Cegar {
                 super::utils::debug_print_flaws(&flaws);
             }
             if flaws.is_empty() {
+                // Plan has no flaws → it is a real concrete plan; flag for
+                // collection-level early exit.
+                solved_by_self = true;
                 break;
             }
 
@@ -388,6 +400,7 @@ impl Cegar {
         Ok(CegarOutcome {
             final_state: CegarState::new(factory, iteration),
             last_step,
+            solved_by_self,
         })
     }
 }

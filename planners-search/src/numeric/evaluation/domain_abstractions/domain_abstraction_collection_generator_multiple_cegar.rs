@@ -404,6 +404,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 .with_context(|| {
                     format!("failed to generate abstraction for collection iteration {iteration}")
                 })?;
+            let solved_by_self = abstraction.metadata.solved_by_self;
             abstraction.metadata = DomainAbstractionMetadata {
                 collection_iteration: Some(iteration),
                 portfolio_strategy: Some(self.config.portfolio_strategy.to_string()),
@@ -411,6 +412,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 full_goal_task: Some(full_goal_task),
                 initial_seed_splits: seed_descriptions,
                 max_abstraction_size: Some(remaining_abstraction_size),
+                solved_by_self,
             };
 
             let abstraction_size = compute_abstraction_size_u128(
@@ -452,6 +454,19 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 || (self.config.total_max_time.is_finite() && elapsed >= self.config.total_max_time)
                 || (stagnated && (!self.config.enable_blacklist_on_stagnation || blacklisting))
             {
+                break;
+            }
+            if solved_by_self {
+                // The just-built abstraction's wildcard plan is a real
+                // concrete plan (CEGAR exited at `flaws.is_empty()`), so
+                // `h_DA(init)` is *tight* at the optimal cost. Adding more
+                // abstractions cannot improve the canonical/max heuristic at
+                // the initial state and only inflates memory. Stop here.
+                info!(
+                    "domain abstraction collection: stopping early at iteration {iteration} \
+                     because abstraction's wildcard plan is a real concrete plan \
+                     (solved_by_self=true)"
+                );
                 break;
             }
             if stagnated && self.config.enable_blacklist_on_stagnation {
