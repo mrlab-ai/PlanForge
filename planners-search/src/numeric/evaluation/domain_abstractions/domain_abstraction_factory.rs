@@ -2187,10 +2187,40 @@ impl DomainAbstractionFactory {
                 continue;
             }
 
-            match_tree.get_applicable_operator_ids(target_hash, &mut applicable_operator_ids);
+            // Mirror `compute_distances_and_generating_ops`: under
+            // comparison-branching, Dijkstra resets the target state's
+            // comparison-axiom prop vars to UNKNOWN before consulting
+            // `match_tree` for applicable operators, and computes the
+            // predecessor hash from that reset state. The reason is that
+            // ops have no direct effect on comparison-axiom prop vars —
+            // those values are derived from the predecessor's numeric
+            // intervals, then enumerated via wildcard expansion. If we
+            // consult `match_tree` at `target_hash` directly (with
+            // specific comparison bits), we'd saturate over transitions
+            // Dijkstra never used (because Dijkstra applied them at the
+            // base form) and miss transitions Dijkstra did use,
+            // diverging from the cost partition that produced the
+            // distance table. The divergence inflates `needed` for ops
+            // not actually on Dijkstra's paths and under-saturates ops
+            // that were, leaving cost in `remaining_costs` for the next
+            // abstraction to re-charge — the symptom is `sum_k h_k > h*`
+            // on plant-watering/prob_4_2_2 (cost 34 vs optimal 33 across
+            // a fraction of seeds).
+            let base_target = if comparison_branching {
+                self.reset_comparison_vars_to_unknown_except(
+                    target_hash,
+                    generator.hash_multipliers(),
+                    &comparison_var_ids,
+                    &[],
+                )?
+            } else {
+                target_hash
+            };
+
+            match_tree.get_applicable_operator_ids(base_target, &mut applicable_operator_ids);
             for &abstract_op_id in &applicable_operator_ids {
                 let op = &operators[abstract_op_id];
-                let predecessor_i64 = target_hash as i64 + op.hash_effect as i64;
+                let predecessor_i64 = base_target as i64 + op.hash_effect as i64;
                 if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
