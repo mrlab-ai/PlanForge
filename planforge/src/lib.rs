@@ -41,7 +41,7 @@ use planforge_search::numeric::successor_generator::{ApplicableOperator, Success
 use planforge_searcher::*;
 use planforge_translator::*;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::num::NonZero;
 use std::process::Command;

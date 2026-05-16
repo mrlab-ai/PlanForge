@@ -9,6 +9,7 @@ default-members = [
     "planforge-searcher",
     "planforge",
     "planforge-cli-utils",
+    "planforge-portfolio",
     "tests",
 ]
 
@@ -22,6 +23,7 @@ members = [
     "planforge-searcher",
     "planforge",
     "planforge-cli-utils",
+    "planforge-portfolio",
     "tests",
 ]
 
