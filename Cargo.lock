@@ -354,6 +354,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "planforge-portfolio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+]
+
+[[package]]
 name = "planforge-preprocess"
 version = "0.1.0"
 dependencies = [

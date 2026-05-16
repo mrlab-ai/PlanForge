@@ -41,7 +41,7 @@ use planforge_search::numeric::successor_generator::{ApplicableOperator, Success
 use planforge_searcher::*;
 use planforge_translator::*;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::num::NonZero;
 use std::process::Command;
@@ -189,9 +189,108 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                 planforge_searcher::SearchSpec::Gbfs(_)
             );
             let task_ref: &dyn AbstractNumericTask = &task;
-            let heuristic_override = match heuristic {
-                planforge_searcher::HeuristicSpec::Blind => None,
-                planforge_searcher::HeuristicSpec::CanonicalDomainAbstractions(config) => {
+            let heuristic_override = build_heuristic_from_spec(heuristic, task_ref)?;
+            let time_limit = if cli.internal_run { None } else { cli.max_time };
+            let memory_limit = if cli.internal_run { None } else { cli.max_memory };
+            let mut search = if gbfs_priority {
+                AStarSearch::new_gbfs(
+                    task_ref,
+                    state_registry,
+                    heuristic_override,
+                    time_limit,
+                    memory_limit,
+                )
+            } else {
+                AStarSearch::new(
+                    task_ref,
+                    state_registry,
+                    heuristic_override,
+                    time_limit,
+                    memory_limit,
+                )
+            };
+
+            info!(
+                "Starting {} search with {:?}...",
+                if gbfs_priority { "GBFS" } else { "A*" },
+                heuristic,
+            );
+            search.search()
+        }
+        planforge_searcher::SearchSpec::AstarFs(fast_spec, slow_spec) => {
+            // A* with two admissible heuristics: a fast one for ordering
+            // and a slow one evaluated lazily on second-pop. Treats the
+            // user's `blind` choice as a placeholder by materializing a
+            // real `BlindHeuristic` with the task's min-action-cost.
+            let task_ref: &dyn AbstractNumericTask = &task;
+            let original_costs: Vec<f64> = task
+                .get_operators()
+                .iter()
+                .map(|op| {
+                    planforge_sas::numeric::numeric_task::metric_operator_cost_from_initial_values(
+                        task_ref, op,
+                    )
+                })
+                .collect();
+            let min_cost = original_costs
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, |a, b| a.min(b));
+            let min_action_cost = if min_cost.is_finite() {
+                min_cost.max(0.0)
+            } else {
+                1.0
+            };
+            let make_blind = || {
+                Box::new(planforge_search::numeric::evaluation::heuristic::BlindHeuristic::with_min_action_cost(
+                    min_action_cost,
+                    None,
+                )) as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>
+            };
+            let fast_h = build_heuristic_from_spec(fast_spec, task_ref)?
+                .unwrap_or_else(make_blind);
+            let slow_h = build_heuristic_from_spec(slow_spec, task_ref)?
+                .unwrap_or_else(make_blind);
+            let time_limit = if cli.internal_run { None } else { cli.max_time };
+            let memory_limit = if cli.internal_run { None } else { cli.max_memory };
+            let mut search = AStarSearch::new_fast_slow(
+                task_ref,
+                state_registry,
+                fast_h,
+                slow_h,
+                time_limit,
+                memory_limit,
+            );
+            info!(
+                "Starting A* fast/slow search with fast={fast_spec:?} slow={slow_spec:?}..."
+            );
+            search.search()
+        }
+        // The original Astar/Gbfs branch is replaced; keep DaDebug paths.
+        planforge_searcher::SearchSpec::DaDebug => run_da_debug(
+            &task,
+            state_registry,
+            if cli.internal_run { None } else { cli.max_time },
+        )?,
+        planforge_searcher::SearchSpec::AstarDaDebug => run_astar_da_debug(
+            &task,
+            state_registry,
+            if cli.internal_run { None } else { cli.max_time },
+        )?,
+    };
+
+    print_search_result(&result);
+
+    Ok(result)
+}
+
+fn build_heuristic_from_spec<'a>(
+    spec: &planforge_searcher::HeuristicSpec,
+    task_ref: &'a dyn AbstractNumericTask,
+) -> std::io::Result<Option<Box<dyn planforge_search::numeric::evaluation::Heuristic + 'a>>> {
+    Ok(match spec {
+        planforge_searcher::HeuristicSpec::Blind => None,
+        planforge_searcher::HeuristicSpec::CanonicalDomainAbstractions(config) => {
                     // Canonical reads only the per-abstraction distance table;
                     // skip footprint construction to avoid ~12 GB of
                     // per-concrete-op `StateRegion` storage on tasks with
@@ -368,50 +467,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                         })?,
                 )
                     as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>),
-            };
-
-            let time_limit = if cli.internal_run { None } else { cli.max_time };
-            let memory_limit = if cli.internal_run { None } else { cli.max_memory };
-            let mut search = if gbfs_priority {
-                AStarSearch::new_gbfs(
-                    task_ref,
-                    state_registry,
-                    heuristic_override,
-                    time_limit,
-                    memory_limit,
-                )
-            } else {
-                AStarSearch::new(
-                    task_ref,
-                    state_registry,
-                    heuristic_override,
-                    time_limit,
-                    memory_limit,
-                )
-            };
-
-            info!(
-                "Starting {} search with {:?}...",
-                if gbfs_priority { "GBFS" } else { "A*" },
-                heuristic,
-            );
-            search.search()
-        }
-        planforge_searcher::SearchSpec::DaDebug => run_da_debug(
-            &task,
-            state_registry,
-            if cli.internal_run { None } else { cli.max_time },
-        )?,
-        planforge_searcher::SearchSpec::AstarDaDebug => run_astar_da_debug(
-            &task,
-            state_registry,
-            if cli.internal_run { None } else { cli.max_time },
-        )?,
-    };
-
-    print_search_result(&result);
-
-    Ok(result)
+    })
 }
 
 fn build_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> SuccessorTree<'a> {

@@ -102,6 +102,12 @@ pub enum HeuristicSpec {
 pub enum SearchSpec {
     Astar(HeuristicSpec),
     Gbfs(HeuristicSpec),
+    /// A* with two admissible heuristics: a *fast* one for initial open-
+    /// list ordering and a *slow* but possibly tighter one evaluated
+    /// lazily when a state is about to be expanded. See
+    /// `AStarSearch::new_fast_slow`.
+    #[serde(rename = "astar_fs")]
+    AstarFs(HeuristicSpec, HeuristicSpec),
     #[serde(rename = "da_debug")]
     DaDebug,
     #[serde(rename = "astar_da_debug")]
@@ -154,6 +160,9 @@ impl fmt::Display for SearchSpec {
         match self {
             SearchSpec::Astar(h) => write!(f, "astar({h})"),
             SearchSpec::Gbfs(h) => write!(f, "gbfs({h})"),
+            SearchSpec::AstarFs(fast, slow) => {
+                write!(f, "astar_fs(fast={fast}, slow={slow})")
+            }
             SearchSpec::DaDebug => write!(f, "da_debug()"),
             SearchSpec::AstarDaDebug => write!(f, "astar_da_debug()"),
         }
@@ -1658,6 +1667,44 @@ impl FromConfig for AStarConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct AStarFsConfig {
+    fast: HeuristicSpec,
+    slow: HeuristicSpec,
+}
+
+impl Default for AStarFsConfig {
+    fn default() -> Self {
+        Self {
+            fast: HeuristicSpec::Blind,
+            slow: HeuristicSpec::Blind,
+        }
+    }
+}
+
+impl FromConfig for AStarFsConfig {
+    fn config_fields() -> Vec<Field<Self>> {
+        vec![
+            Field {
+                name: "fast",
+                apply: |config, value| {
+                    config.fast = build_heuristic(&call_from_value(value)?)?;
+                    Ok(())
+                },
+                format: |config| config.fast.to_string(),
+            },
+            Field {
+                name: "slow",
+                apply: |config, value| {
+                    config.slow = build_heuristic(&call_from_value(value)?)?;
+                    Ok(())
+                },
+                format: |config| config.slow.to_string(),
+            },
+        ]
+    }
+}
+
 impl FromConfig for DomainAbstractionConfig {
     fn config_fields() -> Vec<Field<Self>> {
         domain_abstraction_fields()
@@ -1808,6 +1855,13 @@ fn search_registry() -> Vec<SearchPlugin> {
         SearchPlugin {
             name: "gbfs",
             build: |call| Ok(SearchSpec::Gbfs(AStarConfig::from_config(call)?.heuristic)),
+        },
+        SearchPlugin {
+            name: "astar_fs",
+            build: |call| {
+                let cfg = AStarFsConfig::from_config(call)?;
+                Ok(SearchSpec::AstarFs(cfg.fast, cfg.slow))
+            },
         },
         SearchPlugin {
             name: "da_debug",
