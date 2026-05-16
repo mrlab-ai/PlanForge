@@ -422,25 +422,12 @@ impl<'task> FfHeuristic<'task> {
                      (affected={affected}, left={left}, right={right}, num_numeric={num_numeric})"
                 ));
             }
-            match axiom.get_operator() {
-                CalOperator::Sum | CalOperator::Difference => {
-                    assignment_axioms.push(AssignmentAxiomDesc {
-                        affected_var: affected,
-                        left_var: left,
-                        right_var: right,
-                        op: axiom.get_operator().clone(),
-                    });
-                }
-                CalOperator::Product | CalOperator::Division => {
-                    return Err(format!(
-                        "assignment axiom {axiom_idx} uses unsupported {:?} operator. \
-                         Monotonic-relaxation bounds for multiplicative derived numerics \
-                         require sign-aware case analysis which this FF doesn't implement. \
-                         Pick a different heuristic for such tasks.",
-                        axiom.get_operator()
-                    ));
-                }
-            }
+            assignment_axioms.push(AssignmentAxiomDesc {
+                affected_var: affected,
+                left_var: left,
+                right_var: right,
+                op: axiom.get_operator().clone(),
+            });
         }
 
         // 4. Capture each Constant numeric variable's initial value so we
@@ -888,11 +875,44 @@ impl<'task> FfHeuristic<'task> {
                         max: l.max - r.min,
                         min: l.min - r.max,
                     },
-                    CalOperator::Product | CalOperator::Division => {
-                        unreachable!(
-                            "Product/Division assignment axioms should have been rejected \
-                             at construction"
-                        );
+                    // Sign-aware interval multiplication for `d := l * r`.
+                    // With l ∈ [l.min, l.max] and r ∈ [r.min, r.max], the
+                    // resulting range is bracketed by the four corner
+                    // products. Each product is `extreme * extreme`, so
+                    // any value of l*r lies in the [min, max] of those
+                    // four. The monotonic-relaxation join is a union with
+                    // the existing envelope, so widening is admissible.
+                    CalOperator::Product => {
+                        let p1 = l.min * r.min;
+                        let p2 = l.min * r.max;
+                        let p3 = l.max * r.min;
+                        let p4 = l.max * r.max;
+                        NumericRange {
+                            max: p1.max(p2).max(p3).max(p4),
+                            min: p1.min(p2).min(p3).min(p4),
+                        }
+                    }
+                    // Sign-aware interval division for `d := l / r`. If
+                    // r's interval contains zero, the quotient is
+                    // unbounded — yield `[-∞, +∞]` (still admissible).
+                    // Otherwise the four corner quotients bracket the
+                    // result the same way Product does.
+                    CalOperator::Division => {
+                        if r.min <= 0.0 && 0.0 <= r.max {
+                            NumericRange {
+                                max: f64::INFINITY,
+                                min: f64::NEG_INFINITY,
+                            }
+                        } else {
+                            let q1 = l.min / r.min;
+                            let q2 = l.min / r.max;
+                            let q3 = l.max / r.min;
+                            let q4 = l.max / r.max;
+                            NumericRange {
+                                max: q1.max(q2).max(q3).max(q4),
+                                min: q1.min(q2).min(q3).min(q4),
+                            }
+                        }
                     }
                 };
                 if numeric[ax.affected_var].join(new) {
