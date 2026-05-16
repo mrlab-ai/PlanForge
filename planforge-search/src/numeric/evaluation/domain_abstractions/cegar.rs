@@ -77,6 +77,18 @@ pub struct CegarConfig {
     /// from the regressed-target / required interval. When `None`, the flaw
     /// kind's default ([`FlawKind::default_split_direction`]) is used.
     pub split_direction: Option<SplitDirection>,
+    /// Maximum number of comparison-axiom propositional vars this CEGAR run
+    /// may refine into its pattern. `None` = unbounded. When the cap is
+    /// reached, the refinement loop refuses to introduce additional
+    /// comparison-axiom prop vars: `max_refined_single_atom` (and its
+    /// siblings) fall through to alternative split candidates (typically
+    /// a numeric split on a comparison-axiom dependency). If no eligible
+    /// candidates remain, the CEGAR run terminates and the collection
+    /// generator starts the next iteration with a different init seed.
+    /// Exists to preserve canonical-DA additive-subset diversity (see
+    /// `DomainAbstractionCollectionGeneratorMultipleCegarConfig::max_refined_comparison_vars_per_abstraction`
+    /// for the longer rationale).
+    pub max_refined_comparison_vars_per_abstraction: Option<usize>,
 }
 
 impl Default for CegarConfig {
@@ -100,6 +112,7 @@ impl Default for CegarConfig {
             finite_support: FiniteSupportConfig::default(),
             split_direction: None,
             compute_operator_footprints: true,
+            max_refined_comparison_vars_per_abstraction: None,
         }
     }
 }
@@ -1179,18 +1192,41 @@ fn apply_initial_goal_splits(
         }
     }
 
-    // For every goal-side comparison-axiom prop var (the conditions of the
-    // goal axiom, expanded by `goal_variable_values`), also seed numeric
-    // splits at the initial concrete numeric value of each of the axiom's
-    // regular numeric dependencies. Without this, the initial abstraction
-    // contains the comparison-axiom prop vars at binary resolution but the
-    // underlying numerics are unrefined — so no operator can flip the
-    // comparison bit, and the abstract initial state cannot reach the goal.
-    // CEGAR then bails with "abstract dead end at iteration 1" before it
-    // could refine the numeric to enable reachability.
+    // For every comparison-axiom prop var actually being refined by this
+    // CEGAR run (the intersection of `init_split_var_ids` with goal-side
+    // comparison vars; if `init_split_var_ids` is unset, fall back to all
+    // goal-side comparison vars), seed numeric splits at the initial
+    // concrete numeric value of each of the axiom's regular numeric
+    // dependencies. Without this, the initial abstraction contains the
+    // comparison-axiom prop vars at binary resolution but the underlying
+    // numerics are unrefined — so no operator can flip the comparison bit,
+    // and the abstract initial state cannot reach the goal. CEGAR then
+    // bails with "abstract dead end at iteration 1".
+    //
+    // The previous version of this loop seeded numerics for *every* goal
+    // comparison axiom regardless of which prop var the collection
+    // generator chose for this CEGAR iteration. With `init_split_quantity
+    // = Single` (the canonical-DA default), one iteration selects one
+    // comparison var as its init split, but the unconditional seeding
+    // still drove all numeric deps of all goal comparisons into the
+    // partition — so every CEGAR run started with the same fully-seeded
+    // numeric universe and refined the remaining comparison vars
+    // identically. Result: every abstraction's pattern ended up with all
+    // goal comparison vars refined and cascade-relevance covering every
+    // op, so Bron-Kerbosch returned singleton additive subsets and
+    // canonical degenerated to `max h_i`. Scoping the seeding to the
+    // selected init split lets different CEGAR iterations focus on
+    // different comparison axioms, producing pattern diversity (and
+    // hence additivity) in the resulting collection.
     if let Ok(index) = ComparisonAxiomIndex::from_task(task) {
         let init_numeric = task.get_initial_numeric_state_values();
+        let init_split_filter: Option<&HashSet<usize>> = config.init_split_var_ids.as_ref();
         for fact in goal_variable_values(task) {
+            if let Some(allowed) = init_split_filter
+                && !allowed.contains(&fact.var())
+            {
+                continue;
+            }
             let Some(tree) = index.comparison_tree(fact.var()) else {
                 continue;
             };

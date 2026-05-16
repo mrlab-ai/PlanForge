@@ -143,6 +143,22 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// it off to skip ~12 GB of per-concrete-op `StateRegion` storage on
     /// large tasks like minecraft-sword-advanced/prob_30x30_5.
     pub compute_operator_footprints: bool,
+    /// Cap on the number of comparison-axiom propositional vars a single
+    /// CEGAR run may refine into its pattern. `None` = unbounded (the
+    /// historical behavior). When set, the refinement loop rejects any
+    /// split that would introduce a new comparison-axiom prop var beyond
+    /// this cap; `max_refined_single_atom` falls through to the next
+    /// candidate (typically a numeric split). The cap exists to keep
+    /// canonical-DA additive-subset diversity: when every abstraction
+    /// refines every comparison var, cascade-relevance covers all
+    /// numerics those comparisons depend on, every operator that
+    /// modifies any of those numerics is marked relevant, and Bron-
+    /// Kerbosch returns singleton subsets — canonical degenerates to
+    /// `max h_i`. On counters/pfile4 with this cap unset, initial h=14
+    /// and the search OOMs at 8 GB; numeric-fd with the same CEGAR
+    /// config naturally yields abstractions with 3-5 refined comparison
+    /// vars per pattern, gets initial h=21, and fits in 7.4 GB.
+    pub max_refined_comparison_vars_per_abstraction: Option<usize>,
 }
 
 impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
@@ -171,6 +187,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             finite_support: FiniteSupportConfig::default(),
             split_direction: None,
             compute_operator_footprints: true,
+            max_refined_comparison_vars_per_abstraction: None,
         }
     }
 }
@@ -304,6 +321,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             finite_support: self.config.finite_support,
             split_direction: self.config.split_direction,
             compute_operator_footprints: self.config.compute_operator_footprints,
+            max_refined_comparison_vars_per_abstraction: self
+                .config
+                .max_refined_comparison_vars_per_abstraction,
         }
     }
 
