@@ -174,6 +174,11 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 "`astar_da_debug()` is implemented in the `planforge` binary path, not `planforge-searcher`",
             ));
         }
+        crate::recursive_config::SearchSpec::AstarFs(_, _) => {
+            return Err(std::io::Error::other(
+                "`astar_fs(...)` is implemented in the `planforge` binary path, not `planforge-searcher`",
+            ));
+        }
     };
     let result = {
         {

@@ -139,6 +139,15 @@ struct OpenEntry {
     /// state. Used as a tie-break inside a single queue, and as the queue
     /// selector for dual-queue GBFS.
     is_preferred: bool,
+    /// `true` iff this entry has already been popped once and the slow
+    /// admissible heuristic recomputed and folded in. Used only by the
+    /// fast/slow A* variant (`new_fast_slow`). On the first pop of a
+    /// `second == false` entry, the slow heuristic is evaluated, the
+    /// entry is reinserted with `f' = g + max(h_f, h_s)` and
+    /// `second = true`, and the expansion is deferred to the next pop.
+    /// For ordinary A*/GBFS this field is always `false` and the field
+    /// does not affect `Ord`.
+    second: bool,
 }
 
 impl PartialEq for OpenEntry {
@@ -212,6 +221,18 @@ impl AStarOpenList {
         f_value: f64,
         is_preferred: bool,
     ) {
+        self.insert_with_second(state_id, g_value, h_value, f_value, is_preferred, false);
+    }
+
+    fn insert_with_second(
+        &mut self,
+        state_id: StateID,
+        g_value: f64,
+        h_value: f64,
+        f_value: f64,
+        is_preferred: bool,
+        second: bool,
+    ) {
         let entry = OpenEntry {
             f_value: OrderedFloat(f_value),
             h_value: OrderedFloat(h_value),
@@ -219,6 +240,7 @@ impl AStarOpenList {
             state_id,
             insertion_order: self.next_insertion_order,
             is_preferred,
+            second,
         };
         self.next_insertion_order += 1;
         if self.use_preferred_first && is_preferred {
@@ -301,6 +323,16 @@ pub struct AStarSearch<'a> {
     // Evaluators.
     heuristic: Box<dyn Heuristic + 'a>,
     heuristic_name: String,
+    /// Optional second admissible heuristic used by the fast/slow A*
+    /// variant. When `Some`, every popped open-list entry with
+    /// `second == false` is recomputed against this heuristic and
+    /// reinserted with `f' = g + max(h_f, h_s)` and `second = true`. The
+    /// first heuristic (`heuristic`) is the *fast* one used for initial
+    /// ordering; `heuristic_slow` is the *slow* but more informative one
+    /// computed lazily only when a state is actually about to be
+    /// expanded. See `new_fast_slow` for construction.
+    heuristic_slow: Option<Box<dyn Heuristic + 'a>>,
+    heuristic_slow_name: Option<String>,
     priority_mode: PriorityMode,
 
     // Configuration.
@@ -372,6 +404,40 @@ impl<'a> AStarSearch<'a> {
         )
     }
 
+    /// A* with two admissible heuristics — a fast preliminary one
+    /// (`heuristic_fast`, used to order the open list) and a slower but
+    /// possibly tighter one (`heuristic_slow`, evaluated only when a state
+    /// is about to be expanded).
+    ///
+    /// On the first pop of a state's open-list entry, the slow heuristic
+    /// is computed, the entry is reinserted with priority
+    /// `f' = g + max(h_f, h_s)`, and the expansion is deferred until the
+    /// second pop. Because `max` of two admissible heuristics is
+    /// admissible, the resulting search remains optimal. The benefit is
+    /// that the slow heuristic is only evaluated on states A* actually
+    /// considers expanding, not on every state generated.
+    pub fn new_fast_slow(
+        task: &'a dyn AbstractNumericTask,
+        state_registry: StateRegistry<'a>,
+        heuristic_fast: Box<dyn Heuristic + 'a>,
+        heuristic_slow: Box<dyn Heuristic + 'a>,
+        time_limit: Option<Duration>,
+        max_memory_bytes: Option<u64>,
+    ) -> Self {
+        let slow_name = heuristic_slow.name();
+        let mut search = Self::with_priority_mode(
+            task,
+            state_registry,
+            Some(heuristic_fast),
+            time_limit,
+            max_memory_bytes,
+            PriorityMode::Astar,
+        );
+        search.heuristic_slow = Some(heuristic_slow);
+        search.heuristic_slow_name = Some(slow_name);
+        search
+    }
+
     fn with_priority_mode(
         task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
@@ -425,6 +491,8 @@ impl<'a> AStarSearch<'a> {
             preferred_op_ids_by_state: Vec::new(),
             heuristic,
             heuristic_name,
+            heuristic_slow: None,
+            heuristic_slow_name: None,
             priority_mode,
             time_limit,
             max_memory_bytes,
@@ -687,6 +755,74 @@ impl<'a> AStarSearch<'a> {
         Ok(evaluation)
     }
 
+    /// Compute the slow heuristic for `state`, fold it into the entry via
+    /// `max(h_f, h_s)`, and reinsert as a `second == true` entry. On
+    /// dead-end (h_s = +infinity), mark the state dead in
+    /// `search_nodes` instead of reinserting. The caller is responsible
+    /// for `return`-ing immediately after this method so the existing
+    /// pop is treated as a deferred expansion.
+    fn evaluate_and_reinsert_for_slow(&mut self, entry: OpenEntry, state: &ConcreteState) {
+        let Some(slow) = self.heuristic_slow.as_ref() else {
+            // Caller should have checked `is_some()` first. Treat as a
+            // no-op rather than panic.
+            return;
+        };
+        let mut eval_state = EvaluationState::new_with_registry(
+            state,
+            entry.g_value,
+            false,
+            self.task,
+            &self.state_registry,
+        );
+        eval_state.set_is_goal(self.is_goal_state(state));
+        let slow_h = match slow.compute_heuristic(&eval_state) {
+            Ok(h) => h,
+            Err(EvaluationError::DeadEnd { .. }) => f64::INFINITY,
+            Err(_) => {
+                // Computation failure: behave conservatively by keeping
+                // the fast value (no update).
+                self.open_list.insert_with_second(
+                    entry.state_id,
+                    entry.g_value,
+                    entry.h_value.into_inner(),
+                    entry.f_value.into_inner(),
+                    entry.is_preferred,
+                    true,
+                );
+                return;
+            }
+        };
+        if slow_h.is_infinite() && slow_h.is_sign_positive() {
+            // h_s reports a dead end. Mark state and drop the entry.
+            self.dead_ends = self.dead_ends.saturating_add(1);
+            if let Some(info) = self.search_node_info_mut(entry.state_id) {
+                info.is_dead_end = true;
+            } else {
+                self.set_search_node_info(
+                    entry.state_id,
+                    SearchNodeInfo {
+                        parent_state: None,
+                        parent_operator_id: None,
+                        g_value: entry.g_value,
+                        is_dead_end: true,
+                        is_closed: false,
+                    },
+                );
+            }
+            return;
+        }
+        let combined_h = entry.h_value.into_inner().max(slow_h);
+        let new_f = entry.g_value + combined_h;
+        self.open_list.insert_with_second(
+            entry.state_id,
+            entry.g_value,
+            combined_h,
+            new_f,
+            entry.is_preferred,
+            true,
+        );
+    }
+
     fn populate_applicable_operators(&mut self, state: &ConcreteState) {
         state.fill_state(&self.state_registry, &mut self.state_values_buffer);
         self.applicable_operators_buffer.clear();
@@ -726,6 +862,19 @@ impl<'a> AStarSearch<'a> {
         if let Some(current_info) = self.search_node_info(state_id)
             && current_info.g_value < entry.g_value
         {
+            return SearchStatus::InProgress;
+        }
+
+        // Fast/slow A* lazy slow-heuristic step. If a slow heuristic is
+        // configured and this entry hasn't yet been re-evaluated against
+        // it, compute h_s now, reinsert with `f' = g + max(h_f, h_s)` and
+        // `second = true`, and defer the actual expansion to the next pop.
+        // Mirrors the AAAI paper's algorithm: every popped entry is
+        // either a "first pop" that triggers the slow evaluation, or a
+        // "second pop" that proceeds to expand. Because max of admissible
+        // heuristics is admissible, optimality is preserved.
+        if self.heuristic_slow.is_some() && !entry.second {
+            self.evaluate_and_reinsert_for_slow(entry, &state);
             return SearchStatus::InProgress;
         }
 
