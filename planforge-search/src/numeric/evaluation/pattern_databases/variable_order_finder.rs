@@ -33,6 +33,8 @@ impl fmt::Display for GreedyVariableOrderType {
     }
 }
 
+impl crate::config::sealed::Sealed for GreedyVariableOrderType {}
+
 impl crate::config::FromOptionValue for GreedyVariableOrderType {
     fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
         match crate::config::atom(value)? {

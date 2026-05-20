@@ -42,6 +42,8 @@ impl fmt::Display for InitSplitMethod {
     }
 }
 
+impl crate::config::sealed::Sealed for InitSplitMethod {}
+
 impl crate::config::FromOptionValue for InitSplitMethod {
     fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
         match crate::config::atom(value)? {
@@ -147,6 +149,8 @@ impl fmt::Display for FlawTreatmentVariants {
         }
     }
 }
+
+impl crate::config::sealed::Sealed for FlawTreatmentVariants {}
 
 impl crate::config::FromOptionValue for FlawTreatmentVariants {
     fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {

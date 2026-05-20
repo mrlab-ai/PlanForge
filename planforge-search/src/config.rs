@@ -127,21 +127,39 @@ pub fn for_each_option(
 
 // =============================================================================
 // Traits
+//
+// Sealed via a `pub(crate)` private module so downstream crates can't add
+// impls — they'd need to name `::planforge_search::config::sealed::Sealed`
+// and that path is `pub(crate)`. Inside this workspace the derive macro
+// emits the `Sealed` impl alongside the real impl; hand-written impls do
+// the same.
 // =============================================================================
+
+pub(crate) mod sealed {
+    pub trait Sealed {}
+}
 
 /// Implemented by typed configs that can be populated from a `&[ConfigArg]`.
 /// Normally derived via `#[derive(ApplyOptions)]`; written by hand only for
 /// configs whose CLI surface differs structurally from the struct layout
 /// (e.g. coupled writes, curated subsets).
-pub trait ApplyOptions {
+pub trait ApplyOptions: sealed::Sealed {
     fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String>;
 }
 
 /// Implemented by every type that can appear as the value of an option.
 /// The derive picks `from_option_value` for each field automatically.
-pub trait FromOptionValue: Sized {
+pub trait FromOptionValue: sealed::Sealed + Sized {
     fn from_option_value(value: &ConfigValue) -> Result<Self, String>;
 }
+
+// Primitive `Sealed` impls — keep alongside the `FromOptionValue` impls below.
+impl sealed::Sealed for bool {}
+impl sealed::Sealed for usize {}
+impl sealed::Sealed for u64 {}
+impl sealed::Sealed for f64 {}
+impl sealed::Sealed for Option<u64> {}
+impl sealed::Sealed for String {}
 
 // =============================================================================
 // Primitive impls

@@ -183,6 +183,8 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
 
     Ok(quote! {
+        impl #impl_generics ::planforge_search::config::sealed::Sealed for #ty #type_generics #where_clause {}
+
         impl #impl_generics ::planforge_search::config::ApplyOptions for #ty #type_generics #where_clause {
             fn apply_options(
                 &mut self,
