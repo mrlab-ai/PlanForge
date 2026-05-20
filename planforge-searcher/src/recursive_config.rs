@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt;
 
 use planforge_search::numeric::evaluation::domain_abstractions::cegar::{
@@ -25,16 +25,22 @@ mod tests;
 // =============================================================================
 
 /// A parsed heuristic configuration. The heuristic is identified by `name`;
-/// its options are a raw HashMap, applied to a typed config struct at
-/// construction time via the `apply_*_options` helpers below.
+/// its options are an ordered list of `ConfigArg`s (each optionally keyed),
+/// applied to a typed config struct at construction time via the
+/// `apply_*_options` helpers below.
+///
+/// Storing args as `Vec<ConfigArg>` (not `HashMap`) lets each applier
+/// resolve positional args against its own `ORDER` list — so both
+/// `greedy_numeric_pdb(max_pdb_states=321)` and `greedy_numeric_pdb(321)`
+/// work, and they can be mixed: `greedy_numeric_pdb(321, numeric_first=false)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeuristicSpec {
     pub name: String,
-    pub args: HashMap<String, ConfigValue>,
+    pub args: Vec<ConfigArg>,
 }
 
 impl HeuristicSpec {
-    pub fn new(name: impl Into<String>, args: HashMap<String, ConfigValue>) -> Self {
+    pub fn new(name: impl Into<String>, args: Vec<ConfigArg>) -> Self {
         Self {
             name: name.into(),
             args,
@@ -44,7 +50,7 @@ impl HeuristicSpec {
     pub fn blind() -> Self {
         Self {
             name: "blind".to_string(),
-            args: HashMap::new(),
+            args: Vec::new(),
         }
     }
 }
@@ -70,14 +76,15 @@ impl fmt::Display for HeuristicSpec {
         if self.args.is_empty() {
             return write!(f, "{}()", self.name);
         }
-        let mut pairs: Vec<_> = self.args.iter().collect();
-        pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
         write!(f, "{}(", self.name)?;
-        for (i, (k, v)) in pairs.iter().enumerate() {
+        for (i, arg) in self.args.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{k}={}", fmt_value(v))?;
+            match arg.key() {
+                Some(k) => write!(f, "{k}={}", fmt_value(arg.value()))?,
+                None => write!(f, "{}", fmt_value(arg.value()))?,
+            }
         }
         write!(f, ")")
     }
@@ -428,22 +435,11 @@ fn heuristic_spec_from_value(value: &ConfigValue) -> Result<HeuristicSpec, Strin
         },
         ConfigValue::Call(c) => c.clone(),
     };
-    let mut args = HashMap::new();
-    for arg in call.args {
-        let key = arg.key.ok_or_else(|| {
-            format!(
-                "positional arguments not supported in `{}(...)` — use named options",
-                call.name
-            )
-        })?;
-        if args.contains_key(&key) {
-            return Err(format!("duplicate option `{key}` in `{}(...)`", call.name));
-        }
-        args.insert(key, arg.value);
-    }
+    // Defer named/positional/duplicate validation to the applier — it owns the
+    // canonical option order, so it's the natural place to enforce it.
     Ok(HeuristicSpec {
         name: call.name,
-        args,
+        args: call.args,
     })
 }
 
@@ -467,19 +463,67 @@ fn ensure_no_args(call: &ConfigCall) -> Result<(), String> {
 
 // =============================================================================
 // Per-config option appliers — call these at heuristic construction sites
+//
+// Each applier defines a canonical `ORDER` of option names. Positional args
+// are mapped to that order (first positional → ORDER[0], …). Named args are
+// applied by key. Both forms can be mixed; duplicates are an error.
+//
+// Adding a new option = append to `ORDER` (unless you want it positional-
+// addressable from a specific slot) and add the matching arm. One file edit.
 // =============================================================================
 
 fn atom(value: &ConfigValue) -> Result<&str, String> {
     value.as_atom()
 }
 
-/// Apply `domain_abstraction(...)` options directly onto a `CegarConfig`.
-pub fn apply_da_options(
-    cfg: &mut CegarConfig,
-    opts: &HashMap<String, ConfigValue>,
+/// Walk `args` and dispatch each one as either named (`arg.key`) or positional
+/// (mapped through `positional_order`). Errors on duplicate keys, on unknown
+/// keys (when the closure returns its own unknown-key error), and on
+/// positional overflow.
+fn for_each_option(
+    args: &[ConfigArg],
+    positional_order: &[&str],
+    mut apply: impl FnMut(&str, &ConfigValue) -> Result<(), String>,
 ) -> Result<(), String> {
-    for (key, value) in opts {
-        match key.as_str() {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut next_positional = 0usize;
+    for arg in args {
+        let key: &str = match arg.key() {
+            Some(k) => k,
+            None => {
+                let k = positional_order.get(next_positional).copied().ok_or_else(|| {
+                    format!(
+                        "too many positional arguments (maximum {})",
+                        positional_order.len()
+                    )
+                })?;
+                next_positional += 1;
+                k
+            }
+        };
+        if !seen.insert(key.to_string()) {
+            return Err(format!("duplicate option `{key}`"));
+        }
+        apply(key, arg.value())?;
+    }
+    Ok(())
+}
+
+/// Apply `domain_abstraction(...)` options directly onto a `CegarConfig`.
+pub fn apply_da_options(cfg: &mut CegarConfig, args: &[ConfigArg]) -> Result<(), String> {
+    const ORDER: &[&str] = &[
+        "max_abstraction_size",
+        "max_iterations",
+        "use_wildcard_plans",
+        "combine_labels",
+        "transform_linear_task",
+        "random_seed",
+        "flaw_treatment",
+        "flaw_kind",
+        "init_split_method",
+    ];
+    for_each_option(args, ORDER, |key, value| {
+        match key {
             "max_abstraction_size" => cfg.max_abstraction_size = parse_usize(atom(value)?)?,
             "max_iterations" => cfg.max_iterations = parse_usize(atom(value)?)?,
             "use_wildcard_plans" => cfg.use_wildcard_plans = parse_bool(atom(value)?)?,
@@ -491,19 +535,43 @@ pub fn apply_da_options(
             "init_split_method" => cfg.init_split_method = parse_init_split_method(atom(value)?)?,
             other => return Err(format!("unknown option `{other}` for `domain_abstraction`")),
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
+
+const DA_COLLECTION_ORDER: &[&str] = &[
+    "max_abstraction_size",
+    "max_collection_size",
+    "abstraction_generation_max_time",
+    "total_max_time",
+    "stagnation_limit",
+    "blacklist_trigger_percentage",
+    "enable_blacklist_on_stagnation",
+    "blacklist_option",
+    "init_split_candidates",
+    "init_split_quantity",
+    "random_seed",
+    "debug",
+    "use_wildcard_plans",
+    "combine_labels",
+    "transform_linear_task",
+    "flaw_treatment",
+    "flaw_kind",
+    "init_split_method",
+    "numeric_split_strategy",
+    "portfolio_strategy",
+    "split_direction",
+    "max_stealable_width",
+];
 
 /// Apply collection-generator options (used by canonical/multi/posthoc).
 pub fn apply_da_collection_options(
     cfg: &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    opts: &HashMap<String, ConfigValue>,
+    args: &[ConfigArg],
 ) -> Result<(), String> {
-    for (key, value) in opts {
-        apply_da_collection_key(cfg, key, value)?;
-    }
-    Ok(())
+    for_each_option(args, DA_COLLECTION_ORDER, |key, value| {
+        apply_da_collection_key(cfg, key, value)
+    })
 }
 
 fn apply_da_collection_key(
@@ -543,9 +611,7 @@ fn apply_da_collection_key(
         "numeric_split_strategy" => {
             cfg.numeric_split_strategy = parse_numeric_split_strategy(atom(value)?)?
         }
-        "portfolio_strategy" => {
-            cfg.portfolio_strategy = parse_portfolio_strategy(atom(value)?)?
-        }
+        "portfolio_strategy" => cfg.portfolio_strategy = parse_portfolio_strategy(atom(value)?)?,
         "split_direction" => cfg.split_direction = parse_split_direction(atom(value)?)?,
         "max_stealable_width" => {
             cfg.finite_support.max_stealable_width = parse_f64_or_infinity(atom(value)?)?
@@ -556,12 +622,38 @@ fn apply_da_collection_key(
 }
 
 /// Apply `scp_online(...)` options.
+///
+/// Supports a nested `collection=...(...)` form, e.g.
+/// `scp_online(collection=multi_domain_abstractions(max_collection_size=10))`.
+/// Flat collection keys (e.g. `scp_online(max_collection_size=10)`) also work
+/// — they fall through to `apply_da_collection_key` for backward compatibility.
 pub fn apply_scp_online_options(
     cfg: &mut ScpOnlineConfig,
-    opts: &HashMap<String, ConfigValue>,
+    args: &[ConfigArg],
 ) -> Result<(), String> {
-    for (key, value) in opts {
-        match key.as_str() {
+    const ORDER: &[&str] = &[
+        "max_time",
+        "table_construction_max_time",
+        "max_size",
+        "interval",
+        "use_numeric_pdbs",
+        "use_abstract_operator_cost_partitioning",
+        "saturator",
+        "scoring_function",
+        "orders",
+        "order_optimization_max_time",
+        "max_pdb_states",
+        "max_pattern_size",
+        "only_interesting_patterns",
+        "pdb_exploration_heuristic",
+        "pdb_frontier_heuristic",
+        "pdb_failed_lookup_heuristic",
+        "combine_labels",
+        "random_seed",
+        "collection",
+    ];
+    for_each_option(args, ORDER, |key, value| {
+        match key {
             "max_time" => cfg.max_time = parse_f64_or_infinity(atom(value)?)?,
             "table_construction_max_time" => {
                 cfg.table_construction_max_time = parse_f64_or_infinity(atom(value)?)?
@@ -602,20 +694,46 @@ pub fn apply_scp_online_options(
                 cfg.random_seed = v;
                 cfg.collection_config.random_seed = v;
             }
+            "collection" => {
+                apply_nested_collection(&mut cfg.collection_config, value, "scp_online")?
+            }
             other => apply_da_collection_key(&mut cfg.collection_config, other, value)?,
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Apply `fillSCP(...)` options. Caller is responsible for invoking
 /// `cfg.force_full_goal_tasks()` after applying.
+///
+/// Same nested `collection=...` shape as `scp_online`.
 pub fn apply_fill_scp_options(
     cfg: &mut FillScpConfig,
-    opts: &HashMap<String, ConfigValue>,
+    args: &[ConfigArg],
 ) -> Result<(), String> {
-    for (key, value) in opts {
-        match key.as_str() {
+    const ORDER: &[&str] = &[
+        "table_construction_max_time",
+        "use_abstract_operator_cost_partitioning",
+        "saturator",
+        "scoring_function",
+        "orders",
+        "order_optimization_max_time",
+        "combine_labels",
+        "random_seed",
+        "ceiling_less_than_one",
+        "ignore_numeric",
+        "random_pcf",
+        "irmax",
+        "disable_ma",
+        "use_second_order_simple",
+        "use_constant_assignment",
+        "bound_iterations",
+        "precision",
+        "epsilon",
+        "collection",
+    ];
+    for_each_option(args, ORDER, |key, value| {
+        match key {
             "table_construction_max_time" => {
                 cfg.table_construction_max_time = parse_f64_or_infinity(atom(value)?)?
             }
@@ -652,24 +770,53 @@ pub fn apply_fill_scp_options(
             "use_constant_assignment" => {
                 cfg.lmcut_config.use_constant_assignment = parse_bool(atom(value)?)?
             }
-            "bound_iterations" => {
-                cfg.lmcut_config.bound_iterations = parse_usize(atom(value)?)?
-            }
+            "bound_iterations" => cfg.lmcut_config.bound_iterations = parse_usize(atom(value)?)?,
             "precision" => cfg.lmcut_config.precision = parse_f64_or_infinity(atom(value)?)?,
             "epsilon" => cfg.lmcut_config.epsilon = parse_f64_or_infinity(atom(value)?)?,
+            "collection" => {
+                apply_nested_collection(&mut cfg.collection_config, value, "fillSCP")?
+            }
             other => apply_da_collection_key(&mut cfg.collection_config, other, value)?,
         }
+        Ok(())
+    })
+}
+
+fn apply_nested_collection(
+    cfg: &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+    value: &ConfigValue,
+    parent: &str,
+) -> Result<(), String> {
+    let call = call_from_value(value)?;
+    if !call.name.is_empty()
+        && call.name != "multi_domain_abstractions"
+        && call.name != "canonical_domain_abstractions"
+    {
+        return Err(format!(
+            "`collection=...` in `{parent}(...)` only accepts \
+             `multi_domain_abstractions(...)` or `canonical_domain_abstractions(...)`, got `{}`",
+            call.name
+        ));
     }
-    Ok(())
+    apply_da_collection_options(cfg, call.args())
 }
 
 /// Apply `greedy_numeric_pdb(...)` options.
 pub fn apply_greedy_pdb_options(
     cfg: &mut GreedyPatternGeneratorConfig,
-    opts: &HashMap<String, ConfigValue>,
+    args: &[ConfigArg],
 ) -> Result<(), String> {
-    for (key, value) in opts {
-        match key.as_str() {
+    const ORDER: &[&str] = &[
+        "max_pdb_states",
+        "numeric_first",
+        "random_seed",
+        "variable_order_type",
+        "exploration_heuristic",
+        "frontier_heuristic",
+        "failed_lookup_heuristic",
+    ];
+    for_each_option(args, ORDER, |key, value| {
+        match key {
             "max_pdb_states" => cfg.max_pdb_states = parse_usize(atom(value)?)?,
             "numeric_first" => cfg.numeric_first = parse_bool(atom(value)?)?,
             "random_seed" => cfg.random_seed = parse_u64(atom(value)?)?,
@@ -687,17 +834,25 @@ pub fn apply_greedy_pdb_options(
             }
             other => return Err(format!("unknown option `{other}` for `greedy_numeric_pdb`")),
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Apply `canonical_numeric_pdb(...)` options.
 pub fn apply_canonical_pdb_options(
     cfg: &mut CanonicalNumericPdbConfig,
-    opts: &HashMap<String, ConfigValue>,
+    args: &[ConfigArg],
 ) -> Result<(), String> {
-    for (key, value) in opts {
-        match key.as_str() {
+    const ORDER: &[&str] = &[
+        "max_pdb_states",
+        "max_pattern_size",
+        "only_interesting_patterns",
+        "exploration_heuristic",
+        "frontier_heuristic",
+        "failed_lookup_heuristic",
+    ];
+    for_each_option(args, ORDER, |key, value| {
+        match key {
             "max_pdb_states" => cfg.max_pdb_states = parse_usize(atom(value)?)?,
             "max_pattern_size" => cfg.max_pattern_size = parse_usize(atom(value)?)?,
             "only_interesting_patterns" => {
@@ -714,17 +869,29 @@ pub fn apply_canonical_pdb_options(
             }
             other => return Err(format!("unknown option `{other}` for `canonical_numeric_pdb`")),
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Apply `lmcutnumeric(...)` options.
 pub fn apply_lmcut_options(
     cfg: &mut LmCutNumericConfig,
-    opts: &HashMap<String, ConfigValue>,
+    args: &[ConfigArg],
 ) -> Result<(), String> {
-    for (key, value) in opts {
-        match key.as_str() {
+    const ORDER: &[&str] = &[
+        "ceiling_less_than_one",
+        "ignore_numeric",
+        "random_pcf",
+        "irmax",
+        "disable_ma",
+        "use_second_order_simple",
+        "use_constant_assignment",
+        "bound_iterations",
+        "precision",
+        "epsilon",
+    ];
+    for_each_option(args, ORDER, |key, value| {
+        match key {
             "ceiling_less_than_one" => cfg.ceiling_less_than_one = parse_bool(atom(value)?)?,
             "ignore_numeric" => cfg.ignore_numeric = parse_bool(atom(value)?)?,
             "random_pcf" => cfg.random_pcf = parse_bool(atom(value)?)?,
@@ -737,8 +904,8 @@ pub fn apply_lmcut_options(
             "epsilon" => cfg.epsilon = parse_f64_or_infinity(atom(value)?)?,
             other => return Err(format!("unknown option `{other}` for `lmcutnumeric`")),
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // =============================================================================

@@ -13,7 +13,6 @@ use planforge_search::numeric::evaluation::pattern_databases::pattern_database::
 use planforge_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planforge_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 
-// Helpers to keep assertions compact.
 fn astar_heuristic(input: &str) -> HeuristicSpec {
     match parse_search_spec(input).unwrap() {
         SearchSpec::Astar(h) => h,
@@ -101,7 +100,6 @@ fn parses_execute_entire_plan_flaw_kind() {
     apply_da_collection_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.flaw_kind, FlawKind::ExecuteEntirePlan);
 
-    // Round-trip.
     assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
 }
 
@@ -247,6 +245,78 @@ fn parses_astar_greedy_numeric_pdb_with_named_options() {
 }
 
 #[test]
+fn positional_args_map_to_canonical_order() {
+    // greedy_numeric_pdb's ORDER starts with max_pdb_states, numeric_first, random_seed
+    let h = astar_heuristic("astar(greedy_numeric_pdb(321, false, 7))");
+    let mut cfg = GreedyPatternGeneratorConfig::default();
+    apply_greedy_pdb_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.max_pdb_states, 321);
+    assert!(!cfg.numeric_first);
+    assert_eq!(cfg.random_seed, 7);
+}
+
+#[test]
+fn mixed_positional_and_named_args_work() {
+    // First positional → max_pdb_states; the named ones are explicit.
+    let h = astar_heuristic("astar(greedy_numeric_pdb(321, numeric_first=false, random_seed=7))");
+    let mut cfg = GreedyPatternGeneratorConfig::default();
+    apply_greedy_pdb_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.max_pdb_states, 321);
+    assert!(!cfg.numeric_first);
+    assert_eq!(cfg.random_seed, 7);
+}
+
+#[test]
+fn positional_then_named_for_same_slot_errors() {
+    // Positional 321 → max_pdb_states, then max_pdb_states=999 collides.
+    let h = astar_heuristic("astar(greedy_numeric_pdb(321, max_pdb_states=999))");
+    let err = apply_greedy_pdb_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
+        .unwrap_err();
+    assert!(err.contains("duplicate option `max_pdb_states`"), "got `{err}`");
+}
+
+#[test]
+fn too_many_positional_args_errors() {
+    // greedy_numeric_pdb has 7 positional slots; 8 should error.
+    let h = astar_heuristic(
+        "astar(greedy_numeric_pdb(1, false, 2, cg_goal_level, blind, blind, blind, EXTRA))",
+    );
+    let err = apply_greedy_pdb_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
+        .unwrap_err();
+    assert!(err.contains("too many positional"), "got `{err}`");
+}
+
+#[test]
+fn scp_online_accepts_nested_collection_call() {
+    let h = astar_heuristic(
+        "astar(scp_online(collection=multi_domain_abstractions(max_collection_size=99, total_max_time=2.5), saturator=perimstar))",
+    );
+    let mut cfg = ScpOnlineConfig::default();
+    apply_scp_online_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.collection_config.max_collection_size, 99);
+    assert_eq!(cfg.collection_config.total_max_time, 2.5);
+    assert_eq!(cfg.saturator, Saturator::Perimstar);
+}
+
+#[test]
+fn fill_scp_accepts_nested_collection_call() {
+    let h = astar_heuristic(
+        "astar(fillSCP(collection=canonical_domain_abstractions(max_collection_size=7), precision=0.5))",
+    );
+    let mut cfg = FillScpConfig::default();
+    apply_fill_scp_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.collection_config.max_collection_size, 7);
+    assert_eq!(cfg.lmcut_config.precision, 0.5);
+}
+
+#[test]
+fn nested_collection_rejects_unknown_inner_name() {
+    let h = astar_heuristic("astar(scp_online(collection=bogus(max_collection_size=1)))");
+    let err = apply_scp_online_options(&mut ScpOnlineConfig::default(), &h.args).unwrap_err();
+    assert!(err.contains("`bogus`"), "got `{err}`");
+}
+
+#[test]
 fn parses_registry_style_search_with_keyed_heuristic() {
     let h = astar_heuristic(
         "search(astar(heuristic=greedy_numeric_pdb(max_pdb_states=321, numeric_first=false)))",
@@ -256,12 +326,6 @@ fn parses_registry_style_search_with_keyed_heuristic() {
     apply_greedy_pdb_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
     assert!(!cfg.numeric_first);
-}
-
-#[test]
-fn rejects_positional_arguments_in_heuristic_options() {
-    let err = parse_search_spec("astar(greedy_numeric_pdb(321, false, 7))").unwrap_err();
-    assert!(err.contains("positional"));
 }
 
 #[test]
@@ -389,10 +453,24 @@ fn display_round_trips_scp_online() {
 }
 
 #[test]
+fn display_round_trips_scp_online_with_nested_collection() {
+    let parsed = parse_search_spec(
+        "astar(scp_online(collection=multi_domain_abstractions(max_collection_size=99, total_max_time=2.5), saturator=perimstar))",
+    )
+    .unwrap();
+    let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
+    assert_eq!(parsed, reparsed);
+}
+
+#[test]
+fn display_round_trips_positional_args() {
+    let parsed = parse_search_spec("astar(greedy_numeric_pdb(321, false, 7))").unwrap();
+    let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
+    assert_eq!(parsed, reparsed);
+}
+
+#[test]
 fn rejects_unknown_options_inside_known_heuristics() {
-    // Option parsing happens at the parser layer for some search-engine
-    // checks, but unknown heuristic options are now rejected only at
-    // construction time. Exercise that path via the appliers directly.
     let h = astar_heuristic("astar(scp_online(deviation_flaws=false))");
     let err = apply_scp_online_options(&mut ScpOnlineConfig::default(), &h.args).unwrap_err();
     assert!(err.contains("deviation_flaws"), "got `{err}`");
@@ -438,7 +516,6 @@ fn display_round_trips_lmcutnumeric() {
 
 #[test]
 fn rejects_removed_exec_entire_plan_randomize_option() {
-    // Now caught at the applier layer rather than the parser.
     let h = astar_heuristic("astar(multi_domain_abstractions(exec_entire_plan=randomize))");
     let err = apply_da_collection_options(
         &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
@@ -506,7 +583,6 @@ fn errors_are_human_readable() {
 
 #[test]
 fn unknown_heuristic_name_propagates() {
-    // Parse succeeds — unknown names error at construction time, not parse time.
     let h = astar_heuristic("astar(does_not_exist)");
     assert_eq!(h.name, "does_not_exist");
 }
