@@ -55,7 +55,7 @@ impl PdbValueCache {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, planforge_search::config::ApplyOptions)]
 pub struct CanonicalNumericPdbConfig {
     pub max_pdb_states: usize,
     pub max_pattern_size: usize,

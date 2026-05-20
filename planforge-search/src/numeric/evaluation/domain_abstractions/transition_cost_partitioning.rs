@@ -41,7 +41,7 @@ const MAX_TOTAL_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 50_000;
 /// The default `max_stealable_width = f64::INFINITY` reproduces the legacy
 /// finite-vs-infinite behavior: every finite preimage passes, every infinite
 /// preimage fails.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct FiniteSupportConfig {
     pub max_stealable_width: f64,
 }

@@ -111,7 +111,7 @@ impl PortfolioStrategy {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub max_abstraction_size: usize,
     pub max_collection_size: usize,
@@ -133,6 +133,9 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub numeric_split_strategy: NumericSplitStrategy,
     pub transform_linear_task: bool,
     pub portfolio_strategy: PortfolioStrategy,
+    /// Flattened so unknown keys (today only `max_stealable_width`) reach
+    /// the nested `FiniteSupportConfig::apply_options`.
+    #[option(flatten)]
     pub finite_support: FiniteSupportConfig,
     /// Overrides `FlawKind`'s default split direction when set; otherwise the
     /// flaw kind chooses its own default (`Forward` for everything except
@@ -142,6 +145,8 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// `true`. SCP/fillSCP wrappers leave it on; canonical/max wrappers turn
     /// it off to skip ~12 GB of per-concrete-op `StateRegion` storage on
     /// large tasks like minecraft-sword-advanced/prob_30x30_5.
+    /// Set internally by heuristic construction; not exposed as a CLI option.
+    #[option(skip)]
     pub compute_operator_footprints: bool,
     /// Cap on the number of comparison-axiom propositional vars a single
     /// CEGAR run may refine into its pattern. `None` = unbounded (the
@@ -158,6 +163,8 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// and the search OOMs at 8 GB; numeric-fd with the same CEGAR
     /// config naturally yields abstractions with 3-5 refined comparison
     /// vars per pattern, gets initial h=21, and fits in 7.4 GB.
+    /// Not currently exposed as a CLI option.
+    #[option(skip)]
     pub max_refined_comparison_vars_per_abstraction: Option<usize>,
 }
 

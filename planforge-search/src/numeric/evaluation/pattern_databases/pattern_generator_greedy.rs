@@ -17,7 +17,7 @@ pub const DEFAULT_MAX_PDB_STATES: usize = 100_000;
 pub const DEFAULT_NUMERIC_FIRST: bool = true;
 pub const DEFAULT_RANDOM_SEED: u64 = 0;
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, planforge_search::config::ApplyOptions)]
 pub struct GreedyPatternGeneratorConfig {
     pub max_pdb_states: usize,
     pub numeric_first: bool,

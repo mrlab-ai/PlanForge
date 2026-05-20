@@ -82,8 +82,9 @@ pub fn build_heuristic_from_spec<'a>(
                 as Box<dyn Heuristic + 'a>))
         }
         "canonical_domain_abstractions" => {
-            let mut cfg = Default::default();
-            recursive_config::apply_da_collection_options(&mut cfg, &spec.args)?;
+            use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+            let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             // Canonical never consumes operator footprints — skip ~12 GB of
             // per-concrete-op StateRegion storage on big tasks.
             cfg.compute_operator_footprints = false;
@@ -99,8 +100,9 @@ pub fn build_heuristic_from_spec<'a>(
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
         "multi_domain_abstractions" => {
-            let mut cfg = Default::default();
-            recursive_config::apply_da_collection_options(&mut cfg, &spec.args)?;
+            use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+            let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             cfg.compute_operator_footprints = false;
             let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
             info!("Building multiple domain abstractions (CEGAR)...");
@@ -111,8 +113,9 @@ pub fn build_heuristic_from_spec<'a>(
                 as Box<dyn Heuristic + 'a>))
         }
         "posthoc_optimization" | "pho" => {
-            let mut cfg = Default::default();
-            recursive_config::apply_da_collection_options(&mut cfg, &spec.args)?;
+            use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+            let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             cfg.compute_operator_footprints = false;
             let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
             info!("Building posthoc_optimization domain abstractions (CEGAR)...");
@@ -175,21 +178,21 @@ pub fn build_heuristic_from_spec<'a>(
         }
         "greedy_numeric_pdb" => {
             let mut cfg = planforge_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig::default();
-            recursive_config::apply_greedy_pdb_options(&mut cfg, &spec.args)?;
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             let h = GreedyNumericPdbHeuristic::new(task, cfg)
                 .map_err(|e| format!("failed to build greedy numeric pdb heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
         "canonical_numeric_pdb" => {
             let mut cfg = planforge_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig::default();
-            recursive_config::apply_canonical_pdb_options(&mut cfg, &spec.args)?;
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             let h = CanonicalNumericPdbHeuristic::from_config(task, cfg)
                 .map_err(|e| format!("failed to build canonical numeric pdb heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
         "lmcutnumeric" => {
             let mut cfg = planforge_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig::default();
-            recursive_config::apply_lmcut_options(&mut cfg, &spec.args)?;
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             let h = LandmarkCutNumericHeuristic::from_config(task, cfg)
                 .map_err(|e| format!("failed to build lmcutnumeric heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))

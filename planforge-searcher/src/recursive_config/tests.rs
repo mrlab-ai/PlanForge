@@ -234,7 +234,7 @@ fn parses_astar_greedy_numeric_pdb_with_named_options() {
         "astar(greedy_numeric_pdb(max_pdb_states=321, numeric_first=false, random_seed=7, variable_order_type=cg_goal_random, exploration_heuristic=lmcut, frontier_heuristic=blind, failed_lookup_heuristic=lmcut))",
     );
     let mut cfg = GreedyPatternGeneratorConfig::default();
-    apply_greedy_pdb_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
     assert!(!cfg.numeric_first);
     assert_eq!(cfg.random_seed, 7);
@@ -249,7 +249,7 @@ fn positional_args_map_to_canonical_order() {
     // greedy_numeric_pdb's ORDER starts with max_pdb_states, numeric_first, random_seed
     let h = astar_heuristic("astar(greedy_numeric_pdb(321, false, 7))");
     let mut cfg = GreedyPatternGeneratorConfig::default();
-    apply_greedy_pdb_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
     assert!(!cfg.numeric_first);
     assert_eq!(cfg.random_seed, 7);
@@ -260,7 +260,7 @@ fn mixed_positional_and_named_args_work() {
     // First positional → max_pdb_states; the named ones are explicit.
     let h = astar_heuristic("astar(greedy_numeric_pdb(321, numeric_first=false, random_seed=7))");
     let mut cfg = GreedyPatternGeneratorConfig::default();
-    apply_greedy_pdb_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
     assert!(!cfg.numeric_first);
     assert_eq!(cfg.random_seed, 7);
@@ -270,7 +270,7 @@ fn mixed_positional_and_named_args_work() {
 fn positional_then_named_for_same_slot_errors() {
     // Positional 321 → max_pdb_states, then max_pdb_states=999 collides.
     let h = astar_heuristic("astar(greedy_numeric_pdb(321, max_pdb_states=999))");
-    let err = apply_greedy_pdb_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
+    let err = ApplyOptions::apply_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
         .unwrap_err();
     assert!(err.contains("duplicate option `max_pdb_states`"), "got `{err}`");
 }
@@ -281,7 +281,7 @@ fn too_many_positional_args_errors() {
     let h = astar_heuristic(
         "astar(greedy_numeric_pdb(1, false, 2, cg_goal_level, blind, blind, blind, EXTRA))",
     );
-    let err = apply_greedy_pdb_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
+    let err = ApplyOptions::apply_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
         .unwrap_err();
     assert!(err.contains("too many positional"), "got `{err}`");
 }
@@ -323,7 +323,7 @@ fn parses_registry_style_search_with_keyed_heuristic() {
     );
     assert_eq!(h.name, "greedy_numeric_pdb");
     let mut cfg = GreedyPatternGeneratorConfig::default();
-    apply_greedy_pdb_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
     assert!(!cfg.numeric_first);
 }
@@ -345,7 +345,7 @@ fn parses_astar_canonical_numeric_pdb_with_named_options() {
         "astar(canonical_numeric_pdb(max_pdb_states=321, max_pattern_size=3, only_interesting_patterns=false, exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut))",
     );
     let mut cfg = CanonicalNumericPdbConfig::default();
-    apply_canonical_pdb_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
     assert_eq!(cfg.max_pattern_size, 3);
     assert!(!cfg.only_interesting_patterns);
@@ -371,7 +371,7 @@ fn parses_astar_lmcutnumeric_with_named_options() {
         "astar(lmcutnumeric(ceiling_less_than_one=true, ignore_numeric=true, random_pcf=true, irmax=true, disable_ma=true, use_second_order_simple=true, use_constant_assignment=true, bound_iterations=7, precision=0.5, epsilon=0.25))",
     );
     let mut cfg = LmCutNumericConfig::default();
-    apply_lmcut_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert!(cfg.ceiling_less_than_one);
     assert!(cfg.ignore_numeric);
     assert!(cfg.random_pcf);

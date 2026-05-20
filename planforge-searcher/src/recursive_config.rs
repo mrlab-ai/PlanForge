@@ -1,21 +1,17 @@
-use std::collections::HashSet;
 use std::fmt;
 
-use planforge_search::numeric::evaluation::domain_abstractions::cegar::{
-    CegarConfig, FlawKind, FlawTreatmentVariants, SplitDirection,
+// Re-export the parser AST nodes + the trait from `planforge-search`, where
+// the typed configs live. The derive emits absolute paths into those types,
+// so they have to live in one canonical location.
+pub use planforge_search::config::{
+    ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue, atom, for_each_option,
 };
-use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    InitSplitMethod, InitSplitQuantity, NumericSplitStrategy, PortfolioStrategy, VariableSubset,
-};
+
+use planforge_search::numeric::evaluation::domain_abstractions::cegar::CegarConfig;
+use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
 use planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
-    FillScpConfig, OrderGenerator, Saturator, ScoringFunction, ScpOnlineConfig,
+    FillScpConfig, ScpOnlineConfig,
 };
-use planforge_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
-use planforge_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
-use planforge_search::numeric::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
-use planforge_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
-use planforge_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 
 #[cfg(test)]
 mod tests;
@@ -138,53 +134,6 @@ pub fn parse_search_spec(raw: &str) -> Result<SearchSpec, String> {
 
     let call = ConfigParser::new(input).parse_all()?;
     build_search_spec(&call)
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConfigCall {
-    name: String,
-    args: Vec<ConfigArg>,
-}
-
-impl ConfigCall {
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn args(&self) -> &[ConfigArg] {
-        &self.args
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConfigArg {
-    key: Option<String>,
-    value: ConfigValue,
-}
-
-impl ConfigArg {
-    pub fn key(&self) -> Option<&str> {
-        self.key.as_deref()
-    }
-
-    pub fn value(&self) -> &ConfigValue {
-        &self.value
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConfigValue {
-    Atom(String),
-    Call(ConfigCall),
-}
-
-impl ConfigValue {
-    pub fn as_atom(&self) -> Result<&str, String> {
-        match self {
-            ConfigValue::Atom(value) => Ok(value),
-            ConfigValue::Call(call) => Err(format!("expected scalar value, got `{}`", call.name)),
-        }
-    }
 }
 
 pub(crate) struct ConfigParser<'a> {
@@ -462,53 +411,19 @@ fn ensure_no_args(call: &ConfigCall) -> Result<(), String> {
 }
 
 // =============================================================================
-// Per-config option appliers — call these at heuristic construction sites
+// Per-config option appliers
 //
-// Each applier is written with the `apply_options!` macro. The macro derives
-// the canonical positional `ORDER` from the literal keys, then dispatches
-// each arg by name. Adding a new option = ONE line in the macro body.
+// Most typed configs derive `ApplyOptions` directly (see planforge-search:
+// `GreedyPatternGeneratorConfig`, `CanonicalNumericPdbConfig`,
+// `LmCutNumericConfig`, `FiniteSupportConfig`,
+// `DomainAbstractionCollectionGeneratorMultipleCegarConfig`). For those,
+// call `cfg.apply_options(&args)?` and you're done.
 //
-// Inside each match arm, `cfg`, `key`, and `value` are in scope. Errors
-// propagate through `?`. If you need to handle unknown keys (e.g. SCP
-// flattening collection keys), write a `_ => fallback` arm; otherwise the
-// macro emits a heuristic-named "unknown option" error.
+// The configs with structural quirks — `CegarConfig` (curated subset of a
+// large struct), `ScpOnlineConfig` / `FillScpConfig` (coupled writes and
+// nested call dispatch) — keep their hand-written `apply_*_options`
+// functions below, written with the `apply_options!` macro.
 // =============================================================================
-
-fn atom(value: &ConfigValue) -> Result<&str, String> {
-    value.as_atom()
-}
-
-/// Walk `args` and dispatch each one as either named (`arg.key`) or positional
-/// (mapped through `positional_order`). Errors on duplicate keys and on
-/// positional overflow; unknown keys are the closure's responsibility.
-pub(crate) fn for_each_option(
-    args: &[ConfigArg],
-    positional_order: &[&str],
-    mut apply: impl FnMut(&str, &ConfigValue) -> Result<(), String>,
-) -> Result<(), String> {
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut next_positional = 0usize;
-    for arg in args {
-        let key: &str = match arg.key() {
-            Some(k) => k,
-            None => {
-                let k = positional_order.get(next_positional).copied().ok_or_else(|| {
-                    format!(
-                        "too many positional arguments (maximum {})",
-                        positional_order.len()
-                    )
-                })?;
-                next_positional += 1;
-                k
-            }
-        };
-        if !seen.insert(key.to_string()) {
-            return Err(format!("duplicate option `{key}`"));
-        }
-        apply(key, arg.value())?;
-    }
-    Ok(())
-}
 
 /// Build an applier body from a list of `"key" => action,` arms.
 ///
@@ -523,13 +438,6 @@ pub(crate) fn for_each_option(
 ///     _ => fallback_applier(cfg, key, value)?,
 /// })
 /// ```
-///
-/// The macro:
-/// - Derives the positional `ORDER` from the literal keys (declaration order).
-/// - Generates a `for_each_option` call with a match arm per key.
-/// - `cfg` is the enclosing function's parameter; `key`/`value` are bound by
-///   this macro and named whatever the caller picked in `|…, …|`.
-/// - Actions are expressions that evaluate to `()`; propagate errors with `?`.
 macro_rules! apply_options {
     (
         $args:expr, $name:literal, |$key:ident, $value:ident|
@@ -559,50 +467,41 @@ macro_rules! apply_options {
     }};
 }
 
+/// Type-inferring shortcut for `<T as FromOptionValue>::from_option_value(value)`.
+/// Inside an applier arm, write `cfg.field = parse(value)?;` — the field's
+/// type drives `T`, which picks the right primitive or enum impl.
+fn parse<T: FromOptionValue>(value: &ConfigValue) -> Result<T, String> {
+    T::from_option_value(value)
+}
+
 /// Apply `domain_abstraction(...)` options directly onto a `CegarConfig`.
+///
+/// `CegarConfig` is in `planforge-search` and has many internal-only fields,
+/// so we can't `#[derive(ApplyOptions)]` on it without polluting it with
+/// CLI-specific attributes. Written manually using the `apply_options!`
+/// macro + `FromOptionValue` (no per-type parser function call needed).
 pub fn apply_da_options(cfg: &mut CegarConfig, args: &[ConfigArg]) -> Result<(), String> {
     apply_options!(args, "domain_abstraction", |key, value| {
-        "max_abstraction_size" => cfg.max_abstraction_size = parse_usize(atom(value)?)?,
-        "max_iterations"       => cfg.max_iterations       = parse_usize(atom(value)?)?,
-        "use_wildcard_plans"   => cfg.use_wildcard_plans   = parse_bool(atom(value)?)?,
-        "combine_labels"       => cfg.combine_labels       = parse_bool(atom(value)?)?,
-        "transform_linear_task"=> cfg.transform_linear_task= parse_bool(atom(value)?)?,
-        "random_seed"          => cfg.random_seed          = parse_optional_seed(atom(value)?)?,
-        "flaw_treatment"       => cfg.flaw_treatment       = parse_flaw_treatment(atom(value)?)?,
-        "flaw_kind"            => cfg.flaw_kind            = parse_flaw_kind(atom(value)?)?,
-        "init_split_method"    => cfg.init_split_method    = parse_init_split_method(atom(value)?)?,
+        "max_abstraction_size" => cfg.max_abstraction_size = parse(value)?,
+        "max_iterations"       => cfg.max_iterations       = parse(value)?,
+        "use_wildcard_plans"   => cfg.use_wildcard_plans   = parse(value)?,
+        "combine_labels"       => cfg.combine_labels       = parse(value)?,
+        "transform_linear_task"=> cfg.transform_linear_task= parse(value)?,
+        "random_seed"          => cfg.random_seed          = parse(value)?,
+        "flaw_treatment"       => cfg.flaw_treatment       = parse(value)?,
+        "flaw_kind"            => cfg.flaw_kind            = parse(value)?,
+        "init_split_method"    => cfg.init_split_method    = parse(value)?,
     })
 }
 
-/// Apply collection-generator options (used by canonical/multi/posthoc).
+/// Backwards-compatible wrapper around the derived
+/// `DomainAbstractionCollectionGeneratorMultipleCegarConfig::apply_options`.
+/// New code should call the trait method directly.
 pub fn apply_da_collection_options(
     cfg: &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     args: &[ConfigArg],
 ) -> Result<(), String> {
-    apply_options!(args, "domain abstraction collection", |key, value| {
-        "max_abstraction_size"           => cfg.max_abstraction_size = parse_usize(atom(value)?)?,
-        "max_collection_size"            => cfg.max_collection_size = parse_usize(atom(value)?)?,
-        "abstraction_generation_max_time"=> cfg.abstraction_generation_max_time = parse_f64_or_infinity(atom(value)?)?,
-        "total_max_time"                 => cfg.total_max_time = parse_f64_or_infinity(atom(value)?)?,
-        "stagnation_limit"               => cfg.stagnation_limit = parse_f64_or_infinity(atom(value)?)?,
-        "blacklist_trigger_percentage"   => cfg.blacklist_trigger_percentage = parse_f64_or_infinity(atom(value)?)?,
-        "enable_blacklist_on_stagnation" => cfg.enable_blacklist_on_stagnation = parse_bool(atom(value)?)?,
-        "blacklist_option"               => cfg.blacklist_option = parse_variable_subset(atom(value)?)?,
-        "init_split_candidates"          => cfg.init_split_candidates = parse_variable_subset(atom(value)?)?,
-        "init_split_quantity"            => cfg.init_split_quantity = parse_init_split_quantity(atom(value)?)?,
-        "random_seed"                    => cfg.random_seed = parse_optional_seed(atom(value)?)?,
-        "debug"                          => cfg.debug = parse_bool(atom(value)?)?,
-        "use_wildcard_plans"             => cfg.use_wildcard_plans = parse_bool(atom(value)?)?,
-        "combine_labels"                 => cfg.combine_labels = parse_bool(atom(value)?)?,
-        "transform_linear_task"          => cfg.transform_linear_task = parse_bool(atom(value)?)?,
-        "flaw_treatment"                 => cfg.flaw_treatment = parse_flaw_treatment(atom(value)?)?,
-        "flaw_kind"                      => cfg.flaw_kind = parse_flaw_kind(atom(value)?)?,
-        "init_split_method"              => cfg.init_split_method = parse_init_split_method(atom(value)?)?,
-        "numeric_split_strategy"         => cfg.numeric_split_strategy = parse_numeric_split_strategy(atom(value)?)?,
-        "portfolio_strategy"             => cfg.portfolio_strategy = parse_portfolio_strategy(atom(value)?)?,
-        "split_direction"                => cfg.split_direction = parse_split_direction(atom(value)?)?,
-        "max_stealable_width"            => cfg.finite_support.max_stealable_width = parse_f64_or_infinity(atom(value)?)?,
-    })
+    cfg.apply_options(args)
 }
 
 /// Dispatch a single collection key — used by SCP/fillSCP fall-through.
@@ -611,13 +510,10 @@ fn apply_da_collection_key(
     key: &str,
     value: &ConfigValue,
 ) -> Result<(), String> {
-    apply_da_collection_options(
-        cfg,
-        std::slice::from_ref(&ConfigArg {
-            key: Some(key.to_string()),
-            value: value.clone(),
-        }),
-    )
+    cfg.apply_options(std::slice::from_ref(&ConfigArg::new(
+        Some(key.to_string()),
+        value.clone(),
+    )))
 }
 
 /// Apply `scp_online(...)` options.
@@ -629,31 +525,29 @@ pub fn apply_scp_online_options(
     args: &[ConfigArg],
 ) -> Result<(), String> {
     apply_options!(args, "scp_online", |key, value| {
-        "max_time"                                => cfg.max_time = parse_f64_or_infinity(atom(value)?)?,
-        "table_construction_max_time"             => cfg.table_construction_max_time = parse_f64_or_infinity(atom(value)?)?,
-        "max_size"                                => cfg.max_size = parse_usize(atom(value)?)?,
-        "interval"                                => cfg.interval = parse_usize(atom(value)?)?,
-        "use_numeric_pdbs"                        => cfg.use_numeric_pdbs = parse_bool(atom(value)?)?,
-        "use_abstract_operator_cost_partitioning" => cfg.use_abstract_operator_cost_partitioning = parse_bool(atom(value)?)?,
-        "saturator"                               => cfg.saturator = parse_saturator(atom(value)?)?,
-        "scoring_function"                        => cfg.scoring_function = parse_scoring_function(atom(value)?)?,
-        "orders"                                  => cfg.order_generator = parse_order_generator(atom(value)?)?,
-        "order_optimization_max_time"             => cfg.order_optimization_max_time = parse_f64_or_infinity(atom(value)?)?,
-        "max_pdb_states"                          => cfg.max_pdb_states = parse_usize(atom(value)?)?,
-        "max_pattern_size"                        => cfg.max_pattern_size = parse_usize(atom(value)?)?,
-        "only_interesting_patterns"               => cfg.only_interesting_patterns = parse_bool(atom(value)?)?,
-        "pdb_exploration_heuristic"               => cfg.pdb_exploration_heuristic = parse_pdb_internal_heuristic(atom(value)?)?,
-        "pdb_frontier_heuristic"                  => cfg.pdb_frontier_heuristic = parse_pdb_internal_heuristic(atom(value)?)?,
-        "pdb_failed_lookup_heuristic"             => cfg.pdb_failed_lookup_heuristic = parse_pdb_internal_heuristic(atom(value)?)?,
+        "max_time"                                => cfg.max_time = parse(value)?,
+        "table_construction_max_time"             => cfg.table_construction_max_time = parse(value)?,
+        "max_size"                                => cfg.max_size = parse(value)?,
+        "interval"                                => cfg.interval = parse(value)?,
+        "use_numeric_pdbs"                        => cfg.use_numeric_pdbs = parse(value)?,
+        "use_abstract_operator_cost_partitioning" => cfg.use_abstract_operator_cost_partitioning = parse(value)?,
+        "saturator"                               => cfg.saturator = parse(value)?,
+        "scoring_function"                        => cfg.scoring_function = parse(value)?,
+        "orders"                                  => cfg.order_generator = parse(value)?,
+        "order_optimization_max_time"             => cfg.order_optimization_max_time = parse(value)?,
+        "max_pdb_states"                          => cfg.max_pdb_states = parse(value)?,
+        "max_pattern_size"                        => cfg.max_pattern_size = parse(value)?,
+        "only_interesting_patterns"               => cfg.only_interesting_patterns = parse(value)?,
+        "pdb_exploration_heuristic"               => cfg.pdb_exploration_heuristic = parse(value)?,
+        "pdb_frontier_heuristic"                  => cfg.pdb_frontier_heuristic = parse(value)?,
+        "pdb_failed_lookup_heuristic"             => cfg.pdb_failed_lookup_heuristic = parse(value)?,
         "combine_labels"                          => {
-            let v = parse_bool(atom(value)?)?;
-            cfg.combine_labels = v;
-            cfg.collection_config.combine_labels = v;
+            cfg.combine_labels = parse(value)?;
+            cfg.collection_config.combine_labels = cfg.combine_labels;
         },
         "random_seed"                             => {
-            let v = parse_optional_seed(atom(value)?)?;
-            cfg.random_seed = v;
-            cfg.collection_config.random_seed = v;
+            cfg.random_seed = parse(value)?;
+            cfg.collection_config.random_seed = cfg.random_seed;
         },
         "collection"                              => apply_nested_collection(&mut cfg.collection_config, value, "scp_online")?,
         _ => apply_da_collection_key(&mut cfg.collection_config, key, value)?,
@@ -668,32 +562,30 @@ pub fn apply_fill_scp_options(
     args: &[ConfigArg],
 ) -> Result<(), String> {
     apply_options!(args, "fillSCP", |key, value| {
-        "table_construction_max_time"             => cfg.table_construction_max_time = parse_f64_or_infinity(atom(value)?)?,
-        "use_abstract_operator_cost_partitioning" => cfg.use_abstract_operator_cost_partitioning = parse_bool(atom(value)?)?,
-        "saturator"                               => cfg.saturator = parse_saturator(atom(value)?)?,
-        "scoring_function"                        => cfg.scoring_function = parse_scoring_function(atom(value)?)?,
-        "orders"                                  => cfg.order_generator = parse_order_generator(atom(value)?)?,
-        "order_optimization_max_time"             => cfg.order_optimization_max_time = parse_f64_or_infinity(atom(value)?)?,
+        "table_construction_max_time"             => cfg.table_construction_max_time = parse(value)?,
+        "use_abstract_operator_cost_partitioning" => cfg.use_abstract_operator_cost_partitioning = parse(value)?,
+        "saturator"                               => cfg.saturator = parse(value)?,
+        "scoring_function"                        => cfg.scoring_function = parse(value)?,
+        "orders"                                  => cfg.order_generator = parse(value)?,
+        "order_optimization_max_time"             => cfg.order_optimization_max_time = parse(value)?,
         "combine_labels"                          => {
-            let v = parse_bool(atom(value)?)?;
-            cfg.combine_labels = v;
-            cfg.collection_config.combine_labels = v;
+            cfg.combine_labels = parse(value)?;
+            cfg.collection_config.combine_labels = cfg.combine_labels;
         },
         "random_seed"                             => {
-            let v = parse_optional_seed(atom(value)?)?;
-            cfg.random_seed = v;
-            cfg.collection_config.random_seed = v;
+            cfg.random_seed = parse(value)?;
+            cfg.collection_config.random_seed = cfg.random_seed;
         },
-        "ceiling_less_than_one"                   => cfg.lmcut_config.ceiling_less_than_one = parse_bool(atom(value)?)?,
-        "ignore_numeric"                          => cfg.lmcut_config.ignore_numeric = parse_bool(atom(value)?)?,
-        "random_pcf"                              => cfg.lmcut_config.random_pcf = parse_bool(atom(value)?)?,
-        "irmax"                                   => cfg.lmcut_config.irmax = parse_bool(atom(value)?)?,
-        "disable_ma"                              => cfg.lmcut_config.disable_ma = parse_bool(atom(value)?)?,
-        "use_second_order_simple"                 => cfg.lmcut_config.use_second_order_simple = parse_bool(atom(value)?)?,
-        "use_constant_assignment"                 => cfg.lmcut_config.use_constant_assignment = parse_bool(atom(value)?)?,
-        "bound_iterations"                        => cfg.lmcut_config.bound_iterations = parse_usize(atom(value)?)?,
-        "precision"                               => cfg.lmcut_config.precision = parse_f64_or_infinity(atom(value)?)?,
-        "epsilon"                                 => cfg.lmcut_config.epsilon = parse_f64_or_infinity(atom(value)?)?,
+        "ceiling_less_than_one"                   => cfg.lmcut_config.ceiling_less_than_one = parse(value)?,
+        "ignore_numeric"                          => cfg.lmcut_config.ignore_numeric = parse(value)?,
+        "random_pcf"                              => cfg.lmcut_config.random_pcf = parse(value)?,
+        "irmax"                                   => cfg.lmcut_config.irmax = parse(value)?,
+        "disable_ma"                              => cfg.lmcut_config.disable_ma = parse(value)?,
+        "use_second_order_simple"                 => cfg.lmcut_config.use_second_order_simple = parse(value)?,
+        "use_constant_assignment"                 => cfg.lmcut_config.use_constant_assignment = parse(value)?,
+        "bound_iterations"                        => cfg.lmcut_config.bound_iterations = parse(value)?,
+        "precision"                               => cfg.lmcut_config.precision = parse(value)?,
+        "epsilon"                                 => cfg.lmcut_config.epsilon = parse(value)?,
         "collection"                              => apply_nested_collection(&mut cfg.collection_config, value, "fillSCP")?,
         _ => apply_da_collection_key(&mut cfg.collection_config, key, value)?,
     })
@@ -718,232 +610,10 @@ fn apply_nested_collection(
     apply_da_collection_options(cfg, call.args())
 }
 
-/// Apply `greedy_numeric_pdb(...)` options.
-pub fn apply_greedy_pdb_options(
-    cfg: &mut GreedyPatternGeneratorConfig,
-    args: &[ConfigArg],
-) -> Result<(), String> {
-    apply_options!(args, "greedy_numeric_pdb", |key, value| {
-        "max_pdb_states"          => cfg.max_pdb_states = parse_usize(atom(value)?)?,
-        "numeric_first"           => cfg.numeric_first = parse_bool(atom(value)?)?,
-        "random_seed"             => cfg.random_seed = parse_u64(atom(value)?)?,
-        "variable_order_type"     => cfg.variable_order_type = parse_greedy_variable_order_type(atom(value)?)?,
-        "exploration_heuristic"   => cfg.exploration_heuristic = parse_pdb_internal_heuristic(atom(value)?)?,
-        "frontier_heuristic"      => cfg.frontier_heuristic = parse_pdb_internal_heuristic(atom(value)?)?,
-        "failed_lookup_heuristic" => cfg.failed_lookup_heuristic = parse_pdb_internal_heuristic(atom(value)?)?,
-    })
-}
+// `apply_greedy_pdb_options`, `apply_canonical_pdb_options`, and
+// `apply_lmcut_options` are gone — those configs `#[derive(ApplyOptions)]`,
+// so just call `cfg.apply_options(args)` on them.
 
-/// Apply `canonical_numeric_pdb(...)` options.
-pub fn apply_canonical_pdb_options(
-    cfg: &mut CanonicalNumericPdbConfig,
-    args: &[ConfigArg],
-) -> Result<(), String> {
-    apply_options!(args, "canonical_numeric_pdb", |key, value| {
-        "max_pdb_states"            => cfg.max_pdb_states = parse_usize(atom(value)?)?,
-        "max_pattern_size"          => cfg.max_pattern_size = parse_usize(atom(value)?)?,
-        "only_interesting_patterns" => cfg.only_interesting_patterns = parse_bool(atom(value)?)?,
-        "exploration_heuristic"     => cfg.exploration_heuristic = parse_pdb_internal_heuristic(atom(value)?)?,
-        "frontier_heuristic"        => cfg.frontier_heuristic = parse_pdb_internal_heuristic(atom(value)?)?,
-        "failed_lookup_heuristic"   => cfg.failed_lookup_heuristic = parse_pdb_internal_heuristic(atom(value)?)?,
-    })
-}
-
-/// Apply `lmcutnumeric(...)` options.
-pub fn apply_lmcut_options(
-    cfg: &mut LmCutNumericConfig,
-    args: &[ConfigArg],
-) -> Result<(), String> {
-    apply_options!(args, "lmcutnumeric", |key, value| {
-        "ceiling_less_than_one"   => cfg.ceiling_less_than_one = parse_bool(atom(value)?)?,
-        "ignore_numeric"          => cfg.ignore_numeric = parse_bool(atom(value)?)?,
-        "random_pcf"              => cfg.random_pcf = parse_bool(atom(value)?)?,
-        "irmax"                   => cfg.irmax = parse_bool(atom(value)?)?,
-        "disable_ma"              => cfg.disable_ma = parse_bool(atom(value)?)?,
-        "use_second_order_simple" => cfg.use_second_order_simple = parse_bool(atom(value)?)?,
-        "use_constant_assignment" => cfg.use_constant_assignment = parse_bool(atom(value)?)?,
-        "bound_iterations"        => cfg.bound_iterations = parse_usize(atom(value)?)?,
-        "precision"               => cfg.precision = parse_f64_or_infinity(atom(value)?)?,
-        "epsilon"                 => cfg.epsilon = parse_f64_or_infinity(atom(value)?)?,
-    })
-}
-
-// =============================================================================
-// Scalar value parsers
-// =============================================================================
-
-pub(crate) fn parse_bool(value: &str) -> Result<bool, String> {
-    match value {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        _ => Err(format!("expected boolean, got `{value}`")),
-    }
-}
-
-pub(crate) fn parse_usize(value: &str) -> Result<usize, String> {
-    value
-        .parse::<usize>()
-        .map_err(|_| format!("expected non-negative integer, got `{value}`"))
-}
-
-pub(crate) fn parse_u64(value: &str) -> Result<u64, String> {
-    value
-        .parse::<u64>()
-        .map_err(|_| format!("expected non-negative integer, got `{value}`"))
-}
-
-pub(crate) fn parse_optional_seed(value: &str) -> Result<Option<u64>, String> {
-    if value.eq_ignore_ascii_case("none") {
-        Ok(None)
-    } else {
-        parse_u64(value).map(Some)
-    }
-}
-
-pub(crate) fn parse_f64_or_infinity(value: &str) -> Result<f64, String> {
-    if value.eq_ignore_ascii_case("infinity") {
-        Ok(f64::INFINITY)
-    } else {
-        value
-            .parse::<f64>()
-            .map_err(|_| format!("expected float or infinity, got `{value}`"))
-    }
-}
-
-pub(crate) fn parse_greedy_variable_order_type(
-    value: &str,
-) -> Result<GreedyVariableOrderType, String> {
-    match value {
-        "cg_goal_level" => Ok(GreedyVariableOrderType::CgGoalLevel),
-        "cg_goal_random" => Ok(GreedyVariableOrderType::CgGoalRandom),
-        "goal_cg_level" => Ok(GreedyVariableOrderType::GoalCgLevel),
-        _ => Err(format!("invalid GreedyVariableOrderType `{value}`")),
-    }
-}
-
-pub(crate) fn parse_pdb_internal_heuristic(value: &str) -> Result<PdbInternalHeuristic, String> {
-    match value {
-        "zero" => Ok(PdbInternalHeuristic::Zero),
-        "blind" => Ok(PdbInternalHeuristic::Blind),
-        "lmcut" => Ok(PdbInternalHeuristic::Lmcut),
-        _ => Err(format!("invalid PdbInternalHeuristic `{value}`")),
-    }
-}
-
-pub(crate) fn parse_saturator(value: &str) -> Result<Saturator, String> {
-    match value {
-        "all" => Ok(Saturator::All),
-        "perim" => Ok(Saturator::Perim),
-        "perimstar" => Ok(Saturator::Perimstar),
-        _ => Err(format!("invalid Saturator `{value}`")),
-    }
-}
-
-pub(crate) fn parse_scoring_function(value: &str) -> Result<ScoringFunction, String> {
-    match value {
-        "max_heuristic" => Ok(ScoringFunction::MaxHeuristic),
-        "min_stolen_costs" => Ok(ScoringFunction::MinStolenCosts),
-        "max_heuristic_per_stolen_costs" => Ok(ScoringFunction::MaxHeuristicPerStolenCosts),
-        _ => Err(format!("invalid ScoringFunction `{value}`")),
-    }
-}
-
-pub(crate) fn parse_order_generator(value: &str) -> Result<OrderGenerator, String> {
-    match value {
-        "greedy_orders" | "greedy_orders()" => Ok(OrderGenerator::Greedy),
-        "dynamic_greedy_orders" | "dynamic_greedy_orders()" => Ok(OrderGenerator::DynamicGreedy),
-        "random_orders" | "random_orders()" => Ok(OrderGenerator::Random),
-        _ => Err(format!("invalid OrderGenerator `{value}`")),
-    }
-}
-
-pub(crate) fn parse_variable_subset(value: &str) -> Result<VariableSubset, String> {
-    match value {
-        "goals" => Ok(VariableSubset::Goals),
-        "non_goals" => Ok(VariableSubset::NonGoals),
-        "all" => Ok(VariableSubset::All),
-        _ => Err(format!("invalid VariableSubset `{value}`")),
-    }
-}
-
-pub(crate) fn parse_init_split_quantity(value: &str) -> Result<InitSplitQuantity, String> {
-    match value {
-        "none" => Ok(InitSplitQuantity::None),
-        "single" => Ok(InitSplitQuantity::Single),
-        "all" => Ok(InitSplitQuantity::All),
-        _ => Err(format!("invalid InitSplitQuantity `{value}`")),
-    }
-}
-
-pub(crate) fn parse_flaw_kind(value: &str) -> Result<FlawKind, String> {
-    match value {
-        "progression" => Ok(FlawKind::Progression),
-        "regression" => Ok(FlawKind::Regression),
-        "execute_entire_plan" => Ok(FlawKind::ExecuteEntirePlan),
-        "sequence_progression" => Ok(FlawKind::SequenceProgression),
-        "sequence_regression" => Ok(FlawKind::SequenceRegression),
-        "sequence_bidirectional" => Ok(FlawKind::SequenceBidirectional),
-        "target_centered" => Ok(FlawKind::TargetCentered),
-        _ => Err(format!("invalid FlawKind `{value}`")),
-    }
-}
-
-pub(crate) fn parse_flaw_treatment(value: &str) -> Result<FlawTreatmentVariants, String> {
-    match value {
-        "random_single_atom" => Ok(FlawTreatmentVariants::RandomSingleAtom),
-        "one_split_per_atom" => Ok(FlawTreatmentVariants::OneSplitPerAtom),
-        "one_split_per_variable" => Ok(FlawTreatmentVariants::OneSplitPerVariable),
-        "max_refined_single_atom" => Ok(FlawTreatmentVariants::MaxRefinedSingleAtom),
-        "min_growth_single_atom" => Ok(FlawTreatmentVariants::MinGrowthSingleAtom),
-        "max_refined_preferring_prop" => Ok(FlawTreatmentVariants::MaxRefinedPreferringProp),
-        "closest_to_goal" => Ok(FlawTreatmentVariants::ClosestToGoal),
-        "balance_max_refined_and_closest_to_goal" => {
-            Ok(FlawTreatmentVariants::BalanceMaxRefinedAndClosestToGoal)
-        }
-        "balance_max_refined_preferring_prop_and_closest_to_goal" => {
-            Ok(FlawTreatmentVariants::BalanceMaxRefinedPreferringPropAndClosestToGoal)
-        }
-        _ => Err(format!("invalid FlawTreatment `{value}`")),
-    }
-}
-
-pub(crate) fn parse_init_split_method(value: &str) -> Result<InitSplitMethod, String> {
-    match value {
-        "goal_value" => Ok(InitSplitMethod::GoalValue),
-        "goal_value_or_random_if_non_goal" => Ok(InitSplitMethod::GoalValueOrRandomIfNonGoal),
-        "init_value" => Ok(InitSplitMethod::InitValue),
-        "random_value" => Ok(InitSplitMethod::RandomValue),
-        "random_partition" => Ok(InitSplitMethod::RandomPartition),
-        "random_binary_partition_separating_init_goal" => {
-            Ok(InitSplitMethod::RandomBinaryPartitionSeparatingInitGoal)
-        }
-        "identity" => Ok(InitSplitMethod::Identity),
-        _ => Err(format!("invalid InitSplitMethod `{value}`")),
-    }
-}
-
-pub(crate) fn parse_numeric_split_strategy(value: &str) -> Result<NumericSplitStrategy, String> {
-    match value {
-        "standard" => Ok(NumericSplitStrategy::Standard),
-        "exclusion" => Ok(NumericSplitStrategy::Exclusion),
-        _ => Err(format!("invalid NumericSplitStrategy `{value}`")),
-    }
-}
-
-pub(crate) fn parse_portfolio_strategy(value: &str) -> Result<PortfolioStrategy, String> {
-    match value {
-        "standard" => Ok(PortfolioStrategy::Standard),
-        "complementary" => Ok(PortfolioStrategy::Complementary),
-        _ => Err(format!("invalid PortfolioStrategy `{value}`")),
-    }
-}
-
-pub(crate) fn parse_split_direction(value: &str) -> Result<Option<SplitDirection>, String> {
-    match value {
-        "default" => Ok(None),
-        "forward" => Ok(Some(SplitDirection::Forward)),
-        "forward_partition_deviation" => Ok(Some(SplitDirection::ForwardPartitionDeviation)),
-        "backward" => Ok(Some(SplitDirection::Backward)),
-        _ => Err(format!("invalid SplitDirection `{value}`")),
-    }
-}
+// All per-type parser functions are gone — `FromOptionValue` impls in
+// `planforge_search::config` cover primitives and option-typed enums, and
+// the `parse` helper above dispatches by inferred type at each call site.

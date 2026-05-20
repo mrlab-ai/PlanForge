@@ -445,6 +445,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "planforge-config-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "planforge-portfolio"
 version = "0.1.0"
 dependencies = [
@@ -490,6 +499,7 @@ dependencies = [
  "itertools",
  "libc",
  "ordered-float",
+ "planforge-config-derive",
  "planforge-preprocess",
  "planforge-sas",
  "planforge-translator",

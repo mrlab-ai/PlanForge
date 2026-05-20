@@ -10,6 +10,7 @@ default-members = [
     "planforge",
     "planforge-cli-utils",
     "planforge-portfolio",
+    "planforge-config-derive",
     "tests",
 ]
 
@@ -24,6 +25,7 @@ members = [
     "planforge",
     "planforge-cli-utils",
     "planforge-portfolio",
+    "planforge-config-derive",
     "tests",
 ]
 
