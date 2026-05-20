@@ -6,7 +6,6 @@ use ordered_float::NotNan;
 use time::format_description::well_known::iso8601::{Config, TimePrecision};
 use tracing::{debug, info};
 use planforge_cli_utils::*;
-use planforge_preprocess::run_preprocess;
 use planforge_sas::numeric::axioms::AxiomEvaluator;
 use planforge_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType, Operator};
 use planforge_sas::numeric::state_registry::{ConcreteState, StateRegistry};
@@ -24,7 +23,6 @@ use planforge_search::numeric::search_engine::{compute_effective_operator_costs,
 use planforge_search::numeric::search_engine::{AStarSearch, SearchEngine};
 use planforge_search::numeric::successor_generator::{ApplicableOperator, SuccessorTree};
 use planforge_searcher::*;
-use planforge_translator::*;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::ffi::OsString;
@@ -136,24 +134,27 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
 pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     register_event_handlers();
 
-    let sas_file = if cli.inputs.len() == 2 {
+    let start_time = std::time::Instant::now();
+    let (task, sas_label) = if cli.inputs.len() == 2 {
         let domain = &cli.inputs[0];
         let problem = &cli.inputs[1];
-        translate_to_sas(domain, problem).map_err(|err| std::io::Error::other(err.to_string()))?;
-
-        run_preprocess(&["preprocess".to_string(), "output.sas".to_string()]);
-        "output"
+        // In-memory pipeline: translate → preprocess → parse, no disk I/O.
+        let sas_text = planforge_translator::translate_to_sas_string(domain, problem)
+            .map_err(|err| std::io::Error::other(err.to_string()))?;
+        let preprocessed = planforge_preprocess::run_preprocess_to_string(&sas_text);
+        (
+            NumericRootTask::from_str(&preprocessed),
+            format!("{domain} + {problem} (in-memory)"),
+        )
     } else {
-        &cli.inputs[0]
+        let path = cli.inputs[0].clone();
+        (NumericRootTask::from_file(&path), path)
     };
-
-    let start_time = std::time::Instant::now();
-    let task = NumericRootTask::from_file(sas_file);
     let parse_time = start_time.elapsed();
     info!("Parsed numeric SAS output in: {:?}", parse_time);
 
     info!("=== Search Engine ===");
-    info!("File: {}", sas_file);
+    info!("File: {}", sas_label);
     info!(
         "Variables: {} regular, {} numeric",
         task.variables().len(),

@@ -12,14 +12,16 @@ pub mod successor_generator;
 pub mod variable;
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 
 use tracing::{debug, info};
 
 use crate::causal_graph::CausalGraph;
 use crate::domain_transition_graph::{are_dtgs_strongly_connected, build_dtgs};
 use crate::fact::ExplicitFact;
-use crate::helper_functions::{InputStream, read_preprocessed_problem_description, to_sas_at_path};
+use crate::helper_functions::{
+    InputStream, read_preprocessed_problem_description, to_sas_writer,
+};
 
 pub const SAS_FILE_VERSION: i32 = 4;
 pub const PRE_FILE_VERSION: i32 = SAS_FILE_VERSION;
@@ -42,6 +44,23 @@ pub fn run_preprocess(args: &[String]) {
 }
 
 pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) {
+    let mut outfile = File::create(output_path)
+        .unwrap_or_else(|_| panic!("open output {}", output_path.display()));
+    run_preprocess_args(args, &mut outfile);
+}
+
+/// In-memory entry point: take the translator's SAS+ text, return the
+/// preprocessor's `output` binary as a `String`. Skips disk I/O entirely.
+pub fn run_preprocess_to_string(sas_input: &str) -> String {
+    let mut buf: Vec<u8> = Vec::new();
+    run_preprocess_str_to_writer(sas_input, /* prune_variables = */ true, &mut buf);
+    String::from_utf8(buf).expect("preprocessor output is valid UTF-8")
+}
+
+/// CLI-facing wrapper: read the SAS+ text (from a file argument or stdin),
+/// run the same preprocessing pipeline as the standalone binary, and write
+/// the result to `outfile`.
+pub fn run_preprocess_args<W: Write>(args: &[String], outfile: &mut W) {
     let mut input = String::new();
     let mut argc = args.len();
     if args.len() == 2 {
@@ -61,7 +80,17 @@ pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) 
         true
     };
 
-    let mut stream = InputStream::new(input);
+    run_preprocess_str_to_writer(&input, prune_variables, outfile);
+}
+
+/// Core preprocessor: parse SAS+ input from a string, run all preprocessing
+/// stages, and serialize the preprocessed task into `outfile`.
+pub fn run_preprocess_str_to_writer<W: Write>(
+    input: &str,
+    prune_variables: bool,
+    outfile: &mut W,
+) {
+    let mut stream = InputStream::new(input.to_string());
 
     let (
         mut metric,
@@ -155,7 +184,7 @@ pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) 
     info!("Preprocessor task size: {}", task_size);
 
     info!("Writing output...");
-    to_sas_at_path(
+    to_sas_writer(
         &orig_variables,
         &orig_numeric_variables,
         &ordered_variables,
@@ -169,7 +198,7 @@ pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) 
         &axioms_numeric,
         &axioms_func_comp,
         &global_constraint,
-        output_path,
+        outfile,
     );
     info!("done");
 }

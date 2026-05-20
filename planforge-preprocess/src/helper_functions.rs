@@ -444,7 +444,44 @@ pub fn to_sas_at_path(
 ) {
     let mut outfile = std::fs::File::create(output_path)
         .unwrap_or_else(|_| panic!("open output {}", output_path.display()));
+    to_sas_writer(
+        orig_vars,
+        orig_numeric_vars,
+        ordered_vars,
+        ordered_numeric_vars,
+        metric,
+        mutexes,
+        initial_state,
+        goals,
+        operators,
+        axioms_rel,
+        axioms_func_ass,
+        axioms_func_comp,
+        constraint,
+        &mut outfile,
+    );
+}
 
+/// Same content as `to_sas_at_path`, but writes to an arbitrary `Write` sink
+/// instead of a file. Used by the in-memory pipeline to avoid materializing
+/// the `output` binary on disk.
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+pub fn to_sas_writer<W: Write>(
+    orig_vars: &[ExplicitVariable],
+    orig_numeric_vars: &[NumericVariable],
+    ordered_vars: &[ExplicitVariable],
+    ordered_numeric_vars: &[NumericVariable],
+    metric: &Metric,
+    mutexes: &Vec<MutexGroup>,
+    initial_state: &State,
+    goals: &Vec<ExplicitFact>,
+    operators: &Vec<Operator>,
+    axioms_rel: &Vec<AxiomRelational>,
+    axioms_func_ass: &Vec<AxiomNumericComputation>,
+    axioms_func_comp: &Vec<AxiomFunctionalComparison>,
+    constraint: &Option<GlobalConstraint>,
+    outfile: &mut W,
+) {
     writeln!(outfile, "begin_version").unwrap();
     writeln!(outfile, "{}", PRE_FILE_VERSION).unwrap();
     writeln!(outfile, "end_version").unwrap();
@@ -462,7 +499,7 @@ pub fn to_sas_at_path(
     writeln!(outfile, "{}", num_vars).unwrap();
     debug!("Variables in output are: ");
     for var in ordered_vars {
-        var.to_sas(&mut outfile);
+        var.to_sas(outfile);
         debug!("{} {{", var.get_name());
         for i in 0..var.get_range() {
             debug!("{}, ", var.get_fact_name(i));
@@ -476,13 +513,13 @@ pub fn to_sas_at_path(
     writeln!(outfile, "begin_numeric_variables").unwrap();
     for numeric_var in ordered_numeric_vars {
         numeric_var.dump();
-        numeric_var.to_sas(&mut outfile);
+        numeric_var.to_sas(outfile);
     }
     writeln!(outfile, "end_numeric_variables").unwrap();
 
     writeln!(outfile, "{}", mutexes.len()).unwrap();
     for mutex in mutexes {
-        mutex.to_sas(&mut outfile, orig_vars);
+        mutex.to_sas(outfile, orig_vars);
     }
 
     writeln!(outfile, "begin_state").unwrap();
@@ -514,25 +551,25 @@ pub fn to_sas_at_path(
 
     writeln!(outfile, "{}", operators.len()).unwrap();
     for op in operators {
-        op.to_sas(&mut outfile, orig_vars, orig_numeric_vars);
+        op.to_sas(outfile, orig_vars, orig_numeric_vars);
     }
 
     writeln!(outfile, "{}", axioms_rel.len()).unwrap();
     for ax in axioms_rel {
-        ax.to_sas(&mut outfile, orig_vars);
+        ax.to_sas(outfile, orig_vars);
     }
 
     writeln!(outfile, "{}", axioms_func_comp.len()).unwrap();
     writeln!(outfile, "begin_comparison_axioms").unwrap();
     for ax in axioms_func_comp {
-        ax.to_sas(&mut outfile, orig_vars, orig_numeric_vars);
+        ax.to_sas(outfile, orig_vars, orig_numeric_vars);
     }
     writeln!(outfile, "end_comparison_axioms").unwrap();
 
     writeln!(outfile, "{}", axioms_func_ass.len()).unwrap();
     writeln!(outfile, "begin_numeric_axioms").unwrap();
     for ax in axioms_func_ass {
-        ax.to_sas(&mut outfile, orig_numeric_vars);
+        ax.to_sas(outfile, orig_numeric_vars);
     }
     writeln!(outfile, "end_numeric_axioms").unwrap();
 
