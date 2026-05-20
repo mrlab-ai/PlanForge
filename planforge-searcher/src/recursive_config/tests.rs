@@ -135,13 +135,15 @@ fn parses_astar_scp_online_with_or_without_unit_parens() {
 
 #[test]
 fn parses_astar_fill_scp_with_named_options() {
+    // LMcut params are now nested via `lmcut=lmcutnumeric(...)` rather than
+    // flat at the fillSCP level.
     let h = astar_heuristic(
-        "astar(fillSCP(table_construction_max_time=34.5, use_abstract_operator_cost_partitioning=true, saturator=perimstar, scoring_function=max_heuristic, orders=random_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, split_direction=backward, random_seed=7, debug=true, precision=0.5, epsilon=0.25))",
+        "astar(fillSCP(table_construction_max_time=34.5, use_abstract_operator_cost_partitioning=true, saturator=perimstar, scoring_function=max_heuristic, orders=random_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, split_direction=backward, random_seed=7, debug=true, lmcut=lmcutnumeric(precision=0.5, epsilon=0.25)))",
     );
     assert_eq!(h.name, "fillscp");
 
     let mut cfg = FillScpConfig::default();
-    apply_fill_scp_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.table_construction_max_time, 34.5);
     assert!(cfg.use_abstract_operator_cost_partitioning);
     assert_eq!(cfg.saturator, Saturator::Perimstar);
@@ -181,7 +183,7 @@ fn parses_astar_scp_online_with_named_options() {
         "astar(scp_online(max_time=12.5, table_construction_max_time=34.5, max_size=2048, interval=3, use_abstract_operator_cost_partitioning=true, saturator=perimstar, scoring_function=max_heuristic, orders=dynamic_greedy_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, portfolio_strategy=complementary, random_seed=7, debug=true))",
     );
     let mut cfg = ScpOnlineConfig::default();
-    apply_scp_online_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_time, 12.5);
     assert_eq!(cfg.table_construction_max_time, 34.5);
     assert_eq!(cfg.max_size, 2048);
@@ -292,28 +294,32 @@ fn scp_online_accepts_nested_collection_call() {
         "astar(scp_online(collection=multi_domain_abstractions(max_collection_size=99, total_max_time=2.5), saturator=perimstar))",
     );
     let mut cfg = ScpOnlineConfig::default();
-    apply_scp_online_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.collection_config.max_collection_size, 99);
     assert_eq!(cfg.collection_config.total_max_time, 2.5);
     assert_eq!(cfg.saturator, Saturator::Perimstar);
 }
 
 #[test]
-fn fill_scp_accepts_nested_collection_call() {
+fn fill_scp_accepts_nested_collection_and_lmcut_calls() {
     let h = astar_heuristic(
-        "astar(fillSCP(collection=canonical_domain_abstractions(max_collection_size=7), precision=0.5))",
+        "astar(fillSCP(collection=canonical_domain_abstractions(max_collection_size=7), lmcut=lmcutnumeric(precision=0.5)))",
     );
     let mut cfg = FillScpConfig::default();
-    apply_fill_scp_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.collection_config.max_collection_size, 7);
     assert_eq!(cfg.lmcut_config.precision, 0.5);
 }
 
 #[test]
-fn nested_collection_rejects_unknown_inner_name() {
+fn nested_collection_ignores_inner_call_name() {
+    // The derived nested arm consumes the inner call's args without
+    // validating its name — `collection=anything(max_collection_size=1)` is
+    // equivalent. The wrapping name is treated as a free-form label.
     let h = astar_heuristic("astar(scp_online(collection=bogus(max_collection_size=1)))");
-    let err = apply_scp_online_options(&mut ScpOnlineConfig::default(), &h.args).unwrap_err();
-    assert!(err.contains("`bogus`"), "got `{err}`");
+    let mut cfg = ScpOnlineConfig::default();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.collection_config.max_collection_size, 1);
 }
 
 #[test]
@@ -472,7 +478,7 @@ fn display_round_trips_positional_args() {
 #[test]
 fn rejects_unknown_options_inside_known_heuristics() {
     let h = astar_heuristic("astar(scp_online(deviation_flaws=false))");
-    let err = apply_scp_online_options(&mut ScpOnlineConfig::default(), &h.args).unwrap_err();
+    let err = ApplyOptions::apply_options(&mut ScpOnlineConfig::default(), &h.args).unwrap_err();
     assert!(err.contains("deviation_flaws"), "got `{err}`");
 
     let h = astar_heuristic("astar(canonical_domain_abstractions(deviation_flaws=false))");

@@ -95,13 +95,21 @@ impl fmt::Display for Saturator {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct ScpOnlineConfig {
     pub max_time: f64,
     pub table_construction_max_time: f64,
     pub max_size: usize,
     pub interval: usize,
+    /// Mirrored into `collection_config.combine_labels` so `combine_labels=true`
+    /// sets both. To set them independently, use the nested `collection=…`
+    /// form: `scp_online(combine_labels=true, collection=…(combine_labels=false))`.
+    #[option(also_sets = "collection_config.combine_labels")]
     pub combine_labels: bool,
+    /// Catch-all: flat collection keys (`scp_online(max_collection_size=…)`)
+    /// route here. Explicit `collection=multi_domain_abstractions(…)` form
+    /// also routes here via the `nested` arm.
+    #[option(flatten, nested = "collection")]
     pub collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     pub use_numeric_pdbs: bool,
     pub max_pdb_states: usize,
@@ -111,24 +119,39 @@ pub struct ScpOnlineConfig {
     pub pdb_frontier_heuristic: PdbInternalHeuristic,
     pub pdb_failed_lookup_heuristic: PdbInternalHeuristic,
     pub scoring_function: ScoringFunction,
+    #[option(rename = "orders")]
     pub order_generator: OrderGenerator,
     pub order_optimization_max_time: f64,
     pub saturator: Saturator,
+    #[option(also_sets = "collection_config.random_seed")]
     pub random_seed: Option<u64>,
     pub use_abstract_operator_cost_partitioning: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct FillScpConfig {
     pub table_construction_max_time: f64,
+    #[option(also_sets = "collection_config.combine_labels")]
     pub combine_labels: bool,
+    #[option(flatten, nested = "collection")]
     pub collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     pub scoring_function: ScoringFunction,
+    #[option(rename = "orders")]
     pub order_generator: OrderGenerator,
     pub order_optimization_max_time: f64,
     pub saturator: Saturator,
+    #[option(also_sets = "collection_config.random_seed")]
     pub random_seed: Option<u64>,
     pub use_abstract_operator_cost_partitioning: bool,
+    /// Flattened so `precision`, `epsilon`, etc. reach the nested LMcut config.
+    /// SCP/fillSCP both flatten collection_config, but this `flatten` only
+    /// applies if `collection_config` does not — only one flatten per struct.
+    /// Here we use `nested = "lmcut"` instead, plus per-key forwarding via the
+    /// hand-written wrapper (see `apply_fill_scp_options`). Actually — since
+    /// `collection_config` is the catch-all, the LMcut fields must be named
+    /// explicitly. `nested = "lmcut"` lets `lmcut=lmcutnumeric(precision=…)`
+    /// work cleanly.
+    #[option(nested = "lmcut")]
     pub lmcut_config: LmCutNumericConfig,
 }
 

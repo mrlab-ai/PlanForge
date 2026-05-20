@@ -504,115 +504,13 @@ pub fn apply_da_collection_options(
     cfg.apply_options(args)
 }
 
-/// Dispatch a single collection key — used by SCP/fillSCP fall-through.
-fn apply_da_collection_key(
-    cfg: &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    key: &str,
-    value: &ConfigValue,
-) -> Result<(), String> {
-    cfg.apply_options(std::slice::from_ref(&ConfigArg::new(
-        Some(key.to_string()),
-        value.clone(),
-    )))
-}
 
-/// Apply `scp_online(...)` options.
-///
-/// Supports a nested `collection=multi_domain_abstractions(...)` form. Flat
-/// collection keys still work (they fall through to `apply_da_collection_key`).
-pub fn apply_scp_online_options(
-    cfg: &mut ScpOnlineConfig,
-    args: &[ConfigArg],
-) -> Result<(), String> {
-    apply_options!(args, "scp_online", |key, value| {
-        "max_time"                                => cfg.max_time = parse(value)?,
-        "table_construction_max_time"             => cfg.table_construction_max_time = parse(value)?,
-        "max_size"                                => cfg.max_size = parse(value)?,
-        "interval"                                => cfg.interval = parse(value)?,
-        "use_numeric_pdbs"                        => cfg.use_numeric_pdbs = parse(value)?,
-        "use_abstract_operator_cost_partitioning" => cfg.use_abstract_operator_cost_partitioning = parse(value)?,
-        "saturator"                               => cfg.saturator = parse(value)?,
-        "scoring_function"                        => cfg.scoring_function = parse(value)?,
-        "orders"                                  => cfg.order_generator = parse(value)?,
-        "order_optimization_max_time"             => cfg.order_optimization_max_time = parse(value)?,
-        "max_pdb_states"                          => cfg.max_pdb_states = parse(value)?,
-        "max_pattern_size"                        => cfg.max_pattern_size = parse(value)?,
-        "only_interesting_patterns"               => cfg.only_interesting_patterns = parse(value)?,
-        "pdb_exploration_heuristic"               => cfg.pdb_exploration_heuristic = parse(value)?,
-        "pdb_frontier_heuristic"                  => cfg.pdb_frontier_heuristic = parse(value)?,
-        "pdb_failed_lookup_heuristic"             => cfg.pdb_failed_lookup_heuristic = parse(value)?,
-        "combine_labels"                          => {
-            cfg.combine_labels = parse(value)?;
-            cfg.collection_config.combine_labels = cfg.combine_labels;
-        },
-        "random_seed"                             => {
-            cfg.random_seed = parse(value)?;
-            cfg.collection_config.random_seed = cfg.random_seed;
-        },
-        "collection"                              => apply_nested_collection(&mut cfg.collection_config, value, "scp_online")?,
-        _ => apply_da_collection_key(&mut cfg.collection_config, key, value)?,
-    })
-}
-
-/// Apply `fillSCP(...)` options. Caller is responsible for invoking
-/// `cfg.force_full_goal_tasks()` after applying. Same nested `collection=...`
-/// shape as `scp_online`.
-pub fn apply_fill_scp_options(
-    cfg: &mut FillScpConfig,
-    args: &[ConfigArg],
-) -> Result<(), String> {
-    apply_options!(args, "fillSCP", |key, value| {
-        "table_construction_max_time"             => cfg.table_construction_max_time = parse(value)?,
-        "use_abstract_operator_cost_partitioning" => cfg.use_abstract_operator_cost_partitioning = parse(value)?,
-        "saturator"                               => cfg.saturator = parse(value)?,
-        "scoring_function"                        => cfg.scoring_function = parse(value)?,
-        "orders"                                  => cfg.order_generator = parse(value)?,
-        "order_optimization_max_time"             => cfg.order_optimization_max_time = parse(value)?,
-        "combine_labels"                          => {
-            cfg.combine_labels = parse(value)?;
-            cfg.collection_config.combine_labels = cfg.combine_labels;
-        },
-        "random_seed"                             => {
-            cfg.random_seed = parse(value)?;
-            cfg.collection_config.random_seed = cfg.random_seed;
-        },
-        "ceiling_less_than_one"                   => cfg.lmcut_config.ceiling_less_than_one = parse(value)?,
-        "ignore_numeric"                          => cfg.lmcut_config.ignore_numeric = parse(value)?,
-        "random_pcf"                              => cfg.lmcut_config.random_pcf = parse(value)?,
-        "irmax"                                   => cfg.lmcut_config.irmax = parse(value)?,
-        "disable_ma"                              => cfg.lmcut_config.disable_ma = parse(value)?,
-        "use_second_order_simple"                 => cfg.lmcut_config.use_second_order_simple = parse(value)?,
-        "use_constant_assignment"                 => cfg.lmcut_config.use_constant_assignment = parse(value)?,
-        "bound_iterations"                        => cfg.lmcut_config.bound_iterations = parse(value)?,
-        "precision"                               => cfg.lmcut_config.precision = parse(value)?,
-        "epsilon"                                 => cfg.lmcut_config.epsilon = parse(value)?,
-        "collection"                              => apply_nested_collection(&mut cfg.collection_config, value, "fillSCP")?,
-        _ => apply_da_collection_key(&mut cfg.collection_config, key, value)?,
-    })
-}
-
-fn apply_nested_collection(
-    cfg: &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    value: &ConfigValue,
-    parent: &str,
-) -> Result<(), String> {
-    let call = call_from_value(value)?;
-    if !call.name.is_empty()
-        && call.name != "multi_domain_abstractions"
-        && call.name != "canonical_domain_abstractions"
-    {
-        return Err(format!(
-            "`collection=...` in `{parent}(...)` only accepts \
-             `multi_domain_abstractions(...)` or `canonical_domain_abstractions(...)`, got `{}`",
-            call.name
-        ));
-    }
-    apply_da_collection_options(cfg, call.args())
-}
-
-// `apply_greedy_pdb_options`, `apply_canonical_pdb_options`, and
-// `apply_lmcut_options` are gone — those configs `#[derive(ApplyOptions)]`,
-// so just call `cfg.apply_options(args)` on them.
+// `apply_scp_online_options`, `apply_fill_scp_options`, `apply_greedy_pdb_options`,
+// `apply_canonical_pdb_options`, and `apply_lmcut_options` are all gone —
+// their configs `#[derive(ApplyOptions)]` (with `also_sets` for the coupled
+// `combine_labels` / `random_seed`, `flatten` + `nested = "collection"` for
+// the DA collection sub-config, and `nested = "lmcut"` for the FillScp
+// LMcut sub-config). Just call `cfg.apply_options(args)` on them.
 
 // All per-type parser functions are gone — `FromOptionValue` impls in
 // `planforge_search::config` cover primitives and option-typed enums, and

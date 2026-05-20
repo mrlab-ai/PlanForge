@@ -128,7 +128,7 @@ pub fn build_heuristic_from_spec<'a>(
         }
         "scp_online" => {
             let mut cfg = planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig::default();
-            recursive_config::apply_scp_online_options(&mut cfg, &spec.args)?;
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
                 cfg.collection_config.clone(),
             );
@@ -163,7 +163,7 @@ pub fn build_heuristic_from_spec<'a>(
         }
         "fillscp" | "fill_scp" => {
             let mut cfg = planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::FillScpConfig::default();
-            recursive_config::apply_fill_scp_options(&mut cfg, &spec.args)?;
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             cfg.force_full_goal_tasks();
             let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
                 cfg.collection_config.clone(),
