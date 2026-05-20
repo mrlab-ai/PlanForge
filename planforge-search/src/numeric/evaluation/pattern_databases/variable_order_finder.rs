@@ -33,6 +33,17 @@ impl fmt::Display for GreedyVariableOrderType {
     }
 }
 
+impl crate::config::FromOptionValue for GreedyVariableOrderType {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "cg_goal_level" => Ok(Self::CgGoalLevel),
+            "cg_goal_random" => Ok(Self::CgGoalRandom),
+            "goal_cg_level" => Ok(Self::GoalCgLevel),
+            other => Err(format!("invalid GreedyVariableOrderType `{other}`")),
+        }
+    }
+}
+
 pub struct VariableOrderFinder {
     remaining_vars: Vec<(usize, bool)>,
     is_goal_variable: Vec<bool>,

@@ -55,6 +55,17 @@ impl fmt::Display for VariableSubset {
     }
 }
 
+impl crate::config::FromOptionValue for VariableSubset {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "goals" => Ok(Self::Goals),
+            "non_goals" => Ok(Self::NonGoals),
+            "all" => Ok(Self::All),
+            other => Err(format!("invalid VariableSubset `{other}`")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InitSplitQuantity {
@@ -69,6 +80,17 @@ impl fmt::Display for InitSplitQuantity {
             Self::None => write!(f, "none"),
             Self::Single => write!(f, "single"),
             Self::All => write!(f, "all"),
+        }
+    }
+}
+
+impl crate::config::FromOptionValue for InitSplitQuantity {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "none" => Ok(Self::None),
+            "single" => Ok(Self::Single),
+            "all" => Ok(Self::All),
+            other => Err(format!("invalid InitSplitQuantity `{other}`")),
         }
     }
 }
@@ -89,6 +111,16 @@ impl fmt::Display for NumericSplitStrategy {
     }
 }
 
+impl crate::config::FromOptionValue for NumericSplitStrategy {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "standard" => Ok(Self::Standard),
+            "exclusion" => Ok(Self::Exclusion),
+            other => Err(format!("invalid NumericSplitStrategy `{other}`")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PortfolioStrategy {
@@ -101,6 +133,16 @@ impl fmt::Display for PortfolioStrategy {
         match self {
             Self::Standard => write!(f, "standard"),
             Self::Complementary => write!(f, "complementary"),
+        }
+    }
+}
+
+impl crate::config::FromOptionValue for PortfolioStrategy {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "standard" => Ok(Self::Standard),
+            "complementary" => Ok(Self::Complementary),
+            other => Err(format!("invalid PortfolioStrategy `{other}`")),
         }
     }
 }

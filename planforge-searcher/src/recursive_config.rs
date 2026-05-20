@@ -8,10 +8,6 @@ pub use planforge_search::config::{
 };
 
 use planforge_search::numeric::evaluation::domain_abstractions::cegar::CegarConfig;
-use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
-use planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
-    FillScpConfig, ScpOnlineConfig,
-};
 
 #[cfg(test)]
 mod tests;
@@ -413,105 +409,52 @@ fn ensure_no_args(call: &ConfigCall) -> Result<(), String> {
 // =============================================================================
 // Per-config option appliers
 //
-// Most typed configs derive `ApplyOptions` directly (see planforge-search:
-// `GreedyPatternGeneratorConfig`, `CanonicalNumericPdbConfig`,
-// `LmCutNumericConfig`, `FiniteSupportConfig`,
-// `DomainAbstractionCollectionGeneratorMultipleCegarConfig`). For those,
-// call `cfg.apply_options(&args)?` and you're done.
+// Most typed configs derive `ApplyOptions` directly (in planforge-search,
+// next to each struct). At a construction site, call `cfg.apply_options(&args)?`.
 //
-// The configs with structural quirks — `CegarConfig` (curated subset of a
-// large struct), `ScpOnlineConfig` / `FillScpConfig` (coupled writes and
-// nested call dispatch) — keep their hand-written `apply_*_options`
-// functions below, written with the `apply_options!` macro.
+// `CegarConfig` is the one exception: it's in planforge-search but only a
+// curated subset of its fields is CLI-exposed (the rest are internal-only
+// runtime flags). Sprinkling `#[option(skip)]` on those would couple the
+// search-engine struct to CLI concerns, so `apply_da_options` below stays
+// hand-written. It uses `for_each_option` + the `parse` helper directly.
 // =============================================================================
 
-/// Build an applier body from a list of `"key" => action,` arms.
-///
-/// Usage (closure-style heading names the bindings the actions can use —
-/// macro hygiene means we have to pass them as identifiers):
-///
-/// ```ignore
-/// apply_options!(args, "name", |key, value| {
-///     "max_size" => cfg.max_size = parse_usize(atom(value)?)?,
-///     "label"    => cfg.label = atom(value)?.to_string(),
-///     // optional catch-all (otherwise unknown keys error):
-///     _ => fallback_applier(cfg, key, value)?,
-/// })
-/// ```
-macro_rules! apply_options {
-    (
-        $args:expr, $name:literal, |$key:ident, $value:ident|
-        { $($k:literal => $action:expr,)* _ => $fallback:expr $(,)? }
-    ) => {{
-        const ORDER: &[&str] = &[ $($k,)* ];
-        for_each_option($args, ORDER, |$key, $value| {
-            match $key {
-                $($k => { $action; })*
-                _ => { $fallback; }
-            }
-            Ok(())
-        })
-    }};
-    (
-        $args:expr, $name:literal, |$key:ident, $value:ident|
-        { $($k:literal => $action:expr,)* $(,)? }
-    ) => {{
-        const ORDER: &[&str] = &[ $($k,)* ];
-        for_each_option($args, ORDER, |$key, $value| {
-            match $key {
-                $($k => { $action; })*
-                other => return Err(format!("unknown option `{other}` for `{}`", $name)),
-            }
-            Ok(())
-        })
-    }};
-}
-
 /// Type-inferring shortcut for `<T as FromOptionValue>::from_option_value(value)`.
-/// Inside an applier arm, write `cfg.field = parse(value)?;` — the field's
-/// type drives `T`, which picks the right primitive or enum impl.
+/// `cfg.field = parse(value)?` — the field type drives `T`.
 fn parse<T: FromOptionValue>(value: &ConfigValue) -> Result<T, String> {
     T::from_option_value(value)
 }
 
 /// Apply `domain_abstraction(...)` options directly onto a `CegarConfig`.
-///
-/// `CegarConfig` is in `planforge-search` and has many internal-only fields,
-/// so we can't `#[derive(ApplyOptions)]` on it without polluting it with
-/// CLI-specific attributes. Written manually using the `apply_options!`
-/// macro + `FromOptionValue` (no per-type parser function call needed).
 pub fn apply_da_options(cfg: &mut CegarConfig, args: &[ConfigArg]) -> Result<(), String> {
-    apply_options!(args, "domain_abstraction", |key, value| {
-        "max_abstraction_size" => cfg.max_abstraction_size = parse(value)?,
-        "max_iterations"       => cfg.max_iterations       = parse(value)?,
-        "use_wildcard_plans"   => cfg.use_wildcard_plans   = parse(value)?,
-        "combine_labels"       => cfg.combine_labels       = parse(value)?,
-        "transform_linear_task"=> cfg.transform_linear_task= parse(value)?,
-        "random_seed"          => cfg.random_seed          = parse(value)?,
-        "flaw_treatment"       => cfg.flaw_treatment       = parse(value)?,
-        "flaw_kind"            => cfg.flaw_kind            = parse(value)?,
-        "init_split_method"    => cfg.init_split_method    = parse(value)?,
+    const ORDER: &[&str] = &[
+        "max_abstraction_size",
+        "max_iterations",
+        "use_wildcard_plans",
+        "combine_labels",
+        "transform_linear_task",
+        "random_seed",
+        "flaw_treatment",
+        "flaw_kind",
+        "init_split_method",
+    ];
+    for_each_option(args, ORDER, |key, value| {
+        match key {
+            "max_abstraction_size"  => cfg.max_abstraction_size  = parse(value)?,
+            "max_iterations"        => cfg.max_iterations        = parse(value)?,
+            "use_wildcard_plans"    => cfg.use_wildcard_plans    = parse(value)?,
+            "combine_labels"        => cfg.combine_labels        = parse(value)?,
+            "transform_linear_task" => cfg.transform_linear_task = parse(value)?,
+            "random_seed"           => cfg.random_seed           = parse(value)?,
+            "flaw_treatment"        => cfg.flaw_treatment        = parse(value)?,
+            "flaw_kind"             => cfg.flaw_kind             = parse(value)?,
+            "init_split_method"     => cfg.init_split_method     = parse(value)?,
+            other => {
+                return Err(format!(
+                    "unknown option `{other}` for `domain_abstraction`"
+                ));
+            }
+        }
+        Ok(())
     })
 }
-
-/// Backwards-compatible wrapper around the derived
-/// `DomainAbstractionCollectionGeneratorMultipleCegarConfig::apply_options`.
-/// New code should call the trait method directly.
-pub fn apply_da_collection_options(
-    cfg: &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    args: &[ConfigArg],
-) -> Result<(), String> {
-    cfg.apply_options(args)
-}
-
-
-// `apply_scp_online_options`, `apply_fill_scp_options`, `apply_greedy_pdb_options`,
-// `apply_canonical_pdb_options`, and `apply_lmcut_options` are all gone —
-// their configs `#[derive(ApplyOptions)]` (with `also_sets` for the coupled
-// `combine_labels` / `random_seed`, `flatten` + `nested = "collection"` for
-// the DA collection sub-config, and `nested = "lmcut"` for the FillScp
-// LMcut sub-config). Just call `cfg.apply_options(args)` on them.
-
-// All per-type parser functions are gone — `FromOptionValue` impls in
-// `planforge_search::config` cover primitives and option-typed enums, and
-// the `parse` helper above dispatches by inferred type at each call site.

@@ -13,7 +13,7 @@ fn no_active_abstractions_returns_zero() {
         diagnostics_logged: RefCell::new(false),
     };
     // empty h vector
-    assert_eq!(heuristic.solve_dual(&[]), 0.0);
+    assert_eq!(heuristic.solve_dual(&[]).unwrap(), 0.0);
 }
 
 #[test]
@@ -27,7 +27,7 @@ fn single_abstraction_returns_its_h() {
         lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
         diagnostics_logged: RefCell::new(false),
     };
-    assert!((heuristic.solve_dual(&[7.0]) - 7.0).abs() < 1e-9);
+    assert!((heuristic.solve_dual(&[7.0]).unwrap() - 7.0).abs() < 1e-9);
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn two_disjoint_abstractions_sum() {
         lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
         diagnostics_logged: RefCell::new(false),
     };
-    assert!((heuristic.solve_dual(&[3.0, 4.0]) - 7.0).abs() < 1e-9);
+    assert!((heuristic.solve_dual(&[3.0, 4.0]).unwrap() - 7.0).abs() < 1e-9);
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn two_competing_abstractions_take_max() {
         lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
         diagnostics_logged: RefCell::new(false),
     };
-    let v = heuristic.solve_dual(&[3.0, 5.0]);
+    let v = heuristic.solve_dual(&[3.0, 5.0]).unwrap();
     assert!((v - 5.0).abs() < 1e-9, "got {v}");
 }
 
@@ -73,7 +73,7 @@ fn three_way_packing_picks_best() {
         lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
         diagnostics_logged: RefCell::new(false),
     };
-    let v = heuristic.solve_dual(&[3.0, 5.0, 4.0]);
+    let v = heuristic.solve_dual(&[3.0, 5.0, 4.0]).unwrap();
     assert!((v - 8.0).abs() < 1e-9, "got {v}");
 }
 

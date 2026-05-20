@@ -59,6 +59,17 @@ impl fmt::Display for ScoringFunction {
     }
 }
 
+impl crate::config::FromOptionValue for ScoringFunction {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "max_heuristic" => Ok(Self::MaxHeuristic),
+            "min_stolen_costs" => Ok(Self::MinStolenCosts),
+            "max_heuristic_per_stolen_costs" => Ok(Self::MaxHeuristicPerStolenCosts),
+            other => Err(format!("invalid ScoringFunction `{other}`")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderGenerator {
@@ -77,6 +88,17 @@ impl fmt::Display for OrderGenerator {
     }
 }
 
+impl crate::config::FromOptionValue for OrderGenerator {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "greedy_orders" | "greedy_orders()" => Ok(Self::Greedy),
+            "dynamic_greedy_orders" | "dynamic_greedy_orders()" => Ok(Self::DynamicGreedy),
+            "random_orders" | "random_orders()" => Ok(Self::Random),
+            other => Err(format!("invalid OrderGenerator `{other}`")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Saturator {
@@ -91,6 +113,17 @@ impl fmt::Display for Saturator {
             Saturator::All => write!(f, "all"),
             Saturator::Perim => write!(f, "perim"),
             Saturator::Perimstar => write!(f, "perimstar"),
+        }
+    }
+}
+
+impl crate::config::FromOptionValue for Saturator {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "all" => Ok(Self::All),
+            "perim" => Ok(Self::Perim),
+            "perimstar" => Ok(Self::Perimstar),
+            other => Err(format!("invalid Saturator `{other}`")),
         }
     }
 }

@@ -39,7 +39,7 @@ use planforge_sas::numeric::numeric_task::{
     AbstractNumericTask, metric_operator_cost_from_initial_values,
 };
 use rustc_hash::FxHashMap;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::numeric::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::numeric::evaluation::heuristic::Heuristic;
@@ -185,10 +185,10 @@ impl PostHocOptimizationHeuristic {
 
         self.log_diagnostics_once(&h_values, &scratch.abstract_state_ids);
 
-        Ok(self.solve_dual(&h_values))
+        self.solve_dual(&h_values)
     }
 
-    fn solve_dual(&self, h_values: &[f64]) -> f64 {
+    fn solve_dual(&self, h_values: &[f64]) -> Result<f64, EvaluationError> {
         // Drop abstractions with h_i = 0: their dual variable is fixed at 0
         // in any optimum (positive value can only tighten a packing
         // constraint shared with a strictly-helpful abstraction).
@@ -198,14 +198,14 @@ impl PostHocOptimizationHeuristic {
             .filter_map(|(id, h)| (*h > 0.0).then_some(id))
             .collect();
         if active.is_empty() {
-            return 0.0;
+            return Ok(0.0);
         }
         if active.len() == 1 {
             // X_i is capped at 1 by any constraint containing it, and there's
             // always at least one such constraint when h_i > 0 means the goal
             // is reachable in α_i via at least one positive-cost operator.
             // The optimum is h_i.
-            return h_values[active[0]];
+            return Ok(h_values[active[0]]);
         }
 
         // Build the dual LP with HiGHS.
@@ -217,6 +217,7 @@ impl PostHocOptimizationHeuristic {
         }
 
         let mut row_buffer: Vec<(highs::Col, f64)> = Vec::new();
+        let mut row_count = 0usize;
         for constraint in &self.constraints {
             row_buffer.clear();
             for &abstraction_id in constraint {
@@ -230,26 +231,35 @@ impl PostHocOptimizationHeuristic {
                 continue;
             }
             problem.add_row(..=1.0, row_buffer.as_slice());
+            row_count += 1;
         }
+        // Invariant: with ≥ 2 active abstractions (h_i > 0 for both), each had
+        // at least one positive-cost relevant operator that produced a
+        // constraint in `self.constraints`; the active columns therefore must
+        // appear in at least one row. If we somehow projected every row to
+        // empty, that's a bug — either in `build_constraints` or in the
+        // active-set filtering above.
+        assert!(
+            row_count > 0,
+            "posthoc_optimization: active set {:?} produced no LP rows; \
+             this indicates a bug in `build_constraints` or active-set filtering",
+            active
+        );
 
         let mut model = problem.optimise(Sense::Maximise);
         model.make_quiet();
         let solved = model.solve();
         match solved.status() {
-            HighsModelStatus::Optimal => solved.objective_value().max(0.0),
-            HighsModelStatus::ModelEmpty => {
-                // Active set non-empty but every operator-counting
-                // constraint dropped out (e.g. unit-cost abstractions whose
-                // relevant ops are all free). The LP is then unconstrained
-                // above 0 — but the heuristic must remain admissible, so
-                // fall back to the conservative max-of-h bound.
-                h_values.iter().copied().fold(0.0_f64, f64::max)
-            }
-            HighsModelStatus::Infeasible => f64::INFINITY,
-            other => {
-                warn!("posthoc_optimization: HiGHS returned {other:?}; falling back to max h");
-                h_values.iter().copied().fold(0.0_f64, f64::max)
-            }
+            // Clamp tiny IEEE-754 noise; the dual LP optimum is ≥ 0 by
+            // construction (every X_i ≥ 0, every h_i ≥ 0).
+            HighsModelStatus::Optimal => Ok(solved.objective_value().max(0.0)),
+            HighsModelStatus::Infeasible => Ok(f64::INFINITY),
+            other => Err(EvaluationError::ComputationFailed(format!(
+                "posthoc_optimization: HiGHS returned `{other:?}` for a well-formed LP \
+                 (active={} abstractions, {row_count} constraints); \
+                 not falling back — investigate the LP / solver inputs",
+                active.len()
+            ))),
         }
     }
 

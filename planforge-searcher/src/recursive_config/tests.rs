@@ -74,7 +74,7 @@ fn parses_astar_canonical_domain_abstractions_with_named_options() {
         "astar(canonical_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, random_seed=7))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    apply_da_collection_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
 
     assert_eq!(cfg.max_collection_size, 123);
     assert_eq!(cfg.total_max_time, 4.5);
@@ -97,7 +97,7 @@ fn parses_execute_entire_plan_flaw_kind() {
         _ => panic!("expected astar(...)"),
     };
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    apply_da_collection_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.flaw_kind, FlawKind::ExecuteEntirePlan);
 
     assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
@@ -114,7 +114,7 @@ fn parses_forward_partition_deviation_split_direction() {
         _ => panic!("expected astar(...)"),
     };
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    apply_da_collection_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(
         cfg.split_direction,
         Some(planforge_search::numeric::evaluation::domain_abstractions::cegar::SplitDirection::ForwardPartitionDeviation)
@@ -407,7 +407,7 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
         "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_bidirectional, portfolio_strategy=complementary, random_seed=7, debug=true))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    apply_da_collection_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_collection_size, 123);
     assert_eq!(cfg.total_max_time, 4.5);
     assert_eq!(cfg.blacklist_option, VariableSubset::NonGoals);
@@ -424,7 +424,7 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
 fn parses_astar_multi_domain_abstractions_with_trailing_comma() {
     let h = astar_heuristic("astar(multi_domain_abstractions(max_collection_size=123,))");
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    apply_da_collection_options(&mut cfg, &h.args).unwrap();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_collection_size, 123);
 }
 
@@ -482,7 +482,7 @@ fn rejects_unknown_options_inside_known_heuristics() {
     assert!(err.contains("deviation_flaws"), "got `{err}`");
 
     let h = astar_heuristic("astar(canonical_domain_abstractions(deviation_flaws=false))");
-    let err = apply_da_collection_options(
+    let err = ApplyOptions::apply_options(
         &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
         &h.args,
     )
@@ -523,7 +523,7 @@ fn display_round_trips_lmcutnumeric() {
 #[test]
 fn rejects_removed_exec_entire_plan_randomize_option() {
     let h = astar_heuristic("astar(multi_domain_abstractions(exec_entire_plan=randomize))");
-    let err = apply_da_collection_options(
+    let err = ApplyOptions::apply_options(
         &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
         &h.args,
     )
