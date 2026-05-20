@@ -3,8 +3,8 @@ use std::io::Write;
 
 use tracing::debug;
 
-use crate::helper_functions::InputStream;
-use crate::helper_functions::check_magic;
+use super::helper_functions::InputStream;
+use super::helper_functions::check_magic;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NumType {

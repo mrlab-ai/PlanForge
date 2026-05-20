@@ -10,7 +10,6 @@ doc = false
 
 [dependencies]
 planforge-translate = { path = "../planforge-translate" }
-planforge-preprocess = { path = "../planforge-preprocess" }
 planforge-cli-utils = { path = "../planforge-cli-utils" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

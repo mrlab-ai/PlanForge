@@ -2,8 +2,8 @@ use std::io::Write;
 
 use tracing::debug;
 
-use crate::helper_functions::{InputStream, check_magic};
-use crate::variable::{ExplicitVariable, NumType, NumericVariable};
+use super::helper_functions::{InputStream, check_magic};
+use super::variable::{ExplicitVariable, NumType, NumericVariable};
 
 #[cfg(test)]
 mod tests;

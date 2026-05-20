@@ -2,10 +2,10 @@ use std::io::Write;
 
 use tracing::debug;
 
-use crate::Condition;
-use crate::fact::ExplicitFact;
-use crate::operator::{Operator, PrePost, Prevail};
-use crate::variable::ExplicitVariable;
+use super::Condition;
+use super::fact::ExplicitFact;
+use super::operator::{Operator, PrePost, Prevail};
+use super::variable::ExplicitVariable;
 
 #[derive(Debug)]
 enum GeneratorBase {

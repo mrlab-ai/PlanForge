@@ -141,7 +141,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         // In-memory pipeline: translate → preprocess → parse, no disk I/O.
         let sas_text = planforge_translator::translate_to_sas_string(domain, problem)
             .map_err(|err| std::io::Error::other(err.to_string()))?;
-        let preprocessed = planforge_preprocess::run_preprocess_to_string(&sas_text);
+        let preprocessed = planforge_translate::preprocess::run_preprocess_to_string(&sas_text);
         (
             NumericRootTask::from_str(&preprocessed),
             format!("{domain} + {problem} (in-memory)"),

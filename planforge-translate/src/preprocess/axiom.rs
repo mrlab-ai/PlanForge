@@ -2,9 +2,9 @@ use std::io::Write;
 
 use tracing::debug;
 
-use crate::helper_functions::{InputStream, check_magic};
-use crate::operator::{CompOperator, FOperator, stringify};
-use crate::variable::{ExplicitVariable, NumericVariable};
+use super::helper_functions::{InputStream, check_magic};
+use super::operator::{CompOperator, FOperator, stringify};
+use super::variable::{ExplicitVariable, NumericVariable};
 
 #[derive(Debug, Clone)]
 pub struct AxiomRelationalCondition {

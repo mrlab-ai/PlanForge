@@ -13,6 +13,7 @@ pub mod options;
 pub mod pddl;
 pub mod pddl_parser;
 pub mod pddl_to_prolog;
+pub mod preprocess;
 pub mod sas_tasks;
 pub mod simplify;
 pub mod split_rules;

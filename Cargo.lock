@@ -421,7 +421,6 @@ dependencies = [
  "libc",
  "ordered-float",
  "planforge-cli-utils",
- "planforge-preprocess",
  "planforge-preprocessor",
  "planforge-sas",
  "planforge-search",
@@ -462,20 +461,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "planforge-preprocess"
-version = "0.1.0"
-dependencies = [
- "tracing",
-]
-
-[[package]]
 name = "planforge-preprocessor"
 version = "0.1.0"
 dependencies = [
  "clap",
  "planforge-cli-utils",
- "planforge-preprocess",
  "planforge-sas",
+ "planforge-translate",
  "planforge-translator",
  "time",
  "tracing",
@@ -500,8 +492,8 @@ dependencies = [
  "libc",
  "ordered-float",
  "planforge-config-derive",
- "planforge-preprocess",
  "planforge-sas",
+ "planforge-translate",
  "planforge-translator",
  "rand",
  "rustc-hash",
@@ -541,7 +533,6 @@ dependencies = [
  "anyhow",
  "clap",
  "planforge-cli-utils",
- "planforge-preprocess",
  "planforge-translate",
  "time",
  "tracing",
@@ -748,7 +739,6 @@ name = "tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "planforge-preprocess",
  "planforge-sas",
  "planforge-search",
  "planforge-translate",

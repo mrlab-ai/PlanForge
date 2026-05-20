@@ -6,7 +6,7 @@ license = "LGPL-3.0"
 
 [dependencies]
 planforge-sas = { path = "../planforge-sas" }
-planforge-preprocess = { path = "../planforge-preprocess" }
+planforge-translate = { path = "../planforge-translate" }
 planforge-config-derive = { path = "../planforge-config-derive" }
 libc = "0.2"
 tracing = "0.1"

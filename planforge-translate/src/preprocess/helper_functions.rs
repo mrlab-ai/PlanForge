@@ -2,14 +2,14 @@ use std::io::{Read, Write};
 
 use tracing::{debug, error, info};
 
-use crate::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
-use crate::domain_transition_graph::DomainTransitionGraph;
-use crate::fact::ExplicitFact;
-use crate::mutex_group::MutexGroup;
-use crate::operator::Operator;
-use crate::state::State;
-use crate::variable::{ExplicitVariable, NumericVariable};
-use crate::{GlobalConstraint, Metric, PRE_FILE_VERSION, SAS_FILE_VERSION};
+use super::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
+use super::domain_transition_graph::DomainTransitionGraph;
+use super::fact::ExplicitFact;
+use super::mutex_group::MutexGroup;
+use super::operator::Operator;
+use super::state::State;
+use super::variable::{ExplicitVariable, NumericVariable};
+use super::{GlobalConstraint, Metric, PRE_FILE_VERSION, SAS_FILE_VERSION};
 
 pub struct InputStream {
     input: String,

@@ -16,10 +16,10 @@ use std::io::{Read, Write};
 
 use tracing::{debug, info};
 
-use crate::causal_graph::CausalGraph;
-use crate::domain_transition_graph::{are_dtgs_strongly_connected, build_dtgs};
-use crate::fact::ExplicitFact;
-use crate::helper_functions::{
+use self::causal_graph::CausalGraph;
+use self::domain_transition_graph::{are_dtgs_strongly_connected, build_dtgs};
+use self::fact::ExplicitFact;
+use self::helper_functions::{
     InputStream, read_preprocessed_problem_description, to_sas_writer,
 };
 

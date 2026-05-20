@@ -3310,7 +3310,7 @@ mod handcrafted_sailing_tests {
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
 
-    use planforge_preprocess::run_preprocess_to_output;
+    use planforge_translate::preprocess::run_preprocess_to_output;
     use planforge_sas::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
     use planforge_sas::numeric::numeric_task::{
         AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,

@@ -2,9 +2,9 @@ use std::io::Write;
 
 use tracing::debug;
 
-use crate::fact::ExplicitFact;
-use crate::helper_functions::{InputStream, check_magic};
-use crate::variable::ExplicitVariable;
+use super::fact::ExplicitFact;
+use super::helper_functions::{InputStream, check_magic};
+use super::variable::ExplicitVariable;
 
 #[derive(Debug, Clone)]
 pub struct MutexGroup {

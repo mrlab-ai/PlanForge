@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use planforge_preprocess::run_preprocess_to_output;
+use planforge_translate::preprocess::run_preprocess_to_output;
 use planforge_sas::numeric::axioms::AxiomEvaluator;
 use planforge_sas::numeric::numeric_task::AbstractNumericTask;
 use planforge_sas::numeric::numeric_task::NumericRootTask;
