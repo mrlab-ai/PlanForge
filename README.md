@@ -18,6 +18,7 @@ Production-quality on the admissible search and heuristic paths (A\* with blind,
   - *Canonical* (max over compatible additive subsets).
   - *Saturated cost partitioning* (SCP), including a fill-SCP variant that combines per-label SCP with LM-cut over residual costs.
 - **LM-cut** — numeric landmark-cut heuristic, usable standalone or as a residual-cost component inside SCP.
+- **Posthoc optimization** — Pommerening/Röger/Helmert AAAI 2013 LP heuristic over a CEGAR-built domain-abstraction collection. The dual LP `max Σ h_i(s)·X_i s.t. Σ_{i : o relevant for i} X_i ≤ 1 for each positive-cost operator o` is solved per state by HiGHS. Dominates canonical (max-over-additive) but pays per-state LP cost; useful when the abstractions overlap heavily and a strict max underuses them.
 - **FF** — Hoffmann/Nebel relaxed-plan heuristic with Metric-FF style monotonic numeric relaxation. Each numeric variable tracks a `(max_reachable, min_reachable)` envelope through the relaxed planning graph; comparison-axiom facts become available when the envelope makes them satisfiable. Non-admissible in general; useful as a fast guide for greedy search and competitive with blind on small numeric instances.
 
 ## Search
@@ -33,6 +34,16 @@ Stable Rust, no nightly features:
     cargo build --release
 
 The primary binary is `target/release/planforge`. Smaller-scope binaries (`planforge-translator`, `planforge-preprocessor`, `planforge-searcher`) are built alongside it and are useful for staging.
+
+### HiGHS prerequisites
+
+`planforge-search` depends on the [HiGHS](https://highs.dev) LP solver via the `highs` crate, which builds HiGHS from C++ source and runs `bindgen` over its C headers. The build therefore needs:
+
+- a C++17 compiler (`g++` 11+)
+- `cmake` 3.20+
+- a working `libclang` (set `LIBCLANG_PATH` to its directory if it is not on the default loader path)
+
+On the cluster nodes used during development, `LIBCLANG_PATH` pointed at the Clang module's `lib/` directory and an `LD_LIBRARY_PATH` entry shadowed the missing `libtinfo.so.5` with the system's `libtinfo.so.6`.
 
 ## Running
 
@@ -55,6 +66,7 @@ Common options:
   - `astar(lmcutnumeric())`
   - `astar(canonical_domain_abstractions(...))`
   - `astar(fillSCP(...))`
+  - `astar(posthoc_optimization(...))` — LP-based dominator of canonical; `pho(...)` is accepted as an alias
   - `astar(ff())`
   - `gbfs(ff())` — fast non-admissible search
   - `gbfs(lmcutnumeric())`

@@ -22,6 +22,7 @@ use planforge_search::numeric::evaluation::domain_abstractions::domain_abstracti
 };
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planforge_search::numeric::evaluation::domain_abstractions::max_domain_abstraction_heuristic::MaxDomainAbstractionHeuristic;
+use planforge_search::numeric::evaluation::domain_abstractions::posthoc_optimization_heuristic::PostHocOptimizationHeuristic;
 use planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
     FillScpHeuristic, SaturatedCostPartitioningOnlineHeuristic,
 };
@@ -459,6 +460,26 @@ fn build_heuristic_from_spec<'a>(
                         as Box<
                             dyn planforge_search::numeric::evaluation::Heuristic + '_,
                         >)
+                }
+                planforge_searcher::HeuristicSpec::PostHocOptimization(config) => {
+                    let mut config = config.clone();
+                    config.compute_operator_footprints = false;
+                    let generator =
+                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
+                    info!("Building posthoc_optimization domain abstractions (CEGAR)...");
+                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
+                        std::io::Error::other(format!(
+                            "failed to build posthoc_optimization domain abstractions: {e:#}"
+                        ))
+                    })?;
+                    Some(Box::new(
+                        PostHocOptimizationHeuristic::new(None, task_ref, abstractions)
+                            .map_err(|e| {
+                                std::io::Error::other(format!(
+                                    "failed to construct posthoc_optimization heuristic: {e}"
+                                ))
+                            })?,
+                    ) as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>)
                 }
                 planforge_searcher::HeuristicSpec::Ff => Some(Box::new(
                     planforge_search::numeric::evaluation::ff_heuristic::FfHeuristic::new(task_ref)

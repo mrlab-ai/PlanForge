@@ -93,6 +93,8 @@ pub enum HeuristicSpec {
     ScpOnline(ScpOnlineConfig),
     #[serde(rename = "fillscp")]
     FillScp(FillScpConfig),
+    #[serde(rename = "posthoc_optimization")]
+    PostHocOptimization(DomainAbstractionCollectionGeneratorMultipleCegarConfig),
     #[serde(rename = "ff")]
     Ff,
 }
@@ -149,6 +151,9 @@ impl fmt::Display for HeuristicSpec {
             }
             HeuristicSpec::FillScp(config) => {
                 write!(f, "{}", config.format_config_call("fillSCP"))
+            }
+            HeuristicSpec::PostHocOptimization(config) => {
+                write!(f, "{}", config.format_config_call("posthoc_optimization"))
             }
             HeuristicSpec::Ff => write!(f, "ff()"),
         }
@@ -1818,6 +1823,22 @@ fn heuristic_registry() -> Vec<HeuristicPlugin> {
         HeuristicPlugin {
             name: "fill_scp",
             build: |call| Ok(HeuristicSpec::FillScp(FillScpConfig::from_config(call)?)),
+        },
+        HeuristicPlugin {
+            name: "posthoc_optimization",
+            build: |call| {
+                Ok(HeuristicSpec::PostHocOptimization(
+                    DomainAbstractionCollectionGeneratorMultipleCegarConfig::from_config(call)?,
+                ))
+            },
+        },
+        HeuristicPlugin {
+            name: "pho",
+            build: |call| {
+                Ok(HeuristicSpec::PostHocOptimization(
+                    DomainAbstractionCollectionGeneratorMultipleCegarConfig::from_config(call)?,
+                ))
+            },
         },
         HeuristicPlugin {
             name: "greedy_numeric_pdb",
