@@ -1,10 +1,11 @@
 use super::*;
+use planforge_search::numeric::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, InitSplitQuantity, PortfolioStrategy,
     VariableSubset,
 };
 use planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
-    OrderGenerator, ScoringFunction,
+    FillScpConfig, OrderGenerator, Saturator, ScoringFunction, ScpOnlineConfig,
 };
 use planforge_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planforge_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -12,99 +13,95 @@ use planforge_search::numeric::evaluation::pattern_databases::pattern_database::
 use planforge_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planforge_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 
+// Helpers to keep assertions compact.
+fn astar_heuristic(input: &str) -> HeuristicSpec {
+    match parse_search_spec(input).unwrap() {
+        SearchSpec::Astar(h) => h,
+        other => panic!("expected astar(...), got {other:?}"),
+    }
+}
+
 #[test]
 fn parses_astar_blind_with_or_without_unit_parens() {
-    assert_eq!(
-        parse_search_spec("astar(blind)").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::Blind)
-    );
-    assert_eq!(
-        parse_search_spec("astar(blind())").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::Blind)
-    );
+    let h = astar_heuristic("astar(blind)");
+    assert_eq!(h.name, "blind");
+    assert!(h.args.is_empty());
+
+    let h = astar_heuristic("astar(blind())");
+    assert_eq!(h.name, "blind");
+    assert!(h.args.is_empty());
 }
 
 #[test]
 fn parses_astar_domain_abstraction_with_or_without_unit_parens() {
-    assert_eq!(
-        parse_search_spec("astar(domain_abstraction)").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::DomainAbstraction(
-            DomainAbstractionConfig::default()
-        ))
-    );
-    assert_eq!(
-        parse_search_spec("astar(domain_abstraction())").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::DomainAbstraction(
-            DomainAbstractionConfig::default()
-        ))
-    );
+    let h = astar_heuristic("astar(domain_abstraction)");
+    assert_eq!(h.name, "domain_abstraction");
+    assert!(h.args.is_empty());
+
+    let h = astar_heuristic("astar(domain_abstraction())");
+    assert_eq!(h.name, "domain_abstraction");
+    assert!(h.args.is_empty());
 }
 
 #[test]
 fn parses_astar_domain_abstraction_with_named_options() {
-    let spec = parse_search_spec(
+    let h = astar_heuristic(
         "astar(domain_abstraction(max_abstraction_size=10000, use_wildcard_plans=false, combine_labels=true, random_seed=7))",
-    )
-    .unwrap();
+    );
+    assert_eq!(h.name, "domain_abstraction");
 
-    let SearchSpec::Astar(HeuristicSpec::DomainAbstraction(config)) = spec else {
-        panic!("expected domain_abstraction config");
-    };
-
-    assert_eq!(config.max_abstraction_size, 10_000);
-    assert!(!config.use_wildcard_plans);
-    assert!(config.combine_labels);
-    assert_eq!(config.random_seed, Some(7));
+    let mut cfg = CegarConfig::default();
+    apply_da_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.max_abstraction_size, 10_000);
+    assert!(!cfg.use_wildcard_plans);
+    assert!(cfg.combine_labels);
+    assert_eq!(cfg.random_seed, Some(7));
 }
 
 #[test]
 fn parses_astar_canonical_domain_abstractions_with_or_without_parens() {
-    assert_eq!(
-        parse_search_spec("astar(canonical_domain_abstractions)").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(
-            DomainAbstractionCollectionGeneratorMultipleCegarConfig::default()
-        ))
-    );
-    assert_eq!(
-        parse_search_spec("astar(canonical_domain_abstractions())").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(
-            DomainAbstractionCollectionGeneratorMultipleCegarConfig::default()
-        ))
-    );
+    let h = astar_heuristic("astar(canonical_domain_abstractions)");
+    assert_eq!(h.name, "canonical_domain_abstractions");
+    assert!(h.args.is_empty());
+
+    let h = astar_heuristic("astar(canonical_domain_abstractions())");
+    assert_eq!(h.name, "canonical_domain_abstractions");
+    assert!(h.args.is_empty());
 }
 
 #[test]
 fn parses_astar_canonical_domain_abstractions_with_named_options() {
-    let spec = parse_search_spec(
+    let h = astar_heuristic(
         "astar(canonical_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, random_seed=7))",
-    )
-    .unwrap();
+    );
+    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    apply_da_collection_options(&mut cfg, &h.args).unwrap();
 
-    let SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(config)) = spec else {
-        panic!("expected canonical_domain_abstractions config");
-    };
-
-    assert_eq!(config.max_collection_size, 123);
-    assert_eq!(config.total_max_time, 4.5);
-    assert_eq!(config.blacklist_option, VariableSubset::NonGoals);
-    assert_eq!(config.init_split_quantity, InitSplitQuantity::All);
-    assert!(!config.use_wildcard_plans);
-    assert!(config.combine_labels);
-    assert_eq!(config.flaw_kind, FlawKind::SequenceProgression);
-    assert_eq!(config.random_seed, Some(7));
+    assert_eq!(cfg.max_collection_size, 123);
+    assert_eq!(cfg.total_max_time, 4.5);
+    assert_eq!(cfg.blacklist_option, VariableSubset::NonGoals);
+    assert_eq!(cfg.init_split_quantity, InitSplitQuantity::All);
+    assert!(!cfg.use_wildcard_plans);
+    assert!(cfg.combine_labels);
+    assert_eq!(cfg.flaw_kind, FlawKind::SequenceProgression);
+    assert_eq!(cfg.random_seed, Some(7));
 }
 
 #[test]
 fn parses_execute_entire_plan_flaw_kind() {
-    let spec =
-        parse_search_spec("astar(canonical_domain_abstractions(flaw_kind=execute_entire_plan))")
-            .unwrap();
-
-    let SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(config)) = &spec else {
-        panic!("expected canonical_domain_abstractions config");
+    let spec = parse_search_spec(
+        "astar(canonical_domain_abstractions(flaw_kind=execute_entire_plan))",
+    )
+    .unwrap();
+    let h = match &spec {
+        SearchSpec::Astar(h) => h,
+        _ => panic!("expected astar(...)"),
     };
+    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    apply_da_collection_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.flaw_kind, FlawKind::ExecuteEntirePlan);
 
-    assert_eq!(config.flaw_kind, FlawKind::ExecuteEntirePlan);
+    // Round-trip.
     assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
 }
 
@@ -114,368 +111,251 @@ fn parses_forward_partition_deviation_split_direction() {
         "astar(canonical_domain_abstractions(split_direction=forward_partition_deviation))",
     )
     .unwrap();
-
-    let SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(config)) = &spec else {
-        panic!("expected canonical_domain_abstractions config");
+    let h = match &spec {
+        SearchSpec::Astar(h) => h,
+        _ => panic!("expected astar(...)"),
     };
-
+    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    apply_da_collection_options(&mut cfg, &h.args).unwrap();
     assert_eq!(
-        config.split_direction,
-        Some(SplitDirection::ForwardPartitionDeviation)
+        cfg.split_direction,
+        Some(planforge_search::numeric::evaluation::domain_abstractions::cegar::SplitDirection::ForwardPartitionDeviation)
     );
     assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
 }
 
 #[test]
 fn parses_astar_scp_online_with_or_without_unit_parens() {
-    assert_eq!(
-        parse_search_spec("astar(scp_online)").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::ScpOnline(ScpOnlineConfig::default()))
-    );
-    assert_eq!(
-        parse_search_spec("astar(scp_online())").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::ScpOnline(ScpOnlineConfig::default()))
-    );
+    let h = astar_heuristic("astar(scp_online)");
+    assert_eq!(h.name, "scp_online");
+    assert!(h.args.is_empty());
+
+    let h = astar_heuristic("astar(scp_online())");
+    assert_eq!(h.name, "scp_online");
+    assert!(h.args.is_empty());
 }
 
 #[test]
 fn parses_astar_fill_scp_with_named_options() {
-    let spec = parse_search_spec(
+    let h = astar_heuristic(
         "astar(fillSCP(table_construction_max_time=34.5, use_abstract_operator_cost_partitioning=true, saturator=perimstar, scoring_function=max_heuristic, orders=random_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, split_direction=backward, random_seed=7, debug=true, precision=0.5, epsilon=0.25))",
-    )
-    .unwrap();
+    );
+    assert_eq!(h.name, "fillscp");
 
-    let SearchSpec::Astar(HeuristicSpec::FillScp(config)) = spec else {
-        panic!("expected fillSCP config");
-    };
-
-    assert_eq!(config.table_construction_max_time, 34.5);
-    assert!(config.use_abstract_operator_cost_partitioning);
-    assert_eq!(config.saturator, Saturator::Perimstar);
-    assert_eq!(config.scoring_function, ScoringFunction::MaxHeuristic);
-    assert_eq!(config.order_generator, OrderGenerator::Random);
-    assert_eq!(config.order_optimization_max_time, 1.5);
-    assert!(config.combine_labels);
-    assert_eq!(config.collection_config.max_collection_size, 123);
-    assert_eq!(config.collection_config.total_max_time, 4.5);
+    let mut cfg = FillScpConfig::default();
+    apply_fill_scp_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.table_construction_max_time, 34.5);
+    assert!(cfg.use_abstract_operator_cost_partitioning);
+    assert_eq!(cfg.saturator, Saturator::Perimstar);
+    assert_eq!(cfg.scoring_function, ScoringFunction::MaxHeuristic);
+    assert_eq!(cfg.order_generator, OrderGenerator::Random);
+    assert_eq!(cfg.order_optimization_max_time, 1.5);
+    assert!(cfg.combine_labels);
+    assert_eq!(cfg.collection_config.max_collection_size, 123);
+    assert_eq!(cfg.collection_config.total_max_time, 4.5);
     assert_eq!(
-        config.collection_config.blacklist_option,
+        cfg.collection_config.blacklist_option,
         VariableSubset::NonGoals
     );
     assert_eq!(
-        config.collection_config.init_split_quantity,
+        cfg.collection_config.init_split_quantity,
         InitSplitQuantity::All
     );
-    assert!(!config.collection_config.use_wildcard_plans);
+    assert!(!cfg.collection_config.use_wildcard_plans);
     assert_eq!(
-        config.collection_config.flaw_kind,
+        cfg.collection_config.flaw_kind,
         FlawKind::SequenceProgression
     );
     assert_eq!(
-        config.collection_config.split_direction,
-        Some(SplitDirection::Backward)
+        cfg.collection_config.split_direction,
+        Some(planforge_search::numeric::evaluation::domain_abstractions::cegar::SplitDirection::Backward)
     );
-    assert_eq!(
-        config.collection_config.portfolio_strategy,
-        PortfolioStrategy::Standard
-    );
-    assert_eq!(config.collection_config.random_seed, Some(7));
-    assert_eq!(config.random_seed, Some(7));
-    assert!(config.collection_config.debug);
-    assert_eq!(config.lmcut_config.precision, 0.5);
-    assert_eq!(config.lmcut_config.epsilon, 0.25);
+    assert_eq!(cfg.collection_config.random_seed, Some(7));
+    assert_eq!(cfg.random_seed, Some(7));
+    assert!(cfg.collection_config.debug);
+    assert_eq!(cfg.lmcut_config.precision, 0.5);
+    assert_eq!(cfg.lmcut_config.epsilon, 0.25);
 }
 
 #[test]
 fn parses_astar_scp_online_with_named_options() {
-    let spec = parse_search_spec(
+    let h = astar_heuristic(
         "astar(scp_online(max_time=12.5, table_construction_max_time=34.5, max_size=2048, interval=3, use_abstract_operator_cost_partitioning=true, saturator=perimstar, scoring_function=max_heuristic, orders=dynamic_greedy_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, portfolio_strategy=complementary, random_seed=7, debug=true))",
-    )
-    .unwrap();
-
-    let SearchSpec::Astar(HeuristicSpec::ScpOnline(config)) = spec else {
-        panic!("expected scp_online config");
-    };
-
-    assert_eq!(config.max_time, 12.5);
-    assert_eq!(config.table_construction_max_time, 34.5);
-    assert_eq!(config.max_size, 2048);
-    assert_eq!(config.interval, 3);
-    assert!(config.use_abstract_operator_cost_partitioning);
-    assert_eq!(config.saturator, Saturator::Perimstar);
-    assert_eq!(config.scoring_function, ScoringFunction::MaxHeuristic);
-    assert_eq!(config.order_generator, OrderGenerator::DynamicGreedy);
-    assert_eq!(config.order_optimization_max_time, 1.5);
-    assert!(config.combine_labels);
-    assert_eq!(config.collection_config.max_collection_size, 123);
-    assert_eq!(config.collection_config.total_max_time, 4.5);
+    );
+    let mut cfg = ScpOnlineConfig::default();
+    apply_scp_online_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.max_time, 12.5);
+    assert_eq!(cfg.table_construction_max_time, 34.5);
+    assert_eq!(cfg.max_size, 2048);
+    assert_eq!(cfg.interval, 3);
+    assert!(cfg.use_abstract_operator_cost_partitioning);
+    assert_eq!(cfg.saturator, Saturator::Perimstar);
+    assert_eq!(cfg.scoring_function, ScoringFunction::MaxHeuristic);
+    assert_eq!(cfg.order_generator, OrderGenerator::DynamicGreedy);
+    assert_eq!(cfg.order_optimization_max_time, 1.5);
+    assert!(cfg.combine_labels);
+    assert_eq!(cfg.collection_config.max_collection_size, 123);
+    assert_eq!(cfg.collection_config.total_max_time, 4.5);
     assert_eq!(
-        config.collection_config.blacklist_option,
+        cfg.collection_config.blacklist_option,
         VariableSubset::NonGoals
     );
     assert_eq!(
-        config.collection_config.init_split_quantity,
+        cfg.collection_config.init_split_quantity,
         InitSplitQuantity::All
     );
-    assert!(!config.collection_config.use_wildcard_plans);
-    assert!(config.collection_config.combine_labels);
+    assert!(!cfg.collection_config.use_wildcard_plans);
+    assert!(cfg.collection_config.combine_labels);
     assert_eq!(
-        config.collection_config.flaw_kind,
+        cfg.collection_config.flaw_kind,
         FlawKind::SequenceProgression
     );
     assert_eq!(
-        config.collection_config.portfolio_strategy,
+        cfg.collection_config.portfolio_strategy,
         PortfolioStrategy::Complementary
     );
-    assert_eq!(config.collection_config.random_seed, Some(7));
-    assert_eq!(config.random_seed, Some(7));
-    assert!(config.collection_config.debug);
+    assert_eq!(cfg.collection_config.random_seed, Some(7));
+    assert_eq!(cfg.random_seed, Some(7));
+    assert!(cfg.collection_config.debug);
 }
 
 #[test]
 fn parses_astar_greedy_numeric_pdb_with_or_without_unit_parens() {
-    assert_eq!(
-        parse_search_spec("astar(greedy_numeric_pdb)").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(
-            GreedyPatternGeneratorConfig::default()
-        ))
-    );
-    assert_eq!(
-        parse_search_spec("astar(greedy_numeric_pdb())").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(
-            GreedyPatternGeneratorConfig::default()
-        ))
-    );
+    let h = astar_heuristic("astar(greedy_numeric_pdb)");
+    assert_eq!(h.name, "greedy_numeric_pdb");
+    assert!(h.args.is_empty());
+
+    let h = astar_heuristic("astar(greedy_numeric_pdb())");
+    assert_eq!(h.name, "greedy_numeric_pdb");
+    assert!(h.args.is_empty());
 }
 
 #[test]
 fn parses_astar_greedy_numeric_pdb_with_named_options() {
-    let spec = parse_search_spec(
+    let h = astar_heuristic(
         "astar(greedy_numeric_pdb(max_pdb_states=321, numeric_first=false, random_seed=7, variable_order_type=cg_goal_random, exploration_heuristic=lmcut, frontier_heuristic=blind, failed_lookup_heuristic=lmcut))",
-    )
-    .unwrap();
-
-    let SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(config)) = spec else {
-        panic!("expected greedy_numeric_pdb config");
-    };
-
-    assert_eq!(config.max_pdb_states, 321);
-    assert!(!config.numeric_first);
-    assert_eq!(config.random_seed, 7);
-    assert_eq!(
-        config.variable_order_type,
-        GreedyVariableOrderType::CgGoalRandom
     );
-    assert_eq!(config.exploration_heuristic, PdbInternalHeuristic::Lmcut);
-    assert_eq!(config.frontier_heuristic, PdbInternalHeuristic::Blind);
-    assert_eq!(config.failed_lookup_heuristic, PdbInternalHeuristic::Lmcut);
+    let mut cfg = GreedyPatternGeneratorConfig::default();
+    apply_greedy_pdb_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.max_pdb_states, 321);
+    assert!(!cfg.numeric_first);
+    assert_eq!(cfg.random_seed, 7);
+    assert_eq!(cfg.variable_order_type, GreedyVariableOrderType::CgGoalRandom);
+    assert_eq!(cfg.exploration_heuristic, PdbInternalHeuristic::Lmcut);
+    assert_eq!(cfg.frontier_heuristic, PdbInternalHeuristic::Blind);
+    assert_eq!(cfg.failed_lookup_heuristic, PdbInternalHeuristic::Lmcut);
 }
 
 #[test]
 fn parses_registry_style_search_with_keyed_heuristic() {
-    let spec = parse_search_spec(
+    let h = astar_heuristic(
         "search(astar(heuristic=greedy_numeric_pdb(max_pdb_states=321, numeric_first=false)))",
-    )
-    .unwrap();
-
-    let SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(config)) = spec else {
-        panic!("expected greedy_numeric_pdb config");
-    };
-
-    assert_eq!(config.max_pdb_states, 321);
-    assert!(!config.numeric_first);
-}
-
-#[test]
-fn parses_positional_config_values_in_field_order() {
-    let spec = parse_search_spec("search(astar(greedy_numeric_pdb(321, false, 7)))").unwrap();
-
-    let SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(config)) = spec else {
-        panic!("expected greedy_numeric_pdb config");
-    };
-
-    assert_eq!(config.max_pdb_states, 321);
-    assert!(!config.numeric_first);
-    assert_eq!(config.random_seed, 7);
-}
-
-#[test]
-fn configurable_structs_build_from_generic_config_calls() {
-    let call = ConfigParser::new("greedy_numeric_pdb(max_pdb_states=321, numeric_first=false)")
-        .parse_all()
-        .unwrap();
-
-    let config = GreedyPatternGeneratorConfig::from_config(&call).unwrap();
-
-    assert_eq!(config.max_pdb_states, 321);
-    assert!(!config.numeric_first);
-}
-
-#[test]
-fn search_engines_build_from_generic_config_calls() {
-    let call = ConfigParser::new("astar(heuristic=greedy_numeric_pdb(max_pdb_states=321))")
-        .parse_all()
-        .unwrap();
-
-    let config = AStarConfig::from_config(&call).unwrap();
-
-    let HeuristicSpec::GreedyNumericPdb(heuristic_config) = config.heuristic else {
-        panic!("expected greedy_numeric_pdb config");
-    };
-    assert_eq!(heuristic_config.max_pdb_states, 321);
-}
-
-#[test]
-fn configurable_structs_do_not_need_display_impls() {
-    #[derive(Default, PartialEq)]
-    struct ConfigWithoutDisplay {
-        enabled: bool,
-    }
-
-    impl FromConfig for ConfigWithoutDisplay {
-        fn config_fields() -> Vec<Field<Self>> {
-            vec![Field::new(
-                "enabled",
-                |config, value| {
-                    config.enabled = parse_bool(value.as_atom()?)?;
-                    Ok(())
-                },
-                |config| config.enabled.to_string(),
-            )]
-        }
-    }
-
-    let call = ConfigParser::new("without_display(enabled=true)")
-        .parse_all()
-        .unwrap();
-    let config = ConfigWithoutDisplay::from_config(&call).unwrap();
-
-    assert!(config.enabled);
-    assert_eq!(
-        config.format_config_call("without_display"),
-        "without_display(enabled=true)"
     );
+    assert_eq!(h.name, "greedy_numeric_pdb");
+    let mut cfg = GreedyPatternGeneratorConfig::default();
+    apply_greedy_pdb_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.max_pdb_states, 321);
+    assert!(!cfg.numeric_first);
+}
+
+#[test]
+fn rejects_positional_arguments_in_heuristic_options() {
+    let err = parse_search_spec("astar(greedy_numeric_pdb(321, false, 7))").unwrap_err();
+    assert!(err.contains("positional"));
 }
 
 #[test]
 fn parses_astar_canonical_numeric_pdb_with_or_without_unit_parens() {
-    assert_eq!(
-        parse_search_spec("astar(canonical_numeric_pdb)").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::CanonicalNumericPdb(
-            CanonicalNumericPdbConfig::default()
-        ))
-    );
-    assert_eq!(
-        parse_search_spec("astar(canonical_numeric_pdb())").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::CanonicalNumericPdb(
-            CanonicalNumericPdbConfig::default()
-        ))
-    );
+    let h = astar_heuristic("astar(canonical_numeric_pdb)");
+    assert_eq!(h.name, "canonical_numeric_pdb");
+    assert!(h.args.is_empty());
+
+    let h = astar_heuristic("astar(canonical_numeric_pdb())");
+    assert_eq!(h.name, "canonical_numeric_pdb");
+    assert!(h.args.is_empty());
 }
 
 #[test]
 fn parses_astar_canonical_numeric_pdb_with_named_options() {
-    let spec = parse_search_spec(
+    let h = astar_heuristic(
         "astar(canonical_numeric_pdb(max_pdb_states=321, max_pattern_size=3, only_interesting_patterns=false, exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut))",
-    )
-    .unwrap();
-
-    let SearchSpec::Astar(HeuristicSpec::CanonicalNumericPdb(config)) = spec else {
-        panic!("expected canonical_numeric_pdb config");
-    };
-
-    assert_eq!(config.max_pdb_states, 321);
-    assert_eq!(config.max_pattern_size, 3);
-    assert!(!config.only_interesting_patterns);
-    assert_eq!(config.exploration_heuristic, PdbInternalHeuristic::Blind);
-    assert_eq!(config.frontier_heuristic, PdbInternalHeuristic::Lmcut);
-    assert_eq!(config.failed_lookup_heuristic, PdbInternalHeuristic::Lmcut);
+    );
+    let mut cfg = CanonicalNumericPdbConfig::default();
+    apply_canonical_pdb_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.max_pdb_states, 321);
+    assert_eq!(cfg.max_pattern_size, 3);
+    assert!(!cfg.only_interesting_patterns);
+    assert_eq!(cfg.exploration_heuristic, PdbInternalHeuristic::Blind);
+    assert_eq!(cfg.frontier_heuristic, PdbInternalHeuristic::Lmcut);
+    assert_eq!(cfg.failed_lookup_heuristic, PdbInternalHeuristic::Lmcut);
 }
 
 #[test]
 fn parses_astar_lmcutnumeric_with_or_without_unit_parens() {
-    assert_eq!(
-        parse_search_spec("astar(lmcutnumeric)").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::Lmcutnumeric(LmCutNumericConfig::default()))
-    );
-    assert_eq!(
-        parse_search_spec("astar(lmcutnumeric())").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::Lmcutnumeric(LmCutNumericConfig::default()))
-    );
+    let h = astar_heuristic("astar(lmcutnumeric)");
+    assert_eq!(h.name, "lmcutnumeric");
+    assert!(h.args.is_empty());
+
+    let h = astar_heuristic("astar(lmcutnumeric())");
+    assert_eq!(h.name, "lmcutnumeric");
+    assert!(h.args.is_empty());
 }
 
 #[test]
 fn parses_astar_lmcutnumeric_with_named_options() {
-    let spec = parse_search_spec(
+    let h = astar_heuristic(
         "astar(lmcutnumeric(ceiling_less_than_one=true, ignore_numeric=true, random_pcf=true, irmax=true, disable_ma=true, use_second_order_simple=true, use_constant_assignment=true, bound_iterations=7, precision=0.5, epsilon=0.25))",
-    )
-    .unwrap();
-
-    let SearchSpec::Astar(HeuristicSpec::Lmcutnumeric(config)) = spec else {
-        panic!("expected lmcutnumeric config");
-    };
-
-    assert!(config.ceiling_less_than_one);
-    assert!(config.ignore_numeric);
-    assert!(config.random_pcf);
-    assert!(config.irmax);
-    assert!(config.disable_ma);
-    assert!(config.use_second_order_simple);
-    assert!(config.use_constant_assignment);
-    assert_eq!(config.bound_iterations, 7);
-    assert_eq!(config.precision, 0.5);
-    assert_eq!(config.epsilon, 0.25);
+    );
+    let mut cfg = LmCutNumericConfig::default();
+    apply_lmcut_options(&mut cfg, &h.args).unwrap();
+    assert!(cfg.ceiling_less_than_one);
+    assert!(cfg.ignore_numeric);
+    assert!(cfg.random_pcf);
+    assert!(cfg.irmax);
+    assert!(cfg.disable_ma);
+    assert!(cfg.use_second_order_simple);
+    assert!(cfg.use_constant_assignment);
+    assert_eq!(cfg.bound_iterations, 7);
+    assert_eq!(cfg.precision, 0.5);
+    assert_eq!(cfg.epsilon, 0.25);
 }
 
 #[test]
 fn parses_astar_multi_domain_abstractions_with_or_without_parens() {
-    assert_eq!(
-        parse_search_spec("astar(multi_domain_abstractions)").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::MultiDomainAbstractions(
-            DomainAbstractionCollectionGeneratorMultipleCegarConfig::default()
-        ))
-    );
-    assert_eq!(
-        parse_search_spec("astar(multi_domain_abstractions())").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::MultiDomainAbstractions(
-            DomainAbstractionCollectionGeneratorMultipleCegarConfig::default()
-        ))
-    );
+    let h = astar_heuristic("astar(multi_domain_abstractions)");
+    assert_eq!(h.name, "multi_domain_abstractions");
+    assert!(h.args.is_empty());
+
+    let h = astar_heuristic("astar(multi_domain_abstractions())");
+    assert_eq!(h.name, "multi_domain_abstractions");
+    assert!(h.args.is_empty());
 }
 
 #[test]
 fn parses_astar_multi_domain_abstractions_with_named_options() {
-    let spec = parse_search_spec(
+    let h = astar_heuristic(
         "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_bidirectional, portfolio_strategy=complementary, random_seed=7, debug=true))",
-    )
-    .unwrap();
-
-    let SearchSpec::Astar(HeuristicSpec::MultiDomainAbstractions(config)) = spec else {
-        panic!("expected multi_domain_abstractions config");
-    };
-
-    assert_eq!(config.max_collection_size, 123);
-    assert_eq!(config.total_max_time, 4.5);
-    assert_eq!(config.blacklist_option, VariableSubset::NonGoals);
-    assert_eq!(config.init_split_quantity, InitSplitQuantity::All);
-    assert!(!config.use_wildcard_plans);
-    assert!(config.combine_labels);
-    assert_eq!(config.flaw_kind, FlawKind::SequenceBidirectional);
-    assert_eq!(config.portfolio_strategy, PortfolioStrategy::Complementary);
-    assert_eq!(config.random_seed, Some(7));
-    assert!(config.debug);
+    );
+    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    apply_da_collection_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.max_collection_size, 123);
+    assert_eq!(cfg.total_max_time, 4.5);
+    assert_eq!(cfg.blacklist_option, VariableSubset::NonGoals);
+    assert_eq!(cfg.init_split_quantity, InitSplitQuantity::All);
+    assert!(!cfg.use_wildcard_plans);
+    assert!(cfg.combine_labels);
+    assert_eq!(cfg.flaw_kind, FlawKind::SequenceBidirectional);
+    assert_eq!(cfg.portfolio_strategy, PortfolioStrategy::Complementary);
+    assert_eq!(cfg.random_seed, Some(7));
+    assert!(cfg.debug);
 }
 
 #[test]
 fn parses_astar_multi_domain_abstractions_with_trailing_comma() {
-    let spec =
-        parse_search_spec("astar(multi_domain_abstractions(max_collection_size=123,))").unwrap();
-
-    let SearchSpec::Astar(HeuristicSpec::MultiDomainAbstractions(config)) = spec else {
-        panic!("expected multi_domain_abstractions config");
-    };
-
-    assert_eq!(config.max_collection_size, 123);
+    let h = astar_heuristic("astar(multi_domain_abstractions(max_collection_size=123,))");
+    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    apply_da_collection_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.max_collection_size, 123);
 }
 
 #[test]
@@ -509,13 +389,21 @@ fn display_round_trips_scp_online() {
 }
 
 #[test]
-fn rejects_deviation_flaws_option() {
-    let err = parse_search_spec("astar(scp_online(deviation_flaws=false))").unwrap_err();
-    assert!(err.contains("unknown option `deviation_flaws`"));
+fn rejects_unknown_options_inside_known_heuristics() {
+    // Option parsing happens at the parser layer for some search-engine
+    // checks, but unknown heuristic options are now rejected only at
+    // construction time. Exercise that path via the appliers directly.
+    let h = astar_heuristic("astar(scp_online(deviation_flaws=false))");
+    let err = apply_scp_online_options(&mut ScpOnlineConfig::default(), &h.args).unwrap_err();
+    assert!(err.contains("deviation_flaws"), "got `{err}`");
 
-    let err = parse_search_spec("astar(canonical_domain_abstractions(deviation_flaws=false))")
-        .unwrap_err();
-    assert!(err.contains("unknown option `deviation_flaws`"));
+    let h = astar_heuristic("astar(canonical_domain_abstractions(deviation_flaws=false))");
+    let err = apply_da_collection_options(
+        &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
+        &h.args,
+    )
+    .unwrap_err();
+    assert!(err.contains("deviation_flaws"), "got `{err}`");
 }
 
 #[test]
@@ -550,58 +438,42 @@ fn display_round_trips_lmcutnumeric() {
 
 #[test]
 fn rejects_removed_exec_entire_plan_randomize_option() {
-    assert!(
-        parse_search_spec("astar(multi_domain_abstractions(exec_entire_plan=randomize))",).is_err()
-    );
+    // Now caught at the applier layer rather than the parser.
+    let h = astar_heuristic("astar(multi_domain_abstractions(exec_entire_plan=randomize))");
+    let err = apply_da_collection_options(
+        &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
+        &h.args,
+    )
+    .unwrap_err();
+    assert!(err.contains("exec_entire_plan"));
 }
 
 #[test]
 fn trims_trailing_punctuation() {
+    assert_eq!(astar_heuristic("astar(blind()).").name, "blind");
     assert_eq!(
-        parse_search_spec("astar(blind()).").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::Blind)
+        astar_heuristic("astar(domain_abstraction());").name,
+        "domain_abstraction"
+    );
+    assert_eq!(
+        astar_heuristic("astar(greedy_numeric_pdb());").name,
+        "greedy_numeric_pdb"
+    );
+    assert_eq!(
+        astar_heuristic("astar(canonical_numeric_pdb());").name,
+        "canonical_numeric_pdb"
+    );
+    assert_eq!(astar_heuristic("astar(lmcutnumeric());").name, "lmcutnumeric");
+    assert_eq!(
+        astar_heuristic("astar(multi_domain_abstractions());").name,
+        "multi_domain_abstractions"
+    );
+    assert_eq!(
+        astar_heuristic("astar(canonical_domain_abstractions());").name,
+        "canonical_domain_abstractions"
     );
 
-    assert_eq!(
-        parse_search_spec("astar(domain_abstraction());").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::DomainAbstraction(
-            DomainAbstractionConfig::default()
-        ))
-    );
-
-    assert_eq!(
-        parse_search_spec("astar(greedy_numeric_pdb());").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::GreedyNumericPdb(
-            GreedyPatternGeneratorConfig::default()
-        ))
-    );
-
-    assert_eq!(
-        parse_search_spec("astar(canonical_numeric_pdb());").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::CanonicalNumericPdb(
-            CanonicalNumericPdbConfig::default()
-        ))
-    );
-
-    assert_eq!(
-        parse_search_spec("astar(lmcutnumeric());").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::Lmcutnumeric(LmCutNumericConfig::default()))
-    );
-
-    assert!(matches!(
-        parse_search_spec("astar(multi_domain_abstractions());").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::MultiDomainAbstractions(_))
-    ));
-
-    assert!(matches!(
-        parse_search_spec("astar(canonical_domain_abstractions());").unwrap(),
-        SearchSpec::Astar(HeuristicSpec::CanonicalDomainAbstractions(_))
-    ));
-
-    assert_eq!(
-        parse_search_spec("da_debug();").unwrap(),
-        SearchSpec::DaDebug
-    );
+    assert_eq!(parse_search_spec("da_debug();").unwrap(), SearchSpec::DaDebug);
     assert_eq!(
         parse_search_spec("astar_da_debug();").unwrap(),
         SearchSpec::AstarDaDebug
@@ -611,10 +483,7 @@ fn trims_trailing_punctuation() {
 #[test]
 fn parses_top_level_da_debug_with_or_without_unit_parens() {
     assert_eq!(parse_search_spec("da_debug").unwrap(), SearchSpec::DaDebug);
-    assert_eq!(
-        parse_search_spec("da_debug()").unwrap(),
-        SearchSpec::DaDebug
-    );
+    assert_eq!(parse_search_spec("da_debug()").unwrap(), SearchSpec::DaDebug);
 }
 
 #[test]
@@ -633,4 +502,11 @@ fn parses_top_level_astar_da_debug_with_or_without_unit_parens() {
 fn errors_are_human_readable() {
     let err = parse_search_spec("astar(").unwrap_err();
     assert!(err.to_lowercase().contains("invalid"));
+}
+
+#[test]
+fn unknown_heuristic_name_propagates() {
+    // Parse succeeds — unknown names error at construction time, not parse time.
+    let h = astar_heuristic("astar(does_not_exist)");
+    assert_eq!(h.name, "does_not_exist");
 }
