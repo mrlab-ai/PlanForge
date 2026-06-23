@@ -322,6 +322,19 @@ impl fmt::Display for PdbInternalHeuristic {
     }
 }
 
+impl crate::config::sealed::Sealed for PdbInternalHeuristic {}
+
+impl crate::config::FromOptionValue for PdbInternalHeuristic {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "zero" => Ok(Self::Zero),
+            "blind" => Ok(Self::Blind),
+            "lmcut" => Ok(Self::Lmcut),
+            other => Err(format!("invalid PdbInternalHeuristic `{other}`")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PdbHeuristicConfig {
     pub exploration_heuristic: PdbInternalHeuristic,

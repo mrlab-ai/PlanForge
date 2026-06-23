@@ -59,6 +59,19 @@ impl fmt::Display for ScoringFunction {
     }
 }
 
+impl crate::config::sealed::Sealed for ScoringFunction {}
+
+impl crate::config::FromOptionValue for ScoringFunction {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "max_heuristic" => Ok(Self::MaxHeuristic),
+            "min_stolen_costs" => Ok(Self::MinStolenCosts),
+            "max_heuristic_per_stolen_costs" => Ok(Self::MaxHeuristicPerStolenCosts),
+            other => Err(format!("invalid ScoringFunction `{other}`")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderGenerator {
@@ -73,6 +86,19 @@ impl fmt::Display for OrderGenerator {
             OrderGenerator::Greedy => write!(f, "greedy_orders"),
             OrderGenerator::DynamicGreedy => write!(f, "dynamic_greedy_orders"),
             OrderGenerator::Random => write!(f, "random_orders"),
+        }
+    }
+}
+
+impl crate::config::sealed::Sealed for OrderGenerator {}
+
+impl crate::config::FromOptionValue for OrderGenerator {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "greedy_orders" | "greedy_orders()" => Ok(Self::Greedy),
+            "dynamic_greedy_orders" | "dynamic_greedy_orders()" => Ok(Self::DynamicGreedy),
+            "random_orders" | "random_orders()" => Ok(Self::Random),
+            other => Err(format!("invalid OrderGenerator `{other}`")),
         }
     }
 }
@@ -95,13 +121,34 @@ impl fmt::Display for Saturator {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+impl crate::config::sealed::Sealed for Saturator {}
+
+impl crate::config::FromOptionValue for Saturator {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "all" => Ok(Self::All),
+            "perim" => Ok(Self::Perim),
+            "perimstar" => Ok(Self::Perimstar),
+            other => Err(format!("invalid Saturator `{other}`")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct ScpOnlineConfig {
     pub max_time: f64,
     pub table_construction_max_time: f64,
     pub max_size: usize,
     pub interval: usize,
+    /// Mirrored into `collection_config.combine_labels` so `combine_labels=true`
+    /// sets both. To set them independently, use the nested `collection=…`
+    /// form: `scp_online(combine_labels=true, collection=…(combine_labels=false))`.
+    #[option(also_sets = "collection_config.combine_labels")]
     pub combine_labels: bool,
+    /// Catch-all: flat collection keys (`scp_online(max_collection_size=…)`)
+    /// route here. Explicit `collection=multi_domain_abstractions(…)` form
+    /// also routes here via the `nested` arm.
+    #[option(flatten, nested = "collection")]
     pub collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     pub use_numeric_pdbs: bool,
     pub max_pdb_states: usize,
@@ -111,24 +158,39 @@ pub struct ScpOnlineConfig {
     pub pdb_frontier_heuristic: PdbInternalHeuristic,
     pub pdb_failed_lookup_heuristic: PdbInternalHeuristic,
     pub scoring_function: ScoringFunction,
+    #[option(rename = "orders")]
     pub order_generator: OrderGenerator,
     pub order_optimization_max_time: f64,
     pub saturator: Saturator,
+    #[option(also_sets = "collection_config.random_seed")]
     pub random_seed: Option<u64>,
     pub use_abstract_operator_cost_partitioning: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct FillScpConfig {
     pub table_construction_max_time: f64,
+    #[option(also_sets = "collection_config.combine_labels")]
     pub combine_labels: bool,
+    #[option(flatten, nested = "collection")]
     pub collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     pub scoring_function: ScoringFunction,
+    #[option(rename = "orders")]
     pub order_generator: OrderGenerator,
     pub order_optimization_max_time: f64,
     pub saturator: Saturator,
+    #[option(also_sets = "collection_config.random_seed")]
     pub random_seed: Option<u64>,
     pub use_abstract_operator_cost_partitioning: bool,
+    /// Flattened so `precision`, `epsilon`, etc. reach the nested LMcut config.
+    /// SCP/fillSCP both flatten collection_config, but this `flatten` only
+    /// applies if `collection_config` does not — only one flatten per struct.
+    /// Here we use `nested = "lmcut"` instead, plus per-key forwarding via the
+    /// hand-written wrapper (see `apply_fill_scp_options`). Actually — since
+    /// `collection_config` is the catch-all, the LMcut fields must be named
+    /// explicitly. `nested = "lmcut"` lets `lmcut=lmcutnumeric(precision=…)`
+    /// work cleanly.
+    #[option(nested = "lmcut")]
     pub lmcut_config: LmCutNumericConfig,
 }
 
@@ -3248,7 +3310,7 @@ mod handcrafted_sailing_tests {
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
 
-    use planforge_preprocess::run_preprocess_to_output;
+    use planforge_translate::preprocess::run_preprocess_to_output;
     use planforge_sas::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
     use planforge_sas::numeric::numeric_task::{
         AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,

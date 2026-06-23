@@ -6,7 +6,8 @@ license = "LGPL-3.0"
 
 [dependencies]
 planforge-sas = { path = "../planforge-sas" }
-planforge-preprocess = { path = "../planforge-preprocess" }
+planforge-translate = { path = "../planforge-translate" }
+planforge-config-derive = { path = "../planforge-config-derive" }
 libc = "0.2"
 tracing = "0.1"
 ordered-float = "5.1.0"
@@ -16,6 +17,7 @@ serde = { version = "1", features = ["derive"] }
 itertools = "0.13"
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "2"
+highs = "1.12"
 
 [dev-dependencies]
 planforge-translator = { path = "../planforge-translator" }

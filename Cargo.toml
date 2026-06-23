@@ -3,13 +3,13 @@ default-members = [
     "planforge-sas",
     "planforge-translate",
     "planforge-translator",
-    "planforge-preprocess",
     "planforge-preprocessor",
     "planforge-search",
     "planforge-searcher",
     "planforge",
     "planforge-cli-utils",
     "planforge-portfolio",
+    "planforge-config-derive",
     "tests",
 ]
 
@@ -17,13 +17,13 @@ members = [
     "planforge-sas",
     "planforge-translate",
     "planforge-translator",
-    "planforge-preprocess",
     "planforge-preprocessor",
     "planforge-search",
     "planforge-searcher",
     "planforge",
     "planforge-cli-utils",
     "planforge-portfolio",
+    "planforge-config-derive",
     "tests",
 ]
 

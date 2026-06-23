@@ -6,7 +6,6 @@ edition = "2024"
 license = "GPL-3.0"
 
 [dependencies]
-planforge-preprocess = { path = "../planforge-preprocess" }
 planforge-sas = { path = "../planforge-sas" }
 planforge-search = { path = "../planforge-search" }
 planforge-translate = { path = "../planforge-translate" }

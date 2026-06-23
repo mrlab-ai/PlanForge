@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use tracing::debug;
 
-use crate::helper_functions::InputStream;
-use crate::helper_functions::check_magic;
-use crate::variable::{ExplicitVariable, NumericVariable};
+use super::helper_functions::InputStream;
+use super::helper_functions::check_magic;
+use super::variable::{ExplicitVariable, NumericVariable};
 
 #[derive(Debug, Clone, Default)]
 pub struct State {

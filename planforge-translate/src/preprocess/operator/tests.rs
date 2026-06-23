@@ -1,5 +1,5 @@
 use super::Operator;
-use crate::helper_functions::InputStream;
+use super::super::helper_functions::InputStream;
 
 #[test]
 fn from_stream_preserves_conditional_numeric_effects() {

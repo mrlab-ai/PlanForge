@@ -5,14 +5,14 @@ use std::ops::Deref;
 
 use tracing::{debug, info};
 
-use crate::GlobalConstraint;
-use crate::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
-use crate::fact::ExplicitFact;
-use crate::max_dag::MaxDag;
-use crate::mutex_group::MutexGroup;
-use crate::operator::Operator;
-use crate::scc::Scc;
-use crate::variable::{ExplicitVariable, NumType, NumericVariable};
+use super::GlobalConstraint;
+use super::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
+use super::fact::ExplicitFact;
+use super::max_dag::MaxDag;
+use super::mutex_group::MutexGroup;
+use super::operator::Operator;
+use super::scc::Scc;
+use super::variable::{ExplicitVariable, NumType, NumericVariable};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EitherVar {

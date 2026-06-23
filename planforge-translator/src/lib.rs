@@ -45,7 +45,8 @@ pub fn translate_to_sas_to_path(
     problem: &str,
     output_path: &std::path::Path,
 ) -> anyhow::Result<()> {
-    translate_to_sas_to_path_internal(domain, problem, output_path, false)
+    let mut out_file = std::fs::File::create(output_path)?;
+    translate_to_sas_writer(domain, problem, false, &mut out_file)
 }
 
 pub fn translate_to_sas_to_path_fast(
@@ -53,14 +54,26 @@ pub fn translate_to_sas_to_path_fast(
     problem: &str,
     output_path: &std::path::Path,
 ) -> anyhow::Result<()> {
-    translate_to_sas_to_path_internal(domain, problem, output_path, true)
+    let mut out_file = std::fs::File::create(output_path)?;
+    translate_to_sas_writer(domain, problem, true, &mut out_file)
 }
 
-fn translate_to_sas_to_path_internal(
+/// In-memory entry point: emit the translator's SAS+ text as a `String`.
+/// Used by the in-process planforge pipeline so the `output.sas` file
+/// never has to materialize on disk.
+pub fn translate_to_sas_string(domain: &str, problem: &str) -> anyhow::Result<String> {
+    let mut buf: Vec<u8> = Vec::new();
+    translate_to_sas_writer(domain, problem, false, &mut buf)?;
+    Ok(String::from_utf8(buf).expect("translator output is valid UTF-8"))
+}
+
+/// Core: translate the (domain, problem) PDDL pair and write the SAS+ text
+/// to an arbitrary `Write` sink.
+pub fn translate_to_sas_writer<W: std::io::Write>(
     domain: &str,
     problem: &str,
-    output_path: &std::path::Path,
     fast_groups: bool,
+    out: &mut W,
 ) -> anyhow::Result<()> {
     let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -104,7 +117,6 @@ fn translate_to_sas_to_path_internal(
     }
 
     let py_task = planforge_translate::sas_tasks::from_internal(&sastask);
-    let mut out_file = std::fs::File::create(output_path)?;
-    py_task.output(&mut out_file)?;
+    py_task.output(out)?;
     Ok(())
 }

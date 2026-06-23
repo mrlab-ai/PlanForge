@@ -13,6 +13,7 @@ use planforge_search::numeric::evaluation::domain_abstractions::domain_abstracti
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planforge_search::numeric::evaluation::domain_abstractions::max_domain_abstraction_heuristic::MaxDomainAbstractionHeuristic;
+use planforge_search::numeric::evaluation::domain_abstractions::posthoc_optimization_heuristic::PostHocOptimizationHeuristic;
 use planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
     FillScpHeuristic, SaturatedCostPartitioningOnlineHeuristic,
 };
@@ -40,6 +41,165 @@ use tracing_subscriber::prelude::*;
 pub mod recursive_config;
 
 pub use recursive_config::{HeuristicSpec, SearchSpec, parse_search_spec};
+
+use planforge_search::numeric::evaluation::Heuristic;
+
+/// Build a heuristic from a parsed `HeuristicSpec`. Used by both this crate's
+/// `run()` and by the top-level `planforge` binary.
+pub fn build_heuristic_from_spec<'a>(
+    spec: &HeuristicSpec,
+    task: &'a dyn AbstractNumericTask,
+) -> Result<Option<Box<dyn Heuristic + 'a>>, String> {
+    match spec.name.as_str() {
+        "blind" => {
+            if !spec.args.is_empty() {
+                return Err("`blind` does not accept arguments".to_string());
+            }
+            Ok(None)
+        }
+        "ff" => {
+            if !spec.args.is_empty() {
+                return Err("`ff` does not accept arguments".to_string());
+            }
+            let h =
+                planforge_search::numeric::evaluation::ff_heuristic::FfHeuristic::new(task)
+                    .map_err(|e| format!("failed to construct ff heuristic: {e}"))?;
+            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+        }
+        "domain_abstraction" => {
+            info!("Building domain abstraction (CEGAR)...");
+            let mut cfg = CegarConfig::default();
+            recursive_config::apply_da_options(&mut cfg, &spec.args)?;
+            // Single DA reads only the distance table; footprints are
+            // SCP-specific. Skip the per-concrete-op StateRegion cost.
+            cfg.compute_operator_footprints = false;
+            let generator = DomainAbstractionGenerator::new(cfg)
+                .map_err(|e| format!("failed to construct DomainAbstractionGenerator: {e:#}"))?;
+            let abstraction = generator
+                .generate(task)
+                .map_err(|e| format!("failed to build domain abstraction: {e:#}"))?;
+            Ok(Some(Box::new(DomainAbstractionHeuristic::new(None, abstraction))
+                as Box<dyn Heuristic + 'a>))
+        }
+        "canonical_domain_abstractions" => {
+            use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+            let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
+            // Canonical never consumes operator footprints — skip ~12 GB of
+            // per-concrete-op StateRegion storage on big tasks.
+            cfg.compute_operator_footprints = false;
+            let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
+            info!("Building canonical domain abstractions (CEGAR)...");
+            let abstractions = generator
+                .generate_collection(task)
+                .map_err(|e| format!("failed to build canonical domain abstractions: {e:#}"))?;
+            let h = CanonicalDomainAbstractionHeuristic::new(None, task, abstractions)
+                .map_err(|e| {
+                    format!("failed to construct canonical domain abstraction heuristic: {e}")
+                })?;
+            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+        }
+        "multi_domain_abstractions" => {
+            use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+            let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
+            cfg.compute_operator_footprints = false;
+            let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
+            info!("Building multiple domain abstractions (CEGAR)...");
+            let abstractions = generator
+                .generate_collection(task)
+                .map_err(|e| format!("failed to build multi domain abstractions: {e:#}"))?;
+            Ok(Some(Box::new(MaxDomainAbstractionHeuristic::new(None, abstractions))
+                as Box<dyn Heuristic + 'a>))
+        }
+        "posthoc_optimization" | "pho" => {
+            use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+            let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
+            cfg.compute_operator_footprints = false;
+            let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
+            info!("Building posthoc_optimization domain abstractions (CEGAR)...");
+            let abstractions = generator.generate_collection(task).map_err(|e| {
+                format!("failed to build posthoc_optimization domain abstractions: {e:#}")
+            })?;
+            let h = PostHocOptimizationHeuristic::new(None, task, abstractions)
+                .map_err(|e| format!("failed to construct posthoc_optimization heuristic: {e}"))?;
+            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+        }
+        "scp_online" => {
+            let mut cfg = planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig::default();
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
+            let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+                cfg.collection_config.clone(),
+            );
+            info!("Building scp_online domain abstractions (CEGAR)...");
+            let abstractions = generator
+                .generate_collection(task)
+                .map_err(|e| format!("failed to build scp_online domain abstractions: {e:#}"))?;
+            let pdbs = if cfg.use_numeric_pdbs {
+                info!("Building scp_online systematic numeric PDBs...");
+                let patterns = generate_systematic_patterns(
+                    task,
+                    SystematicPatternGeneratorConfig {
+                        max_pdb_states: cfg.max_pdb_states,
+                        max_pattern_size: cfg.max_pattern_size,
+                        only_interesting_patterns: cfg.only_interesting_patterns,
+                    },
+                );
+                PdbCollection::with_heuristic_config(
+                    task,
+                    patterns,
+                    cfg.max_pdb_states,
+                    cfg.pdb_heuristic_config(),
+                )
+                .map_err(|e| format!("failed to build scp_online numeric PDBs: {e}"))?
+                .into_pdbs()
+            } else {
+                Vec::new()
+            };
+            let h = SaturatedCostPartitioningOnlineHeuristic::new(None, abstractions, pdbs, cfg, task)
+                .map_err(|e| format!("failed to construct scp_online heuristic: {e}"))?;
+            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+        }
+        "fillscp" | "fill_scp" => {
+            let mut cfg = planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::FillScpConfig::default();
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
+            cfg.force_full_goal_tasks();
+            let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+                cfg.collection_config.clone(),
+            );
+            info!("Building fillSCP domain abstractions (CEGAR)...");
+            let abstractions = generator
+                .generate_collection(task)
+                .map_err(|e| format!("failed to build fillSCP domain abstractions: {e:#}"))?;
+            let h = FillScpHeuristic::new(None, abstractions, cfg, task)
+                .map_err(|e| format!("failed to construct fillSCP heuristic: {e}"))?;
+            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+        }
+        "greedy_numeric_pdb" => {
+            let mut cfg = planforge_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig::default();
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
+            let h = GreedyNumericPdbHeuristic::new(task, cfg)
+                .map_err(|e| format!("failed to build greedy numeric pdb heuristic: {e}"))?;
+            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+        }
+        "canonical_numeric_pdb" => {
+            let mut cfg = planforge_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig::default();
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
+            let h = CanonicalNumericPdbHeuristic::from_config(task, cfg)
+                .map_err(|e| format!("failed to build canonical numeric pdb heuristic: {e}"))?;
+            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+        }
+        "lmcutnumeric" => {
+            let mut cfg = planforge_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig::default();
+            recursive_config::ApplyOptions::apply_options(&mut cfg, &spec.args)?;
+            let h = LandmarkCutNumericHeuristic::from_config(task, cfg)
+                .map_err(|e| format!("failed to build lmcutnumeric heuristic: {e}"))?;
+            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+        }
+        other => Err(format!("unknown heuristic `{other}`")),
+    }
+}
 
 use tracing_subscriber::filter::LevelFilter;
 
@@ -183,191 +343,8 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let result = {
         {
             let task_ref: &dyn AbstractNumericTask = &task;
-            let heuristic_override = match heuristic_spec {
-                crate::recursive_config::HeuristicSpec::Blind => None,
-                crate::recursive_config::HeuristicSpec::CanonicalDomainAbstractions(config) => {
-                    // Canonical reads only the per-abstraction distance table;
-                    // it never consumes operator footprints. Skip footprint
-                    // construction to avoid ~12 GB of per-concrete-op
-                    // `StateRegion` storage on tasks with hundreds of
-                    // thousands of concrete operators.
-                    let mut config = config.clone();
-                    config.compute_operator_footprints = false;
-                    let generator =
-                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
-                    info!("Building canonical domain abstractions (CEGAR)...");
-                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
-                        std::io::Error::other(format!(
-                            "failed to build canonical domain abstractions: {e:#}"
-                        ))
-                    })?;
-                    Some(Box::new(
-                        CanonicalDomainAbstractionHeuristic::new(None, task_ref, abstractions)
-                            .map_err(|e| {
-                                std::io::Error::other(format!(
-                                    "failed to construct canonical domain abstraction heuristic: {e}"
-                                ))
-                            })?,
-                    ) as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>)
-                }
-                crate::recursive_config::HeuristicSpec::DomainAbstraction(domain_config) => {
-                    info!("Building domain abstraction (CEGAR)...");
-                    let mut config = CegarConfig::default();
-                    config.max_abstraction_size = domain_config.max_abstraction_size;
-                    config.max_iterations = domain_config.max_iterations;
-                    config.use_wildcard_plans = domain_config.use_wildcard_plans;
-                    config.combine_labels = domain_config.combine_labels;
-                    config.random_seed = domain_config.random_seed;
-                    config.flaw_kind = domain_config.flaw_kind;
-                    config.flaw_treatment = domain_config.flaw_treatment;
-                    config.init_split_method = domain_config.init_split_method;
-                    config.transform_linear_task = domain_config.transform_linear_task;
-                    // Single DA reads only the distance table; footprints are
-                    // SCP-specific. Skip the per-concrete-op StateRegion cost.
-                    config.compute_operator_footprints = false;
-
-                    let generator = DomainAbstractionGenerator::new(config).map_err(|e| {
-                        std::io::Error::other(format!(
-                            "failed to construct DomainAbstractionGenerator: {e:#}"
-                        ))
-                    })?;
-                    let abstraction = generator.generate(task_ref).map_err(|e| {
-                        std::io::Error::other(format!("failed to build domain abstraction: {e:#}"))
-                    })?;
-                    Some(Box::new(DomainAbstractionHeuristic::new(None, abstraction))
-                        as Box<
-                            dyn planforge_search::numeric::evaluation::Heuristic + '_,
-                        >)
-                }
-                crate::recursive_config::HeuristicSpec::CanonicalNumericPdb(config) => Some(
-                    Box::new(
-                        CanonicalNumericPdbHeuristic::from_config(task_ref, *config).map_err(
-                            |e| {
-                                std::io::Error::other(format!(
-                                    "failed to build canonical numeric pdb heuristic: {e}"
-                                ))
-                            },
-                        )?,
-                    )
-                        as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>,
-                ),
-                crate::recursive_config::HeuristicSpec::GreedyNumericPdb(config) => Some(Box::new(
-                    GreedyNumericPdbHeuristic::new(task_ref, *config).map_err(|e| {
-                        std::io::Error::other(format!(
-                            "failed to build greedy numeric pdb heuristic: {e}"
-                        ))
-                    })?,
-                )
-                    as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>),
-                crate::recursive_config::HeuristicSpec::Lmcutnumeric(config) => Some(Box::new(
-                    LandmarkCutNumericHeuristic::from_config(task_ref, *config).map_err(|e| {
-                        std::io::Error::other(format!(
-                            "failed to build lmcutnumeric heuristic: {e}"
-                        ))
-                    })?,
-                )
-                    as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>),
-                crate::recursive_config::HeuristicSpec::MultiDomainAbstractions(config) => {
-                    // Max-of-abstractions reads only the distance tables;
-                    // footprints are SCP-only.
-                    let mut config = config.clone();
-                    config.compute_operator_footprints = false;
-                    let generator =
-                        DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
-                    info!("Building multiple domain abstractions (CEGAR)...");
-                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
-                        std::io::Error::other(format!(
-                            "failed to build multi domain abstractions: {e:#}"
-                        ))
-                    })?;
-                    Some(
-                        Box::new(MaxDomainAbstractionHeuristic::new(None, abstractions))
-                            as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>,
-                    )
-                }
-                crate::recursive_config::HeuristicSpec::ScpOnline(config) => {
-                    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
-                        config.collection_config.clone(),
-                    );
-                    info!("Building scp_online domain abstractions (CEGAR)...");
-                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
-                        std::io::Error::other(format!(
-                            "failed to build scp_online domain abstractions: {e:#}"
-                        ))
-                    })?;
-                    let pdbs = if config.use_numeric_pdbs {
-                        info!("Building scp_online systematic numeric PDBs...");
-                        let patterns = generate_systematic_patterns(
-                            task_ref,
-                            SystematicPatternGeneratorConfig {
-                                max_pdb_states: config.max_pdb_states,
-                                max_pattern_size: config.max_pattern_size,
-                                only_interesting_patterns: config.only_interesting_patterns,
-                            },
-                        );
-                        PdbCollection::with_heuristic_config(
-                            task_ref,
-                            patterns,
-                            config.max_pdb_states,
-                            config.pdb_heuristic_config(),
-                        )
-                        .map_err(|e| {
-                            std::io::Error::other(format!(
-                                "failed to build scp_online numeric PDBs: {e}"
-                            ))
-                        })?
-                        .into_pdbs()
-                    } else {
-                        Vec::new()
-                    };
-                    let h = SaturatedCostPartitioningOnlineHeuristic::new(
-                        None,
-                        abstractions,
-                        pdbs,
-                        config.clone(),
-                        task_ref,
-                    )
-                    .map_err(|e| {
-                        std::io::Error::other(format!(
-                            "failed to construct scp_online heuristic: {e}"
-                        ))
-                    })?;
-                    Some(Box::new(h)
-                        as Box<
-                            dyn planforge_search::numeric::evaluation::Heuristic + '_,
-                        >)
-                }
-                crate::recursive_config::HeuristicSpec::FillScp(config) => {
-                    let mut fill_config = config.clone();
-                    fill_config.force_full_goal_tasks();
-                    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
-                        fill_config.collection_config.clone(),
-                    );
-                    info!("Building fillSCP domain abstractions (CEGAR)...");
-                    let abstractions = generator.generate_collection(task_ref).map_err(|e| {
-                        std::io::Error::other(format!(
-                            "failed to build fillSCP domain abstractions: {e:#}"
-                        ))
-                    })?;
-                    let h = FillScpHeuristic::new(None, abstractions, fill_config, task_ref)
-                        .map_err(|e| {
-                            std::io::Error::other(format!(
-                                "failed to construct fillSCP heuristic: {e}"
-                            ))
-                        })?;
-                    Some(Box::new(h)
-                        as Box<
-                            dyn planforge_search::numeric::evaluation::Heuristic + '_,
-                        >)
-                }
-                crate::recursive_config::HeuristicSpec::Ff => Some(Box::new(
-                    planforge_search::numeric::evaluation::ff_heuristic::FfHeuristic::new(task_ref)
-                        .map_err(|e| {
-                            std::io::Error::other(format!("failed to construct ff heuristic: {e}"))
-                        })?,
-                )
-                    as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>),
-            };
+            let heuristic_override =
+                build_heuristic_from_spec(heuristic_spec, task_ref).map_err(std::io::Error::other)?;
 
             let time_limit = if cli.internal_run { None } else { cli.max_time };
             let memory_limit = if cli.internal_run { None } else { cli.max_memory };

@@ -9,7 +9,7 @@ name = "planforge-preprocessor"
 doc = false
 
 [dependencies]
-planforge-preprocess = { path = "../planforge-preprocess" }
+planforge-translate = { path = "../planforge-translate" }
 planforge-translator = { path = "../planforge-translator" }
 planforge-sas = { path = "../planforge-sas" }
 planforge-cli-utils = { path = "../planforge-cli-utils" }

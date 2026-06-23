@@ -30,7 +30,7 @@ pub const DEFAULT_BOUND_ITERATIONS: usize = 0;
 pub const DEFAULT_PRECISION: f64 = 0.000001;
 pub const DEFAULT_EPSILON: f64 = 0.0;
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct LmCutNumericConfig {
     pub ceiling_less_than_one: bool,
     pub ignore_numeric: bool,

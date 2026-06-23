@@ -42,6 +42,25 @@ impl fmt::Display for InitSplitMethod {
     }
 }
 
+impl crate::config::sealed::Sealed for InitSplitMethod {}
+
+impl crate::config::FromOptionValue for InitSplitMethod {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "goal_value" => Ok(Self::GoalValue),
+            "goal_value_or_random_if_non_goal" => Ok(Self::GoalValueOrRandomIfNonGoal),
+            "init_value" => Ok(Self::InitValue),
+            "random_value" => Ok(Self::RandomValue),
+            "random_partition" => Ok(Self::RandomPartition),
+            "random_binary_partition_separating_init_goal" => {
+                Ok(Self::RandomBinaryPartitionSeparatingInitGoal)
+            }
+            "identity" => Ok(Self::Identity),
+            other => Err(format!("invalid InitSplitMethod `{other}`")),
+        }
+    }
+}
+
 /// Trait that all flaw treatment variants must implement.
 pub trait FlawTreatment {
     /// Return the ordered chosen flaws.
@@ -127,6 +146,29 @@ impl fmt::Display for FlawTreatmentVariants {
             Self::BalanceMaxRefinedPreferringPropAndClosestToGoal => {
                 write!(f, "balance_max_refined_preferring_prop_and_closest_to_goal")
             }
+        }
+    }
+}
+
+impl crate::config::sealed::Sealed for FlawTreatmentVariants {}
+
+impl crate::config::FromOptionValue for FlawTreatmentVariants {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "random_single_atom" => Ok(Self::RandomSingleAtom),
+            "one_split_per_atom" => Ok(Self::OneSplitPerAtom),
+            "one_split_per_variable" => Ok(Self::OneSplitPerVariable),
+            "max_refined_single_atom" => Ok(Self::MaxRefinedSingleAtom),
+            "min_growth_single_atom" => Ok(Self::MinGrowthSingleAtom),
+            "max_refined_preferring_prop" => Ok(Self::MaxRefinedPreferringProp),
+            "closest_to_goal" => Ok(Self::ClosestToGoal),
+            "balance_max_refined_and_closest_to_goal" => {
+                Ok(Self::BalanceMaxRefinedAndClosestToGoal)
+            }
+            "balance_max_refined_preferring_prop_and_closest_to_goal" => {
+                Ok(Self::BalanceMaxRefinedPreferringPropAndClosestToGoal)
+            }
+            other => Err(format!("invalid FlawTreatment `{other}`")),
         }
     }
 }

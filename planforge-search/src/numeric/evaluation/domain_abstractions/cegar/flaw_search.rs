@@ -119,6 +119,20 @@ impl fmt::Display for SplitDirection {
     }
 }
 
+impl crate::config::sealed::Sealed for Option<SplitDirection> {}
+
+impl crate::config::FromOptionValue for Option<SplitDirection> {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "default" => Ok(None),
+            "forward" => Ok(Some(SplitDirection::Forward)),
+            "forward_partition_deviation" => Ok(Some(SplitDirection::ForwardPartitionDeviation)),
+            "backward" => Ok(Some(SplitDirection::Backward)),
+            other => Err(format!("invalid SplitDirection `{other}`")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FlawKind {
@@ -141,6 +155,23 @@ impl fmt::Display for FlawKind {
             Self::SequenceRegression => write!(f, "sequence_regression"),
             Self::SequenceBidirectional => write!(f, "sequence_bidirectional"),
             Self::TargetCentered => write!(f, "target_centered"),
+        }
+    }
+}
+
+impl crate::config::sealed::Sealed for FlawKind {}
+
+impl crate::config::FromOptionValue for FlawKind {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "progression" => Ok(Self::Progression),
+            "regression" => Ok(Self::Regression),
+            "execute_entire_plan" => Ok(Self::ExecuteEntirePlan),
+            "sequence_progression" => Ok(Self::SequenceProgression),
+            "sequence_regression" => Ok(Self::SequenceRegression),
+            "sequence_bidirectional" => Ok(Self::SequenceBidirectional),
+            "target_centered" => Ok(Self::TargetCentered),
+            other => Err(format!("invalid FlawKind `{other}`")),
         }
     }
 }
