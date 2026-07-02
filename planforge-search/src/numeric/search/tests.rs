@@ -2,8 +2,10 @@ use super::*;
 
 use planforge_sas::numeric::axioms::AxiomEvaluator;
 use planforge_sas::numeric::numeric_task::{
-    ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable, Operator,
+    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
+    Operator,
 };
+use std::time::Duration;
 use planforge_sas::numeric::state_registry::StateRegistry;
 use planforge_sas::numeric::utils::int_packer::IntDoublePacker;
 
