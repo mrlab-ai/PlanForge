@@ -136,12 +136,9 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
             .also_sets
             .iter()
             .map(|path| {
-                let path_expr: syn::Expr = syn::parse_str(&format!("self.{path}"))
-                    .map_err(|e| {
-                        Error::new_spanned(
-                            field,
-                            format!("invalid `also_sets` path `{path}`: {e}"),
-                        )
+                let path_expr: syn::Expr =
+                    syn::parse_str(&format!("self.{path}")).map_err(|e| {
+                        Error::new_spanned(field, format!("invalid `also_sets` path `{path}`: {e}"))
                     })?;
                 Ok(quote! { #path_expr = ::std::clone::Clone::clone(&self.#field_ident); })
             })
@@ -258,7 +255,9 @@ fn parse_field_attrs(field: &Field) -> Result<FieldAttrs, Error> {
 
 fn string_value(nv: &syn::MetaNameValue) -> Result<String, Error> {
     match &nv.value {
-        syn::Expr::Lit(syn::ExprLit { lit: Lit::Str(s), .. }) => Ok(s.value()),
+        syn::Expr::Lit(syn::ExprLit {
+            lit: Lit::Str(s), ..
+        }) => Ok(s.value()),
         _ => Err(Error::new_spanned(
             &nv.value,
             "value must be a string literal",

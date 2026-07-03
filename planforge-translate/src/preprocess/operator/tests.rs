@@ -1,5 +1,5 @@
-use super::Operator;
 use super::super::helper_functions::InputStream;
+use super::Operator;
 
 #[test]
 fn from_stream_preserves_conditional_numeric_effects() {

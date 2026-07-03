@@ -76,7 +76,7 @@ impl SumEvaluator {
             first_evaluator_name: "g".to_string(),
             second_evaluator_name: heuristic_name,
             // TODO: Set to false once LM-Cut is faithful and remove the option.
-            truncate_result: false, //NOTE: Disabled last minute before IPC deadline. Please, don't cause any bugs. 
+            truncate_result: false, //NOTE: Disabled last minute before IPC deadline. Please, don't cause any bugs.
         }
     }
 }

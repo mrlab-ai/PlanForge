@@ -19,9 +19,7 @@ use tracing::{debug, info};
 use self::causal_graph::CausalGraph;
 use self::domain_transition_graph::{are_dtgs_strongly_connected, build_dtgs};
 use self::fact::ExplicitFact;
-use self::helper_functions::{
-    InputStream, read_preprocessed_problem_description, to_sas_writer,
-};
+use self::helper_functions::{InputStream, read_preprocessed_problem_description, to_sas_writer};
 
 pub const SAS_FILE_VERSION: i32 = 4;
 pub const PRE_FILE_VERSION: i32 = SAS_FILE_VERSION;
@@ -85,11 +83,7 @@ pub fn run_preprocess_args<W: Write>(args: &[String], outfile: &mut W) {
 
 /// Core preprocessor: parse SAS+ input from a string, run all preprocessing
 /// stages, and serialize the preprocessed task into `outfile`.
-pub fn run_preprocess_str_to_writer<W: Write>(
-    input: &str,
-    prune_variables: bool,
-    outfile: &mut W,
-) {
+pub fn run_preprocess_str_to_writer<W: Write>(input: &str, prune_variables: bool, outfile: &mut W) {
     let mut stream = InputStream::new(input.to_string());
 
     let (

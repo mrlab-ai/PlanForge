@@ -89,13 +89,21 @@ impl NumericRange {
 
     /// Returns `true` if `other` widens this range.
     fn join(&mut self, other: NumericRange) -> bool {
-        let new_max = if other.max > self.max { other.max } else { self.max };
-        let new_min = if other.min < self.min { other.min } else { self.min };
+        let new_max = if other.max > self.max {
+            other.max
+        } else {
+            self.max
+        };
+        let new_min = if other.min < self.min {
+            other.min
+        } else {
+            self.min
+        };
         // Use bit-pattern inequality rather than `> self.max + EPSILON` so
         // `+∞ vs finite max` reads as "widened" without an arithmetic-on-
         // infinity ambiguity.
-        let changed = new_max.to_bits() != self.max.to_bits()
-            || new_min.to_bits() != self.min.to_bits();
+        let changed =
+            new_max.to_bits() != self.max.to_bits() || new_min.to_bits() != self.min.to_bits();
         self.max = new_max;
         self.min = new_min;
         changed
@@ -438,9 +446,9 @@ impl<'task> FfHeuristic<'task> {
             .iter()
             .enumerate()
             .map(|(idx, var)| match var.get_type() {
-                NumericType::Constant => Some(initial_numeric.get(idx).copied().ok_or_else(
-                    || format!("constant numeric variable {idx} missing initial value"),
-                )),
+                NumericType::Constant => Some(initial_numeric.get(idx).copied().ok_or_else(|| {
+                    format!("constant numeric variable {idx} missing initial value")
+                })),
                 _ => None,
             })
             .map(|opt| opt.transpose())
@@ -526,10 +534,7 @@ impl<'task> FfHeuristic<'task> {
                             affected_var: assign.affected_var_id(),
                             operation: assign.operation().clone(),
                             rhs_var: assign.var_id(),
-                            direction: direction_of_effect(
-                                assign.operation(),
-                                assign.var_id(),
-                            ),
+                            direction: direction_of_effect(assign.operation(), assign.var_id()),
                         });
                     }
                     AssignmentOperation::Times | AssignmentOperation::Divide => {
@@ -543,8 +548,7 @@ impl<'task> FfHeuristic<'task> {
                     }
                 }
             }
-            let parent_cost =
-                metric_operator_cost_from_initial_values(task, op).max(0.0);
+            let parent_cost = metric_operator_cost_from_initial_values(task, op).max(0.0);
             op_preconditions.push(parent_preconds.clone());
             op_state_deps.push(parent_state_deps.clone());
             op_effects.push(parent_effects);
@@ -603,10 +607,7 @@ impl<'task> FfHeuristic<'task> {
                             affected_var: assign.affected_var_id(),
                             operation: assign.operation().clone(),
                             rhs_var: assign.var_id(),
-                            direction: direction_of_effect(
-                                assign.operation(),
-                                assign.var_id(),
-                            ),
+                            direction: direction_of_effect(assign.operation(), assign.var_id()),
                         }]
                     }
                     AssignmentOperation::Times | AssignmentOperation::Divide => {
@@ -665,8 +666,7 @@ impl<'task> FfHeuristic<'task> {
                     None => state_deps.push((cond.var(), cond.value())),
                 }
             }
-            let pre_value_fact =
-                ExplicitFact::new(axiom.var_id(), axiom.precondition_value());
+            let pre_value_fact = ExplicitFact::new(axiom.var_id(), axiom.precondition_value());
             match map_fact(&pre_value_fact) {
                 Some(prec_fid) => precs.push(prec_fid),
                 None => state_deps.push((axiom.var_id(), axiom.precondition_value())),
@@ -746,11 +746,7 @@ impl<'task> FfHeuristic<'task> {
                 // explicitly.
                 for &axiom_idx in &axioms_touching_var[eff.affected_var] {
                     let axiom = &comparison_axioms[axiom_idx];
-                    if !axiom_needs_direction(
-                        eff.affected_var,
-                        eff.direction,
-                        axiom,
-                    ) {
+                    if !axiom_needs_direction(eff.affected_var, eff.direction, axiom) {
                         continue;
                     }
                     let true_fact = axiom.true_fact;
@@ -942,9 +938,7 @@ impl<'task> FfHeuristic<'task> {
             ComparisonOperator::Equal => l.min <= r.max && l.max >= r.min,
             ComparisonOperator::GreaterThanOrEqual => l.max >= r.min,
             ComparisonOperator::GreaterThan => l.max > r.min,
-            ComparisonOperator::UnEqual => {
-                l.min != l.max || r.min != r.max || l.min != r.min
-            }
+            ComparisonOperator::UnEqual => l.min != l.max || r.min != r.max || l.min != r.min,
         }
     }
 
@@ -1012,15 +1006,17 @@ impl<'task> FfHeuristic<'task> {
         // is admissible in the relaxation iff the precondition is
         // satisfied in the live state — the monotonic relaxation cannot
         // make it true later. Mark such ops ineligible up front.
-        scratch.op_eligible.resize(self.op_preconditions.len(), true);
+        scratch
+            .op_eligible
+            .resize(self.op_preconditions.len(), true);
         let live_state = eval_state.state();
         for (op_id, deps) in self.op_state_deps.iter().enumerate() {
             if deps.is_empty() {
                 continue;
             }
-            let eligible = deps.iter().all(|&(var, value)| {
-                ExplicitFact::new(var, value).is_hold(live_state, registry)
-            });
+            let eligible = deps
+                .iter()
+                .all(|&(var, value)| ExplicitFact::new(var, value).is_hold(live_state, registry));
             scratch.op_eligible[op_id] = eligible;
         }
 
@@ -1410,13 +1406,11 @@ fn axiom_needs_direction(
     match axiom.op {
         ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
             // need max[L] big or min[R] small
-            (lhs && direction.includes_grow_max())
-                || (rhs && direction.includes_shrink_min())
+            (lhs && direction.includes_grow_max()) || (rhs && direction.includes_shrink_min())
         }
         ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => {
             // need min[L] small or max[R] big
-            (lhs && direction.includes_shrink_min())
-                || (rhs && direction.includes_grow_max())
+            (lhs && direction.includes_shrink_min()) || (rhs && direction.includes_grow_max())
         }
         ComparisonOperator::Equal => {
             // any envelope movement on either side can help meet equality

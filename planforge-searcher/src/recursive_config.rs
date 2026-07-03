@@ -440,19 +440,17 @@ pub fn apply_da_options(cfg: &mut CegarConfig, args: &[ConfigArg]) -> Result<(),
     ];
     for_each_option(args, ORDER, |key, value| {
         match key {
-            "max_abstraction_size"  => cfg.max_abstraction_size  = parse(value)?,
-            "max_iterations"        => cfg.max_iterations        = parse(value)?,
-            "use_wildcard_plans"    => cfg.use_wildcard_plans    = parse(value)?,
-            "combine_labels"        => cfg.combine_labels        = parse(value)?,
+            "max_abstraction_size" => cfg.max_abstraction_size = parse(value)?,
+            "max_iterations" => cfg.max_iterations = parse(value)?,
+            "use_wildcard_plans" => cfg.use_wildcard_plans = parse(value)?,
+            "combine_labels" => cfg.combine_labels = parse(value)?,
             "transform_linear_task" => cfg.transform_linear_task = parse(value)?,
-            "random_seed"           => cfg.random_seed           = parse(value)?,
-            "flaw_treatment"        => cfg.flaw_treatment        = parse(value)?,
-            "flaw_kind"             => cfg.flaw_kind             = parse(value)?,
-            "init_split_method"     => cfg.init_split_method     = parse(value)?,
+            "random_seed" => cfg.random_seed = parse(value)?,
+            "flaw_treatment" => cfg.flaw_treatment = parse(value)?,
+            "flaw_kind" => cfg.flaw_kind = parse(value)?,
+            "init_split_method" => cfg.init_split_method = parse(value)?,
             other => {
-                return Err(format!(
-                    "unknown option `{other}` for `domain_abstraction`"
-                ));
+                return Err(format!("unknown option `{other}` for `domain_abstraction`"));
             }
         }
         Ok(())

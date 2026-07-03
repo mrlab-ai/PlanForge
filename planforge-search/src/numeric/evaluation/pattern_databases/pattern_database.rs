@@ -7,13 +7,13 @@ use std::collections::BinaryHeap;
 use std::fmt;
 
 use ordered_float::NotNan;
-use std::sync::Arc;
 use planforge_sas::numeric::numeric_task::AbstractNumericTask;
 use planforge_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::numeric::utils::float_tolerance;
 use planforge_sas::numeric::utils::int_packer::IntDoublePacker;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tracing::info;
 
 type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;

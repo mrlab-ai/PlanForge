@@ -1510,10 +1510,10 @@ impl DomainAbstractionFactory {
                 // whose comparison-axiom variables are consistent with the
                 // operator's comparison preconditions.
                 let push_source = |source_hash: usize,
-                                       transitions: &mut Vec<AbstractTransition>,
-                                       backward: &mut Vec<Vec<usize>>,
-                                       forward: &mut Vec<Vec<usize>>,
-                                       #[cfg(debug_assertions)] seen: &mut HashSet<(
+                                   transitions: &mut Vec<AbstractTransition>,
+                                   backward: &mut Vec<Vec<usize>>,
+                                   forward: &mut Vec<Vec<usize>>,
+                                   #[cfg(debug_assertions)] seen: &mut HashSet<(
                     usize,
                     usize,
                     usize,
@@ -2150,9 +2150,7 @@ impl DomainAbstractionFactory {
                 }
                 let base_predecessor = predecessor_i64 as usize;
 
-                let consider_source = |source_hash: usize,
-                                            saturated: &mut [f64]|
-                 -> Result<()> {
+                let consider_source = |source_hash: usize, saturated: &mut [f64]| -> Result<()> {
                     let source_h = table.distances[source_hash];
                     if !source_h.is_finite() {
                         return Ok(());
@@ -2294,8 +2292,7 @@ impl DomainAbstractionFactory {
                 // residual, but skipping it left that cost in the residual and let
                 // subsequent abstractions over-allocate, producing sum h > h* on
                 // plant-watering/prob_6_2_2 (32-47 across seeds vs optimal 32).
-                let consider_source = |source_hash: usize,
-                                           saturated_costs: &mut [f64]| {
+                let consider_source = |source_hash: usize, saturated_costs: &mut [f64]| {
                     if let Some(&src_h) = table.distances.get(source_hash)
                         && src_h.is_finite()
                     {

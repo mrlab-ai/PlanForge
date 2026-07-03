@@ -30,3 +30,6 @@ __pycache__/
 others
 profile.json.gz
 proj.json
+.verify/
+codex-plan.md
+codex-implement.log

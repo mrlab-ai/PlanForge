@@ -161,7 +161,9 @@ impl PortfolioStrategy {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions)]
+#[derive(
+    Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
+)]
 pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub max_abstraction_size: usize,
     pub max_collection_size: usize,

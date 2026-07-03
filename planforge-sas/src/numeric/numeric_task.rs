@@ -473,7 +473,10 @@ impl ExplicitFact {
     /// narrowed at construction. Out-of-range arguments are caught in
     /// debug builds.
     pub fn new(var: usize, value: usize) -> Self {
-        debug_assert!(var <= u32::MAX as usize, "ExplicitFact var {var} > u32::MAX");
+        debug_assert!(
+            var <= u32::MAX as usize,
+            "ExplicitFact var {var} > u32::MAX"
+        );
         debug_assert!(
             value <= u32::MAX as usize,
             "ExplicitFact value {value} > u32::MAX"
@@ -799,10 +802,9 @@ impl Operator {
 
     pub fn conditions_met(&self, state: &Vec<&ExplicitFact>) -> bool {
         for precondition in &self.preconditions {
-            if !state
-                .iter()
-                .any(|fact| fact.var() == precondition.var() && fact.value() == precondition.value())
-            {
+            if !state.iter().any(|fact| {
+                fact.var() == precondition.var() && fact.value() == precondition.value()
+            }) {
                 return false;
             }
         }
@@ -1137,7 +1139,13 @@ fn evaluate_state_with_axiom_closure(
         packer.set(&mut packed, var_id, *value as u64);
     }
     let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), packer.clone());
-    finish_axiom_closure(&packer, propositional, numeric, &mut packed, &axiom_evaluator)
+    finish_axiom_closure(
+        &packer,
+        propositional,
+        numeric,
+        &mut packed,
+        &axiom_evaluator,
+    )
 }
 
 fn abstract_propositional_packer<T: AbstractNumericTask + ?Sized>(task: &T) -> IntDoublePacker {

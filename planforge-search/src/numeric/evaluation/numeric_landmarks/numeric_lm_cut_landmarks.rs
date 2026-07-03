@@ -845,7 +845,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     &variant.source_region,
                 ));
             }
-            self.residual_variant_precondition_ids.push(operator_variants);
+            self.residual_variant_precondition_ids
+                .push(operator_variants);
         }
     }
 
@@ -2085,8 +2086,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 } else {
                     precondition_ids.clone()
                 };
-                let mut seen: BTreeSet<usize> =
-                    guarded_precondition_ids.iter().copied().collect();
+                let mut seen: BTreeSet<usize> = guarded_precondition_ids.iter().copied().collect();
                 if let Some(guards) = variant_precondition_ids.get(variant_id) {
                     for &guard_id in guards {
                         if seen.insert(guard_id) {
@@ -2104,15 +2104,16 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 );
                 guarded_operator.assignment_effect_ids =
                     unconditional_linear_assignment_effect_ids.clone();
-                guarded_operator.linear_assignment_effects = unconditional_linear_assignment_effect_ids
-                    .iter()
-                    .map(|&assignment_effect_id| {
-                        helper_linearized_assignment_effects
-                            .get(assignment_effect_id)
-                            .and_then(|effect| effect.clone())
-                            .expect("helper linearized assignment effect id must be valid")
-                    })
-                    .collect();
+                guarded_operator.linear_assignment_effects =
+                    unconditional_linear_assignment_effect_ids
+                        .iter()
+                        .map(|&assignment_effect_id| {
+                            helper_linearized_assignment_effects
+                                .get(assignment_effect_id)
+                                .and_then(|effect| effect.clone())
+                                .expect("helper linearized assignment effect id must be valid")
+                        })
+                        .collect();
                 guarded_operator.assert_well_formed();
                 self.relaxed_operators.push(guarded_operator);
                 self.build_linear_operators(
