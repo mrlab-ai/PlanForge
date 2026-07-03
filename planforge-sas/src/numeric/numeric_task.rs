@@ -12,6 +12,7 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     fmt,
     rc::Rc,
+    sync::Arc,
 };
 
 pub trait AbstractNumericTask {
@@ -180,6 +181,191 @@ pub trait AbstractNumericTask {
                     "requested linear action-cost constant for non-linear-cost operator {operator_id}"
                 )
             })
+    }
+}
+
+/// Shared-ownership handle to a task.
+///
+/// `'a` bounds the borrows the task may hold internally: root tasks are
+/// `'static` (`Arc<NumericRootTask>` coerces to `TaskRef<'static>`), while
+/// projected/abstracted tasks borrow their parent and instantiate at the
+/// parent's lifetime.
+pub type TaskRef<'a> = Arc<dyn AbstractNumericTask + 'a>;
+
+/// Delegation impl so a *borrowed* task can be wrapped into a [`TaskRef`]
+/// at sites that don't own the task: `Arc::new(task)` with
+/// `task: &'a dyn AbstractNumericTask` coerces to `TaskRef<'a>`.
+///
+/// Every method — including the ones with default bodies — forwards to the
+/// referent, so trait-object overrides are preserved through the wrapper.
+impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
+    fn variables(&self) -> &Vec<ExplicitVariable> {
+        (**self).variables()
+    }
+    fn numeric_variables(&self) -> &Vec<NumericVariable> {
+        (**self).numeric_variables()
+    }
+    fn assignment_axioms(&self) -> &Vec<AssignmentAxiom> {
+        (**self).assignment_axioms()
+    }
+    fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
+        (**self).comparison_axioms()
+    }
+    fn axioms(&self) -> &Vec<PropositionalAxiom> {
+        (**self).axioms()
+    }
+    fn metric(&self) -> &Metric {
+        (**self).metric()
+    }
+    fn get_num_variables(&self) -> usize {
+        (**self).get_num_variables()
+    }
+    fn get_variable_name(&self, index: usize) -> Result<&str, &str> {
+        (**self).get_variable_name(index)
+    }
+    fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str> {
+        (**self).get_variable_domain_size(index)
+    }
+    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str> {
+        (**self).get_variable_axiom_layer(index)
+    }
+    fn get_variable_default_axiom_value(&self, index: usize) -> Result<usize, &str> {
+        (**self).get_variable_default_axiom_value(index)
+    }
+    fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
+        (**self).get_fact_name(fact)
+    }
+    fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
+        (**self).are_facts_mutex(fact1, fact2)
+    }
+    fn get_operators(&self) -> &Vec<Operator> {
+        (**self).get_operators()
+    }
+    fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {
+        (**self).get_operator_cost(index, is_axiom)
+    }
+    fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str {
+        (**self).get_operator_name(index, is_axiom)
+    }
+    fn get_num_operators(&self) -> usize {
+        (**self).get_num_operators()
+    }
+    fn get_num_operator_preconditions(&self, index: usize, is_axiom: bool) -> usize {
+        (**self).get_num_operator_preconditions(index, is_axiom)
+    }
+    fn get_operator_precondition(
+        &self,
+        index: usize,
+        precond_index: usize,
+        is_axiom: bool,
+    ) -> &ExplicitFact {
+        (**self).get_operator_precondition(index, precond_index, is_axiom)
+    }
+    fn get_num_operator_effects(&self, index: usize, is_axiom: bool) -> usize {
+        (**self).get_num_operator_effects(index, is_axiom)
+    }
+    fn get_num_operator_effect_conditions(
+        &self,
+        index: usize,
+        eff_index: usize,
+        is_axiom: bool,
+    ) -> usize {
+        (**self).get_num_operator_effect_conditions(index, eff_index, is_axiom)
+    }
+    fn get_operator_effect_condition(
+        &self,
+        index: usize,
+        eff_index: usize,
+        cond_index: usize,
+        is_axiom: bool,
+    ) -> &ExplicitFact {
+        (**self).get_operator_effect_condition(index, eff_index, cond_index, is_axiom)
+    }
+    fn get_operator_effect(&self, index: usize, eff_index: usize, is_axiom: bool) -> &ExplicitFact {
+        (**self).get_operator_effect(index, eff_index, is_axiom)
+    }
+    fn convert_operator_index(&self, index: usize, ancestor_task: &dyn AbstractNumericTask) {
+        (**self).convert_operator_index(index, ancestor_task)
+    }
+    fn get_num_axioms(&self) -> usize {
+        (**self).get_num_axioms()
+    }
+    fn get_num_goals(&self) -> usize {
+        (**self).get_num_goals()
+    }
+    fn get_goal_fact(&self, index: usize) -> &ExplicitFact {
+        (**self).get_goal_fact(index)
+    }
+    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>> {
+        (**self).get_initial_propositional_state_values()
+    }
+    fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>> {
+        (**self).get_initial_numeric_state_values()
+    }
+    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>> {
+        (**self).get_initial_propositional_state_values_mut()
+    }
+    fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>> {
+        (**self).get_initial_numeric_state_values_mut()
+    }
+    fn set_initial_propositional_state_values(&self, values: Vec<usize>) {
+        (**self).set_initial_propositional_state_values(values)
+    }
+    fn set_initial_numeric_state_values(&self, values: Vec<f64>) {
+        (**self).set_initial_numeric_state_values(values)
+    }
+    fn convert_ancestor_state_values(
+        &self,
+        ancestor_state_values: &[usize],
+        ancestor_task: &dyn AbstractNumericTask,
+    ) -> Vec<usize> {
+        (**self).convert_ancestor_state_values(ancestor_state_values, ancestor_task)
+    }
+    fn get_num_cmp_axioms(&self) -> usize {
+        (**self).get_num_cmp_axioms()
+    }
+    fn abstract_state_values(
+        &self,
+        propositional_values: &[usize],
+        numeric_values: &[f64],
+    ) -> Result<(Vec<usize>, Vec<f64>), String> {
+        (**self).abstract_state_values(propositional_values, numeric_values)
+    }
+    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
+        (**self).evaluated_initial_abstract_state_values()
+    }
+    fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
+        (**self).abstract_operator_cost(operator_id)
+    }
+    fn min_abstract_operator_cost(&self) -> f64 {
+        (**self).min_abstract_operator_cost()
+    }
+    fn assignment_axiom_lookup(&self) -> Vec<Option<usize>> {
+        (**self).assignment_axiom_lookup()
+    }
+    fn linearize_numeric_var(
+        &self,
+        numeric_var_id: usize,
+    ) -> Result<crate::numeric::utils::linear_effects::LinearExpression, LinearizationError> {
+        (**self).linearize_numeric_var(numeric_var_id)
+    }
+    fn linearized_assignment_effects(
+        &self,
+        operator_id: usize,
+    ) -> Result<Vec<LinearNumericEffect>, LinearizationError> {
+        (**self).linearized_assignment_effects(operator_id)
+    }
+    fn regular_numeric_variable_ids(&self) -> Vec<usize> {
+        (**self).regular_numeric_variable_ids()
+    }
+    fn is_linear_cost_operator(&self, operator_id: usize) -> bool {
+        (**self).is_linear_cost_operator(operator_id)
+    }
+    fn operator_cost_coefficients(&self, operator_id: usize) -> Vec<f64> {
+        (**self).operator_cost_coefficients(operator_id)
+    }
+    fn operator_cost_constant(&self, operator_id: usize) -> f64 {
+        (**self).operator_cost_constant(operator_id)
     }
 }
 
@@ -945,18 +1131,13 @@ fn evaluate_state_with_axiom_closure(
     propositional: &mut [usize],
     numeric: &mut [f64],
 ) -> Result<(), String> {
-    let packer = abstract_propositional_packer(task);
+    let packer = Arc::new(abstract_propositional_packer(task));
     let mut packed = vec![0u64; packer.num_bins() as usize];
     for (var_id, value) in propositional.iter().enumerate() {
         packer.set(&mut packed, var_id, *value as u64);
     }
-    evaluate_state_with_axiom_closure_and_packed_dyn(
-        task,
-        &packer,
-        propositional,
-        numeric,
-        &mut packed,
-    )
+    let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), packer.clone());
+    finish_axiom_closure(&packer, propositional, numeric, &mut packed, &axiom_evaluator)
 }
 
 fn abstract_propositional_packer<T: AbstractNumericTask + ?Sized>(task: &T) -> IntDoublePacker {
@@ -966,29 +1147,6 @@ fn abstract_propositional_packer<T: AbstractNumericTask + ?Sized>(task: &T) -> I
         .map(|variable| variable.domain_size() as u64)
         .collect();
     IntDoublePacker::new(&ranges)
-}
-
-#[allow(unused)]
-fn evaluate_state_with_axiom_closure_and_packed_sized<T: AbstractNumericTask>(
-    task: &T,
-    packer: &IntDoublePacker,
-    propositional: &mut [usize],
-    numeric: &mut [f64],
-    packed: &mut [u64],
-) -> Result<(), String> {
-    let axiom_evaluator = AxiomEvaluator::new(task, packer);
-    finish_axiom_closure(packer, propositional, numeric, packed, &axiom_evaluator)
-}
-
-fn evaluate_state_with_axiom_closure_and_packed_dyn(
-    task: &dyn AbstractNumericTask,
-    packer: &IntDoublePacker,
-    propositional: &mut [usize],
-    numeric: &mut [f64],
-    packed: &mut [u64],
-) -> Result<(), String> {
-    let axiom_evaluator = AxiomEvaluator::new(task, packer);
-    finish_axiom_closure(packer, propositional, numeric, packed, &axiom_evaluator)
 }
 
 fn finish_axiom_closure(

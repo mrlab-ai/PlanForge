@@ -2,14 +2,13 @@
 mod tests;
 
 use planforge_sas::numeric::{
-    numeric_task::{AbstractNumericTask, ExplicitFact, Operator},
+    numeric_task::{AbstractNumericTask, ExplicitFact},
     utils::errors::ConstructError,
 };
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
 type Condition<'a> = Vec<&'a ExplicitFact>;
-pub type ApplicableOperator<'a> = (&'a Operator, usize);
 
 /// Index into the `SuccessorTree`'s internal node storage. The high bit
 /// flags the node kind (`1` = leaf, `0` = branch); the remaining 31 bits
@@ -70,21 +69,18 @@ struct BranchEntry {
 
 #[derive(Debug)]
 struct LeafEntry {
-    // op_id list. We store just the u32 id; the `&Operator` reference
-    // demanded by `ApplicableOperator` is recovered from the task via
-    // `task.get_operators()[op_id]` at lookup time.
     applicable_operators: Box<[u32]>,
 }
 
-/// Decision tree returning the operators applicable in a given state.
+/// Decision tree returning the ids of the operators applicable in a given
+/// state. Callers resolve ids to `&Operator` via `task.get_operators()`.
 ///
 /// All nodes live in two `Vec`s on the same heap allocation each, so
 /// constructing the tree on tasks with hundreds of thousands of operators
 /// performs O(n) allocations total instead of O(n) `Box::new` calls. The
-/// asymptotic lookup complexity (root-to-leaf walk per `state`) is
-/// identical to the previous `Box<dyn Node>` implementation.
-pub struct SuccessorTree<'a> {
-    task: &'a dyn AbstractNumericTask,
+/// tree holds no reference to the task: it borrows the task only during
+/// construction and stores plain operator ids.
+pub struct SuccessorTree {
     branches: Vec<BranchEntry>,
     leaves: Vec<LeafEntry>,
     /// Index 0 in `leaves` is a shared empty leaf reused for every
@@ -96,7 +92,7 @@ pub struct SuccessorTree<'a> {
     root: NodeId,
 }
 
-impl<'a> Debug for SuccessorTree<'a> {
+impl Debug for SuccessorTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SuccessorTree")
             .field("branches", &self.branches.len())
@@ -106,15 +102,14 @@ impl<'a> Debug for SuccessorTree<'a> {
     }
 }
 
-impl<'a> SuccessorTree<'a> {
-    pub fn new(task: &'a dyn AbstractNumericTask) -> Self {
+impl SuccessorTree {
+    pub fn new(task: &dyn AbstractNumericTask) -> Self {
         let mut builder = TreeBuilder::new(task);
         let mut queue: VecDeque<u32> = (0..task.get_operators().len() as u32).collect();
         let root = builder
             .construct(0, &mut queue)
             .expect("successor-tree construction failed");
         SuccessorTree {
-            task,
             branches: builder.branches,
             leaves: builder.leaves,
             empty_leaf: builder.empty_leaf,
@@ -122,55 +117,32 @@ impl<'a> SuccessorTree<'a> {
         }
     }
 
-    pub fn get_applicable_operators(
-        &self,
-        state: &[usize],
-        out: &mut Vec<ApplicableOperator<'a>>,
-    ) {
-        let operators = self.task.get_operators();
-        self.walk(self.root, state, operators, out);
+    /// Append the ids of all operators applicable in `state` to `out`.
+    pub fn get_applicable_operators(&self, state: &[usize], out: &mut Vec<u32>) {
+        self.walk(self.root, state, out);
     }
 
-    fn walk(
-        &self,
-        id: NodeId,
-        state: &[usize],
-        operators: &'a [Operator],
-        out: &mut Vec<ApplicableOperator<'a>>,
-    ) {
+    fn walk(&self, id: NodeId, state: &[usize], out: &mut Vec<u32>) {
         // Shared empty leaf is a fast no-op; many branches point to it.
         if id == self.empty_leaf {
             return;
         }
         if id.is_leaf() {
             let leaf = &self.leaves[id.index()];
-            extend_from_op_ids(out, &leaf.applicable_operators, operators);
+            out.extend_from_slice(&leaf.applicable_operators);
             return;
         }
         let branch = &self.branches[id.index()];
-        extend_from_op_ids(out, &branch.immediate_operators, operators);
+        out.extend_from_slice(&branch.immediate_operators);
         let value = state[branch.var_id as usize];
         if let Some(&child) = branch.value_children.get(value)
             && child.is_valid()
         {
-            self.walk(child, state, operators, out);
+            self.walk(child, state, out);
         }
         if branch.default_child.is_valid() {
-            self.walk(branch.default_child, state, operators, out);
+            self.walk(branch.default_child, state, out);
         }
-    }
-}
-
-#[inline]
-fn extend_from_op_ids<'a>(
-    out: &mut Vec<ApplicableOperator<'a>>,
-    op_ids: &[u32],
-    operators: &'a [Operator],
-) {
-    out.reserve(op_ids.len());
-    for &op_id in op_ids {
-        let op_id = op_id as usize;
-        out.push((&operators[op_id], op_id));
     }
 }
 
@@ -313,8 +285,9 @@ impl<'a> TreeBuilder<'a> {
 
 // -----------------------------------------------------------------------
 // Backward-compatible facade for callers that still want
-// `GroundedSuccessorGenerator::new(...)` + `.construct(...)` (search_engine
-// and tests). All real work is delegated to the arena-backed builder.
+// `GroundedSuccessorGenerator::new(...)` + `.construct(...)` (tests and
+// pattern databases). All real work is delegated to the arena-backed
+// builder.
 // -----------------------------------------------------------------------
 
 pub struct GroundedSuccessorGenerator<'a> {
@@ -328,7 +301,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
         }
     }
 
-    pub fn construct_node_from_task<T: AbstractNumericTask>(task: &'a T) -> SuccessorTree<'a> {
+    pub fn construct_node_from_task<T: AbstractNumericTask>(task: &T) -> SuccessorTree {
         SuccessorTree::new(task)
     }
 
@@ -339,28 +312,22 @@ impl<'a> GroundedSuccessorGenerator<'a> {
     pub fn construct(
         &mut self,
         branch_var_id: &mut usize,
-        queue: &mut VecDeque<ApplicableOperator<'a>>,
+        queue: &mut VecDeque<u32>,
     ) -> Result<NodeRef, ConstructError> {
-        // Translate the old `(&Operator, op_id)` queue into u32 op ids;
-        // callers only need the resulting `NodeRef` opaque token.
-        let mut id_queue: VecDeque<u32> = queue.iter().map(|(_, op_id)| *op_id as u32).collect();
-        queue.clear();
-        let id = self.builder.construct(*branch_var_id, &mut id_queue)?;
+        let id = self.builder.construct(*branch_var_id, queue)?;
         Ok(NodeRef { id })
     }
 
     /// Returns a `SuccessorTree` consuming the in-progress builder. Roots
     /// at the supplied `NodeRef`.
-    pub fn into_tree(self, root: NodeRef) -> SuccessorTree<'a> {
+    pub fn into_tree(self, root: NodeRef) -> SuccessorTree {
         let TreeBuilder {
-            task,
             branches,
             leaves,
             empty_leaf,
             ..
         } = self.builder;
         SuccessorTree {
-            task,
             branches,
             leaves,
             empty_leaf,

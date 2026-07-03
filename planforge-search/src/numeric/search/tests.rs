@@ -1,13 +1,12 @@
 use super::*;
 
-use planforge_sas::numeric::axioms::AxiomEvaluator;
 use planforge_sas::numeric::numeric_task::{
     ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
-    Operator,
+    Operator, TaskRef,
 };
-use std::time::Duration;
 use planforge_sas::numeric::state_registry::StateRegistry;
-use planforge_sas::numeric::utils::int_packer::IntDoublePacker;
+use std::sync::Arc;
+use std::time::Duration;
 
 #[test]
 fn test_compute_effective_operator_costs_plus_constants() {
@@ -72,9 +71,8 @@ fn test_compute_effective_operator_costs_plus_constants() {
         ExplicitFact::new(0, 0),
     );
 
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let task: TaskRef = Arc::new(task);
+    let mut state_registry = StateRegistry::for_task(task.clone());
     let initial_state = state_registry.get_initial_state();
 
     let d0 = state_registry
@@ -86,7 +84,7 @@ fn test_compute_effective_operator_costs_plus_constants() {
     assert!((d0 - 0.5).abs() < 1e-12);
     assert!((d1 - 0.002).abs() < 1e-12);
 
-    let operator_costs = compute_effective_operator_costs(&task, &state_registry, &initial_state);
+    let operator_costs = compute_effective_operator_costs(&*task, &state_registry, &initial_state);
     assert_eq!(operator_costs.len(), 2);
     assert!((operator_costs[0] - 0.5).abs() < 1e-12);
     assert!((operator_costs[1] - 0.002).abs() < 1e-12);

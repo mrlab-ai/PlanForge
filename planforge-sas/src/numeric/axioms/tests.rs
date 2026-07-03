@@ -4,7 +4,7 @@ use crate::numeric::tests::*;
 
 #[test]
 fn test_axiom_evaluator_creation() {
-    let problem = get_root_task();
+    let problem = std::sync::Arc::new(get_root_task());
     let mut domain_sizes = vec![];
     for var in problem.variables().iter() {
         domain_sizes.push(var.domain_size() as u64);
@@ -13,8 +13,8 @@ fn test_axiom_evaluator_creation() {
         domain_sizes.push(u64::MAX);
     }
 
-    let state_packer = IntDoublePacker::new(&domain_sizes);
-    let axiom_evaluator = AxiomEvaluator::new(&problem, &state_packer);
+    let state_packer = std::sync::Arc::new(IntDoublePacker::new(&domain_sizes));
+    let axiom_evaluator = AxiomEvaluator::new(problem.clone(), state_packer);
 
     let init_state = problem.get_initial_propositional_state_values();
     let mut buffer = vec![0; axiom_evaluator.state_packer.num_bins()];
@@ -34,7 +34,7 @@ fn test_axiom_evaluator_creation() {
 
 #[test]
 fn test_example1_axiom_evaluation() {
-    let problem = get_root_task();
+    let problem = std::sync::Arc::new(get_root_task());
 
     // Set up state packer and axiom evaluator
     let mut domain_sizes = vec![];
@@ -45,8 +45,8 @@ fn test_example1_axiom_evaluation() {
         domain_sizes.push(u64::MAX);
     }
 
-    let state_packer = IntDoublePacker::new(&domain_sizes);
-    let axiom_evaluator = AxiomEvaluator::new(&problem, &state_packer);
+    let state_packer = std::sync::Arc::new(IntDoublePacker::new(&domain_sizes));
+    let axiom_evaluator = AxiomEvaluator::new(problem.clone(), state_packer);
 
     // Verify axiom structure is set up correctly.
     assert!(

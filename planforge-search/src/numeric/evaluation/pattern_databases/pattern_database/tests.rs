@@ -1,12 +1,11 @@
 use planforge_sas::numeric::axioms::{
-    AssignmentAxiom, AxiomEvaluator, CalOperator, ComparisonAxiom, ComparisonOperator,
+    AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
 };
 use planforge_sas::numeric::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
     NumericType, NumericVariable, Operator,
 };
 use planforge_sas::numeric::state_registry::StateRegistry;
-use planforge_sas::numeric::utils::int_packer::IntDoublePacker;
 
 use crate::numeric::evaluation::pattern_databases::pattern_database::{
     PatternDatabase, PdbHeuristicConfig, PdbInternalHeuristic,
@@ -494,9 +493,7 @@ fn direct_concrete_lookup_matches_projected_lookup_for_propositional_task() {
     )
     .unwrap();
     let pdb = PatternDatabase::new(projected_task, 32).unwrap();
-    let state_packer = IntDoublePacker::from_abstract_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = state_registry.get_initial_state();
 
     assert_eq!(
@@ -542,9 +539,7 @@ fn direct_concrete_lookup_matches_projected_lookup_for_comparison_guarded_task()
     .unwrap();
     let (initial_prop, initial_num) = projected_task.evaluated_initial_state_values().unwrap();
     let pdb = PatternDatabase::new(projected_task, 16).unwrap();
-    let state_packer = IntDoublePacker::from_abstract_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = state_registry.get_initial_state();
 
     assert_eq!(
@@ -627,9 +622,7 @@ fn direct_concrete_lookup_uses_compact_prop_table_for_pure_propositional_pattern
     .unwrap();
 
     let pdb = PatternDatabase::new(projected_task, 64).unwrap();
-    let state_packer = IntDoublePacker::from_abstract_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = state_registry.get_initial_state();
 
     assert_eq!(
@@ -659,9 +652,7 @@ fn direct_concrete_numeric_lookup_keeps_slot_zero_for_prop_hash() {
     pdb.distances = vec![11.0];
     pdb.rebuild_lookup_indexes();
 
-    let state_packer = IntDoublePacker::from_abstract_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = state_registry.get_initial_state();
 
     assert_eq!(

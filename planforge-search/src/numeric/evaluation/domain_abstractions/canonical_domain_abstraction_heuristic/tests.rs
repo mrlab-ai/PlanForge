@@ -1,9 +1,7 @@
-use planforge_sas::numeric::axioms::AxiomEvaluator;
 use planforge_sas::numeric::numeric_task::{
     ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
 };
 use planforge_sas::numeric::state_registry::StateRegistry;
-use planforge_sas::numeric::utils::int_packer::IntDoublePacker;
 
 use crate::numeric::evaluation::evaluator::EvaluationState;
 
@@ -87,9 +85,7 @@ fn computes_max_additive_subsets_from_relevant_operators() {
 #[test]
 fn canonical_domain_abstraction_uses_explicit_subsets() {
     let task = simple_task();
-    let packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &packer);
-    let mut registry = StateRegistry::new(&task, &packer, &axiom_evaluator);
+    let mut registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = registry.get_initial_state();
 
     let heuristic = CanonicalDomainAbstractionHeuristic::with_explicit_subsets(

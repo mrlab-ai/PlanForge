@@ -23,9 +23,9 @@ use planforge_sas::numeric::numeric_task::{
 use planforge_sas::numeric::state_registry::{ConcreteState, StateID, StateRegistry};
 use std::time::Duration;
 
-pub fn compute_effective_operator_costs<'a>(
-    task: &'a dyn AbstractNumericTask,
-    _state_registry: &StateRegistry<'a>,
+pub fn compute_effective_operator_costs(
+    task: &dyn AbstractNumericTask,
+    _state_registry: &StateRegistry<'_>,
     _initial_state: &ConcreteState,
 ) -> Vec<f64> {
     task.get_operators()

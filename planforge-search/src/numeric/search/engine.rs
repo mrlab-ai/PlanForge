@@ -8,12 +8,13 @@ use super::{
 use crate::numeric::{
     evaluation::heuristic::BlindHeuristic,
     evaluation::{EvaluationError, EvaluationState, Heuristic},
-    successor_generator::{ApplicableOperator, SuccessorTree},
+    successor_generator::SuccessorTree,
 };
 use ordered_float::OrderedFloat;
-use planforge_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planforge_sas::numeric::numeric_task::{ExplicitFact, TaskRef};
 use planforge_sas::numeric::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
 use std::env;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
@@ -58,9 +59,9 @@ impl PriorityMode {
 }
 
 pub struct AStarSearch<'a> {
-    task: &'a dyn AbstractNumericTask,
+    task: TaskRef<'a>,
     state_registry: StateRegistry<'a>,
-    successor_generator: SuccessorTree<'a>,
+    successor_generator: SuccessorTree,
     operator_costs: Vec<f64>,
     /// Cached `task.metric().use_metric()` so per-successor cost selection
     /// does not chase the trait vtable.
@@ -102,21 +103,16 @@ pub struct AStarSearch<'a> {
     last_reported_f_layer: Option<i64>,
     best_reported_heuristic_value: Option<OrderedFloat<f64>>,
     state_values_buffer: Vec<usize>,
-    applicable_operators_buffer: Vec<ApplicableOperator<'a>>,
+    applicable_operators_buffer: Vec<u32>,
     successor_numeric_values_buffer: Vec<f64>,
     successor_cost_values_buffer: Vec<f64>,
     expansion_context: ExpansionContext,
 }
 
 impl<'a> AStarSearch<'a> {
-    /// Create a successor generator for the given task.
-    fn create_successor_generator(task: &'a dyn AbstractNumericTask) -> SuccessorTree<'a> {
-        SuccessorTree::new(task)
-    }
-
     /// Create a new A* search instance.
     pub fn new(
-        task: &'a dyn AbstractNumericTask,
+        task: TaskRef<'a>,
         state_registry: StateRegistry<'a>,
         heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
@@ -138,7 +134,7 @@ impl<'a> AStarSearch<'a> {
     /// and not admissible, but it solves many tasks far faster than A* with
     /// the same heuristic.
     pub fn new_gbfs(
-        task: &'a dyn AbstractNumericTask,
+        task: TaskRef<'a>,
         state_registry: StateRegistry<'a>,
         heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
@@ -167,7 +163,7 @@ impl<'a> AStarSearch<'a> {
     /// that the slow heuristic is only evaluated on states A* actually
     /// considers expanding, not on every state generated.
     pub fn new_fast_slow(
-        task: &'a dyn AbstractNumericTask,
+        task: TaskRef<'a>,
         state_registry: StateRegistry<'a>,
         heuristic_fast: Box<dyn Heuristic + 'a>,
         heuristic_slow: Box<dyn Heuristic + 'a>,
@@ -189,21 +185,21 @@ impl<'a> AStarSearch<'a> {
     }
 
     fn with_priority_mode(
-        task: &'a dyn AbstractNumericTask,
+        task: TaskRef<'a>,
         state_registry: StateRegistry<'a>,
         heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
         priority_mode: PriorityMode,
     ) -> Self {
-        let successor_generator = Self::create_successor_generator(task);
+        let successor_generator = SuccessorTree::new(&*task);
 
         // Build initial state early so numeric constants are initialized in the registry.
         // Required to derive a correct min_action_cost under metric.
         let mut state_registry = state_registry;
         let initial_state = state_registry.get_initial_state();
         let operator_costs =
-            compute_effective_operator_costs(task, &state_registry, &initial_state);
+            compute_effective_operator_costs(&*task, &state_registry, &initial_state);
 
         // Determine `min_action_cost`.
         let min_action_cost = operator_costs
@@ -230,6 +226,8 @@ impl<'a> AStarSearch<'a> {
         // open-list pop order.
         let use_preferred_first = priority_mode == PriorityMode::Gbfs
             && env::var_os("PLANFORGE_NO_PREFERRED").is_none();
+        let num_variables = task.variables().len();
+        let num_numeric_variables = task.numeric_variables().len();
         Self {
             task,
             state_registry,
@@ -256,9 +254,9 @@ impl<'a> AStarSearch<'a> {
             counters_at_last_jump: SearchCounters::default(),
             last_reported_f_layer: None,
             best_reported_heuristic_value: None,
-            state_values_buffer: Vec::with_capacity(task.variables().len()),
+            state_values_buffer: Vec::with_capacity(num_variables),
             applicable_operators_buffer: Vec::new(),
-            successor_numeric_values_buffer: Vec::with_capacity(task.numeric_variables().len()),
+            successor_numeric_values_buffer: Vec::with_capacity(num_numeric_variables),
             successor_cost_values_buffer: Vec::new(),
             expansion_context: ExpansionContext::default(),
         }
@@ -410,7 +408,7 @@ impl<'a> AStarSearch<'a> {
             state,
             g_value,
             false,
-            self.task,
+            &*self.task,
             &self.state_registry,
         );
         let is_goal = self.is_goal_state(state);
@@ -461,7 +459,7 @@ impl<'a> AStarSearch<'a> {
             state,
             entry.g_value,
             false,
-            self.task,
+            &*self.task,
             &self.state_registry,
         );
         eval_state.set_is_goal(self.is_goal_state(state));
@@ -631,7 +629,13 @@ impl<'a> AStarSearch<'a> {
             return SearchStatus::InProgress;
         }
 
-        for (operator, operator_id) in applicable_operators.iter().copied() {
+        // Clone the task handle so `operators` borrows the local `Arc`
+        // rather than `self` (the loop body needs `&mut self`).
+        let task = Arc::clone(&self.task);
+        let operators = task.get_operators();
+        for &op_id in applicable_operators.iter() {
+            let operator_id = op_id as usize;
+            let operator = &operators[operator_id];
             let (succ_state, op_cost) = match self.state_registry.apply_operator_in_context(
                 &state,
                 operator,
@@ -697,7 +701,7 @@ impl<'a> AStarSearch<'a> {
             // successor.
             let is_preferred = parent_preferred_ids
                 .as_deref()
-                .is_some_and(|ids| ids.contains(&(operator_id as u32)));
+                .is_some_and(|ids| ids.contains(&op_id));
 
             // Evaluate and add to open list.
             if let Ok(evaluation) = self.evaluate_state(&succ_state, new_g_value) {
@@ -853,7 +857,7 @@ impl<'a> SearchEngine for AStarSearch<'a> {
             {
                 SearchStatus::Solved(goal_state_id) => {
                     // Use the goal state ID returned from step()
-                    let plan = self.space.extract_plan(goal_state_id, self.task);
+                    let plan = self.space.extract_plan(goal_state_id, &*self.task);
                     let solution_cost = self.space.node(goal_state_id).map(|info| info.g_value);
 
                     return SearchResult {

@@ -40,8 +40,8 @@ pub fn get_progression_flaws(
     let comparison_index = ComparisonAxiomIndex::from_task(task)
         .map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
 
-    let state_packer = make_prop_state_packer(task);
-    let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
+    let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
+    let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
 
     // `target_centered_shell_flaws` (in the `Backward` direction) needs the
     // per-numeric-var stack of operator effect deltas. The legacy code
@@ -143,8 +143,8 @@ pub fn get_execute_entire_plan_flaws(
     let comparison_index = ComparisonAxiomIndex::from_task(task)
         .map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
 
-    let state_packer = make_prop_state_packer(task);
-    let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
+    let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
+    let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
     let deltas = numeric_effect_deltas(task);
 
     let (mut prop_state, mut numeric_state) =

@@ -1,31 +1,26 @@
 use crate::numeric::{
-    axioms::AxiomEvaluator,
     numeric_task::{
-        AbstractNumericTask, Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-        NumericType, NumericVariable, Operator,
+        Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
+        NumericVariable, Operator, TaskRef,
     },
     state_registry::StateRegistry,
-    utils::int_packer::IntDoublePacker,
 };
+use std::sync::Arc;
 
 use crate::numeric::tests::*;
 
 #[test]
 fn test_state_registry_initial_state() {
-    let task = get_root_task();
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let task: TaskRef = Arc::new(get_root_task());
+    let mut state_registry = StateRegistry::for_task(task);
     let initial_state = state_registry.get_initial_state();
     assert_eq!(initial_state.get_state(&state_registry), [1, 0]);
 }
 
 #[test]
 fn test_cost_information_storage() {
-    let task = get_root_task();
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let task: TaskRef = Arc::new(get_root_task());
+    let mut state_registry = StateRegistry::for_task(task);
 
     let initial_state = state_registry.get_initial_state();
 
@@ -76,7 +71,7 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         1,
     );
 
-    let task = NumericRootTask::new(
+    let task: TaskRef = Arc::new(NumericRootTask::new(
         4,
         Metric::new(true, Some(0)),
         variables,
@@ -90,11 +85,9 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         vec![],
         vec![],
         ExplicitFact::new(0, 0),
-    );
+    ));
 
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(task.clone());
 
     let initial_state = state_registry.get_initial_state();
     let expensive_successor = state_registry
@@ -154,7 +147,7 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         )],
         1,
     );
-    let task = NumericRootTask::new(
+    let task: TaskRef = Arc::new(NumericRootTask::new(
         4,
         Metric::new(false, None),
         variables,
@@ -168,11 +161,9 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         vec![],
         vec![],
         ExplicitFact::new(0, 0),
-    );
+    ));
 
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(task.clone());
 
     let initial = state_registry.get_initial_state();
     let first = state_registry

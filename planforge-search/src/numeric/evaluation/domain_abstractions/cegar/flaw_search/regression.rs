@@ -24,8 +24,8 @@ pub fn get_regression_flaws(
     domain_mapping: &DomainMapping,
     wildcard_plan: &WildcardPlanResult,
 ) -> Result<Vec<Flaw>> {
-    let state_packer = make_prop_state_packer(task);
-    let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
+    let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
+    let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
     let comparison_index = ComparisonAxiomIndex::from_task(task)
         .map_err(|e| anyhow::anyhow!("failed to build comparison axiom index: {e}"))?;
 

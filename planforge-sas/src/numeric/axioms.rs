@@ -3,8 +3,9 @@ mod tests;
 
 use std::cell::RefCell;
 use std::cmp::max;
+use std::sync::Arc;
 
-use crate::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
+use crate::numeric::numeric_task::{AbstractNumericTask, ExplicitFact, TaskRef};
 use crate::numeric::utils::errors::{AxiomEvalError, InvalidIndex, WrongAxiomLayer};
 use crate::numeric::utils::int_packer::IntDoublePacker;
 
@@ -360,8 +361,8 @@ fn build_compiled_axiom_evaluator_data(
 
 #[allow(unused)]
 pub struct AxiomEvaluator<'a> {
-    pub numeric_task: &'a dyn AbstractNumericTask,
-    state_packer: &'a IntDoublePacker,
+    pub numeric_task: TaskRef<'a>,
+    state_packer: Arc<IntDoublePacker>,
     axiom_literals: Vec<Vec<AxiomLiteral>>,
     rules: Vec<AxiomRule>,
     comparison_axiom_layer: Option<usize>,
@@ -374,11 +375,8 @@ pub struct AxiomEvaluator<'a> {
 }
 
 impl<'a> AxiomEvaluator<'a> {
-    pub fn new(
-        numeric_task: &'a dyn AbstractNumericTask,
-        state_packer: &'a IntDoublePacker,
-    ) -> Self {
-        let compiled = build_compiled_axiom_evaluator_data(numeric_task);
+    pub fn new(numeric_task: TaskRef<'a>, state_packer: Arc<IntDoublePacker>) -> Self {
+        let compiled = build_compiled_axiom_evaluator_data(&*numeric_task);
         let rule_count = compiled.rules.len();
 
         AxiomEvaluator {

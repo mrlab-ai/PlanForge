@@ -1,10 +1,9 @@
 use clap::Parser;
 use tracing::{error, info};
 use planforge_cli_utils::*;
-use planforge_sas::numeric::axioms::AxiomEvaluator;
-use planforge_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
+use planforge_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::numeric::state_registry::StateRegistry;
-use planforge_sas::numeric::utils::int_packer::IntDoublePacker;
+use std::sync::Arc;
 use planforge_search::numeric::evaluation::domain_abstractions::cegar::CegarConfig;
 use planforge_search::numeric::evaluation::domain_abstractions::canonical_domain_abstraction_heuristic::CanonicalDomainAbstractionHeuristic;
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
@@ -302,7 +301,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let sas_file = &cli.sas_file;
 
     let start_time = std::time::Instant::now();
-    let task = NumericRootTask::from_file(sas_file);
+    let task: TaskRef<'static> = Arc::new(NumericRootTask::from_file(sas_file));
     let parse_time = start_time.elapsed();
     info!("Parsed numeric SAS output in: {:?}", parse_time);
 
@@ -314,9 +313,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
         task.numeric_variables().len()
     );
 
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let state_registry = StateRegistry::for_task(task.clone());
 
     // Both A* and GBFS go through identical heuristic construction; only the
     // open-list priority differs. Project the search spec onto (heuristic,
@@ -342,15 +339,14 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     };
     let result = {
         {
-            let task_ref: &dyn AbstractNumericTask = &task;
             let heuristic_override =
-                build_heuristic_from_spec(heuristic_spec, task_ref).map_err(std::io::Error::other)?;
+                build_heuristic_from_spec(heuristic_spec, &*task).map_err(std::io::Error::other)?;
 
             let time_limit = if cli.internal_run { None } else { cli.max_time };
             let memory_limit = if cli.internal_run { None } else { cli.max_memory };
             let mut search = if gbfs_priority {
                 AStarSearch::new_gbfs(
-                    task_ref,
+                    task.clone(),
                     state_registry,
                     heuristic_override,
                     time_limit,
@@ -358,7 +354,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 )
             } else {
                 AStarSearch::new(
-                    task_ref,
+                    task.clone(),
                     state_registry,
                     heuristic_override,
                     time_limit,
