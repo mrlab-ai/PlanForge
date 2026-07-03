@@ -1,7 +1,6 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use planforge_translate::preprocess::run_preprocess_to_output;
 use planforge_sas::numeric::numeric_task::AbstractNumericTask;
 use planforge_sas::numeric::numeric_task::NumericRootTask;
 use planforge_sas::numeric::state_registry::StateRegistry;
@@ -10,9 +9,10 @@ use planforge_search::numeric::evaluation::evaluator::Evaluator;
 use planforge_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planforge_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planforge_search::numeric::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
-use planforge_search::numeric::search_engine::SearchStatus;
-use planforge_search::numeric::search_engine::{AStarSearch, SearchEngine};
+use planforge_search::numeric::search::SearchStatus;
+use planforge_search::numeric::search::{AStarSearch, SearchEngine};
 use planforge_search::numeric::successor_generator::GroundedSuccessorGenerator;
+use planforge_translate::preprocess::run_preprocess_to_output;
 use planforge_translator::translate_to_sas_to_path_fast;
 
 fn unique_temp_dir(prefix: &str) -> std::io::Result<PathBuf> {
@@ -582,7 +582,7 @@ fn plant_watering_lmcutnumeric_remains_finite_along_blind_solution() {
             AStarSearch::new(std::sync::Arc::new(&task), state_registry, None, None, None);
         let result = search.search();
         match result {
-            planforge_search::numeric::search_engine::SearchResult {
+            planforge_search::numeric::search::SearchResult {
                 status: SearchStatus::Solved(_),
                 plan: Some(plan),
                 ..

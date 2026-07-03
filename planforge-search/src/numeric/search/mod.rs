@@ -13,10 +13,12 @@ mod tests;
 mod config;
 mod engine;
 mod open_list;
+mod policy;
 mod space;
 mod stats;
 
-pub use engine::{AStarSearch, PriorityMode};
+pub use engine::AStarSearch;
+pub use policy::SearchPolicy;
 
 use planforge_sas::numeric::numeric_task::{
     AbstractNumericTask, Operator, metric_operator_cost_from_initial_values,

@@ -3,34 +3,36 @@ mod tests;
 
 use clap::Parser;
 use ordered_float::NotNan;
-use time::format_description::well_known::iso8601::{Config, TimePrecision};
-use tracing::{debug, info};
 use planforge_cli_utils::*;
 use planforge_sas::numeric::numeric_task::{
     AbstractNumericTask, NumericRootTask, NumericType, Operator, TaskRef,
 };
 use planforge_sas::numeric::state_registry::{ConcreteState, StateRegistry};
-use planforge_search::numeric::evaluation::g_evaluator::{GEvaluator, SumEvaluator};
 use planforge_search::numeric::evaluation::domain_abstractions::cegar::{Cegar, CegarConfig};
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, compute_hash_multipliers,
 };
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planforge_search::numeric::evaluation::evaluator::EvaluationState;
+use planforge_search::numeric::evaluation::g_evaluator::{GEvaluator, SumEvaluator};
 use planforge_search::numeric::evaluation::{EvaluationResult, Evaluator};
 use planforge_search::numeric::open_lists::{OpenList, SearchNode, TieBreakingOpenList};
-use planforge_search::numeric::search_engine::{compute_effective_operator_costs, SearchResult, SearchStatus};
-use planforge_search::numeric::search_engine::{AStarSearch, SearchEngine};
+use planforge_search::numeric::search::{AStarSearch, SearchEngine};
+use planforge_search::numeric::search::{
+    SearchResult, SearchStatus, compute_effective_operator_costs,
+};
 use planforge_search::numeric::successor_generator::SuccessorTree;
 use planforge_searcher::*;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::sync::Arc;
 use std::ffi::OsString;
 use std::num::NonZero;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
-use tracing_subscriber::fmt::{time::UtcTime};
+use time::format_description::well_known::iso8601::{Config, TimePrecision};
+use tracing::{debug, info};
+use tracing_subscriber::fmt::time::UtcTime;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -170,13 +172,14 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         | planforge_searcher::SearchSpec::Gbfs(heuristic) => {
             // GBFS and A* share heuristic construction; only the open-list
             // priority differs (h vs g+h).
-            let gbfs_priority = matches!(
-                &cli.search,
-                planforge_searcher::SearchSpec::Gbfs(_)
-            );
+            let gbfs_priority = matches!(&cli.search, planforge_searcher::SearchSpec::Gbfs(_));
             let heuristic_override = build_heuristic_from_spec(heuristic, &*task)?;
             let time_limit = if cli.internal_run { None } else { cli.max_time };
-            let memory_limit = if cli.internal_run { None } else { cli.max_memory };
+            let memory_limit = if cli.internal_run {
+                None
+            } else {
+                cli.max_memory
+            };
             let mut search = if gbfs_priority {
                 AStarSearch::new_gbfs(
                     task.clone(),
@@ -232,12 +235,14 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                     None,
                 )) as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>
             };
-            let fast_h = build_heuristic_from_spec(fast_spec, task_ref)?
-                .unwrap_or_else(make_blind);
-            let slow_h = build_heuristic_from_spec(slow_spec, task_ref)?
-                .unwrap_or_else(make_blind);
+            let fast_h = build_heuristic_from_spec(fast_spec, task_ref)?.unwrap_or_else(make_blind);
+            let slow_h = build_heuristic_from_spec(slow_spec, task_ref)?.unwrap_or_else(make_blind);
             let time_limit = if cli.internal_run { None } else { cli.max_time };
-            let memory_limit = if cli.internal_run { None } else { cli.max_memory };
+            let memory_limit = if cli.internal_run {
+                None
+            } else {
+                cli.max_memory
+            };
             let mut search = AStarSearch::new_fast_slow(
                 task.clone(),
                 state_registry,
@@ -246,9 +251,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
                 time_limit,
                 memory_limit,
             );
-            info!(
-                "Starting A* fast/slow search with fast={fast_spec:?} slow={slow_spec:?}..."
-            );
+            info!("Starting A* fast/slow search with fast={fast_spec:?} slow={slow_spec:?}...");
             search.search()
         }
         // The original Astar/Gbfs branch is replaced; keep DaDebug paths.

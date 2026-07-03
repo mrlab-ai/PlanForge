@@ -23,7 +23,7 @@ use planforge_search::numeric::evaluation::pattern_databases::pattern_generator_
 };
 use planforge_search::numeric::evaluation::pattern_databases::pdb_collection::PdbCollection;
 use planforge_search::numeric::evaluation::pattern_databases::pdb_heuristic::GreedyNumericPdbHeuristic;
-use planforge_search::numeric::search_engine::{
+use planforge_search::numeric::search::{
     AStarSearch, SearchEngine, SearchResult, SearchStatus,
 };
 use std::ffi::OsString;
@@ -60,9 +60,8 @@ pub fn build_heuristic_from_spec<'a>(
             if !spec.args.is_empty() {
                 return Err("`ff` does not accept arguments".to_string());
             }
-            let h =
-                planforge_search::numeric::evaluation::ff_heuristic::FfHeuristic::new(task)
-                    .map_err(|e| format!("failed to construct ff heuristic: {e}"))?;
+            let h = planforge_search::numeric::evaluation::ff_heuristic::FfHeuristic::new(task)
+                .map_err(|e| format!("failed to construct ff heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
         "domain_abstraction" => {
@@ -77,8 +76,10 @@ pub fn build_heuristic_from_spec<'a>(
             let abstraction = generator
                 .generate(task)
                 .map_err(|e| format!("failed to build domain abstraction: {e:#}"))?;
-            Ok(Some(Box::new(DomainAbstractionHeuristic::new(None, abstraction))
-                as Box<dyn Heuristic + 'a>))
+            Ok(Some(
+                Box::new(DomainAbstractionHeuristic::new(None, abstraction))
+                    as Box<dyn Heuristic + 'a>,
+            ))
         }
         "canonical_domain_abstractions" => {
             use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
@@ -92,10 +93,9 @@ pub fn build_heuristic_from_spec<'a>(
             let abstractions = generator
                 .generate_collection(task)
                 .map_err(|e| format!("failed to build canonical domain abstractions: {e:#}"))?;
-            let h = CanonicalDomainAbstractionHeuristic::new(None, task, abstractions)
-                .map_err(|e| {
-                    format!("failed to construct canonical domain abstraction heuristic: {e}")
-                })?;
+            let h = CanonicalDomainAbstractionHeuristic::new(None, task, abstractions).map_err(
+                |e| format!("failed to construct canonical domain abstraction heuristic: {e}"),
+            )?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
         "multi_domain_abstractions" => {
@@ -108,8 +108,10 @@ pub fn build_heuristic_from_spec<'a>(
             let abstractions = generator
                 .generate_collection(task)
                 .map_err(|e| format!("failed to build multi domain abstractions: {e:#}"))?;
-            Ok(Some(Box::new(MaxDomainAbstractionHeuristic::new(None, abstractions))
-                as Box<dyn Heuristic + 'a>))
+            Ok(Some(
+                Box::new(MaxDomainAbstractionHeuristic::new(None, abstractions))
+                    as Box<dyn Heuristic + 'a>,
+            ))
         }
         "posthoc_optimization" | "pho" => {
             use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
@@ -156,8 +158,9 @@ pub fn build_heuristic_from_spec<'a>(
             } else {
                 Vec::new()
             };
-            let h = SaturatedCostPartitioningOnlineHeuristic::new(None, abstractions, pdbs, cfg, task)
-                .map_err(|e| format!("failed to construct scp_online heuristic: {e}"))?;
+            let h =
+                SaturatedCostPartitioningOnlineHeuristic::new(None, abstractions, pdbs, cfg, task)
+                    .map_err(|e| format!("failed to construct scp_online heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
         "fillscp" | "fill_scp" => {
@@ -343,7 +346,11 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 build_heuristic_from_spec(heuristic_spec, &*task).map_err(std::io::Error::other)?;
 
             let time_limit = if cli.internal_run { None } else { cli.max_time };
-            let memory_limit = if cli.internal_run { None } else { cli.max_memory };
+            let memory_limit = if cli.internal_run {
+                None
+            } else {
+                cli.max_memory
+            };
             let mut search = if gbfs_priority {
                 AStarSearch::new_gbfs(
                     task.clone(),

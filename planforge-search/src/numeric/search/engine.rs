@@ -1,5 +1,6 @@
 use super::config::{ExpansionScratch, SearchConfig};
 use super::open_list::{DualQueueOpenList, OpenEntry};
+use super::policy::SearchPolicy;
 use super::space::{SearchNodeInfo, SearchSpace};
 use super::stats::{ProgressSnapshot, SearchCounters, SearchStats, TraceFlags};
 use super::{
@@ -29,36 +30,6 @@ struct SearchEvaluation {
     is_dead_end: bool,
 }
 
-/// Priority-key construction for best-first search.
-///
-/// `Astar` uses `f = g + h`, the textbook admissible best-first key. `Gbfs`
-/// drops `g` from the key — successors are popped strictly in order of `h`,
-/// which is the greedy best-first variant. `g` is still accumulated for plan
-/// cost reporting; only the open-list priority changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PriorityMode {
-    Astar,
-    Gbfs,
-}
-
-impl PriorityMode {
-    #[inline]
-    fn priority_value(self, g_value: f64, h_value: f64) -> f64 {
-        match self {
-            PriorityMode::Astar => g_value + h_value,
-            PriorityMode::Gbfs => h_value,
-        }
-    }
-
-    #[inline]
-    fn priority_label(self) -> &'static str {
-        match self {
-            PriorityMode::Astar => "f",
-            PriorityMode::Gbfs => "h",
-        }
-    }
-}
-
 pub struct AStarSearch<'a> {
     task: TaskRef<'a>,
     state_registry: StateRegistry<'a>,
@@ -71,17 +42,7 @@ pub struct AStarSearch<'a> {
     // Evaluators.
     heuristic: Box<dyn Heuristic + 'a>,
     heuristic_name: String,
-    /// Optional second admissible heuristic used by the fast/slow A*
-    /// variant. When `Some`, every popped open-list entry with
-    /// `second == false` is recomputed against this heuristic and
-    /// reinserted with `f' = g + max(h_f, h_s)` and `second = true`. The
-    /// first heuristic (`heuristic`) is the *fast* one used for initial
-    /// ordering; `heuristic_slow` is the *slow* but more informative one
-    /// computed lazily only when a state is actually about to be
-    /// expanded. See `new_fast_slow` for construction.
-    heuristic_slow: Option<Box<dyn Heuristic + 'a>>,
-    heuristic_slow_name: Option<String>,
-    priority_mode: PriorityMode,
+    policy: SearchPolicy<'a>,
 
     config: SearchConfig,
     stats: SearchStats,
@@ -104,13 +65,13 @@ impl<'a> AStarSearch<'a> {
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
     ) -> Self {
-        Self::with_priority_mode(
+        Self::with_policy(
             task,
             state_registry,
             heuristic,
             time_limit,
             max_memory_bytes,
-            PriorityMode::Astar,
+            SearchPolicy::AStar,
         )
     }
 
@@ -126,13 +87,13 @@ impl<'a> AStarSearch<'a> {
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
     ) -> Self {
-        Self::with_priority_mode(
+        Self::with_policy(
             task,
             state_registry,
             heuristic,
             time_limit,
             max_memory_bytes,
-            PriorityMode::Gbfs,
+            SearchPolicy::Gbfs,
         )
     }
 
@@ -156,27 +117,25 @@ impl<'a> AStarSearch<'a> {
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
     ) -> Self {
-        let slow_name = heuristic_slow.name();
-        let mut search = Self::with_priority_mode(
+        Self::with_policy(
             task,
             state_registry,
             Some(heuristic_fast),
             time_limit,
             max_memory_bytes,
-            PriorityMode::Astar,
-        );
-        search.heuristic_slow = Some(heuristic_slow);
-        search.heuristic_slow_name = Some(slow_name);
-        search
+            SearchPolicy::FastSlow {
+                slow: heuristic_slow,
+            },
+        )
     }
 
-    fn with_priority_mode(
+    fn with_policy(
         task: TaskRef<'a>,
         state_registry: StateRegistry<'a>,
         heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
-        priority_mode: PriorityMode,
+        policy: SearchPolicy<'a>,
     ) -> Self {
         let successor_generator = SuccessorTree::new(&*task);
 
@@ -211,7 +170,7 @@ impl<'a> AStarSearch<'a> {
         // for A/B benchmarking; it doesn't affect correctness, only the
         // open-list pop order.
         let use_preferred_first =
-            priority_mode == PriorityMode::Gbfs && env::var_os("PLANFORGE_NO_PREFERRED").is_none();
+            policy.is_gbfs() && env::var_os("PLANFORGE_NO_PREFERRED").is_none();
         let num_variables = task.variables().len();
         let num_numeric_variables = task.numeric_variables().len();
         Self {
@@ -222,9 +181,7 @@ impl<'a> AStarSearch<'a> {
             space: SearchSpace::new(),
             heuristic,
             heuristic_name,
-            heuristic_slow: None,
-            heuristic_slow_name: None,
-            priority_mode,
+            policy,
             config: SearchConfig {
                 operator_costs,
                 use_metric,
@@ -288,7 +245,7 @@ impl<'a> AStarSearch<'a> {
         // For GBFS the priority is `h`, which is non-monotonic — the "next
         // layer" abstraction doesn't apply. Skip; per-improvement progress is
         // still reported via `maybe_report_heuristic_progress`.
-        if self.priority_mode == PriorityMode::Gbfs {
+        if !self.policy.reports_f_layers() {
             return;
         }
         let f_layer = f_value as i64;
@@ -315,7 +272,7 @@ impl<'a> AStarSearch<'a> {
 
         info!(
             "{} = {} [{} evaluated, {} expanded, t={:.6}s, {} KB]",
-            self.priority_mode.priority_label(),
+            self.policy.priority_label(),
             f_layer,
             self.stats.nodes_evaluated,
             self.stats.nodes_expanded,
@@ -406,7 +363,7 @@ impl<'a> AStarSearch<'a> {
             }
             Ok(h_value) => SearchEvaluation {
                 h_value,
-                f_value: self.priority_mode.priority_value(g_value, h_value),
+                f_value: self.policy.priority_value(g_value, h_value),
                 g_value,
                 is_dead_end: false,
             },
@@ -431,8 +388,8 @@ impl<'a> AStarSearch<'a> {
     /// for `return`-ing immediately after this method so the existing
     /// pop is treated as a deferred expansion.
     fn evaluate_and_reinsert_for_slow(&mut self, entry: OpenEntry, state: &ConcreteState) {
-        let Some(slow) = self.heuristic_slow.as_ref() else {
-            // Caller should have checked `is_some()` first. Treat as a
+        let SearchPolicy::FastSlow { slow } = &self.policy else {
+            // Caller should have checked the policy variant first. Treat as a
             // no-op rather than panic.
             return;
         };
@@ -445,21 +402,23 @@ impl<'a> AStarSearch<'a> {
         );
         eval_state.set_is_goal(self.is_goal_state(state));
         let slow_h = match slow.compute_heuristic(&eval_state) {
-            Ok(h) => h,
-            Err(EvaluationError::DeadEnd { .. }) => f64::INFINITY,
-            Err(_) => {
-                // Computation failure: behave conservatively by keeping
-                // the fast value (no update).
-                self.open_list.insert_with_second(
-                    entry.state_id,
-                    entry.g_value,
-                    entry.h_value.into_inner(),
-                    entry.f_value.into_inner(),
-                    entry.is_preferred,
-                    true,
-                );
-                return;
-            }
+            Ok(h) => Some(h),
+            Err(EvaluationError::DeadEnd { .. }) => Some(f64::INFINITY),
+            Err(_) => None,
+        };
+        drop(eval_state);
+        let Some(slow_h) = slow_h else {
+            // Computation failure: behave conservatively by keeping
+            // the fast value (no update).
+            self.open_list.insert_with_second(
+                entry.state_id,
+                entry.g_value,
+                entry.h_value.into_inner(),
+                entry.f_value.into_inner(),
+                entry.is_preferred,
+                true,
+            );
+            return;
         };
         if slow_h.is_infinite() && slow_h.is_sign_positive() {
             // h_s reports a dead end. Mark state and drop the entry.
@@ -608,7 +567,7 @@ impl<'a> AStarSearch<'a> {
         // either a "first pop" that triggers the slow evaluation, or a
         // "second pop" that proceeds to expand. Because max of admissible
         // heuristics is admissible, optimality is preserved.
-        if self.heuristic_slow.is_some() && !entry.second {
+        if matches!(self.policy, SearchPolicy::FastSlow { .. }) && !entry.second {
             self.evaluate_and_reinsert_for_slow(entry, &state);
             return SearchStatus::InProgress;
         }
