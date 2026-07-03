@@ -10,6 +10,7 @@
 #[cfg(test)]
 mod tests;
 
+mod config;
 mod engine;
 mod open_list;
 mod space;
@@ -73,7 +74,18 @@ pub struct SearchResult {
 }
 
 pub trait SearchEngine {
-    fn search(&mut self) -> SearchResult;
+    fn initialize(&mut self);
+    fn step(&mut self) -> SearchStatus;
+    fn finish(&mut self, status: SearchStatus) -> SearchResult;
+    fn search(&mut self) -> SearchResult {
+        self.initialize();
+        loop {
+            match self.step() {
+                SearchStatus::InProgress => continue,
+                terminal => return self.finish(terminal),
+            }
+        }
+    }
     fn print_initial_h_values(&mut self);
 }
 

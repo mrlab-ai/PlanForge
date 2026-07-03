@@ -65,7 +65,9 @@ impl SearchSpace {
     /// expansion step, after which the IDs aren't needed again unless the
     /// state is reopened — in which case `evaluate_state` will resnapshot.
     pub(crate) fn take_preferred(&mut self, state_id: StateID) -> Option<Box<[u32]>> {
-        self.preferred_op_ids.get_mut(state_id).and_then(Option::take)
+        self.preferred_op_ids
+            .get_mut(state_id)
+            .and_then(Option::take)
     }
 
     /// Trace back the path from goal state to initial state.
