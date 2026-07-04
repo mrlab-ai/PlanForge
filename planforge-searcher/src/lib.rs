@@ -39,7 +39,7 @@ use tracing_subscriber::prelude::*;
 
 pub mod recursive_config;
 
-pub use recursive_config::{HeuristicSpec, SearchSpec, parse_search_spec};
+pub use recursive_config::{HeuristicSpec, SearchSpec, parse_heuristic_spec, parse_search_spec};
 
 use planforge_search::numeric::evaluation::Heuristic;
 

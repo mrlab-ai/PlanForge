@@ -132,6 +132,20 @@ pub fn parse_search_spec(raw: &str) -> Result<SearchSpec, String> {
     build_search_spec(&call)
 }
 
+pub fn parse_heuristic_spec(raw: &str) -> Result<HeuristicSpec, String> {
+    let mut input = raw.trim();
+    input = input
+        .strip_suffix('.')
+        .or_else(|| input.strip_suffix(';'))
+        .unwrap_or(input)
+        .trim();
+    let call = ConfigParser::new(input).parse_all()?;
+    Ok(HeuristicSpec {
+        name: call.name,
+        args: call.args,
+    })
+}
+
 pub(crate) struct ConfigParser<'a> {
     input: &'a str,
     pos: usize,

@@ -891,14 +891,21 @@ impl NumericRootTask {
         Self::from_str(&file_content)
     }
 
+    /// Parse a `NumericRootTask` from the preprocessor's text format, returning a
+    /// descriptive error instead of panicking on malformed input.
+    pub fn try_from_str(content: &str) -> Result<Self, String> {
+        match parse_numeric_sas_output(content) {
+            Ok((_, task)) => Ok(task),
+            Err(err) => Err(format!("failed to parse numeric SAS output: {err}")),
+        }
+    }
+
     /// Parse a `NumericRootTask` from the preprocessor's text format held in
     /// memory. Equivalent to `from_file` minus the disk read; used by the
     /// in-memory translate→preprocess→search pipeline so the binary
     /// `output` file never has to materialize on disk.
     pub fn from_str(content: &str) -> Self {
-        parse_numeric_sas_output(content)
-            .unwrap() // TODO: Handle errors properly.
-            .1
+        Self::try_from_str(content).expect("failed to parse numeric SAS output")
     }
 
     /// Returns a reference to the metric configuration

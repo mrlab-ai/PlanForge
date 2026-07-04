@@ -21,6 +21,20 @@ fn astar_heuristic(input: &str) -> HeuristicSpec {
 }
 
 #[test]
+fn parses_heuristic_spec_ff_call() {
+    let h = parse_heuristic_spec("ff()").unwrap();
+    assert_eq!(h.name, "ff");
+    assert!(h.args.is_empty());
+}
+
+#[test]
+fn parses_heuristic_spec_blind_bare_identifier() {
+    let h = parse_heuristic_spec("blind").unwrap();
+    assert_eq!(h.name, "blind");
+    assert!(h.args.is_empty());
+}
+
+#[test]
 fn parses_astar_blind_with_or_without_unit_parens() {
     let h = astar_heuristic("astar(blind)");
     assert_eq!(h.name, "blind");
