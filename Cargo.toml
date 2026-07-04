@@ -25,6 +25,7 @@ members = [
     "planforge-cli-utils",
     "planforge-portfolio",
     "planforge-config-derive",
+    "tutorials/rust-goal-count",
     "tests",
 ]
 
