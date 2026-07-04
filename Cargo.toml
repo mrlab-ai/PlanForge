@@ -21,6 +21,7 @@ members = [
     "planforge-search",
     "planforge-searcher",
     "planforge",
+    "planforge-py",
     "planforge-cli-utils",
     "planforge-portfolio",
     "planforge-config-derive",
