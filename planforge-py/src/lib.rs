@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,7 +9,9 @@ use pyo3::prelude::*;
 
 use planforge_core;
 use planforge_sas::numeric::numeric_task::{NumericRootTask, Operator, TaskRef};
+use planforge_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::numeric::search::{SearchResult, SearchStatus};
+use planforge_search::numeric::successor_generator::SuccessorTree;
 
 create_exception!(planforge, PlanforgeError, PyException);
 create_exception!(planforge, TranslateError, PlanforgeError);
@@ -71,6 +74,280 @@ impl PySearchResult {
             "SearchResult(status={:?}, cost={:?}, nodes_expanded={})",
             self.status, self.cost, self.nodes_expanded
         )
+    }
+}
+
+#[pyclass(frozen)]
+#[derive(Clone)]
+struct State {
+    #[pyo3(get)]
+    values: Vec<usize>,
+    #[pyo3(get)]
+    numeric_values: Vec<f64>,
+    registry_id: usize,
+    state_id: usize,
+}
+
+#[pymethods]
+impl State {
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.values.hash(&mut h);
+        for v in &self.numeric_values {
+            v.to_bits().hash(&mut h);
+        }
+        h.finish()
+    }
+
+    fn __eq__(&self, other: &State) -> bool {
+        self.values == other.values
+            && self.numeric_values.len() == other.numeric_values.len()
+            && self
+                .numeric_values
+                .iter()
+                .zip(&other.numeric_values)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "State(values={:?}, numeric_values={:?})",
+            self.values, self.numeric_values
+        )
+    }
+}
+
+impl State {
+    fn snapshot(cstate: &ConcreteState, reg: &StateRegistry) -> State {
+        State {
+            values: cstate.get_state(reg),
+            numeric_values: cstate.get_numeric_state(reg),
+            registry_id: reg.id(),
+            state_id: cstate.get_id(),
+        }
+    }
+}
+
+#[pyclass(unsendable)]
+struct Task {
+    task: TaskRef<'static>,
+    registry: RefCell<StateRegistry<'static>>,
+    succ: SuccessorTree,
+}
+
+struct GilReleasedTask(TaskRef<'static>);
+
+// PyO3's stable `allow_threads` bound requires captured values to be `Send`,
+// even though the closure is executed synchronously on the current thread with
+// only the GIL released. Keep this private and use it only for that handoff.
+unsafe impl Send for GilReleasedTask {}
+
+impl GilReleasedTask {
+    fn solve(
+        self,
+        spec: &planforge_searcher::SearchSpec,
+        time_limit: Option<Duration>,
+        max_memory: Option<u64>,
+    ) -> std::io::Result<SearchResult> {
+        planforge_core::solve_task(self.0, spec, time_limit, max_memory)
+    }
+}
+
+#[pymethods]
+impl Task {
+    #[staticmethod]
+    fn from_sas_text(text: &str) -> PyResult<Self> {
+        let task = NumericRootTask::try_from_str(text).map_err(ParseError::new_err)?;
+        Ok(Self::build(Arc::new(task)))
+    }
+
+    #[staticmethod]
+    fn from_sas(path: PathBuf) -> PyResult<Self> {
+        let text = std::fs::read_to_string(&path).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                PyFileNotFoundError::new_err(format!("{}: {e}", path.display()))
+            }
+            _ => ParseError::new_err(format!("failed to read {}: {e}", path.display())),
+        })?;
+        Self::from_sas_text(&text)
+    }
+
+    #[staticmethod]
+    fn from_pddl(py: Python<'_>, domain: PathBuf, problem: PathBuf) -> PyResult<Self> {
+        let text = py
+            .allow_threads(|| -> Result<String, String> {
+                let raw = planforge_translator::translate_to_sas_string(
+                    &domain.to_string_lossy(),
+                    &problem.to_string_lossy(),
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(planforge_translate::preprocess::run_preprocess_to_string(
+                    &raw,
+                ))
+            })
+            .map_err(TranslateError::new_err)?;
+        Self::from_sas_text(&text)
+    }
+
+    #[getter]
+    fn num_variables(&self) -> usize {
+        self.task.variables().len()
+    }
+
+    #[getter]
+    fn num_numeric_variables(&self) -> usize {
+        self.task.numeric_variables().len()
+    }
+
+    #[getter]
+    fn num_operators(&self) -> usize {
+        self.task.get_operators().len()
+    }
+
+    #[getter]
+    fn num_goals(&self) -> usize {
+        self.task.get_num_goals()
+    }
+
+    #[getter]
+    fn metric(&self) -> bool {
+        self.task.metric().use_metric()
+    }
+
+    #[getter]
+    fn variable_names(&self) -> Vec<String> {
+        (0..self.task.variables().len())
+            .map(|i| {
+                self.task
+                    .get_variable_name(i)
+                    .expect("variable index came from task.variables()")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[getter]
+    fn registered_states(&self) -> usize {
+        self.registry.borrow().num_registered_states()
+    }
+
+    fn operators(&self, py: Python<'_>) -> Vec<Py<PyOperator>> {
+        self.task
+            .get_operators()
+            .iter()
+            .map(|op| {
+                Py::new(
+                    py,
+                    PyOperator {
+                        name: op.name().to_string(),
+                        cost: op.cost() as f64,
+                    },
+                )
+                .expect("creating a Python Operator should not fail")
+            })
+            .collect()
+    }
+
+    fn initial_state(&self) -> State {
+        let mut reg = self.registry.borrow_mut();
+        let s = reg.get_initial_state();
+        State::snapshot(&s, &reg)
+    }
+
+    fn is_goal(&self, state: &State) -> PyResult<bool> {
+        let reg = self.registry.borrow();
+        let cstate = self.lookup(state, &reg)?;
+        let mut all = true;
+        for i in 0..self.task.get_num_goals() {
+            let g = self.task.get_goal_fact(i);
+            if !g.is_hold(&cstate, &reg) {
+                all = false;
+                break;
+            }
+        }
+        Ok(all)
+    }
+
+    /// (operator, successor_state, transition_cost) for every applicable operator.
+    fn successors(
+        &self,
+        py: Python<'_>,
+        state: &State,
+    ) -> PyResult<Vec<(Py<PyOperator>, State, f64)>> {
+        let mut reg = self.registry.borrow_mut();
+        let cstate = self.lookup(state, &reg)?;
+        let mut vals = Vec::new();
+        cstate.fill_state(&reg, &mut vals);
+        let mut ids: Vec<u32> = Vec::new();
+        self.succ.get_applicable_operators(&vals, &mut ids);
+        let operators = self.task.get_operators();
+        let mut out = Vec::with_capacity(ids.len());
+        let (mut b1, mut b2) = (Vec::new(), Vec::new());
+        for op_id in ids {
+            let op = &operators[op_id as usize];
+            let (succ, cost) = reg
+                .get_successor_state_with_buffers_and_cost(&cstate, op, &mut b1, &mut b2)
+                .map_err(|e| {
+                    PlanforgeError::new_err(format!(
+                        "successor generation failed for {}: {e:?}",
+                        op.name()
+                    ))
+                })?;
+            let py_op = Py::new(
+                py,
+                PyOperator {
+                    name: op.name().to_string(),
+                    cost: op.cost() as f64,
+                },
+            )?;
+            let snap = State::snapshot(&succ, &reg);
+            out.push((py_op, snap, cost));
+        }
+        Ok(out)
+    }
+
+    /// Full search reusing this parsed task; delegates to the same pipeline as
+    /// the module-level `solve()`.
+    #[pyo3(signature = (search=None, max_time=None, max_memory=None))]
+    fn solve(
+        &self,
+        py: Python<'_>,
+        search: Option<String>,
+        max_time: Option<f64>,
+        max_memory: Option<u64>,
+    ) -> PyResult<PySearchResult> {
+        let search = search.unwrap_or_else(|| "astar(blind())".to_string());
+        let spec = planforge_searcher::parse_search_spec(&search).map_err(SpecError::new_err)?;
+        let time_limit = max_time.map(Duration::from_secs_f64);
+        let task = GilReleasedTask(self.task.clone());
+        let result = py
+            .allow_threads(move || task.solve(&spec, time_limit, max_memory))
+            .map_err(|e| PlanforgeError::new_err(e.to_string()))?;
+        Ok(search_result_to_py(py, result))
+    }
+}
+
+impl Task {
+    fn build(task: TaskRef<'static>) -> Self {
+        let registry = StateRegistry::for_task(task.clone());
+        let succ = SuccessorTree::new(&*task);
+        Task {
+            task,
+            registry: RefCell::new(registry),
+            succ,
+        }
+    }
+
+    /// Resolve a State to a ConcreteState in this task's registry, asserting the
+    /// state actually came from this task.
+    fn lookup(&self, state: &State, reg: &StateRegistry) -> PyResult<ConcreteState> {
+        if state.registry_id != reg.id() {
+            return Err(PyValueError::new_err("State does not belong to this Task"));
+        }
+        reg.lookup_state(state.state_id)
+            .map_err(|e| PlanforgeError::new_err(format!("state lookup failed: {e:?}")))
     }
 }
 
@@ -195,6 +472,8 @@ fn planforge(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(solve, m)?)?;
     m.add_class::<PySearchResult>()?;
     m.add_class::<PyOperator>()?;
+    m.add_class::<Task>()?;
+    m.add_class::<State>()?;
     let py = m.py();
     m.add("PlanforgeError", py.get_type::<PlanforgeError>())?;
     m.add("TranslateError", py.get_type::<TranslateError>())?;

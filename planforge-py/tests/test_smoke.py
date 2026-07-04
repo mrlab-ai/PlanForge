@@ -67,3 +67,42 @@ def test_missing_file_raises_filenotfound():
 
     with pytest.raises(FileNotFoundError):
         planforge.solve(sas="tests/assets/does_not_exist.sas")
+
+
+def test_task_reuse_and_exploration():
+    task = planforge.Task.from_sas("tests/assets/numeric_sas/example2.sas")
+    assert task.num_variables > 0
+    assert len(task.variable_names) == task.num_variables
+    assert len(task.operators()) == task.num_operators
+    s0 = task.initial_state()
+    assert isinstance(s0.values, list)
+    # exploration
+    succ = task.successors(s0)
+    assert isinstance(succ, list)
+    for op, s, cost in succ:
+        assert isinstance(op.name, str)
+        assert isinstance(cost, float)
+        assert isinstance(task.is_goal(s), bool)
+    # state value identity is stable
+    assert task.initial_state() == s0
+    assert hash(task.initial_state()) == hash(s0)
+    # reuse the task for a full solve (no re-parse)
+    r = task.solve("gbfs(ff())", max_time=60.0)
+    assert r.status in {"solved", "unsolvable", "timeout", "memory_limit"}
+
+
+def test_task_from_pddl():
+    task = planforge.Task.from_pddl(
+        "tests/assets/numeric-pddl-files/fn-counters-small_instances/domain.pddl",
+        "tests/assets/numeric-pddl-files/fn-counters-small_instances/problem_2.pddl")
+    assert task.num_operators > 0
+    assert task.solve("gbfs(ff())", max_time=60.0).status in {"solved","unsolvable","timeout","memory_limit"}
+
+
+def test_state_from_other_task_rejected():
+    import pytest
+    a = planforge.Task.from_sas("tests/assets/numeric_sas/example2.sas")
+    b = planforge.Task.from_sas("tests/assets/numeric_sas/example5.sas")
+    s = a.initial_state()
+    with pytest.raises(ValueError):
+        b.successors(s)
