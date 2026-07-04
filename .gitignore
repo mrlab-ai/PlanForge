@@ -33,3 +33,6 @@ proj.json
 .verify/
 codex-plan.md
 codex-implement.log
+
+# Python bindings crate: track its Python sources despite the blanket *.py ignore above
+!planforge-py/**/*.py
