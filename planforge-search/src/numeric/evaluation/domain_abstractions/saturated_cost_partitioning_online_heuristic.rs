@@ -134,7 +134,9 @@ impl crate::config::FromOptionValue for Saturator {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions)]
+#[derive(
+    Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
+)]
 pub struct ScpOnlineConfig {
     pub max_time: f64,
     pub table_construction_max_time: f64,
@@ -167,7 +169,9 @@ pub struct ScpOnlineConfig {
     pub use_abstract_operator_cost_partitioning: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions)]
+#[derive(
+    Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
+)]
 pub struct FillScpConfig {
     pub table_construction_max_time: f64,
     #[option(also_sets = "collection_config.combine_labels")]
@@ -491,52 +495,8 @@ impl<'task> FillScpHeuristic<'task> {
             let state = temp.state.borrow();
             standalone_current_h_values(&state, &abstract_state_ids, num_domain_abstractions)
         };
-        let (mut cp_heuristic, mut residual_costs, mut residual_partitions) = if config
-            .use_abstract_operator_cost_partitioning
-        {
-            let (cp, costs, partitions) = temp.build_abstract_operator_fill_scp(
-                task,
-                &abstractions,
-                &order,
-                &abstract_state_ids,
-                &standalone_current_h,
-                num_domain_abstractions,
-                &original_costs,
-                deadline,
-                config.saturator,
-            )?;
-            (cp, costs, Some(partitions))
-        } else {
-            let (cp, costs) = temp.build_label_fill_scp(
-                task,
-                &abstractions,
-                &order,
-                &abstract_state_ids,
-                num_domain_abstractions,
-                &original_costs,
-                deadline,
-            )?;
-            (cp, costs, None)
-        };
-        if config.order_optimization_max_time > 0.0 {
-            let optimization_deadline = config
-                .order_optimization_max_time
-                .is_finite()
-                .then(|| Instant::now() + Duration::from_secs_f64(config.order_optimization_max_time));
-            temp.optimize_order_with_hill_climbing(
-                task,
-                &abstractions,
-                &standalone_current_h,
-                num_domain_abstractions,
-                &original_costs,
-                &abstract_state_ids,
-                &mut order,
-                &mut cp_heuristic,
-                optimization_deadline,
-            )?;
-            (cp_heuristic, residual_costs, residual_partitions) = if config
-                .use_abstract_operator_cost_partitioning
-            {
+        let (mut cp_heuristic, mut residual_costs, mut residual_partitions) =
+            if config.use_abstract_operator_cost_partitioning {
                 let (cp, costs, partitions) = temp.build_abstract_operator_fill_scp(
                     task,
                     &abstractions,
@@ -561,14 +521,56 @@ impl<'task> FillScpHeuristic<'task> {
                 )?;
                 (cp, costs, None)
             };
+        if config.order_optimization_max_time > 0.0 {
+            let optimization_deadline = config.order_optimization_max_time.is_finite().then(|| {
+                Instant::now() + Duration::from_secs_f64(config.order_optimization_max_time)
+            });
+            temp.optimize_order_with_hill_climbing(
+                task,
+                &abstractions,
+                &standalone_current_h,
+                num_domain_abstractions,
+                &original_costs,
+                &abstract_state_ids,
+                &mut order,
+                &mut cp_heuristic,
+                optimization_deadline,
+            )?;
+            (cp_heuristic, residual_costs, residual_partitions) =
+                if config.use_abstract_operator_cost_partitioning {
+                    let (cp, costs, partitions) = temp.build_abstract_operator_fill_scp(
+                        task,
+                        &abstractions,
+                        &order,
+                        &abstract_state_ids,
+                        &standalone_current_h,
+                        num_domain_abstractions,
+                        &original_costs,
+                        deadline,
+                        config.saturator,
+                    )?;
+                    (cp, costs, Some(partitions))
+                } else {
+                    let (cp, costs) = temp.build_label_fill_scp(
+                        task,
+                        &abstractions,
+                        &order,
+                        &abstract_state_ids,
+                        num_domain_abstractions,
+                        &original_costs,
+                        deadline,
+                    )?;
+                    (cp, costs, None)
+                };
         }
-        let lmcut_heuristic = LandmarkCutNumericHeuristic::from_config_with_residual_operator_cost_partitions(
-            task,
-            config.lmcut_config,
-            residual_partitions.is_none().then_some(residual_costs),
-            residual_partitions,
-        )
-        .map_err(EvaluationError::ComputationFailed)?;
+        let lmcut_heuristic =
+            LandmarkCutNumericHeuristic::from_config_with_residual_operator_cost_partitions(
+                task,
+                config.lmcut_config,
+                residual_partitions.is_none().then_some(residual_costs),
+                residual_partitions,
+            )
+            .map_err(EvaluationError::ComputationFailed)?;
         let abstraction_heuristics = abstractions
             .into_iter()
             .enumerate()
@@ -3310,12 +3312,12 @@ mod handcrafted_sailing_tests {
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
 
-    use planforge_translate::preprocess::run_preprocess_to_output;
     use planforge_sas::numeric::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
     use planforge_sas::numeric::numeric_task::{
         AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
         NumericVariable, Operator,
     };
+    use planforge_translate::preprocess::run_preprocess_to_output;
     use planforge_translator::translate_to_sas_to_path_fast;
 
     use super::*;

@@ -20,7 +20,7 @@
 mod tests;
 
 use crate::numeric::axioms::AxiomEvaluator;
-use crate::numeric::numeric_task::{AbstractNumericTask, AssignmentOperation, Operator};
+use crate::numeric::numeric_task::{AssignmentOperation, Operator, TaskRef};
 use crate::numeric::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
 use crate::numeric::utils::float_tolerance;
 use crate::numeric::utils::per_state_info::PerStateInformation;
@@ -29,6 +29,7 @@ use crate::numeric::{numeric_task::NumericType, utils::int_packer::IntDoublePack
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Pass-through hasher for `u64` keys that are *already* hashes
@@ -106,8 +107,8 @@ impl ConcreteState {
     /// Fill `output` with the propositional state values without allocating a new vector.
     pub fn fill_state(&self, state_registry: &StateRegistry, output: &mut Vec<usize>) {
         let buffer = state_registry.get_buffer(self.pool_offset);
-        let task = state_registry.task;
-        let state_packer = state_registry.global_state_packer;
+        let task = &state_registry.task;
+        let state_packer = &state_registry.global_state_packer;
 
         output.resize(task.variables().len(), 0);
         output
@@ -135,8 +136,8 @@ impl ConcreteState {
     /// Get the numeric state values for regular variables.
     pub fn get_numeric_state(&self, state_registry: &StateRegistry) -> Vec<f64> {
         let buffer = state_registry.get_buffer(self.pool_offset);
-        let task = state_registry.task;
-        let state_packer = state_registry.global_state_packer;
+        let task = &state_registry.task;
+        let state_packer = &state_registry.global_state_packer;
 
         task.numeric_variables()
             .iter()
@@ -168,7 +169,7 @@ impl ConcreteState {
 
     /// Create a debug representation of this state with variable values.
     pub fn debug_with_registry(&self, registry: &StateRegistry) -> String {
-        let task = registry.task;
+        let task = &registry.task;
         let num_variables = task.variables().len();
         let num_regular_numeric_vars = task
             .numeric_variables()
@@ -177,7 +178,7 @@ impl ConcreteState {
             .count();
 
         let buffer = self.buffer(registry);
-        let state_packer = registry.global_state_packer;
+        let state_packer = &registry.global_state_packer;
 
         let mut result = format!("ConcreteState with {} bins\n", buffer.len());
 
@@ -297,12 +298,12 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 pub struct StateRegistry<'a> {
     /// Unique identifier for this registry instance.
     id: usize,
-    /// Reference to the root planning task.
-    task: &'a dyn AbstractNumericTask,
+    /// Shared handle to the planning task.
+    task: TaskRef<'a>,
     /// Axiom evaluator for handling derived predicates and numeric axioms.
-    axiom_evaluator: &'a AxiomEvaluator<'a>,
+    axiom_evaluator: Arc<AxiomEvaluator<'a>>,
     /// State packer for efficient bit-level state representation.
-    global_state_packer: &'a StatePacker,
+    global_state_packer: Arc<StatePacker>,
     /// Pool of state data, each entry is a packed state representation.
     state_data_pool: DataStorage,
     /// Constants for numeric variables.
@@ -347,11 +348,20 @@ pub struct StateRegistry<'a> {
 }
 
 impl<'a> StateRegistry<'a> {
+    /// Build the state packer, axiom evaluator, and registry for `task` in
+    /// one step. This is the common construction path; use [`Self::new`]
+    /// when a custom packer or axiom evaluator is needed.
+    pub fn for_task(task: TaskRef<'a>) -> Self {
+        let packer = Arc::new(StatePacker::from_abstract_task(&*task));
+        let axiom_evaluator = Arc::new(AxiomEvaluator::new(task.clone(), packer.clone()));
+        Self::new(task, packer, axiom_evaluator)
+    }
+
     /// Create a new state registry for the given planning task.
     pub fn new(
-        task: &'a dyn AbstractNumericTask,
-        global_state_packer: &'a StatePacker,
-        axiom_evaluator: &'a AxiomEvaluator<'a>,
+        task: TaskRef<'a>,
+        global_state_packer: Arc<StatePacker>,
+        axiom_evaluator: Arc<AxiomEvaluator<'a>>,
     ) -> Self {
         let numeric_vars = task.numeric_variables();
         let number_numeric_vars = numeric_vars.len();
@@ -408,11 +418,12 @@ impl<'a> StateRegistry<'a> {
         }
 
         let metric_is_min = task.metric().is_min();
+        let state_data_pool = DataStorage::new(global_state_packer.num_bins());
         Self {
             id,
             task,
             global_state_packer,
-            state_data_pool: DataStorage::new(global_state_packer.num_bins()),
+            state_data_pool,
             numeric_constants: Vec::new(),
             numeric_indices: vec![None; number_numeric_vars],
             registered_states: RegisteredStatesMap::with_capacity_and_hasher(
@@ -526,8 +537,8 @@ impl<'a> StateRegistry<'a> {
     }
 
     /// Return a reference to the global state packer.
-    pub const fn global_state_packer(&self) -> &StatePacker {
-        self.global_state_packer
+    pub fn global_state_packer(&self) -> &StatePacker {
+        &self.global_state_packer
     }
 
     fn num_state_bins(&self) -> usize {
@@ -1229,7 +1240,7 @@ impl<'a> StateRegistry<'a> {
         numeric_output.resize(self.task.numeric_variables().len(), 0.0);
 
         let buffer = state.buffer(self);
-        let state_packer = self.global_state_packer;
+        let state_packer = &self.global_state_packer;
         propositional_output
             .extend((0..self.task.variables().len()).map(|i| state_packer.get(buffer, i) as usize));
 

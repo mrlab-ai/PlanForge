@@ -21,6 +21,20 @@ fn astar_heuristic(input: &str) -> HeuristicSpec {
 }
 
 #[test]
+fn parses_heuristic_spec_ff_call() {
+    let h = parse_heuristic_spec("ff()").unwrap();
+    assert_eq!(h.name, "ff");
+    assert!(h.args.is_empty());
+}
+
+#[test]
+fn parses_heuristic_spec_blind_bare_identifier() {
+    let h = parse_heuristic_spec("blind").unwrap();
+    assert_eq!(h.name, "blind");
+    assert!(h.args.is_empty());
+}
+
+#[test]
 fn parses_astar_blind_with_or_without_unit_parens() {
     let h = astar_heuristic("astar(blind)");
     assert_eq!(h.name, "blind");
@@ -88,10 +102,9 @@ fn parses_astar_canonical_domain_abstractions_with_named_options() {
 
 #[test]
 fn parses_execute_entire_plan_flaw_kind() {
-    let spec = parse_search_spec(
-        "astar(canonical_domain_abstractions(flaw_kind=execute_entire_plan))",
-    )
-    .unwrap();
+    let spec =
+        parse_search_spec("astar(canonical_domain_abstractions(flaw_kind=execute_entire_plan))")
+            .unwrap();
     let h = match &spec {
         SearchSpec::Astar(h) => h,
         _ => panic!("expected astar(...)"),
@@ -240,7 +253,10 @@ fn parses_astar_greedy_numeric_pdb_with_named_options() {
     assert_eq!(cfg.max_pdb_states, 321);
     assert!(!cfg.numeric_first);
     assert_eq!(cfg.random_seed, 7);
-    assert_eq!(cfg.variable_order_type, GreedyVariableOrderType::CgGoalRandom);
+    assert_eq!(
+        cfg.variable_order_type,
+        GreedyVariableOrderType::CgGoalRandom
+    );
     assert_eq!(cfg.exploration_heuristic, PdbInternalHeuristic::Lmcut);
     assert_eq!(cfg.frontier_heuristic, PdbInternalHeuristic::Blind);
     assert_eq!(cfg.failed_lookup_heuristic, PdbInternalHeuristic::Lmcut);
@@ -274,7 +290,10 @@ fn positional_then_named_for_same_slot_errors() {
     let h = astar_heuristic("astar(greedy_numeric_pdb(321, max_pdb_states=999))");
     let err = ApplyOptions::apply_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
         .unwrap_err();
-    assert!(err.contains("duplicate option `max_pdb_states`"), "got `{err}`");
+    assert!(
+        err.contains("duplicate option `max_pdb_states`"),
+        "got `{err}`"
+    );
 }
 
 #[test]
@@ -546,7 +565,10 @@ fn trims_trailing_punctuation() {
         astar_heuristic("astar(canonical_numeric_pdb());").name,
         "canonical_numeric_pdb"
     );
-    assert_eq!(astar_heuristic("astar(lmcutnumeric());").name, "lmcutnumeric");
+    assert_eq!(
+        astar_heuristic("astar(lmcutnumeric());").name,
+        "lmcutnumeric"
+    );
     assert_eq!(
         astar_heuristic("astar(multi_domain_abstractions());").name,
         "multi_domain_abstractions"
@@ -556,7 +578,10 @@ fn trims_trailing_punctuation() {
         "canonical_domain_abstractions"
     );
 
-    assert_eq!(parse_search_spec("da_debug();").unwrap(), SearchSpec::DaDebug);
+    assert_eq!(
+        parse_search_spec("da_debug();").unwrap(),
+        SearchSpec::DaDebug
+    );
     assert_eq!(
         parse_search_spec("astar_da_debug();").unwrap(),
         SearchSpec::AstarDaDebug
@@ -566,7 +591,10 @@ fn trims_trailing_punctuation() {
 #[test]
 fn parses_top_level_da_debug_with_or_without_unit_parens() {
     assert_eq!(parse_search_spec("da_debug").unwrap(), SearchSpec::DaDebug);
-    assert_eq!(parse_search_spec("da_debug()").unwrap(), SearchSpec::DaDebug);
+    assert_eq!(
+        parse_search_spec("da_debug()").unwrap(),
+        SearchSpec::DaDebug
+    );
 }
 
 #[test]

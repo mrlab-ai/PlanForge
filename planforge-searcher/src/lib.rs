@@ -1,10 +1,9 @@
 use clap::Parser;
 use tracing::{error, info};
 use planforge_cli_utils::*;
-use planforge_sas::numeric::axioms::AxiomEvaluator;
-use planforge_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
+use planforge_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::numeric::state_registry::StateRegistry;
-use planforge_sas::numeric::utils::int_packer::IntDoublePacker;
+use std::sync::Arc;
 use planforge_search::numeric::evaluation::domain_abstractions::cegar::CegarConfig;
 use planforge_search::numeric::evaluation::domain_abstractions::canonical_domain_abstraction_heuristic::CanonicalDomainAbstractionHeuristic;
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
@@ -24,7 +23,7 @@ use planforge_search::numeric::evaluation::pattern_databases::pattern_generator_
 };
 use planforge_search::numeric::evaluation::pattern_databases::pdb_collection::PdbCollection;
 use planforge_search::numeric::evaluation::pattern_databases::pdb_heuristic::GreedyNumericPdbHeuristic;
-use planforge_search::numeric::search_engine::{
+use planforge_search::numeric::search::{
     AStarSearch, SearchEngine, SearchResult, SearchStatus,
 };
 use std::ffi::OsString;
@@ -40,7 +39,7 @@ use tracing_subscriber::prelude::*;
 
 pub mod recursive_config;
 
-pub use recursive_config::{HeuristicSpec, SearchSpec, parse_search_spec};
+pub use recursive_config::{HeuristicSpec, SearchSpec, parse_heuristic_spec, parse_search_spec};
 
 use planforge_search::numeric::evaluation::Heuristic;
 
@@ -61,9 +60,8 @@ pub fn build_heuristic_from_spec<'a>(
             if !spec.args.is_empty() {
                 return Err("`ff` does not accept arguments".to_string());
             }
-            let h =
-                planforge_search::numeric::evaluation::ff_heuristic::FfHeuristic::new(task)
-                    .map_err(|e| format!("failed to construct ff heuristic: {e}"))?;
+            let h = planforge_search::numeric::evaluation::ff_heuristic::FfHeuristic::new(task)
+                .map_err(|e| format!("failed to construct ff heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
         "domain_abstraction" => {
@@ -78,8 +76,10 @@ pub fn build_heuristic_from_spec<'a>(
             let abstraction = generator
                 .generate(task)
                 .map_err(|e| format!("failed to build domain abstraction: {e:#}"))?;
-            Ok(Some(Box::new(DomainAbstractionHeuristic::new(None, abstraction))
-                as Box<dyn Heuristic + 'a>))
+            Ok(Some(
+                Box::new(DomainAbstractionHeuristic::new(None, abstraction))
+                    as Box<dyn Heuristic + 'a>,
+            ))
         }
         "canonical_domain_abstractions" => {
             use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
@@ -93,10 +93,9 @@ pub fn build_heuristic_from_spec<'a>(
             let abstractions = generator
                 .generate_collection(task)
                 .map_err(|e| format!("failed to build canonical domain abstractions: {e:#}"))?;
-            let h = CanonicalDomainAbstractionHeuristic::new(None, task, abstractions)
-                .map_err(|e| {
-                    format!("failed to construct canonical domain abstraction heuristic: {e}")
-                })?;
+            let h = CanonicalDomainAbstractionHeuristic::new(None, task, abstractions).map_err(
+                |e| format!("failed to construct canonical domain abstraction heuristic: {e}"),
+            )?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
         "multi_domain_abstractions" => {
@@ -109,8 +108,10 @@ pub fn build_heuristic_from_spec<'a>(
             let abstractions = generator
                 .generate_collection(task)
                 .map_err(|e| format!("failed to build multi domain abstractions: {e:#}"))?;
-            Ok(Some(Box::new(MaxDomainAbstractionHeuristic::new(None, abstractions))
-                as Box<dyn Heuristic + 'a>))
+            Ok(Some(
+                Box::new(MaxDomainAbstractionHeuristic::new(None, abstractions))
+                    as Box<dyn Heuristic + 'a>,
+            ))
         }
         "posthoc_optimization" | "pho" => {
             use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
@@ -157,8 +158,9 @@ pub fn build_heuristic_from_spec<'a>(
             } else {
                 Vec::new()
             };
-            let h = SaturatedCostPartitioningOnlineHeuristic::new(None, abstractions, pdbs, cfg, task)
-                .map_err(|e| format!("failed to construct scp_online heuristic: {e}"))?;
+            let h =
+                SaturatedCostPartitioningOnlineHeuristic::new(None, abstractions, pdbs, cfg, task)
+                    .map_err(|e| format!("failed to construct scp_online heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
         "fillscp" | "fill_scp" => {
@@ -302,7 +304,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let sas_file = &cli.sas_file;
 
     let start_time = std::time::Instant::now();
-    let task = NumericRootTask::from_file(sas_file);
+    let task: TaskRef<'static> = Arc::new(NumericRootTask::from_file(sas_file));
     let parse_time = start_time.elapsed();
     info!("Parsed numeric SAS output in: {:?}", parse_time);
 
@@ -314,9 +316,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
         task.numeric_variables().len()
     );
 
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let state_registry = StateRegistry::for_task(task.clone());
 
     // Both A* and GBFS go through identical heuristic construction; only the
     // open-list priority differs. Project the search spec onto (heuristic,
@@ -342,15 +342,18 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     };
     let result = {
         {
-            let task_ref: &dyn AbstractNumericTask = &task;
             let heuristic_override =
-                build_heuristic_from_spec(heuristic_spec, task_ref).map_err(std::io::Error::other)?;
+                build_heuristic_from_spec(heuristic_spec, &*task).map_err(std::io::Error::other)?;
 
             let time_limit = if cli.internal_run { None } else { cli.max_time };
-            let memory_limit = if cli.internal_run { None } else { cli.max_memory };
+            let memory_limit = if cli.internal_run {
+                None
+            } else {
+                cli.max_memory
+            };
             let mut search = if gbfs_priority {
                 AStarSearch::new_gbfs(
-                    task_ref,
+                    task.clone(),
                     state_registry,
                     heuristic_override,
                     time_limit,
@@ -358,7 +361,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 )
             } else {
                 AStarSearch::new(
-                    task_ref,
+                    task.clone(),
                     state_registry,
                     heuristic_override,
                     time_limit,

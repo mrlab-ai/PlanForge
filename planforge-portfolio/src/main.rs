@@ -238,7 +238,11 @@ fn describe_duration(d: Duration) -> String {
     if secs < 60.0 {
         format!("{secs:.1}s")
     } else if secs < 3600.0 {
-        format!("{}m{:02}s", (secs / 60.0).floor() as u64, (secs as u64) % 60)
+        format!(
+            "{}m{:02}s",
+            (secs / 60.0).floor() as u64,
+            (secs as u64) % 60
+        )
     } else {
         format!(
             "{}h{:02}m",

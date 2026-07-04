@@ -1,20 +1,18 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use planforge_translate::preprocess::run_preprocess_to_output;
-use planforge_sas::numeric::axioms::AxiomEvaluator;
 use planforge_sas::numeric::numeric_task::AbstractNumericTask;
 use planforge_sas::numeric::numeric_task::NumericRootTask;
 use planforge_sas::numeric::state_registry::StateRegistry;
-use planforge_sas::numeric::utils::int_packer::IntDoublePacker;
 use planforge_search::numeric::evaluation::evaluator::EvaluationState;
 use planforge_search::numeric::evaluation::evaluator::Evaluator;
 use planforge_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planforge_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planforge_search::numeric::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
-use planforge_search::numeric::search_engine::SearchStatus;
-use planforge_search::numeric::search_engine::{AStarSearch, SearchEngine};
+use planforge_search::numeric::search::SearchStatus;
+use planforge_search::numeric::search::{AStarSearch, SearchEngine};
 use planforge_search::numeric::successor_generator::GroundedSuccessorGenerator;
+use planforge_translate::preprocess::run_preprocess_to_output;
 use planforge_translator::translate_to_sas_to_path_fast;
 
 fn unique_temp_dir(prefix: &str) -> std::io::Result<PathBuf> {
@@ -217,13 +215,11 @@ fn fd_blind_plan_cost_matches_misc_benchmarks() {
 
         let (actual_cost, actual_len): (Option<f64>, Option<u64>) = {
             let task = NumericRootTask::from_file(&preprocessed);
-            let state_packer = IntDoublePacker::from_task(&task);
-            let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-            let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+            let state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
 
             let result = {
-                let task_ref: &dyn AbstractNumericTask = &task;
-                let mut search = AStarSearch::new(task_ref, state_registry, None, None, None);
+                let mut search =
+                    AStarSearch::new(std::sync::Arc::new(&task), state_registry, None, None, None);
                 search.search()
             };
 
@@ -300,9 +296,7 @@ fn plant_watering_lmcutnumeric_initial_state_is_finite_and_bounded_by_optimum() 
 
     let (dead_end, total_cost) = {
         let task = NumericRootTask::from_file(&preprocessed);
-        let state_packer = IntDoublePacker::from_task(&task);
-        let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-        let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+        let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
         let initial_state = state_registry.get_initial_state();
 
         let mut propositional_values = Vec::new();
@@ -379,9 +373,7 @@ fn drone_pfile1_lmcutnumeric_initial_state_local_repro() {
     );
 
     let task = NumericRootTask::from_file(&preprocessed);
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = state_registry.get_initial_state();
 
     let mut propositional_values = Vec::new();
@@ -441,9 +433,7 @@ fn drone_output_lmcutnumeric_initial_state_matches_fd_regression() {
         .join("drone.output");
 
     let task = NumericRootTask::from_file(&preprocessed);
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = state_registry.get_initial_state();
 
     let mut propositional_values = Vec::new();
@@ -510,15 +500,13 @@ fn plant_watering_lmcutnumeric_full_search_solves_without_dead_ends() {
 
     let result = {
         let task = NumericRootTask::from_file(&preprocessed);
-        let state_packer = IntDoublePacker::from_task(&task);
-        let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-        let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+        let state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
         let task_ref: &dyn AbstractNumericTask = &task;
         let heuristic =
             LandmarkCutNumericHeuristic::from_config(task_ref, LmCutNumericConfig::default())
                 .expect("default lmcutnumeric config should be supported");
         let mut search = AStarSearch::new(
-            task_ref,
+            std::sync::Arc::new(&task),
             state_registry,
             Some(Box::new(heuristic)),
             None,
@@ -589,14 +577,12 @@ fn plant_watering_lmcutnumeric_remains_finite_along_blind_solution() {
 
     let blind_plan = {
         let task = NumericRootTask::from_file(&preprocessed);
-        let state_packer = IntDoublePacker::from_task(&task);
-        let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-        let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
-        let task_ref: &dyn AbstractNumericTask = &task;
-        let mut search = AStarSearch::new(task_ref, state_registry, None, None, None);
+        let state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
+        let mut search =
+            AStarSearch::new(std::sync::Arc::new(&task), state_registry, None, None, None);
         let result = search.search();
         match result {
-            planforge_search::numeric::search_engine::SearchResult {
+            planforge_search::numeric::search::SearchResult {
                 status: SearchStatus::Solved(_),
                 plan: Some(plan),
                 ..
@@ -609,9 +595,7 @@ fn plant_watering_lmcutnumeric_remains_finite_along_blind_solution() {
     };
 
     let task = NumericRootTask::from_file(&preprocessed);
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let mut state = state_registry.get_initial_state();
     let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
     let mut propositional_values = Vec::new();
@@ -666,9 +650,7 @@ fn hydropower_output_lmcutnumeric_initial_successor_trace() {
         .join("..")
         .join("test_outputs/hydropower.output");
     let task = NumericRootTask::from_file(&task_path);
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = state_registry.get_initial_state();
     let propositional_state = initial_state.get_state(&state_registry);
     let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&task);
@@ -693,7 +675,9 @@ fn hydropower_output_lmcutnumeric_initial_successor_trace() {
         applicable_operators.len()
     );
 
-    for (operator, operator_id) in applicable_operators {
+    for op_id in applicable_operators {
+        let operator_id = op_id as usize;
+        let operator = &task.get_operators()[operator_id];
         let succ_state = state_registry
             .get_successor_state(&initial_state, operator)
             .unwrap_or_else(|e| {

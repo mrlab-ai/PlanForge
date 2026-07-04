@@ -99,7 +99,8 @@ impl AbstractOperator {
         let mut hash_effect: i32 = 0;
         for (pre, eff) in pre_pairs.iter().zip(eff_pairs.iter()) {
             debug_assert_eq!(
-                pre.var(), eff.var(),
+                pre.var(),
+                eff.var(),
                 "abstract operator transition var mismatch: pre={pre:?} eff={eff:?}"
             );
 
@@ -347,15 +348,24 @@ fn build_candidate_from_transition(
     // We can therefore merge instead of sort+dedup: the merged outputs are
     // built in-order with O(n+m) work and no `Vec::sort()` cost.
     debug_assert!(
-        skeleton.pre_pairs.windows(2).all(|w| w[0].var() < w[1].var()),
+        skeleton
+            .pre_pairs
+            .windows(2)
+            .all(|w| w[0].var() < w[1].var()),
         "skeleton.pre_pairs must be strictly ascending by var"
     );
     debug_assert!(
-        skeleton.eff_pairs.windows(2).all(|w| w[0].var() < w[1].var()),
+        skeleton
+            .eff_pairs
+            .windows(2)
+            .all(|w| w[0].var() < w[1].var()),
         "skeleton.eff_pairs must be strictly ascending by var"
     );
     debug_assert!(
-        skeleton.prev_pairs.windows(2).all(|w| w[0].var() < w[1].var()),
+        skeleton
+            .prev_pairs
+            .windows(2)
+            .all(|w| w[0].var() < w[1].var()),
         "skeleton.prev_pairs must be strictly ascending by var"
     );
     debug_assert!(
@@ -373,7 +383,10 @@ fn build_candidate_from_transition(
         "TransitionInfo.target_partition_facts must be sorted by var"
     );
     debug_assert!(
-        trans.prevail_facts.windows(2).all(|w| w[0].var() <= w[1].var()),
+        trans
+            .prevail_facts
+            .windows(2)
+            .all(|w| w[0].var() <= w[1].var()),
         "TransitionInfo.prevail_facts must be sorted by var"
     );
 

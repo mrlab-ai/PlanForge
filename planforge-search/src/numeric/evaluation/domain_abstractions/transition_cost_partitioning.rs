@@ -41,7 +41,9 @@ const MAX_TOTAL_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 50_000;
 /// The default `max_stealable_width = f64::INFINITY` reproduces the legacy
 /// finite-vs-infinite behavior: every finite preimage passes, every infinite
 /// preimage fails.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions)]
+#[derive(
+    Debug, Clone, Copy, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
+)]
 pub struct FiniteSupportConfig {
     pub max_stealable_width: f64,
 }
@@ -582,7 +584,10 @@ impl TransitionResidualCosts {
                         max_guard_conditions_per_variant,
                     ) {
                         return LmCutResidualOperatorCostPartition {
-                            fallback_cost: uniform_costs.get(op_id).copied().unwrap_or(fallback_cost),
+                            fallback_cost: uniform_costs
+                                .get(op_id)
+                                .copied()
+                                .unwrap_or(fallback_cost),
                             variants: Vec::new(),
                         };
                     }
@@ -1646,7 +1651,10 @@ fn singleton_value_for_feature(region: &TransitionRegion, feature: RegionFeature
     (values.len() == 1).then_some(values[0] as usize)
 }
 
-fn query_values_for_feature(region: &TransitionRegion, feature: RegionFeature) -> Option<&[PropValueId]> {
+fn query_values_for_feature(
+    region: &TransitionRegion,
+    feature: RegionFeature,
+) -> Option<&[PropValueId]> {
     match feature {
         RegionFeature::SourceProp(var_id) => region.source.propositions.get(var_id),
         RegionFeature::TargetProp(var_id) => region.target.propositions.get(var_id),

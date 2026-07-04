@@ -100,8 +100,7 @@ impl PostHocOptimizationHeuristic {
             .map(|op| metric_operator_cost_from_initial_values(task, op))
             .collect();
 
-        let constraints =
-            build_constraints(&relevant_operators, &original_costs, heuristics.len());
+        let constraints = build_constraints(&relevant_operators, &original_costs, heuristics.len());
 
         info!(
             "posthoc_optimization: abstractions={}, lp_constraints={} (HiGHS)",
@@ -138,21 +137,13 @@ impl PostHocOptimizationHeuristic {
         cache[state_id] = Some(value);
     }
 
-    fn evaluate_lp(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
+    fn evaluate_lp(&self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
         if self.heuristics.is_empty() {
             return Ok(0.0);
         }
 
         let mut scratch = self.lookup_scratch.borrow_mut();
-        compute_collection_abstract_state_ids(
-            &self.heuristics,
-            eval_state,
-            None,
-            &mut scratch,
-        )?;
+        compute_collection_abstract_state_ids(&self.heuristics, eval_state, None, &mut scratch)?;
 
         let mut h_values = vec![0.0_f64; self.heuristics.len()];
         for (abstraction_id, state_id) in scratch.abstract_state_ids.iter().enumerate() {

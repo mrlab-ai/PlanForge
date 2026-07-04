@@ -62,9 +62,7 @@ pub fn reserve_memory_padding(cli_max_memory_bytes: Option<u64>) {
     let limit_mb: u64 = env_limit_mb
         .or(cli_limit_mb)
         .unwrap_or(padding_mb as u64 * 16);
-    LIMIT_BYTES
-        .set(limit_mb.saturating_mul(1024 * 1024))
-        .ok();
+    LIMIT_BYTES.set(limit_mb.saturating_mul(1024 * 1024)).ok();
     let cell = padding_cell();
     let mut guard = cell.lock().unwrap_or_else(|p| p.into_inner());
     if guard.is_some() {
@@ -82,9 +80,7 @@ pub fn reserve_memory_padding(cli_max_memory_bytes: Option<u64>) {
 /// polls this; a `false` reading means we should stop adding abstractions.
 pub fn padding_is_reserved() -> bool {
     let cell = padding_cell();
-    cell.lock()
-        .map(|g| g.is_some())
-        .unwrap_or(false)
+    cell.lock().map(|g| g.is_some()).unwrap_or(false)
 }
 
 /// Releases the padding. After this call, `padding_is_reserved()` returns

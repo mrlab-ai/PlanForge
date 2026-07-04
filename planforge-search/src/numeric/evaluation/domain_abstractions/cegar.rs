@@ -486,8 +486,8 @@ fn wildcard_plan_is_real(
     // exponential in the number of equivalent concrete operators per step. On
     // sailing it cost several seconds per CEGAR iteration once plans became
     // long, so the CEGAR loop intentionally does not call this hot-path check.
-    let state_packer = make_prop_state_packer(task);
-    let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
+    let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
+    let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
 
     let plan_length = wildcard_plan.wildcard_plan.len();
     let (mut prop_state, mut numeric_state) =

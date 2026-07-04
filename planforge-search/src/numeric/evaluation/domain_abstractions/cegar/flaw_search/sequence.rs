@@ -98,8 +98,8 @@ fn get_sequence_progression_flaws(
     let comparison_index = ComparisonAxiomIndex::from_task(task)
         .map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
 
-    let state_packer = make_prop_state_packer(task);
-    let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
+    let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
+    let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
 
     let mut state =
         get_initial_flaw_search_state(task, &state_packer, &axiom_evaluator, domain_mapping)?;
@@ -209,8 +209,8 @@ fn get_sequence_regression_flaws(
     wildcard_plan: &WildcardPlanResult,
     collected_flaws: &mut Vec<Flaw>,
 ) -> Result<()> {
-    let state_packer = make_prop_state_packer(task);
-    let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
+    let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
+    let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
     let comparison_index = ComparisonAxiomIndex::from_task(task)
         .map_err(|e| anyhow::anyhow!("failed to build comparison axiom index: {e}"))?;
 

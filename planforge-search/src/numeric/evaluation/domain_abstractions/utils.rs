@@ -591,8 +591,8 @@ fn debug_print_concrete_trace(
     partitions: &NumericPartitions,
     shown_steps: usize,
 ) {
-    let state_packer = make_prop_state_packer(task);
-    let axiom_evaluator = AxiomEvaluator::new(task, &state_packer);
+    let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
+    let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
 
     let mut buffer = vec![0u64; state_packer.num_bins() as usize];
     set_initial_prop_values(task, &state_packer, &mut buffer);

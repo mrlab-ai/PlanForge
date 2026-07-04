@@ -1,0 +1,19 @@
+# Environment for building `highs-sys`, whose build script runs `bindgen` and
+# needs libclang plus the C standard headers. On this NixOS checkout these are
+# not on the default search path, so `cargo build` fails with
+# "Unable to find libclang" / "'inttypes.h' file not found" unless the vars
+# below are set. Pinning them here makes `cargo build` work in any shell
+# (plain terminal, direnv/devenv, CI, or an agent sandbox) without manual
+# exports.
+#
+# Paths are content-addressed nix store paths pinned by devenv.lock; regenerate
+# them if the nixpkgs pin changes the clang/glibc versions:
+#   LIBCLANG_PATH:            dirname of libclang.so  (clang-*-lib/lib)
+#   clang resource include:   clang-*-lib/lib/clang/<major>/include
+#   glibc dev include:        glibc-*-dev/include
+#
+# Cargo does not override an env var that is already set, so a working
+# LIBCLANG_PATH in your shell still wins.
+[env]
+LIBCLANG_PATH = "/nix/store/hal3i0mcgsrkpharzpdjz6m10hxnxnvr-clang-21.1.8-lib/lib"
+BINDGEN_EXTRA_CLANG_ARGS = "-isystem /nix/store/15h9askp4k1lx44d9871wid23j2a8ijp-glibc-2.42-61-dev/include -isystem /nix/store/hal3i0mcgsrkpharzpdjz6m10hxnxnvr-clang-21.1.8-lib/lib/clang/21/include"

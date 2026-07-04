@@ -524,9 +524,8 @@ impl CompOp {
         // open/closed combinations, no x in A is < any y in B. The earlier
         // `amin_c && bmax_c` clause was too strict and made e.g.
         // `(0, +inf) < (-inf, 0)` evaluate to `None` where C++ returns `Some(false)`.
-        let min_ge_max = |amin: f64, _amin_c: bool, bmax: f64, _bmax_c: bool| -> bool {
-            amin >= bmax
-        };
+        let min_ge_max =
+            |amin: f64, _amin_c: bool, bmax: f64, _bmax_c: bool| -> bool { amin >= bmax };
         let min_gt_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
             (amin > bmax) || (amin == bmax && (!amin_c || !bmax_c))
         };

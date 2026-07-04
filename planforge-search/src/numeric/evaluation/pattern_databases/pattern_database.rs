@@ -7,20 +7,20 @@ use std::collections::BinaryHeap;
 use std::fmt;
 
 use ordered_float::NotNan;
-use planforge_sas::numeric::axioms::AxiomEvaluator;
 use planforge_sas::numeric::numeric_task::AbstractNumericTask;
 use planforge_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::numeric::utils::float_tolerance;
 use planforge_sas::numeric::utils::int_packer::IntDoublePacker;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tracing::info;
 
 type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 
 use crate::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use crate::numeric::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
-use crate::numeric::successor_generator::{ApplicableOperator, GroundedSuccessorGenerator};
+use crate::numeric::successor_generator::GroundedSuccessorGenerator;
 
 use super::projected_task::{PatternLookupProjection, ProjectedTask};
 //use super::utils;
@@ -1555,11 +1555,8 @@ impl<'task> PatternDatabase<'task> {
             let mut predecessors: Vec<Vec<(usize, usize)>> = Vec::with_capacity(max_states);
             let successor_generator =
                 GroundedSuccessorGenerator::construct_node_from_task(&self.task);
-            let state_packer = IntDoublePacker::from_abstract_task(&self.task);
-            let axiom_evaluator = AxiomEvaluator::new(&self.task, &state_packer);
-            let mut state_registry =
-                StateRegistry::new(&self.task, &state_packer, &axiom_evaluator);
-            let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
+            let mut state_registry = StateRegistry::for_task(Arc::new(&self.task));
+            let mut applicable_operators: Vec<u32> = Vec::new();
             let initial_registry_state = state_registry.get_initial_state();
             let mut current_propositional: Vec<usize> = Vec::new();
             let mut successor_numeric: Vec<f64> = Vec::new();
@@ -1656,7 +1653,10 @@ impl<'task> PatternDatabase<'task> {
                 successor_generator
                     .get_applicable_operators(&current_propositional, &mut applicable_operators);
 
-                for (operator, operator_id) in applicable_operators.iter().copied() {
+                let operators = self.task.get_operators();
+                for &op_id in applicable_operators.iter() {
+                    let operator_id = op_id as usize;
+                    let operator = &operators[operator_id];
                     let operator_cost = self.task.abstract_operator_cost(operator_id);
                     let successor_state = state_registry
                         .get_successor_state_with_buffers(

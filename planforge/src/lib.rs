@@ -3,33 +3,36 @@ mod tests;
 
 use clap::Parser;
 use ordered_float::NotNan;
-use time::format_description::well_known::iso8601::{Config, TimePrecision};
-use tracing::{debug, info};
 use planforge_cli_utils::*;
-use planforge_sas::numeric::axioms::AxiomEvaluator;
-use planforge_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType, Operator};
+use planforge_sas::numeric::numeric_task::{
+    AbstractNumericTask, NumericRootTask, NumericType, Operator, TaskRef,
+};
 use planforge_sas::numeric::state_registry::{ConcreteState, StateRegistry};
-use planforge_sas::numeric::utils::int_packer::IntDoublePacker;
-use planforge_search::numeric::evaluation::g_evaluator::{GEvaluator, SumEvaluator};
 use planforge_search::numeric::evaluation::domain_abstractions::cegar::{Cegar, CegarConfig};
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, compute_hash_multipliers,
 };
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planforge_search::numeric::evaluation::evaluator::EvaluationState;
+use planforge_search::numeric::evaluation::g_evaluator::{GEvaluator, SumEvaluator};
 use planforge_search::numeric::evaluation::{EvaluationResult, Evaluator};
 use planforge_search::numeric::open_lists::{OpenList, SearchNode, TieBreakingOpenList};
-use planforge_search::numeric::search_engine::{compute_effective_operator_costs, SearchResult, SearchStatus};
-use planforge_search::numeric::search_engine::{AStarSearch, SearchEngine};
-use planforge_search::numeric::successor_generator::{ApplicableOperator, SuccessorTree};
+use planforge_search::numeric::search::{AStarSearch, SearchEngine};
+use planforge_search::numeric::search::{
+    SearchResult, SearchStatus, compute_effective_operator_costs,
+};
+use planforge_search::numeric::successor_generator::SuccessorTree;
 use planforge_searcher::*;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::num::NonZero;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
-use tracing_subscriber::fmt::{time::UtcTime};
+use time::format_description::well_known::iso8601::{Config, TimePrecision};
+use tracing::{debug, info};
+use tracing_subscriber::fmt::time::UtcTime;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -130,6 +133,103 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     std::process::exit(exit_code)
 }
 
+/// Run search for an already-parsed task and return the result. Contains no
+/// CLI, signal-handler, logging-setup, or file-writing side effects -- those
+/// stay in `run_internal`. Handles the astar / gbfs / astar_fs specs; the
+/// debug-only specs are handled directly in `run_internal`.
+pub fn solve_task(
+    task: TaskRef<'_>,
+    spec: &planforge_searcher::SearchSpec,
+    time_limit: Option<Duration>,
+    memory_limit: Option<u64>,
+) -> std::io::Result<SearchResult> {
+    let state_registry = StateRegistry::for_task(task.clone());
+    match spec {
+        planforge_searcher::SearchSpec::Astar(heuristic)
+        | planforge_searcher::SearchSpec::Gbfs(heuristic) => {
+            // GBFS and A* share heuristic construction; only the open-list
+            // priority differs (h vs g+h).
+            let gbfs_priority = matches!(spec, planforge_searcher::SearchSpec::Gbfs(_));
+            let heuristic_override = build_heuristic_from_spec(heuristic, &*task)?;
+            let mut search = if gbfs_priority {
+                AStarSearch::new_gbfs(
+                    task.clone(),
+                    state_registry,
+                    heuristic_override,
+                    time_limit,
+                    memory_limit,
+                )
+            } else {
+                AStarSearch::new(
+                    task.clone(),
+                    state_registry,
+                    heuristic_override,
+                    time_limit,
+                    memory_limit,
+                )
+            };
+
+            info!(
+                "Starting {} search with {:?}...",
+                if gbfs_priority { "GBFS" } else { "A*" },
+                heuristic,
+            );
+            Ok(search.search())
+        }
+        planforge_searcher::SearchSpec::AstarFs(fast_spec, slow_spec) => {
+            // A* with two admissible heuristics: a fast one for ordering
+            // and a slow one evaluated lazily on second-pop. Treats the
+            // user's `blind` choice as a placeholder by materializing a
+            // real `BlindHeuristic` with the task's min-action-cost.
+            let task_ref: &dyn AbstractNumericTask = &*task;
+            let original_costs: Vec<f64> = task
+                .get_operators()
+                .iter()
+                .map(|op| {
+                    planforge_sas::numeric::numeric_task::metric_operator_cost_from_initial_values(
+                        task_ref, op,
+                    )
+                })
+                .collect();
+            let min_cost = original_costs
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, |a, b| a.min(b));
+            let min_action_cost = if min_cost.is_finite() {
+                min_cost.max(0.0)
+            } else {
+                1.0
+            };
+            let make_blind = || {
+                Box::new(
+                    planforge_search::numeric::evaluation::heuristic::BlindHeuristic::with_min_action_cost(
+                        min_action_cost,
+                        None,
+                    ),
+                )
+                    as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>
+            };
+            let fast_h = build_heuristic_from_spec(fast_spec, task_ref)?.unwrap_or_else(make_blind);
+            let slow_h = build_heuristic_from_spec(slow_spec, task_ref)?.unwrap_or_else(make_blind);
+            let mut search = AStarSearch::new_fast_slow(
+                task.clone(),
+                state_registry,
+                fast_h,
+                slow_h,
+                time_limit,
+                memory_limit,
+            );
+            info!("Starting A* fast/slow search with fast={fast_spec:?} slow={slow_spec:?}...");
+            Ok(search.search())
+        }
+        planforge_searcher::SearchSpec::DaDebug | planforge_searcher::SearchSpec::AstarDaDebug => {
+            Err(std::io::Error::other(
+                "solve_task does not handle debug search specs",
+            ))
+        }
+    }
+}
+
 #[allow(clippy::field_reassign_with_default)]
 pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     register_event_handlers();
@@ -150,6 +250,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         let path = cli.inputs[0].clone();
         (NumericRootTask::from_file(&path), path)
     };
+    let task: TaskRef<'static> = Arc::new(task);
     let parse_time = start_time.elapsed();
     info!("Parsed numeric SAS output in: {:?}", parse_time);
 
@@ -161,106 +262,26 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         task.numeric_variables().len()
     );
 
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
-
+    let time_limit = if cli.internal_run { None } else { cli.max_time };
+    let memory_limit = if cli.internal_run {
+        None
+    } else {
+        cli.max_memory
+    };
     let result = match &cli.search {
-        planforge_searcher::SearchSpec::Astar(heuristic)
-        | planforge_searcher::SearchSpec::Gbfs(heuristic) => {
-            // GBFS and A* share heuristic construction; only the open-list
-            // priority differs (h vs g+h).
-            let gbfs_priority = matches!(
-                &cli.search,
-                planforge_searcher::SearchSpec::Gbfs(_)
-            );
-            let task_ref: &dyn AbstractNumericTask = &task;
-            let heuristic_override = build_heuristic_from_spec(heuristic, task_ref)?;
-            let time_limit = if cli.internal_run { None } else { cli.max_time };
-            let memory_limit = if cli.internal_run { None } else { cli.max_memory };
-            let mut search = if gbfs_priority {
-                AStarSearch::new_gbfs(
-                    task_ref,
-                    state_registry,
-                    heuristic_override,
-                    time_limit,
-                    memory_limit,
-                )
-            } else {
-                AStarSearch::new(
-                    task_ref,
-                    state_registry,
-                    heuristic_override,
-                    time_limit,
-                    memory_limit,
-                )
-            };
-
-            info!(
-                "Starting {} search with {:?}...",
-                if gbfs_priority { "GBFS" } else { "A*" },
-                heuristic,
-            );
-            search.search()
+        planforge_searcher::SearchSpec::Astar(_)
+        | planforge_searcher::SearchSpec::Gbfs(_)
+        | planforge_searcher::SearchSpec::AstarFs(_, _) => {
+            solve_task(task.clone(), &cli.search, time_limit, memory_limit)?
         }
-        planforge_searcher::SearchSpec::AstarFs(fast_spec, slow_spec) => {
-            // A* with two admissible heuristics: a fast one for ordering
-            // and a slow one evaluated lazily on second-pop. Treats the
-            // user's `blind` choice as a placeholder by materializing a
-            // real `BlindHeuristic` with the task's min-action-cost.
-            let task_ref: &dyn AbstractNumericTask = &task;
-            let original_costs: Vec<f64> = task
-                .get_operators()
-                .iter()
-                .map(|op| {
-                    planforge_sas::numeric::numeric_task::metric_operator_cost_from_initial_values(
-                        task_ref, op,
-                    )
-                })
-                .collect();
-            let min_cost = original_costs
-                .iter()
-                .copied()
-                .fold(f64::INFINITY, |a, b| a.min(b));
-            let min_action_cost = if min_cost.is_finite() {
-                min_cost.max(0.0)
-            } else {
-                1.0
-            };
-            let make_blind = || {
-                Box::new(planforge_search::numeric::evaluation::heuristic::BlindHeuristic::with_min_action_cost(
-                    min_action_cost,
-                    None,
-                )) as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>
-            };
-            let fast_h = build_heuristic_from_spec(fast_spec, task_ref)?
-                .unwrap_or_else(make_blind);
-            let slow_h = build_heuristic_from_spec(slow_spec, task_ref)?
-                .unwrap_or_else(make_blind);
-            let time_limit = if cli.internal_run { None } else { cli.max_time };
-            let memory_limit = if cli.internal_run { None } else { cli.max_memory };
-            let mut search = AStarSearch::new_fast_slow(
-                task_ref,
-                state_registry,
-                fast_h,
-                slow_h,
-                time_limit,
-                memory_limit,
-            );
-            info!(
-                "Starting A* fast/slow search with fast={fast_spec:?} slow={slow_spec:?}..."
-            );
-            search.search()
-        }
-        // The original Astar/Gbfs branch is replaced; keep DaDebug paths.
         planforge_searcher::SearchSpec::DaDebug => run_da_debug(
-            &task,
-            state_registry,
+            &*task,
+            StateRegistry::for_task(task.clone()),
             if cli.internal_run { None } else { cli.max_time },
         )?,
         planforge_searcher::SearchSpec::AstarDaDebug => run_astar_da_debug(
-            &task,
-            state_registry,
+            &*task,
+            StateRegistry::for_task(task.clone()),
             if cli.internal_run { None } else { cli.max_time },
         )?,
     };
@@ -277,7 +298,7 @@ fn build_heuristic_from_spec<'a>(
     planforge_searcher::build_heuristic_from_spec(spec, task_ref).map_err(std::io::Error::other)
 }
 
-fn build_successor_generator<'a>(task: &'a dyn AbstractNumericTask) -> SuccessorTree<'a> {
+fn build_successor_generator(task: &dyn AbstractNumericTask) -> SuccessorTree {
     SuccessorTree::new(task)
 }
 
@@ -423,7 +444,7 @@ fn blind_remaining_distance(
     let mut open: BinaryHeap<OpenListElements> = BinaryHeap::new();
     let successor_generator = build_successor_generator(task);
     let mut state_values_buffer: Vec<usize> = Vec::new();
-    let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
+    let mut applicable_operators: Vec<u32> = Vec::new();
     let mut successor_numeric_values: Vec<f64> = Vec::new();
     let mut successor_cost_values: Vec<f64> = Vec::new();
 
@@ -457,7 +478,9 @@ fn blind_remaining_distance(
         successor_generator
             .get_applicable_operators(&state_values_buffer, &mut applicable_operators);
 
-        for (operator, operator_id) in applicable_operators.iter().copied() {
+        for &op_id in applicable_operators.iter() {
+            let operator_id = op_id as usize;
+            let operator = &task.get_operators()[operator_id];
             let successor = state_registry
                 .get_successor_state_with_buffers(
                     &state,
@@ -634,7 +657,7 @@ fn exact_remaining_plan(
     let mut open: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
     let successor_generator = build_successor_generator(task);
     let mut state_values_buffer: Vec<usize> = Vec::new();
-    let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
+    let mut applicable_operators: Vec<u32> = Vec::new();
     let mut successor_numeric_values: Vec<f64> = Vec::new();
     let mut successor_cost_values: Vec<f64> = Vec::new();
 
@@ -669,7 +692,9 @@ fn exact_remaining_plan(
         successor_generator
             .get_applicable_operators(&state_values_buffer, &mut applicable_operators);
 
-        for (operator, operator_id) in applicable_operators.iter().copied() {
+        for &op_id in applicable_operators.iter() {
+            let operator_id = op_id as usize;
+            let operator = &task.get_operators()[operator_id];
             let successor = state_registry
                 .get_successor_state_with_buffers(
                     &state,
@@ -766,7 +791,7 @@ fn exact_remaining_distance(
     let mut open: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
     let successor_generator = build_successor_generator(task);
     let mut state_values_buffer: Vec<usize> = Vec::new();
-    let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
+    let mut applicable_operators: Vec<u32> = Vec::new();
     let mut successor_numeric_values: Vec<f64> = Vec::new();
     let mut successor_cost_values: Vec<f64> = Vec::new();
 
@@ -794,7 +819,9 @@ fn exact_remaining_distance(
         successor_generator
             .get_applicable_operators(&state_values_buffer, &mut applicable_operators);
 
-        for (operator, operator_id) in applicable_operators.iter().copied() {
+        for &op_id in applicable_operators.iter() {
+            let operator_id = op_id as usize;
+            let operator = &task.get_operators()[operator_id];
             let successor = state_registry
                 .get_successor_state_with_buffers(
                     &state,
@@ -894,7 +921,7 @@ fn run_da_debug(
     }
 
     let mut state_values_buffer: Vec<usize> = Vec::new();
-    let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
+    let mut applicable_operators: Vec<u32> = Vec::new();
 
     for (step_idx, candidate_ids) in wildcard_plan.wildcard_plan.iter().enumerate() {
         let successor_generator = build_successor_generator(task);
@@ -907,15 +934,16 @@ fn run_da_debug(
             applicable_operators
                 .iter()
                 .copied()
-                .find(|(_, applicable_id)| applicable_id == candidate_id)
+                .find(|&applicable_id| applicable_id as usize == *candidate_id)
         });
-        let (operator, operator_id) = chosen.ok_or_else(|| {
+        let operator_id = chosen.ok_or_else(|| {
             std::io::Error::other(format!(
                 "no applicable concrete operator found for wildcard step {} candidates {:?}",
                 step_idx + 1,
                 candidate_ids
             ))
-        })?;
+        })? as usize;
+        let operator = &task.get_operators()[operator_id];
 
         let successor = state_registry
             .get_successor_state(&current_state, operator)
@@ -1031,7 +1059,7 @@ fn run_astar_da_debug(
     let mut first_expanded_witness: Option<AdmissibilityWitness> = None;
 
     let mut state_values_buffer: Vec<usize> = Vec::new();
-    let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
+    let mut applicable_operators: Vec<u32> = Vec::new();
     let mut successor_numeric_values: Vec<f64> = Vec::new();
     let mut successor_cost_values: Vec<f64> = Vec::new();
 
@@ -1171,7 +1199,9 @@ fn run_astar_da_debug(
         successor_generator
             .get_applicable_operators(&state_values_buffer, &mut applicable_operators);
 
-        for (operator, operator_id) in applicable_operators.iter().copied() {
+        for &op_id in applicable_operators.iter() {
+            let operator_id = op_id as usize;
+            let operator = &task.get_operators()[operator_id];
             let succ_state = match state_registry.get_successor_state_with_buffers(
                 &node.state,
                 operator,

@@ -379,8 +379,14 @@ fn derived_numeric_partitions_are_not_materialized_in_transitions() {
                 .contains(&ExplicitFact::new(0, 1))
     }));
     assert!(transitions.iter().all(|trans| {
-        trans.source_partition_facts.iter().all(|fact| fact.var() < 3)
-            && trans.target_partition_facts.iter().all(|fact| fact.var() < 3)
+        trans
+            .source_partition_facts
+            .iter()
+            .all(|fact| fact.var() < 3)
+            && trans
+                .target_partition_facts
+                .iter()
+                .all(|fact| fact.var() < 3)
             && !trans.changed_numeric_vars.contains(&3)
             && !trans.changed_numeric_vars.contains(&4)
     }));

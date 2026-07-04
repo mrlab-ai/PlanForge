@@ -1,13 +1,12 @@
 use super::*;
-use planforge_sas::numeric::axioms::AxiomEvaluator;
 use planforge_sas::numeric::{
     numeric_task::{
         AbstractNumericTask, Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
         NumericType, NumericVariable, Operator,
     },
     state_registry::StateRegistry,
-    utils::int_packer::IntDoublePacker,
 };
+use std::sync::Arc;
 
 fn get_root_task() -> NumericRootTask {
     let version = 4;
@@ -83,14 +82,9 @@ fn test_grounded_successor_generator() {
 
     let mut generator = GroundedSuccessorGenerator::new(&task);
 
-    let mut queue = VecDeque::new();
-    for (op_id, operator) in task.get_operators().iter().enumerate() {
-        queue.push_back((operator, op_id));
-    }
+    let mut queue: VecDeque<u32> = (0..task.get_operators().len() as u32).collect();
 
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(Arc::new(&task));
 
     let state = state_registry.get_initial_state();
     let state_values = state.get_state(&state_registry);
@@ -99,26 +93,17 @@ fn test_grounded_successor_generator() {
     let root = generator.construct(&mut 0, &mut queue).unwrap();
     let tree = generator.into_tree(root);
 
-    let mut applicable_operators: Vec<ApplicableOperator<'_>> = Vec::new();
+    let mut applicable_operators: Vec<u32> = Vec::new();
     tree.get_applicable_operators(&state_values[..], &mut applicable_operators);
 
-    let applicable = Operator::new(
-        String::from("drop"),
-        vec![ExplicitFact::new(1, 1)],
-        vec![Effect::new(vec![], 1, Some(1), 5)],
-        vec![],
-        1,
-    );
-    assert_eq!(applicable_operators[0], (&applicable, 0));
-    assert_eq!(applicable_operators.len(), 1);
+    // Only operator id 0 ("drop") is applicable in the initial state.
+    assert_eq!(applicable_operators, vec![0]);
 }
 
 #[test]
 fn test_generate_immediate_successor_of_init_state() {
     let task = get_root_task();
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(Arc::new(&task));
     let initial_state = state_registry.get_initial_state();
 
     let state = initial_state.get_state(&state_registry);
@@ -127,7 +112,7 @@ fn test_generate_immediate_successor_of_init_state() {
     let mut applicable_operators = Vec::new();
     suc_gen.get_applicable_operators(&state, &mut applicable_operators);
 
-    let (op, _) = applicable_operators.into_iter().next().unwrap();
+    let op = &task.get_operators()[applicable_operators[0] as usize];
 
     let successor = state_registry
         .get_successor_state(&initial_state, op)
@@ -139,9 +124,7 @@ fn test_generate_immediate_successor_of_init_state() {
 #[test]
 fn test_per_state_info_subscription() {
     let task = get_root_task();
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let state_registry = StateRegistry::for_task(Arc::new(&task));
 
     // Create a PerStateInformation instance
     let mut custom_per_state_info =
@@ -169,11 +152,9 @@ fn test_per_state_info_subscription() {
 #[test]
 fn test_automatic_cleanup_on_drop() {
     let task = get_root_task();
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
 
     let _registry_id = {
-        let state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+        let state_registry = StateRegistry::for_task(Arc::new(&task));
         let id = state_registry.id();
 
         // Verify the cost_info is automatically subscribed
@@ -186,9 +167,7 @@ fn test_automatic_cleanup_on_drop() {
 #[test]
 fn test_duplicate_successor_should_not_generate_new_id() {
     let task = get_root_task();
-    let state_packer = IntDoublePacker::from_task(&task);
-    let axiom_evaluator = AxiomEvaluator::new(&task, &state_packer);
-    let mut state_registry = StateRegistry::new(&task, &state_packer, &axiom_evaluator);
+    let mut state_registry = StateRegistry::for_task(Arc::new(&task));
     let initial_state = state_registry.get_initial_state();
 
     let state = initial_state.get_state(&state_registry);
@@ -198,7 +177,7 @@ fn test_duplicate_successor_should_not_generate_new_id() {
     suc_gen.get_applicable_operators(&state, &mut applicable_operators);
 
     // Get the first applicable operator
-    let (op, _) = applicable_operators.first().unwrap();
+    let op = &task.get_operators()[applicable_operators[0] as usize];
 
     assert_eq!(op.name(), "drop");
     assert_eq!(initial_state.get_id(), 0);

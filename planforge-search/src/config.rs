@@ -177,17 +177,23 @@ impl FromOptionValue for bool {
 
 impl FromOptionValue for usize {
     fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
-        atom(value)?
-            .parse::<usize>()
-            .map_err(|_| format!("expected non-negative integer, got `{}`", atom(value).unwrap()))
+        atom(value)?.parse::<usize>().map_err(|_| {
+            format!(
+                "expected non-negative integer, got `{}`",
+                atom(value).unwrap()
+            )
+        })
     }
 }
 
 impl FromOptionValue for u64 {
     fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
-        atom(value)?
-            .parse::<u64>()
-            .map_err(|_| format!("expected non-negative integer, got `{}`", atom(value).unwrap()))
+        atom(value)?.parse::<u64>().map_err(|_| {
+            format!(
+                "expected non-negative integer, got `{}`",
+                atom(value).unwrap()
+            )
+        })
     }
 }
 
