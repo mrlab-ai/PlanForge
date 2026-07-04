@@ -106,3 +106,28 @@ def test_state_from_other_task_rejected():
     s = a.initial_state()
     with pytest.raises(ValueError):
         b.successors(s)
+
+
+def test_search_with_python_heuristic():
+    task = planforge.Task.from_pddl(
+        "tests/assets/numeric-pddl-files/fn-counters-small_instances/domain.pddl",
+        "tests/assets/numeric-pddl-files/fn-counters-small_instances/problem_2.pddl")
+    goals = task.goals
+
+    def goal_count(state):
+        return float(sum(1 for (v, val) in goals if state.values[v] != val))
+
+    r = task.search_with_heuristic(goal_count, max_time=60.0)
+    assert r.status in {"solved", "unsolvable", "timeout", "memory_limit"}
+
+
+def test_python_heuristic_error_propagates():
+    import pytest
+
+    task = planforge.Task.from_sas("tests/assets/numeric_sas/example2.sas")
+
+    def bad(state):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        task.search_with_heuristic(bad, max_time=10.0)

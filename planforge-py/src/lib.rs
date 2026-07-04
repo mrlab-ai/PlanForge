@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,7 +11,8 @@ use pyo3::prelude::*;
 use planforge_core;
 use planforge_sas::numeric::numeric_task::{NumericRootTask, Operator, TaskRef};
 use planforge_sas::numeric::state_registry::{ConcreteState, StateRegistry};
-use planforge_search::numeric::search::{SearchResult, SearchStatus};
+use planforge_search::numeric::evaluation::{EvaluationError, EvaluationState, Heuristic};
+use planforge_search::numeric::search::{AStarSearch, SearchEngine, SearchResult, SearchStatus};
 use planforge_search::numeric::successor_generator::SuccessorTree;
 
 create_exception!(planforge, PlanforgeError, PyException);
@@ -130,6 +132,47 @@ impl State {
     }
 }
 
+struct PyHeuristic {
+    callable: Py<PyAny>,
+    /// First error raised by the Python callable, re-raised after search.
+    error: Rc<RefCell<Option<PyErr>>>,
+    name: String,
+}
+
+impl Heuristic for PyHeuristic {
+    fn compute_heuristic(
+        &self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
+        // If a previous call already failed, stop doing work.
+        if self.error.borrow().is_some() {
+            return Ok(0.0);
+        }
+        let registry = eval_state
+            .state_registry()
+            .expect("python heuristic needs the state registry");
+        let snapshot = State::snapshot(eval_state.state(), registry);
+        let value = Python::with_gil(|py| -> PyResult<f64> {
+            let state_obj = Py::new(py, snapshot)?;
+            let result = self.callable.call1(py, (state_obj,))?;
+            result.extract::<f64>(py)
+        });
+        match value {
+            Ok(h) => Ok(h),
+            Err(err) => {
+                // Capture the first error; return 0.0 so the (finite) search
+                // still terminates, then `search_with_heuristic` re-raises it.
+                *self.error.borrow_mut() = Some(err);
+                Ok(0.0)
+            }
+        }
+    }
+
+    fn heuristic_name(&self) -> String {
+        self.name.clone()
+    }
+}
+
 #[pyclass(unsendable)]
 struct Task {
     task: TaskRef<'static>,
@@ -209,6 +252,16 @@ impl Task {
     #[getter]
     fn num_goals(&self) -> usize {
         self.task.get_num_goals()
+    }
+
+    #[getter]
+    fn goals(&self) -> Vec<(usize, usize)> {
+        (0..self.task.get_num_goals())
+            .map(|i| {
+                let f = self.task.get_goal_fact(i);
+                (f.var(), f.value())
+            })
+            .collect()
     }
 
     #[getter]
@@ -325,6 +378,55 @@ impl Task {
         let result = py
             .allow_threads(move || task.solve(&spec, time_limit, max_memory))
             .map_err(|e| PlanforgeError::new_err(e.to_string()))?;
+        Ok(search_result_to_py(py, result))
+    }
+
+    /// Run A* or greedy best-first search with a Python heuristic callback.
+    ///
+    /// The callback receives a value snapshot of each evaluated State for
+    /// inspection via `.values` and `.numeric_values`. The snapshot belongs to
+    /// the search's internal registry, so `task.successors(state)` rejects it;
+    /// guidance heuristics should read state values, not re-explore.
+    #[pyo3(signature = (heuristic, greedy=false, max_time=None, max_memory=None))]
+    fn search_with_heuristic(
+        &self,
+        py: Python<'_>,
+        heuristic: Py<PyAny>,
+        greedy: bool,
+        max_time: Option<f64>,
+        max_memory: Option<u64>,
+    ) -> PyResult<PySearchResult> {
+        let registry = StateRegistry::for_task(self.task.clone());
+        let error = Rc::new(RefCell::new(None));
+        let heur: Box<dyn Heuristic> = Box::new(PyHeuristic {
+            callable: heuristic.clone_ref(py),
+            error: error.clone(),
+            name: "python".to_string(),
+        });
+        let time_limit = max_time.map(Duration::from_secs_f64);
+        // GIL is held for the whole search: the heuristic calls back into Python
+        // once per evaluated state. This is intentionally NOT allow_threads.
+        let mut search = if greedy {
+            AStarSearch::new_gbfs(
+                self.task.clone(),
+                registry,
+                Some(heur),
+                time_limit,
+                max_memory,
+            )
+        } else {
+            AStarSearch::new(
+                self.task.clone(),
+                registry,
+                Some(heur),
+                time_limit,
+                max_memory,
+            )
+        };
+        let result = search.search();
+        if let Some(err) = error.borrow_mut().take() {
+            return Err(err);
+        }
         Ok(search_result_to_py(py, result))
     }
 }
