@@ -2584,6 +2584,180 @@ mod tests {
     }
 
     #[test]
+    fn label_cp_steals_shared_operator_cost() {
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
+        residuals
+            .reduce_by_abstract_operator_footprints(
+                0,
+                &[footprint(0.0, 5.0)],
+                None,
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![1.0],
+                },
+            )
+            .unwrap();
+
+        // Label CP has only one scalar residual for `go_east`: once the first
+        // abstraction saturates it, every later abstraction sees zero.
+        assert_eq!(residuals.operator_costs_for_label_cp(), vec![0.0]);
+    }
+
+    #[test]
+    fn region_cp_preserves_residual_for_complementary_abstraction() {
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
+        residuals
+            .reduce_by_abstract_operator_footprints(
+                0,
+                &[footprint(0.0, 5.0)],
+                None,
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![1.0],
+                },
+            )
+            .unwrap();
+
+        // The complementary abstraction starts after the first one's active
+        // source region, so region CP preserves the unit residual there.
+        let complementary = concrete_footprint(5.0 + 1e-6, 10.0);
+        let region_residual = residuals.cost_for_operator_footprint(1, 0, &complementary);
+        assert_eq!(region_residual, 1.0);
+        assert!(region_residual > residuals.operator_costs_for_label_cp()[0]);
+        assert!(region_residual <= 11.0);
+    }
+
+    #[test]
+    fn region_cp_overlapping_nested_targets_order_insensitive() {
+        fn move_footprints(start: usize, end: usize) -> Vec<AbstractOperatorFootprint> {
+            (start..end)
+                .map(|i| AbstractOperatorFootprint {
+                    labels: vec![ConcreteOperatorFootprint {
+                        concrete_op_id: 0,
+                        source_region: StateRegion {
+                            propositions: vec![vec![0]],
+                            numeric: vec![Interval::new(i as f64, (i + 1) as f64, false, true)],
+                        },
+                        allocable: true,
+                        max_allocation_fraction: 1.0,
+                        non_allocable_reason: None,
+                    }],
+                })
+                .collect()
+        }
+
+        fn save_footprint(save_op_id: usize) -> AbstractOperatorFootprint {
+            AbstractOperatorFootprint {
+                labels: vec![concrete_footprint_for_op(save_op_id, 0.0, 15.0, true)],
+            }
+        }
+
+        fn contribution(
+            residuals: &TransitionResidualCosts,
+            abstraction_id: usize,
+            footprints: &[AbstractOperatorFootprint],
+        ) -> f64 {
+            footprints
+                .iter()
+                .enumerate()
+                .map(|(abstract_op_id, footprint)| {
+                    footprint
+                        .labels
+                        .iter()
+                        .map(|label| {
+                            residuals.cost_for_operator_footprint(
+                                abstraction_id,
+                                abstract_op_id,
+                                label,
+                            )
+                        })
+                        .fold(f64::INFINITY, f64::min)
+                })
+                .sum()
+        }
+
+        fn reduce(
+            residuals: &mut TransitionResidualCosts,
+            abstraction_id: usize,
+            footprints: &[AbstractOperatorFootprint],
+        ) {
+            residuals
+                .reduce_by_abstract_operator_footprints(
+                    abstraction_id,
+                    footprints,
+                    None,
+                    &AbstractOperatorCostFunction {
+                        operator_costs: vec![1.0; footprints.len()],
+                    },
+                )
+                .unwrap();
+        }
+
+        let mut alpha10 = move_footprints(0, 10);
+        alpha10.push(save_footprint(1));
+        let mut alpha15 = move_footprints(0, 15);
+        alpha15.push(save_footprint(2));
+
+        let label_cp_value = {
+            let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0, 1.0, 1.0]);
+            reduce(&mut residuals, 0, &alpha10);
+            11.0 + residuals.operator_costs_for_label_cp()[2]
+        };
+        assert_eq!(label_cp_value, 12.0);
+
+        let alpha10_then_alpha15 = {
+            let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0, 1.0, 1.0]);
+            let first = contribution(&residuals, 0, &alpha10);
+            reduce(&mut residuals, 0, &alpha10);
+            let second = contribution(&residuals, 1, &alpha15);
+            first + second
+        };
+        let alpha15_then_alpha10 = {
+            let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0, 1.0, 1.0]);
+            let first = contribution(&residuals, 0, &alpha15);
+            reduce(&mut residuals, 0, &alpha15);
+            let second = contribution(&residuals, 1, &alpha10);
+            first + second
+        };
+
+        assert_eq!(alpha10_then_alpha15, 17.0);
+        assert_eq!(alpha15_then_alpha10, 17.0);
+        assert!(alpha10_then_alpha15 <= 17.0);
+        assert!(alpha15_then_alpha10 <= 17.0);
+        assert!(alpha10_then_alpha15 >= 16.0);
+        assert!(alpha15_then_alpha10 >= 16.0);
+        assert!(alpha10_then_alpha15 > label_cp_value);
+        assert!(alpha15_then_alpha10 > label_cp_value);
+    }
+
+    #[test]
+    fn cross_dimension_residual_shared() {
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
+        let x_abstraction = AbstractOperatorFootprint {
+            labels: vec![concrete_footprint_2d(
+                0,
+                Interval::closed(0.0, 1.0),
+                Interval::unbounded(),
+            )],
+        };
+        residuals
+            .reduce_by_abstract_operator_footprints(
+                0,
+                &[x_abstraction],
+                None,
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![1.0],
+                },
+            )
+            .unwrap();
+
+        let y_abstraction =
+            concrete_footprint_2d(0, Interval::unbounded(), Interval::closed(0.0, 1.0));
+        assert_eq!(
+            residuals.cost_for_operator_footprint(1, 0, &y_abstraction),
+            0.0
+        );
+    }
+
+    #[test]
     fn lookahead_budget_splits_overlapping_same_label_abstractions() {
         let first = vec![footprint(0.0, 5.0)];
         let second = vec![footprint(3.0, 8.0)];

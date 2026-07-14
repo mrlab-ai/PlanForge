@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use anyhow::{Context, Result, bail, ensure};
 use planforge_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom};
 use planforge_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, Metric,
-    NumericRootTask, NumericType, NumericVariable, Operator,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable,
+    Metric, NumericRootTask, NumericType, NumericVariable, Operator,
 };
 use planforge_sas::numeric::utils::float_tolerance;
 
@@ -327,6 +327,7 @@ fn build_task(
             comparison_axiom.get_operator().clone(),
         ));
     }
+    let variables = renumber_propositional_axiom_layers(task, &comparison_axioms);
 
     let metric_var_id = task.metric().var_id().and_then(|var_id| {
         original_to_transformed
@@ -337,7 +338,7 @@ fn build_task(
     let task = NumericRootTask::new(
         1,
         Metric::new(task.metric().is_min(), metric_var_id),
-        task.variables().clone(),
+        variables,
         numeric_variables,
         (0..task.get_num_goals())
             .map(|goal_id| task.get_goal_fact(goal_id).clone())
@@ -358,6 +359,50 @@ fn build_task(
             numeric_exprs: transformed_to_expr,
         },
     }))
+}
+
+fn renumber_propositional_axiom_layers(
+    task: &dyn AbstractNumericTask,
+    comparison_axioms: &[ComparisonAxiom],
+) -> Vec<ExplicitVariable> {
+    if comparison_axioms.is_empty() {
+        return task.variables().clone();
+    }
+
+    let comparison_vars = comparison_axioms
+        .iter()
+        .map(|axiom| axiom.get_affected_var_id())
+        .collect::<BTreeSet<_>>();
+    let remaining_layers = task
+        .variables()
+        .iter()
+        .enumerate()
+        .filter_map(|(var_id, variable)| {
+            (!comparison_vars.contains(&var_id))
+                .then_some(variable.axiom_layer())
+                .flatten()
+        })
+        .collect::<BTreeSet<_>>();
+    let layer_map = remaining_layers
+        .into_iter()
+        .enumerate()
+        .map(|(index, layer)| (layer, index + 1))
+        .collect::<BTreeMap<_, _>>();
+
+    task.variables()
+        .iter()
+        .enumerate()
+        .map(|(var_id, variable)| {
+            let new_layer = if comparison_vars.contains(&var_id) {
+                Some(0)
+            } else {
+                variable
+                    .axiom_layer()
+                    .map(|layer| *layer_map.get(&layer).expect("layer map is complete"))
+            };
+            variable.with_axiom_layer(new_layer)
+        })
+        .collect()
 }
 
 fn transform_operator(
@@ -751,6 +796,7 @@ mod tests {
         assert_eq!(transformed.numeric_variables().len(), 3);
         assert_eq!(transformed.numeric_variables()[0].name(), "u");
         assert_eq!(transformed.numeric_variables()[1].name(), "limit");
+        assert_eq!(transformed.get_variable_axiom_layer(0), Ok(Some(0)));
         assert_eq!(
             transformed.get_initial_numeric_state_values().as_slice(),
             &[5.0, 10.0, 1.0]

@@ -369,6 +369,13 @@ impl Cegar {
             } else {
                 None
             };
+            // Overflow-free progress signal: every landed split increments
+            // exactly one entry of `domain_sizes` or `numeric_domain_sizes`,
+            // so the sum strictly increases iff any refinement landed. The
+            // u128 size product cannot serve here: it saturates to `None` on
+            // overflow, which would make progress undetectable.
+            let before_partition_count = factory.domain_sizes.iter().sum::<usize>()
+                + factory.numeric_domain_sizes.iter().sum::<usize>();
             let refine_start = Instant::now();
             let refined = fix_flaws(
                 &self.config,
@@ -385,6 +392,8 @@ impl Cegar {
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
             let refine_time = refine_start.elapsed();
+            let after_partition_count = factory.domain_sizes.iter().sum::<usize>()
+                + factory.numeric_domain_sizes.iter().sum::<usize>();
             if config.debug {
                 let after_size = compute_abstraction_size_u128(
                     &factory.domain_sizes,
@@ -401,6 +410,24 @@ impl Cegar {
             if refined.is_empty() {
                 break;
             }
+            let split_values: Vec<_> = flaws
+                .iter()
+                .filter_map(|flaw| match flaw {
+                    Flaw::Numeric(numeric) => Some((
+                        numeric.numeric_var_id,
+                        numeric.value,
+                        numeric.include_in_lower,
+                    )),
+                    Flaw::Propositional(_) => None,
+                })
+                .collect();
+            ensure!(
+                after_partition_count > before_partition_count,
+                "CEGAR refinement made no progress at iteration {iteration}: flaws={:?}, refined={:?}, split_values={:?}",
+                flaws,
+                refined,
+                split_values
+            );
             if config.debug {
                 let abstraction_size = compute_abstraction_size_u128(
                     &factory.domain_sizes,

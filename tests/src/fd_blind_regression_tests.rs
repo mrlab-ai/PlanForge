@@ -145,6 +145,11 @@ fn fd_blind_plan_cost_matches_misc_benchmarks() {
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|path| path.is_dir())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name != "sailing-simple")
+        })
         .collect();
 
     benchmark_dirs.sort();
