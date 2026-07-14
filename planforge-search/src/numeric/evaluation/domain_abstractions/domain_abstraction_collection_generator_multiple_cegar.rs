@@ -31,7 +31,6 @@ use super::comparison_expression::{CompOp, Interval};
 use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, DomainAbstractionMetadata,
-    prepare_domain_abstraction_task,
 };
 use super::memory_padding;
 use super::transition_cost_partitioning::FiniteSupportConfig;
@@ -194,7 +193,6 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub numeric_split_strategy: NumericSplitStrategy,
-    pub transform_linear_task: bool,
     pub portfolio_strategy: PortfolioStrategy,
     /// Flattened so unknown keys (today only `max_stealable_width`) reach
     /// the nested `FiniteSupportConfig::apply_options`.
@@ -252,7 +250,6 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,
-            transform_linear_task: false,
             portfolio_strategy: PortfolioStrategy::Standard,
             finite_support: FiniteSupportConfig::default(),
             split_direction: None,
@@ -303,7 +300,6 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
                 "numeric_split_strategy={}, ",
-                "transform_linear_task={}, ",
                 "portfolio_strategy={}, ",
             ),
             self.max_abstraction_size,
@@ -323,7 +319,6 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.flaw_treatment,
             self.init_split_method,
             self.numeric_split_strategy,
-            self.transform_linear_task,
             self.portfolio_strategy,
         )
     }
@@ -386,7 +381,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             init_split_var_ids,
             blacklisted_prop_var_ids,
             blacklisted_numeric_var_ids,
-            transform_linear_task: self.config.transform_linear_task,
             initial_seed_splits,
             finite_support: self.config.finite_support,
             split_direction: self.config.split_direction,
@@ -462,19 +456,13 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 .as_ref()
                 .map(|single_goal_task| single_goal_task as &dyn AbstractNumericTask)
                 .unwrap_or(task);
-            let prepared_task = prepare_domain_abstraction_task(
-                abstraction_task,
-                self.config.transform_linear_task,
-            )
-            .context("failed to prepare task for domain-abstraction collection")?;
-            let generation_task = prepared_task.task_for(abstraction_task);
             let root_groups = if full_goal_task {
                 Vec::new()
             } else {
                 let goal = goals
                     .get(goal_index)
                     .expect("complementary goal_index is in bounds");
-                self.root_groups_for_goal(abstraction_task, generation_task, goal)
+                self.root_groups_for_goal(abstraction_task, abstraction_task, goal)
             };
             let active_root_group = if root_groups.is_empty() {
                 None
@@ -491,9 +479,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 HashSet::new()
             };
             let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
-                split_blacklisted_variables(generation_task, blacklisted_var_ids);
+                split_blacklisted_variables(abstraction_task, blacklisted_var_ids);
             let (group_blacklisted_prop_var_ids, group_blacklisted_numeric_var_ids) =
-                self.group_blacklisted_variable_ids(generation_task, active_root_group);
+                self.group_blacklisted_variable_ids(abstraction_task, active_root_group);
             let blacklisted_prop_var_ids = blacklisted_prop_var_ids
                 .union(&group_blacklisted_prop_var_ids)
                 .copied()
@@ -503,14 +491,14 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 .copied()
                 .collect::<HashSet<_>>();
             let initial_seed_splits = self.initial_seed_splits_for_goal_count(
-                generation_task,
+                abstraction_task,
                 iteration,
                 goals.len(),
                 complementary_direction,
                 active_root_group,
             );
             let init_split_var_ids = if initial_seed_splits.is_empty() {
-                self.initial_split_var_ids(generation_task, iteration)
+                self.initial_split_var_ids(abstraction_task, iteration)
             } else {
                 None
             };
@@ -543,11 +531,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             );
             let generator = DomainAbstractionGenerator::new(cegar_config)
                 .context("failed to construct single-abstraction CEGAR generator")?;
-            let mut abstraction = generator
-                .generate_prepared(abstraction_task, &prepared_task)
-                .with_context(|| {
-                    format!("failed to generate abstraction for collection iteration {iteration}")
-                })?;
+            let mut abstraction = generator.generate(abstraction_task).with_context(|| {
+                format!("failed to generate abstraction for collection iteration {iteration}")
+            })?;
             let solved_by_self = abstraction.metadata.solved_by_self;
             abstraction.metadata = DomainAbstractionMetadata {
                 collection_iteration: Some(iteration),
@@ -576,7 +562,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                         log_collection_abstraction_debug(
                             generated_abstractions.len() - 1,
                             last,
-                            generation_task,
+                            abstraction_task,
                         );
                     }
                 }
@@ -1048,6 +1034,9 @@ fn numeric_shape_key(
     numeric_var_id: usize,
 ) -> Option<Vec<OrderedFloat<f64>>> {
     let task_var = task.numeric_variables().get(numeric_var_id)?;
+    if let Some(shape) = restricted_shape_key(task_var.name()) {
+        return Some(shape);
+    }
     let expr = source_task
         .numeric_variables()
         .iter()
@@ -1066,6 +1055,19 @@ fn numeric_shape_key(
     }
     coefficients.sort_unstable();
     Some(coefficients)
+}
+
+fn restricted_shape_key(name: &str) -> Option<Vec<OrderedFloat<f64>>> {
+    let shape = name.strip_prefix("rt-shape:")?.split('|').next()?;
+    let coefficients = if shape.is_empty() {
+        Vec::new()
+    } else {
+        shape
+            .split(',')
+            .map(|coefficient| coefficient.parse::<f64>().ok().map(OrderedFloat))
+            .collect::<Option<Vec<_>>>()?
+    };
+    (!coefficients.is_empty()).then_some(coefficients)
 }
 
 fn seed_split_description(seed: &InitialSeedSplit) -> String {

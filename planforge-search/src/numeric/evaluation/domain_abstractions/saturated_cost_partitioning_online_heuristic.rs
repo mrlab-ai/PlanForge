@@ -3325,23 +3325,26 @@ mod handcrafted_sailing_tests {
     use crate::numeric::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
     use crate::numeric::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
     use crate::numeric::evaluation::domain_abstractions::domain_abstraction_generator::{
-        DomainAbstractionMetadata, compute_hash_multipliers, prepare_domain_abstraction_task,
+        DomainAbstractionMetadata, compute_hash_multipliers,
     };
+    use crate::numeric::evaluation::domain_abstractions::restricted_task::build_restricted_task;
 
     #[test]
     #[ignore = "diagnostic full-task handcrafted sailing abstract-operator SCP report"]
     fn sailing_handcrafted_four_abstractions_full_task_abstract_operator_scp_initial_h_report() {
         let task = translated_sailing_2_2_task();
-        let prepared = prepare_domain_abstraction_task(&task, true)
-            .expect("sailing task should support transformed linear views");
-        let transformed_task = prepared.task_for(&task);
+        let restricted_task = build_restricted_task(&task)
+            .expect("sailing task should support restricted task")
+            .expect("sailing task should have promotable roots")
+            .into_task();
+        let transformed_task = &restricted_task;
         let specs = handcrafted_full_task_specs(transformed_task);
         assert_eq!(specs.len(), 4);
 
         let mut abstractions = Vec::new();
         for (index, spec) in specs.iter().enumerate() {
             let single_goal_task = SingleGoalTask::new(transformed_task, spec.goal.clone());
-            let mut abstraction = build_handcrafted_abstraction(&single_goal_task, &prepared, spec)
+            let mut abstraction = build_handcrafted_abstraction(&single_goal_task, spec)
                 .unwrap_or_else(|error| panic!("failed to build {}: {error:#}", spec.name));
             abstraction.metadata = DomainAbstractionMetadata {
                 collection_iteration: Some(index + 1),
@@ -3369,7 +3372,6 @@ mod handcrafted_sailing_tests {
             combine_labels: false,
             collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 debug: true,
-                transform_linear_task: true,
                 ..Default::default()
             },
             use_numeric_pdbs: false,
@@ -3500,7 +3502,6 @@ mod handcrafted_sailing_tests {
 
     fn build_handcrafted_abstraction(
         transformed_task: &dyn AbstractNumericTask,
-        prepared: &crate::numeric::evaluation::domain_abstractions::domain_abstraction_generator::PreparedDomainAbstractionTask,
         spec: &HandcraftedSpec,
     ) -> anyhow::Result<DomainAbstraction> {
         let mut partitions = NumericPartitions::trivial(transformed_task);
@@ -3576,8 +3577,6 @@ mod handcrafted_sailing_tests {
             distance_table,
             hash_multipliers,
             combine_labels: false,
-            task_projection: prepared.task_projection.clone(),
-            transformed_task: prepared.transformed_task.clone(),
             relevant_operator_ids,
             abstract_operators,
             abstract_operator_footprints,

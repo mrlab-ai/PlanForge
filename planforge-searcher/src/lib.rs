@@ -11,6 +11,7 @@ use planforge_search::numeric::evaluation::domain_abstractions::domain_abstracti
 };
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
+use planforge_search::numeric::evaluation::domain_abstractions::restricted_task::build_restricted_task;
 use planforge_search::numeric::evaluation::domain_abstractions::max_domain_abstraction_heuristic::MaxDomainAbstractionHeuristic;
 use planforge_search::numeric::evaluation::domain_abstractions::posthoc_optimization_heuristic::PostHocOptimizationHeuristic;
 use planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
@@ -251,6 +252,9 @@ pub struct PlannersSearcherCli {
     #[arg(long, hide = true)]
     pub internal_run: bool,
 
+    #[arg(long = "restrict-task")]
+    pub restrict_task: bool,
+
     /// Recursive search configuration.
     /// Examples: `astar(blind())`, `astar(domain_abstraction())`, `da_debug()`.
     #[arg(
@@ -273,6 +277,9 @@ pub fn run_wrapped_process(cli: &PlannersSearcherCli) -> std::io::Result<()> {
     if let Some(level) = cli.log_level {
         child_args.push(OsString::from("--log-level"));
         child_args.push(OsString::from(level.to_string()));
+    }
+    if cli.restrict_task {
+        child_args.push(OsString::from("--restrict-task"));
     }
     child_args.push(OsString::from("--search"));
     child_args.push(OsString::from(cli.search.to_string()));
@@ -304,7 +311,21 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let sas_file = &cli.sas_file;
 
     let start_time = std::time::Instant::now();
-    let task: TaskRef<'static> = Arc::new(NumericRootTask::from_file(sas_file));
+    let mut task = NumericRootTask::from_file(sas_file);
+    if cli.restrict_task {
+        let original_numeric_count = task.numeric_variables().len();
+        if let Some(restricted_task) = build_restricted_task(&task).map_err(|err| {
+            std::io::Error::other(format!("failed to build restricted task: {err:#}"))
+        })? {
+            task = restricted_task.into_task();
+            info!(
+                "restricted task: numeric variables {} -> {}",
+                original_numeric_count,
+                task.numeric_variables().len()
+            );
+        }
+    }
+    let task: TaskRef<'static> = Arc::new(task);
     let parse_time = start_time.elapsed();
     info!("Parsed numeric SAS output in: {:?}", parse_time);
 

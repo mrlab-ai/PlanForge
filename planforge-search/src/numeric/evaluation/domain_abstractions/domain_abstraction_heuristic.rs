@@ -10,7 +10,6 @@ use crate::numeric::evaluation::heuristic::Heuristic;
 use planforge_sas::numeric::numeric_task::Operator;
 use planforge_sas::numeric::state_registry::{ConcreteState, StateRegistry};
 
-use super::abstracted_task::DomainAbstractionTaskProjection;
 use super::comparison_expression::{ComparisonTree, ComparisonTreeNode};
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::utils;
@@ -28,7 +27,6 @@ fn fast_hash_enabled() -> bool {
 pub(crate) struct DomainAbstractionLookupScratch {
     pub(crate) prop: Vec<usize>,
     pub(crate) numeric: Vec<f64>,
-    pub(crate) projected_numeric: Vec<f64>,
     pub(crate) comparisons: Vec<Option<usize>>,
     pub(crate) required_domain_ids: Vec<usize>,
     pub(crate) abstract_state_ids: Vec<Option<usize>>,
@@ -40,7 +38,6 @@ impl DomainAbstractionLookupScratch {
         Self {
             prop: Vec::new(),
             numeric: Vec::new(),
-            projected_numeric: Vec::new(),
             comparisons: Vec::new(),
             required_domain_ids: Vec::new(),
             abstract_state_ids: Vec::new(),
@@ -83,39 +80,18 @@ pub(crate) fn compute_collection_abstract_state_ids(
         );
     }
 
-    let shared_projection =
-        shared_projection_for_domain_ids(heuristics, &scratch.required_domain_ids)?;
-    let shared_numeric_values = match shared_projection {
-        Some(Some(projection)) => {
-            projection
-                .project_numeric_values_into(&scratch.numeric, &mut scratch.projected_numeric)
-                .map_err(|error| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to project state into shared abstracted domain task: {error:#}"
-                    ))
-                })?;
-            Some(scratch.projected_numeric.as_slice())
-        }
-        Some(None) => Some(scratch.numeric.as_slice()),
-        None => None,
-    };
-
-    // When no abstraction in this collection projects the task, the
-    // registry's axiom evaluator has already materialized every comparison
+    let has_required_domains = !scratch.required_domain_ids.is_empty();
+    // The registry's axiom evaluator has already materialized every comparison
     // axiom's truth value into `scratch.prop[affected_var_id]`. In that case
     // we can read those bits directly and skip the per-state `ComparisonTree`
-    // walks entirely — that walk shows up as ~10% of total CPU on sailing.
-    // `DA_NO_FAST_HASH=1` disables this for A/B benchmarking.
-    let prop_has_resolved_comparisons =
-        matches!(shared_projection, Some(None)) && fast_hash_enabled();
+    // walks entirely. `DA_NO_FAST_HASH=1` disables this for A/B benchmarking.
+    let prop_has_resolved_comparisons = has_required_domains && fast_hash_enabled();
 
     scratch.comparisons.clear();
     if !prop_has_resolved_comparisons && scratch.required_domain_ids.len() > 1 {
-        if let (Some(&first_id), Some(numeric_values)) =
-            (scratch.required_domain_ids.first(), shared_numeric_values)
-        {
+        if let Some(&first_id) = scratch.required_domain_ids.first() {
             heuristics[first_id].fill_comparison_values_from_projected_state_values(
-                numeric_values,
+                &scratch.numeric,
                 &mut scratch.comparisons,
             )?;
         }
@@ -129,7 +105,6 @@ pub(crate) fn compute_collection_abstract_state_ids(
                 heuristic,
                 &scratch.prop,
                 &scratch.numeric,
-                shared_numeric_values,
                 &scratch.comparisons,
                 prop_has_resolved_comparisons,
             )?);
@@ -143,7 +118,6 @@ pub(crate) fn compute_collection_abstract_state_ids(
                 heuristic,
                 &scratch.prop,
                 &scratch.numeric,
-                shared_numeric_values,
                 &scratch.comparisons,
                 prop_has_resolved_comparisons,
             )?);
@@ -157,43 +131,15 @@ fn hash_with_shared_values(
     heuristic: &DomainAbstractionHeuristic,
     prop_values: &[usize],
     numeric_values: &[f64],
-    shared_numeric_values: Option<&[f64]>,
     comparison_values: &[Option<usize>],
     prop_has_resolved_comparisons: bool,
 ) -> Result<usize, EvaluationError> {
-    if let Some(shared_numeric_values) = shared_numeric_values {
-        heuristic.compute_abstract_hash_from_projected_state_values_inner(
-            prop_values,
-            shared_numeric_values,
-            Some(comparison_values),
-            prop_has_resolved_comparisons,
-        )
-    } else {
-        heuristic.compute_abstract_hash_inner(
-            prop_values,
-            numeric_values,
-            None,
-            prop_has_resolved_comparisons,
-        )
-    }
-}
-
-fn shared_projection_for_domain_ids<'a>(
-    heuristics: &'a [DomainAbstractionHeuristic],
-    ids: &[usize],
-) -> Result<Option<Option<&'a DomainAbstractionTaskProjection>>, EvaluationError> {
-    let Some(first_id) = ids.first().copied() else {
-        return Ok(None);
-    };
-    let first = heuristics[first_id].task_projection();
-    for &id in &ids[1..] {
-        if heuristics[id].task_projection() != first {
-            return Err(EvaluationError::ComputationFailed(format!(
-                "domain abstractions use different lookup task projections: abstraction {first_id} and abstraction {id}"
-            )));
-        }
-    }
-    Ok(Some(first))
+    heuristic.compute_abstract_hash_from_projected_state_values_inner(
+        prop_values,
+        numeric_values,
+        Some(comparison_values),
+        prop_has_resolved_comparisons,
+    )
 }
 
 /// Heuristic that evaluates a concrete state by mapping it to an abstract state
@@ -204,25 +150,10 @@ pub struct DomainAbstractionHeuristic {
     abstraction: DomainAbstraction,
     prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
-    projected_numeric_scratch: RefCell<Vec<f64>>,
     active_prop_vars: Vec<usize>,
     active_numeric_vars: Vec<usize>,
     comparison_tree_by_var: Vec<Option<usize>>,
     comparison_tree_required_lens: Vec<usize>,
-}
-
-enum NumericValues<'a> {
-    Borrowed(&'a [f64]),
-    Projected(std::cell::Ref<'a, [f64]>),
-}
-
-impl<'a> NumericValues<'a> {
-    fn as_slice(&self) -> &[f64] {
-        match self {
-            Self::Borrowed(values) => values,
-            Self::Projected(values) => values,
-        }
-    }
 }
 
 impl DomainAbstractionHeuristic {
@@ -258,7 +189,6 @@ impl DomainAbstractionHeuristic {
             abstraction,
             prop_scratch: RefCell::new(Vec::new()),
             numeric_scratch: RefCell::new(Vec::new()),
-            projected_numeric_scratch: RefCell::new(Vec::new()),
             active_prop_vars,
             active_numeric_vars,
             comparison_tree_by_var,
@@ -268,10 +198,6 @@ impl DomainAbstractionHeuristic {
 
     pub fn abstraction(&self) -> &DomainAbstraction {
         &self.abstraction
-    }
-
-    pub fn task_projection(&self) -> Option<&DomainAbstractionTaskProjection> {
-        self.abstraction.task_projection.as_ref()
     }
 
     fn numeric_partition_for_projected_value(
@@ -355,9 +281,7 @@ impl DomainAbstractionHeuristic {
         numeric: &[f64],
         out: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
-        let numeric_values = self.project_numeric_values(numeric)?;
-        let numeric_values = numeric_values.as_slice();
-        self.fill_comparison_values_from_projected_state_values(numeric_values, out)
+        self.fill_comparison_values_from_projected_state_values(numeric, out)
     }
 
     pub fn fill_comparison_values_from_projected_state_values(
@@ -436,14 +360,12 @@ impl DomainAbstractionHeuristic {
             .map_err(|e| {
                 EvaluationError::ComputationFailed(format!("failed to read numeric vars: {e:?}"))
             })?;
-        // When the abstraction shares its task with the registry (no
-        // `task_projection`), the registry's buffer already holds correct
-        // comparison-axiom-derived bits in `prop` — they were materialized
-        // when the state was registered. We can skip the per-evaluation
-        // re-evaluation of `ComparisonTree`s entirely.
+        // The registry's buffer already holds correct comparison-axiom-derived
+        // bits in `prop`; they were materialized when the state was
+        // registered. We can skip the per-evaluation re-evaluation of
+        // `ComparisonTree`s entirely.
         // Set DA_NO_FAST_HASH=1 to disable for A/B benchmarking.
-        let prop_has_resolved_comparisons =
-            self.abstraction.task_projection.is_none() && fast_hash_enabled();
+        let prop_has_resolved_comparisons = fast_hash_enabled();
         self.compute_abstract_hash_inner(&prop, &numeric, None, prop_has_resolved_comparisons)
     }
 
@@ -475,11 +397,9 @@ impl DomainAbstractionHeuristic {
             )));
         }
 
-        let numeric_values = self.project_numeric_values(numeric)?;
-        let numeric_values = numeric_values.as_slice();
         self.compute_abstract_hash_from_projected_state_values_inner(
             prop_values,
-            numeric_values,
+            numeric,
             comparison_values,
             prop_has_resolved_comparisons,
         )
@@ -556,30 +476,6 @@ impl DomainAbstractionHeuristic {
         }
 
         Ok(index + prop_index)
-    }
-
-    fn project_numeric_values<'a>(
-        &'a self,
-        numeric: &'a [f64],
-    ) -> Result<NumericValues<'a>, EvaluationError> {
-        if let Some(projection) = self.abstraction.task_projection.as_ref() {
-            {
-                let mut projected_numeric = self.projected_numeric_scratch.borrow_mut();
-                projection
-                    .project_numeric_values_into(numeric, &mut projected_numeric)
-                    .map_err(|e| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to project state into abstracted domain task: {e:#}"
-                        ))
-                    })?;
-            }
-            Ok(NumericValues::Projected(std::cell::Ref::map(
-                self.projected_numeric_scratch.borrow(),
-                |values| values.as_slice(),
-            )))
-        } else {
-            Ok(NumericValues::Borrowed(numeric))
-        }
     }
 }
 

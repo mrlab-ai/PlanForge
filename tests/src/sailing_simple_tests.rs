@@ -12,6 +12,7 @@ use planforge_search::numeric::evaluation::domain_abstractions::domain_abstracti
     NumericSplitStrategy,
     PortfolioStrategy,
 };
+use planforge_search::numeric::evaluation::domain_abstractions::restricted_task::build_restricted_task;
 use planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
     SaturatedCostPartitioningOnlineHeuristic, ScpOnlineConfig,
 };
@@ -98,6 +99,31 @@ fn blind_astar_cost(instance: &str) -> f64 {
     }
 }
 
+fn restricted_blind_astar_cost(instance: &str) -> f64 {
+    let (task, temp_dir) = sailing_task(instance);
+    let restricted_task = build_restricted_task(&task)
+        .expect("sailing-simple restricted task construction must not fail")
+        .expect("sailing-simple instances have promotable derived roots")
+        .into_task();
+    let state_registry = StateRegistry::for_task(Arc::new(&restricted_task));
+    let mut search = AStarSearch::new(Arc::new(&restricted_task), state_registry, None, None, None);
+    let result = search.search();
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    match result.status {
+        SearchStatus::Solved(_) => result
+            .solution_cost
+            .or_else(|| {
+                result
+                    .plan
+                    .as_ref()
+                    .map(|plan| plan.iter().map(|op| op.cost() as f64).sum())
+            })
+            .expect("solved restricted sailing-simple search must report a cost"),
+        status => panic!("restricted blind A* did not solve {instance}: {status:?}"),
+    }
+}
+
 fn standard_round7_collection_config(
     seed: u64,
 ) -> DomainAbstractionCollectionGeneratorMultipleCegarConfig {
@@ -115,7 +141,6 @@ fn standard_round7_collection_config(
         numeric_split_strategy: NumericSplitStrategy::Standard,
         use_wildcard_plans: true,
         combine_labels: false,
-        transform_linear_task: true,
         flaw_kind: FlawKind::SequenceBidirectional,
         portfolio_strategy: PortfolioStrategy::Complementary,
         random_seed: Some(seed),
@@ -128,6 +153,10 @@ fn scp_online_initial_h_with_config(
     collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 ) -> f64 {
     let (task, temp_dir) = sailing_task(instance);
+    let task = build_restricted_task(&task)
+        .expect("sailing-simple restricted task construction must not fail")
+        .expect("sailing-simple instances have promotable derived roots")
+        .into_task();
     let generator =
         DomainAbstractionCollectionGeneratorMultipleCegar::new(collection_config.clone());
     let abstractions = generator
@@ -163,6 +192,32 @@ fn scp_online_initial_h_with_config(
 
     let _ = std::fs::remove_dir_all(&temp_dir);
     h
+}
+
+#[test]
+fn restricted_task_preserves_sailing_simple_optimal_costs() {
+    let cases = [
+        ("prob_1b1p_x", 11.0),
+        ("prob_1b1p_diag", 11.0),
+        ("prob_2b1p", 11.0),
+        ("prob_1b2p_x", 17.0),
+        ("prob_1b2p_diag", 22.0),
+        ("prob_2b2p_x", 22.0),
+        ("prob_2b2p_assign", 17.0),
+    ];
+
+    for (instance, expected_cost) in cases {
+        let original_cost = blind_astar_cost(instance);
+        assert_eq!(
+            original_cost, expected_cost,
+            "machine-verified h* changed for original {instance}"
+        );
+        let restricted_cost = restricted_blind_astar_cost(instance);
+        assert_eq!(
+            restricted_cost, expected_cost,
+            "restricted task is not plan-preserving for {instance}"
+        );
+    }
 }
 
 fn scp_online_initial_h(instance: &str) -> f64 {
@@ -239,6 +294,10 @@ fn sailing_simple_assignment_gap() {
 #[test]
 fn sailing_simple_ratchet_equilibrium() {
     let (task, temp_dir) = sailing_task("prob_2b1p");
+    let task = build_restricted_task(&task)
+        .expect("sailing-simple restricted task construction must not fail")
+        .expect("sailing-simple instances have promotable derived roots")
+        .into_task();
     let config = standard_round7_collection_config(1);
     let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
     let abstractions = generator

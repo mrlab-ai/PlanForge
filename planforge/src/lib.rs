@@ -13,6 +13,7 @@ use planforge_search::numeric::evaluation::domain_abstractions::domain_abstracti
     DomainAbstraction, DomainAbstractionGenerator, compute_hash_multipliers,
 };
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
+use planforge_search::numeric::evaluation::domain_abstractions::restricted_task::build_restricted_task;
 use planforge_search::numeric::evaluation::evaluator::EvaluationState;
 use planforge_search::numeric::evaluation::g_evaluator::{GEvaluator, SumEvaluator};
 use planforge_search::numeric::evaluation::{EvaluationResult, Evaluator};
@@ -88,6 +89,9 @@ pub struct PlannersCli {
     #[arg(long, hide = true)]
     pub internal_run: bool,
 
+    #[arg(long = "restrict-task")]
+    pub restrict_task: bool,
+
     /// Recursive search configuration.
     /// Examples: `astar(blind())`, `astar(domain_abstraction())`, `da_debug()`.
     #[arg(
@@ -109,6 +113,9 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     if let Some(level) = cli.log_level {
         child_args.push(OsString::from("--log-level"));
         child_args.push(OsString::from(level.to_string()));
+    }
+    if cli.restrict_task {
+        child_args.push(OsString::from("--restrict-task"));
     }
     child_args.push(OsString::from("--search"));
     child_args.push(OsString::from(cli.search.to_string()));
@@ -235,7 +242,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     register_event_handlers();
 
     let start_time = std::time::Instant::now();
-    let (task, sas_label) = if cli.inputs.len() == 2 {
+    let (mut task, sas_label) = if cli.inputs.len() == 2 {
         let domain = &cli.inputs[0];
         let problem = &cli.inputs[1];
         // In-memory pipeline: translate → preprocess → parse, no disk I/O.
@@ -250,6 +257,19 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         let path = cli.inputs[0].clone();
         (NumericRootTask::from_file(&path), path)
     };
+    if cli.restrict_task {
+        let original_numeric_count = task.numeric_variables().len();
+        if let Some(restricted_task) = build_restricted_task(&task).map_err(|err| {
+            std::io::Error::other(format!("failed to build restricted task: {err:#}"))
+        })? {
+            task = restricted_task.into_task();
+            info!(
+                "restricted task: numeric variables {} -> {}",
+                original_numeric_count,
+                task.numeric_variables().len()
+            );
+        }
+    }
     let task: TaskRef<'static> = Arc::new(task);
     let parse_time = start_time.elapsed();
     info!("Parsed numeric SAS output in: {:?}", parse_time);
@@ -889,8 +909,6 @@ fn run_da_debug(
         distance_table,
         hash_multipliers,
         combine_labels: config.combine_labels,
-        task_projection: None,
-        transformed_task: None,
         relevant_operator_ids: Vec::new(),
         abstract_operators: Vec::new(),
         abstract_operator_footprints: Vec::new(),

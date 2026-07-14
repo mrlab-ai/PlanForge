@@ -56,7 +56,7 @@ the cost radius) that blind A\* is feasible on all instances.
   `alpha1` keeps only its distinct save_p0 label = 1).
   Order-sensitivity fixture; naive independent sum = 27 (inadmissible).
 - **`prob_1b1p_diag` / `prob_1b2p_diag`.** Useful root is `u = x + y`
-  (`transform_linear_task`); each diagonal move is `u += 1`. A single 1-D
+  (`--restrict-task`); each diagonal move is `u += 1`. A single 1-D
   abstraction on `u` counts the moves exactly. Also the cross-dimension
   sharing fixture: a diagonal op charged in an x-abstraction must reduce its
   residual for a y-abstraction (one concrete NE move cannot pay both

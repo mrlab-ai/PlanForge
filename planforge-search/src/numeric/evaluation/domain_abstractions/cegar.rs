@@ -57,14 +57,13 @@ pub struct CegarConfig {
     pub init_split_var_ids: Option<HashSet<usize>>,
     pub blacklisted_prop_var_ids: HashSet<usize>,
     pub blacklisted_numeric_var_ids: HashSet<usize>,
-    pub transform_linear_task: bool,
     pub initial_seed_splits: Vec<InitialSeedSplit>,
     /// Width threshold for the finite-support transition-cost-partitioning
     /// gate applied when the abstraction's operator footprints are built. The
     /// default reproduces the legacy finite-vs-infinite behavior.
     pub finite_support: FiniteSupportConfig,
-    /// When false, `DomainAbstractionGenerator::generate_prepared` skips
-    /// building the `Vec<AbstractOperatorFootprint>`. Footprints are only
+    /// When false, `DomainAbstractionGenerator::generate` skips building the
+    /// `Vec<AbstractOperatorFootprint>`. Footprints are only
     /// consumed by abstract-operator transition-cost partitioning
     /// (SCP / fillSCP); for canonical-max and other heuristics that read
     /// only the distance table they are pure memory bloat — on
@@ -107,7 +106,6 @@ impl Default for CegarConfig {
             init_split_var_ids: None,
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
-            transform_linear_task: false,
             initial_seed_splits: Vec::new(),
             finite_support: FiniteSupportConfig::default(),
             split_direction: None,
