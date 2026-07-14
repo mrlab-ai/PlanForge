@@ -1,4 +1,6 @@
-use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::{PropFlaw, get_flaws};
+use crate::numeric::evaluation::domain_abstractions::cegar::flaw_search::{
+    Flaw, NumericFlaw, PropFlaw, get_flaws,
+};
 
 use super::*;
 use rand::{SeedableRng, rngs::SmallRng};
@@ -7,8 +9,74 @@ use planforge_sas::numeric::axioms::PropositionalAxiom;
 use planforge_sas::numeric::axioms::{ComparisonAxiom, ComparisonOperator};
 
 use planforge_sas::numeric::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericVariable, Operator,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
+    NumericRootTask, NumericType, NumericVariable, Operator,
 };
+
+fn one_dimensional_sailing_like_task() -> NumericRootTask {
+    let variables = vec![
+        ExplicitVariable::new(
+            3,
+            "x_gt_9".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(0),
+            2,
+        ),
+        ExplicitVariable::new(
+            2,
+            "saved".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            0,
+        ),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+        NumericVariable::new("nine".into(), NumericType::Constant, None),
+    ];
+    let go_east = Operator::new(
+        "go_east".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            0,
+            AssignmentOperation::Plus,
+            1,
+            false,
+            vec![],
+        )],
+        1,
+    );
+    let save = Operator::new(
+        "save".into(),
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(vec![], 1, Some(0), 1)],
+        vec![],
+        1,
+    );
+
+    NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![ExplicitFact::new(1, 1)],
+        vec![],
+        vec![2, 0],
+        vec![0.0, 1.0, 9.0],
+        vec![go_east, save],
+        vec![],
+        vec![ComparisonAxiom::new(
+            0,
+            0,
+            2,
+            ComparisonOperator::GreaterThan,
+        )],
+        vec![],
+        ExplicitFact::new(0, 0),
+    )
+}
 
 #[test]
 fn build_abstraction_produces_singleton_plan_without_wildcards() {
@@ -518,4 +586,169 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
     let parts = partitions.partitions(0).unwrap();
     assert_eq!(parts.len(), 2);
     assert!(parts[0].contains(3.5) || parts[1].contains(3.5));
+}
+
+#[test]
+fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
+    let task = one_dimensional_sailing_like_task();
+    let config = CegarConfig {
+        flaw_kind: FlawKind::TargetCentered,
+        split_direction: Some(SplitDirection::Backward),
+        flaw_treatment: FlawTreatmentVariants::MaxRefinedSingleAtom,
+        max_iterations: 64,
+        random_seed: Some(7),
+        ..Default::default()
+    };
+
+    let outcome = Cegar::new(config)
+        .unwrap()
+        .build_abstraction(&task)
+        .expect("normal one-dimensional CEGAR run should make progress");
+
+    let x_partitions = outcome
+        .final_state
+        .factory
+        .partitions()
+        .partitions(0)
+        .expect("x partitions should exist");
+    assert!(
+        x_partitions.len() > 1,
+        "CEGAR should refine x on the one-dimensional task"
+    );
+}
+
+#[test]
+fn target_centered_builds_goal_side_partitions() {
+    fn split_points(outcome: &CegarOutcome) -> Vec<f64> {
+        let mut points = outcome
+            .final_state
+            .factory
+            .partitions()
+            .partitions(0)
+            .expect("x partitions should exist")
+            .iter()
+            .flat_map(|interval| [interval.lower, interval.upper])
+            .filter(|value| value.is_finite())
+            .collect::<Vec<_>>();
+        points.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        points.dedup_by(|a, b| a.to_bits() == b.to_bits());
+        points
+    }
+
+    let task = one_dimensional_sailing_like_task();
+    let target_centered = Cegar::new(CegarConfig {
+        flaw_kind: FlawKind::TargetCentered,
+        split_direction: Some(SplitDirection::Backward),
+        flaw_treatment: FlawTreatmentVariants::MaxRefinedSingleAtom,
+        max_iterations: 5,
+        random_seed: Some(7),
+        ..Default::default()
+    })
+    .unwrap()
+    .build_abstraction(&task)
+    .expect("target-centered CEGAR should build goal-side partitions");
+    let progression = Cegar::new(CegarConfig {
+        flaw_kind: FlawKind::Progression,
+        flaw_treatment: FlawTreatmentVariants::MaxRefinedSingleAtom,
+        max_iterations: 5,
+        random_seed: Some(7),
+        ..Default::default()
+    })
+    .unwrap()
+    .build_abstraction(&task)
+    .expect("progression CEGAR should build start-side partitions");
+
+    let target_points = split_points(&target_centered);
+    let progression_points = split_points(&progression);
+    let target_goal_side = target_points.iter().filter(|&&point| point >= 5.0).count();
+    let progression_start_side = progression_points
+        .iter()
+        .filter(|&&point| point <= 5.0)
+        .count();
+
+    assert!(
+        target_goal_side * 2 >= target_points.len(),
+        "target-centered splits should cluster near the goal side: {target_points:?}"
+    );
+    assert!(
+        progression_start_side * 2 >= progression_points.len(),
+        "progression splits should cluster near the start side: {progression_points:?}"
+    );
+}
+
+#[test]
+fn max_refined_single_atom_is_sticky() {
+    let variables = vec![ExplicitVariable::new(
+        1,
+        "p".into(),
+        vec!["p0".into()],
+        None,
+        0,
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 0.0],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let config = CegarConfig {
+        flaw_treatment: FlawTreatmentVariants::MaxRefinedSingleAtom,
+        random_seed: Some(7),
+        ..Default::default()
+    };
+    let mut rng = SmallRng::seed_from_u64(7);
+    let mut domain_mapping = vec![vec![0]];
+    let mut domain_sizes = vec![1];
+    let mut partitions = NumericPartitions::trivial(&task);
+    let mut numeric_domain_sizes = vec![1, 1];
+    let mut blacklisted_prop_var_ids = HashSet::new();
+    let mut blacklisted_numeric_var_ids = HashSet::new();
+
+    for step in 0..4 {
+        let value = (step + 1) as f64;
+        let flaws = vec![
+            Flaw::Numeric(NumericFlaw {
+                numeric_var_id: 0,
+                value,
+                include_in_lower: true,
+                step,
+            }),
+            Flaw::Numeric(NumericFlaw {
+                numeric_var_id: 1,
+                value,
+                include_in_lower: true,
+                step,
+            }),
+        ];
+        let refined = fix_flaws(
+            &config,
+            &task,
+            &flaws,
+            &mut domain_mapping,
+            &mut domain_sizes,
+            &mut partitions,
+            &mut numeric_domain_sizes,
+            &mut rng,
+            &mut blacklisted_prop_var_ids,
+            &mut blacklisted_numeric_var_ids,
+            1,
+        )
+        .unwrap();
+        assert_eq!(refined.refined_numeric_vars, HashSet::from([0]));
+    }
+
+    assert_eq!(numeric_domain_sizes, vec![5, 1]);
 }

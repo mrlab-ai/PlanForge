@@ -3,100 +3,26 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use anyhow::{Context, Result, bail, ensure};
 use planforge_sas::numeric::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom};
 use planforge_sas::numeric::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, Metric,
-    NumericRootTask, NumericType, NumericVariable, Operator,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable,
+    Metric, NumericRootTask, NumericType, NumericVariable, Operator,
 };
 use planforge_sas::numeric::utils::float_tolerance;
+use tracing::info;
 
 use super::comparison_expression::ComparisonTree;
 
-#[derive(Debug, Clone)]
-pub struct ProjectedState {
-    pub propositional_values: Vec<usize>,
-    pub numeric_values: Vec<f64>,
-}
-
-pub trait AbstractedTask {
-    fn task(&self) -> &dyn AbstractNumericTask;
-    fn project_state_values(
-        &self,
-        propositional_values: &[usize],
-        numeric_values: &[f64],
-    ) -> Result<ProjectedState>;
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct DomainAbstractionTaskProjection {
-    numeric_exprs: Vec<AffineExpression>,
-}
-
-impl DomainAbstractionTaskProjection {
-    pub fn identity(task: &dyn AbstractNumericTask) -> Self {
-        let numeric_exprs = (0..task.numeric_variables().len())
-            .map(|numeric_var_id| {
-                AffineExpression::var(numeric_var_id, task.numeric_variables().len())
-            })
-            .collect();
-        Self { numeric_exprs }
-    }
-
-    pub fn project_state_values(
-        &self,
-        propositional_values: &[usize],
-        numeric_values: &[f64],
-    ) -> Result<ProjectedState> {
-        let projected_numeric = self
-            .numeric_exprs
-            .iter()
-            .map(|expr| expr.evaluate(numeric_values))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(ProjectedState {
-            propositional_values: propositional_values.to_vec(),
-            numeric_values: projected_numeric,
-        })
-    }
-
-    pub fn project_numeric_values_into(
-        &self,
-        numeric_values: &[f64],
-        out: &mut Vec<f64>,
-    ) -> Result<()> {
-        out.clear();
-        out.reserve(self.numeric_exprs.len());
-        for expr in &self.numeric_exprs {
-            out.push(expr.evaluate(numeric_values)?);
-        }
-        Ok(())
-    }
-}
-
-pub struct LinearAbstractedTask {
+#[derive(Debug)]
+pub struct RestrictedTask {
     task: NumericRootTask,
-    projection: DomainAbstractionTaskProjection,
 }
 
-impl LinearAbstractedTask {
-    pub fn projection(&self) -> DomainAbstractionTaskProjection {
-        self.projection.clone()
-    }
-
-    pub fn into_parts(self) -> (NumericRootTask, DomainAbstractionTaskProjection) {
-        (self.task, self.projection)
-    }
-}
-
-impl AbstractedTask for LinearAbstractedTask {
-    fn task(&self) -> &dyn AbstractNumericTask {
+impl RestrictedTask {
+    pub fn task(&self) -> &NumericRootTask {
         &self.task
     }
 
-    fn project_state_values(
-        &self,
-        propositional_values: &[usize],
-        numeric_values: &[f64],
-    ) -> Result<ProjectedState> {
-        self.projection
-            .project_state_values(propositional_values, numeric_values)
+    pub fn into_task(self) -> NumericRootTask {
+        self.task
     }
 }
 
@@ -191,16 +117,10 @@ impl AffineExpression {
     }
 }
 
-pub fn maybe_build_linear_abstracted_task(
-    task: &dyn AbstractNumericTask,
-    enabled: bool,
-) -> Result<Option<LinearAbstractedTask>> {
-    if !enabled {
-        return Ok(None);
-    }
-
+pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<RestrictedTask>> {
     let num_numeric_vars = task.numeric_variables().len();
     if num_numeric_vars == 0 || task.comparison_axioms().is_empty() {
+        info!("restricted task: domain has no promotable roots, using original task");
         return Ok(None);
     }
 
@@ -239,6 +159,7 @@ pub fn maybe_build_linear_abstracted_task(
     }
 
     if root_exprs.is_empty() {
+        info!("restricted task: domain has no promotable roots, using original task");
         return Ok(None);
     }
 
@@ -267,7 +188,7 @@ fn build_task(
     initial_numeric: &[f64],
     root_exprs: &BTreeMap<usize, AffineExpression>,
     numeric_var_ids: &[usize],
-) -> Result<Option<LinearAbstractedTask>> {
+) -> Result<Option<RestrictedTask>> {
     let num_original_numeric = task.numeric_variables().len();
     let mut original_to_transformed = vec![None; num_original_numeric];
     let mut transformed_to_expr = Vec::new();
@@ -285,7 +206,12 @@ fn build_task(
         });
         let transformed_id = numeric_variables.len();
         original_to_transformed[original_id] = Some(transformed_id);
-        let name = task.numeric_variables()[original_id].name().to_string();
+        let original_name = task.numeric_variables()[original_id].name();
+        let name = if root_exprs.contains_key(&original_id) {
+            format!("{}|{}", restricted_shape_prefix(&expr), original_name)
+        } else {
+            original_name.to_string()
+        };
         let numeric_type = if root_exprs.contains_key(&original_id) {
             NumericType::Regular
         } else {
@@ -327,6 +253,7 @@ fn build_task(
             comparison_axiom.get_operator().clone(),
         ));
     }
+    let variables = renumber_propositional_axiom_layers(task, &comparison_axioms);
 
     let metric_var_id = task.metric().var_id().and_then(|var_id| {
         original_to_transformed
@@ -337,7 +264,7 @@ fn build_task(
     let task = NumericRootTask::new(
         1,
         Metric::new(task.metric().is_min(), metric_var_id),
-        task.variables().clone(),
+        variables,
         numeric_variables,
         (0..task.get_num_goals())
             .map(|goal_id| task.get_goal_fact(goal_id).clone())
@@ -352,12 +279,51 @@ fn build_task(
         ExplicitFact::new(0, 0),
     );
 
-    Ok(Some(LinearAbstractedTask {
-        task,
-        projection: DomainAbstractionTaskProjection {
-            numeric_exprs: transformed_to_expr,
-        },
-    }))
+    Ok(Some(RestrictedTask { task }))
+}
+
+fn renumber_propositional_axiom_layers(
+    task: &dyn AbstractNumericTask,
+    comparison_axioms: &[ComparisonAxiom],
+) -> Vec<ExplicitVariable> {
+    if comparison_axioms.is_empty() {
+        return task.variables().clone();
+    }
+
+    let comparison_vars = comparison_axioms
+        .iter()
+        .map(|axiom| axiom.get_affected_var_id())
+        .collect::<BTreeSet<_>>();
+    let remaining_layers = task
+        .variables()
+        .iter()
+        .enumerate()
+        .filter_map(|(var_id, variable)| {
+            (!comparison_vars.contains(&var_id))
+                .then_some(variable.axiom_layer())
+                .flatten()
+        })
+        .collect::<BTreeSet<_>>();
+    let layer_map = remaining_layers
+        .into_iter()
+        .enumerate()
+        .map(|(index, layer)| (layer, index + 1))
+        .collect::<BTreeMap<_, _>>();
+
+    task.variables()
+        .iter()
+        .enumerate()
+        .map(|(var_id, variable)| {
+            let new_layer = if comparison_vars.contains(&var_id) {
+                Some(0)
+            } else {
+                variable
+                    .axiom_layer()
+                    .map(|layer| *layer_map.get(&layer).expect("layer map is complete"))
+            };
+            variable.with_axiom_layer(new_layer)
+        })
+        .collect()
 }
 
 fn transform_operator(
@@ -392,13 +358,13 @@ fn transform_operator(
     for effect in operator.assignment_effects() {
         ensure!(
             !effect.is_conditional() && effect.conditions().is_empty(),
-            "abstracted domain task does not support conditional numeric effects in operator {}",
+            "restricted task does not support conditional numeric effects in operator {}",
             operator.name()
         );
         let source_value = match task.numeric_variables()[effect.var_id()].get_type() {
             NumericType::Constant | NumericType::Cost => initial_numeric[effect.var_id()],
             _ => bail!(
-                "abstracted domain task requires constant RHS numeric effects in operator {}",
+                "restricted task requires constant RHS numeric effects in operator {}",
                 operator.name()
             ),
         };
@@ -406,11 +372,11 @@ fn transform_operator(
             AssignmentOperation::Plus => deltas[effect.affected_var_id()] += source_value,
             AssignmentOperation::Minus => deltas[effect.affected_var_id()] -= source_value,
             AssignmentOperation::Assign => bail!(
-                "abstracted domain task does not support assignment numeric effects in operator {}",
+                "restricted task does not support assignment numeric effects in operator {}",
                 operator.name()
             ),
             AssignmentOperation::Times | AssignmentOperation::Divide => bail!(
-                "abstracted domain task does not support non-additive numeric effects in operator {}",
+                "restricted task does not support non-additive numeric effects in operator {}",
                 operator.name()
             ),
         }
@@ -474,13 +440,13 @@ fn transform_operator_with_assignment(
     for effect in operator.assignment_effects() {
         ensure!(
             !effect.is_conditional() && effect.conditions().is_empty(),
-            "abstracted domain task does not support conditional numeric effects in operator {}",
+            "restricted task does not support conditional numeric effects in operator {}",
             operator.name()
         );
         let source_value = match task.numeric_variables()[effect.var_id()].get_type() {
             NumericType::Constant | NumericType::Cost => initial_numeric[effect.var_id()],
             _ => bail!(
-                "abstracted domain task requires constant RHS numeric effects in operator {}",
+                "restricted task requires constant RHS numeric effects in operator {}",
                 operator.name()
             ),
         };
@@ -488,7 +454,7 @@ fn transform_operator_with_assignment(
             AssignmentOperation::Plus => {
                 ensure!(
                     assigned_constants[effect.affected_var_id()].is_none(),
-                    "abstracted domain task does not support mixed assignment/additive numeric effects on one variable in operator {}",
+                    "restricted task does not support mixed assignment/additive numeric effects on one variable in operator {}",
                     operator.name()
                 );
                 additive_deltas[effect.affected_var_id()] += source_value;
@@ -496,7 +462,7 @@ fn transform_operator_with_assignment(
             AssignmentOperation::Minus => {
                 ensure!(
                     assigned_constants[effect.affected_var_id()].is_none(),
-                    "abstracted domain task does not support mixed assignment/additive numeric effects on one variable in operator {}",
+                    "restricted task does not support mixed assignment/additive numeric effects on one variable in operator {}",
                     operator.name()
                 );
                 additive_deltas[effect.affected_var_id()] -= source_value;
@@ -505,13 +471,13 @@ fn transform_operator_with_assignment(
                 ensure!(
                     approx_eq(additive_deltas[effect.affected_var_id()], 0.0)
                         && assigned_constants[effect.affected_var_id()].is_none(),
-                    "abstracted domain task does not support multiple numeric effects on an assigned variable in operator {}",
+                    "restricted task does not support multiple numeric effects on an assigned variable in operator {}",
                     operator.name()
                 );
                 assigned_constants[effect.affected_var_id()] = Some(source_value);
             }
             AssignmentOperation::Times | AssignmentOperation::Divide => bail!(
-                "abstracted domain task does not support non-additive numeric effects in operator {}",
+                "restricted task does not support non-additive numeric effects in operator {}",
                 operator.name()
             ),
         }
@@ -548,7 +514,7 @@ fn transform_operator_with_assignment(
         }
         ensure!(
             successor_expr.non_zero_vars().is_empty(),
-            "abstracted domain task cannot express assignment effect on transformed numeric variable {original_id} in operator {}",
+            "restricted task cannot express assignment effect on transformed numeric variable {original_id} in operator {}",
             operator.name()
         );
         let const_id = constants.get_or_insert(
@@ -596,7 +562,7 @@ impl ConstantPool {
         }
         let id = numeric_variables.len();
         numeric_variables.push(NumericVariable::new(
-            format!("abstracted-const-{id}"),
+            format!("restricted-const-{id}"),
             NumericType::Constant,
             None,
         ));
@@ -686,6 +652,22 @@ fn approx_eq(lhs: f64, rhs: f64) -> bool {
     (lhs - rhs).abs() <= 1e-12
 }
 
+fn restricted_shape_prefix(expr: &AffineExpression) -> String {
+    let mut coefficients = expr
+        .coefficients
+        .iter()
+        .copied()
+        .filter(|coefficient| !approx_eq(*coefficient, 0.0))
+        .collect::<Vec<_>>();
+    coefficients.sort_by(|left, right| left.total_cmp(right));
+    let shape = coefficients
+        .iter()
+        .map(|coefficient| coefficient.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("rt-shape:{shape}")
+}
+
 #[cfg(test)]
 mod tests {
     use planforge_sas::numeric::axioms::ComparisonOperator;
@@ -694,7 +676,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn linear_abstracted_task_lifts_derived_condition_root_and_maps_effects() {
+    fn restricted_task_lifts_derived_condition_root_and_maps_effects() {
         let variables = vec![ExplicitVariable::new(
             2,
             "cmp".into(),
@@ -743,14 +725,15 @@ mod tests {
             ExplicitFact::new(0, 0),
         );
 
-        let abstracted = maybe_build_linear_abstracted_task(&task, true)
+        let restricted = build_restricted_task(&task)
             .unwrap()
-            .expect("task should be transformed");
-        let transformed = abstracted.task();
+            .expect("task should be restricted");
+        let transformed = restricted.task();
 
         assert_eq!(transformed.numeric_variables().len(), 3);
-        assert_eq!(transformed.numeric_variables()[0].name(), "u");
+        assert!(transformed.numeric_variables()[0].name().ends_with("|u"));
         assert_eq!(transformed.numeric_variables()[1].name(), "limit");
+        assert_eq!(transformed.get_variable_axiom_layer(0), Ok(Some(0)));
         assert_eq!(
             transformed.get_initial_numeric_state_values().as_slice(),
             &[5.0, 10.0, 1.0]
@@ -762,16 +745,14 @@ mod tests {
         assert_eq!(assignment_effects.len(), 1);
         assert_eq!(assignment_effects[0].affected_var_id(), 0);
         assert_eq!(assignment_effects[0].var_id(), 2);
-
-        let projected = abstracted
-            .project_state_values(&[1], &[7.0, 11.0, 18.0, 10.0, 1.0])
-            .unwrap();
-        assert_eq!(projected.propositional_values, vec![1]);
-        assert_eq!(projected.numeric_values, vec![18.0, 10.0, 1.0]);
+        assert_eq!(
+            transformed.get_initial_numeric_state_values()[assignment_effects[0].var_id()],
+            1.0
+        );
     }
 
     #[test]
-    fn linear_abstracted_task_supports_assignment_to_constant_when_views_stay_simple() {
+    fn restricted_task_supports_assignment_to_constant_when_views_stay_simple() {
         let variables = vec![ExplicitVariable::new(
             2,
             "cmp".into(),
@@ -818,10 +799,10 @@ mod tests {
             ExplicitFact::new(0, 0),
         );
 
-        let abstracted = maybe_build_linear_abstracted_task(&task, true)
+        let restricted = build_restricted_task(&task)
             .unwrap()
-            .expect("task should be transformed");
-        let transformed = abstracted.task();
+            .expect("task should be restricted");
+        let transformed = restricted.task();
         let assignment_effects = transformed.get_operators()[0].assignment_effects();
 
         assert_eq!(assignment_effects.len(), 1);
@@ -833,6 +814,101 @@ mod tests {
         assert_eq!(
             transformed.get_initial_numeric_state_values()[assignment_effects[0].var_id()],
             0.0
+        );
+    }
+
+    #[test]
+    fn restricted_task_returns_none_when_domain_has_no_derived_roots() {
+        let variables = vec![ExplicitVariable::new(
+            2,
+            "cmp".into(),
+            vec!["true".into(), "false".into()],
+            Some(0),
+            1,
+        )];
+        let numeric_variables = vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("limit".into(), NumericType::Constant, None),
+        ];
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, None),
+            variables,
+            numeric_variables,
+            vec![ExplicitFact::new(0, 0)],
+            vec![],
+            vec![1],
+            vec![2.0, 10.0],
+            vec![],
+            vec![],
+            vec![ComparisonAxiom::new(
+                0,
+                0,
+                1,
+                ComparisonOperator::LessThanOrEqual,
+            )],
+            vec![],
+            ExplicitFact::new(0, 0),
+        );
+
+        assert!(build_restricted_task(&task).unwrap().is_none());
+    }
+
+    #[test]
+    fn restricted_task_reports_unsupported_effect_as_error() {
+        let variables = vec![ExplicitVariable::new(
+            2,
+            "cmp".into(),
+            vec!["true".into(), "false".into()],
+            Some(0),
+            1,
+        )];
+        let numeric_variables = vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("y".into(), NumericType::Regular, None),
+            NumericVariable::new("u".into(), NumericType::Derived, Some(0)),
+            NumericVariable::new("limit".into(), NumericType::Constant, None),
+        ];
+        let operator = Operator::new(
+            "scale-x".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Times,
+                3,
+                false,
+                vec![],
+            )],
+            1,
+        );
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, None),
+            variables,
+            numeric_variables,
+            vec![ExplicitFact::new(0, 0)],
+            vec![],
+            vec![1],
+            vec![2.0, 3.0, 5.0, 10.0],
+            vec![operator],
+            vec![],
+            vec![ComparisonAxiom::new(
+                0,
+                2,
+                3,
+                ComparisonOperator::LessThanOrEqual,
+            )],
+            vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
+            ExplicitFact::new(0, 0),
+        );
+
+        let error = build_restricted_task(&task).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("does not support non-additive numeric effects"),
+            "{error:#}"
         );
     }
 }

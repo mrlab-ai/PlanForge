@@ -31,7 +31,6 @@ use super::comparison_expression::{CompOp, Interval};
 use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, DomainAbstractionMetadata,
-    prepare_domain_abstraction_task,
 };
 use super::memory_padding;
 use super::transition_cost_partitioning::FiniteSupportConfig;
@@ -161,6 +160,17 @@ impl PortfolioStrategy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComplementaryDirection {
+    Regression,
+    Progression,
+}
+
+#[derive(Debug, Clone)]
+struct RootGroup {
+    numeric_var_ids: HashSet<usize>,
+}
+
 #[derive(
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
@@ -183,7 +193,6 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub numeric_split_strategy: NumericSplitStrategy,
-    pub transform_linear_task: bool,
     pub portfolio_strategy: PortfolioStrategy,
     /// Flattened so unknown keys (today only `max_stealable_width`) reach
     /// the nested `FiniteSupportConfig::apply_options`.
@@ -241,7 +250,6 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,
-            transform_linear_task: false,
             portfolio_strategy: PortfolioStrategy::Standard,
             finite_support: FiniteSupportConfig::default(),
             split_direction: None,
@@ -292,7 +300,6 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
                 "numeric_split_strategy={}, ",
-                "transform_linear_task={}, ",
                 "portfolio_strategy={}, ",
             ),
             self.max_abstraction_size,
@@ -312,7 +319,6 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.flaw_treatment,
             self.init_split_method,
             self.numeric_split_strategy,
-            self.transform_linear_task,
             self.portfolio_strategy,
         )
     }
@@ -375,7 +381,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             init_split_var_ids,
             blacklisted_prop_var_ids,
             blacklisted_numeric_var_ids,
-            transform_linear_task: self.config.transform_linear_task,
             initial_seed_splits,
             finite_support: self.config.finite_support,
             split_direction: self.config.split_direction,
@@ -414,6 +419,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             self.config.total_max_time * self.config.blacklist_trigger_percentage;
         let mut iteration = 1usize;
         let mut goal_index = 0usize;
+        let mut group_index = 0usize;
+        let mut complementary_direction = ComplementaryDirection::Regression;
         loop {
             let elapsed = start.elapsed().as_secs_f64();
             if !blacklisting && elapsed > blacklist_start_time {
@@ -449,31 +456,69 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 .as_ref()
                 .map(|single_goal_task| single_goal_task as &dyn AbstractNumericTask)
                 .unwrap_or(task);
-            let prepared_task = prepare_domain_abstraction_task(
-                abstraction_task,
-                self.config.transform_linear_task,
-            )
-            .context("failed to prepare task for domain-abstraction collection")?;
-            let generation_task = prepared_task.task_for(abstraction_task);
+            let root_groups = if full_goal_task {
+                Vec::new()
+            } else {
+                let goal = goals
+                    .get(goal_index)
+                    .expect("complementary goal_index is in bounds");
+                self.root_groups_for_goal(abstraction_task, abstraction_task, goal)
+            };
+            let active_root_group = if root_groups.is_empty() {
+                None
+            } else {
+                Some(
+                    root_groups
+                        .get(group_index)
+                        .expect("complementary group_index is in bounds"),
+                )
+            };
             let blacklisted_var_ids = if blacklisting {
                 sample_blacklisted_variables(&blacklist_candidates, &mut rng)
             } else {
                 HashSet::new()
             };
-            let initial_seed_splits =
-                self.initial_seed_splits_for_goal_count(generation_task, iteration, goals.len());
             let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
-                split_blacklisted_variables(generation_task, blacklisted_var_ids);
+                split_blacklisted_variables(abstraction_task, blacklisted_var_ids);
+            let (group_blacklisted_prop_var_ids, group_blacklisted_numeric_var_ids) =
+                self.group_blacklisted_variable_ids(abstraction_task, active_root_group);
+            let blacklisted_prop_var_ids = blacklisted_prop_var_ids
+                .union(&group_blacklisted_prop_var_ids)
+                .copied()
+                .collect::<HashSet<_>>();
+            let blacklisted_numeric_var_ids = blacklisted_numeric_var_ids
+                .union(&group_blacklisted_numeric_var_ids)
+                .copied()
+                .collect::<HashSet<_>>();
+            let initial_seed_splits = self.initial_seed_splits_for_goal_count(
+                abstraction_task,
+                iteration,
+                goals.len(),
+                complementary_direction,
+                active_root_group,
+            );
             let init_split_var_ids = if initial_seed_splits.is_empty() {
-                self.initial_split_var_ids(generation_task, iteration)
+                self.initial_split_var_ids(abstraction_task, iteration)
             } else {
                 None
             };
-            let flaw_kind = self.flaw_kind_for_goal_count(goals.len(), iteration);
+            let flaw_kind = self.flaw_kind_for_goal_count_and_direction(
+                goals.len(),
+                iteration,
+                complementary_direction,
+            );
             let seed_descriptions = initial_seed_splits
                 .iter()
                 .map(seed_split_description)
                 .collect::<Vec<_>>();
+            let cegar_random_seed = self.cegar_random_seed(
+                &mut rng,
+                iteration,
+                goal_index,
+                group_index,
+                complementary_direction,
+                full_goal_task,
+            );
             let cegar_config = self.build_cegar_config(
                 remaining_abstraction_size,
                 remaining_generation_time,
@@ -481,16 +526,14 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 initial_seed_splits,
                 blacklisted_prop_var_ids,
                 blacklisted_numeric_var_ids,
-                Some(rng.next_u64()),
+                Some(cegar_random_seed),
                 flaw_kind,
             );
             let generator = DomainAbstractionGenerator::new(cegar_config)
                 .context("failed to construct single-abstraction CEGAR generator")?;
-            let mut abstraction = generator
-                .generate_prepared(abstraction_task, &prepared_task)
-                .with_context(|| {
-                    format!("failed to generate abstraction for collection iteration {iteration}")
-                })?;
+            let mut abstraction = generator.generate(abstraction_task).with_context(|| {
+                format!("failed to generate abstraction for collection iteration {iteration}")
+            })?;
             let solved_by_self = abstraction.metadata.solved_by_self;
             abstraction.metadata = DomainAbstractionMetadata {
                 collection_iteration: Some(iteration),
@@ -519,7 +562,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                         log_collection_abstraction_debug(
                             generated_abstractions.len() - 1,
                             last,
-                            generation_task,
+                            abstraction_task,
                         );
                     }
                 }
@@ -543,12 +586,14 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             {
                 break;
             }
-            if solved_by_self {
+            if solved_by_self && full_goal_task {
                 // The just-built abstraction's wildcard plan is a real
                 // concrete plan (CEGAR exited at `flaws.is_empty()`), so
                 // `h_DA(init)` is *tight* at the optimal cost. Adding more
                 // abstractions cannot improve the canonical/max heuristic at
-                // the initial state and only inflates memory. Stop here.
+                // the initial state and only inflates memory. This is only
+                // true for the full task. Complementary one-goal tasks still
+                // cycle root groups and directions for deterministic seeding.
                 info!(
                     "domain abstraction collection: stopping early at iteration {iteration} \
                      because abstraction's wildcard plan is a real concrete plan \
@@ -573,10 +618,36 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 time_point_of_last_new_abstraction = elapsed;
             }
 
-            iteration += 1;
-            if !full_goal_task && !goals.is_empty() {
-                goal_index = (goal_index + 1) % goals.len();
+            if !full_goal_task {
+                let group_count = root_groups.len();
+                assert!(
+                    group_count > 0,
+                    "complementary iteration must have at least one root group"
+                );
+                match complementary_direction {
+                    ComplementaryDirection::Regression => {
+                        complementary_direction = ComplementaryDirection::Progression;
+                    }
+                    ComplementaryDirection::Progression => {
+                        group_index += 1;
+                        complementary_direction = ComplementaryDirection::Regression;
+                        if group_index == group_count {
+                            group_index = 0;
+                            goal_index += 1;
+                            if goal_index == goals.len() {
+                                info!(
+                                    "domain abstraction collection: stopping complementary \
+                                     generation after every goal, root group, and direction was \
+                                     attempted"
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
             }
+
+            iteration += 1;
         }
 
         if generated_abstractions.is_empty() {
@@ -615,30 +686,89 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         task: &dyn AbstractNumericTask,
         iteration: usize,
         goal_count: usize,
+        complementary_direction: ComplementaryDirection,
+        active_root_group: Option<&RootGroup>,
     ) -> Vec<InitialSeedSplit> {
         match self.config.portfolio_strategy {
             PortfolioStrategy::Standard => return Vec::new(),
             PortfolioStrategy::Complementary => {
-                if self.complementary_uses_target_centered_for_goal_count(goal_count, iteration) {
-                    return self.backward_goal_seed_splits(task);
+                if self.complementary_uses_target_centered_for_goal_count(
+                    goal_count,
+                    iteration,
+                    complementary_direction,
+                ) {
+                    let mut seeds = self.backward_goal_seed_splits(task);
+                    if let Some(root_group) = active_root_group {
+                        seeds.retain(|seed| match seed {
+                            InitialSeedSplit::Propositional { .. } => true,
+                            InitialSeedSplit::Numeric { numeric_var_id, .. } => {
+                                root_group.numeric_var_ids.contains(numeric_var_id)
+                            }
+                        });
+                    }
+                    return seeds;
                 }
                 return Vec::new();
             }
         }
     }
 
-    fn uses_full_goal_task(&self, goal_count: usize, iteration: usize) -> bool {
+    fn uses_full_goal_task(&self, goal_count: usize, _iteration: usize) -> bool {
         match self.config.portfolio_strategy {
             PortfolioStrategy::Standard => true,
-            PortfolioStrategy::Complementary => goal_count == 0 || iteration == 1,
+            PortfolioStrategy::Complementary => goal_count == 0,
         }
     }
 
+    fn cegar_random_seed(
+        &self,
+        rng: &mut SmallRng,
+        iteration: usize,
+        goal_index: usize,
+        group_index: usize,
+        complementary_direction: ComplementaryDirection,
+        full_goal_task: bool,
+    ) -> u64 {
+        match self.config.portfolio_strategy {
+            PortfolioStrategy::Standard => rng.next_u64(),
+            PortfolioStrategy::Complementary if full_goal_task => rng.next_u64(),
+            PortfolioStrategy::Complementary => {
+                let direction_id = match complementary_direction {
+                    ComplementaryDirection::Regression => 0u64,
+                    ComplementaryDirection::Progression => 1u64,
+                };
+                let key = (iteration as u64)
+                    ^ ((goal_index as u64) << 17)
+                    ^ ((group_index as u64) << 33)
+                    ^ (direction_id << 49);
+                splitmix64(key)
+            }
+        }
+    }
+
+    #[cfg(test)]
     fn flaw_kind_for_goal_count(&self, goal_count: usize, iteration: usize) -> FlawKind {
+        self.flaw_kind_for_goal_count_and_direction(
+            goal_count,
+            iteration,
+            ComplementaryDirection::Regression,
+        )
+    }
+
+    fn flaw_kind_for_goal_count_and_direction(
+        &self,
+        goal_count: usize,
+        iteration: usize,
+        complementary_direction: ComplementaryDirection,
+    ) -> FlawKind {
         match self.config.portfolio_strategy {
             PortfolioStrategy::Standard => return self.config.flaw_kind,
             PortfolioStrategy::Complementary => {
-                if self.complementary_uses_target_centered_for_goal_count(goal_count, iteration) {
+                if self.complementary_uses_target_centered_for_goal_count(
+                    goal_count,
+                    iteration,
+                    complementary_direction,
+                ) {
                     return FlawKind::TargetCentered;
                 }
                 return self.config.flaw_kind;
@@ -650,14 +780,59 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         &self,
         goal_count: usize,
         iteration: usize,
+        complementary_direction: ComplementaryDirection,
     ) -> bool {
         // Target-centered (backward) splits place split points at the
         // boundaries of the regressed goal-required interval, which is the
-        // natural granularity for goal-focused single-fact abstractions in
-        // the complementary portfolio. Every non-full-goal abstraction uses
-        // target-centered; only the full-goal-task (iteration 1) uses
-        // forward/progression splits.
+        // natural granularity for the regression-side abstraction.
         !self.uses_full_goal_task(goal_count, iteration)
+            && complementary_direction == ComplementaryDirection::Regression
+    }
+
+    fn root_groups_for_goal(
+        &self,
+        source_task: &dyn AbstractNumericTask,
+        task: &dyn AbstractNumericTask,
+        goal: &ExplicitFact,
+    ) -> Vec<RootGroup> {
+        let Some(groups) = complete_shape_root_groups(source_task, task, goal) else {
+            let fallback = all_goal_relevant_numeric_vars(task, goal);
+            if fallback.is_empty() {
+                return vec![RootGroup {
+                    numeric_var_ids: (0..task.numeric_variables().len()).collect(),
+                }];
+            }
+            return vec![RootGroup {
+                numeric_var_ids: fallback,
+            }];
+        };
+        groups
+    }
+
+    fn group_blacklisted_variable_ids(
+        &self,
+        task: &dyn AbstractNumericTask,
+        active_root_group: Option<&RootGroup>,
+    ) -> (HashSet<usize>, HashSet<usize>) {
+        let Some(active_root_group) = active_root_group else {
+            return (HashSet::new(), HashSet::new());
+        };
+        let blacklisted_numeric_var_ids = (0..task.numeric_variables().len())
+            .filter(|numeric_var_id| !active_root_group.numeric_var_ids.contains(numeric_var_id))
+            .collect();
+        let blacklisted_prop_var_ids = task
+            .comparison_axioms()
+            .iter()
+            .filter_map(|comparison_axiom| {
+                let roots = comparison_root_vars_for_comparison(task, comparison_axiom);
+                (!roots.is_empty()
+                    && !roots.iter().all(|numeric_var_id| {
+                        active_root_group.numeric_var_ids.contains(numeric_var_id)
+                    }))
+                .then_some(comparison_axiom.get_affected_var_id())
+            })
+            .collect();
+        (blacklisted_prop_var_ids, blacklisted_numeric_var_ids)
     }
 
     fn backward_goal_seed_splits(&self, task: &dyn AbstractNumericTask) -> Vec<InitialSeedSplit> {
@@ -716,6 +891,183 @@ fn operator_has_unconditional_effect(op: &Operator, fact: &ExplicitFact) -> bool
             && effect.var_id() == fact.var()
             && effect.value() == fact.value()
     })
+}
+
+fn complete_shape_root_groups(
+    source_task: &dyn AbstractNumericTask,
+    task: &dyn AbstractNumericTask,
+    goal: &ExplicitFact,
+) -> Option<Vec<RootGroup>> {
+    let comparison_index = ComparisonAxiomIndex::from_task(task).ok()?;
+    let achievers = task
+        .get_operators()
+        .iter()
+        .filter(|op| operator_has_unconditional_effect(op, goal))
+        .collect::<Vec<_>>();
+    if achievers.is_empty() {
+        return None;
+    }
+
+    let mut per_achiever = Vec::with_capacity(achievers.len());
+    for op in achievers {
+        let mut by_shape: HashMap<Vec<OrderedFloat<f64>>, HashSet<usize>> = HashMap::new();
+        for precondition in op.preconditions() {
+            for numeric_var_id in
+                comparison_root_vars_for_fact(task, &comparison_index, precondition)
+            {
+                let shape = numeric_shape_key(source_task, task, numeric_var_id)?;
+                by_shape.entry(shape).or_default().insert(numeric_var_id);
+            }
+        }
+        if by_shape.is_empty() {
+            return None;
+        }
+        per_achiever.push(by_shape);
+    }
+
+    let mut groups = Vec::new();
+    for shape in per_achiever[0].keys() {
+        if !per_achiever
+            .iter()
+            .all(|achiever_shapes| achiever_shapes.contains_key(shape))
+        {
+            continue;
+        }
+        let mut numeric_var_ids = HashSet::new();
+        for achiever_shapes in &per_achiever {
+            numeric_var_ids.extend(
+                achiever_shapes
+                    .get(shape)
+                    .expect("shape key was checked above")
+                    .iter()
+                    .copied(),
+            );
+        }
+        groups.push(RootGroup { numeric_var_ids });
+    }
+
+    if groups.is_empty() {
+        return None;
+    }
+    groups.sort_by_key(|group| {
+        group
+            .numeric_var_ids
+            .iter()
+            .min()
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
+    Some(groups)
+}
+
+fn all_goal_relevant_numeric_vars(
+    task: &dyn AbstractNumericTask,
+    goal: &ExplicitFact,
+) -> HashSet<usize> {
+    let Ok(comparison_index) = ComparisonAxiomIndex::from_task(task) else {
+        return HashSet::new();
+    };
+    let mut relevant = HashSet::new();
+    for op in task
+        .get_operators()
+        .iter()
+        .filter(|op| operator_has_unconditional_effect(op, goal))
+    {
+        for precondition in op.preconditions() {
+            relevant.extend(comparison_root_vars_for_fact(
+                task,
+                &comparison_index,
+                precondition,
+            ));
+        }
+    }
+    relevant
+}
+
+fn comparison_root_vars_for_fact(
+    task: &dyn AbstractNumericTask,
+    comparison_index: &ComparisonAxiomIndex,
+    fact: &ExplicitFact,
+) -> Vec<usize> {
+    let Some(tree) = comparison_index.comparison_tree(fact.var()) else {
+        return Vec::new();
+    };
+    comparison_root_vars_for_numeric_ids(
+        task,
+        [tree.left_numeric_var_id, tree.right_numeric_var_id],
+    )
+}
+
+fn comparison_root_vars_for_comparison(
+    task: &dyn AbstractNumericTask,
+    comparison_axiom: &ComparisonAxiom,
+) -> Vec<usize> {
+    comparison_root_vars_for_numeric_ids(
+        task,
+        [
+            comparison_axiom.get_left_var_id(),
+            comparison_axiom.get_right_var_id(),
+        ],
+    )
+}
+
+fn comparison_root_vars_for_numeric_ids(
+    task: &dyn AbstractNumericTask,
+    numeric_var_ids: [usize; 2],
+) -> Vec<usize> {
+    let mut roots = numeric_var_ids
+        .into_iter()
+        .filter(|numeric_var_id| {
+            task.numeric_variables()
+                .get(*numeric_var_id)
+                .is_some_and(|var| var.get_type() == &NumericType::Regular)
+        })
+        .collect::<Vec<_>>();
+    roots.sort_unstable();
+    roots.dedup();
+    roots
+}
+
+fn numeric_shape_key(
+    source_task: &dyn AbstractNumericTask,
+    task: &dyn AbstractNumericTask,
+    numeric_var_id: usize,
+) -> Option<Vec<OrderedFloat<f64>>> {
+    let task_var = task.numeric_variables().get(numeric_var_id)?;
+    if let Some(shape) = restricted_shape_key(task_var.name()) {
+        return Some(shape);
+    }
+    let expr = source_task
+        .numeric_variables()
+        .iter()
+        .position(|var| var.name() == task_var.name())
+        .and_then(|source_var_id| linearize_numeric_var(source_task, source_var_id).ok())
+        .or_else(|| linearize_numeric_var(task, numeric_var_id).ok())?;
+    let mut coefficients = expr
+        .coefficients
+        .iter()
+        .copied()
+        .filter(|coefficient| coefficient.abs() >= 1e-12)
+        .map(OrderedFloat)
+        .collect::<Vec<_>>();
+    if coefficients.is_empty() {
+        return None;
+    }
+    coefficients.sort_unstable();
+    Some(coefficients)
+}
+
+fn restricted_shape_key(name: &str) -> Option<Vec<OrderedFloat<f64>>> {
+    let shape = name.strip_prefix("rt-shape:")?.split('|').next()?;
+    let coefficients = if shape.is_empty() {
+        Vec::new()
+    } else {
+        shape
+            .split(',')
+            .map(|coefficient| coefficient.parse::<f64>().ok().map(OrderedFloat))
+            .collect::<Option<Vec<_>>>()?
+    };
+    (!coefficients.is_empty()).then_some(coefficients)
 }
 
 fn seed_split_description(seed: &InitialSeedSplit) -> String {
@@ -1186,7 +1538,11 @@ fn add_shells_for_requirement(
 }
 
 fn max_shell_splits_for_task(task: &dyn AbstractNumericTask) -> usize {
-    (256usize).max(task.numeric_variables().len() * 4)
+    max_shell_splits_for_var_count(task.numeric_variables().len())
+}
+
+fn max_shell_splits_for_var_count(var_count: usize) -> usize {
+    (256usize).max(var_count * 4)
 }
 
 fn smallest_positive_delta(deltas: &[f64]) -> Option<f64> {
@@ -1424,6 +1780,13 @@ fn sample_blacklisted_variables<R: rand::Rng + ?Sized>(
     let mut shuffled = candidates.to_vec();
     shuffled.shuffle(rng);
     shuffled.into_iter().take(blacklist_size).collect()
+}
+
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^ (value >> 31)
 }
 
 fn select_single_init_split_var(candidate_var_ids: &[usize], iteration: usize) -> Option<usize> {

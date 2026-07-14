@@ -424,6 +424,13 @@ impl ExplicitVariable {
         self.axiom_layer
     }
 
+    pub fn with_axiom_layer(&self, axiom_layer: Option<usize>) -> Self {
+        Self {
+            axiom_layer,
+            ..self.clone()
+        }
+    }
+
     pub fn domain_size(&self) -> usize {
         self.domain_size
     }

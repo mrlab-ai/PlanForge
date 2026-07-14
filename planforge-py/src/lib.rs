@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 use planforge_core;
 use planforge_sas::numeric::numeric_task::{NumericRootTask, Operator, TaskRef};
 use planforge_sas::numeric::state_registry::{ConcreteState, StateRegistry};
+use planforge_search::numeric::evaluation::domain_abstractions::restricted_task::build_restricted_task;
 use planforge_search::numeric::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use planforge_search::numeric::search::{AStarSearch, SearchEngine, SearchResult, SearchStatus};
 use planforge_search::numeric::successor_generator::SuccessorTree;
@@ -25,6 +26,7 @@ create_exception!(planforge, SpecError, PyValueError);
 enum SolveError {
     Translate(String),
     Parse(String),
+    Restrict(String),
     Search(String),
     FileNotFound(String),
 }
@@ -198,27 +200,52 @@ impl GilReleasedTask {
     }
 }
 
+fn restrict_numeric_task(
+    task: NumericRootTask,
+    restrict_task: bool,
+) -> Result<NumericRootTask, String> {
+    if !restrict_task {
+        return Ok(task);
+    }
+    match build_restricted_task(&task).map_err(|err| format!("{err:#}"))? {
+        Some(restricted_task) => Ok(restricted_task.into_task()),
+        None => Ok(task),
+    }
+}
+
 #[pymethods]
 impl Task {
     #[staticmethod]
-    fn from_sas_text(text: &str) -> PyResult<Self> {
-        let task = NumericRootTask::try_from_str(text).map_err(ParseError::new_err)?;
+    #[pyo3(signature = (text, restrict_task=false))]
+    fn from_sas_text(text: &str, restrict_task: bool) -> PyResult<Self> {
+        let task = restrict_numeric_task(
+            NumericRootTask::try_from_str(text).map_err(ParseError::new_err)?,
+            restrict_task,
+        )
+        .map_err(PlanforgeError::new_err)?;
         Ok(Self::build(Arc::new(task)))
     }
 
     #[staticmethod]
-    fn from_sas(path: PathBuf) -> PyResult<Self> {
+    #[pyo3(signature = (path, restrict_task=false))]
+    fn from_sas(path: PathBuf, restrict_task: bool) -> PyResult<Self> {
         let text = std::fs::read_to_string(&path).map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => {
                 PyFileNotFoundError::new_err(format!("{}: {e}", path.display()))
             }
             _ => ParseError::new_err(format!("failed to read {}: {e}", path.display())),
         })?;
-        Self::from_sas_text(&text)
+        Self::from_sas_text(&text, restrict_task)
     }
 
     #[staticmethod]
-    fn from_pddl(py: Python<'_>, domain: PathBuf, problem: PathBuf) -> PyResult<Self> {
+    #[pyo3(signature = (domain, problem, restrict_task=false))]
+    fn from_pddl(
+        py: Python<'_>,
+        domain: PathBuf,
+        problem: PathBuf,
+        restrict_task: bool,
+    ) -> PyResult<Self> {
         let text = py
             .allow_threads(|| -> Result<String, String> {
                 let raw = planforge_translator::translate_to_sas_string(
@@ -231,7 +258,7 @@ impl Task {
                 ))
             })
             .map_err(TranslateError::new_err)?;
-        Self::from_sas_text(&text)
+        Self::from_sas_text(&text, restrict_task)
     }
 
     #[getter]
@@ -455,7 +482,7 @@ impl Task {
 
 #[pyfunction]
 #[pyo3(signature = (*, domain=None, problem=None, sas=None, sas_text=None,
-                    search=None, max_time=None, max_memory=None))]
+                    search=None, max_time=None, max_memory=None, restrict_task=false))]
 #[allow(clippy::too_many_arguments)]
 fn solve(
     py: Python<'_>,
@@ -466,6 +493,7 @@ fn solve(
     search: Option<String>,
     max_time: Option<f64>,
     max_memory: Option<u64>,
+    restrict_task: bool,
 ) -> PyResult<PySearchResult> {
     let has_pddl = domain.is_some() && problem.is_some();
     let has_partial_pddl = domain.is_some() ^ problem.is_some();
@@ -510,6 +538,7 @@ fn solve(
         };
 
         let task = NumericRootTask::try_from_str(&sas_text).map_err(SolveError::Parse)?;
+        let task = restrict_numeric_task(task, restrict_task).map_err(SolveError::Restrict)?;
         let task: TaskRef<'static> = Arc::new(task);
         planforge_core::solve_task(task, &spec, time_limit, memory_limit)
             .map_err(|err| SolveError::Search(err.to_string()))
@@ -519,6 +548,7 @@ fn solve(
         match err {
             SolveError::Translate(message) => TranslateError::new_err(message),
             SolveError::Parse(message) => ParseError::new_err(message),
+            SolveError::Restrict(message) => PlanforgeError::new_err(message),
             SolveError::Search(message) => PlanforgeError::new_err(message),
             SolveError::FileNotFound(message) => PyFileNotFoundError::new_err(message),
         }

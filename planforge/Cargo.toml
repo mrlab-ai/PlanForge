@@ -12,7 +12,6 @@ doc = false
 planforge-sas = { path = "../planforge-sas" }
 planforge-translate = { path = "../planforge-translate" }
 planforge-translator = { path = "../planforge-translator" }
-planforge-preprocessor = { path = "../planforge-preprocessor" }
 planforge-search = { path = "../planforge-search" }
 planforge-searcher = { path = "../planforge-searcher" }
 planforge-cli-utils = { path = "../planforge-cli-utils" }

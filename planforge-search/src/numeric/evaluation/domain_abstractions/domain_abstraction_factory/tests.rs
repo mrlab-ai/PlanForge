@@ -1042,6 +1042,34 @@ fn abstract_operator_footprint_tightens_source_by_inverse_target_image() {
 }
 
 #[test]
+fn footprint_active_preimage_allows_boundary_charge() {
+    let (task, factory) = additive_numeric_footprint_task_with_partitions(vec![
+        Interval::new(f64::NEG_INFINITY, 5.0, false, true),
+        Interval::new(5.0, 6.0, false, true),
+    ]);
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![0],
+        cost: 1.0,
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
+        changed_numeric_vars: vec![0],
+    };
+
+    let footprints = factory
+        .build_abstract_operator_footprints(&task, &[op], &FiniteSupportConfig::default())
+        .unwrap();
+    let concrete = &footprints[0].labels[0];
+
+    assert!(concrete.allocable);
+    assert_eq!(
+        concrete.source_region.numeric[0],
+        Interval::new(4.0, 5.0, false, true)
+    );
+}
+
+#[test]
 fn abstract_operator_footprint_rejects_empty_inverse_target_image() {
     let (task, factory) = additive_numeric_footprint_task_with_partitions(vec![
         Interval::new(f64::NEG_INFINITY, 5.0, false, true),
@@ -1258,6 +1286,117 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
         abstract_operator_costs_from_footprints(1, &footprints, None, None, &residuals, 0, None)
             .unwrap();
     assert_eq!(operator_costs, vec![1.0]);
+}
+
+#[test]
+fn footprint_one_finite_dim_suffices() {
+    let variables = vec![
+        ExplicitVariable::new(
+            3,
+            "x_gt_zero".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(0),
+            2,
+        ),
+        ExplicitVariable::new(
+            2,
+            "saved".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            0,
+        ),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("half".into(), NumericType::Constant, None),
+        NumericVariable::new("zero".into(), NumericType::Constant, None),
+    ];
+    let diagonal = Operator::new(
+        "diagonal".into(),
+        vec![],
+        vec![],
+        vec![
+            AssignmentEffect::new(0, AssignmentOperation::Plus, 2, false, vec![]),
+            AssignmentEffect::new(1, AssignmentOperation::Plus, 2, false, vec![]),
+        ],
+        1,
+    );
+    let save = Operator::new(
+        "save".into(),
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(vec![], 1, Some(0), 1)],
+        vec![],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![ExplicitFact::new(1, 1)],
+        vec![],
+        vec![2, 0],
+        vec![0.0, 0.0, 0.5, 0.0],
+        vec![diagonal, save],
+        vec![],
+        vec![ComparisonAxiom::new(
+            0,
+            0,
+            3,
+            ComparisonOperator::GreaterThan,
+        )],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::singleton(0.0),
+            Interval::new(0.0, f64::INFINITY, false, false),
+        ],
+        vec![Interval::unbounded()],
+        vec![Interval::singleton(0.5)],
+        vec![Interval::singleton(0.0)],
+    ]);
+    let numeric_domain_sizes = vec![2, 1, 1, 1];
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .unwrap();
+
+    let x_abs_var = task.variables().len();
+    let y_abs_var = x_abs_var + 1;
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![0],
+        cost: 1.0,
+        hash_effect: 0,
+        regression_preconditions: vec![
+            ExplicitFact::new(x_abs_var, 1),
+            ExplicitFact::new(y_abs_var, 0),
+        ],
+        preconditions: vec![
+            ExplicitFact::new(x_abs_var, 0),
+            ExplicitFact::new(y_abs_var, 0),
+        ],
+        changed_numeric_vars: vec![0, 1],
+    };
+    let footprints = factory
+        .build_abstract_operator_footprints(&task, &[op], &FiniteSupportConfig::default())
+        .unwrap();
+    let concrete = &footprints[0].labels[0];
+    assert!(concrete.allocable);
+    assert_eq!(concrete.source_region.numeric[0], Interval::singleton(0.0));
+    assert_eq!(concrete.source_region.numeric[1], Interval::unbounded());
+
+    let table = factory
+        .build_abstract_distance_table(&task, false, false)
+        .unwrap();
+    assert_eq!(table.distances[table.initial_state_hash], 2.0);
 }
 
 #[test]
