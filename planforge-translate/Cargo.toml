@@ -4,8 +4,20 @@ version = "0.1.0"
 edition = "2024"
 license = "LGPL-3.0"
 
+[[bin]]
+name = "planforge-preprocess"
+path = "src/bin/preprocess.rs"
+
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "fmt",
+    "std",
+    "time",
+] }
+time = "0.3"
 nom = "7"
 ordered-float = "5.1.0"
 itertools = "0.13"

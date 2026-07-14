@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 
 use planforge_translate::normalize;
 use planforge_translate::pddl_parser::PddlTask;
-use planforge_translator::init_logger;
+use planforge_translator::{init_logger, translate_to_sas_to_path};
 use tracing::info;
 /// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
 #[derive(Parser)]
@@ -33,14 +33,18 @@ enum Commands {
         #[arg(long = "log-level")]
         log_level: Option<tracing_subscriber::filter::LevelFilter>,
     },
-    // /// Preprocess: read SAS+ from stdin and write a preprocessed search input (writes to stdout or file)
-    // Preprocess {
-    //     /// Optional input file (default: stdin)
-    //     input: Option<PathBuf>,
-    //     /// Optional output file (default: output)
-    //     #[clap(short, long)]
-    //     output: Option<PathBuf>,
-    // },
+    /// Translate DOMAIN and PROBLEM PDDL, then preprocess the generated SAS task.
+    Preprocess {
+        /// Domain PDDL file
+        domain: PathBuf,
+        /// Problem PDDL file
+        problem: PathBuf,
+        /// Optional preprocessed output file (default: output)
+        #[clap(short, long)]
+        output: Option<PathBuf>,
+        #[arg(long = "log-level")]
+        log_level: Option<tracing_subscriber::filter::LevelFilter>,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -170,6 +174,31 @@ fn main() -> anyhow::Result<()> {
 
             let duration = start.elapsed();
             info!("translator: completed in {:.2?} seconds", duration);
+        }
+        Commands::Preprocess {
+            domain,
+            problem,
+            output,
+            log_level,
+        } => {
+            init_logger(log_level.unwrap_or(tracing_subscriber::filter::LevelFilter::INFO));
+
+            let domain_str = domain
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("domain path must be valid Unicode"))?;
+            let problem_str = problem
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("problem path must be valid Unicode"))?;
+            let sas_path = PathBuf::from("output.sas");
+            translate_to_sas_to_path(domain_str, problem_str, &sas_path)?;
+
+            let sas_input = sas_path
+                .to_str()
+                .expect("literal output.sas path is valid Unicode")
+                .to_owned();
+            let args = ["planforge-translator preprocess".to_string(), sas_input];
+            let out_path = output.unwrap_or_else(|| PathBuf::from("output"));
+            planforge_translate::preprocess::run_preprocess_to_output(&args, &out_path);
         }
     }
 
