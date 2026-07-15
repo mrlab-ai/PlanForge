@@ -19,7 +19,7 @@ use planforge_sas::numeric::numeric_task::{
     AbstractNumericTask, ExplicitFact, NumericType, Operator,
 };
 
-use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw};
+use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
 
 pub use flaw_search::FlawKind;
 pub use flaw_search::SplitDirection;
@@ -296,17 +296,29 @@ impl Cegar {
 
             let iteration_start = Instant::now();
             let plan_start = Instant::now();
-            wildcard_plan = factory
-                .compute_plan_with_rng(
-                    task,
-                    config.combine_labels,
-                    config.debug,
-                    config.use_wildcard_plans,
-                    Some(&mut rng),
-                )
-                .with_context(|| {
-                    format!("failed to compute abstract plan (iteration {iteration})")
-                })?;
+            let deadline = config.max_time.map(|max_time| start + max_time);
+            match factory.compute_plan_with_rng_and_deadline(
+                task,
+                config.combine_labels,
+                config.debug,
+                config.use_wildcard_plans,
+                Some(&mut rng),
+                deadline,
+            ) {
+                Ok(plan) => wildcard_plan = plan,
+                Err(error) if is_deadline_error(&error) => {
+                    info!(
+                        "CEGAR: deadline expired while computing abstract plan at iteration {}; stopping refinement",
+                        iteration
+                    );
+                    break;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("failed to compute abstract plan (iteration {iteration})")
+                    });
+                }
+            }
             let plan_time = plan_start.elapsed();
             if config.debug {
                 match wildcard_plan.as_ref() {
@@ -361,6 +373,22 @@ impl Cegar {
                 solved_by_self = true;
                 break;
             }
+            let eligible_flaws =
+                filter_eligible_flaws(task, &factory.partitions, &factory.domain_sizes, &flaws);
+            if eligible_flaws.filtered_stale > 0 {
+                debug!(
+                    "filtered {} stale flaws (already-split values / fully refined vars)",
+                    eligible_flaws.filtered_stale
+                );
+            }
+            if eligible_flaws.flaws.is_empty() {
+                info!(
+                    "CEGAR: {} flaws remain but none are refinable (stale boundaries / fully refined vars); stopping refinement at iteration {}",
+                    flaws.len(),
+                    iteration
+                );
+                break;
+            }
 
             let before_size = if config.debug {
                 compute_abstraction_size_u128(&factory.domain_sizes, &factory.numeric_domain_sizes)
@@ -378,7 +406,7 @@ impl Cegar {
             let refined = fix_flaws(
                 &self.config,
                 task,
-                &flaws,
+                &eligible_flaws.flaws,
                 &mut factory.domain_mapping,
                 &mut factory.domain_sizes,
                 &mut factory.partitions,
@@ -408,7 +436,8 @@ impl Cegar {
             if refined.is_empty() {
                 break;
             }
-            let split_values: Vec<_> = flaws
+            let split_values: Vec<_> = eligible_flaws
+                .flaws
                 .iter()
                 .filter_map(|flaw| match flaw {
                     Flaw::Numeric(numeric) => Some((
@@ -422,7 +451,7 @@ impl Cegar {
             ensure!(
                 after_partition_count > before_partition_count,
                 "CEGAR refinement made no progress at iteration {iteration}: flaws={:?}, refined={:?}, split_values={:?}",
-                flaws,
+                eligible_flaws.flaws,
                 refined,
                 split_values
             );
@@ -460,6 +489,87 @@ impl Cegar {
             solved_by_self,
         })
     }
+}
+
+fn is_deadline_error(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("online SCP deadline exceeded")
+        || message.contains("abstract operator generation deadline exceeded")
+}
+
+#[derive(Debug, Clone)]
+struct EligibleFlaws {
+    flaws: Vec<Flaw>,
+    filtered_stale: usize,
+}
+
+fn filter_eligible_flaws(
+    task: &dyn AbstractNumericTask,
+    partitions: &NumericPartitions,
+    domain_sizes: &[usize],
+    flaws: &[Flaw],
+) -> EligibleFlaws {
+    let mut eligible = Vec::with_capacity(flaws.len());
+    let mut filtered_stale = 0usize;
+    for flaw in flaws {
+        match flaw {
+            Flaw::Numeric(numeric) => {
+                if numeric_flaw_is_refinable(partitions, numeric) {
+                    eligible.push(Flaw::Numeric(numeric.clone()));
+                } else {
+                    filtered_stale += 1;
+                }
+            }
+            Flaw::Propositional(prop) => {
+                if !propositional_flaw_is_refinable(task, domain_sizes, prop) {
+                    filtered_stale += 1 + prop.dependent_numeric_flaws.len();
+                    continue;
+                }
+                let mut filtered_prop = prop.clone();
+                let old_dep_count = filtered_prop.dependent_numeric_flaws.len();
+                filtered_prop
+                    .dependent_numeric_flaws
+                    .retain(|numeric| numeric_flaw_is_refinable(partitions, numeric));
+                filtered_stale += old_dep_count - filtered_prop.dependent_numeric_flaws.len();
+                eligible.push(Flaw::Propositional(filtered_prop));
+            }
+        }
+    }
+    EligibleFlaws {
+        flaws: eligible,
+        filtered_stale,
+    }
+}
+
+fn numeric_flaw_is_refinable(partitions: &NumericPartitions, flaw: &NumericFlaw) -> bool {
+    can_split_numeric_var(
+        partitions,
+        flaw.numeric_var_id,
+        flaw.value,
+        flaw.include_in_lower,
+    )
+}
+
+fn propositional_flaw_is_refinable(
+    task: &dyn AbstractNumericTask,
+    domain_sizes: &[usize],
+    flaw: &PropFlaw,
+) -> bool {
+    let var_id = flaw.fact.var();
+    let current_size = *domain_sizes
+        .get(var_id)
+        .unwrap_or_else(|| panic!("flaw variable {var_id} is outside domain_sizes"));
+    let true_size = task
+        .get_variable_domain_size(var_id)
+        .unwrap_or_else(|error| panic!("failed to get true domain size for var {var_id}: {error}"));
+    assert!(
+        flaw.fact.value() < true_size,
+        "flaw fact value {} outside true domain size {} for var {}",
+        flaw.fact.value(),
+        true_size,
+        var_id
+    );
+    current_size < true_size
 }
 
 fn log_final_target_centered_abstraction(
@@ -724,6 +834,18 @@ pub fn fix_flaws(
     blacklisted_numeric_var_ids: &mut HashSet<usize>,
     plan_length: usize,
 ) -> Result<RefinementSummary> {
+    let eligible_flaws = filter_eligible_flaws(task, partitions, domain_sizes, flaws);
+    if eligible_flaws.filtered_stale > 0 {
+        debug!(
+            "filtered {} stale flaws (already-split values / fully refined vars)",
+            eligible_flaws.filtered_stale
+        );
+    }
+    let flaws = eligible_flaws.flaws;
+    if flaws.is_empty() {
+        return Ok(RefinementSummary::default());
+    }
+
     let comparison_var_ids: HashSet<usize> = task
         .comparison_axioms()
         .iter()
@@ -732,7 +854,7 @@ pub fn fix_flaws(
 
     let chosen_flaws: ChosenFlaws = config.flaw_treatment.choose_flaws(
         task,
-        flaws,
+        &flaws,
         config,
         &comparison_var_ids,
         rng,
@@ -869,6 +991,7 @@ fn try_refine_from_flaw(
             }
 
             let mut changed = false;
+            let mut prop_domain_size_changed = false;
 
             if comparison_var_ids.contains(&var_id) {
                 if !can_refine_propositional_variable_with_blacklist(
@@ -887,6 +1010,7 @@ fn try_refine_from_flaw(
                 if domain_sizes[var_id] < 2 {
                     domain_sizes[var_id] = 2;
                     changed = true;
+                    prop_domain_size_changed = true;
                 }
                 // Ensure mapping values are within the new abstract size.
                 if !domain_mapping[var_id].is_empty() && domain_mapping[var_id][0] != 1 {
@@ -901,7 +1025,7 @@ fn try_refine_from_flaw(
                     domain_mapping[var_id][2] = 0;
                     changed = true;
                 }
-                let _ = old_size; // Keep structure similar to numeric-fd; size tracking handled elsewhere.
+                debug_assert!(domain_sizes[var_id] >= old_size);
             } else {
                 let abs_size = domain_sizes[var_id];
                 // If we've already fully refined this variable, nothing to do.
@@ -927,6 +1051,7 @@ fn try_refine_from_flaw(
                 domain_mapping[var_id][value] = abs_size;
                 domain_sizes[var_id] = abs_size + 1;
                 changed = true;
+                prop_domain_size_changed = true;
             }
 
             // Optional dependent numeric refinements (currently produced only for comparison vars).
@@ -935,7 +1060,7 @@ fn try_refine_from_flaw(
             {
                 let mut any_numeric_changed = false;
                 let mut refined = RefinementSummary::default();
-                if changed {
+                if prop_domain_size_changed {
                     refined.mark_propositional(var_id);
                 }
                 let iter: Box<dyn Iterator<Item = &NumericFlaw>> =
@@ -980,7 +1105,9 @@ fn try_refine_from_flaw(
 
             if changed {
                 let mut refined = RefinementSummary::default();
-                refined.mark_propositional(var_id);
+                if prop_domain_size_changed {
+                    refined.mark_propositional(var_id);
+                }
                 Ok(Some(refined))
             } else {
                 Ok(None)

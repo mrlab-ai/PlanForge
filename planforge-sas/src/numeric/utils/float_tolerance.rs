@@ -21,7 +21,12 @@ pub fn canonicalize(value: f64) -> f64 {
 
 #[inline]
 pub fn canonical_bits(value: f64) -> u64 {
-    canonicalize(value).to_bits()
+    let canonical = canonicalize(value);
+    if canonical == 0.0 {
+        0.0f64.to_bits()
+    } else {
+        canonical.to_bits()
+    }
 }
 
 #[inline]
@@ -42,6 +47,11 @@ mod tests {
     #[test]
     fn canonical_bits_deduplicate_close_values() {
         assert_eq!(canonical_bits(0.1 + 0.2), canonical_bits(0.3));
+    }
+
+    #[test]
+    fn canonical_bits_deduplicate_negative_zero() {
+        assert_eq!(canonical_bits(-0.0), canonical_bits(0.0));
     }
 
     #[test]

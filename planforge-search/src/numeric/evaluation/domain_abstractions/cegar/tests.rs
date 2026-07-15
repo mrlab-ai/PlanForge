@@ -752,3 +752,44 @@ fn max_refined_single_atom_is_sticky() {
 
     assert_eq!(numeric_domain_sizes, vec![5, 1]);
 }
+
+#[test]
+fn stale_numeric_flaw_at_existing_boundary_contributes_empty_summary() {
+    let task = one_dimensional_sailing_like_task();
+    let config = CegarConfig {
+        flaw_treatment: FlawTreatmentVariants::OneSplitPerAtom,
+        random_seed: Some(1),
+        ..Default::default()
+    };
+    let mut rng = SmallRng::seed_from_u64(1);
+    let (mut domain_mapping, mut domain_sizes) = trivial_domain_mapping_and_sizes(&task).unwrap();
+    let mut partitions = NumericPartitions::trivial(&task);
+    assert!(partitions.split_at(0, 0.0, true));
+    let mut numeric_domain_sizes = vec![2, 1, 1];
+    let mut blacklisted_prop_var_ids = HashSet::new();
+    let mut blacklisted_numeric_var_ids = HashSet::new();
+    let flaws = vec![Flaw::Numeric(NumericFlaw {
+        numeric_var_id: 0,
+        value: -0.0,
+        include_in_lower: true,
+        step: 0,
+    })];
+
+    let refined = fix_flaws(
+        &config,
+        &task,
+        &flaws,
+        &mut domain_mapping,
+        &mut domain_sizes,
+        &mut partitions,
+        &mut numeric_domain_sizes,
+        &mut rng,
+        &mut blacklisted_prop_var_ids,
+        &mut blacklisted_numeric_var_ids,
+        1,
+    )
+    .unwrap();
+
+    assert!(refined.is_empty());
+    assert_eq!(numeric_domain_sizes[0], 2);
+}

@@ -64,17 +64,25 @@ impl DomainAbstractionGenerator {
 
     /// Builds a domain abstraction and its abstract distance table.
     pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<DomainAbstraction> {
+        let deadline = self
+            .config
+            .max_time
+            .map(|max_time| std::time::Instant::now() + max_time);
         let outcome = self
             .cegar
             .build_abstraction(task)
             .context("CEGAR failed to build abstraction")?;
+        ensure!(
+            deadline.is_none_or(|deadline| std::time::Instant::now() < deadline),
+            "domain abstraction generation deadline exceeded"
+        );
 
         let solved_by_self = outcome.solved_by_self;
         let factory = outcome.final_state.factory;
         let mut operator_generator =
             factory.make_operator_generator(task, self.config.combine_labels)?;
         let abstract_operators = operator_generator
-            .build_abstract_operators(task)
+            .build_abstract_operators_with_deadline(task, deadline)
             .context("failed to build abstract operators")?;
         let abstract_operator_footprints = if self.config.compute_operator_footprints {
             factory

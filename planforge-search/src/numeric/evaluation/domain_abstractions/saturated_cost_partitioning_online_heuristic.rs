@@ -895,6 +895,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         abstraction_task,
                         self.config.combine_labels,
                         &remaining_costs,
+                        deadline,
                     )?
                 } else {
                     let pdb_id = pos - num_domain_abstractions;
@@ -1035,6 +1036,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         error.to_string().contains("online SCP deadline exceeded")
     }
 
+    fn is_online_deadline_error_eval(error: &EvaluationError) -> bool {
+        format!("{error}").contains("online SCP deadline exceeded")
+    }
+
     fn update_improvement_status(&self, state: &mut ScpOnlineState) {
         let time_limit_reached = self.config.max_time.is_finite()
             && state.start_time.elapsed() >= Duration::from_secs_f64(self.config.max_time);
@@ -1149,40 +1154,26 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             None
         };
         let mut cp = if self.config.use_abstract_operator_cost_partitioning {
-            if self.config.order_optimization_max_time > 0.0 {
-                self.build_best_abstract_operator_cp_from_candidate_orders(
-                    task,
-                    abstractions,
-                    &mut order,
-                    abstract_state_ids,
-                    &standalone_current_h,
-                    num_domain_abstractions,
-                    original_costs,
-                    optimization_deadline,
-                )?
-            } else {
-                self.build_abstract_operator_cp(
-                    task,
-                    abstractions,
-                    &order,
-                    abstract_state_ids,
-                    &standalone_current_h,
-                    num_domain_abstractions,
-                    original_costs,
-                    deadline,
-                    self.config.saturator,
-                    None,
-                )?
-            }
-        } else {
-            self.build_label_cp(
+            self.build_best_abstract_operator_cp_from_candidate_orders(
                 task,
                 abstractions,
-                &order,
+                &mut order,
                 abstract_state_ids,
+                &standalone_current_h,
                 num_domain_abstractions,
                 original_costs,
-                deadline,
+                optimization_deadline.or(deadline),
+            )?
+        } else {
+            self.build_best_label_cp_from_candidate_orders(
+                task,
+                abstractions,
+                &mut order,
+                abstract_state_ids,
+                &standalone_current_h,
+                num_domain_abstractions,
+                original_costs,
+                optimization_deadline.or(deadline),
             )?
         };
 
@@ -1204,6 +1195,70 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             info!("scp_online: {mode} CP attempt produced no lookup tables");
         }
         Ok((!cp.is_empty()).then_some(cp))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_best_label_cp_from_candidate_orders(
+        &self,
+        task: &dyn AbstractNumericTask,
+        abstractions: &[DomainAbstraction],
+        incumbent_order: &mut Vec<usize>,
+        abstract_state_ids: &[Option<usize>],
+        standalone_current_h: &[f64],
+        num_domain_abstractions: usize,
+        original_costs: &[f64],
+        deadline: Option<Instant>,
+    ) -> Result<CostPartitioningHeuristic, EvaluationError> {
+        let mut best_order = incumbent_order.clone();
+        let mut best_cp = self.build_label_cp(
+            task,
+            abstractions,
+            &best_order,
+            abstract_state_ids,
+            num_domain_abstractions,
+            original_costs,
+            deadline,
+        )?;
+        let mut best_h = best_cp.compute_heuristic(abstract_state_ids);
+
+        for candidate in self.candidate_label_orders(incumbent_order, standalone_current_h) {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                break;
+            }
+            if candidate == best_order {
+                continue;
+            }
+            let candidate_cp = match self.build_label_cp(
+                task,
+                abstractions,
+                &candidate,
+                abstract_state_ids,
+                num_domain_abstractions,
+                original_costs,
+                deadline,
+            ) {
+                Ok(cp) => cp,
+                Err(error) if Self::is_online_deadline_error_eval(&error) => {
+                    info!(
+                        "scp_online: label candidate order stopped while computing table (deadline)"
+                    );
+                    break;
+                }
+                Err(error) => return Err(error),
+            };
+            let candidate_h = candidate_cp.compute_heuristic(abstract_state_ids);
+            if candidate_h > best_h {
+                if self.config.collection_config.debug {
+                    info!("scp_online: label candidate order improved h {best_h} -> {candidate_h}");
+                }
+                best_h = candidate_h;
+                best_order = candidate;
+                best_cp = candidate_cp;
+            }
+        }
+
+        *incumbent_order = best_order;
+        Ok(best_cp)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1280,13 +1335,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let mut orders = Vec::new();
         orders.push(base_order.to_vec());
 
-        let mut by_plain_score = base_order.to_vec();
-        by_plain_score.sort_by(|&left, &right| {
-            let left_h = standalone_current_h.get(left).copied().unwrap_or(0.0);
-            let right_h = standalone_current_h.get(right).copied().unwrap_or(0.0);
-            right_h.total_cmp(&left_h).then_with(|| left.cmp(&right))
-        });
-        orders.push(by_plain_score);
+        orders.push(max_heuristic_greedy_order(base_order, standalone_current_h));
 
         let mut by_collection = base_order.to_vec();
         by_collection.sort_by_key(|&id| abstraction_collection_iteration(abstractions, id));
@@ -1334,6 +1383,17 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
 
         orders
+    }
+
+    fn candidate_label_orders(
+        &self,
+        base_order: &[usize],
+        standalone_current_h: &[f64],
+    ) -> Vec<Vec<usize>> {
+        vec![
+            base_order.to_vec(),
+            max_heuristic_greedy_order(base_order, standalone_current_h),
+        ]
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1785,6 +1845,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 abstraction_task,
                 self.config.combine_labels,
                 &label_remaining_costs,
+                deadline,
             )?;
             if should_skip_zero_current_table(
                 "abstract-operator label tail",
@@ -1817,6 +1878,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             abstraction_task,
             self.config.combine_labels,
             &label_remaining_costs,
+            None,
         )?;
         let label_h = current_h_for_distances(abstraction_id, &label_distances, abstract_state_ids);
         let (positive_labels, total_label_saturated) = positive_cost_stats(&label_saturated);
@@ -1974,12 +2036,22 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 match self.config.saturator {
                     Saturator::All => {
                         let abstraction_task = abstraction.task_for_factory(task);
-                        let (distances, saturated) = Self::compute_domain_cp_entry(
+                        let (distances, saturated) = match Self::compute_domain_cp_entry(
                             abstraction,
                             abstraction_task,
                             self.config.combine_labels,
                             &remaining_costs,
-                        )?;
+                            deadline,
+                        ) {
+                            Ok(entry) => entry,
+                            Err(error) if Self::is_online_deadline_error_eval(&error) => {
+                                info!(
+                                    "scp_online: label all abstraction {pos} stopped while computing table (deadline)"
+                                );
+                                break;
+                            }
+                            Err(error) => return Err(error),
+                        };
                         log_label_table_summary(
                             "all",
                             pos,
@@ -2092,6 +2164,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstraction_task,
                             self.config.combine_labels,
                             &remaining_costs,
+                            deadline,
                         )?;
                         log_label_table_summary(
                             "perimstar/all",
@@ -2160,6 +2233,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         abstraction_task,
                         self.config.combine_labels,
                         &remaining_costs,
+                        deadline,
                     )?;
                     log_label_table_summary(
                         "fillSCP/all",
@@ -2266,6 +2340,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         abstraction_task,
                         self.config.combine_labels,
                         &remaining_costs,
+                        deadline,
                     )?;
                     if should_skip_zero_current_table(
                         "fillSCP label perimstar/all",
@@ -2664,21 +2739,30 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
         remaining_costs: &[f64],
+        deadline: Option<Instant>,
     ) -> Result<(Vec<f64>, Vec<f64>), EvaluationError> {
+        let start = Instant::now();
         let (table, saturated) = abstraction
             .factory
-            .build_cost_partitioned_distance_table_for_goals(
+            .build_cost_partitioned_distance_table_for_goals_with_deadline(
                 task,
                 combine_labels,
                 remaining_costs,
                 false,
                 &abstraction.distance_table.goal_facts,
+                deadline,
             )
             .map_err(|error| {
                 EvaluationError::ComputationFailed(format!(
                     "failed to compute SCP table: {error:#}"
                 ))
             })?;
+        info!(
+            "scp_online: label distance-table/CP construction finished in {:.3}s, states={}, saturated_costs={}",
+            start.elapsed().as_secs_f64(),
+            table.distances.len(),
+            saturated.len()
+        );
         Ok((table.distances, saturated))
     }
 
@@ -2781,6 +2865,16 @@ fn abstraction_collection_iteration(
         .get(abstraction_id)
         .and_then(|abstraction| abstraction.metadata.collection_iteration)
         .unwrap_or(usize::MAX)
+}
+
+fn max_heuristic_greedy_order(base_order: &[usize], standalone_current_h: &[f64]) -> Vec<usize> {
+    let mut order = base_order.to_vec();
+    order.sort_by(|&left, &right| {
+        let left_h = standalone_current_h.get(left).copied().unwrap_or(0.0);
+        let right_h = standalone_current_h.get(right).copied().unwrap_or(0.0);
+        right_h.total_cmp(&left_h).then_with(|| left.cmp(&right))
+    });
+    order
 }
 
 fn abstraction_is_target_centered(
@@ -4116,5 +4210,15 @@ mod tests {
 
         reduce_costs(&mut remaining, &saturated).unwrap();
         assert_eq!(remaining, vec![0.0]);
+    }
+
+    #[test]
+    fn label_candidates_always_include_max_heuristic_greedy_order() {
+        let base_order = vec![2, 0, 1];
+        let h_values = vec![3.0, 7.0, 5.0];
+
+        let max_order = max_heuristic_greedy_order(&base_order, &h_values);
+
+        assert_eq!(max_order, vec![1, 2, 0]);
     }
 }
