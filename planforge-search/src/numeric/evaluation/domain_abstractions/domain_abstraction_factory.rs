@@ -10,6 +10,7 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use ordered_float::NotNan;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
+use tracing::info;
 
 use planforge_sas::numeric::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType, Operator,
@@ -533,16 +534,40 @@ impl DomainAbstractionFactory {
         dump_distances: bool,
         goal_facts: &[ExplicitFact],
     ) -> Result<(AbstractDistanceTable, Vec<f64>)> {
+        self.build_cost_partitioned_distance_table_for_goals_with_deadline(
+            task,
+            combine_labels,
+            operator_costs,
+            dump_distances,
+            goal_facts,
+            None,
+        )
+    }
+
+    pub fn build_cost_partitioned_distance_table_for_goals_with_deadline(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operator_costs: &[f64],
+        dump_distances: bool,
+        goal_facts: &[ExplicitFact],
+        deadline: Option<Instant>,
+    ) -> Result<(AbstractDistanceTable, Vec<f64>)> {
+        ensure_online_scp_deadline(deadline)?;
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let mut operators = generator.build_abstract_operators(task)?;
+        ensure_online_scp_deadline(deadline)?;
         apply_operator_costs(&mut operators, operator_costs)?;
-        let table = self.build_distance_table_with_operators_for_goals(
+        let table = self.build_distance_table_with_operators_for_goals_inner(
             task,
             &generator,
             &operators,
             dump_distances,
             goal_facts,
+            None,
+            deadline,
         )?;
+        ensure_online_scp_deadline(deadline)?;
         let saturated_costs = self.compute_saturated_costs(task, &generator, &operators, &table)?;
         Ok((table, saturated_costs))
     }
@@ -570,7 +595,7 @@ impl DomainAbstractionFactory {
         let mut operators = generator.build_abstract_operators(task)?;
         apply_operator_costs(&mut operators, operator_costs)?;
         self.build_distance_table_with_operators_for_goals_inner(
-            task, &generator, &operators, false, goal_facts, None,
+            task, &generator, &operators, false, goal_facts, None, None,
         )
     }
 
@@ -852,6 +877,7 @@ impl DomainAbstractionFactory {
             false,
             &goal_facts,
             Some(&match_tree),
+            deadline,
         )?;
 
         if let Some(state_id) = cap_state_id
@@ -882,6 +908,7 @@ impl DomainAbstractionFactory {
                 false,
                 &goal_facts,
                 Some(&match_tree),
+                deadline,
             )?;
             return Ok((global_table, tcf));
         }
@@ -1227,12 +1254,60 @@ impl DomainAbstractionFactory {
         use_wildcard_plans: bool,
         plan_step_rng: Option<&mut SmallRng>,
     ) -> Result<Option<WildcardPlanResult>> {
+        self.compute_plan_with_rng_and_deadline(
+            task,
+            combine_labels,
+            dump_distances,
+            use_wildcard_plans,
+            plan_step_rng,
+            None,
+        )
+    }
+
+    pub(crate) fn compute_plan_with_rng_and_deadline(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        dump_distances: bool,
+        use_wildcard_plans: bool,
+        plan_step_rng: Option<&mut SmallRng>,
+        deadline: Option<Instant>,
+    ) -> Result<Option<WildcardPlanResult>> {
+        ensure_online_scp_deadline(deadline)?;
+        let start = Instant::now();
         let mut generator = self.make_operator_generator(task, combine_labels)?;
-        let operators = generator.build_abstract_operators(task)?;
-        let table =
-            self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)?;
+        info!(
+            "domain abstraction factory: operator generator prepared in {:.3}s",
+            start.elapsed().as_secs_f64()
+        );
+        let operator_start = Instant::now();
+        let operators = generator.build_abstract_operators_with_deadline(task, deadline)?;
+        info!(
+            "domain abstraction factory: built {} abstract operators in {:.3}s",
+            operators.len(),
+            operator_start.elapsed().as_secs_f64()
+        );
+        ensure_online_scp_deadline(deadline)?;
+        let table_start = Instant::now();
+        let goal_facts = self.compute_abstract_goals(task);
+        let table = self.build_distance_table_with_operators_for_goals_inner(
+            task,
+            &generator,
+            &operators,
+            dump_distances,
+            &goal_facts,
+            None,
+            deadline,
+        )?;
+        info!(
+            "domain abstraction factory: built abstract distance table with {} states in {:.3}s",
+            table.distances.len(),
+            table_start.elapsed().as_secs_f64()
+        );
+        ensure_online_scp_deadline(deadline)?;
 
         let comparison_var_ids = self.comparison_var_ids();
+        let match_tree_start = Instant::now();
         let match_tree = MatchTree::build(
             generator.domain_sizes(),
             generator.numeric_domain_sizes(),
@@ -1240,8 +1315,14 @@ impl DomainAbstractionFactory {
             &operators,
             &comparison_var_ids,
         );
+        info!(
+            "domain abstraction factory: built match tree in {:.3}s",
+            match_tree_start.elapsed().as_secs_f64()
+        );
+        ensure_online_scp_deadline(deadline)?;
 
-        self.compute_wildcard_plan_from_table(
+        let plan_start = Instant::now();
+        let plan = self.compute_wildcard_plan_from_table(
             task,
             &generator,
             &operators,
@@ -1250,7 +1331,13 @@ impl DomainAbstractionFactory {
             &match_tree,
             use_wildcard_plans,
             plan_step_rng,
-        )
+            deadline,
+        );
+        info!(
+            "domain abstraction factory: extracted wildcard plan in {:.3}s",
+            plan_start.elapsed().as_secs_f64()
+        );
+        plan
     }
 
     pub(crate) fn build_distance_table_with_operators(
@@ -1348,6 +1435,7 @@ impl DomainAbstractionFactory {
             dump_distances,
             goal_facts,
             None,
+            None,
         )
     }
 
@@ -1359,7 +1447,9 @@ impl DomainAbstractionFactory {
         dump_distances: bool,
         goal_facts: &[ExplicitFact],
         prebuilt_match_tree: Option<&MatchTree>,
+        deadline: Option<Instant>,
     ) -> Result<AbstractDistanceTable> {
+        ensure_online_scp_deadline(deadline)?;
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
         let comparison_var_ids = self.comparison_var_ids();
@@ -1397,6 +1487,7 @@ impl DomainAbstractionFactory {
             hash_multipliers,
             &comparison_var_ids,
             num_states,
+            deadline,
         )?;
 
         let goal_facts = goal_facts.to_vec();
@@ -2734,7 +2825,9 @@ impl DomainAbstractionFactory {
         match_tree: &MatchTree,
         use_wildcard_plans: bool,
         mut plan_step_rng: Option<&mut SmallRng>,
+        deadline: Option<Instant>,
     ) -> Result<Option<WildcardPlanResult>> {
+        ensure_online_scp_deadline(deadline)?;
         let domain_sizes = generator.domain_sizes();
         let hash_multipliers = generator.hash_multipliers();
         let num_props = domain_sizes.len();
@@ -2782,6 +2875,9 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes,
             hash_multipliers,
         ) {
+            if safety_steps % 64 == 0 {
+                ensure_online_scp_deadline(deadline)?;
+            }
             safety_steps += 1;
             if safety_steps > dist.len() + 1 {
                 bail!("abstract plan extraction exceeded safety limit")
@@ -2968,7 +3064,9 @@ impl DomainAbstractionFactory {
         hash_multipliers: &[usize],
         comparison_var_ids: &[usize],
         num_states: usize,
+        deadline: Option<Instant>,
     ) -> Result<(Vec<f64>, Vec<Option<usize>>)> {
+        ensure_online_scp_deadline(deadline)?;
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
         let mut generating_op_ids: Vec<Option<usize>> = vec![None; num_states];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
@@ -2979,6 +3077,9 @@ impl DomainAbstractionFactory {
         let comparison_branching = !comparison_var_ids.is_empty();
 
         for state_hash in 0..num_states {
+            if state_hash % 1024 == 0 {
+                ensure_online_scp_deadline(deadline)?;
+            }
             if !self.is_goal_state(
                 state_hash,
                 goal_facts,
@@ -3016,6 +3117,9 @@ impl DomainAbstractionFactory {
         };
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
         while let Some((Reverse(d), state_hash)) = heap.pop() {
+            if state_hash % 1024 == 0 {
+                ensure_online_scp_deadline(deadline)?;
+            }
             let d = d.into_inner();
             if d > distances[state_hash] + 1e-12 {
                 continue;

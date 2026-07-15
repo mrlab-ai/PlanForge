@@ -3,6 +3,7 @@ mod tests;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, ensure};
 
@@ -22,6 +23,14 @@ use super::utils;
 const COMPARISON_TRUE_VAL: usize = 0;
 const COMPARISON_FALSE_VAL: usize = 1;
 const COMPARISON_UNKNOWN_VAL: usize = 2;
+
+fn ensure_generation_deadline(deadline: Option<Instant>) -> Result<()> {
+    ensure!(
+        deadline.is_none_or(|deadline| Instant::now() < deadline),
+        "abstract operator generation deadline exceeded"
+    );
+    Ok(())
+}
 
 pub type DomainMapping = Vec<Vec<usize>>;
 
@@ -555,7 +564,9 @@ fn materialize_skeletons_into(
     skeletons: &[AbstractOperatorSkeleton],
     finalizer: &mut AbstractOperatorFinalizer,
     candidate_scratch: &mut AbstractOperatorCandidate,
+    deadline: Option<Instant>,
 ) -> Result<()> {
+    ensure_generation_deadline(deadline)?;
     let Some(first) = skeletons.first() else {
         return Ok(());
     };
@@ -564,9 +575,11 @@ fn materialize_skeletons_into(
         generator,
         &first.op_preconditions,
         &first.ass_effects,
+        deadline,
     )?;
 
     for skeleton in skeletons {
+        ensure_generation_deadline(deadline)?;
         debug_assert_eq!(skeleton.ass_effects, first.ass_effects);
         debug_assert_eq!(skeleton.op_preconditions, first.op_preconditions);
         for trans in &transitions {
@@ -821,10 +834,19 @@ impl AbstractOperatorGenerator {
         &mut self,
         task: &dyn AbstractNumericTask,
     ) -> Result<Vec<AbstractOperator>> {
+        self.build_abstract_operators_with_deadline(task, None)
+    }
+
+    pub fn build_abstract_operators_with_deadline(
+        &mut self,
+        task: &dyn AbstractNumericTask,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<AbstractOperator>> {
         let mut finalizer =
             AbstractOperatorFinalizer::new(self.combine_labels, &self.hash_multipliers);
         let mut candidate_scratch = AbstractOperatorCandidate::default();
         for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
+            ensure_generation_deadline(deadline)?;
             let skeletons = self.build_for_concrete_operator(task, op, concrete_op_id)?;
             materialize_skeletons_into(
                 task,
@@ -832,6 +854,7 @@ impl AbstractOperatorGenerator {
                 &skeletons,
                 &mut finalizer,
                 &mut candidate_scratch,
+                deadline,
             )?;
         }
 
@@ -1230,7 +1253,9 @@ fn compute_hash_effects_with_preconditions(
     generator: &mut AbstractOperatorGenerator,
     op_preconditions: &[ExplicitFact],
     ass_effects: &[planforge_sas::numeric::numeric_task::AssignmentEffect],
+    deadline: Option<Instant>,
 ) -> Result<Vec<TransitionInfo>> {
+    ensure_generation_deadline(deadline)?;
     if generator.numeric_domain_sizes.is_empty() {
         return Ok(vec![TransitionInfo {
             source_partition_facts: Vec::new(),
@@ -1473,6 +1498,7 @@ fn compute_hash_effects_with_preconditions(
         &mut source_intervals_buf,
         &mut target_intervals_buf,
         &mut out,
+        deadline,
     )?;
 
     Ok(out)
@@ -1496,7 +1522,11 @@ fn enumerate_partition_combos(
     source_intervals_buf: &mut Vec<Interval>,
     target_intervals_buf: &mut Vec<Interval>,
     out: &mut Vec<TransitionInfo>,
+    deadline: Option<Instant>,
 ) -> Result<()> {
+    if pos % 4 == 0 {
+        ensure_generation_deadline(deadline)?;
+    }
     if pos == per_var.len() {
         // Leaf: emit a TransitionInfo for the current (source, target,
         // changed_vars) state of the scratch.
@@ -1631,6 +1661,7 @@ fn enumerate_partition_combos(
             source_intervals_buf,
             target_intervals_buf,
             out,
+            deadline,
         )?;
 
         source_partition_facts.pop();

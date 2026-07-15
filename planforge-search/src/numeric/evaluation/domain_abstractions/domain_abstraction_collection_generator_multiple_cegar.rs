@@ -278,6 +278,13 @@ fn time_seed() -> u64 {
         .unwrap_or(0x5EED_F00D_u64)
 }
 
+fn is_generation_deadline_error(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("domain abstraction generation deadline exceeded")
+        || message.contains("abstract operator generation deadline exceeded")
+        || message.contains("online SCP deadline exceeded")
+}
+
 impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -421,6 +428,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         let mut goal_index = 0usize;
         let mut group_index = 0usize;
         let mut complementary_direction = ComplementaryDirection::Regression;
+        let mut stopped_by_generation_deadline = false;
         loop {
             let elapsed = start.elapsed().as_secs_f64();
             if !blacklisting && elapsed > blacklist_start_time {
@@ -531,9 +539,35 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             );
             let generator = DomainAbstractionGenerator::new(cegar_config)
                 .context("failed to construct single-abstraction CEGAR generator")?;
-            let mut abstraction = generator.generate(abstraction_task).with_context(|| {
-                format!("failed to generate abstraction for collection iteration {iteration}")
-            })?;
+            let generation_start = Instant::now();
+            info!(
+                "domain abstraction collection: starting CEGAR generation iteration {}, remaining_generation_time={:.2}s, full_goal_task={}, flaw_kind={}",
+                iteration, remaining_generation_time, full_goal_task, flaw_kind
+            );
+            let mut abstraction = match generator.generate(abstraction_task) {
+                Ok(abstraction) => abstraction,
+                Err(error) if is_generation_deadline_error(&error) => {
+                    info!(
+                        "domain abstraction collection: generation deadline expired at iteration {}; keeping {} abstractions built so far",
+                        iteration,
+                        generated_abstractions.len()
+                    );
+                    stopped_by_generation_deadline = true;
+                    break;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "failed to generate abstraction for collection iteration {iteration}"
+                        )
+                    });
+                }
+            };
+            info!(
+                "domain abstraction collection: finished CEGAR generation iteration {} in {:.3}s",
+                iteration,
+                generation_start.elapsed().as_secs_f64()
+            );
             let solved_by_self = abstraction.metadata.solved_by_self;
             abstraction.metadata = DomainAbstractionMetadata {
                 collection_iteration: Some(iteration),
@@ -650,6 +684,12 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             iteration += 1;
         }
 
+        if generated_abstractions.is_empty() && stopped_by_generation_deadline {
+            info!(
+                "domain abstraction collection: returning empty collection after generation deadline"
+            );
+            return Ok(generated_abstractions);
+        }
         if generated_abstractions.is_empty() {
             bail!("multi_domain_abstractions(...) failed to generate any abstractions")
         }

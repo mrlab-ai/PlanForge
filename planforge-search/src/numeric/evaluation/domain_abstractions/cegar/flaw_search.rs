@@ -30,6 +30,7 @@ use anyhow::Result;
 use std::fmt;
 
 use planforge_sas::numeric::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planforge_sas::numeric::utils::float_tolerance;
 use planforge_sas::numeric::utils::linear_effects::{LinearExpression, linearize_numeric_var};
 
 use serde::{Deserialize, Serialize};
@@ -456,12 +457,13 @@ fn single_var_interval_for_linear_zero_comparison(
     Some((numeric_var_id, interval))
 }
 
-fn can_split_numeric_var(
+pub(crate) fn can_split_numeric_var(
     partitions: &NumericPartitions,
     numeric_var_id: usize,
     value: f64,
     include_in_lower: bool,
 ) -> bool {
+    let value = f64::from_bits(float_tolerance::canonical_bits(value));
     let Some(parts) = partitions.partitions(numeric_var_id) else {
         return false;
     };
