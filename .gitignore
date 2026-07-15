@@ -35,6 +35,23 @@ proj.json
 codex-plan.md
 codex-implement.log
 
+# Local planning research and generated comparison artifacts.
+/.codex
+/AGENTS.md
+/CLAUDE.md
+/Interval Splitting for Abstractions.pdf
+/Numeric_Domain_Abstractions__SOCS_-2.pdf
+/codex-*.md
+/docs/
+/dominik/
+/ipc2023
+/numeric-fd
+/*.sas
+/sailing.txt
+/scorpion/
+/sstcp-code.zip
+/test_outputs/
+
 # Python bindings crate: track its Python sources despite the blanket *.py ignore above
 !planforge-py/**/*.py
 !tutorials/**/*.py

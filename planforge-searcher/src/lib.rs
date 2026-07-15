@@ -6,6 +6,9 @@ use planforge_sas::numeric::state_registry::StateRegistry;
 use std::sync::Arc;
 use planforge_search::numeric::evaluation::domain_abstractions::cegar::CegarConfig;
 use planforge_search::numeric::evaluation::domain_abstractions::canonical_domain_abstraction_heuristic::CanonicalDomainAbstractionHeuristic;
+use planforge_search::numeric::evaluation::domain_abstractions::cartesian_abstraction::{
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
+};
 use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
 };
@@ -79,6 +82,27 @@ pub fn build_heuristic_from_spec<'a>(
                 .map_err(|e| format!("failed to build domain abstraction: {e:#}"))?;
             Ok(Some(
                 Box::new(DomainAbstractionHeuristic::new(None, abstraction))
+                    as Box<dyn Heuristic + 'a>,
+            ))
+        }
+        "cartesian_abstraction" => {
+            info!("Building Cartesian abstraction (CEGAR)...");
+            let mut cegar_cfg = CegarConfig::default();
+            recursive_config::apply_da_options(&mut cegar_cfg, &spec.args)?;
+            let cfg = CartesianAbstractionConfig {
+                max_states: cegar_cfg.max_abstraction_size,
+                max_time: cegar_cfg.max_time,
+                combine_labels: cegar_cfg.combine_labels,
+                compute_operator_footprints: false,
+                debug: cegar_cfg.debug,
+            };
+            let generator = CartesianAbstractionGenerator::new(cfg)
+                .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?;
+            let abstraction = generator
+                .generate(task)
+                .map_err(|error| format!("failed to build Cartesian abstraction: {error:#}"))?;
+            Ok(Some(
+                Box::new(CartesianAbstractionHeuristic::new(None, abstraction))
                     as Box<dyn Heuristic + 'a>,
             ))
         }

@@ -290,6 +290,7 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
         &mut generator,
         &[],
         op.assignment_effects(),
+        None,
     )
     .unwrap();
 
@@ -367,6 +368,7 @@ fn derived_numeric_partitions_are_not_materialized_in_transitions() {
         &mut generator,
         &[],
         op.assignment_effects(),
+        None,
     )
     .unwrap();
 
@@ -649,6 +651,7 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
         &mut generator,
         &[],
         op.assignment_effects(),
+        None,
     )
     .unwrap();
 

@@ -1,5 +1,6 @@
 pub mod abstract_operator_generator;
 pub mod canonical_domain_abstraction_heuristic;
+pub mod cartesian_abstraction;
 pub mod comparison_expression;
 pub mod domain_abstraction;
 pub mod domain_abstraction_collection_generator_multiple_cegar;
