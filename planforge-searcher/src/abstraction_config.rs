@@ -6,6 +6,7 @@ use planforge_search::config::{
 };
 use planforge_search::evaluation::abstraction_collections::component::AbstractionComponent;
 use planforge_search::evaluation::cartesian_abstractions::{
+    CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
@@ -68,12 +69,12 @@ pub(crate) fn require_only_component_sources(
             |key| format!("{key}={}", format_config_value(option.value())),
         );
         return Err(format!(
-            "`{combinator}` accepts only domain(...), cartesian(...), and pdb(...) sources; got `{description}`"
+            "`{combinator}` accepts only domain(...), cartesian(...), cartesian_collection(...), and pdb(...) sources; got `{description}`"
         ));
     }
     if sources.is_empty() {
         return Err(format!(
-            "`{combinator}` requires at least one domain(...), cartesian(...), or pdb(...) source"
+            "`{combinator}` requires at least one domain(...), cartesian(...), cartesian_collection(...), or pdb(...) source"
         ));
     }
     Ok(sources)
@@ -102,7 +103,7 @@ pub(crate) fn validate_scp_combinator_options(args: &[ConfigArg]) -> Result<(), 
         })?;
         if !ALLOWED.contains(&key) {
             return Err(format!(
-                "unknown `scp` combinator option `{key}`; abstraction-generation options belong inside domain(...), cartesian(...), or pdb(...)"
+                "unknown `scp` combinator option `{key}`; abstraction-generation options belong inside domain(...), cartesian(...), cartesian_collection(...), or pdb(...)"
             ));
         }
         if !seen.insert(key) {
@@ -164,6 +165,30 @@ pub(crate) fn build_components<'task>(
                     abstraction,
                 ));
             }
+            "cartesian_collection" | "cartesian_abstraction_collection" => {
+                let config = apply_cartesian_collection_options(source.args(), component_use)?;
+                info!("Building Cartesian abstraction collection source {source_index}...");
+                let abstractions = CartesianAbstractionCollectionGenerator::new(config)
+                    .map_err(|error| {
+                        format!(
+                            "failed to construct Cartesian abstraction collection source {source_index}: {error:#}"
+                        )
+                    })?
+                    .generate(task)
+                    .map_err(|error| {
+                        format!(
+                            "failed to build Cartesian abstraction collection source {source_index}: {error:#}"
+                        )
+                    })?;
+                components.extend(abstractions.into_iter().enumerate().map(
+                    |(goal_id, abstraction)| {
+                        AbstractionComponent::cartesian(
+                            Some(format!("cartesian_{source_index}_goal_{goal_id}")),
+                            abstraction,
+                        )
+                    },
+                ));
+            }
             "pdb" | "numeric_pdb" => {
                 validate_restricted_task(task)?;
                 let mut config = CanonicalNumericPdbConfig::default();
@@ -191,7 +216,7 @@ pub(crate) fn build_components<'task>(
             }
             other => {
                 return Err(format!(
-                    "unknown abstraction source `{other}`; expected domain(...), cartesian(...), or pdb(...)"
+                    "unknown abstraction source `{other}`; expected domain(...), cartesian(...), cartesian_collection(...), or pdb(...)"
                 ));
             }
         }
@@ -223,6 +248,8 @@ fn is_component_source_name(name: &str) -> bool {
             | "domain_abstractions"
             | "cartesian"
             | "cartesian_abstraction"
+            | "cartesian_collection"
+            | "cartesian_abstraction_collection"
             | "pdb"
             | "numeric_pdb"
     )
@@ -232,9 +259,29 @@ fn apply_cartesian_options(
     args: &[ConfigArg],
     component_use: ComponentUse,
 ) -> Result<CartesianAbstractionConfig, String> {
+    Ok(apply_cartesian_source_options(args, component_use, false)?.abstraction)
+}
+
+fn apply_cartesian_collection_options(
+    args: &[ConfigArg],
+    component_use: ComponentUse,
+) -> Result<CartesianAbstractionCollectionConfig, String> {
+    apply_cartesian_source_options(args, component_use, true)
+}
+
+fn apply_cartesian_source_options(
+    args: &[ConfigArg],
+    component_use: ComponentUse,
+    collection: bool,
+) -> Result<CartesianAbstractionCollectionConfig, String> {
     const POSITIONAL_ORDER: &[&str] = &["max_states", "max_time", "combine_labels", "debug"];
 
-    let mut config = CartesianAbstractionConfig::default();
+    let source = if collection {
+        "cartesian_collection"
+    } else {
+        "cartesian"
+    };
+    let mut config = CartesianAbstractionCollectionConfig::default();
     let mut seen = HashSet::new();
     let mut next_positional = 0;
     for arg in args {
@@ -243,7 +290,7 @@ fn apply_cartesian_options(
             None => {
                 let key = POSITIONAL_ORDER.get(next_positional).ok_or_else(|| {
                     format!(
-                        "too many positional arguments for `cartesian` (maximum {})",
+                        "too many positional arguments for `{source}` (maximum {})",
                         POSITIONAL_ORDER.len()
                     )
                 })?;
@@ -257,15 +304,15 @@ fn apply_cartesian_options(
             other => other,
         };
         if !seen.insert(key.to_string()) {
-            return Err(format!("duplicate option `{key}` for `cartesian`"));
+            return Err(format!("duplicate option `{key}` for `{source}`"));
         }
         match key {
             "max_states" => {
-                config.max_states = usize::from_option_value(arg.value())?;
+                config.abstraction.max_states = usize::from_option_value(arg.value())?;
             }
             "max_time" => {
                 let seconds = f64::from_option_value(arg.value())?;
-                config.max_time = if seconds.is_infinite() {
+                config.abstraction.max_time = if seconds.is_infinite() {
                     None
                 } else {
                     Some(Duration::try_from_secs_f64(seconds).map_err(|error| {
@@ -274,15 +321,36 @@ fn apply_cartesian_options(
                 };
             }
             "combine_labels" => {
-                config.combine_labels = bool::from_option_value(arg.value())?;
+                config.abstraction.combine_labels = bool::from_option_value(arg.value())?;
             }
             "debug" => {
-                config.debug = bool::from_option_value(arg.value())?;
+                config.abstraction.debug = bool::from_option_value(arg.value())?;
             }
-            other => return Err(format!("unknown option `{other}` for `cartesian`")),
+            "random_seed" => {
+                config.abstraction.random_seed = Some(u64::from_option_value(arg.value())?);
+            }
+            "variants_per_goal" if collection => {
+                config.variants_per_goal = usize::from_option_value(arg.value())?;
+            }
+            "max_collection_size" if collection => {
+                config.max_collection_states = usize::from_option_value(arg.value())?;
+            }
+            "total_max_time" if collection => {
+                let seconds = f64::from_option_value(arg.value())?;
+                config.total_max_time = if seconds.is_infinite() {
+                    None
+                } else {
+                    Some(Duration::try_from_secs_f64(seconds).map_err(|error| {
+                        format!("invalid Cartesian total_max_time {seconds}: {error}")
+                    })?)
+                };
+            }
+            other => {
+                return Err(format!("unknown option `{other}` for `{source}`"));
+            }
         }
     }
-    config.compute_operator_footprints = component_use.needs_operator_footprints();
+    config.abstraction.compute_operator_footprints = component_use.needs_operator_footprints();
     Ok(config)
 }
 

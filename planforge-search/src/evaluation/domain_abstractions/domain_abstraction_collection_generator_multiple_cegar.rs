@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests;
 
-use std::cell::{Ref, RefMut};
 use std::cmp::{Ordering, Reverse};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -10,17 +9,16 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use ordered_float::OrderedFloat;
-use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericType, NumericVariable,
-    Operator,
-};
+use planforge_sas::axioms::ComparisonAxiom;
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, Operator};
 use planforge_sas::utils::linear_effects::linearize_numeric_var;
 use rand::seq::SliceRandom;
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
+use crate::evaluation::abstraction_collections::portfolio::mix_seed;
+use crate::evaluation::abstraction_task::SingleGoalTask;
 use crate::evaluation::domain_abstractions::cegar::FlawKind;
 
 use super::additive_numeric_views::{
@@ -806,7 +804,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     ^ ((goal_index as u64) << 17)
                     ^ ((group_index as u64) << 33)
                     ^ (direction_id << 49);
-                splitmix64(key)
+                mix_seed(key)
             }
         }
     }
@@ -1878,214 +1876,12 @@ fn sample_blacklisted_variables<R: rand::Rng + ?Sized>(
     shuffled.into_iter().take(blacklist_size).collect()
 }
 
-fn splitmix64(mut value: u64) -> u64 {
-    value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    value ^ (value >> 31)
-}
-
 fn select_single_init_split_var(candidate_var_ids: &[usize], iteration: usize) -> Option<usize> {
     if candidate_var_ids.is_empty() {
         return None;
     }
     let index = iteration % candidate_var_ids.len();
     candidate_var_ids.get(index).copied()
-}
-
-struct SingleGoalTask<'task> {
-    base: &'task dyn AbstractNumericTask,
-    goal: ExplicitFact,
-}
-
-impl<'task> SingleGoalTask<'task> {
-    fn new(base: &'task dyn AbstractNumericTask, goal: ExplicitFact) -> Self {
-        Self { base, goal }
-    }
-}
-
-impl AbstractNumericTask for SingleGoalTask<'_> {
-    fn variables(&self) -> &Vec<ExplicitVariable> {
-        self.base.variables()
-    }
-
-    fn numeric_variables(&self) -> &Vec<NumericVariable> {
-        self.base.numeric_variables()
-    }
-
-    fn assignment_axioms(&self) -> &Vec<AssignmentAxiom> {
-        self.base.assignment_axioms()
-    }
-
-    fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
-        self.base.comparison_axioms()
-    }
-
-    fn axioms(&self) -> &Vec<PropositionalAxiom> {
-        self.base.axioms()
-    }
-
-    fn metric(&self) -> &Metric {
-        self.base.metric()
-    }
-
-    fn get_num_variables(&self) -> usize {
-        self.base.get_num_variables()
-    }
-
-    fn get_variable_name(&self, index: usize) -> Result<&str, &str> {
-        self.base.get_variable_name(index)
-    }
-
-    fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str> {
-        self.base.get_variable_domain_size(index)
-    }
-
-    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str> {
-        self.base.get_variable_axiom_layer(index)
-    }
-
-    fn get_variable_default_axiom_value(&self, index: usize) -> Result<usize, &str> {
-        self.base.get_variable_default_axiom_value(index)
-    }
-
-    fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
-        self.base.get_fact_name(fact)
-    }
-
-    fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
-        self.base.are_facts_mutex(fact1, fact2)
-    }
-
-    fn get_operators(&self) -> &Vec<Operator> {
-        self.base.get_operators()
-    }
-
-    fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {
-        self.base.get_operator_cost(index, is_axiom)
-    }
-
-    fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str {
-        self.base.get_operator_name(index, is_axiom)
-    }
-
-    fn get_num_operators(&self) -> usize {
-        self.base.get_num_operators()
-    }
-
-    fn get_num_operator_preconditions(&self, index: usize, is_axiom: bool) -> usize {
-        self.base.get_num_operator_preconditions(index, is_axiom)
-    }
-
-    fn get_operator_precondition(
-        &self,
-        index: usize,
-        precond_index: usize,
-        is_axiom: bool,
-    ) -> &ExplicitFact {
-        self.base
-            .get_operator_precondition(index, precond_index, is_axiom)
-    }
-
-    fn get_num_operator_effects(&self, index: usize, is_axiom: bool) -> usize {
-        self.base.get_num_operator_effects(index, is_axiom)
-    }
-
-    fn get_num_operator_effect_conditions(
-        &self,
-        index: usize,
-        eff_index: usize,
-        is_axiom: bool,
-    ) -> usize {
-        self.base
-            .get_num_operator_effect_conditions(index, eff_index, is_axiom)
-    }
-
-    fn get_operator_effect_condition(
-        &self,
-        index: usize,
-        eff_index: usize,
-        cond_index: usize,
-        is_axiom: bool,
-    ) -> &ExplicitFact {
-        self.base
-            .get_operator_effect_condition(index, eff_index, cond_index, is_axiom)
-    }
-
-    fn get_operator_effect(&self, index: usize, eff_index: usize, is_axiom: bool) -> &ExplicitFact {
-        self.base.get_operator_effect(index, eff_index, is_axiom)
-    }
-
-    fn convert_operator_index(&self, index: usize, ancestor_task: &dyn AbstractNumericTask) {
-        self.base.convert_operator_index(index, ancestor_task)
-    }
-
-    fn get_num_axioms(&self) -> usize {
-        self.base.get_num_axioms()
-    }
-
-    fn get_num_goals(&self) -> usize {
-        1
-    }
-
-    fn get_goal_fact(&self, index: usize) -> &ExplicitFact {
-        assert_eq!(index, 0, "SingleGoalTask only exposes one goal");
-        &self.goal
-    }
-
-    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>> {
-        self.base.get_initial_propositional_state_values()
-    }
-
-    fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>> {
-        self.base.get_initial_numeric_state_values()
-    }
-
-    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>> {
-        self.base.get_initial_propositional_state_values_mut()
-    }
-
-    fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>> {
-        self.base.get_initial_numeric_state_values_mut()
-    }
-
-    fn set_initial_numeric_state_values(&self, values: Vec<f64>) {
-        self.base.set_initial_numeric_state_values(values)
-    }
-
-    fn set_initial_propositional_state_values(&self, values: Vec<usize>) {
-        self.base.set_initial_propositional_state_values(values)
-    }
-
-    fn convert_ancestor_state_values(
-        &self,
-        ancestor_state_values: &[usize],
-        ancestor_task: &dyn AbstractNumericTask,
-    ) -> Vec<usize> {
-        self.base
-            .convert_ancestor_state_values(ancestor_state_values, ancestor_task)
-    }
-
-    fn get_num_cmp_axioms(&self) -> usize {
-        self.base.get_num_cmp_axioms()
-    }
-
-    fn abstract_state_values(
-        &self,
-        propositional_values: &[usize],
-        numeric_values: &[f64],
-    ) -> Result<(Vec<usize>, Vec<f64>), String> {
-        self.base
-            .abstract_state_values(propositional_values, numeric_values)
-    }
-
-    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
-        self.base.evaluated_initial_abstract_state_values()
-    }
-
-    fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
-        self.base.abstract_operator_cost(operator_id)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

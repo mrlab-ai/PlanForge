@@ -76,6 +76,7 @@ fn cartesian_config_from_collection(
         max_time,
         combine_labels: config.combine_labels,
         compute_operator_footprints,
+        random_seed: config.random_seed,
         debug: config.debug,
     })
 }
@@ -110,7 +111,7 @@ fn build_scp_from_sources<'task>(
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, String> {
     if sources.is_empty() {
         return Err(format!(
-            "`{name}` requires at least one domain(...), cartesian(...), or pdb(...) source"
+            "`{name}` requires at least one domain(...), cartesian(...), cartesian_collection(...), or pdb(...) source"
         ));
     }
     validate_scp_combinator_options(options)?;
@@ -191,6 +192,7 @@ pub fn build_heuristic_from_spec<'a>(
                 max_time: cegar_cfg.max_time,
                 combine_labels: cegar_cfg.combine_labels,
                 compute_operator_footprints: false,
+                random_seed: cegar_cfg.random_seed,
                 debug: cegar_cfg.debug,
             };
             let generator = CartesianAbstractionGenerator::new(cfg)
@@ -211,6 +213,7 @@ pub fn build_heuristic_from_spec<'a>(
                 max_time: cegar_cfg.max_time,
                 combine_labels: cegar_cfg.combine_labels,
                 compute_operator_footprints: false,
+                random_seed: cegar_cfg.random_seed,
                 debug: cegar_cfg.debug,
             })
             .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?;

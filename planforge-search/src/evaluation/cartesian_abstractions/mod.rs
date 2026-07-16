@@ -2,9 +2,9 @@
 //!
 //! Unlike the factorized domain abstraction, splitting one Cartesian state
 //! adds exactly one state. Every abstract transition is a may-transition of a
-//! grounded concrete operator. CEGAR searches the complete optimal abstract
-//! transition graph for concrete executions and refines witnessed flaws; only
-//! a successfully replayed concrete plan may set `solved_by_self`.
+//! grounded concrete operator. CEGAR replays a deterministic optimal abstract
+//! trace and refines its first witnessed flaw; only a successfully replayed
+//! concrete plan may set `solved_by_self`.
 
 #[cfg(test)]
 mod tests;
@@ -21,24 +21,30 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
     metric_operator_cost_from_initial_values,
 };
-use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::int_packer::IntDoublePacker;
 use tracing::{debug, info};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 
+use super::abstraction_collections::portfolio::{derive_variant_seed, mix_seed};
 use super::abstraction_collections::transition_cost_partitioning::{
     AbstractOperatorFootprint, AbstractTransition, AbstractTransitionSystem,
     ConcreteOperatorFootprint, PropValueId, StateRegion,
 };
-use super::abstraction_task::validate_abstraction_operator;
+use super::abstraction_task::{SingleGoalTask, validate_abstraction_operator};
 use super::domain_abstractions::cegar::flaw_search::state::progress;
 use super::domain_abstractions::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstractions::domain_abstraction_factory::AbstractDistanceTable;
 use super::domain_abstractions::utils::{fact_is_hold, get_initial_state, make_prop_state_packer};
 
 const EPSILON: f64 = 1e-9;
+
+fn fact_choice_key(fact: &ExplicitFact) -> u64 {
+    let var_id = u64::try_from(fact.var()).expect("fact variable id does not fit u64");
+    let value = u64::try_from(fact.value()).expect("fact value does not fit u64");
+    var_id.rotate_left(32) ^ value
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CartesianStopReason {
@@ -53,6 +59,8 @@ pub struct CartesianAbstractionMetadata {
     pub stop_reason: CartesianStopReason,
     pub pending_flaw: Option<String>,
     pub refinements: usize,
+    pub collection_goal_id: Option<usize>,
+    pub collection_variant_id: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +69,7 @@ pub struct CartesianAbstractionConfig {
     pub max_time: Option<Duration>,
     pub combine_labels: bool,
     pub compute_operator_footprints: bool,
+    pub random_seed: Option<u64>,
     pub debug: bool,
 }
 
@@ -71,7 +80,27 @@ impl Default for CartesianAbstractionConfig {
             max_time: None,
             combine_labels: false,
             compute_operator_footprints: true,
+            random_seed: None,
             debug: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CartesianAbstractionCollectionConfig {
+    pub abstraction: CartesianAbstractionConfig,
+    pub variants_per_goal: usize,
+    pub max_collection_states: usize,
+    pub total_max_time: Option<Duration>,
+}
+
+impl Default for CartesianAbstractionCollectionConfig {
+    fn default() -> Self {
+        Self {
+            abstraction: CartesianAbstractionConfig::default(),
+            variants_per_goal: 1,
+            max_collection_states: 10_000_000,
+            total_max_time: None,
         }
     }
 }
@@ -272,7 +301,6 @@ struct WorkingTransition {
     source: usize,
     target: usize,
     concrete_op_id: usize,
-    active: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -287,22 +315,30 @@ struct WorkingAbstraction {
     states: Vec<StateRegion>,
     leaf_node_ids: Vec<usize>,
     hierarchy: CartesianRefinementHierarchy,
-    transitions: Vec<WorkingTransition>,
+    transitions: Vec<Option<WorkingTransition>>,
+    free_transition_ids: Vec<usize>,
     outgoing: Vec<Vec<usize>>,
     incoming: Vec<Vec<usize>>,
-    active_transition_keys: HashSet<TransitionKey>,
+    transition_ids_by_key: HashMap<TransitionKey, usize>,
+    propositional_refinement_counts: Vec<usize>,
+    numeric_refinement_counts: Vec<usize>,
 }
 
 impl WorkingAbstraction {
     fn new(initial_region: StateRegion) -> Self {
+        let propositional_refinement_counts = vec![0; initial_region.propositions.len()];
+        let numeric_refinement_counts = vec![0; initial_region.numeric.len()];
         Self {
             states: vec![initial_region],
             leaf_node_ids: vec![0],
             hierarchy: CartesianRefinementHierarchy::trivial(),
             transitions: Vec::new(),
+            free_transition_ids: Vec::new(),
             outgoing: vec![Vec::new()],
             incoming: vec![Vec::new()],
-            active_transition_keys: HashSet::new(),
+            transition_ids_by_key: HashMap::new(),
+            propositional_refinement_counts,
+            numeric_refinement_counts,
         }
     }
 
@@ -312,39 +348,102 @@ impl WorkingAbstraction {
             concrete_op_id: op_id,
             target,
         };
-        if !self.active_transition_keys.insert(key) {
+        if self.transition_ids_by_key.contains_key(&key) {
             return;
         }
-        let transition_id = self.transitions.len();
-        self.transitions.push(WorkingTransition {
+        let transition = WorkingTransition {
             source,
             target,
             concrete_op_id: op_id,
-            active: true,
-        });
+        };
+        let transition_id = if let Some(transition_id) = self.free_transition_ids.pop() {
+            assert!(
+                self.transitions[transition_id].is_none(),
+                "reused Cartesian transition slot is occupied"
+            );
+            self.transitions[transition_id] = Some(transition);
+            transition_id
+        } else {
+            let transition_id = self.transitions.len();
+            self.transitions.push(Some(transition));
+            transition_id
+        };
+        let old = self.transition_ids_by_key.insert(key, transition_id);
+        assert!(old.is_none(), "duplicate Cartesian transition key");
         self.outgoing[source].push(transition_id);
         self.incoming[target].push(transition_id);
     }
 
-    fn deactivate_transition(&mut self, transition_id: usize) {
-        let transition = &mut self.transitions[transition_id];
-        if !transition.active {
-            return;
-        }
-        transition.active = false;
-        let removed = self.active_transition_keys.remove(&TransitionKey {
+    fn remove_transition(&mut self, transition_id: usize) -> WorkingTransition {
+        let transition = self.transitions[transition_id]
+            .take()
+            .expect("Cartesian adjacency references a removed transition");
+        let removed_id = self.transition_ids_by_key.remove(&TransitionKey {
             source: transition.source,
             concrete_op_id: transition.concrete_op_id,
             target: transition.target,
         });
-        assert!(removed, "active Cartesian transition key is missing");
+        assert_eq!(
+            removed_id,
+            Some(transition_id),
+            "active Cartesian transition key is missing or inconsistent"
+        );
+        self.free_transition_ids.push(transition_id);
+        transition
+    }
+
+    fn remove_incident_transitions(&mut self, state_id: usize) -> Vec<WorkingTransition> {
+        let mut incident = self.outgoing[state_id].clone();
+        incident.extend(self.incoming[state_id].iter().copied());
+        incident.sort_unstable();
+        incident.dedup();
+
+        let mut old_transitions = Vec::with_capacity(incident.len());
+        let mut changed_outgoing = Vec::with_capacity(incident.len());
+        let mut changed_incoming = Vec::with_capacity(incident.len());
+        for transition_id in incident {
+            let transition = self.remove_transition(transition_id);
+            changed_outgoing.push(transition.source);
+            changed_incoming.push(transition.target);
+            old_transitions.push(transition);
+        }
+        changed_outgoing.sort_unstable();
+        changed_outgoing.dedup();
+        changed_incoming.sort_unstable();
+        changed_incoming.dedup();
+
+        let transitions = &self.transitions;
+        for source in changed_outgoing {
+            self.outgoing[source].retain(|&id| transitions[id].is_some());
+        }
+        for target in changed_incoming {
+            self.incoming[target].retain(|&id| transitions[id].is_some());
+        }
+        old_transitions
     }
 
     fn active_transition_ids(&self) -> impl Iterator<Item = usize> + '_ {
         self.transitions
             .iter()
             .enumerate()
-            .filter_map(|(id, transition)| transition.active.then_some(id))
+            .filter_map(|(id, transition)| transition.as_ref().map(|_| id))
+    }
+
+    fn transition(&self, transition_id: usize) -> &WorkingTransition {
+        self.transitions[transition_id]
+            .as_ref()
+            .expect("Cartesian adjacency references a removed transition")
+    }
+
+    fn contains_transition(&self, key: TransitionKey) -> bool {
+        self.transition_ids_by_key.contains_key(&key)
+    }
+
+    fn refinement_count(&self, split: &Split) -> usize {
+        match split {
+            Split::Propositional { var_id, .. } => self.propositional_refinement_counts[*var_id],
+            Split::Numeric { var_id, .. } => self.numeric_refinement_counts[*var_id],
+        }
     }
 }
 
@@ -367,21 +466,6 @@ enum Split {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum SplitKey {
-    Propositional {
-        state_id: usize,
-        var_id: usize,
-        wanted: Vec<PropValueId>,
-    },
-    Numeric {
-        state_id: usize,
-        var_id: usize,
-        boundary_bits: u64,
-        lower_includes_boundary: bool,
-    },
-}
-
 impl Split {
     fn state_id(&self) -> usize {
         match self {
@@ -396,33 +480,6 @@ impl Split {
             }
         }
     }
-
-    fn key(&self) -> SplitKey {
-        match self {
-            Self::Propositional {
-                state_id,
-                var_id,
-                wanted,
-                ..
-            } => SplitKey::Propositional {
-                state_id: *state_id,
-                var_id: *var_id,
-                wanted: wanted.clone(),
-            },
-            Self::Numeric {
-                state_id,
-                var_id,
-                boundary,
-                lower_includes_boundary,
-                ..
-            } => SplitKey::Numeric {
-                state_id: *state_id,
-                var_id: *var_id,
-                boundary_bits: float_tolerance::canonical_bits(*boundary),
-                lower_includes_boundary: *lower_includes_boundary,
-            },
-        }
-    }
 }
 
 struct CartesianSemantics<'task> {
@@ -431,10 +488,11 @@ struct CartesianSemantics<'task> {
     comparison_trees: Vec<ComparisonTree>,
     propositional_axioms_by_prop_var: Vec<Vec<usize>>,
     operator_costs: Vec<f64>,
+    random_seed: Option<u64>,
 }
 
 impl<'task> CartesianSemantics<'task> {
-    fn new(task: &'task dyn AbstractNumericTask) -> Result<Self> {
+    fn new(task: &'task dyn AbstractNumericTask, random_seed: Option<u64>) -> Result<Self> {
         for (op_id, op) in task.get_operators().iter().enumerate() {
             validate_abstraction_operator(task, op, op_id)?;
         }
@@ -479,7 +537,23 @@ impl<'task> CartesianSemantics<'task> {
             comparison_trees,
             propositional_axioms_by_prop_var,
             operator_costs,
+            random_seed,
         })
+    }
+
+    fn choose_keyed_index(&self, keys: &[u64], tag: u64) -> usize {
+        assert!(
+            !keys.is_empty(),
+            "cannot choose from an empty Cartesian candidate set"
+        );
+        let Some(seed) = self.random_seed else {
+            return 0;
+        };
+        keys.iter()
+            .enumerate()
+            .min_by_key(|(_, key)| mix_seed(seed ^ tag ^ **key))
+            .map(|(index, _)| index)
+            .expect("nonempty Cartesian key set has no minimum")
     }
 
     fn trivial_region(&self) -> Result<StateRegion> {
@@ -898,7 +972,7 @@ impl CartesianAbstractionGenerator {
 
     pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<CartesianAbstraction> {
         let start = Instant::now();
-        let semantics = CartesianSemantics::new(task)?;
+        let semantics = CartesianSemantics::new(task, self.config.random_seed)?;
         let mut working = WorkingAbstraction::new(semantics.trivial_region()?);
         for op_id in 0..task.get_operators().len() {
             if semantics.may_transition(&working.states[0], op_id, &working.states[0])? {
@@ -912,7 +986,7 @@ impl CartesianAbstractionGenerator {
 
         let mut shortest_paths = compute_shortest_paths(&working, &semantics)?;
         let (stop_reason, pending_flaw, solved_plan) = loop {
-            let check = search_optimal_abstract_graph(
+            let check = replay_optimal_abstract_trace(
                 &working,
                 &semantics,
                 &shortest_paths,
@@ -965,7 +1039,12 @@ impl CartesianAbstractionGenerator {
         };
 
         let (transition_system, distance_table, relevant_operator_ids, footprints) =
-            finalize_abstraction(&working, &semantics, self.config.combine_labels)?;
+            finalize_abstraction(
+                &working,
+                &semantics,
+                self.config.combine_labels,
+                self.config.compute_operator_footprints,
+            )?;
         if let Some(plan) = &solved_plan {
             validate_concrete_plan(&semantics, &state_packer, &axiom_evaluator, plan)?;
             let h = distance_table.distances[distance_table.initial_state_hash];
@@ -988,48 +1067,209 @@ impl CartesianAbstractionGenerator {
             distance_table,
             transition_system,
             relevant_operator_ids,
-            abstract_operator_footprints: if self.config.compute_operator_footprints {
-                footprints
-            } else {
-                Vec::new()
-            },
+            abstract_operator_footprints: footprints,
             metadata: CartesianAbstractionMetadata {
                 solved_by_self: solved_plan.is_some(),
                 stop_reason,
                 pending_flaw,
                 refinements,
+                collection_goal_id: None,
+                collection_variant_id: None,
             },
         })
+    }
+}
+
+pub struct CartesianAbstractionCollectionGenerator {
+    config: CartesianAbstractionCollectionConfig,
+}
+
+impl CartesianAbstractionCollectionGenerator {
+    pub fn new(config: CartesianAbstractionCollectionConfig) -> Result<Self> {
+        ensure!(
+            config.max_collection_states > 0,
+            "Cartesian max_collection_size must be > 0"
+        );
+        ensure!(
+            config.variants_per_goal > 0,
+            "Cartesian variants_per_goal must be > 0"
+        );
+        CartesianAbstractionGenerator::new(config.abstraction.clone())?;
+        Ok(Self { config })
+    }
+
+    /// Builds the configured number of variants for every task goal, or one
+    /// full-task abstraction when the goal is empty.
+    ///
+    /// Each member changes only the goal view. Operators, state mappings, and
+    /// concrete operator IDs stay identical to the base task, which makes the
+    /// resulting transition systems valid components for canonical and
+    /// transition-cost-partitioned collection heuristics.
+    pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<Vec<CartesianAbstraction>> {
+        let goal_count = task.get_num_goals();
+        let variants_per_goal = if goal_count == 0 {
+            1
+        } else {
+            self.config.variants_per_goal
+        };
+        let abstraction_count = goal_count
+            .max(1)
+            .checked_mul(variants_per_goal)
+            .context("Cartesian collection abstraction count overflow")?;
+        ensure!(
+            self.config.max_collection_states >= abstraction_count,
+            "Cartesian max_collection_size {} cannot give at least one state to each of the {abstraction_count} abstractions",
+            self.config.max_collection_states
+        );
+
+        let start = Instant::now();
+        let mut remaining_states = self.config.max_collection_states;
+        let mut abstractions = Vec::with_capacity(abstraction_count);
+        for abstraction_id in 0..abstraction_count {
+            let goal_id = abstraction_id / variants_per_goal;
+            let variant_id = abstraction_id % variants_per_goal;
+            let remaining_abstractions = abstraction_count - abstraction_id;
+            let remaining_time = match self.config.total_max_time {
+                Some(total_max_time) => {
+                    let elapsed = start.elapsed();
+                    ensure!(
+                        elapsed < total_max_time,
+                        "Cartesian collection total_max_time expired after {abstraction_id} of {abstraction_count} abstractions"
+                    );
+                    Some(total_max_time - elapsed)
+                }
+                None => None,
+            };
+            let mut abstraction_config = self.config.abstraction.clone();
+            abstraction_config.max_states = abstraction_config
+                .max_states
+                .min(remaining_states - (remaining_abstractions - 1));
+            abstraction_config.max_time = match (abstraction_config.max_time, remaining_time) {
+                (Some(per_abstraction), Some(remaining)) => Some(per_abstraction.min(remaining)),
+                (Some(per_abstraction), None) => Some(per_abstraction),
+                (None, Some(remaining)) => Some(remaining),
+                (None, None) => None,
+            };
+            if goal_count > 0 && self.config.variants_per_goal > 1 {
+                abstraction_config.random_seed = if variant_id == 0 {
+                    None
+                } else {
+                    Some(derive_variant_seed(
+                        abstraction_config.random_seed.unwrap_or(0),
+                        goal_id,
+                        variant_id - 1,
+                    ))
+                };
+            }
+
+            let goal_task = (goal_count > 0)
+                .then(|| SingleGoalTask::new(task, task.get_goal_fact(goal_id).clone()));
+            let abstraction_task = goal_task
+                .as_ref()
+                .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
+            info!(
+                "Cartesian collection: building abstraction {}/{abstraction_count}, goal={}, variant={}, max_states={}, seed={:?}",
+                abstraction_id + 1,
+                goal_id,
+                variant_id,
+                abstraction_config.max_states,
+                abstraction_config.random_seed
+            );
+            let mut abstraction = CartesianAbstractionGenerator::new(abstraction_config)?
+                .generate(abstraction_task)
+                .with_context(|| {
+                    format!("failed to build Cartesian collection abstraction {abstraction_id}")
+                })?;
+            let state_count = abstraction.num_states();
+            ensure!(
+                state_count <= remaining_states,
+                "Cartesian goal abstraction used {state_count} states with only {remaining_states} remaining"
+            );
+            remaining_states -= state_count;
+            abstraction.metadata.collection_goal_id = (goal_count > 0).then_some(goal_id);
+            abstraction.metadata.collection_variant_id = (goal_count > 0).then_some(variant_id);
+            abstractions.push(abstraction);
+        }
+
+        info!(
+            "Cartesian collection: abstractions={}, states={}, elapsed={:.3}s",
+            abstractions.len(),
+            self.config.max_collection_states - remaining_states,
+            start.elapsed().as_secs_f64()
+        );
+        Ok(abstractions)
     }
 }
 
 #[derive(Debug)]
 struct ShortestPaths {
     distances: Vec<f64>,
-    generating_transition: Vec<Option<usize>>,
-    goal_states: Vec<usize>,
+    generating_transition: Vec<Option<TransitionKey>>,
+    dependents: Vec<Vec<usize>>,
+    dependent_positions: Vec<Option<usize>>,
+    is_goal: Vec<bool>,
+    invalid: Vec<bool>,
+}
+
+impl ShortestPaths {
+    fn remove_generating_transition(&mut self, source: usize) {
+        let Some(old) = self.generating_transition[source].take() else {
+            assert!(
+                self.dependent_positions[source].is_none(),
+                "Cartesian state without a generating transition has a dependency position"
+            );
+            return;
+        };
+        let position = self.dependent_positions[source]
+            .take()
+            .expect("Cartesian generating transition has no dependency position");
+        let removed = self.dependents[old.target].swap_remove(position);
+        assert_eq!(
+            removed, source,
+            "Cartesian dependency position references another state"
+        );
+        if position < self.dependents[old.target].len() {
+            let moved = self.dependents[old.target][position];
+            self.dependent_positions[moved] = Some(position);
+        }
+    }
+
+    fn set_generating_transition(&mut self, source: usize, transition: TransitionKey) {
+        assert_eq!(transition.source, source);
+        assert_ne!(
+            transition.target, source,
+            "self-loop cannot generate a shortest path with nonnegative costs"
+        );
+        self.remove_generating_transition(source);
+        let position = self.dependents[transition.target].len();
+        self.dependents[transition.target].push(source);
+        self.dependent_positions[source] = Some(position);
+        self.generating_transition[source] = Some(transition);
+    }
 }
 
 fn compute_shortest_paths(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
 ) -> Result<ShortestPaths> {
-    let mut goal_states = Vec::new();
+    let mut is_goal = vec![false; working.states.len()];
     for (state_id, region) in working.states.iter().enumerate() {
         if semantics.region_is_goal(region)? {
-            goal_states.push(state_id);
+            is_goal[state_id] = true;
         }
     }
     ensure!(
-        !goal_states.is_empty(),
+        is_goal.iter().any(|is_goal| *is_goal),
         "Cartesian abstraction has no abstract goal state"
     );
     let mut distances = vec![f64::INFINITY; working.states.len()];
-    let mut generating_transition: Vec<Option<usize>> = vec![None; working.states.len()];
+    let mut generating_transition = vec![None; working.states.len()];
     let mut heap = BinaryHeap::new();
-    for &goal_state in &goal_states {
-        distances[goal_state] = 0.0;
-        heap.push((Reverse(NotNan::new(0.0).unwrap()), goal_state));
+    for (state_id, &state_is_goal) in is_goal.iter().enumerate() {
+        if state_is_goal {
+            distances[state_id] = 0.0;
+            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_id));
+        }
     }
     while let Some((Reverse(distance), target)) = heap.pop() {
         let distance = distance.into_inner();
@@ -1037,8 +1277,8 @@ fn compute_shortest_paths(
             continue;
         }
         for &transition_id in &working.incoming[target] {
-            let transition = &working.transitions[transition_id];
-            if !transition.active {
+            let transition = working.transition(transition_id);
+            if transition.source == target {
                 continue;
             }
             let cost = semantics.operator_costs[transition.concrete_op_id];
@@ -1048,114 +1288,132 @@ fn compute_shortest_paths(
             );
             let alternative = distance + cost.max(0.0);
             let source = transition.source;
-            let improves = alternative + EPSILON < distances[source];
-            let ties_better = (alternative - distances[source]).abs() <= EPSILON
-                && generating_transition[source].is_none_or(|old_id| {
-                    let old = &working.transitions[old_id];
-                    (transition.concrete_op_id, transition.target, transition_id)
-                        < (old.concrete_op_id, old.target, old_id)
-                });
-            if improves || ties_better {
+            if alternative + EPSILON < distances[source] {
                 distances[source] = alternative;
-                generating_transition[source] = Some(transition_id);
+                generating_transition[source] = Some(TransitionKey {
+                    source,
+                    concrete_op_id: transition.concrete_op_id,
+                    target,
+                });
                 heap.push((Reverse(NotNan::new(alternative).unwrap()), source));
             }
+        }
+    }
+    let mut dependents = vec![Vec::new(); working.states.len()];
+    let mut dependent_positions = vec![None; working.states.len()];
+    for (source, transition) in generating_transition.iter().enumerate() {
+        if let Some(transition) = transition {
+            let position = dependents[transition.target].len();
+            dependents[transition.target].push(source);
+            dependent_positions[source] = Some(position);
         }
     }
     Ok(ShortestPaths {
         distances,
         generating_transition,
-        goal_states,
+        dependents,
+        dependent_positions,
+        is_goal,
+        invalid: vec![false; working.states.len()],
     })
 }
 
 fn update_shortest_paths_after_split(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
-    old: ShortestPaths,
+    mut shortest_paths: ShortestPaths,
     split_state_id: usize,
     new_state_id: usize,
 ) -> Result<ShortestPaths> {
-    let old_num_states = old.distances.len();
+    let old_num_states = shortest_paths.distances.len();
     ensure!(
         new_state_id == old_num_states && working.states.len() == old_num_states + 1,
         "Cartesian incremental shortest-path update requires one appended split state"
     );
 
-    let mut invalid = vec![false; working.states.len()];
     let mut queue = std::collections::VecDeque::new();
+    let mut invalid_states = Vec::new();
     let invalidate = |state_id: usize,
-                      invalid: &mut Vec<bool>,
+                      shortest_paths: &mut ShortestPaths,
+                      invalid_states: &mut Vec<usize>,
                       queue: &mut std::collections::VecDeque<usize>| {
-        if !invalid[state_id] {
-            invalid[state_id] = true;
+        if !shortest_paths.invalid[state_id] {
+            shortest_paths.invalid[state_id] = true;
+            invalid_states.push(state_id);
             queue.push_back(state_id);
         }
     };
-    invalidate(split_state_id, &mut invalid, &mut queue);
-    invalidate(new_state_id, &mut invalid, &mut queue);
+    let parent_distance = shortest_paths.distances[split_state_id];
+    shortest_paths.distances.push(parent_distance);
+    shortest_paths.generating_transition.push(None);
+    shortest_paths.dependents.push(Vec::new());
+    shortest_paths.dependent_positions.push(None);
+    shortest_paths.is_goal[split_state_id] =
+        semantics.region_is_goal(&working.states[split_state_id])?;
+    shortest_paths
+        .is_goal
+        .push(semantics.region_is_goal(&working.states[new_state_id])?);
+    shortest_paths.invalid.push(false);
 
-    let mut shortest_path_dependents = vec![Vec::new(); old_num_states];
-    for source in 0..old_num_states {
-        if let Some(transition_id) = old.generating_transition[source] {
-            let transition = &working.transitions[transition_id];
-            if !transition.active {
-                invalidate(source, &mut invalid, &mut queue);
-            }
-            if transition.target < old_num_states {
-                shortest_path_dependents[transition.target].push(source);
-            }
-        }
-    }
+    invalidate(
+        split_state_id,
+        &mut shortest_paths,
+        &mut invalid_states,
+        &mut queue,
+    );
+    invalidate(
+        new_state_id,
+        &mut shortest_paths,
+        &mut invalid_states,
+        &mut queue,
+    );
     while let Some(target) = queue.pop_front() {
-        if target >= old_num_states {
-            continue;
-        }
-        for &source in &shortest_path_dependents[target] {
-            invalidate(source, &mut invalid, &mut queue);
-        }
-    }
-
-    let mut distances = old.distances;
-    distances.push(distances[split_state_id]);
-    let mut generating_transition = old.generating_transition;
-    generating_transition.push(None);
-    for state_id in 0..working.states.len() {
-        if invalid[state_id] {
-            distances[state_id] = f64::INFINITY;
-            generating_transition[state_id] = None;
+        shortest_paths.remove_generating_transition(target);
+        let dependents = std::mem::take(&mut shortest_paths.dependents[target]);
+        for source in dependents {
+            let transition = shortest_paths.generating_transition[source]
+                .take()
+                .expect("Cartesian shortest-path dependent has no generating transition");
+            assert_eq!(transition.target, target);
+            shortest_paths.dependent_positions[source] = None;
+            invalidate(source, &mut shortest_paths, &mut invalid_states, &mut queue);
         }
     }
 
-    let mut goal_states = Vec::new();
+    for &state_id in &invalid_states {
+        shortest_paths.distances[state_id] = f64::INFINITY;
+    }
+
     let mut heap = BinaryHeap::new();
-    for (state_id, region) in working.states.iter().enumerate() {
-        if semantics.region_is_goal(region)? {
-            goal_states.push(state_id);
-            if invalid[state_id] {
-                distances[state_id] = 0.0;
-                heap.push((Reverse(NotNan::new(0.0).unwrap()), state_id));
-            }
+    for &state_id in &invalid_states {
+        if shortest_paths.is_goal[state_id] {
+            shortest_paths.distances[state_id] = 0.0;
+            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_id));
         }
     }
 
-    for source in 0..working.states.len() {
-        if !invalid[source] {
-            continue;
-        }
+    for &source in &invalid_states {
         for &transition_id in &working.outgoing[source] {
-            let transition = &working.transitions[transition_id];
-            if !transition.active || invalid[transition.target] {
+            let transition = working.transition(transition_id);
+            if transition.source == transition.target || shortest_paths.invalid[transition.target] {
                 continue;
             }
-            let target_distance = distances[transition.target];
+            let target_distance = shortest_paths.distances[transition.target];
             if !target_distance.is_finite() {
                 continue;
             }
-            let candidate = target_distance + semantics.operator_costs[transition.concrete_op_id];
-            if candidate + EPSILON < distances[source] {
-                distances[source] = candidate;
-                generating_transition[source] = Some(transition_id);
+            let candidate =
+                target_distance + semantics.operator_costs[transition.concrete_op_id].max(0.0);
+            if candidate + EPSILON < shortest_paths.distances[source] {
+                shortest_paths.distances[source] = candidate;
+                shortest_paths.set_generating_transition(
+                    source,
+                    TransitionKey {
+                        source,
+                        concrete_op_id: transition.concrete_op_id,
+                        target: transition.target,
+                    },
+                );
                 heap.push((Reverse(NotNan::new(candidate).unwrap()), source));
             }
         }
@@ -1163,18 +1421,26 @@ fn update_shortest_paths_after_split(
 
     while let Some((Reverse(distance), target)) = heap.pop() {
         let distance = distance.into_inner();
-        if distance > distances[target] + EPSILON {
+        if distance > shortest_paths.distances[target] + EPSILON {
             continue;
         }
         for &transition_id in &working.incoming[target] {
-            let transition = &working.transitions[transition_id];
-            if !transition.active || !invalid[transition.source] {
+            let transition = working.transition(transition_id);
+            if transition.source == target || !shortest_paths.invalid[transition.source] {
                 continue;
             }
-            let alternative = distance + semantics.operator_costs[transition.concrete_op_id];
-            if alternative + EPSILON < distances[transition.source] {
-                distances[transition.source] = alternative;
-                generating_transition[transition.source] = Some(transition_id);
+            let alternative =
+                distance + semantics.operator_costs[transition.concrete_op_id].max(0.0);
+            if alternative + EPSILON < shortest_paths.distances[transition.source] {
+                shortest_paths.distances[transition.source] = alternative;
+                shortest_paths.set_generating_transition(
+                    transition.source,
+                    TransitionKey {
+                        source: transition.source,
+                        concrete_op_id: transition.concrete_op_id,
+                        target,
+                    },
+                );
                 heap.push((
                     Reverse(NotNan::new(alternative).unwrap()),
                     transition.source,
@@ -1187,7 +1453,7 @@ fn update_shortest_paths_after_split(
     if working.states.len() <= 512 {
         let reference = compute_shortest_paths(working, semantics)?;
         for state_id in 0..working.states.len() {
-            let actual = distances[state_id];
+            let actual = shortest_paths.distances[state_id];
             let expected = reference.distances[state_id];
             assert!(
                 (actual == expected) || (actual - expected).abs() <= 1e-7,
@@ -1196,11 +1462,10 @@ fn update_shortest_paths_after_split(
         }
     }
 
-    Ok(ShortestPaths {
-        distances,
-        generating_transition,
-        goal_states,
-    })
+    for state_id in invalid_states {
+        shortest_paths.invalid[state_id] = false;
+    }
+    Ok(shortest_paths)
 }
 
 #[derive(Debug)]
@@ -1212,38 +1477,6 @@ struct ConcretePlan {
 enum PlanCheck {
     ConcretePlan(ConcretePlan),
     Refine(Split),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ConcreteStateKey {
-    propositions: Vec<u64>,
-    numeric_bits: Vec<u64>,
-}
-
-impl ConcreteStateKey {
-    fn new(propositions: &[u64], numeric: &[f64]) -> Self {
-        Self {
-            propositions: propositions.to_vec(),
-            numeric_bits: numeric
-                .iter()
-                .map(|value| float_tolerance::canonical_bits(*value))
-                .collect(),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct ConcreteSearchNode {
-    propositions: Vec<u64>,
-    numeric: Vec<f64>,
-    cost: f64,
-    parent: Option<(usize, usize)>,
-}
-
-#[derive(Debug)]
-struct SplitCandidate {
-    split: Split,
-    witness_nodes: HashSet<usize>,
 }
 
 fn approximately_equal(left: f64, right: f64) -> bool {
@@ -1264,219 +1497,230 @@ fn concrete_is_goal(
     })
 }
 
-fn add_split_candidate(
-    candidates: &mut HashMap<SplitKey, SplitCandidate>,
-    split: Split,
-    witness_node: usize,
-) {
-    let key = split.key();
-    let candidate = candidates.entry(key).or_insert_with(|| SplitCandidate {
-        split,
-        witness_nodes: HashSet::new(),
-    });
-    candidate.witness_nodes.insert(witness_node);
+fn fact_refinement_count(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    fact: &ExplicitFact,
+) -> Result<usize> {
+    if let Some(tree_id) = semantics
+        .comparison_tree_by_prop_var
+        .get(fact.var())
+        .copied()
+        .flatten()
+    {
+        let tree = semantics
+            .comparison_trees
+            .get(tree_id)
+            .with_context(|| format!("missing comparison tree {tree_id}"))?;
+        return Ok(tree
+            .regular_numeric_var_dependencies(semantics.task)
+            .into_iter()
+            .map(|var_id| working.numeric_refinement_counts[var_id])
+            .max()
+            .unwrap_or(0));
+    }
+    Ok(working
+        .propositional_refinement_counts
+        .get(fact.var())
+        .copied()
+        .with_context(|| {
+            format!(
+                "missing propositional refinement count for var {}",
+                fact.var()
+            )
+        })?)
 }
 
-fn select_split_candidate(candidates: HashMap<SplitKey, SplitCandidate>) -> Result<Split> {
-    let mut best: Option<(SplitKey, SplitCandidate)> = None;
-    for (key, candidate) in candidates {
-        let replace = best.as_ref().is_none_or(|(best_key, best_candidate)| {
-            candidate.witness_nodes.len() > best_candidate.witness_nodes.len()
-                || (candidate.witness_nodes.len() == best_candidate.witness_nodes.len()
-                    && key < *best_key)
-        });
-        if replace {
-            best = Some((key, candidate));
+fn retain_min_growth_facts(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    facts: &mut Vec<&ExplicitFact>,
+) -> Result<()> {
+    let refinement_counts = facts
+        .iter()
+        .map(|fact| fact_refinement_count(working, semantics, fact))
+        .collect::<Result<Vec<_>>>()?;
+    let most_refined = refinement_counts
+        .iter()
+        .copied()
+        .max()
+        .context("cannot rank an empty flaw set by growth")?;
+    let mut index = 0;
+    facts.retain(|_| {
+        let retain = refinement_counts[index] == most_refined;
+        index += 1;
+        retain
+    });
+    Ok(())
+}
+
+fn split_choice_key(split: &Split) -> u64 {
+    match split {
+        Split::Propositional { var_id, wanted, .. } => {
+            let var_id = u64::try_from(*var_id).expect("split variable id does not fit u64");
+            wanted
+                .iter()
+                .fold(var_id, |key, value| mix_seed(key ^ u64::from(*value)))
+        }
+        Split::Numeric {
+            var_id,
+            lower_includes_boundary,
+            ..
+        } => {
+            let var_id = u64::try_from(*var_id).expect("split variable id does not fit u64");
+            var_id ^ (u64::from(*lower_includes_boundary) << 63)
         }
     }
-    best.map(|(_, candidate)| candidate.split)
-        .context("optimal abstract graph has no concrete plan and no refinement flaw")
 }
 
-fn reconstruct_concrete_plan(nodes: &[ConcreteSearchNode], mut node_id: usize) -> ConcretePlan {
-    let cost = nodes[node_id].cost;
-    let mut operator_ids = Vec::new();
-    while let Some((parent_id, op_id)) = nodes[node_id].parent {
-        operator_ids.push(op_id);
-        node_id = parent_id;
-    }
-    operator_ids.reverse();
-    ConcretePlan { operator_ids, cost }
+fn retain_min_growth_splits<T>(
+    working: &WorkingAbstraction,
+    candidates: &mut Vec<T>,
+    split: impl Fn(&T) -> &Split,
+) {
+    let most_refined = candidates
+        .iter()
+        .map(|candidate| working.refinement_count(split(candidate)))
+        .max()
+        .expect("cannot rank an empty split candidate set by growth");
+    candidates.retain(|candidate| working.refinement_count(split(candidate)) == most_refined);
 }
 
-fn search_optimal_abstract_graph(
+fn replay_optimal_abstract_trace(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     shortest_paths: &ShortestPaths,
     state_packer: &Arc<IntDoublePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
 ) -> Result<PlanCheck> {
-    let (initial_propositions, initial_numeric) =
+    let (mut propositions, mut numeric) =
         get_initial_state(semantics.task, state_packer, axiom_evaluator)?;
     let mut prop_values = Vec::new();
     let mut successor_prop_values = Vec::new();
-    semantics.concrete_prop_values(state_packer, &initial_propositions, &mut prop_values);
-    let initial_abstract_state = working
-        .hierarchy
-        .map_state(&prop_values, &initial_numeric)?;
+    semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
+    let initial_abstract_state = working.hierarchy.map_state(&prop_values, &numeric)?;
     ensure!(
         shortest_paths.distances[initial_abstract_state].is_finite(),
         "concrete initial state maps to abstract dead end {initial_abstract_state}"
     );
     let abstract_plan_cost = shortest_paths.distances[initial_abstract_state];
-    let initial_key = ConcreteStateKey::new(&initial_propositions, &initial_numeric);
-    let mut registry = HashMap::from([(initial_key, 0usize)]);
-    let mut nodes = vec![ConcreteSearchNode {
-        propositions: initial_propositions,
-        numeric: initial_numeric,
-        cost: 0.0,
-        parent: None,
-    }];
-    let mut open = BinaryHeap::from([(Reverse(NotNan::new(0.0).unwrap()), 0usize)]);
-    let mut candidates = HashMap::new();
+    let mut operator_ids = Vec::new();
+    let mut concrete_cost = 0.0;
 
-    while let Some((Reverse(queue_cost), node_id)) = open.pop() {
-        let node_cost = nodes[node_id].cost;
-        if !approximately_equal(queue_cost.into_inner(), node_cost) {
-            continue;
-        }
-        let node_propositions = nodes[node_id].propositions.clone();
-        let node_numeric = nodes[node_id].numeric.clone();
-        if concrete_is_goal(semantics, state_packer, &node_propositions) {
-            ensure!(
-                approximately_equal(node_cost, abstract_plan_cost),
-                "concrete goal cost {} differs from optimal abstract cost {abstract_plan_cost}",
-                node_cost
-            );
-            return Ok(PlanCheck::ConcretePlan(reconstruct_concrete_plan(
-                &nodes, node_id,
-            )));
-        }
-
-        semantics.concrete_prop_values(state_packer, &node_propositions, &mut prop_values);
-        let abstract_state = working.hierarchy.map_state(&prop_values, &node_numeric)?;
+    loop {
+        semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
+        let abstract_state = working.hierarchy.map_state(&prop_values, &numeric)?;
         let abstract_distance = shortest_paths.distances[abstract_state];
         ensure!(
-            approximately_equal(node_cost + abstract_distance, abstract_plan_cost),
-            "concrete state reached outside optimal abstract graph: g={} h={abstract_distance} initial_h={abstract_plan_cost}",
-            node_cost
+            approximately_equal(concrete_cost + abstract_distance, abstract_plan_cost),
+            "concrete trace left optimal abstract path: g={concrete_cost} h={abstract_distance} initial_h={abstract_plan_cost}"
         );
 
-        if shortest_paths.goal_states.contains(&abstract_state) {
-            for goal_id in 0..semantics.task.get_num_goals() {
-                let goal = semantics.task.get_goal_fact(goal_id);
-                if !fact_is_hold(goal, state_packer, &node_propositions) {
-                    let split = split_failed_fact(
-                        working,
-                        semantics,
-                        abstract_state,
-                        goal,
-                        &prop_values,
-                        &node_numeric,
-                        format!("goal {goal:?}"),
-                    )?;
-                    add_split_candidate(&mut candidates, split, node_id);
-                }
+        if shortest_paths.is_goal[abstract_state] {
+            if concrete_is_goal(semantics, state_packer, &propositions) {
+                return Ok(PlanCheck::ConcretePlan(ConcretePlan {
+                    operator_ids,
+                    cost: concrete_cost,
+                }));
             }
-        }
-
-        let mut optimal_targets_by_operator: HashMap<usize, Vec<usize>> = HashMap::new();
-        for &transition_id in &working.outgoing[abstract_state] {
-            let transition = &working.transitions[transition_id];
-            if !transition.active {
-                continue;
-            }
-            let target_distance = shortest_paths.distances[transition.target];
-            let op_cost = semantics.operator_costs[transition.concrete_op_id];
-            if approximately_equal(op_cost + target_distance, abstract_distance) {
-                optimal_targets_by_operator
-                    .entry(transition.concrete_op_id)
-                    .or_default()
-                    .push(transition.target);
-            }
-        }
-        for (op_id, mut expected_targets) in optimal_targets_by_operator {
-            expected_targets.sort_unstable();
-            expected_targets.dedup();
-            let op = &semantics.task.get_operators()[op_id];
-            let failed_preconditions: Vec<_> = op
-                .preconditions()
-                .iter()
-                .filter(|fact| !fact_is_hold(fact, state_packer, &node_propositions))
-                .collect();
-            if !failed_preconditions.is_empty() {
-                for failed in failed_preconditions {
-                    let split = split_failed_fact(
-                        working,
-                        semantics,
-                        abstract_state,
-                        failed,
-                        &prop_values,
-                        &node_numeric,
-                        format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
-                    )?;
-                    add_split_candidate(&mut candidates, split, node_id);
-                }
-                continue;
-            }
-
-            let mut successor_propositions = node_propositions.clone();
-            let mut successor_numeric = node_numeric.clone();
-            progress(
-                op,
-                axiom_evaluator,
-                state_packer,
-                &mut successor_propositions,
-                &mut successor_numeric,
-            )?;
-            semantics.concrete_prop_values(
-                state_packer,
-                &successor_propositions,
-                &mut successor_prop_values,
+            let mut failed_goals = (0..semantics.task.get_num_goals())
+                .map(|goal_id| semantics.task.get_goal_fact(goal_id))
+                .filter(|goal| !fact_is_hold(goal, state_packer, &propositions))
+                .collect::<Vec<_>>();
+            ensure!(
+                !failed_goals.is_empty(),
+                "abstract goal contains a concrete non-goal without a failed goal fact"
             );
-            let concrete_target = working
-                .hierarchy
-                .map_state(&successor_prop_values, &successor_numeric)?;
-            for &expected_target in &expected_targets {
-                if expected_target != concrete_target {
-                    let split = split_deviation(
-                        working,
-                        semantics,
-                        abstract_state,
-                        expected_target,
-                        op_id,
-                        &successor_prop_values,
-                        &node_numeric,
-                        &successor_numeric,
-                    )?;
-                    add_split_candidate(&mut candidates, split, node_id);
-                }
-            }
-            if expected_targets.binary_search(&concrete_target).is_err() {
-                continue;
-            }
-
-            let successor_cost = node_cost + semantics.operator_costs[op_id];
-            let successor_key = ConcreteStateKey::new(&successor_propositions, &successor_numeric);
-            if registry.contains_key(&successor_key) {
-                continue;
-            }
-            let successor_id = nodes.len();
-            registry.insert(successor_key, successor_id);
-            nodes.push(ConcreteSearchNode {
-                propositions: successor_propositions,
-                numeric: successor_numeric,
-                cost: successor_cost,
-                parent: Some((node_id, op_id)),
-            });
-            open.push((
-                Reverse(NotNan::new(successor_cost).context("non-finite concrete path cost")?),
-                successor_id,
-            ));
+            retain_min_growth_facts(working, semantics, &mut failed_goals)?;
+            let goal_keys = failed_goals
+                .iter()
+                .map(|goal| fact_choice_key(goal))
+                .collect::<Vec<_>>();
+            let failed_goal = failed_goals[semantics.choose_keyed_index(&goal_keys, 0x474F_414C)];
+            return Ok(PlanCheck::Refine(split_failed_fact(
+                working,
+                semantics,
+                abstract_state,
+                failed_goal,
+                &prop_values,
+                &numeric,
+                format!("goal {failed_goal:?}"),
+            )?));
         }
-    }
 
-    Ok(PlanCheck::Refine(select_split_candidate(candidates)?))
+        ensure!(
+            operator_ids.len() <= working.states.len(),
+            "Cartesian generating transitions contain a cycle"
+        );
+        let transition = shortest_paths.generating_transition[abstract_state].context(
+            "non-goal Cartesian state with finite distance has no generating transition",
+        )?;
+        ensure!(
+            working.contains_transition(transition),
+            "Cartesian shortest path references missing transition {transition:?}"
+        );
+        let op_id = transition.concrete_op_id;
+        let op = &semantics.task.get_operators()[op_id];
+        let mut failed_preconditions = op
+            .preconditions()
+            .iter()
+            .filter(|fact| !fact_is_hold(fact, state_packer, &propositions))
+            .collect::<Vec<_>>();
+        if !failed_preconditions.is_empty() {
+            retain_min_growth_facts(working, semantics, &mut failed_preconditions)?;
+            let precondition_keys = failed_preconditions
+                .iter()
+                .map(|precondition| fact_choice_key(precondition))
+                .collect::<Vec<_>>();
+            let failed =
+                failed_preconditions[semantics.choose_keyed_index(&precondition_keys, 0x5052_4543)];
+            return Ok(PlanCheck::Refine(split_failed_fact(
+                working,
+                semantics,
+                abstract_state,
+                failed,
+                &prop_values,
+                &numeric,
+                format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
+            )?));
+        }
+
+        let source_numeric = numeric.clone();
+        progress(
+            op,
+            axiom_evaluator,
+            state_packer,
+            &mut propositions,
+            &mut numeric,
+        )?;
+        semantics.concrete_prop_values(state_packer, &propositions, &mut successor_prop_values);
+        let concrete_target = working
+            .hierarchy
+            .map_state(&successor_prop_values, &numeric)?;
+        if concrete_target != transition.target {
+            return Ok(PlanCheck::Refine(split_deviation(
+                working,
+                semantics,
+                abstract_state,
+                transition.target,
+                op_id,
+                &successor_prop_values,
+                &source_numeric,
+                &numeric,
+            )?));
+        }
+
+        let op_cost = semantics.operator_costs[op_id];
+        ensure!(
+            approximately_equal(
+                op_cost + shortest_paths.distances[transition.target],
+                abstract_distance
+            ),
+            "Cartesian generating transition is not distance preserving"
+        );
+        concrete_cost += op_cost;
+        operator_ids.push(op_id);
+    }
 }
 
 fn validate_concrete_plan(
@@ -1804,7 +2048,7 @@ fn comparison_refinement(
         .states
         .get(state_id)
         .with_context(|| format!("missing Cartesian state {state_id}"))?;
-    let mut best: Option<(bool, Split)> = None;
+    let mut candidates = Vec::new();
     for var_id in tree.regular_numeric_var_dependencies(semantics.task) {
         let witness_value = *numeric_values
             .get(var_id)
@@ -1867,19 +2111,24 @@ fn comparison_refinement(
                 witness_value,
                 description: description.clone(),
             };
-            if best
-                .as_ref()
-                .is_none_or(|(best_achieved, _)| achieved && !best_achieved)
-            {
-                best = Some((achieved, candidate));
-            }
+            candidates.push((achieved, candidate));
         }
     }
-    best.map(|(_, split)| split).with_context(|| {
-        format!(
-            "comparison tree {tree_id} has no strict regular-variable split in Cartesian state {state_id}"
-        )
-    })
+    ensure!(
+        !candidates.is_empty(),
+        "comparison tree {tree_id} has no strict regular-variable split in Cartesian state {state_id}"
+    );
+    retain_min_growth_splits(working, &mut candidates, |(_, split)| split);
+    let has_achieving_candidate = candidates.iter().any(|(achieved, _)| *achieved);
+    if has_achieving_candidate {
+        candidates.retain(|(achieved, _)| *achieved);
+    }
+    let keys = candidates
+        .iter()
+        .map(|(_, split)| split_choice_key(split))
+        .collect::<Vec<_>>();
+    let index = semantics.choose_keyed_index(&keys, 0x434F_4D50);
+    Ok(candidates.swap_remove(index).1)
 }
 
 fn comparison_truth(prop_value: usize) -> Result<bool> {
@@ -1926,6 +2175,7 @@ fn split_deviation(
     successor_numeric: &[f64],
 ) -> Result<Split> {
     let target = &working.states[target_state_id];
+    let mut candidates = Vec::new();
     for (var_id, allowed) in target.propositions.iter().enumerate() {
         if semantics.comparison_tree_by_prop_var[var_id].is_some()
             || !semantics.propositional_axioms_by_prop_var[var_id].is_empty()
@@ -1940,7 +2190,7 @@ fn split_deviation(
                 unaffected,
                 "operator {op_id} effect image admitted wrong target prop region for var {var_id}"
             );
-            return Ok(Split::Propositional {
+            candidates.push(Split::Propositional {
                 state_id: source_state_id,
                 var_id,
                 wanted: allowed.clone(),
@@ -1977,7 +2227,7 @@ fn split_deviation(
             boundary.is_finite(),
             "cannot refine an infinite numeric-effect preimage boundary"
         );
-        return Ok(Split::Numeric {
+        candidates.push(Split::Numeric {
             state_id: source_state_id,
             var_id,
             boundary,
@@ -1988,9 +2238,14 @@ fn split_deviation(
             ),
         });
     }
-    bail!(
+    ensure!(
+        !candidates.is_empty(),
         "concrete successor maps to a different Cartesian state but no differing component was found"
-    )
+    );
+    retain_min_growth_splits(working, &mut candidates, |split| split);
+    let keys = candidates.iter().map(split_choice_key).collect::<Vec<_>>();
+    let index = semantics.choose_keyed_index(&keys, 0x4445_5649);
+    Ok(candidates.swap_remove(index))
 }
 
 fn apply_split(
@@ -2036,6 +2291,7 @@ fn apply_split(
             wanted_region.propositions[var_id] = wanted_child_values;
             let mut other_region = old_region.clone();
             other_region.propositions[var_id] = other_child_values;
+            working.propositional_refinement_counts[var_id] += 1;
             working.hierarchy.split_propositional(
                 leaf_node_id,
                 old_state_id,
@@ -2079,6 +2335,7 @@ fn apply_split(
             lower_region.numeric[var_id] = lower;
             let mut upper_region = old_region.clone();
             upper_region.numeric[var_id] = upper;
+            working.numeric_refinement_counts[var_id] += 1;
             working.hierarchy.split_numeric(
                 leaf_node_id,
                 old_state_id,
@@ -2127,21 +2384,7 @@ fn apply_split(
     working.leaf_node_ids[old_state_id] = old_leaf_node;
     working.leaf_node_ids.push(new_leaf_node);
 
-    let mut incident = working.outgoing[old_state_id].clone();
-    incident.extend(working.incoming[old_state_id].iter().copied());
-    incident.sort_unstable();
-    incident.dedup();
-    let old_transitions: Vec<_> = incident
-        .iter()
-        .filter_map(|&id| {
-            working.transitions[id]
-                .active
-                .then(|| working.transitions[id].clone())
-        })
-        .collect();
-    for transition_id in incident {
-        working.deactivate_transition(transition_id);
-    }
+    let old_transitions = working.remove_incident_transitions(old_state_id);
     for transition in old_transitions {
         let sources: &[usize] = if transition.source == old_state_id {
             &[old_state_id, new_state_id]
@@ -2172,6 +2415,7 @@ fn finalize_abstraction(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     combine_labels: bool,
+    compute_operator_footprints: bool,
 ) -> Result<(
     AbstractTransitionSystem,
     AbstractDistanceTable,
@@ -2181,7 +2425,7 @@ fn finalize_abstraction(
     let mut grouped: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
     let mut raw = Vec::new();
     for transition_id in working.active_transition_ids() {
-        let transition = &working.transitions[transition_id];
+        let transition = working.transition(transition_id);
         if combine_labels {
             grouped
                 .entry((transition.source, transition.target))
@@ -2206,33 +2450,53 @@ fn finalize_abstraction(
     let mut transitions = Vec::with_capacity(raw.len());
     let mut forward = vec![Vec::new(); working.states.len()];
     let mut backward = vec![Vec::new(); working.states.len()];
-    let mut footprints = Vec::with_capacity(raw.len());
+    let mut footprints = if compute_operator_footprints {
+        Vec::with_capacity(raw.len())
+    } else {
+        Vec::new()
+    };
+    let shared_state_regions = compute_operator_footprints.then(|| {
+        working
+            .states
+            .iter()
+            .cloned()
+            .map(Arc::new)
+            .collect::<Vec<_>>()
+    });
     let mut relevant = HashSet::new();
     for (transition_id, (source, target, labels)) in raw.into_iter().enumerate() {
         for &label in &labels {
             relevant.insert(label);
         }
+        if compute_operator_footprints {
+            footprints.push(AbstractOperatorFootprint {
+                labels: labels
+                    .iter()
+                    .copied()
+                    .map(|concrete_op_id| ConcreteOperatorFootprint {
+                        concrete_op_id,
+                        source_region: Arc::clone(
+                            &shared_state_regions
+                                .as_ref()
+                                .expect("Cartesian footprints require shared state regions")
+                                [source],
+                        ),
+                        allocable: true,
+                        max_allocation_fraction: 1.0,
+                        non_allocable_reason: None,
+                    })
+                    .collect(),
+            });
+        }
         transitions.push(AbstractTransition {
             transition_id,
             abstract_op_id: transition_id,
-            concrete_op_ids: labels.clone(),
+            concrete_op_ids: labels,
             source_hash: source,
             target_hash: target,
         });
         forward[source].push(transition_id);
         backward[target].push(transition_id);
-        footprints.push(AbstractOperatorFootprint {
-            labels: labels
-                .into_iter()
-                .map(|concrete_op_id| ConcreteOperatorFootprint {
-                    concrete_op_id,
-                    source_region: working.states[source].clone(),
-                    allocable: true,
-                    max_allocation_fraction: 1.0,
-                    non_allocable_reason: None,
-                })
-                .collect(),
-        });
     }
     let mut goal_state_hashes = Vec::new();
     for (state_id, region) in working.states.iter().enumerate() {

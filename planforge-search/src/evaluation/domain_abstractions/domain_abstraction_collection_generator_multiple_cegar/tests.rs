@@ -1,6 +1,8 @@
 use super::*;
-use planforge_sas::axioms::CalOperator;
-use planforge_sas::numeric_task::{AssignmentEffect, AssignmentOperation, Metric, NumericRootTask};
+use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
+use planforge_sas::numeric_task::{
+    AssignmentEffect, AssignmentOperation, Metric, NumericRootTask, NumericVariable,
+};
 
 #[test]
 fn single_init_split_selection_uses_round_robin_iteration_order() {

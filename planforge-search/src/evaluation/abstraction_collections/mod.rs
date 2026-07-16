@@ -7,5 +7,6 @@
 pub mod canonical_heuristic;
 pub mod component;
 pub mod max_heuristic;
+pub(crate) mod portfolio;
 pub mod saturated_cost_partitioning_online_heuristic;
 pub mod transition_cost_partitioning;

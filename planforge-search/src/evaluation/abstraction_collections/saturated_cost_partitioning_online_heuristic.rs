@@ -4764,6 +4764,7 @@ mod tests {
             max_time: None,
             combine_labels: false,
             compute_operator_footprints: true,
+            random_seed: None,
             debug: false,
         })
         .unwrap()

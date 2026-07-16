@@ -19,6 +19,7 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -98,7 +99,7 @@ pub struct AbstractOperatorFootprint {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConcreteOperatorFootprint {
     pub concrete_op_id: usize,
-    pub source_region: StateRegion,
+    pub source_region: Arc<StateRegion>,
     pub allocable: bool,
     pub max_allocation_fraction: f64,
     pub non_allocable_reason: Option<NonAllocableFootprintReason>,
@@ -859,7 +860,7 @@ struct IndexedLaterFootprint {
 #[derive(Clone, Debug)]
 struct LaterFootprint {
     abstraction_id: usize,
-    source_region: StateRegion,
+    source_region: Arc<StateRegion>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1343,8 +1344,8 @@ impl TransitionResidualCosts {
                     continue;
                 }
                 let region = TransitionRegion {
-                    source: footprint.source_region.clone(),
-                    target: footprint.source_region.clone(),
+                    source: footprint.source_region.as_ref().clone(),
+                    target: footprint.source_region.as_ref().clone(),
                 };
                 let concrete_op_id = footprint.concrete_op_id;
                 ensure!(
@@ -2472,7 +2473,7 @@ mod tests {
         let footprints = vec![AbstractOperatorFootprint {
             labels: vec![ConcreteOperatorFootprint {
                 concrete_op_id: 0,
-                source_region: state_region(0),
+                source_region: state_region(0).into(),
                 allocable: true,
                 max_allocation_fraction: 1.0,
                 non_allocable_reason: None,
@@ -2545,7 +2546,7 @@ mod tests {
     ) -> ConcreteOperatorFootprint {
         ConcreteOperatorFootprint {
             concrete_op_id,
-            source_region: numeric_state_region(lower, upper),
+            source_region: numeric_state_region(lower, upper).into(),
             allocable,
             max_allocation_fraction: if allocable {
                 max_allocation_fraction
@@ -2566,7 +2567,8 @@ mod tests {
             source_region: StateRegion {
                 propositions: vec![vec![0]],
                 numeric: vec![first, second],
-            },
+            }
+            .into(),
             allocable: true,
             max_allocation_fraction: 1.0,
             non_allocable_reason: None,
@@ -3076,7 +3078,8 @@ mod tests {
                         source_region: StateRegion {
                             propositions: vec![vec![0]],
                             numeric: vec![Interval::new(i as f64, (i + 1) as f64, false, true)],
-                        },
+                        }
+                        .into(),
                         allocable: true,
                         max_allocation_fraction: 1.0,
                         non_allocable_reason: None,

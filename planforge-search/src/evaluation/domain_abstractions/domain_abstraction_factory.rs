@@ -1222,7 +1222,7 @@ impl DomainAbstractionFactory {
 
         Ok(ConcreteOperatorFootprint {
             concrete_op_id,
-            source_region,
+            source_region: Arc::new(source_region),
             allocable,
             max_allocation_fraction: if allocable {
                 let fraction = if precision_count == 0 {

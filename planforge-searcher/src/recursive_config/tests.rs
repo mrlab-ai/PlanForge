@@ -126,6 +126,17 @@ fn parses_hierarchical_scp_options_and_sources() {
 }
 
 #[test]
+fn parses_hierarchical_cartesian_collection_source() {
+    let h = astar_heuristic(
+        "astar(scp(cartesian_collection(max_states=1000, variants_per_goal=8, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, use_abstract_operator_cost_partitioning=true))",
+    );
+    let (sources, options) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].name(), "cartesian_collection");
+    assert_eq!(options.len(), 2);
+}
+
+#[test]
 fn parses_execute_entire_plan_flaw_kind() {
     let spec =
         parse_search_spec("astar(canonical_domain_abstractions(flaw_kind=execute_entire_plan))")
