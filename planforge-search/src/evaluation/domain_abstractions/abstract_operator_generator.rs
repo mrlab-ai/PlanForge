@@ -17,6 +17,7 @@ use planforge_sas::utils::float_tolerance;
 
 use crate::evaluation::abstraction_task::validate_abstraction_operator;
 
+use super::additive_numeric_views::{AdditiveNumericViews, active_comparison_dimensions};
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees;
@@ -575,6 +576,7 @@ fn materialize_skeletons_into(
     let transitions = compute_hash_effects_with_preconditions(
         task,
         generator,
+        first.concrete_op_id,
         &first.op_preconditions,
         &first.ass_effects,
         deadline,
@@ -612,6 +614,7 @@ pub struct AbstractOperatorGenerator {
     partitions: NumericPartitions,
     comparison_index: Option<ComparisonAxiomIndex>,
     comparison_trees: Vec<ComparisonTree>,
+    additive_numeric_views: AdditiveNumericViews,
     comparisons_by_numeric_dep: Vec<Vec<usize>>,
     derived_prop_vars: HashSet<usize>,
     combine_labels: bool,
@@ -701,10 +704,17 @@ impl AbstractOperatorGenerator {
             comparison_trees.push(tree);
         }
 
+        let additive_numeric_views =
+            AdditiveNumericViews::for_active_dimensions(task, &numeric_domain_sizes)?;
         let mut comparisons_by_numeric_dep: Vec<Vec<usize>> =
             vec![Vec::new(); task.numeric_variables().len()];
         for (tree_idx, tree) in comparison_trees.iter().enumerate() {
-            for dep in tree.regular_numeric_var_dependencies(task) {
+            for dep in active_comparison_dimensions(
+                task,
+                tree,
+                &numeric_domain_sizes,
+                &additive_numeric_views,
+            ) {
                 ensure!(
                     dep < comparisons_by_numeric_dep.len(),
                     "comparison tree depends on numeric var {dep}, but only {} numeric vars exist",
@@ -734,6 +744,7 @@ impl AbstractOperatorGenerator {
             partitions,
             comparison_index,
             comparison_trees,
+            additive_numeric_views,
             comparisons_by_numeric_dep,
             derived_prop_vars,
             combine_labels,
@@ -1225,6 +1236,7 @@ fn multiply_out_propositional(
 fn compute_hash_effects_with_preconditions(
     task: &dyn AbstractNumericTask,
     generator: &mut AbstractOperatorGenerator,
+    concrete_op_id: usize,
     op_preconditions: &[ExplicitFact],
     ass_effects: &[planforge_sas::numeric_task::AssignmentEffect],
     deadline: Option<Instant>,
@@ -1241,11 +1253,9 @@ fn compute_hash_effects_with_preconditions(
 
     let num_props = generator.domain_sizes.len();
 
-    // C++ parity: enumerate every refined regular numeric variable. Affected
-    // variables get source->target transitions; unaffected refined variables
-    // get explicit identity transitions. Treating the latter as wildcards is
-    // too relaxed for the regression table and can create abstract dead ends
-    // for concrete-reachable states.
+    // Enumerate every refined numeric coordinate needed by this operator.
+    // Affected regular variables and exact additive views get source->target
+    // transitions; needed unaffected coordinates get identity transitions.
     let num_numeric_vars = generator.numeric_domain_sizes.len();
     let mut effects_by_var: Vec<Vec<&planforge_sas::numeric_task::AssignmentEffect>> =
         vec![Vec::new(); num_numeric_vars];
@@ -1263,6 +1273,13 @@ fn compute_hash_effects_with_preconditions(
         effects_by_var[v].push(eff);
         if generator.numeric_domain_sizes.get(v).copied().unwrap_or(1) > 1 {
             affected_numeric_vars.insert(v);
+        }
+    }
+    for (numeric_var_id, view) in generator.additive_numeric_views.iter() {
+        if generator.numeric_domain_sizes[numeric_var_id] > 1
+            && view.operator_delta(concrete_op_id)?.abs() >= 1e-12
+        {
+            affected_numeric_vars.insert(numeric_var_id);
         }
     }
 
@@ -1285,7 +1302,12 @@ fn compute_hash_effects_with_preconditions(
                 continue;
             }
             if let Some(tree) = index.comparison_tree(pre.var()) {
-                for dep in tree.regular_numeric_var_dependencies(task) {
+                for dep in active_comparison_dimensions(
+                    task,
+                    tree,
+                    &generator.numeric_domain_sizes,
+                    &generator.additive_numeric_views,
+                ) {
                     needed_numeric_vars.insert(dep);
                 }
             }
@@ -1305,7 +1327,12 @@ fn compute_hash_effects_with_preconditions(
             if generator.domain_sizes.get(var_id).copied().unwrap_or(1) <= 1 {
                 continue;
             }
-            let deps = tree.regular_numeric_var_dependencies(task);
+            let deps = active_comparison_dimensions(
+                task,
+                tree,
+                &generator.numeric_domain_sizes,
+                &generator.additive_numeric_views,
+            );
             if deps.iter().any(|d| affected_numeric_vars.contains(d)) {
                 for dep in &deps {
                     needed_numeric_vars.insert(*dep);
@@ -1327,11 +1354,34 @@ fn compute_hash_effects_with_preconditions(
             generator.numeric_domain_sizes.len(),
             task.numeric_variables().len()
         );
-        if task.numeric_variables()[v].get_type() == &NumericType::Derived {
-            continue;
-        }
         let num_parts = generator.numeric_domain_sizes[v];
         if num_parts <= 1 {
+            continue;
+        }
+        if task.numeric_variables()[v].get_type() == &NumericType::Derived {
+            let view = generator.additive_numeric_views.get(v).with_context(|| {
+                format!("refined derived numeric variable {v} has no additive-view semantics")
+            })?;
+            let delta = view.operator_delta(concrete_op_id)?;
+            if delta.abs() >= 1e-12 {
+                let delta_interval = Interval::singleton(delta);
+                let mut pairs = HashSet::new();
+                for src in 0..num_parts {
+                    for tgt in generator.partitions.reachable_partitions(
+                        v,
+                        src,
+                        &planforge_sas::numeric_task::AssignmentOperation::Plus,
+                        delta_interval,
+                    ) {
+                        pairs.insert((src, tgt));
+                    }
+                }
+                let mut transitions = pairs.into_iter().collect::<Vec<_>>();
+                transitions.sort_unstable();
+                per_var.push((v, transitions));
+            } else if needed_numeric_vars.contains(&v) {
+                per_var.push((v, (0..num_parts).map(|part| (part, part)).collect()));
+            }
             continue;
         }
         let effs = &effects_by_var[v];
@@ -1397,8 +1447,7 @@ fn compute_hash_effects_with_preconditions(
     // numeric var that participates in a comparison tree is a trigger. We
     // re-check per combo (a combo may have src==tgt and thus no actual
     // change), but use this as the upper bound.
-    let any_changed_var_affects_comparison = ass_effects.iter().any(|eff| {
-        let v = eff.affected_var_id();
+    let any_changed_var_affects_comparison = changed_numeric_vars_for_semantics.iter().any(|&v| {
         generator
             .comparisons_by_numeric_dep
             .get(v)
@@ -1445,7 +1494,12 @@ fn compute_hash_effects_with_preconditions(
             if generator.domain_sizes.get(var_id).copied().unwrap_or(1) <= 1 {
                 continue;
             }
-            let deps = tree.regular_numeric_var_dependencies(task);
+            let deps = active_comparison_dimensions(
+                task,
+                tree,
+                &generator.numeric_domain_sizes,
+                &generator.additive_numeric_views,
+            );
             if deps.iter().any(|d| snapshot.contains(d)) {
                 for dep in &deps {
                     bound_numeric_vars.insert(*dep);

@@ -37,6 +37,9 @@ use serde::{Deserialize, Serialize};
 
 use super::determine_include_in_lower;
 use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
+use crate::evaluation::domain_abstractions::additive_numeric_views::{
+    comparison_refinement_dimensions, is_refinable_numeric_dimension,
+};
 use crate::evaluation::domain_abstractions::cegar::determine_include_in_lower_for_flaw_search_state;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::progression::{
     get_execute_entire_plan_flaws, get_progression_flaws,
@@ -316,7 +319,7 @@ fn dependent_numeric_flaws_for_comparison_prop_var(
     };
 
     let mut out: Vec<NumericFlaw> = Vec::new();
-    for dep_var_id in tree.regular_numeric_var_dependencies(task) {
+    for dep_var_id in comparison_refinement_dimensions(task, tree) {
         let Some(&concrete_value) = numeric_state.get(dep_var_id) else {
             continue;
         };
@@ -355,7 +358,7 @@ fn dependent_numeric_flaws_in_interval_for_comparison_prop_var(
     };
 
     let mut out: Vec<NumericFlaw> = Vec::new();
-    for dep_var_id in tree.regular_numeric_var_dependencies(task) {
+    for dep_var_id in comparison_refinement_dimensions(task, tree) {
         let include_in_lower = determine_include_in_lower_for_flaw_search_state(tree, state);
 
         if can_split_numeric_var(
@@ -393,10 +396,32 @@ pub(crate) fn numeric_requirement_for_comparison_fact(
     fact: &ExplicitFact,
 ) -> Option<(usize, Interval)> {
     let tree = comparison_index.comparison_tree(fact.var())?;
+    let required_op = required_comparison_op(tree.op, fact.value())?;
     let left = linearize_numeric_var(task, tree.left_numeric_var_id).ok()?;
     let right = linearize_numeric_var(task, tree.right_numeric_var_id).ok()?;
+    let num_numeric_vars = task.numeric_variables().len();
+    if is_refinable_numeric_dimension(task, tree.left_numeric_var_id) && right.is_constant() {
+        let expression =
+            LinearExpression::variable(num_numeric_vars, tree.left_numeric_var_id).subtract(
+                &LinearExpression::constant(num_numeric_vars, right.constant),
+            );
+        if let Some(requirement) =
+            single_var_interval_for_linear_zero_comparison(&expression, required_op)
+        {
+            return Some(requirement);
+        }
+    }
+    if is_refinable_numeric_dimension(task, tree.right_numeric_var_id) && left.is_constant() {
+        let expression = LinearExpression::constant(num_numeric_vars, left.constant).subtract(
+            &LinearExpression::variable(num_numeric_vars, tree.right_numeric_var_id),
+        );
+        if let Some(requirement) =
+            single_var_interval_for_linear_zero_comparison(&expression, required_op)
+        {
+            return Some(requirement);
+        }
+    }
     let expression = left.subtract(&right);
-    let required_op = required_comparison_op(tree.op, fact.value())?;
     single_var_interval_for_linear_zero_comparison(&expression, required_op)
 }
 

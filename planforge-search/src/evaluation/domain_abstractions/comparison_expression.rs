@@ -140,6 +140,28 @@ impl Interval {
     }
 
     #[inline]
+    pub fn intersection(&self, other: &Interval) -> Interval {
+        if self.is_empty() || other.is_empty() {
+            return EMPTY_INTERVAL;
+        }
+        let (lower, lower_closed) = if self.lower > other.lower {
+            (self.lower, self.lower_closed)
+        } else if self.lower < other.lower {
+            (other.lower, other.lower_closed)
+        } else {
+            (self.lower, self.lower_closed && other.lower_closed)
+        };
+        let (upper, upper_closed) = if self.upper < other.upper {
+            (self.upper, self.upper_closed)
+        } else if self.upper > other.upper {
+            (other.upper, other.upper_closed)
+        } else {
+            (self.upper, self.upper_closed && other.upper_closed)
+        };
+        Interval::new(lower, upper, lower_closed, upper_closed)
+    }
+
+    #[inline]
     #[allow(clippy::if_same_then_else)]
     pub fn lower_is_lower(&self, other: &Self) -> bool {
         if self.lower < other.lower {
@@ -954,11 +976,21 @@ impl ComparisonTree {
         match &self.nodes[node_id] {
             ComparisonTreeNode::Leaf { numeric_var_id } => inputs[*numeric_var_id],
             ComparisonTreeNode::Arith {
-                op, left, right, ..
+                op,
+                left,
+                right,
+                result_numeric_var_id,
+                ..
             } => {
                 let lhs = self.eval_node_interval(*left, inputs);
                 let rhs = self.eval_node_interval(*right, inputs);
-                op.apply_interval(lhs, rhs)
+                let computed = op.apply_interval(lhs, rhs);
+                let supplied = inputs[*result_numeric_var_id];
+                if supplied.is_empty() {
+                    computed
+                } else {
+                    computed.intersection(&supplied)
+                }
             }
         }
     }
@@ -979,7 +1011,13 @@ impl ComparisonTree {
             } => {
                 let lhs = self.eval_node_interval_and_fill(*left, intervals);
                 let rhs = self.eval_node_interval_and_fill(*right, intervals);
-                let result = op.apply_interval(lhs, rhs);
+                let computed = op.apply_interval(lhs, rhs);
+                let supplied = intervals[*result_numeric_var_id];
+                let result = if supplied.is_empty() {
+                    computed
+                } else {
+                    computed.intersection(&supplied)
+                };
                 intervals[*result_numeric_var_id] = result;
                 result
             }

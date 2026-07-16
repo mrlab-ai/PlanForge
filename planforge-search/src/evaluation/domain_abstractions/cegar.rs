@@ -15,7 +15,7 @@ use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
 
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, Operator};
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, Operator};
 
 use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
 
@@ -31,6 +31,10 @@ use crate::evaluation::domain_abstractions::utils::{
 };
 
 use super::abstract_operator_generator::DomainMapping;
+use super::additive_numeric_views::{
+    comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
+    is_refinable_numeric_dimension,
+};
 use super::comparison_expression::Interval;
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
@@ -259,7 +263,7 @@ impl Cegar {
                 &mut domain_sizes,
                 &mut partitions,
                 &mut numeric_domain_sizes,
-            );
+            )?;
         }
 
         let mut iteration: usize = 1;
@@ -1268,6 +1272,7 @@ fn apply_initial_goal_splits(
     } else {
         config.max_abstraction_size
     };
+    let initial_numeric = initial_numeric_values_with_additive_views(task);
 
     for encoded_var_id in candidate_var_ids {
         if encoded_var_id >= num_prop_vars {
@@ -1275,10 +1280,10 @@ fn apply_initial_goal_splits(
             if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
                 continue;
             }
-            let Some(numeric_var) = task.numeric_variables().get(numeric_var_id) else {
+            let Some(_) = task.numeric_variables().get(numeric_var_id) else {
                 continue;
             };
-            if numeric_var.get_type() != &NumericType::Regular {
+            if !is_refinable_numeric_dimension(task, numeric_var_id) {
                 continue;
             }
             if !matches!(
@@ -1287,8 +1292,7 @@ fn apply_initial_goal_splits(
             ) {
                 continue;
             }
-            let Some(&init_value) = task.get_initial_numeric_state_values().get(numeric_var_id)
-            else {
+            let Some(&init_value) = initial_numeric.get(numeric_var_id) else {
                 continue;
             };
             if !can_refine_numeric_variable(
@@ -1369,7 +1373,6 @@ fn apply_initial_goal_splits(
     // different comparison axioms, producing pattern diversity (and
     // hence additivity) in the resulting collection.
     if let Ok(index) = ComparisonAxiomIndex::from_task(task) {
-        let init_numeric = task.get_initial_numeric_state_values();
         let init_split_filter: Option<&HashSet<usize>> = config.init_split_var_ids.as_ref();
         for fact in goal_variable_values(task) {
             if let Some(allowed) = init_split_filter
@@ -1380,14 +1383,14 @@ fn apply_initial_goal_splits(
             let Some(tree) = index.comparison_tree(fact.var()) else {
                 continue;
             };
-            for numeric_var_id in tree.regular_numeric_var_dependencies(task) {
+            for numeric_var_id in comparison_refinement_dimensions(task, tree) {
                 if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
                     continue;
                 }
-                let Some(numeric_var) = task.numeric_variables().get(numeric_var_id) else {
+                let Some(_) = task.numeric_variables().get(numeric_var_id) else {
                     continue;
                 };
-                if numeric_var.get_type() != &NumericType::Regular {
+                if !is_refinable_numeric_dimension(task, numeric_var_id) {
                     continue;
                 }
                 if !can_refine_numeric_variable(
@@ -1398,7 +1401,7 @@ fn apply_initial_goal_splits(
                 ) {
                     continue;
                 }
-                let Some(&init_value) = init_numeric.get(numeric_var_id) else {
+                let Some(&init_value) = initial_numeric.get(numeric_var_id) else {
                     continue;
                 };
                 let include_in_lower = rng.gen_range(0..2) == 0;
@@ -1423,7 +1426,7 @@ fn apply_initial_seed_splits(
     domain_sizes: &mut [usize],
     partitions: &mut NumericPartitions,
     numeric_domain_sizes: &mut [usize],
-) {
+) -> Result<()> {
     let comparison_var_ids: HashSet<usize> = task
         .comparison_axioms()
         .iter()
@@ -1440,12 +1443,15 @@ fn apply_initial_seed_splits(
                 if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
                     continue;
                 }
-                let Some(numeric_var) = task.numeric_variables().get(numeric_var_id) else {
-                    continue;
-                };
-                if numeric_var.get_type() != &NumericType::Regular {
-                    continue;
-                }
+                ensure!(
+                    task.numeric_variables().get(numeric_var_id).is_some(),
+                    "initial numeric seed references missing variable {numeric_var_id}"
+                );
+                ensure!(
+                    is_refinable_numeric_dimension(task, numeric_var_id),
+                    "initial numeric seed references unsupported abstraction dimension {numeric_var_id} ({})",
+                    task.numeric_variables()[numeric_var_id].name()
+                );
                 if !can_refine_numeric_variable(
                     domain_sizes,
                     numeric_domain_sizes,
@@ -1500,6 +1506,7 @@ fn apply_initial_seed_splits(
             }
         }
     }
+    Ok(())
 }
 
 pub fn run_cegar(task: &dyn AbstractNumericTask, config: CegarConfig) -> Result<CegarOutcome> {

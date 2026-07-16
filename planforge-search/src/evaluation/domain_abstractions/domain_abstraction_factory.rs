@@ -21,6 +21,7 @@ use planforge_sas::utils::float_tolerance;
 use super::abstract_operator_generator::{
     AbstractOperator, AbstractOperatorGenerator, DomainMapping,
 };
+use super::additive_numeric_views::AdditiveNumericViews;
 use super::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::{
@@ -352,6 +353,7 @@ pub struct DomainAbstractionFactory {
     pub numeric_domain_sizes: Vec<usize>,
     comparison_index: Option<ComparisonAxiomIndex>,
     comparison_trees: Vec<ComparisonTree>,
+    additive_numeric_views: AdditiveNumericViews,
     /// Per-concrete-operator metric cost, evaluated once over the initial
     /// numeric state. The cost is task-deterministic, so caching here (and
     /// sharing the `Arc` into every per-iteration `AbstractOperatorGenerator`)
@@ -439,6 +441,8 @@ impl DomainAbstractionFactory {
             .iter()
             .map(|op| metric_operator_cost_from_initial_values(task, op))
             .collect();
+        let additive_numeric_views =
+            AdditiveNumericViews::for_active_dimensions(task, &numeric_domain_sizes)?;
         Ok(Self {
             domain_mapping,
             domain_sizes,
@@ -446,6 +450,7 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes,
             comparison_index,
             comparison_trees,
+            additive_numeric_views,
             cached_operator_costs,
         })
     }
@@ -1124,19 +1129,40 @@ impl DomainAbstractionFactory {
         let mut precision_sum = 0.0;
         let mut precision_count = 0usize;
 
-        for numeric_var_id in deterministic_affected_regular_numeric_vars(task, concrete_operator) {
+        let mut affected_numeric_dimensions =
+            deterministic_affected_regular_numeric_vars(task, concrete_operator);
+        for (numeric_var_id, view) in self.additive_numeric_views.iter() {
+            if self.numeric_domain_sizes[numeric_var_id] > 1
+                && view.operator_delta(concrete_op_id)?.abs() >= 1e-12
+            {
+                affected_numeric_dimensions.push(numeric_var_id);
+            }
+        }
+        affected_numeric_dimensions.sort_unstable();
+        affected_numeric_dimensions.dedup();
+
+        for numeric_var_id in affected_numeric_dimensions {
             ensure!(
                 numeric_var_id < abstract_source_region.numeric.len(),
                 "abstract operator references affected numeric var {numeric_var_id}, but footprint has {} numeric vars",
                 abstract_source_region.numeric.len()
             );
             let source_interval = abstract_source_region.numeric[numeric_var_id];
-            let Some(effect_image) = deterministic_numeric_effect_image(
-                task,
-                concrete_operator,
-                numeric_var_id,
-                source_interval,
-            ) else {
+            let effect_image = if let Some(view) = self.additive_numeric_views.get(numeric_var_id) {
+                let delta = view.operator_delta(concrete_op_id)?;
+                Some(DeterministicNumericEffectImage {
+                    image: shift_interval(source_interval, delta),
+                    inverse: DeterministicNumericEffectInverse::Additive { delta },
+                })
+            } else {
+                deterministic_numeric_effect_image(
+                    task,
+                    concrete_operator,
+                    numeric_var_id,
+                    source_interval,
+                )
+            };
+            let Some(effect_image) = effect_image else {
                 non_allocable_reason
                     .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
                 continue;
@@ -2569,7 +2595,12 @@ impl DomainAbstractionFactory {
         for num_var_id in 0..numeric_domain_sizes.len() {
             let abs_var = num_props + num_var_id;
             let mult = hash_multipliers[abs_var];
-            let val = float_tolerance::canonicalize(num_init[num_var_id]);
+            let concrete_value = self
+                .additive_numeric_views
+                .get(num_var_id)
+                .map(|view| view.evaluate(&num_init))
+                .unwrap_or(num_init[num_var_id]);
+            let val = float_tolerance::canonicalize(concrete_value);
             ensure!(
                 val.is_finite() && !val.is_nan(),
                 "initial numeric value for var {num_var_id} must be finite, got {val}"

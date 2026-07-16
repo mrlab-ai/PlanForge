@@ -9,12 +9,12 @@
 use std::collections::HashMap;
 
 use planforge_sas::{
-    numeric_task::AssignmentOperation,
     numeric_task::{AbstractNumericTask, ExplicitFact, NumericType},
     utils::linear_effects::linearize_numeric_var,
 };
 
 use super::{NumericFlaw, can_split_numeric_var, numeric_requirement_for_comparison_fact};
+pub(super) use crate::evaluation::domain_abstractions::additive_numeric_views::numeric_effect_deltas;
 use crate::evaluation::domain_abstractions::{
     comparison_expression::{CompOp, Interval},
     domain_abstraction::{ComparisonAxiomIndex, NumericPartitions},
@@ -247,45 +247,6 @@ fn push_numeric_flaw_if_possible(
             step,
         });
     }
-}
-
-pub(super) fn numeric_effect_deltas(task: &dyn AbstractNumericTask) -> HashMap<usize, Vec<f64>> {
-    let initial_numeric = task.get_initial_numeric_state_values();
-    let mut deltas: HashMap<usize, Vec<f64>> = HashMap::new();
-    for op in task.get_operators() {
-        for effect in op.assignment_effects() {
-            let affected = effect.affected_var_id();
-            if task
-                .numeric_variables()
-                .get(affected)
-                .is_none_or(|variable| variable.get_type() != &NumericType::Regular)
-            {
-                continue;
-            }
-            let Some(source_value) = initial_numeric.get(effect.var_id()).copied() else {
-                continue;
-            };
-            if !source_value.is_finite() {
-                continue;
-            }
-            let delta = match effect.operation() {
-                AssignmentOperation::Plus => source_value,
-                AssignmentOperation::Minus => -source_value,
-                AssignmentOperation::Assign
-                | AssignmentOperation::Times
-                | AssignmentOperation::Divide => continue,
-            };
-            if delta.abs() <= 1e-12 {
-                continue;
-            }
-            deltas.entry(affected).or_default().push(delta);
-        }
-    }
-    for values in deltas.values_mut() {
-        values.sort_by(|left, right| left.total_cmp(right));
-        values.dedup_by(|left, right| (*left - *right).abs() <= 1e-12);
-    }
-    deltas
 }
 
 fn required_comparison_op(op: CompOp, prop_value: usize) -> Option<CompOp> {

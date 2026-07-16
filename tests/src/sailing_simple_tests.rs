@@ -19,7 +19,9 @@ use planforge_search::evaluation::abstraction_collections::saturated_cost_partit
     SaturatedCostPartitioningOnlineHeuristic, ScpOnlineConfig,
 };
 use planforge_search::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
-use planforge_search::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
+use planforge_search::evaluation::domain_abstractions::domain_abstraction_generator::{
+    DomainAbstraction, DomainAbstractionGenerator,
+};
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planforge_search::evaluation::evaluator::{EvaluationState, Evaluator};
 use planforge_search::evaluation::heuristic::Heuristic;
@@ -181,7 +183,13 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     .expect("unrestricted domain abstraction generator should construct")
     .generate(&task)
     .expect("unrestricted domain abstraction should solve sailing-simple");
-    assert!(domain_abstraction.metadata.solved_by_self);
+    assert!(
+        domain_abstraction.metadata.solved_by_self,
+        "unrestricted domain abstraction stopped without a real plan: metadata={:?}, prop_domains={:?}, numeric_domains={:?}",
+        domain_abstraction.metadata,
+        domain_abstraction.factory.domain_sizes(),
+        domain_abstraction.factory.numeric_domain_sizes()
+    );
     assert_exact_single_abstraction_search(
         &task,
         DomainAbstractionHeuristic::new(None, domain_abstraction),
@@ -246,6 +254,17 @@ fn scp_online_initial_h_with_config(
     let abstractions = generator
         .generate_collection(&task)
         .expect("scp_online domain abstractions should build");
+    let h = scp_online_initial_h_for_collection(&task, abstractions, collection_config);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    h
+}
+
+fn scp_online_initial_h_for_collection(
+    task: &NumericRootTask,
+    abstractions: Vec<DomainAbstraction>,
+    collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+) -> f64 {
     let config = ScpOnlineConfig {
         max_time: 100.0,
         max_size: 10_000_000,
@@ -257,25 +276,22 @@ fn scp_online_initial_h_with_config(
         ..Default::default()
     };
     let heuristic =
-        SaturatedCostPartitioningOnlineHeuristic::new(None, abstractions, vec![], config, &task)
+        SaturatedCostPartitioningOnlineHeuristic::new(None, abstractions, vec![], config, task)
             .expect("scp_online heuristic should construct");
 
-    let mut state_registry = StateRegistry::for_task(Arc::new(&task));
+    let mut state_registry = StateRegistry::for_task(Arc::new(task));
     let initial = state_registry.get_initial_state();
     let mut eval = EvaluationState::new_with_registry(
         &initial,
         0.0,
         false,
-        &task as &dyn AbstractNumericTask,
+        task as &dyn AbstractNumericTask,
         &state_registry,
     );
     eval.set_is_goal(false);
-    let h = heuristic
+    heuristic
         .evaluate_state(&mut eval)
-        .expect("scp_online initial evaluation should succeed");
-
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    h
+        .expect("scp_online initial evaluation should succeed")
 }
 
 #[test]
@@ -378,11 +394,8 @@ fn sailing_simple_assignment_gap() {
 #[test]
 fn sailing_simple_ratchet_equilibrium() {
     let (task, temp_dir) = sailing_task("prob_2b1p");
-    let task = build_restricted_task(&task)
-        .expect("sailing-simple restricted task construction must not fail")
-        .expect("sailing-simple instances have promotable derived roots")
-        .into_task();
-    let config = standard_round7_collection_config(1);
+    let mut config = standard_round7_collection_config(1);
+    config.max_abstraction_size = 1_000;
     let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
     let abstractions = generator
         .generate_collection(&task)
@@ -429,7 +442,7 @@ fn sailing_simple_ratchet_equilibrium() {
         "expected at least one saved(p0) abstraction refining both boat x roots"
     );
 
-    let h = scp_online_initial_h_with_config("prob_2b1p", config);
+    let h = scp_online_initial_h_for_collection(&task, abstractions, config);
     let _ = std::fs::remove_dir_all(&temp_dir);
     assert!(h >= 10.0, "prob_2b1p: initial h={h} should stay >= 10");
 }

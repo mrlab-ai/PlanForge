@@ -2,17 +2,18 @@
 mod tests;
 
 use std::cell::{Ref, RefMut};
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::hash::Hash;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use ordered_float::OrderedFloat;
 use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericType,
-    NumericVariable, Operator,
+    AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericType, NumericVariable,
+    Operator,
 };
 use planforge_sas::utils::linear_effects::linearize_numeric_var;
 use rand::seq::SliceRandom;
@@ -22,6 +23,10 @@ use tracing::info;
 
 use crate::evaluation::domain_abstractions::cegar::FlawKind;
 
+use super::additive_numeric_views::{
+    comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
+    is_operator_invariant_regular_dimension, is_refinable_numeric_dimension, numeric_effect_deltas,
+};
 use super::cegar::CegarConfig;
 use super::cegar::InitialSeedSplit;
 use super::cegar::SplitDirection;
@@ -169,6 +174,26 @@ enum ComplementaryDirection {
 #[derive(Debug, Clone)]
 struct RootGroup {
     numeric_var_ids: HashSet<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct NumericRootGroupKey {
+    coefficient_shape: Vec<OrderedFloat<f64>>,
+    invariant_terms: Vec<(usize, OrderedFloat<f64>)>,
+    constant: OrderedFloat<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum SeedIdentity {
+    Propositional {
+        var_id: usize,
+        value: usize,
+    },
+    Numeric {
+        numeric_var_id: usize,
+        value_bits: u64,
+        include_in_lower: bool,
+    },
 }
 
 #[derive(
@@ -879,9 +904,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         let Ok(comparison_index) = ComparisonAxiomIndex::from_task(task) else {
             return goal_seed_splits(task);
         };
-        let initial_numeric = task.get_initial_numeric_state_values();
+        let initial_numeric = initial_numeric_values_with_additive_views(task);
         let deltas = numeric_effect_deltas(task);
         let mut seeds = Vec::new();
+        let mut numeric_seed_groups = Vec::new();
 
         for goal_id in 0..task.get_num_goals() {
             let goal = task.get_goal_fact(goal_id);
@@ -902,10 +928,12 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                         precondition,
                         &initial_numeric,
                     ) {
-                        add_requirement_bounds(&requirement, &mut seeds);
+                        let mut requirement_seeds = Vec::new();
+                        add_requirement_bounds(&requirement, &mut requirement_seeds);
                         let Some(source_value) =
                             initial_numeric.get(requirement.numeric_var_id).copied()
                         else {
+                            numeric_seed_groups.push(requirement_seeds);
                             continue;
                         };
                         add_shells_for_requirement(
@@ -913,14 +941,15 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                             &deltas,
                             source_value,
                             &requirement,
-                            &mut seeds,
+                            &mut requirement_seeds,
                         );
+                        numeric_seed_groups.push(requirement_seeds);
                     }
                 }
             }
         }
 
-        sort_and_dedup_seed_splits(&mut seeds);
+        append_interleaved_numeric_seeds(&mut seeds, numeric_seed_groups);
         seeds
     }
 }
@@ -949,13 +978,19 @@ fn complete_shape_root_groups(
     }
 
     let mut per_achiever = Vec::with_capacity(achievers.len());
+    let mut per_achiever_coarse = Vec::with_capacity(achievers.len());
     for op in achievers {
-        let mut by_shape: HashMap<Vec<OrderedFloat<f64>>, HashSet<usize>> = HashMap::new();
+        let mut by_shape: HashMap<NumericRootGroupKey, HashSet<usize>> = HashMap::new();
+        let mut by_coarse_shape: HashMap<Vec<OrderedFloat<f64>>, HashSet<usize>> = HashMap::new();
         for precondition in op.preconditions() {
             for numeric_var_id in
                 comparison_root_vars_for_fact(task, &comparison_index, precondition)
             {
-                let shape = numeric_shape_key(source_task, task, numeric_var_id)?;
+                let shape = numeric_root_group_key(source_task, task, numeric_var_id)?;
+                by_coarse_shape
+                    .entry(shape.coefficient_shape.clone())
+                    .or_default()
+                    .insert(numeric_var_id);
                 by_shape.entry(shape).or_default().insert(numeric_var_id);
             }
         }
@@ -963,41 +998,61 @@ fn complete_shape_root_groups(
             return None;
         }
         per_achiever.push(by_shape);
+        per_achiever_coarse.push(by_coarse_shape);
     }
 
-    let mut groups = Vec::new();
-    for shape in per_achiever[0].keys() {
-        if !per_achiever
-            .iter()
-            .all(|achiever_shapes| achiever_shapes.contains_key(shape))
-        {
-            continue;
-        }
-        let mut numeric_var_ids = HashSet::new();
-        for achiever_shapes in &per_achiever {
-            numeric_var_ids.extend(
-                achiever_shapes
-                    .get(shape)
-                    .expect("shape key was checked above")
-                    .iter()
-                    .copied(),
-            );
-        }
-        groups.push(RootGroup { numeric_var_ids });
-    }
+    let mut groups = complete_groups_for_keys(&per_achiever_coarse);
+    groups.extend(complete_groups_for_keys(&per_achiever));
+    let mut seen_groups = HashSet::new();
+    groups.retain(|group| {
+        let mut ids = group.numeric_var_ids.iter().copied().collect::<Vec<_>>();
+        ids.sort_unstable();
+        seen_groups.insert(ids)
+    });
 
     if groups.is_empty() {
         return None;
     }
     groups.sort_by_key(|group| {
-        group
-            .numeric_var_ids
-            .iter()
-            .min()
-            .copied()
-            .unwrap_or(usize::MAX)
+        let mut ids = group.numeric_var_ids.iter().copied().collect::<Vec<_>>();
+        ids.sort_unstable();
+        (
+            ids.first().copied().unwrap_or(usize::MAX),
+            Reverse(ids.len()),
+            ids,
+        )
     });
     Some(groups)
+}
+
+fn complete_groups_for_keys<K>(per_achiever: &[HashMap<K, HashSet<usize>>]) -> Vec<RootGroup>
+where
+    K: Eq + Hash,
+{
+    let Some(first) = per_achiever.first() else {
+        return Vec::new();
+    };
+    first
+        .keys()
+        .filter(|key| {
+            per_achiever
+                .iter()
+                .all(|achiever_shapes| achiever_shapes.contains_key(*key))
+        })
+        .map(|key| {
+            let numeric_var_ids = per_achiever
+                .iter()
+                .flat_map(|achiever_shapes| {
+                    achiever_shapes
+                        .get(key)
+                        .expect("shape key was checked above")
+                        .iter()
+                        .copied()
+                })
+                .collect();
+            RootGroup { numeric_var_ids }
+        })
+        .collect()
 }
 
 fn all_goal_relevant_numeric_vars(
@@ -1032,10 +1087,7 @@ fn comparison_root_vars_for_fact(
     let Some(tree) = comparison_index.comparison_tree(fact.var()) else {
         return Vec::new();
     };
-    comparison_root_vars_for_numeric_ids(
-        task,
-        [tree.left_numeric_var_id, tree.right_numeric_var_id],
-    )
+    comparison_refinement_dimensions(task, tree)
 }
 
 fn comparison_root_vars_for_comparison(
@@ -1057,25 +1109,25 @@ fn comparison_root_vars_for_numeric_ids(
 ) -> Vec<usize> {
     let mut roots = numeric_var_ids
         .into_iter()
-        .filter(|numeric_var_id| {
-            task.numeric_variables()
-                .get(*numeric_var_id)
-                .is_some_and(|var| var.get_type() == &NumericType::Regular)
-        })
+        .filter(|&numeric_var_id| is_refinable_numeric_dimension(task, numeric_var_id))
         .collect::<Vec<_>>();
     roots.sort_unstable();
     roots.dedup();
     roots
 }
 
-fn numeric_shape_key(
+fn numeric_root_group_key(
     source_task: &dyn AbstractNumericTask,
     task: &dyn AbstractNumericTask,
     numeric_var_id: usize,
-) -> Option<Vec<OrderedFloat<f64>>> {
+) -> Option<NumericRootGroupKey> {
     let task_var = task.numeric_variables().get(numeric_var_id)?;
     if let Some(shape) = restricted_shape_key(task_var.name()) {
-        return Some(shape);
+        return Some(NumericRootGroupKey {
+            coefficient_shape: shape,
+            invariant_terms: Vec::new(),
+            constant: OrderedFloat(0.0),
+        });
     }
     let expr = source_task
         .numeric_variables()
@@ -1094,7 +1146,22 @@ fn numeric_shape_key(
         return None;
     }
     coefficients.sort_unstable();
-    Some(coefficients)
+    let invariant_terms = expr
+        .coefficients
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(dependency, coefficient)| {
+            coefficient.abs() >= 1e-12
+                && is_operator_invariant_regular_dimension(source_task, *dependency)
+        })
+        .map(|(dependency, coefficient)| (dependency, OrderedFloat(coefficient)))
+        .collect();
+    Some(NumericRootGroupKey {
+        coefficient_shape: coefficients,
+        invariant_terms,
+        constant: OrderedFloat(expr.constant),
+    })
 }
 
 fn restricted_shape_key(name: &str) -> Option<Vec<OrderedFloat<f64>>> {
@@ -1273,11 +1340,7 @@ fn target_centered_requirements_for_comparison_fact(
     if let Some((numeric_var_id, interval)) =
         numeric_requirement_for_comparison_fact(task, comparison_index, fact)
     {
-        if task
-            .numeric_variables()
-            .get(numeric_var_id)
-            .is_some_and(|variable| variable.get_type() == &NumericType::Regular)
-        {
+        if is_refinable_numeric_dimension(task, numeric_var_id) {
             return vec![NumericRequirement::from_interval(numeric_var_id, interval)];
         }
     }
@@ -1439,7 +1502,7 @@ fn estimate_goal_distance_from_initial(task: &dyn AbstractNumericTask, goal: &Ex
     let Ok(comparison_index) = ComparisonAxiomIndex::from_task(task) else {
         return 0.0;
     };
-    let initial_numeric = task.get_initial_numeric_state_values();
+    let initial_numeric = initial_numeric_values_with_additive_views(task);
     let mut best_direct = 0.0f64;
     let direct_requirements = target_centered_requirements_for_comparison_fact(
         task,
@@ -1474,45 +1537,6 @@ fn estimate_goal_distance_from_initial(task: &dyn AbstractNumericTask, goal: &Ex
     }
 
     best_direct.max(best_achiever)
-}
-
-fn numeric_effect_deltas(task: &dyn AbstractNumericTask) -> HashMap<usize, Vec<f64>> {
-    let initial_numeric = task.get_initial_numeric_state_values();
-    let mut deltas: HashMap<usize, Vec<f64>> = HashMap::new();
-    for op in task.get_operators() {
-        for effect in op.assignment_effects() {
-            let affected = effect.affected_var_id();
-            if task
-                .numeric_variables()
-                .get(affected)
-                .is_none_or(|variable| variable.get_type() != &NumericType::Regular)
-            {
-                continue;
-            }
-            let Some(&source_value) = initial_numeric.get(effect.var_id()) else {
-                continue;
-            };
-            if !source_value.is_finite() {
-                continue;
-            }
-            let delta = match effect.operation() {
-                AssignmentOperation::Plus => source_value,
-                AssignmentOperation::Minus => -source_value,
-                AssignmentOperation::Assign
-                | AssignmentOperation::Times
-                | AssignmentOperation::Divide => continue,
-            };
-            if delta.abs() < 1e-12 {
-                continue;
-            }
-            deltas.entry(affected).or_default().push(delta);
-        }
-    }
-    for values in deltas.values_mut() {
-        values.sort_by_key(|value| OrderedFloat(*value));
-        values.dedup_by(|left, right| (*left - *right).abs() < 1e-12);
-    }
-    deltas
 }
 
 fn add_requirement_bounds(requirement: &NumericRequirement, seeds: &mut Vec<InitialSeedSplit>) {
@@ -1630,22 +1654,54 @@ fn add_monotone_shells(
     }
 }
 
-fn sort_and_dedup_seed_splits(seeds: &mut Vec<InitialSeedSplit>) {
-    seeds.sort_by_key(|seed| match seed {
-        InitialSeedSplit::Propositional { var_id, value } => (0, *var_id, *value, 0, 0),
+fn append_interleaved_numeric_seeds(
+    seeds: &mut Vec<InitialSeedSplit>,
+    mut numeric_seed_groups: Vec<Vec<InitialSeedSplit>>,
+) {
+    numeric_seed_groups.sort_by(|left, right| seed_group_key(left).cmp(&seed_group_key(right)));
+    let mut seen = seeds.iter().map(seed_identity).collect::<HashSet<_>>();
+    let max_group_len = numeric_seed_groups.iter().map(Vec::len).max().unwrap_or(0);
+    for layer in 0..max_group_len {
+        for group in &numeric_seed_groups {
+            if let Some(seed) = group.get(layer)
+                && seen.insert(seed_identity(seed))
+            {
+                seeds.push(seed.clone());
+            }
+        }
+    }
+}
+
+fn seed_identity(seed: &InitialSeedSplit) -> SeedIdentity {
+    match seed {
+        InitialSeedSplit::Propositional { var_id, value } => SeedIdentity::Propositional {
+            var_id: *var_id,
+            value: *value,
+        },
         InitialSeedSplit::Numeric {
             numeric_var_id,
             value,
             include_in_lower,
-        } => (
-            1,
-            *numeric_var_id,
-            *include_in_lower as usize,
-            value.to_bits() as usize,
-            0,
-        ),
-    });
-    seeds.dedup();
+        } => SeedIdentity::Numeric {
+            numeric_var_id: *numeric_var_id,
+            value_bits: value.to_bits(),
+            include_in_lower: *include_in_lower,
+        },
+    }
+}
+
+fn seed_group_key(group: &[InitialSeedSplit]) -> (usize, OrderedFloat<f64>, bool) {
+    group
+        .iter()
+        .find_map(|seed| match seed {
+            InitialSeedSplit::Numeric {
+                numeric_var_id,
+                value,
+                include_in_lower,
+            } => Some((*numeric_var_id, OrderedFloat(*value), *include_in_lower)),
+            InitialSeedSplit::Propositional { .. } => None,
+        })
+        .unwrap_or((usize::MAX, OrderedFloat(0.0), false))
 }
 
 fn goal_seed_splits(task: &dyn AbstractNumericTask) -> Vec<InitialSeedSplit> {

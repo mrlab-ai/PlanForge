@@ -281,6 +281,7 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
     let transitions = compute_hash_effects_with_preconditions(
         &task,
         &mut generator,
+        0,
         &[],
         op.assignment_effects(),
         None,
@@ -296,7 +297,7 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
 }
 
 #[test]
-fn derived_numeric_partitions_are_not_materialized_in_transitions() {
+fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("c1".into(), NumericType::Constant, None),
@@ -359,6 +360,7 @@ fn derived_numeric_partitions_are_not_materialized_in_transitions() {
     let transitions = compute_hash_effects_with_preconditions(
         &task,
         &mut generator,
+        0,
         &[],
         op.assignment_effects(),
         None,
@@ -377,13 +379,20 @@ fn derived_numeric_partitions_are_not_materialized_in_transitions() {
         trans
             .source_partition_facts
             .iter()
-            .all(|fact| fact.var() < 3)
+            .any(|fact| fact.var() == 3)
             && trans
                 .target_partition_facts
                 .iter()
-                .all(|fact| fact.var() < 3)
-            && !trans.changed_numeric_vars.contains(&3)
-            && !trans.changed_numeric_vars.contains(&4)
+                .any(|fact| fact.var() == 3)
+            && trans
+                .source_partition_facts
+                .iter()
+                .any(|fact| fact.var() == 4)
+            && trans
+                .target_partition_facts
+                .iter()
+                .any(|fact| fact.var() == 4)
+            && trans.changed_numeric_vars == vec![0, 3, 4]
     }));
 }
 
@@ -642,6 +651,7 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
     let transitions = compute_hash_effects_with_preconditions(
         &task,
         &mut generator,
+        0,
         &[],
         op.assignment_effects(),
         None,
@@ -658,6 +668,92 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
         }),
         "transitions={transitions:#?}"
     );
+    let derived_abs_var = task.variables().len() + 2;
+    assert!(
+        transitions.iter().all(|transition| {
+            transition.changed_numeric_vars.contains(&2)
+                && transition
+                    .source_partition_facts
+                    .iter()
+                    .any(|fact| fact.var() == derived_abs_var)
+                && transition
+                    .target_partition_facts
+                    .iter()
+                    .any(|fact| fact.var() == derived_abs_var)
+        }),
+        "the exact y=x+0.5 coordinate must receive its own +0.5 transitions: {transitions:#?}"
+    );
+}
+
+#[test]
+fn additive_view_filters_false_equality_precondition() {
+    let variables = vec![ExplicitVariable::new(
+        3,
+        "at-target".into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        Some(0),
+        2,
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("target".into(), NumericType::Constant, None),
+        NumericVariable::new("x-minus-target".into(), NumericType::Derived, None),
+        NumericVariable::new("zero".into(), NumericType::Constant, None),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, 10.0, -10.0, 0.0],
+        vec![Operator::new(
+            "save".into(),
+            vec![ExplicitFact::new(0, 0)],
+            vec![],
+            vec![],
+            1,
+        )],
+        vec![],
+        vec![ComparisonAxiom::new(0, 2, 3, ComparisonOperator::Equal)],
+        vec![AssignmentAxiom::new(2, CalOperator::Difference, 0, 1)],
+        ExplicitFact::new(0, 0),
+    );
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![Interval::unbounded()],
+        vec![Interval::singleton(10.0)],
+        vec![
+            Interval::singleton(-9.0),
+            Interval::new(-9.0, f64::INFINITY, false, false),
+        ],
+        vec![Interval::singleton(0.0)],
+    ]);
+    let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
+        &task,
+        partitions,
+        vec![1, 1, 2, 1],
+        false,
+    )
+    .unwrap();
+
+    let transitions = compute_hash_effects_with_preconditions(
+        &task,
+        &mut generator,
+        0,
+        &[ExplicitFact::new(0, 0)],
+        &[],
+        None,
+    )
+    .unwrap();
+    let derived_abs_var = task.variables().len() + 2;
+
+    assert!(transitions.iter().all(|transition| {
+        !transition
+            .source_partition_facts
+            .contains(&ExplicitFact::new(derived_abs_var, 0))
+    }));
 }
 
 #[test]
@@ -687,13 +783,13 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
         vec![Interval::singleton(5.0), Interval::singleton(6.0)],
         vec![Interval::singleton(0.0)],
         vec![Interval::unbounded()],
-        vec![Interval::singleton(0.0), Interval::unbounded()],
+        vec![Interval::unbounded()],
     ]);
 
     let generator = AbstractOperatorGenerator::new_with_identity_mapping(
         &task,
         partitions,
-        vec![2, 1, 1, 2],
+        vec![2, 1, 1, 1],
         false,
     )
     .unwrap();

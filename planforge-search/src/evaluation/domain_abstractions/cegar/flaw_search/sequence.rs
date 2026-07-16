@@ -12,6 +12,7 @@ use planforge_sas::{
 use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
 use crate::evaluation::domain_abstractions::{
     abstract_operator_generator::DomainMapping,
+    additive_numeric_views::numeric_dimension_delta_for_operator,
     cegar::flaw_search::{
         dependent_numeric_flaws_in_interval_for_comparison_prop_var,
         regression::{get_init_state_flaws, get_regression_precondition_flaws},
@@ -289,6 +290,7 @@ pub(crate) fn progress_and_get_sequence_deviation_flaws<'a>(
     next_state.progress(op, axiom_evaluator)?;
 
     let deviation_flaws = get_progression_numeric_sequence_deviation_flaws(
+        axiom_evaluator.numeric_task.as_ref(),
         op,
         &state,
         &next_state,
@@ -306,6 +308,7 @@ pub(crate) fn progress_and_get_sequence_deviation_flaws<'a>(
 
 #[allow(clippy::needless_range_loop)]
 pub fn get_progression_numeric_sequence_deviation_flaws(
+    task: &dyn AbstractNumericTask,
     op: &Operator,
     current_state: &FlawSearchState,
     successor_state: &FlawSearchState,
@@ -323,7 +326,9 @@ pub fn get_progression_numeric_sequence_deviation_flaws(
         let operator_modified_var = op
             .assignment_effects()
             .iter()
-            .any(|eff| eff.affected_var_id() == var_id);
+            .any(|eff| eff.affected_var_id() == var_id)
+            || numeric_dimension_delta_for_operator(task, var_id, op)
+                .is_some_and(|delta| delta.abs() >= 1e-12);
         if !operator_modified_var {
             continue;
         }

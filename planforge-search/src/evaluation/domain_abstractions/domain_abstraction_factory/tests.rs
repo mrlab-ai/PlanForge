@@ -785,7 +785,7 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
 }
 
 #[test]
-fn factory_numeric_context_recomputes_tree_reachable_derived_intervals_from_regular_vars() {
+fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
     let variables = vec![ExplicitVariable::new(
         3,
         "cmp".into(),
@@ -842,7 +842,7 @@ fn factory_numeric_context_recomputes_tree_reachable_derived_intervals_from_regu
 
     let x_partition = 0;
     let c2_partition = 0;
-    let derived_partition = 1;
+    let derived_partition = 0;
     let state_hash = x_partition * hash_multipliers[1]
         + c2_partition * hash_multipliers[2]
         + derived_partition * hash_multipliers[3];

@@ -680,6 +680,7 @@ fn debug_print_concrete_trace(
             .expect("Error applying operator");
 
             let deviation_flaws = get_progression_numeric_deviation_flaws(
+                task,
                 op,
                 &numeric_state,
                 &cand_numeric,

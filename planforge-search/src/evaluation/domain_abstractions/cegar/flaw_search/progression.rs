@@ -18,6 +18,7 @@ use super::{
     dependent_numeric_flaws_for_comparison_prop_var, state::progress,
 };
 use crate::evaluation::domain_abstractions::{
+    additive_numeric_views::numeric_dimension_delta_for_operator,
     domain_abstraction::{ComparisonAxiomIndex, NumericPartitions},
     domain_abstraction_factory::WildcardPlanResult,
     utils::{fact_is_hold, get_initial_state, make_prop_state_packer, partition_for_value},
@@ -258,6 +259,7 @@ pub(crate) fn progress_and_get_deviation_flaws(
     )?;
 
     let deviation_flaws = get_progression_numeric_deviation_flaws(
+        axiom_evaluator.numeric_task.as_ref(),
         op,
         numeric_state,
         &next_numeric_state,
@@ -283,6 +285,7 @@ pub(crate) fn progress_and_get_deviation_flaws(
 /// interval — the split that separates the cell containing the regressed
 /// preimage support from the rest of the source cell.
 pub fn get_progression_numeric_deviation_flaws(
+    task: &dyn AbstractNumericTask,
     op: &Operator,
     numeric_current_state: &[f64],
     numeric_successor_state: &[f64],
@@ -309,7 +312,9 @@ pub fn get_progression_numeric_deviation_flaws(
             let operator_modified_var = op
                 .assignment_effects()
                 .iter()
-                .any(|eff| eff.affected_var_id() == var_id);
+                .any(|eff| eff.affected_var_id() == var_id)
+                || numeric_dimension_delta_for_operator(task, var_id, op)
+                    .is_some_and(|delta| delta.abs() >= 1e-12);
             if !operator_modified_var {
                 continue;
             }

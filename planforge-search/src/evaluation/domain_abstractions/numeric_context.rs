@@ -34,6 +34,10 @@ pub fn prepare_comparison_tree_inputs_from_initial_state(
     let initial_numeric_values = task.get_initial_numeric_state_values();
     let mut numeric_intervals: Vec<Interval> = Vec::with_capacity(initial_numeric_values.len());
     for (numeric_var_id, &raw_value) in initial_numeric_values.iter().enumerate() {
+        if task.numeric_variables()[numeric_var_id].get_type() == &NumericType::Derived {
+            numeric_intervals.push(Interval::new(0.0, 0.0, false, false));
+            continue;
+        }
         let value = float_tolerance::canonicalize(raw_value);
         ensure!(
             value.is_finite() && !value.is_nan(),
@@ -100,8 +104,8 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
                 );
                 out[numeric_var_id] = Interval::singleton(value);
             }
-            NumericType::Derived => {}
-            _ => {
+            NumericType::Derived if numeric_domain_sizes[numeric_var_id] == 1 => {}
+            NumericType::Derived | NumericType::Regular => {
                 let abs_var = num_props + numeric_var_id;
                 ensure!(
                     abs_var < hash_multipliers.len(),
@@ -120,6 +124,9 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
                     )
                 })?;
                 out[numeric_var_id] = interval;
+            }
+            NumericType::Cost => {
+                out[numeric_var_id] = Interval::unbounded();
             }
         }
     }
