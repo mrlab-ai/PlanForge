@@ -3,6 +3,9 @@ use std::sync::Arc;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::evaluation::cartesian_abstractions::{
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
+};
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
@@ -12,13 +15,16 @@ use planforge_search::evaluation::domain_abstractions::domain_abstraction_collec
     NumericSplitStrategy,
     PortfolioStrategy,
 };
-use planforge_search::task_restriction::build_restricted_task;
 use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
     SaturatedCostPartitioningOnlineHeuristic, ScpOnlineConfig,
 };
-use planforge_search::evaluation::domain_abstractions::cegar::FlawKind;
+use planforge_search::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
+use planforge_search::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
+use planforge_search::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planforge_search::evaluation::evaluator::{EvaluationState, Evaluator};
+use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
+use planforge_search::task_restriction::build_restricted_task;
 use planforge_translate::preprocess::run_preprocess_to_output;
 use planforge_translator::translate_to_sas_to_path_fast;
 
@@ -122,6 +128,84 @@ fn restricted_blind_astar_cost(instance: &str) -> f64 {
             .expect("solved restricted sailing-simple search must report a cost"),
         status => panic!("restricted blind A* did not solve {instance}: {status:?}"),
     }
+}
+
+fn assert_exact_single_abstraction_search<H>(
+    task: &NumericRootTask,
+    heuristic: H,
+    expected_cost: f64,
+    backend: &str,
+) where
+    H: Heuristic,
+{
+    assert!(
+        heuristic.proves_initial_state_optimal(),
+        "unrestricted {backend} CEGAR must finish with a concrete plan"
+    );
+    let state_registry = StateRegistry::for_task(Arc::new(task));
+    let mut search = AStarSearch::new(
+        Arc::new(task),
+        state_registry,
+        Some(Box::new(heuristic)),
+        None,
+        None,
+    );
+    let result = search.search();
+
+    assert!(
+        matches!(result.status, SearchStatus::Solved(_)),
+        "A* with the unrestricted {backend} abstraction did not solve: {:?}",
+        result.status
+    );
+    assert_eq!(
+        result.solution_cost,
+        Some(expected_cost),
+        "A* with the unrestricted {backend} abstraction changed the optimal cost"
+    );
+    assert_eq!(
+        result.nodes_expanded_until_last_jump, 0,
+        "an unrestricted {backend} abstraction that proves h(init) = h* must start A* in its final f-layer"
+    );
+}
+
+#[test]
+fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
+    let (task, temp_dir) = sailing_task("prob_1b1p_x");
+
+    let domain_abstraction = DomainAbstractionGenerator::new(CegarConfig {
+        max_iterations: usize::MAX,
+        random_seed: Some(1),
+        compute_operator_footprints: false,
+        ..Default::default()
+    })
+    .expect("unrestricted domain abstraction generator should construct")
+    .generate(&task)
+    .expect("unrestricted domain abstraction should solve sailing-simple");
+    assert!(domain_abstraction.metadata.solved_by_self);
+    assert_exact_single_abstraction_search(
+        &task,
+        DomainAbstractionHeuristic::new(None, domain_abstraction),
+        11.0,
+        "domain",
+    );
+
+    let cartesian_abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        max_states: usize::MAX,
+        compute_operator_footprints: false,
+        ..Default::default()
+    })
+    .expect("unrestricted Cartesian abstraction generator should construct")
+    .generate(&task)
+    .expect("unrestricted Cartesian abstraction should solve sailing-simple");
+    assert!(cartesian_abstraction.metadata.solved_by_self);
+    assert_exact_single_abstraction_search(
+        &task,
+        CartesianAbstractionHeuristic::new(None, cartesian_abstraction),
+        11.0,
+        "Cartesian",
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 fn standard_round7_collection_config(

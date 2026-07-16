@@ -214,6 +214,12 @@ impl Heuristic for CanonicalAbstractionHeuristic<'_> {
         Ok(value)
     }
 
+    fn proves_initial_state_optimal(&self) -> bool {
+        self.components
+            .iter()
+            .any(AbstractionComponent::proves_initial_state_optimal)
+    }
+
     fn heuristic_name(&self) -> String {
         self.name.clone()
     }
@@ -256,6 +262,10 @@ impl Heuristic for CanonicalDomainAbstractionHeuristic {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         self.inner.compute_heuristic(eval_state)
+    }
+
+    fn proves_initial_state_optimal(&self) -> bool {
+        self.inner.proves_initial_state_optimal()
     }
 
     fn heuristic_name(&self) -> String {

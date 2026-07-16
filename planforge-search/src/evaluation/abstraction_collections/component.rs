@@ -66,6 +66,14 @@ impl<'task> AbstractionComponent<'task> {
         }
     }
 
+    pub fn proves_initial_state_optimal(&self) -> bool {
+        match self {
+            Self::Domain(heuristic) => heuristic.proves_initial_state_optimal(),
+            Self::Cartesian(heuristic) => heuristic.proves_initial_state_optimal(),
+            Self::PatternDatabase(_) => false,
+        }
+    }
+
     pub fn standalone_value(
         &self,
         eval_state: &EvaluationState<'_, '_>,

@@ -25,6 +25,16 @@ pub trait Heuristic: Evaluator {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError>;
 
+    /// Return true when construction proved that the initial heuristic value
+    /// equals the optimal solution cost.
+    ///
+    /// A* uses this stronger contract to assert that it never enters a higher
+    /// f-layer. Heuristics must not return true based on an estimate or a
+    /// resource-limited construction.
+    fn proves_initial_state_optimal(&self) -> bool {
+        false
+    }
+
     /// Return true if dead ends detected by this heuristic are reliable.
     fn dead_ends_are_reliable(&self) -> bool {
         false

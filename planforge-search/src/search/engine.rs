@@ -42,6 +42,7 @@ pub struct AStarSearch<'a> {
     // Evaluators.
     heuristic: Box<dyn Heuristic + 'a>,
     heuristic_name: String,
+    initial_state_is_proven_optimal: bool,
     policy: SearchPolicy<'a>,
 
     config: SearchConfig,
@@ -163,6 +164,7 @@ impl<'a> AStarSearch<'a> {
             Box::new(BlindHeuristic::with_min_action_cost(min_action_cost, None))
         });
         let heuristic_name = heuristic.name();
+        let initial_state_is_proven_optimal = heuristic.proves_initial_state_optimal();
 
         let use_metric = task.metric().use_metric();
         // Dual-queue preferred-first ordering is the FF default for GBFS.
@@ -181,6 +183,7 @@ impl<'a> AStarSearch<'a> {
             space: SearchSpace::new(),
             heuristic,
             heuristic_name,
+            initial_state_is_proven_optimal,
             policy,
             config: SearchConfig {
                 operator_costs,
@@ -809,6 +812,13 @@ impl<'a> AStarSearch<'a> {
                 // Use the goal state ID returned from step()
                 let plan = self.space.extract_plan(goal_state_id, &*self.task);
                 let solution_cost = self.space.node(goal_state_id).map(|info| info.g_value);
+
+                assert!(
+                    !self.initial_state_is_proven_optimal
+                        || self.stats.counters_at_last_jump.expanded == 0,
+                    "A* entered a higher f-layer after its heuristic proved h(init) = h*: {} nodes were expanded before the last jump",
+                    self.stats.counters_at_last_jump.expanded
+                );
 
                 SearchResult {
                     status: SearchStatus::Solved(goal_state_id),

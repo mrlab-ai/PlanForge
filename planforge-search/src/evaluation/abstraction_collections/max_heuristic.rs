@@ -52,6 +52,12 @@ impl Heuristic for MaxAbstractionHeuristic<'_> {
         Ok(best)
     }
 
+    fn proves_initial_state_optimal(&self) -> bool {
+        self.components
+            .iter()
+            .any(AbstractionComponent::proves_initial_state_optimal)
+    }
+
     fn heuristic_name(&self) -> String {
         self.name.clone()
     }
@@ -91,6 +97,10 @@ impl Heuristic for MaxDomainAbstractionHeuristic {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         self.inner.compute_heuristic(eval_state)
+    }
+
+    fn proves_initial_state_optimal(&self) -> bool {
+        self.inner.proves_initial_state_optimal()
     }
 
     fn heuristic_name(&self) -> String {

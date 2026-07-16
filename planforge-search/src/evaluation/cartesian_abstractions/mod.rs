@@ -2399,6 +2399,10 @@ impl Heuristic for CartesianAbstractionHeuristic {
             })
     }
 
+    fn proves_initial_state_optimal(&self) -> bool {
+        self.abstraction.metadata.solved_by_self
+    }
+
     fn heuristic_name(&self) -> String {
         self.name.clone()
     }
