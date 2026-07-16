@@ -252,13 +252,7 @@ impl Interval {
             AssignmentOperation::Plus => *self = *self + *operand,
             AssignmentOperation::Minus => *self = *self - *operand,
             AssignmentOperation::Times => *self = *self * *operand,
-            AssignmentOperation::Divide => {
-                if operand.any_bound_is_zero() {
-                    panic!("Division by zero is not allowed");
-                } else {
-                    *self = *self / *operand
-                }
-            }
+            AssignmentOperation::Divide => *self = *self / *operand,
         };
     }
 
@@ -269,7 +263,7 @@ impl Interval {
             AssignmentOperation::Plus => *self = *self - *operand,
             AssignmentOperation::Minus => *self = *self + *operand,
             AssignmentOperation::Times => {
-                if operand.any_bound_is_zero() {
+                if operand.contains_zero() {
                     // Unknown previous value.
                     *self = UNBOUNDED_INTERVAL
                 } else {
@@ -306,10 +300,10 @@ impl std::ops::Sub for Interval {
         debug_assert!(!self.is_empty() && !rhs.is_empty());
 
         Interval {
-            lower: self.lower - rhs.lower,
-            upper: self.upper - rhs.upper,
-            lower_closed: self.lower_closed && rhs.lower_closed,
-            upper_closed: self.upper_closed && rhs.upper_closed,
+            lower: self.lower - rhs.upper,
+            upper: self.upper - rhs.lower,
+            lower_closed: self.lower_closed && rhs.upper_closed,
+            upper_closed: self.upper_closed && rhs.lower_closed,
         }
         .normalized()
     }
@@ -322,13 +316,45 @@ impl std::ops::Mul for Interval {
     fn mul(self, rhs: Interval) -> Interval {
         debug_assert!(!self.is_empty() && !rhs.is_empty());
 
-        Interval {
-            lower: self.lower * rhs.lower,
-            upper: self.upper * rhs.upper,
-            lower_closed: self.lower_closed && rhs.lower_closed,
-            upper_closed: self.upper_closed && rhs.upper_closed,
+        if self.is_zero() || rhs.is_zero() {
+            return Interval::singleton(0.0);
         }
-        .normalized()
+
+        let left = [
+            (self.lower, self.lower_closed),
+            (self.upper, self.upper_closed),
+        ];
+        let right = [(rhs.lower, rhs.lower_closed), (rhs.upper, rhs.upper_closed)];
+        let mut lower = f64::INFINITY;
+        let mut upper = f64::NEG_INFINITY;
+        let mut lower_closed = false;
+        let mut upper_closed = false;
+
+        for (left_value, left_closed) in left {
+            for (right_value, right_closed) in right {
+                let value = extended_product(left_value, right_value);
+                let attained = if value == 0.0 {
+                    (left_value == 0.0 && self.contains(0.0))
+                        || (right_value == 0.0 && rhs.contains(0.0))
+                } else {
+                    value.is_finite() && left_closed && right_closed
+                };
+                if value < lower {
+                    lower = value;
+                    lower_closed = attained;
+                } else if value == lower {
+                    lower_closed |= attained;
+                }
+                if value > upper {
+                    upper = value;
+                    upper_closed = attained;
+                } else if value == upper {
+                    upper_closed |= attained;
+                }
+            }
+        }
+
+        Interval::new(lower, upper, lower_closed, upper_closed)
     }
 }
 
@@ -338,15 +364,26 @@ impl std::ops::Div for Interval {
     #[inline]
     fn div(self, rhs: Interval) -> Interval {
         debug_assert!(!self.is_empty() && !rhs.is_empty());
-        assert!(rhs.lower != 0.0 && rhs.upper != 0.0);
-
-        Interval {
-            lower: self.lower / rhs.lower,
-            upper: self.upper / rhs.upper,
-            lower_closed: self.lower_closed && rhs.lower_closed,
-            upper_closed: self.upper_closed && rhs.upper_closed,
+        if rhs.contains_zero() {
+            return UNBOUNDED_INTERVAL;
         }
-        .normalized()
+
+        let reciprocal = Interval::new(
+            1.0 / rhs.upper,
+            1.0 / rhs.lower,
+            rhs.upper_closed && rhs.upper.is_finite(),
+            rhs.lower_closed && rhs.lower.is_finite(),
+        );
+        self * reciprocal
+    }
+}
+
+#[inline]
+fn extended_product(left: f64, right: f64) -> f64 {
+    if (left == 0.0 && right.is_infinite()) || (right == 0.0 && left.is_infinite()) {
+        0.0
+    } else {
+        left * right
     }
 }
 
@@ -371,113 +408,14 @@ impl ArithOp {
 
     #[inline]
     pub fn apply_interval(self, lhs: Interval, rhs: Interval) -> Interval {
+        if lhs.is_empty() || rhs.is_empty() {
+            return EMPTY_INTERVAL;
+        }
         match self {
             ArithOp::Add => lhs + rhs,
-            ArithOp::Sub => {
-                if lhs.is_empty() || rhs.is_empty() {
-                    return EMPTY_INTERVAL;
-                }
-                Interval {
-                    lower: lhs.lower - rhs.upper,
-                    upper: lhs.upper - rhs.lower,
-                    lower_closed: lhs.lower_closed && rhs.upper_closed,
-                    upper_closed: lhs.upper_closed && rhs.lower_closed,
-                }
-                .normalized()
-            }
-            ArithOp::Mul => {
-                if lhs.is_empty() || rhs.is_empty() {
-                    return EMPTY_INTERVAL;
-                }
-                let lhs_bounds = [(lhs.lower, lhs.lower_closed), (lhs.upper, lhs.upper_closed)];
-                let rhs_bounds = [(rhs.lower, rhs.lower_closed), (rhs.upper, rhs.upper_closed)];
-                let mut lo: Option<(f64, bool)> = None;
-                let mut hi: Option<(f64, bool)> = None;
-                let mut saw_nan = false;
-
-                for (lhs_value, lhs_closed) in lhs_bounds {
-                    for (rhs_value, rhs_closed) in rhs_bounds {
-                        let value = lhs_value * rhs_value;
-                        if value.is_nan() {
-                            saw_nan = true;
-                            continue;
-                        }
-                        let closed = lhs_closed && rhs_closed;
-                        match lo {
-                            None => lo = Some((value, closed)),
-                            Some((cur, _cur_closed)) if value < cur => lo = Some((value, closed)),
-                            Some((cur, cur_closed)) if value == cur => {
-                                lo = Some((cur, cur_closed || closed));
-                            }
-                            _ => {}
-                        }
-                        match hi {
-                            None => hi = Some((value, closed)),
-                            Some((cur, _cur_closed)) if value > cur => hi = Some((value, closed)),
-                            Some((cur, cur_closed)) if value == cur => {
-                                hi = Some((cur, cur_closed || closed));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-
-                if saw_nan
-                    && ((lhs.contains_zero() && !rhs.is_singleton())
-                        || (rhs.contains_zero() && !lhs.is_singleton()))
-                {
-                    return Interval::unbounded();
-                }
-
-                let Some((lower, lower_closed)) = lo else {
-                    return Interval::unbounded();
-                };
-                let Some((upper, upper_closed)) = hi else {
-                    return Interval::unbounded();
-                };
-                Interval {
-                    lower,
-                    upper,
-                    lower_closed,
-                    upper_closed,
-                }
-                .normalized()
-            }
-            ArithOp::Div => {
-                if lhs.is_empty() || rhs.is_empty() {
-                    return EMPTY_INTERVAL;
-                }
-
-                // If divisor contains 0, we conservatively give up.
-                let (rlo, rlo_c) = rhs.min_bound();
-                let (rhi, rhi_c) = rhs.max_bound();
-                let contains_zero =
-                    (rlo < 0.0 && rhi > 0.0) || (rlo == 0.0 && rlo_c) || (rhi == 0.0 && rhi_c);
-                if contains_zero {
-                    return Interval::unbounded();
-                }
-
-                // Reciprocal interval.
-                let inv_lo = 1.0 / rhs.upper;
-                let inv_hi = 1.0 / rhs.lower;
-                let inv = if inv_lo <= inv_hi {
-                    Interval {
-                        lower: inv_lo,
-                        upper: inv_hi,
-                        lower_closed: rhs.upper_closed,
-                        upper_closed: rhs.lower_closed,
-                    }
-                } else {
-                    Interval {
-                        lower: inv_hi,
-                        upper: inv_lo,
-                        lower_closed: rhs.lower_closed,
-                        upper_closed: rhs.upper_closed,
-                    }
-                }
-                .normalized();
-                ArithOp::Mul.apply_interval(lhs, inv)
-            }
+            ArithOp::Sub => lhs - rhs,
+            ArithOp::Mul => lhs * rhs,
+            ArithOp::Div => lhs / rhs,
         }
     }
 }
@@ -829,9 +767,27 @@ pub struct ComparisonTree {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComparisonTreeBuildError {
-    InvalidComparisonAxiomId { provided: usize, len: usize },
-    InvalidNumericVarId { provided: usize, len: usize },
-    CycleDetected { numeric_var_id: usize },
+    InvalidComparisonAxiomId {
+        provided: usize,
+        len: usize,
+    },
+    InvalidNumericVarId {
+        provided: usize,
+        len: usize,
+    },
+    InvalidAssignmentTarget {
+        assignment_axiom_id: usize,
+        provided: usize,
+        len: usize,
+    },
+    DuplicateAssignmentTarget {
+        numeric_var_id: usize,
+        first_assignment_axiom_id: usize,
+        second_assignment_axiom_id: usize,
+    },
+    CycleDetected {
+        numeric_var_id: usize,
+    },
 }
 
 impl ComparisonTree {
@@ -851,8 +807,21 @@ impl ComparisonTree {
         let mut affected_to_assignment_axiom: Vec<Option<usize>> = vec![None; num_numeric_vars];
         for (axiom_id, ax) in task.assignment_axioms().iter().enumerate() {
             let affected = ax.get_affected_var_id();
-            if affected < num_numeric_vars {
-                affected_to_assignment_axiom[affected] = Some(axiom_id);
+            if affected >= num_numeric_vars {
+                return Err(ComparisonTreeBuildError::InvalidAssignmentTarget {
+                    assignment_axiom_id: axiom_id,
+                    provided: affected,
+                    len: num_numeric_vars,
+                });
+            }
+            if let Some(first_assignment_axiom_id) =
+                affected_to_assignment_axiom[affected].replace(axiom_id)
+            {
+                return Err(ComparisonTreeBuildError::DuplicateAssignmentTarget {
+                    numeric_var_id: affected,
+                    first_assignment_axiom_id,
+                    second_assignment_axiom_id: axiom_id,
+                });
             }
         }
 

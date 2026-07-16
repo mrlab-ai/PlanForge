@@ -15,6 +15,8 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 
+use crate::evaluation::abstraction_task::validate_abstraction_operator;
+
 use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
 use super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees;
@@ -867,35 +869,7 @@ impl AbstractOperatorGenerator {
         op: &Operator,
         concrete_op_id: usize,
     ) -> Result<Vec<AbstractOperatorSkeleton>> {
-        // All effects must be unconditional (the legacy code partitioned
-        // into conditional/unconditional vectors and then asserted
-        // conditional was empty — 4 allocations per operator just to fail
-        // fast). Walk the slice once instead.
-        for eff in op.effects() {
-            ensure!(
-                eff.conditions().is_empty(),
-                "numeric-fd parity: conditional propositional or numeric effects are unsupported in abstract operator generation"
-            );
-        }
-        for eff in op.assignment_effects() {
-            ensure!(
-                !eff.is_conditional(),
-                "numeric-fd parity: conditional propositional or numeric effects are unsupported in abstract operator generation"
-            );
-            let rhs_var_id = eff.var_id();
-            ensure!(
-                rhs_var_id < task.numeric_variables().len(),
-                "assignment effect rhs var id out of bounds: {} >= {}",
-                rhs_var_id,
-                task.numeric_variables().len()
-            );
-            ensure!(
-                task.numeric_variables()[rhs_var_id].get_type() == &NumericType::Constant,
-                "numeric-fd parity: assignment effects require constant RHS, got {:?} for numeric var {}",
-                task.numeric_variables()[rhs_var_id].get_type(),
-                rhs_var_id
-            );
-        }
+        validate_abstraction_operator(task, op, concrete_op_id)?;
 
         // Build a thin `&[&Effect]` view without collecting.
         let unconditional_effects: Vec<&Effect> = op.effects().iter().collect();

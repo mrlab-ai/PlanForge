@@ -51,6 +51,12 @@ fn interval_add_regular() {
 }
 
 #[test]
+fn interval_subtract_uses_opposite_extrema() {
+    let result = Interval::closed(3.0, 4.0) - Interval::closed(-3.0, 10.0);
+    assert_eq!(result, Interval::closed(-7.0, 7.0));
+}
+
+#[test]
 fn interval_comparison_definite_and_unknown() {
     let mut expr = Expr::new();
     let a = expr.add_leaf(0);
@@ -102,6 +108,38 @@ fn interval_eq_and_ne() {
 fn interval_mul_preserves_closed_extrema() {
     let result = ArithOp::Mul.apply_interval(Interval::singleton(2.0), Interval::closed(3.0, 4.0));
     assert_eq!(result, Interval::closed(6.0, 8.0));
+}
+
+#[test]
+fn interval_mul_handles_mixed_signs_and_unbounded_zero() {
+    assert_eq!(
+        Interval::closed(-1.0, 2.0) * Interval::closed(-3.0, 4.0),
+        Interval::closed(-6.0, 8.0)
+    );
+    assert_eq!(
+        Interval::singleton(0.0) * UNBOUNDED_INTERVAL,
+        Interval::singleton(0.0)
+    );
+    assert_eq!(
+        Interval::new(0.0, 1.0, false, true) * Interval::closed(2.0, 3.0),
+        Interval::new(0.0, 3.0, false, true)
+    );
+}
+
+#[test]
+fn interval_div_handles_signs_and_zero_crossings() {
+    assert_eq!(
+        Interval::closed(2.0, 4.0) / Interval::closed(-2.0, -1.0),
+        Interval::closed(-4.0, -1.0)
+    );
+    assert_eq!(
+        Interval::closed(2.0, 4.0) / Interval::new(0.0, 2.0, false, true),
+        Interval::new(1.0, f64::INFINITY, true, false)
+    );
+    assert_eq!(
+        Interval::closed(2.0, 4.0) / Interval::closed(-1.0, 1.0),
+        UNBOUNDED_INTERVAL
+    );
 }
 
 #[test]
@@ -239,6 +277,40 @@ fn comparison_tree_cycle_detection() {
     assert_eq!(
         err,
         ComparisonTreeBuildError::CycleDetected { numeric_var_id: 1 }
+    );
+}
+
+#[test]
+fn comparison_tree_rejects_duplicate_assignment_targets() {
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        vec![],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("derived".into(), NumericType::Derived, None),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0; 2],
+        vec![],
+        vec![],
+        vec![ComparisonAxiom::new(0, 1, 0, ComparisonOperator::Equal)],
+        vec![
+            AssignmentAxiom::new(1, CalOperator::Sum, 0, 0),
+            AssignmentAxiom::new(1, CalOperator::Product, 0, 0),
+        ],
+        ExplicitFact::new(0, 0),
+    );
+
+    assert_eq!(
+        ComparisonTree::from_task(&task, 0).unwrap_err(),
+        ComparisonTreeBuildError::DuplicateAssignmentTarget {
+            numeric_var_id: 1,
+            first_assignment_axiom_id: 0,
+            second_assignment_axiom_id: 1,
+        }
     );
 }
 

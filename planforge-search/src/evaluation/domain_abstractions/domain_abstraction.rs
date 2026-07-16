@@ -198,7 +198,13 @@ impl ComparisonAxiomIndex {
             let tree = ComparisonTree::from_task(task, comparison_axiom_id)
                 .map_err(|e| format!("failed to build comparison tree: {e:?}"))?;
             let idx = trees.len();
-            by_affected_var_id.insert(tree.affected_var_id, idx);
+            if let Some(first_idx) = by_affected_var_id.insert(tree.affected_var_id, idx) {
+                let first_axiom_id = trees[first_idx].comparison_axiom_id;
+                return Err(format!(
+                    "comparison axioms {first_axiom_id} and {comparison_axiom_id} both affect propositional variable {}",
+                    tree.affected_var_id
+                ));
+            }
             trees.push(tree);
         }
 

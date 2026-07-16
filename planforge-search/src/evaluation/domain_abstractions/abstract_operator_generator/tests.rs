@@ -708,7 +708,7 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
 }
 
 #[test]
-fn duplicate_assignment_effects_use_first_matching_effect() {
+fn duplicate_assignment_effects_are_rejected() {
     let variables: Vec<ExplicitVariable> = vec![];
 
     let numeric_variables = vec![
@@ -763,11 +763,12 @@ fn duplicate_assignment_effects_use_first_matching_effect() {
         false,
     )
     .unwrap();
-    let abs_ops = generator.build_abstract_operators(&task).unwrap();
-
-    assert!(!abs_ops.is_empty());
-    assert!(abs_ops.iter().any(|op| op.hash_effect == -1));
-    assert!(!abs_ops.iter().any(|op| op.hash_effect == -2));
+    let error = generator.build_abstract_operators(&task).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("multiple numeric effects on variable 0")
+    );
 }
 
 #[test]

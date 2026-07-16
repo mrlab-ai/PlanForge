@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
 use ordered_float::NotNan;
-use planforge_sas::axioms::{AxiomEvaluator, ComparisonOperator};
+use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
     metric_operator_cost_from_initial_values,
@@ -32,8 +32,9 @@ use super::abstraction_collections::transition_cost_partitioning::{
     AbstractOperatorFootprint, AbstractTransition, AbstractTransitionSystem,
     ConcreteOperatorFootprint, PropValueId, StateRegion,
 };
+use super::abstraction_task::validate_abstraction_operator;
 use super::domain_abstractions::cegar::flaw_search::state::progress;
-use super::domain_abstractions::comparison_expression::Interval;
+use super::domain_abstractions::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstractions::domain_abstraction_factory::AbstractDistanceTable;
 use super::domain_abstractions::utils::{fact_is_hold, get_initial_state, make_prop_state_packer};
 
@@ -426,64 +427,34 @@ impl Split {
 
 struct CartesianSemantics<'task> {
     task: &'task dyn AbstractNumericTask,
-    comparison_axiom_by_prop_var: Vec<Option<usize>>,
+    comparison_tree_by_prop_var: Vec<Option<usize>>,
+    comparison_trees: Vec<ComparisonTree>,
     propositional_axioms_by_prop_var: Vec<Vec<usize>>,
     operator_costs: Vec<f64>,
 }
 
 impl<'task> CartesianSemantics<'task> {
     fn new(task: &'task dyn AbstractNumericTask) -> Result<Self> {
-        ensure!(
-            task.assignment_axioms().is_empty(),
-            "Cartesian abstractions currently require a task without assignment axioms; use --restrict-task for affine-root tasks"
-        );
         for (op_id, op) in task.get_operators().iter().enumerate() {
-            for effect in op.assignment_effects() {
-                ensure!(
-                    !effect.is_conditional() && effect.conditions().is_empty(),
-                    "Cartesian abstraction does not support conditional numeric effect in operator {op_id} ({})",
-                    op.name()
-                );
-                ensure!(
-                    matches!(
-                        effect.operation(),
-                        AssignmentOperation::Plus
-                            | AssignmentOperation::Minus
-                            | AssignmentOperation::Assign
-                    ),
-                    "Cartesian abstraction does not support {:?} numeric effect in operator {op_id} ({})",
-                    effect.operation(),
-                    op.name()
-                );
-                let rhs_type = task
-                    .numeric_variables()
-                    .get(effect.var_id())
-                    .with_context(|| {
-                        format!(
-                            "operator {op_id} references missing numeric RHS var {}",
-                            effect.var_id()
-                        )
-                    })?
-                    .get_type();
-                ensure!(
-                    matches!(rhs_type, NumericType::Constant),
-                    "Cartesian abstraction requires constant numeric RHS effects; operator {op_id} ({}) uses var {} of type {rhs_type:?}",
-                    op.name(),
-                    effect.var_id()
-                );
-            }
+            validate_abstraction_operator(task, op, op_id)?;
         }
 
-        let mut comparison_axiom_by_prop_var = vec![None; task.get_num_variables()];
+        let mut comparison_tree_by_prop_var = vec![None; task.get_num_variables()];
+        let mut comparison_trees = Vec::with_capacity(task.comparison_axioms().len());
         for (axiom_id, axiom) in task.comparison_axioms().iter().enumerate() {
             let var_id = axiom.get_affected_var_id();
             ensure!(
-                var_id < comparison_axiom_by_prop_var.len(),
+                var_id < comparison_tree_by_prop_var.len(),
                 "comparison axiom {axiom_id} affects missing prop var {var_id}"
             );
+            let tree = ComparisonTree::from_task(task, axiom_id).map_err(|error| {
+                anyhow::anyhow!("invalid comparison axiom {axiom_id}: {error:?}")
+            })?;
+            let tree_id = comparison_trees.len();
+            comparison_trees.push(tree);
             ensure!(
-                comparison_axiom_by_prop_var[var_id]
-                    .replace(axiom_id)
+                comparison_tree_by_prop_var[var_id]
+                    .replace(tree_id)
                     .is_none(),
                 "multiple comparison axioms affect prop var {var_id}"
             );
@@ -504,7 +475,8 @@ impl<'task> CartesianSemantics<'task> {
             .collect();
         Ok(Self {
             task,
-            comparison_axiom_by_prop_var,
+            comparison_tree_by_prop_var,
+            comparison_trees,
             propositional_axioms_by_prop_var,
             operator_costs,
         })
@@ -558,7 +530,7 @@ impl<'task> CartesianSemantics<'task> {
     ) -> Result<bool> {
         let var_id = fact.var();
         if let Some(axiom_id) = self
-            .comparison_axiom_by_prop_var
+            .comparison_tree_by_prop_var
             .get(var_id)
             .copied()
             .flatten()
@@ -621,7 +593,7 @@ impl<'task> CartesianSemantics<'task> {
     ) -> Result<bool> {
         let var_id = fact.var();
         if let Some(axiom_id) = self
-            .comparison_axiom_by_prop_var
+            .comparison_tree_by_prop_var
             .get(var_id)
             .copied()
             .flatten()
@@ -717,45 +689,20 @@ impl<'task> CartesianSemantics<'task> {
         Ok(default_value)
     }
 
-    fn comparison_truths(&self, region: &StateRegion, axiom_id: usize) -> Result<(bool, bool)> {
-        let axiom = self
-            .task
-            .comparison_axioms()
-            .get(axiom_id)
-            .with_context(|| format!("missing comparison axiom {axiom_id}"))?;
-        let left = *region
-            .numeric
-            .get(axiom.get_left_var_id())
-            .with_context(|| format!("missing left numeric var for comparison axiom {axiom_id}"))?;
-        let right = *region
-            .numeric
-            .get(axiom.get_right_var_id())
-            .with_context(|| {
-                format!("missing right numeric var for comparison axiom {axiom_id}")
-            })?;
+    fn comparison_truths(&self, region: &StateRegion, tree_id: usize) -> Result<(bool, bool)> {
+        let tree = self
+            .comparison_trees
+            .get(tree_id)
+            .with_context(|| format!("missing comparison tree {tree_id}"))?;
         ensure!(
-            !left.is_empty() && !right.is_empty(),
-            "comparison axiom {axiom_id} evaluated on an empty Cartesian region"
+            region.numeric.iter().all(|interval| !interval.is_empty()),
+            "comparison tree {tree_id} evaluated on an empty Cartesian region"
         );
-        let may_lt = left.lower < right.upper;
-        let may_le = left.lower < right.upper
-            || (left.lower == right.upper && left.lower_closed && right.upper_closed);
-        let may_eq = left.intersects(&right);
-        let may_gt = right.lower < left.upper;
-        let may_ge = right.lower < left.upper
-            || (right.lower == left.upper && right.lower_closed && left.upper_closed);
-        let left_single = left.lower == left.upper && left.lower_closed && left.upper_closed;
-        let right_single = right.lower == right.upper && right.lower_closed && right.upper_closed;
-        let may_ne = !(left_single && right_single && left.lower == right.lower);
-        let result = match axiom.get_operator() {
-            ComparisonOperator::LessThan => (may_lt, may_ge),
-            ComparisonOperator::LessThanOrEqual => (may_le, may_gt),
-            ComparisonOperator::Equal => (may_eq, may_ne),
-            ComparisonOperator::GreaterThanOrEqual => (may_ge, may_lt),
-            ComparisonOperator::GreaterThan => (may_gt, may_le),
-            ComparisonOperator::UnEqual => (may_ne, may_eq),
-        };
-        Ok(result)
+        Ok(match tree.evaluate_interval(&region.numeric) {
+            Some(true) => (true, false),
+            Some(false) => (false, true),
+            None => (true, true),
+        })
     }
 
     fn operator_may_apply(&self, source: &StateRegion, op_id: usize) -> Result<bool> {
@@ -784,7 +731,7 @@ impl<'task> CartesianSemantics<'task> {
         let op = &self.task.get_operators()[op_id];
 
         for var_id in 0..self.task.get_num_variables() {
-            if self.comparison_axiom_by_prop_var[var_id].is_some()
+            if self.comparison_tree_by_prop_var[var_id].is_some()
                 || !self.propositional_axioms_by_prop_var[var_id].is_empty()
             {
                 continue;
@@ -797,17 +744,23 @@ impl<'task> CartesianSemantics<'task> {
                 .iter()
                 .filter(|effect| effect.var_id() == var_id)
             {
-                let conditions_may_hold = effect
-                    .conditions()
-                    .iter()
-                    .all(|condition| self.region_admits_fact(source, condition).unwrap_or(true));
+                let mut conditions_may_hold = true;
+                for condition in effect.conditions() {
+                    if !self.region_admits_fact(source, condition)? {
+                        conditions_may_hold = false;
+                        break;
+                    }
+                }
                 if !conditions_may_hold {
                     continue;
                 }
-                let conditions_guaranteed = effect.conditions().iter().all(|condition| {
-                    self.region_guarantees_fact(source, condition)
-                        .unwrap_or(false)
-                });
+                let mut conditions_guaranteed = true;
+                for condition in effect.conditions() {
+                    if !self.region_guarantees_fact(source, condition)? {
+                        conditions_guaranteed = false;
+                        break;
+                    }
+                }
                 if effect.conditions().is_empty() || conditions_guaranteed {
                     possible.clear();
                 }
@@ -853,37 +806,67 @@ impl<'task> CartesianSemantics<'task> {
             .filter(|effect| effect.affected_var_id() == numeric_var_id)
         {
             let rhs = self.task.get_initial_numeric_state_values()[effect.var_id()];
-            image = match effect.operation() {
-                AssignmentOperation::Plus => shift_interval(image, rhs),
-                AssignmentOperation::Minus => shift_interval(image, -rhs),
-                AssignmentOperation::Assign => Interval::singleton(rhs),
-                AssignmentOperation::Times | AssignmentOperation::Divide => {
-                    unreachable!("unsupported numeric effects were rejected at construction")
-                }
-            };
+            image.apply_op(effect.operation(), &Interval::singleton(rhs));
         }
         Ok(image)
     }
 
-    fn additive_effect_delta(&self, op_id: usize, numeric_var_id: usize) -> Result<Option<f64>> {
-        let mut delta = 0.0;
+    fn numeric_effect_preimage(
+        &self,
+        target: Interval,
+        op_id: usize,
+        numeric_var_id: usize,
+    ) -> Result<Interval> {
+        let mut preimage = target;
         let op = &self.task.get_operators()[op_id];
         for effect in op
             .assignment_effects()
             .iter()
             .filter(|effect| effect.affected_var_id() == numeric_var_id)
+            .rev()
         {
             let rhs = self.task.get_initial_numeric_state_values()[effect.var_id()];
             match effect.operation() {
-                AssignmentOperation::Plus => delta += rhs,
-                AssignmentOperation::Minus => delta -= rhs,
-                AssignmentOperation::Assign => return Ok(None),
-                AssignmentOperation::Times | AssignmentOperation::Divide => {
-                    unreachable!("unsupported numeric effects were rejected at construction")
+                AssignmentOperation::Assign => {
+                    preimage = if preimage.contains(rhs) {
+                        Interval::unbounded()
+                    } else {
+                        bail!(
+                            "operator {op_id} assignment image for numeric var {numeric_var_id} cannot intersect target {target:?}"
+                        )
+                    };
+                }
+                AssignmentOperation::Plus => {
+                    preimage
+                        .apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(rhs));
+                }
+                AssignmentOperation::Minus => {
+                    preimage
+                        .apply_reverse_op(&AssignmentOperation::Minus, &Interval::singleton(rhs));
+                }
+                AssignmentOperation::Times => {
+                    if rhs == 0.0 {
+                        preimage = if preimage.contains(0.0) {
+                            Interval::unbounded()
+                        } else {
+                            bail!(
+                                "operator {op_id} zero multiplication image for numeric var {numeric_var_id} cannot intersect target {target:?}"
+                            )
+                        };
+                    } else {
+                        preimage.apply_reverse_op(
+                            &AssignmentOperation::Times,
+                            &Interval::singleton(rhs),
+                        );
+                    }
+                }
+                AssignmentOperation::Divide => {
+                    preimage
+                        .apply_reverse_op(&AssignmentOperation::Divide, &Interval::singleton(rhs));
                 }
             }
         }
-        Ok(Some(delta))
+        Ok(preimage)
     }
 
     fn region_is_goal(&self, region: &StateRegion) -> Result<bool> {
@@ -1331,6 +1314,7 @@ fn search_optimal_abstract_graph(
     let (initial_propositions, initial_numeric) =
         get_initial_state(semantics.task, state_packer, axiom_evaluator)?;
     let mut prop_values = Vec::new();
+    let mut successor_prop_values = Vec::new();
     semantics.concrete_prop_values(state_packer, &initial_propositions, &mut prop_values);
     let initial_abstract_state = working
         .hierarchy
@@ -1445,10 +1429,14 @@ fn search_optimal_abstract_graph(
                 &mut successor_propositions,
                 &mut successor_numeric,
             )?;
-            semantics.concrete_prop_values(state_packer, &successor_propositions, &mut prop_values);
+            semantics.concrete_prop_values(
+                state_packer,
+                &successor_propositions,
+                &mut successor_prop_values,
+            );
             let concrete_target = working
                 .hierarchy
-                .map_state(&prop_values, &successor_numeric)?;
+                .map_state(&successor_prop_values, &successor_numeric)?;
             for &expected_target in &expected_targets {
                 if expected_target != concrete_target {
                     let split = split_deviation(
@@ -1457,7 +1445,7 @@ fn search_optimal_abstract_graph(
                         abstract_state,
                         expected_target,
                         op_id,
-                        &prop_values,
+                        &successor_prop_values,
                         &node_numeric,
                         &successor_numeric,
                     )?;
@@ -1542,32 +1530,73 @@ fn split_failed_fact(
     numeric_values: &[f64],
     description: String,
 ) -> Result<Split> {
-    if let Some(axiom_id) = semantics
-        .comparison_axiom_by_prop_var
+    if let Some(tree_id) = semantics
+        .comparison_tree_by_prop_var
         .get(fact.var())
         .copied()
         .flatten()
     {
-        return comparison_split(
+        return comparison_refinement(
             working,
             semantics,
             state_id,
-            axiom_id,
-            fact.value(),
+            tree_id,
             numeric_values,
+            ComparisonRefinementGoal::exclude(fact.value())?,
             description,
         );
     }
     if !semantics.propositional_axioms_by_prop_var[fact.var()].is_empty() {
         let default_value = semantics.propositional_axiom_default(fact.var())?;
-        ensure!(
-            fact.value() != default_value,
-            "Cartesian refinement of a failed default-valued derived fact is not supported for variable {}",
-            fact.var()
-        );
+        if fact.value() == default_value {
+            let concrete_value = *prop_values
+                .get(fact.var())
+                .with_context(|| format!("missing concrete prop var {}", fact.var()))?;
+            ensure!(
+                concrete_value != default_value,
+                "failed default-valued derived fact unexpectedly holds for variable {}",
+                fact.var()
+            );
+            for &axiom_id in &semantics.propositional_axioms_by_prop_var[fact.var()] {
+                let axiom = &semantics.task.axioms()[axiom_id];
+                if axiom.effect_value() != concrete_value
+                    || !conditions_hold_concretely(axiom.conditions(), prop_values)?
+                {
+                    continue;
+                }
+                for condition in axiom.conditions() {
+                    if !semantics.region_guarantees_fact(&working.states[state_id], condition)? {
+                        return split_to_guarantee_fact(
+                            working,
+                            semantics,
+                            state_id,
+                            condition,
+                            prop_values,
+                            numeric_values,
+                            format!(
+                                "{description} via concrete axiom {axiom_id} condition {condition:?}"
+                            ),
+                        );
+                    }
+                }
+                bail!(
+                    "derived default fact {fact:?} is abstractly admitted although concrete axiom {axiom_id} is guaranteed"
+                );
+            }
+            bail!(
+                "concrete derived value {concrete_value} for variable {} has no supporting axiom",
+                fact.var()
+            );
+        }
         for &axiom_id in &semantics.propositional_axioms_by_prop_var[fact.var()] {
             let axiom = &semantics.task.axioms()[axiom_id];
-            if axiom.effect_value() != fact.value() {
+            if axiom.effect_value() != fact.value()
+                || !all_conditions_admitted(
+                    semantics,
+                    &working.states[state_id],
+                    axiom.conditions(),
+                )?
+            {
                 continue;
             }
             for condition in axiom.conditions() {
@@ -1608,63 +1637,282 @@ fn split_failed_fact(
     })
 }
 
-fn comparison_split(
+fn split_to_guarantee_fact(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     state_id: usize,
-    axiom_id: usize,
-    desired_prop_value: usize,
+    fact: &ExplicitFact,
+    prop_values: &[usize],
     numeric_values: &[f64],
     description: String,
 ) -> Result<Split> {
-    let axiom = &semantics.task.comparison_axioms()[axiom_id];
-    let left_id = axiom.get_left_var_id();
-    let right_id = axiom.get_right_var_id();
-    let left_constant = matches!(
-        semantics.task.numeric_variables()[left_id].get_type(),
-        NumericType::Constant
-    );
-    let right_constant = matches!(
-        semantics.task.numeric_variables()[right_id].get_type(),
-        NumericType::Constant
-    );
+    let concrete_value = *prop_values
+        .get(fact.var())
+        .with_context(|| format!("missing concrete prop var {}", fact.var()))?;
     ensure!(
-        left_constant ^ right_constant,
-        "Cartesian comparison refinement currently requires exactly one constant side; axiom {axiom_id} compares vars {left_id}/{right_id}"
+        concrete_value == fact.value(),
+        "cannot guarantee fact {fact:?}: concrete value is {concrete_value}"
     );
-    let (var_id, constant, mut relation) = if right_constant {
-        (
-            left_id,
-            numeric_values[right_id],
-            Relation::from(axiom.get_operator()),
-        )
-    } else {
-        (
-            right_id,
-            numeric_values[left_id],
-            Relation::from(axiom.get_operator()).reversed(),
-        )
-    };
-    if desired_prop_value == 1 {
-        relation = relation.negated();
-    } else {
-        ensure!(
-            desired_prop_value == 0,
-            "invalid comparison fact value {desired_prop_value}"
+    if let Some(tree_id) = semantics
+        .comparison_tree_by_prop_var
+        .get(fact.var())
+        .copied()
+        .flatten()
+    {
+        return comparison_refinement(
+            working,
+            semantics,
+            state_id,
+            tree_id,
+            numeric_values,
+            ComparisonRefinementGoal::guarantee(fact.value())?,
+            description,
         );
     }
-    let witness_value = numeric_values[var_id];
-    let region = &working.states[state_id].numeric[var_id];
-    let lower_includes_boundary =
-        split_boundary_inclusion_for_failed_relation(relation, witness_value, constant, *region)?;
-    Ok(Split::Numeric {
+    if !semantics.propositional_axioms_by_prop_var[fact.var()].is_empty() {
+        let default_value = semantics.propositional_axiom_default(fact.var())?;
+        if fact.value() == default_value {
+            for &axiom_id in &semantics.propositional_axioms_by_prop_var[fact.var()] {
+                let axiom = &semantics.task.axioms()[axiom_id];
+                if !all_conditions_admitted(
+                    semantics,
+                    &working.states[state_id],
+                    axiom.conditions(),
+                )? {
+                    continue;
+                }
+                let condition = axiom
+                    .conditions()
+                    .iter()
+                    .find(|condition| {
+                        prop_values
+                            .get(condition.var())
+                            .is_some_and(|&value| value != condition.value())
+                    })
+                    .with_context(|| {
+                        format!(
+                            "concrete default value for derived variable {} conflicts with firing axiom {axiom_id}",
+                            fact.var()
+                        )
+                    })?;
+                let witness_value = prop_values[condition.var()];
+                let witness_fact = ExplicitFact::new(condition.var(), witness_value);
+                return split_to_guarantee_fact(
+                    working,
+                    semantics,
+                    state_id,
+                    &witness_fact,
+                    prop_values,
+                    numeric_values,
+                    format!("{description} by disabling axiom {axiom_id} condition {condition:?}"),
+                );
+            }
+            bail!(
+                "derived default fact {fact:?} is not guaranteed although no competing axiom is admitted"
+            );
+        }
+
+        for &axiom_id in &semantics.propositional_axioms_by_prop_var[fact.var()] {
+            let axiom = &semantics.task.axioms()[axiom_id];
+            if axiom.effect_value() != fact.value()
+                || !conditions_hold_concretely(axiom.conditions(), prop_values)?
+            {
+                continue;
+            }
+            for condition in axiom.conditions() {
+                if !semantics.region_guarantees_fact(&working.states[state_id], condition)? {
+                    return split_to_guarantee_fact(
+                        working,
+                        semantics,
+                        state_id,
+                        condition,
+                        prop_values,
+                        numeric_values,
+                        format!("{description} via axiom {axiom_id} condition {condition:?}"),
+                    );
+                }
+            }
+            bail!(
+                "derived fact {fact:?} is not guaranteed although supporting axiom {axiom_id} is guaranteed"
+            );
+        }
+        bail!("concrete derived fact {fact:?} has no supporting axiom");
+    }
+
+    let witness_value = concrete_value as PropValueId;
+    let allowed = working
+        .states
+        .get(state_id)
+        .and_then(|state| state.propositions.get(fact.var()))
+        .with_context(|| format!("missing Cartesian state {state_id} prop var {}", fact.var()))?;
+    ensure!(
+        allowed.binary_search(&witness_value).is_ok() && allowed.len() > 1,
+        "fact {fact:?} is already guaranteed in Cartesian state {state_id}"
+    );
+    Ok(Split::Propositional {
         state_id,
-        var_id,
-        boundary: constant,
-        lower_includes_boundary,
+        var_id: fact.var(),
+        wanted: vec![witness_value],
         witness_value,
         description,
     })
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ComparisonRefinementGoal {
+    ExcludeDesired(bool),
+    GuaranteeDesired(bool),
+}
+
+impl ComparisonRefinementGoal {
+    fn exclude(prop_value: usize) -> Result<Self> {
+        Ok(Self::ExcludeDesired(comparison_truth(prop_value)?))
+    }
+
+    fn guarantee(prop_value: usize) -> Result<Self> {
+        Ok(Self::GuaranteeDesired(comparison_truth(prop_value)?))
+    }
+
+    fn desired_truth(self) -> bool {
+        match self {
+            Self::ExcludeDesired(truth) | Self::GuaranteeDesired(truth) => truth,
+        }
+    }
+}
+
+fn comparison_refinement(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    state_id: usize,
+    tree_id: usize,
+    numeric_values: &[f64],
+    goal: ComparisonRefinementGoal,
+    description: String,
+) -> Result<Split> {
+    let desired_truth = goal.desired_truth();
+    let tree = semantics
+        .comparison_trees
+        .get(tree_id)
+        .with_context(|| format!("missing comparison tree {tree_id}"))?;
+    let concrete_truth = tree.evaluate_point(numeric_values);
+    ensure!(
+        matches!(goal, ComparisonRefinementGoal::ExcludeDesired(_))
+            == (concrete_truth != desired_truth),
+        "comparison refinement goal disagrees with concrete truth for tree {tree_id}"
+    );
+    let state = working
+        .states
+        .get(state_id)
+        .with_context(|| format!("missing Cartesian state {state_id}"))?;
+    let mut best: Option<(bool, Split)> = None;
+    for var_id in tree.regular_numeric_var_dependencies(semantics.task) {
+        let witness_value = *numeric_values
+            .get(var_id)
+            .with_context(|| format!("missing concrete numeric var {var_id}"))?;
+        ensure!(
+            witness_value.is_finite(),
+            "comparison split witness for numeric var {var_id} is non-finite: {witness_value}"
+        );
+        let parent = *state
+            .numeric
+            .get(var_id)
+            .with_context(|| format!("missing Cartesian numeric var {var_id}"))?;
+        for lower_includes_boundary in [true, false] {
+            if !parent.can_split_at(witness_value, lower_includes_boundary) {
+                continue;
+            }
+            let lower = interval_intersection(
+                parent,
+                Interval::new(
+                    f64::NEG_INFINITY,
+                    witness_value,
+                    false,
+                    lower_includes_boundary,
+                ),
+            );
+            let upper = interval_intersection(
+                parent,
+                Interval::new(
+                    witness_value,
+                    f64::INFINITY,
+                    !lower_includes_boundary,
+                    false,
+                ),
+            );
+            let witness_child = if lower.contains(witness_value) {
+                lower
+            } else {
+                ensure!(
+                    upper.contains(witness_value),
+                    "comparison split loses witness {witness_value} for numeric var {var_id}"
+                );
+                upper
+            };
+            let mut child_numeric = state.numeric.clone();
+            child_numeric[var_id] = witness_child;
+            let result = tree.evaluate_interval(&child_numeric);
+            ensure!(
+                result != Some(!concrete_truth),
+                "comparison interval for tree {tree_id} excludes its concrete witness after splitting numeric var {var_id}"
+            );
+            let achieved = match goal {
+                ComparisonRefinementGoal::ExcludeDesired(_) => result == Some(!desired_truth),
+                ComparisonRefinementGoal::GuaranteeDesired(_) => result == Some(desired_truth),
+            };
+            let candidate = Split::Numeric {
+                state_id,
+                var_id,
+                boundary: witness_value,
+                lower_includes_boundary,
+                witness_value,
+                description: description.clone(),
+            };
+            if best
+                .as_ref()
+                .is_none_or(|(best_achieved, _)| achieved && !best_achieved)
+            {
+                best = Some((achieved, candidate));
+            }
+        }
+    }
+    best.map(|(_, split)| split).with_context(|| {
+        format!(
+            "comparison tree {tree_id} has no strict regular-variable split in Cartesian state {state_id}"
+        )
+    })
+}
+
+fn comparison_truth(prop_value: usize) -> Result<bool> {
+    match prop_value {
+        0 => Ok(true),
+        1 => Ok(false),
+        _ => bail!("invalid comparison fact value {prop_value}"),
+    }
+}
+
+fn conditions_hold_concretely(conditions: &[ExplicitFact], prop_values: &[usize]) -> Result<bool> {
+    for condition in conditions {
+        let value = *prop_values
+            .get(condition.var())
+            .with_context(|| format!("missing concrete prop var {}", condition.var()))?;
+        if value != condition.value() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn all_conditions_admitted(
+    semantics: &CartesianSemantics<'_>,
+    region: &StateRegion,
+    conditions: &[ExplicitFact],
+) -> Result<bool> {
+    for condition in conditions {
+        if !semantics.region_admits_fact(region, condition)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn split_deviation(
@@ -1679,7 +1927,7 @@ fn split_deviation(
 ) -> Result<Split> {
     let target = &working.states[target_state_id];
     for (var_id, allowed) in target.propositions.iter().enumerate() {
-        if semantics.comparison_axiom_by_prop_var[var_id].is_some()
+        if semantics.comparison_tree_by_prop_var[var_id].is_some()
             || !semantics.propositional_axioms_by_prop_var[var_id].is_empty()
         {
             continue;
@@ -1709,30 +1957,25 @@ fn split_deviation(
         if target_interval.contains(successor) {
             continue;
         }
-        let delta = semantics
-            .additive_effect_delta(op_id, var_id)?
-            .with_context(|| {
-                format!(
-                    "operator {op_id} assignment effect admitted a wrong target interval for numeric var {var_id}"
-                )
-            })?;
+        let preimage = semantics.numeric_effect_preimage(target_interval, op_id, var_id)?;
         let source = source_numeric[var_id];
-        let (target_boundary, lower_includes_boundary) = if successor < target_interval.lower
-            || (successor == target_interval.lower && !target_interval.lower_closed)
-        {
-            (target_interval.lower, !target_interval.lower_closed)
-        } else {
-            ensure!(
-                successor > target_interval.upper
-                    || (successor == target_interval.upper && !target_interval.upper_closed),
-                "numeric successor mismatch has no separating target boundary"
-            );
-            (target_interval.upper, target_interval.upper_closed)
-        };
-        let boundary = target_boundary - delta;
+        ensure!(
+            !preimage.contains(source),
+            "operator {op_id} concrete source {source} for numeric var {var_id} lies in the preimage {preimage:?} of target {target_interval:?}, but successor {successor} is outside"
+        );
+        let (boundary, lower_includes_boundary) =
+            if source < preimage.lower || (source == preimage.lower && !preimage.lower_closed) {
+                (preimage.lower, !preimage.lower_closed)
+            } else {
+                ensure!(
+                    source > preimage.upper || (source == preimage.upper && !preimage.upper_closed),
+                    "numeric successor mismatch has no separating preimage boundary"
+                );
+                (preimage.upper, preimage.upper_closed)
+            };
         ensure!(
             boundary.is_finite(),
-            "cannot refine an infinite target boundary"
+            "cannot refine an infinite numeric-effect preimage boundary"
         );
         return Ok(Split::Numeric {
             state_id: source_state_id,
@@ -2161,84 +2404,6 @@ impl Heuristic for CartesianAbstractionHeuristic {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Relation {
-    Lt,
-    Le,
-    Eq,
-    Ge,
-    Gt,
-    Ne,
-}
-
-impl From<&ComparisonOperator> for Relation {
-    fn from(value: &ComparisonOperator) -> Self {
-        match value {
-            ComparisonOperator::LessThan => Self::Lt,
-            ComparisonOperator::LessThanOrEqual => Self::Le,
-            ComparisonOperator::Equal => Self::Eq,
-            ComparisonOperator::GreaterThanOrEqual => Self::Ge,
-            ComparisonOperator::GreaterThan => Self::Gt,
-            ComparisonOperator::UnEqual => Self::Ne,
-        }
-    }
-}
-
-impl Relation {
-    fn reversed(self) -> Self {
-        match self {
-            Self::Lt => Self::Gt,
-            Self::Le => Self::Ge,
-            Self::Eq => Self::Eq,
-            Self::Ge => Self::Le,
-            Self::Gt => Self::Lt,
-            Self::Ne => Self::Ne,
-        }
-    }
-
-    fn negated(self) -> Self {
-        match self {
-            Self::Lt => Self::Ge,
-            Self::Le => Self::Gt,
-            Self::Eq => Self::Ne,
-            Self::Ge => Self::Lt,
-            Self::Gt => Self::Le,
-            Self::Ne => Self::Eq,
-        }
-    }
-}
-
-fn split_boundary_inclusion_for_failed_relation(
-    relation: Relation,
-    witness: f64,
-    boundary: f64,
-    parent: Interval,
-) -> Result<bool> {
-    ensure!(
-        witness.is_finite() && boundary.is_finite(),
-        "comparison split values must be finite"
-    );
-    let inclusion = match relation {
-        Relation::Ge => false,
-        Relation::Gt => true,
-        Relation::Le => true,
-        Relation::Lt => false,
-        Relation::Eq => witness > boundary,
-        Relation::Ne => {
-            ensure!(
-                witness == boundary,
-                "failed != relation witness is not boundary"
-            );
-            if parent.upper == boundary && parent.upper_closed {
-                false
-            } else {
-                true
-            }
-        }
-    };
-    Ok(inclusion)
-}
-
 fn sorted_values_overlap(left: &[PropValueId], right: &[PropValueId]) -> bool {
     let mut left_id = 0;
     let mut right_id = 0;
@@ -2250,15 +2415,6 @@ fn sorted_values_overlap(left: &[PropValueId], right: &[PropValueId]) -> bool {
         }
     }
     false
-}
-
-fn shift_interval(interval: Interval, delta: f64) -> Interval {
-    Interval::new(
-        interval.lower + delta,
-        interval.upper + delta,
-        interval.lower_closed,
-        interval.upper_closed,
-    )
 }
 
 fn interval_intersection(left: Interval, right: Interval) -> Interval {
