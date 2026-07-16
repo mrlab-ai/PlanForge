@@ -7,7 +7,7 @@ pub use planforge_search::config::{
     ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue, atom, for_each_option,
 };
 
-use planforge_search::numeric::evaluation::domain_abstractions::cegar::CegarConfig;
+use planforge_search::evaluation::domain_abstractions::cegar::CegarConfig;
 
 #[cfg(test)]
 mod tests;

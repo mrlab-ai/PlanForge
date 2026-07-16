@@ -14,7 +14,9 @@ fn main() -> std::io::Result<()> {
     // and stops cleanly if the RSS limit is exceeded. Configurable via
     // `DA_MEMORY_PADDING_MB` (default 512 MB) and `DA_MEMORY_LIMIT_MB`
     // (default derives from `--max-memory`, leaving ~10% headroom).
-    planforge_search::numeric::evaluation::domain_abstractions::memory_padding::reserve_memory_padding(cli.max_memory);
+    planforge_search::evaluation::domain_abstractions::memory_padding::reserve_memory_padding(
+        cli.max_memory,
+    );
     #[cfg(unix)]
     if !cli.internal_run {
         return run_wrapped_process(&cli);

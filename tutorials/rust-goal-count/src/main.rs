@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use planforge_sas::numeric::numeric_task::{NumericRootTask, TaskRef};
-use planforge_sas::numeric::state_registry::StateRegistry;
-use planforge_search::numeric::evaluation::{EvaluationError, EvaluationState, Heuristic};
-use planforge_search::numeric::search::{AStarSearch, SearchEngine, SearchStatus};
+use planforge_sas::numeric_task::{NumericRootTask, TaskRef};
+use planforge_sas::state_registry::StateRegistry;
+use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
+use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
 
 /// Goal-count heuristic: number of goal facts not satisfied in the state.
 struct GoalCountHeuristic {

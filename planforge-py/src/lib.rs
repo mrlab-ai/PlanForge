@@ -9,12 +9,12 @@ use pyo3::exceptions::{PyException, PyFileNotFoundError, PyValueError};
 use pyo3::prelude::*;
 
 use planforge_core;
-use planforge_sas::numeric::numeric_task::{NumericRootTask, Operator, TaskRef};
-use planforge_sas::numeric::state_registry::{ConcreteState, StateRegistry};
-use planforge_search::numeric::evaluation::domain_abstractions::restricted_task::build_restricted_task;
-use planforge_search::numeric::evaluation::{EvaluationError, EvaluationState, Heuristic};
-use planforge_search::numeric::search::{AStarSearch, SearchEngine, SearchResult, SearchStatus};
-use planforge_search::numeric::successor_generator::SuccessorTree;
+use planforge_sas::numeric_task::{NumericRootTask, Operator, TaskRef};
+use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
+use planforge_search::search::{AStarSearch, SearchEngine, SearchResult, SearchStatus};
+use planforge_search::successor_generator::SuccessorTree;
+use planforge_search::task_restriction::build_restricted_task;
 
 create_exception!(planforge, PlanforgeError, PyException);
 create_exception!(planforge, TranslateError, PlanforgeError);

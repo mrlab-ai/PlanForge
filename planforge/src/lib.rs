@@ -4,25 +4,23 @@ mod tests;
 use clap::Parser;
 use ordered_float::NotNan;
 use planforge_cli_utils::*;
-use planforge_sas::numeric::numeric_task::{
+use planforge_sas::numeric_task::{
     AbstractNumericTask, NumericRootTask, NumericType, Operator, TaskRef,
 };
-use planforge_sas::numeric::state_registry::{ConcreteState, StateRegistry};
-use planforge_search::numeric::evaluation::domain_abstractions::cegar::{Cegar, CegarConfig};
-use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_generator::{
+use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+use planforge_search::evaluation::domain_abstractions::cegar::{Cegar, CegarConfig};
+use planforge_search::evaluation::domain_abstractions::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, compute_hash_multipliers,
 };
-use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
-use planforge_search::numeric::evaluation::domain_abstractions::restricted_task::build_restricted_task;
-use planforge_search::numeric::evaluation::evaluator::EvaluationState;
-use planforge_search::numeric::evaluation::g_evaluator::{GEvaluator, SumEvaluator};
-use planforge_search::numeric::evaluation::{EvaluationResult, Evaluator};
-use planforge_search::numeric::open_lists::{OpenList, SearchNode, TieBreakingOpenList};
-use planforge_search::numeric::search::{AStarSearch, SearchEngine};
-use planforge_search::numeric::search::{
-    SearchResult, SearchStatus, compute_effective_operator_costs,
-};
-use planforge_search::numeric::successor_generator::SuccessorTree;
+use planforge_search::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
+use planforge_search::evaluation::evaluator::EvaluationState;
+use planforge_search::evaluation::g_evaluator::{GEvaluator, SumEvaluator};
+use planforge_search::evaluation::{EvaluationResult, Evaluator};
+use planforge_search::open_lists::{OpenList, SearchNode, TieBreakingOpenList};
+use planforge_search::search::{AStarSearch, SearchEngine};
+use planforge_search::search::{SearchResult, SearchStatus, compute_effective_operator_costs};
+use planforge_search::successor_generator::SuccessorTree;
+use planforge_search::task_restriction::build_restricted_task;
 use planforge_searcher::*;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -193,7 +191,7 @@ pub fn solve_task(
                 .get_operators()
                 .iter()
                 .map(|op| {
-                    planforge_sas::numeric::numeric_task::metric_operator_cost_from_initial_values(
+                    planforge_sas::numeric_task::metric_operator_cost_from_initial_values(
                         task_ref, op,
                     )
                 })
@@ -209,12 +207,11 @@ pub fn solve_task(
             };
             let make_blind = || {
                 Box::new(
-                    planforge_search::numeric::evaluation::heuristic::BlindHeuristic::with_min_action_cost(
+                    planforge_search::evaluation::heuristic::BlindHeuristic::with_min_action_cost(
                         min_action_cost,
                         None,
                     ),
-                )
-                    as Box<dyn planforge_search::numeric::evaluation::Heuristic + '_>
+                ) as Box<dyn planforge_search::evaluation::Heuristic + '_>
             };
             let fast_h = build_heuristic_from_spec(fast_spec, task_ref)?.unwrap_or_else(make_blind);
             let slow_h = build_heuristic_from_spec(slow_spec, task_ref)?.unwrap_or_else(make_blind);
@@ -314,7 +311,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
 fn build_heuristic_from_spec<'a>(
     spec: &planforge_searcher::HeuristicSpec,
     task_ref: &'a dyn AbstractNumericTask,
-) -> std::io::Result<Option<Box<dyn planforge_search::numeric::evaluation::Heuristic + 'a>>> {
+) -> std::io::Result<Option<Box<dyn planforge_search::evaluation::Heuristic + 'a>>> {
     planforge_searcher::build_heuristic_from_spec(spec, task_ref).map_err(std::io::Error::other)
 }
 

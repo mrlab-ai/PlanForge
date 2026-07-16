@@ -1,17 +1,17 @@
 use super::*;
-use planforge_search::numeric::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
-use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
+use planforge_search::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
+use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, InitSplitQuantity, PortfolioStrategy,
     VariableSubset,
 };
-use planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
+use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
     FillScpConfig, OrderGenerator, Saturator, ScoringFunction, ScpOnlineConfig,
 };
-use planforge_search::numeric::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
-use planforge_search::numeric::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
-use planforge_search::numeric::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
-use planforge_search::numeric::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
-use planforge_search::numeric::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
+use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
+use planforge_search::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
+use planforge_search::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
+use planforge_search::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
+use planforge_search::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 
 fn astar_heuristic(input: &str) -> HeuristicSpec {
     match parse_search_spec(input).unwrap() {
@@ -101,6 +101,31 @@ fn parses_astar_canonical_domain_abstractions_with_named_options() {
 }
 
 #[test]
+fn parses_hierarchical_canonical_abstraction_sources() {
+    let h = astar_heuristic(
+        "astar(canonical(domain(max_abstraction_size=100), cartesian(max_states=100), pdb(max_pdb_states=100)))",
+    );
+    assert_eq!(h.name, "canonical");
+    let source_names: Vec<_> = h
+        .args
+        .iter()
+        .map(|arg| arg.value().as_call().unwrap().name())
+        .collect();
+    assert_eq!(source_names, ["domain", "cartesian", "pdb"]);
+}
+
+#[test]
+fn parses_hierarchical_scp_options_and_sources() {
+    let h = astar_heuristic(
+        "astar(scp(domain(max_collection_size=1000), cartesian(max_states=100), pdb(max_pdb_states=100), saturator=perimstar, use_abstract_operator_cost_partitioning=true))",
+    );
+    assert_eq!(h.name, "scp");
+    let (sources, options) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
+    assert_eq!(sources.len(), 3);
+    assert_eq!(options.len(), 2);
+}
+
+#[test]
 fn parses_execute_entire_plan_flaw_kind() {
     let spec =
         parse_search_spec("astar(canonical_domain_abstractions(flaw_kind=execute_entire_plan))")
@@ -130,7 +155,7 @@ fn parses_forward_partition_deviation_split_direction() {
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(
         cfg.split_direction,
-        Some(planforge_search::numeric::evaluation::domain_abstractions::cegar::SplitDirection::ForwardPartitionDeviation)
+        Some(planforge_search::evaluation::domain_abstractions::cegar::SplitDirection::ForwardPartitionDeviation)
     );
     assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
 }
@@ -181,7 +206,7 @@ fn parses_astar_fill_scp_with_named_options() {
     );
     assert_eq!(
         cfg.collection_config.split_direction,
-        Some(planforge_search::numeric::evaluation::domain_abstractions::cegar::SplitDirection::Backward)
+        Some(planforge_search::evaluation::domain_abstractions::cegar::SplitDirection::Backward)
     );
     assert_eq!(cfg.collection_config.random_seed, Some(7));
     assert_eq!(cfg.random_seed, Some(7));
@@ -461,6 +486,16 @@ fn display_round_trips_multi_domain_abstractions() {
 fn display_round_trips_canonical_domain_abstractions() {
     let parsed = parse_search_spec(
         "astar(canonical_domain_abstractions(max_abstraction_size=42, abstraction_generation_max_time=infinity))",
+    )
+    .unwrap();
+    let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
+    assert_eq!(parsed, reparsed);
+}
+
+#[test]
+fn display_round_trips_hierarchical_abstraction_collection() {
+    let parsed = parse_search_spec(
+        "astar(canonical(domain(max_abstraction_size=42), cartesian(max_states=42), pdb(max_pdb_states=42)))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();

@@ -1,4 +1,4 @@
-use planforge_search::numeric::search::SearchStatus;
+use planforge_search::search::SearchStatus;
 
 use super::*;
 

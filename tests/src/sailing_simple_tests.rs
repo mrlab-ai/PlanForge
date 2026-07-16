@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use planforge_sas::numeric::numeric_task::{AbstractNumericTask, NumericRootTask};
-use planforge_sas::numeric::state_registry::StateRegistry;
-use planforge_search::numeric::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
+use planforge_sas::state_registry::StateRegistry;
+use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     FlawTreatmentVariants,
@@ -12,13 +12,13 @@ use planforge_search::numeric::evaluation::domain_abstractions::domain_abstracti
     NumericSplitStrategy,
     PortfolioStrategy,
 };
-use planforge_search::numeric::evaluation::domain_abstractions::restricted_task::build_restricted_task;
-use planforge_search::numeric::evaluation::domain_abstractions::saturated_cost_partitioning_online_heuristic::{
+use planforge_search::task_restriction::build_restricted_task;
+use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
     SaturatedCostPartitioningOnlineHeuristic, ScpOnlineConfig,
 };
-use planforge_search::numeric::evaluation::domain_abstractions::cegar::FlawKind;
-use planforge_search::numeric::evaluation::evaluator::{EvaluationState, Evaluator};
-use planforge_search::numeric::search::{AStarSearch, SearchEngine, SearchStatus};
+use planforge_search::evaluation::domain_abstractions::cegar::FlawKind;
+use planforge_search::evaluation::evaluator::{EvaluationState, Evaluator};
+use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
 use planforge_translate::preprocess::run_preprocess_to_output;
 use planforge_translator::translate_to_sas_to_path_fast;
 

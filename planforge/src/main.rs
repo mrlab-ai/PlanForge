@@ -19,7 +19,9 @@ fn main() -> std::io::Result<()> {
     // `memory_per_cpu=8300M` with `--max-memory 8G`) and slurm's OOM
     // killer fires between two CEGAR polls instead of the planner
     // exiting cleanly.
-    planforge_search::numeric::evaluation::domain_abstractions::memory_padding::reserve_memory_padding(cli.max_memory);
+    planforge_search::evaluation::domain_abstractions::memory_padding::reserve_memory_padding(
+        cli.max_memory,
+    );
     #[cfg(unix)]
     if !cli.internal_run {
         return run_wrapped_process(&cli);
