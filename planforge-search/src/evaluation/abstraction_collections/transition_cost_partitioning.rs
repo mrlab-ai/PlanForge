@@ -114,8 +114,8 @@ pub enum NonAllocableFootprintReason {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TransitionRegion {
-    pub source: StateRegion,
-    pub target: StateRegion,
+    pub source: Arc<StateRegion>,
+    pub target: Arc<StateRegion>,
 }
 
 impl TransitionRegion {
@@ -139,7 +139,7 @@ pub struct AbstractTransitionSystem {
     pub initial_state_hash: usize,
     pub hash_multipliers: Vec<usize>,
     pub numeric_domain_sizes: Vec<usize>,
-    pub state_regions: Vec<StateRegion>,
+    pub state_regions: Vec<Arc<StateRegion>>,
 }
 
 impl AbstractTransitionSystem {
@@ -675,6 +675,7 @@ pub struct LmCutResidualCostVariant {
 struct OperatorResidual {
     base_cost: f64,
     reductions: Vec<ResidualReduction>,
+    reduction_indices: HashMap<TransitionIdentity, usize>,
     generation: Cell<u64>,
     uniform_cost_cache: Cell<Option<f64>>,
     transition_cost_cache: RefCell<HashMap<TransitionQueryKey, CachedCost>>,
@@ -787,6 +788,25 @@ struct TransitionCondition {
     region: TransitionRegion,
 }
 
+impl TransitionCondition {
+    fn identity(&self) -> TransitionIdentity {
+        TransitionIdentity {
+            abstraction_id: self.abstraction_id,
+            source_hash: self.source_hash,
+            abstract_op_id: self.abstract_op_id,
+            target_hash: self.target_hash,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct TransitionIdentity {
+    abstraction_id: usize,
+    source_hash: usize,
+    abstract_op_id: usize,
+    target_hash: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct TransitionQueryKey {
     abstraction_id: usize,
@@ -891,6 +911,7 @@ impl TransitionResidualCosts {
             .map(|&base_cost| OperatorResidual {
                 base_cost,
                 reductions: Vec::new(),
+                reduction_indices: HashMap::new(),
                 generation: Cell::new(0),
                 uniform_cost_cache: Cell::new(None),
                 transition_cost_cache: RefCell::new(HashMap::new()),
@@ -975,7 +996,7 @@ impl TransitionResidualCosts {
                     }
                     variants.push(LmCutResidualCostVariant {
                         cost: (residual.base_cost - reduction.amount).max(0.0),
-                        source_region: reduction.condition.region.source.clone(),
+                        source_region: reduction.condition.region.source.as_ref().clone(),
                     });
                 }
 
@@ -1043,14 +1064,13 @@ impl TransitionResidualCosts {
         abstract_op_id: usize,
         region: &TransitionRegion,
     ) -> f64 {
-        self.cost_for_transition_with_region_key(
+        self.cost_for_transition_with_region(
             concrete_op_id,
             current_abstraction_id,
             ABSTRACT_OPERATOR_REGION_HASH,
             abstract_op_id,
             ABSTRACT_OPERATOR_REGION_HASH,
-            &region.source,
-            &region.target,
+            region.clone(),
             None,
         )
     }
@@ -1064,19 +1084,17 @@ impl TransitionResidualCosts {
         if !footprint.allocable {
             return 0.0;
         }
-        let region_key = state_region_key(&footprint.source_region);
-        self.cost_for_transition_with_region_key(
+        self.cost_for_transition_with_region(
             footprint.concrete_op_id,
             current_abstraction_id,
             ABSTRACT_OPERATOR_REGION_HASH,
             abstract_op_id,
             ABSTRACT_OPERATOR_REGION_HASH,
-            &footprint.source_region,
-            &footprint.source_region,
-            Some(TransitionRegionKey {
-                source: region_key.clone(),
-                target: region_key,
-            }),
+            TransitionRegion {
+                source: Arc::clone(&footprint.source_region),
+                target: Arc::clone(&footprint.source_region),
+            },
+            None,
         )
     }
 
@@ -1092,16 +1110,37 @@ impl TransitionResidualCosts {
         target_region: &StateRegion,
         region_key: Option<TransitionRegionKey>,
     ) -> f64 {
+        self.cost_for_transition_with_region(
+            concrete_op_id,
+            current_abstraction_id,
+            source_hash,
+            abstract_op_id,
+            target_hash,
+            TransitionRegion {
+                source: Arc::new(source_region.clone()),
+                target: Arc::new(target_region.clone()),
+            },
+            region_key,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn cost_for_transition_with_region(
+        &self,
+        concrete_op_id: usize,
+        current_abstraction_id: usize,
+        source_hash: usize,
+        abstract_op_id: usize,
+        target_hash: usize,
+        query_region: TransitionRegion,
+        region_key: Option<TransitionRegionKey>,
+    ) -> f64 {
         let Some(residual) = self.operator_residuals.get(concrete_op_id) else {
             return f64::INFINITY;
         };
         if !residual.base_cost.is_finite() {
             return f64::INFINITY;
         }
-        let query_region = TransitionRegion {
-            source: source_region.clone(),
-            target: target_region.clone(),
-        };
 
         let key = TransitionQueryKey {
             abstraction_id: current_abstraction_id,
@@ -1255,16 +1294,32 @@ impl TransitionResidualCosts {
                         "residual cost underflow: abstract-operator reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
                         residual.base_cost
                     );
-                    residual.reductions.push(ResidualReduction {
-                        amount: saturated.min(residual.base_cost),
-                        condition: TransitionCondition {
-                            abstraction_id: producing_abstraction_id,
-                            source_hash: piece_id,
-                            abstract_op_id,
-                            target_hash: piece_id,
-                            region: region.clone(),
-                        },
-                    });
+                    let condition = TransitionCondition {
+                        abstraction_id: producing_abstraction_id,
+                        source_hash: piece_id,
+                        abstract_op_id,
+                        target_hash: piece_id,
+                        region: region.clone(),
+                    };
+                    let identity = condition.identity();
+                    if let Some(&index) = residual.reduction_indices.get(&identity) {
+                        let reduction = &mut residual.reductions[index];
+                        let new_amount = reduction.amount + saturated;
+                        ensure!(
+                            new_amount <= residual.base_cost + EPSILON,
+                            "abstract-operator reductions for concrete operator {concrete_op_id} exceed base cost {}",
+                            residual.base_cost
+                        );
+                        reduction.amount = new_amount.min(residual.base_cost);
+                    } else {
+                        let index = residual.reductions.len();
+                        residual.reductions.push(ResidualReduction {
+                            amount: saturated.min(residual.base_cost),
+                            condition,
+                        });
+                        let previous = residual.reduction_indices.insert(identity, index);
+                        assert!(previous.is_none(), "duplicate residual reduction identity");
+                    }
                     residual.invalidate_cache();
                 }
             }
@@ -1344,8 +1399,8 @@ impl TransitionResidualCosts {
                     continue;
                 }
                 let region = TransitionRegion {
-                    source: footprint.source_region.as_ref().clone(),
-                    target: footprint.source_region.as_ref().clone(),
+                    source: Arc::clone(&footprint.source_region),
+                    target: Arc::clone(&footprint.source_region),
                 };
                 let concrete_op_id = footprint.concrete_op_id;
                 ensure!(
@@ -1393,7 +1448,8 @@ impl TransitionResidualCosts {
                 let amount = saturated.min(residual.base_cost);
                 if let Some((_, existing)) =
                     pending.iter_mut().find(|(pending_op_id, reduction)| {
-                        *pending_op_id == concrete_op_id && reduction.condition == condition
+                        *pending_op_id == concrete_op_id
+                            && reduction.condition.identity() == condition.identity()
                     })
                 {
                     existing.amount = existing.amount.max(amount);
@@ -1419,14 +1475,15 @@ impl TransitionResidualCosts {
             let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
                 continue;
             };
-            if let Some(existing) = residual
-                .reductions
-                .iter_mut()
-                .find(|existing| existing.condition == reduction.condition)
-            {
+            let identity = reduction.condition.identity();
+            if let Some(&index) = residual.reduction_indices.get(&identity) {
+                let existing = &mut residual.reductions[index];
                 existing.amount = (existing.amount + reduction.amount).min(residual.base_cost);
             } else {
+                let index = residual.reductions.len();
                 residual.reductions.push(reduction);
+                let previous = residual.reduction_indices.insert(identity, index);
+                assert!(previous.is_none(), "duplicate residual reduction identity");
             }
             residual.invalidate_cache();
         }
@@ -1480,11 +1537,9 @@ impl TransitionResidualCosts {
             region: region.clone(),
         };
         let residual = &mut self.operator_residuals[concrete_op_id];
-        if let Some(reduction) = residual
-            .reductions
-            .iter_mut()
-            .find(|reduction| reduction.condition == condition)
-        {
+        let identity = condition.identity();
+        if let Some(&index) = residual.reduction_indices.get(&identity) {
+            let reduction = &mut residual.reductions[index];
             let new_amount = reduction.amount + saturated;
             ensure!(
                 new_amount <= residual.base_cost + EPSILON,
@@ -1505,10 +1560,13 @@ impl TransitionResidualCosts {
             "residual cost underflow: transition reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
             residual.base_cost
         );
+        let index = residual.reductions.len();
         residual.reductions.push(ResidualReduction {
             amount: saturated.min(residual.base_cost),
             condition,
         });
+        let previous = residual.reduction_indices.insert(identity, index);
+        assert!(previous.is_none(), "duplicate residual reduction identity");
         residual.invalidate_cache();
         Ok(())
     }
@@ -1538,8 +1596,8 @@ fn transition_region_key(region: &TransitionRegion) -> TransitionRegionKey {
 }
 
 fn merge_transition_region(target: &mut TransitionRegion, source: &TransitionRegion) {
-    merge_state_region(&mut target.source, &source.source);
-    merge_state_region(&mut target.target, &source.target);
+    merge_state_region(Arc::make_mut(&mut target.source), &source.source);
+    merge_state_region(Arc::make_mut(&mut target.target), &source.target);
 }
 
 fn merge_state_region(target: &mut StateRegion, source: &StateRegion) {
@@ -2262,16 +2320,16 @@ fn can_add_reduction(
         }
     }
     state_regions_have_common_intersection(
-        query.map(|condition| &condition.region.source),
+        query.map(|condition| condition.region.source.as_ref()),
         selected
             .iter()
-            .map(|&index| &relevant[index].condition.region.source),
+            .map(|&index| relevant[index].condition.region.source.as_ref()),
         &condition.region.source,
     ) && state_regions_have_common_intersection(
-        query.map(|condition| &condition.region.target),
+        query.map(|condition| condition.region.target.as_ref()),
         selected
             .iter()
-            .map(|&index| &relevant[index].condition.region.target),
+            .map(|&index| relevant[index].condition.region.target.as_ref()),
         &condition.region.target,
     )
 }
@@ -2453,7 +2511,7 @@ mod tests {
             initial_state_hash: 0,
             hash_multipliers: vec![],
             numeric_domain_sizes: vec![],
-            state_regions: vec![state_region(0), state_region(1)],
+            state_regions: vec![state_region(0).into(), state_region(1).into()],
         }
     }
 
@@ -2505,8 +2563,8 @@ mod tests {
 
     fn region(source: usize, target: usize) -> TransitionRegion {
         TransitionRegion {
-            source: state_region(source),
-            target: state_region(target),
+            source: state_region(source).into(),
+            target: state_region(target).into(),
         }
     }
 
@@ -2519,8 +2577,8 @@ mod tests {
 
     fn numeric_region(source_lower: f64, source_upper: f64) -> TransitionRegion {
         TransitionRegion {
-            source: numeric_state_region(source_lower, source_upper),
-            target: numeric_state_region(source_lower, source_upper),
+            source: numeric_state_region(source_lower, source_upper).into(),
+            target: numeric_state_region(source_lower, source_upper).into(),
         }
     }
 
@@ -2627,9 +2685,9 @@ mod tests {
             hash_multipliers: vec![],
             numeric_domain_sizes: vec![],
             state_regions: vec![
-                state_region(9),
-                state_region(9),
-                state_region(9),
+                state_region(9).into(),
+                state_region(9).into(),
+                state_region(9).into(),
                 reduced_region.source.clone(),
                 reduced_region.target.clone(),
             ],
@@ -2747,9 +2805,9 @@ mod tests {
             hash_multipliers: vec![],
             numeric_domain_sizes: vec![],
             state_regions: vec![
-                state_region(9),
-                state_region(9),
-                state_region(9),
+                state_region(9).into(),
+                state_region(9).into(),
+                state_region(9).into(),
                 reduced_region.source.clone(),
                 reduced_region.target.clone(),
             ],

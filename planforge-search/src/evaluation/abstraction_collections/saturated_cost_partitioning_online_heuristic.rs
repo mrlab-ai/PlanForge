@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{Level, debug, enabled, info};
 
 use crate::evaluation::cartesian_abstractions::{
-    CartesianAbstraction, CartesianAbstractionHeuristic,
+    CartesianAbstraction, CartesianAbstractionHeuristic, CartesianRefinementHierarchy,
 };
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
@@ -142,6 +142,10 @@ impl crate::config::FromOptionValue for Saturator {
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
 pub struct ScpOnlineConfig {
+    /// Whether to rebuild cost partitions during search. When false, exactly
+    /// one partition is built for the first evaluated state and all
+    /// construction-only abstraction data is released immediately afterwards.
+    pub online: bool,
     pub max_time: f64,
     pub table_construction_max_time: f64,
     pub max_size: usize,
@@ -244,6 +248,7 @@ impl FillScpConfig {
 
     fn as_scp_online_config(&self) -> ScpOnlineConfig {
         ScpOnlineConfig {
+            online: false,
             max_time: 0.0,
             table_construction_max_time: self.table_construction_max_time,
             max_size: usize::MAX,
@@ -275,6 +280,7 @@ impl Default for ScpOnlineConfig {
         };
         let random_seed = collection_config.random_seed;
         Self {
+            online: true,
             max_time: 200.0,
             table_construction_max_time: 30.0,
             max_size: usize::MAX,
@@ -437,7 +443,8 @@ pub struct SaturatedCostPartitioningOnlineHeuristic<'task> {
     name: String,
     abstractions: RefCell<Option<Vec<DomainAbstraction>>>,
     abstraction_heuristics: Vec<DomainAbstractionHeuristic>,
-    cartesian_heuristics: Vec<CartesianAbstractionHeuristic>,
+    cartesian_abstractions: RefCell<Option<Vec<CartesianAbstraction>>>,
+    cartesian_hierarchies: Vec<CartesianRefinementHierarchy>,
     pdbs: Vec<PatternDatabase<'task>>,
     config: ScpOnlineConfig,
     original_operator_costs: Vec<f64>,
@@ -694,6 +701,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 "SCP requires at least one abstraction component".to_string(),
             ));
         }
+        if config.online && config.interval == 0 {
+            return Err(EvaluationError::ComputationFailed(
+                "online SCP interval must be greater than zero".to_string(),
+            ));
+        }
         let abstraction_heuristics = abstractions
             .iter()
             .cloned()
@@ -702,16 +714,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 DomainAbstractionHeuristic::new(Some(format!("scp_online_{index}")), abstraction)
             })
             .collect();
-        let cartesian_heuristics = cartesian_abstractions
+        let cartesian_hierarchies = cartesian_abstractions
             .iter()
-            .cloned()
-            .enumerate()
-            .map(|(index, abstraction)| {
-                CartesianAbstractionHeuristic::new(
-                    Some(format!("scp_online_cartesian_{index}")),
-                    abstraction,
-                )
-            })
+            .map(|abstraction| abstraction.hierarchy.clone())
             .collect();
 
         let original_costs: Vec<f64> = task
@@ -869,7 +874,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             name: name.unwrap_or_else(|| "scp_online".to_string()),
             abstractions: RefCell::new(Some(abstractions)),
             abstraction_heuristics,
-            cartesian_heuristics,
+            cartesian_abstractions: RefCell::new(Some(cartesian_abstractions)),
+            cartesian_hierarchies,
             pdbs,
             config,
             original_operator_costs: original_costs,
@@ -915,15 +921,27 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         &self,
         component_id: usize,
         num_domain_abstractions: usize,
-    ) -> Option<&CartesianAbstraction> {
-        component_id
-            .checked_sub(num_domain_abstractions)
-            .and_then(|index| self.cartesian_heuristics.get(index))
-            .map(CartesianAbstractionHeuristic::abstraction)
+    ) -> Option<Ref<'_, CartesianAbstraction>> {
+        let index = component_id.checked_sub(num_domain_abstractions)?;
+        if index >= self.cartesian_hierarchies.len() {
+            return None;
+        }
+        Some(Ref::map(
+            self.cartesian_abstractions.borrow(),
+            |collection| {
+                collection
+                    .as_ref()
+                    .expect(
+                        "Cartesian abstractions were released while SCP construction was active",
+                    )
+                    .get(index)
+                    .expect("Cartesian abstraction component index must be valid")
+            },
+        ))
     }
 
     fn pdb_offset(&self, num_domain_abstractions: usize) -> usize {
-        num_domain_abstractions + self.cartesian_heuristics.len()
+        num_domain_abstractions + self.cartesian_hierarchies.len()
     }
 
     fn compute_order_for_state(
@@ -1134,7 +1152,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         ids: &mut Vec<Option<usize>>,
     ) -> Result<usize, EvaluationError> {
         let num_domain = self.abstraction_heuristics.len();
-        let num_cartesian = self.cartesian_heuristics.len();
+        let num_cartesian = self.cartesian_hierarchies.len();
         let pdb_offset = num_domain + num_cartesian;
         let total_components = pdb_offset + self.pdbs.len();
         ids.clear();
@@ -1153,23 +1171,18 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             }
         }
 
-        for (cartesian_id, heuristic) in self.cartesian_heuristics.iter().enumerate() {
-            let component_id = num_domain + cartesian_id;
-            if !needs_all && !required_ids.is_some_and(|ids| ids.contains(&component_id)) {
-                continue;
-            }
-            ids[component_id] = Some(heuristic.abstract_state_id(eval_state)?);
-        }
-
-        if !self.pdbs.is_empty() {
-            let pdb_required =
-                needs_all || required_ids.is_some_and(|ids| ids.iter().any(|&id| id >= pdb_offset));
-            if !pdb_required {
-                return Ok(num_domain);
-            }
+        let cartesian_required = !self.cartesian_hierarchies.is_empty()
+            && (needs_all
+                || required_ids.is_some_and(|ids| {
+                    ids.iter().any(|&id| (num_domain..pdb_offset).contains(&id))
+                }));
+        let pdb_required = !self.pdbs.is_empty()
+            && (needs_all
+                || required_ids.is_some_and(|ids| ids.iter().any(|&id| id >= pdb_offset)));
+        if cartesian_required || pdb_required {
             let registry = eval_state.state_registry().ok_or_else(|| {
                 EvaluationError::InvalidState(
-                    "SCP online PDB lookup requires state registry".to_string(),
+                    "SCP Cartesian/PDB lookup requires state registry".to_string(),
                 )
             })?;
             let mut numeric = self.numeric_scratch.borrow_mut();
@@ -1182,11 +1195,25 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 })?;
             let mut prop = self.prop_scratch.borrow_mut();
             eval_state.state().fill_state(registry, &mut prop);
-            for (pdb_id, pdb) in self.pdbs.iter().enumerate() {
-                let sid = pdb
-                    .abstract_state_id_from_source_state_values(&prop, &numeric)
-                    .map_err(EvaluationError::ComputationFailed)?;
-                ids[pdb_offset + pdb_id] = sid;
+
+            if cartesian_required {
+                for (cartesian_id, hierarchy) in self.cartesian_hierarchies.iter().enumerate() {
+                    let component_id = num_domain + cartesian_id;
+                    if needs_all || required_ids.is_some_and(|ids| ids.contains(&component_id)) {
+                        ids[component_id] =
+                            Some(hierarchy.map_state(&prop, &numeric).map_err(|error| {
+                                EvaluationError::ComputationFailed(error.to_string())
+                            })?);
+                    }
+                }
+            }
+            if pdb_required {
+                for (pdb_id, pdb) in self.pdbs.iter().enumerate() {
+                    let sid = pdb
+                        .abstract_state_id_from_source_state_values(&prop, &numeric)
+                        .map_err(EvaluationError::ComputationFailed)?;
+                    ids[pdb_offset + pdb_id] = sid;
+                }
             }
         }
 
@@ -1221,6 +1248,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     }
 
     fn update_improvement_status(&self, state: &mut ScpOnlineState) {
+        if !self.config.online {
+            return;
+        }
         let time_limit_reached = self.config.max_time.is_finite()
             && state.start_time.elapsed() >= Duration::from_secs_f64(self.config.max_time);
 
@@ -1228,33 +1258,25 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         {
             state.improve_heuristic = false;
         }
-
-        // With a one-shot `interval` (e.g. `usize::MAX`), we only ever rebuild
-        // the CP at evaluation 0. Once that CP exists, holding the entire
-        // abstraction collection — including the per-operator footprints
-        // (~1.6 GB on sailing prob_1_11) — is pure dead weight for the rest
-        // of search. Flip the flag here so `release_abstractions_if_finished`
-        // drops them.
-        if state.improve_heuristic
-            && !state.cp_heuristics.is_empty()
-            && self.config.interval == usize::MAX
-        {
-            state.improve_heuristic = false;
-        }
     }
 
     fn release_abstractions_if_finished(&self, state: &mut ScpOnlineState) {
         if !state.improve_heuristic && !state.improvement_ended {
-            let mut abs_guard = self.abstractions.borrow_mut();
-            if abs_guard.is_some() {
-                abs_guard.take();
-                state.improvement_ended = true;
-            }
+            let domain_released = self.abstractions.borrow_mut().take().is_some();
+            let cartesian_released = self.cartesian_abstractions.borrow_mut().take().is_some();
+            assert!(
+                domain_released || cartesian_released,
+                "SCP construction data must exist until improvement ends"
+            );
+            state.improvement_ended = true;
         }
     }
 
     fn should_build_cp(&self, state: &ScpOnlineState) -> bool {
-        state.improve_heuristic && state.evaluated_states.is_multiple_of(self.config.interval)
+        state.improve_heuristic
+            && (state.evaluated_states == 0
+                || (self.config.online
+                    && state.evaluated_states.is_multiple_of(self.config.interval)))
     }
 
     fn maybe_build_cp(
@@ -1273,7 +1295,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             Some(abs) => abs.as_slice(),
             None => &[],
         };
-        if abstractions.is_empty() && self.cartesian_heuristics.is_empty() && self.pdbs.is_empty() {
+        if abstractions.is_empty() && self.cartesian_hierarchies.is_empty() && self.pdbs.is_empty()
+        {
             return Ok(None);
         }
         let original_costs = self.original_operator_costs.as_slice();
@@ -1999,7 +2022,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     &mut cp,
                     &mut remaining_costs,
                     pos,
-                    abstraction,
+                    &abstraction,
                     abstract_state_ids,
                     budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
                     deadline,
@@ -2536,7 +2559,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     &mut cp,
                     &mut remaining_costs,
                     pos,
-                    abstraction,
+                    &abstraction,
                     abstract_state_ids,
                     deadline,
                 )?;
@@ -2584,7 +2607,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     &mut cp,
                     &mut remaining_costs,
                     pos,
-                    abstraction,
+                    &abstraction,
                     abstract_state_ids,
                     deadline,
                 )?;
@@ -2748,7 +2771,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     &mut cp,
                     &mut remaining_costs,
                     pos,
-                    abstraction,
+                    &abstraction,
                     abstract_state_ids,
                     None,
                     deadline,
@@ -3900,6 +3923,12 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
             Self::accept_improved_cp(&mut state, cp, abstract_state_ids, &mut max_h);
         }
 
+        if build_cp && (!self.config.online || self.config.interval == usize::MAX) {
+            state.improve_heuristic = false;
+        }
+        self.update_improvement_status(&mut state);
+        self.release_abstractions_if_finished(&mut state);
+
         state.evaluated_states = state.evaluated_states.saturating_add(1);
         Ok(max_h)
     }
@@ -3968,6 +3997,7 @@ mod handcrafted_sailing_tests {
         }
 
         let config = ScpOnlineConfig {
+            online: true,
             max_time: 300.0,
             table_construction_max_time: 30.0,
             max_size: 10_000_000,
@@ -4840,6 +4870,28 @@ mod tests {
                 assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
             }
         }
+    }
+
+    #[test]
+    fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
+        let task = independent_goals_task();
+        let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
+        let mut config = scp_config(Saturator::All, true);
+        config.online = false;
+        config.interval = 1;
+        let heuristic = SaturatedCostPartitioningOnlineHeuristic::from_components(
+            None,
+            vec![component],
+            config,
+            &task,
+        )
+        .unwrap();
+
+        assert!(heuristic.cartesian_abstractions.borrow().is_some());
+        assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
+        assert!(heuristic.cartesian_abstractions.borrow().is_none());
+        assert!(heuristic.state.borrow().improvement_ended);
+        assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
     }
 
     #[test]

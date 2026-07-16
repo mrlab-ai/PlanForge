@@ -82,6 +82,7 @@ pub(crate) fn require_only_component_sources(
 
 pub(crate) fn validate_scp_combinator_options(args: &[ConfigArg]) -> Result<(), String> {
     const ALLOWED: &[&str] = &[
+        "online",
         "max_time",
         "table_construction_max_time",
         "max_size",

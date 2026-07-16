@@ -1765,7 +1765,7 @@ impl DomainAbstractionFactory {
             initial_state_hash: init_hash,
             hash_multipliers: hash_multipliers.to_vec(),
             numeric_domain_sizes: numeric_domain_sizes.to_vec(),
-            state_regions,
+            state_regions: state_regions.into_iter().map(Arc::new).collect(),
         })
     }
 

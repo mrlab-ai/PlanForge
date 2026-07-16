@@ -2455,14 +2455,12 @@ fn finalize_abstraction(
     } else {
         Vec::new()
     };
-    let shared_state_regions = compute_operator_footprints.then(|| {
-        working
-            .states
-            .iter()
-            .cloned()
-            .map(Arc::new)
-            .collect::<Vec<_>>()
-    });
+    let shared_state_regions = working
+        .states
+        .iter()
+        .cloned()
+        .map(Arc::new)
+        .collect::<Vec<_>>();
     let mut relevant = HashSet::new();
     for (transition_id, (source, target, labels)) in raw.into_iter().enumerate() {
         for &label in &labels {
@@ -2475,12 +2473,7 @@ fn finalize_abstraction(
                     .copied()
                     .map(|concrete_op_id| ConcreteOperatorFootprint {
                         concrete_op_id,
-                        source_region: Arc::clone(
-                            &shared_state_regions
-                                .as_ref()
-                                .expect("Cartesian footprints require shared state regions")
-                                [source],
-                        ),
+                        source_region: Arc::clone(&shared_state_regions[source]),
                         allocable: true,
                         max_allocation_fraction: 1.0,
                         non_allocable_reason: None,
@@ -2521,7 +2514,7 @@ fn finalize_abstraction(
         initial_state_hash,
         hash_multipliers: Vec::new(),
         numeric_domain_sizes: Vec::new(),
-        state_regions: working.states.clone(),
+        state_regions: shared_state_regions,
     };
     let transition_costs = transition_system
         .transitions

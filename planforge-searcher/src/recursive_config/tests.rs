@@ -534,6 +534,14 @@ fn display_round_trips_scp_online_with_nested_collection() {
 }
 
 #[test]
+fn parses_explicit_offline_scp() {
+    let h = astar_heuristic("astar(scp_online(online=false))");
+    let mut config = ScpOnlineConfig::default();
+    ApplyOptions::apply_options(&mut config, &h.args).unwrap();
+    assert!(!config.online);
+}
+
+#[test]
 fn display_round_trips_positional_args() {
     let parsed = parse_search_spec("astar(greedy_numeric_pdb(321, false, 7))").unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
