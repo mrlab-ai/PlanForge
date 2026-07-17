@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use planforge_sas::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
@@ -594,6 +596,61 @@ fn goal_collection_preserves_empty_goal_tasks() {
     assert!(abstractions[0].metadata.solved_by_self);
     assert_eq!(abstractions[0].metadata.collection_goal_id, None);
     assert_eq!(abstractions[0].metadata.collection_variant_id, None);
+}
+
+#[test]
+fn collection_time_limit_keeps_mandatory_first_abstraction() {
+    let task = numeric_goal_task(
+        vec![comparison_variable("x-at-three")],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+            NumericVariable::new("three".into(), NumericType::Constant, None),
+        ],
+        vec![0.0, 1.0, 3.0],
+        vec![Operator::new(
+            "increment".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                1,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![ComparisonAxiom::new(
+            0,
+            0,
+            2,
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![],
+    );
+
+    let abstractions =
+        CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+            abstraction: CartesianAbstractionConfig {
+                max_states: 64,
+                ..Default::default()
+            },
+            variants_per_goal: 3,
+            max_collection_states: 192,
+            total_max_time: Some(Duration::ZERO),
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+
+    assert_eq!(abstractions.len(), 1);
+    assert_eq!(
+        abstractions[0].metadata.stop_reason,
+        CartesianStopReason::TimeLimit
+    );
+    assert_eq!(abstractions[0].metadata.collection_goal_id, Some(0));
+    assert_eq!(abstractions[0].metadata.collection_variant_id, Some(0));
 }
 
 fn comparison_variable(name: &str) -> ExplicitVariable {
