@@ -50,6 +50,14 @@ impl<'task> AbstractionComponent<'task> {
         Self::PatternDatabase(Box::new(pdb))
     }
 
+    pub fn discard_transition_data(&mut self) {
+        match self {
+            Self::Domain(heuristic) => heuristic.discard_transition_data(),
+            Self::Cartesian(heuristic) => heuristic.discard_transition_data(),
+            Self::PatternDatabase(_) => {}
+        }
+    }
+
     pub fn kind(&self) -> AbstractionKind {
         match self {
             Self::Domain(_) => AbstractionKind::Domain,

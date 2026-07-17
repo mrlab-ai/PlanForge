@@ -38,11 +38,11 @@ class CachedRustPlannerRevision(CachedRevision):
 
     def _cleanup(self):
         """
-        Keep only the release binary and remove unnecessary files.
+        Keep only the selected profile and remove unnecessary files.
         """
-        target_dir = self.path / "target" / "release"
+        target_dir = self.path / "target" / self.profile
 
-        # Remove everything except release binaries
+        # Remove everything except binaries from the selected profile.
         for path in self.path.glob("target/*"):
             if path != target_dir:
                 tools.remove_path(path)
@@ -61,4 +61,9 @@ class CachedRustPlannerRevision(CachedRevision):
         """
         Return path to compiled binary inside experiment.
         """
+        binary = self.path / "target" / self.profile / binary_name
+        if not binary.is_file():
+            raise FileNotFoundError(
+                f"Rust planner binary was not built for profile {self.profile}: {binary}"
+            )
         return self.get_relative_exp_path(f"target/{self.profile}/{binary_name}")

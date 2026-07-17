@@ -602,14 +602,16 @@ impl<'task> FillScpHeuristic<'task> {
         let abstraction_heuristics = abstractions
             .into_iter()
             .enumerate()
-            .map(|(index, abstraction)| {
+            .map(|(index, mut abstraction)| {
+                abstraction.discard_transition_data();
                 DomainAbstractionHeuristic::new(Some(format!("fillSCP_{index}")), abstraction)
             })
             .collect();
         let cartesian_heuristics = cartesian_abstractions
             .into_iter()
             .enumerate()
-            .map(|(index, abstraction)| {
+            .map(|(index, mut abstraction)| {
+                abstraction.discard_transition_data();
                 CartesianAbstractionHeuristic::new(
                     Some(format!("fillSCP_cartesian_{index}")),
                     abstraction,
@@ -708,10 +710,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
         let abstraction_heuristics = abstractions
             .iter()
-            .cloned()
             .enumerate()
             .map(|(index, abstraction)| {
-                DomainAbstractionHeuristic::new(Some(format!("scp_online_{index}")), abstraction)
+                DomainAbstractionHeuristic::new(
+                    Some(format!("scp_online_{index}")),
+                    abstraction.lookup_clone(),
+                )
             })
             .collect();
         let cartesian_hierarchies = cartesian_abstractions
@@ -1240,7 +1244,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     }
 
     fn is_online_deadline_error(error: &anyhow::Error) -> bool {
-        error.to_string().contains("online SCP deadline exceeded")
+        crate::resource_limits::is_deadline_exceeded(error)
     }
 
     fn is_online_deadline_error_eval(error: &EvaluationError) -> bool {

@@ -15,10 +15,10 @@ use planforge_sas::utils::linear_effects::linearize_numeric_var;
 use rand::seq::SliceRandom;
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::evaluation::abstraction_collections::portfolio::mix_seed;
-use crate::evaluation::abstraction_task::SingleGoalTask;
+use crate::evaluation::abstraction_task::{AbstractionUse, SingleGoalTask};
 use crate::evaluation::domain_abstractions::cegar::FlawKind;
 
 use super::additive_numeric_views::{
@@ -35,9 +35,9 @@ use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, DomainAbstractionMetadata,
 };
-use super::memory_padding;
 use super::utils::compute_abstraction_size_u128;
 use crate::evaluation::abstraction_collections::transition_cost_partitioning::FiniteSupportConfig;
+use crate::resource_limits;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -302,10 +302,7 @@ fn time_seed() -> u64 {
 }
 
 fn is_generation_deadline_error(error: &anyhow::Error) -> bool {
-    let message = error.to_string();
-    message.contains("domain abstraction generation deadline exceeded")
-        || message.contains("abstract operator generation deadline exceeded")
-        || message.contains("online SCP deadline exceeded")
+    crate::resource_limits::is_deadline_exceeded(error)
 }
 
 impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
@@ -451,7 +448,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         let mut goal_index = 0usize;
         let mut group_index = 0usize;
         let mut complementary_direction = ComplementaryDirection::Regression;
-        let mut stopped_by_generation_deadline = false;
+        let stop_reason: &str;
         loop {
             let elapsed = start.elapsed().as_secs_f64();
             if !blacklisting && elapsed > blacklist_start_time {
@@ -471,7 +468,15 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let remaining_abstraction_size =
                 remaining_collection_size.min(self.config.max_abstraction_size);
 
-            if remaining_abstraction_size == 0 || remaining_generation_time <= 0.0 {
+            if remaining_abstraction_size == 0 {
+                stop_reason = "collection size limit";
+                break;
+            }
+            // Numeric FD constructs one abstraction before checking
+            // collection-level limits. A collection must never silently
+            // become an empty successful heuristic.
+            if remaining_generation_time <= 0.0 && !generated_abstractions.is_empty() {
+                stop_reason = "collection time limit";
                 break;
             }
 
@@ -563,7 +568,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let generator = DomainAbstractionGenerator::new(cegar_config)
                 .context("failed to construct single-abstraction CEGAR generator")?;
             let generation_start = Instant::now();
-            info!(
+            debug!(
                 "domain abstraction collection: starting CEGAR generation iteration {}, remaining_generation_time={:.2}s, full_goal_task={}, flaw_kind={}",
                 iteration, remaining_generation_time, full_goal_task, flaw_kind
             );
@@ -575,7 +580,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                         iteration,
                         generated_abstractions.len()
                     );
-                    stopped_by_generation_deadline = true;
+                    stop_reason = "abstraction generation deadline";
                     break;
                 }
                 Err(error) => {
@@ -586,20 +591,23 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     });
                 }
             };
-            info!(
+            debug!(
                 "domain abstraction collection: finished CEGAR generation iteration {} in {:.3}s",
                 iteration,
                 generation_start.elapsed().as_secs_f64()
             );
             let solved_by_self = abstraction.metadata.solved_by_self;
+            let cegar_stop_reason = abstraction.metadata.stop_reason;
             abstraction.metadata = DomainAbstractionMetadata {
                 collection_iteration: Some(iteration),
                 portfolio_strategy: Some(self.config.portfolio_strategy.to_string()),
                 flaw_kind: Some(flaw_kind.to_string()),
                 full_goal_task: Some(full_goal_task),
+                abstraction_use: AbstractionUse::CollectionMember,
                 initial_seed_splits: seed_descriptions,
                 max_abstraction_size: Some(remaining_abstraction_size),
                 solved_by_self,
+                stop_reason: cegar_stop_reason,
             };
 
             let abstraction_size = compute_abstraction_size_u128(
@@ -623,7 +631,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                         );
                     }
                 }
-                info!(
+                debug!(
                     "domain abstraction collection: added abstraction at iteration {}, abstraction_size={}, elapsed={:.2}s, remaining_collection_size={}, next_max_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
                     iteration,
                     abstraction_size,
@@ -637,37 +645,26 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
 
             let stagnated =
                 elapsed - time_point_of_last_new_abstraction > self.config.stagnation_limit;
-            if remaining_collection_size == 0
-                || (self.config.total_max_time.is_finite() && elapsed >= self.config.total_max_time)
-                || (stagnated && (!self.config.enable_blacklist_on_stagnation || blacklisting))
-            {
+            if remaining_collection_size == 0 {
+                stop_reason = "collection size limit";
                 break;
             }
-            if solved_by_self && full_goal_task {
-                // The just-built abstraction's wildcard plan is a real
-                // concrete plan (CEGAR exited at `flaws.is_empty()`), so
-                // `h_DA(init)` is *tight* at the optimal cost. Adding more
-                // abstractions cannot improve the canonical/max heuristic at
-                // the initial state and only inflates memory. This is only
-                // true for the full task. Complementary one-goal tasks still
-                // cycle root groups and directions for deterministic seeding.
-                info!(
-                    "domain abstraction collection: stopping early at iteration {iteration} \
-                     because abstraction's wildcard plan is a real concrete plan \
-                     (solved_by_self=true)"
-                );
+            if self.config.total_max_time.is_finite() && elapsed >= self.config.total_max_time {
+                stop_reason = "collection time limit";
                 break;
             }
-            // Memory safety net (mirrors numeric-FD's
-            // `utils::extra_memory_padding`). Once RSS approaches the
-            // configured ceiling, drop the reserved padding so the search
-            // engine still has headroom, and bail out of further
-            // abstraction generation.
-            if !memory_padding::poll_and_release_if_exceeded() {
+            if stagnated && (!self.config.enable_blacklist_on_stagnation || blacklisting) {
+                stop_reason = "stagnation limit";
+                break;
+            }
+            // Release the reserved padding before the process reaches its hard limit,
+            // leaving enough memory for search to report a useful result.
+            if !resource_limits::poll_and_release_if_exceeded() {
                 info!(
                     "domain abstraction collection: stopping at iteration {iteration} \
                      because the memory padding was released (RSS limit reached)"
                 );
+                stop_reason = "memory limit";
                 break;
             }
             if stagnated && self.config.enable_blacklist_on_stagnation {
@@ -697,6 +694,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                                      generation after every goal, root group, and direction was \
                                      attempted"
                                 );
+                                stop_reason = "complementary schedule exhausted";
                                 break;
                             }
                         }
@@ -707,15 +705,31 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             iteration += 1;
         }
 
-        if generated_abstractions.is_empty() && stopped_by_generation_deadline {
-            info!(
-                "domain abstraction collection: returning empty collection after generation deadline"
-            );
-            return Ok(generated_abstractions);
-        }
         if generated_abstractions.is_empty() {
-            bail!("multi_domain_abstractions(...) failed to generate any abstractions")
+            bail!(
+                "multi_domain_abstractions(...) failed to generate the mandatory first abstraction ({stop_reason})"
+            )
         }
+        let total_states = generated_abstractions.iter().try_fold(
+            0u128,
+            |total, abstraction| -> Result<u128> {
+                let size = compute_abstraction_size_u128(
+                    abstraction.factory.domain_sizes(),
+                    abstraction.factory.numeric_domain_sizes(),
+                )
+                .context("domain abstraction size overflow in collection summary")?;
+                total
+                    .checked_add(size)
+                    .context("domain abstraction collection state count overflow")
+            },
+        )?;
+        info!(
+            "domain abstraction collection finished: abstractions={}, states={}, elapsed={:.3}s, stop_reason={}",
+            generated_abstractions.len(),
+            total_states,
+            start.elapsed().as_secs_f64(),
+            stop_reason
+        );
         if self.config.debug {
             log_collection_debug_summary(&generated_abstractions);
         }

@@ -108,6 +108,14 @@ pub struct PlannersCli {
 pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     let current_executable = std::env::current_exe()?;
     let mut child_args = vec![OsString::from("--internal-run")];
+    if let Some(max_memory) = cli.max_memory {
+        child_args.push(OsString::from("--max-memory"));
+        child_args.push(OsString::from(max_memory.to_string()));
+    }
+    if let Some(max_time) = cli.max_time {
+        child_args.push(OsString::from("--max-time"));
+        child_args.push(OsString::from(format_time_limit(max_time)));
+    }
     if let Some(level) = cli.log_level {
         child_args.push(OsString::from("--log-level"));
         child_args.push(OsString::from(level.to_string()));
@@ -279,28 +287,20 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         task.numeric_variables().len()
     );
 
-    let time_limit = if cli.internal_run { None } else { cli.max_time };
-    let memory_limit = if cli.internal_run {
-        None
-    } else {
-        cli.max_memory
-    };
+    let time_limit = cli.max_time;
+    let memory_limit = cli.max_memory;
     let result = match &cli.search {
         planforge_searcher::SearchSpec::Astar(_)
         | planforge_searcher::SearchSpec::Gbfs(_)
         | planforge_searcher::SearchSpec::AstarFs(_, _) => {
             solve_task(task.clone(), &cli.search, time_limit, memory_limit)?
         }
-        planforge_searcher::SearchSpec::DaDebug => run_da_debug(
-            &*task,
-            StateRegistry::for_task(task.clone()),
-            if cli.internal_run { None } else { cli.max_time },
-        )?,
-        planforge_searcher::SearchSpec::AstarDaDebug => run_astar_da_debug(
-            &*task,
-            StateRegistry::for_task(task.clone()),
-            if cli.internal_run { None } else { cli.max_time },
-        )?,
+        planforge_searcher::SearchSpec::DaDebug => {
+            run_da_debug(&*task, StateRegistry::for_task(task.clone()), cli.max_time)?
+        }
+        planforge_searcher::SearchSpec::AstarDaDebug => {
+            run_astar_da_debug(&*task, StateRegistry::for_task(task.clone()), cli.max_time)?
+        }
     };
 
     print_search_result(&result);

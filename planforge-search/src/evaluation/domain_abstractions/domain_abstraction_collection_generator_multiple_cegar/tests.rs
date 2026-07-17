@@ -1,8 +1,57 @@
 use super::*;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, Metric, NumericRootTask, NumericVariable,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
+    NumericRootTask, NumericVariable,
 };
+
+#[test]
+fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![ExplicitVariable::new(
+            2,
+            "goal".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            1,
+        )],
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![Operator::new(
+            "set-goal".into(),
+            vec![],
+            vec![Effect::new(vec![], 0, Some(0), 1)],
+            vec![],
+            1,
+        )],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        max_abstraction_size: 10,
+        max_collection_size: 100,
+        abstraction_generation_max_time: 0.0,
+        total_max_time: 0.0,
+        compute_operator_footprints: false,
+        ..Default::default()
+    };
+    let abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
+        .generate_collection(&task)
+        .unwrap();
+
+    assert_eq!(abstractions.len(), 1);
+    assert_eq!(
+        abstractions[0].metadata.abstraction_use,
+        AbstractionUse::CollectionMember
+    );
+}
 
 #[test]
 fn single_init_split_selection_uses_round_robin_iteration_order() {

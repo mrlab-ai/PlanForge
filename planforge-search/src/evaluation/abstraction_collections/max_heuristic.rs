@@ -12,10 +12,13 @@ pub struct MaxAbstractionHeuristic<'task> {
 impl<'task> MaxAbstractionHeuristic<'task> {
     pub fn new(
         name: Option<String>,
-        components: Vec<AbstractionComponent<'task>>,
+        mut components: Vec<AbstractionComponent<'task>>,
     ) -> Result<Self, String> {
         if components.is_empty() {
             return Err("max abstraction heuristic requires at least one component".to_string());
+        }
+        for component in &mut components {
+            component.discard_transition_data();
         }
         Ok(Self {
             name: name.unwrap_or_else(|| "max_abstractions".to_string()),
@@ -53,9 +56,7 @@ impl Heuristic for MaxAbstractionHeuristic<'_> {
     }
 
     fn proves_initial_state_optimal(&self) -> bool {
-        self.components
-            .iter()
-            .any(AbstractionComponent::proves_initial_state_optimal)
+        false
     }
 
     fn heuristic_name(&self) -> String {

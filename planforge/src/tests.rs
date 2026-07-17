@@ -20,6 +20,8 @@ fn parses_time_limit_suffixes() {
         parse_time_limit("250ms").unwrap(),
         Duration::from_millis(250)
     );
+    assert_eq!(format_time_limit(Duration::from_secs(60)), "60s");
+    assert_eq!(format_time_limit(Duration::from_millis(250)), "250ms");
 }
 
 #[test]

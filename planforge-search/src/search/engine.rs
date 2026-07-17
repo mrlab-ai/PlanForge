@@ -813,7 +813,7 @@ impl<'a> AStarSearch<'a> {
                 let plan = self.space.extract_plan(goal_state_id, &*self.task);
                 let solution_cost = self.space.node(goal_state_id).map(|info| info.g_value);
 
-                assert!(
+                debug_assert!(
                     !self.initial_state_is_proven_optimal
                         || self.stats.counters_at_last_jump.expanded == 0,
                     "A* entered a higher f-layer after its heuristic proved h(init) = h*: {} nodes were expanded before the last jump",

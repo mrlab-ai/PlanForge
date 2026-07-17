@@ -145,6 +145,19 @@ pub fn parse_time_limit(input: &str) -> Result<Duration, String> {
     }
 }
 
+pub fn format_time_limit(limit: Duration) -> String {
+    if limit.subsec_nanos() == 0 {
+        format!("{}s", limit.as_secs())
+    } else {
+        assert_eq!(
+            limit.subsec_nanos() % 1_000_000,
+            0,
+            "time limit must have millisecond precision"
+        );
+        format!("{}ms", limit.as_millis())
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub fn peak_memory_kb() -> u64 {
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {

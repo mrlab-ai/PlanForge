@@ -159,14 +159,20 @@ pub struct CegarStep {
 pub struct CegarOutcome {
     pub final_state: CegarState,
     pub last_step: CegarStep,
-    /// True iff CEGAR's loop exited because no flaws remained: the
-    /// abstract wildcard plan is therefore already a real concrete plan
-    /// (or the initial state is itself the goal, plan empty). When set,
-    /// `h_DA(init)` is exact for the optimal cost — admissible *and*
-    /// tight — so subsequent abstractions in the collection cannot
-    /// improve the canonical (max) heuristic at the initial state, and
-    /// the collection generator can stop early to save memory.
+    pub stop_reason: CegarStopReason,
+    /// True iff CEGAR's loop exited because no flaws remained. For a
+    /// standalone full-task abstraction, the abstract plan is then a real
+    /// concrete plan and `h(init)` is optimal.
     pub solved_by_self: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CegarStopReason {
+    ConcretePlan,
+    TimeLimit,
+    MemoryLimit,
+    IterationLimit,
+    NoRefinableFlaw,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -280,11 +286,19 @@ impl Cegar {
         })?;
         let mut wildcard_plan = None;
         let mut solved_by_self = false;
+        let mut stop_reason = CegarStopReason::IterationLimit;
 
         while iteration <= config.max_iterations {
+            if iteration.is_multiple_of(64)
+                && !crate::resource_limits::poll_and_release_if_exceeded()
+            {
+                stop_reason = CegarStopReason::MemoryLimit;
+                break;
+            }
             if let Some(max_time) = config.max_time
                 && start.elapsed() >= max_time
             {
+                stop_reason = CegarStopReason::TimeLimit;
                 break;
             }
 
@@ -313,6 +327,7 @@ impl Cegar {
                         "CEGAR: deadline expired while computing abstract plan at iteration {}; stopping refinement",
                         iteration
                     );
+                    stop_reason = CegarStopReason::TimeLimit;
                     break;
                 }
                 Err(error) => {
@@ -370,9 +385,8 @@ impl Cegar {
                 super::utils::debug_print_flaws(&flaws);
             }
             if flaws.is_empty() {
-                // Plan has no flaws → it is a real concrete plan; flag for
-                // collection-level early exit.
                 solved_by_self = true;
+                stop_reason = CegarStopReason::ConcretePlan;
                 break;
             }
             let eligible_flaws =
@@ -389,6 +403,7 @@ impl Cegar {
                     flaws.len(),
                     iteration
                 );
+                stop_reason = CegarStopReason::NoRefinableFlaw;
                 break;
             }
 
@@ -436,6 +451,7 @@ impl Cegar {
                 );
             }
             if refined.is_empty() {
+                stop_reason = CegarStopReason::NoRefinableFlaw;
                 break;
             }
             let split_values: Vec<_> = eligible_flaws
@@ -488,15 +504,14 @@ impl Cegar {
         Ok(CegarOutcome {
             final_state: CegarState::new(factory, iteration),
             last_step,
+            stop_reason,
             solved_by_self,
         })
     }
 }
 
 fn is_deadline_error(error: &anyhow::Error) -> bool {
-    let message = error.to_string();
-    message.contains("online SCP deadline exceeded")
-        || message.contains("abstract operator generation deadline exceeded")
+    crate::resource_limits::is_deadline_exceeded(error)
 }
 
 #[derive(Debug, Clone)]

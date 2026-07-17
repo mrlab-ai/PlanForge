@@ -71,7 +71,12 @@ class RustPlannerRun(Run):
         self.set_property("repo", algo.cached_revision.repo)
         self.set_property("local_revision", algo.cached_revision.local_rev)
         self.set_property("global_revision", algo.cached_revision.global_rev)
+        self.set_property("build_profile", algo.cached_revision.profile)
         self.set_property("build_options", algo.cached_revision.build_options)
+        self.set_property(
+            "binary",
+            algo.cached_revision.get_binary_path(algo.binary_name),
+        )
         self.set_property("options", algo.options)
 
         for key, value in task.properties.items():

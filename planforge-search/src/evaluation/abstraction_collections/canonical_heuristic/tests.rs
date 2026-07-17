@@ -4,6 +4,7 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::evaluation::abstraction_collections::max_heuristic::MaxAbstractionHeuristic;
+use crate::evaluation::abstraction_task::AbstractionUse;
 use crate::evaluation::cartesian_abstractions::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
@@ -183,4 +184,29 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
             .any(|subset| subset == &[0, 2])
     );
     assert_eq!(canonical.compute_heuristic(&eval_state).unwrap(), 5.0);
+}
+
+#[test]
+fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() {
+    let task = simple_task();
+    let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
+    domain.relevant_operator_ids = vec![0];
+    domain.metadata.solved_by_self = true;
+    domain.metadata.abstraction_use = AbstractionUse::Standalone;
+    let component = AbstractionComponent::domain(None, domain);
+    assert!(component.proves_initial_state_optimal());
+    let max = MaxAbstractionHeuristic::new(None, vec![component]).unwrap();
+    assert!(!max.proves_initial_state_optimal());
+
+    let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
+    domain.relevant_operator_ids = vec![0];
+    domain.metadata.solved_by_self = true;
+    domain.metadata.abstraction_use = AbstractionUse::Standalone;
+    let canonical = CanonicalAbstractionHeuristic::new(
+        None,
+        &task,
+        vec![AbstractionComponent::domain(None, domain)],
+    )
+    .unwrap();
+    assert!(!canonical.proves_initial_state_optimal());
 }

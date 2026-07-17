@@ -3,9 +3,10 @@ use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::AbstractNumericTask;
 
 use super::abstract_operator_generator::AbstractOperator;
-use super::cegar::{Cegar, CegarConfig};
+use super::cegar::{Cegar, CegarConfig, CegarStopReason};
 use super::domain_abstraction_factory::{AbstractDistanceTable, DomainAbstractionFactory};
 use crate::evaluation::abstraction_collections::transition_cost_partitioning::AbstractOperatorFootprint;
+use crate::evaluation::abstraction_task::AbstractionUse;
 
 /// Fully built abstraction artifact that can be used to evaluate concrete states.
 #[derive(Debug, Clone)]
@@ -27,6 +28,17 @@ impl DomainAbstraction {
     ) -> &'task dyn AbstractNumericTask {
         fallback
     }
+
+    pub fn discard_transition_data(&mut self) {
+        self.abstract_operators.clear();
+        self.abstract_operator_footprints.clear();
+    }
+
+    pub fn lookup_clone(&self) -> Self {
+        let mut abstraction = self.clone();
+        abstraction.discard_transition_data();
+        abstraction
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -35,13 +47,13 @@ pub struct DomainAbstractionMetadata {
     pub portfolio_strategy: Option<String>,
     pub flaw_kind: Option<String>,
     pub full_goal_task: Option<bool>,
+    pub abstraction_use: AbstractionUse,
+    pub stop_reason: Option<CegarStopReason>,
     pub initial_seed_splits: Vec<String>,
     pub max_abstraction_size: Option<usize>,
-    /// CEGAR exited because the wildcard plan has no flaws — the abstract
-    /// plan is therefore a real concrete plan and `h(init)` equals the
-    /// optimal cost. Lets the collection generator stop early when one
-    /// such abstraction is built, since canonical (max) and SCP cannot
-    /// improve on a tight optimal heuristic at the initial state.
+    /// CEGAR exited because the wildcard plan has no flaws. This proves
+    /// `h(init)` optimal only when `abstraction_use` is `Standalone`;
+    /// collection combinators deliberately do not expose that search shortcut.
     pub solved_by_self: bool,
 }
 
@@ -64,25 +76,17 @@ impl DomainAbstractionGenerator {
 
     /// Builds a domain abstraction and its abstract distance table.
     pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<DomainAbstraction> {
-        let deadline = self
-            .config
-            .max_time
-            .map(|max_time| std::time::Instant::now() + max_time);
         let outcome = self
             .cegar
             .build_abstraction(task)
             .context("CEGAR failed to build abstraction")?;
-        ensure!(
-            deadline.is_none_or(|deadline| std::time::Instant::now() < deadline),
-            "domain abstraction generation deadline exceeded"
-        );
-
         let solved_by_self = outcome.solved_by_self;
+        let stop_reason = outcome.stop_reason;
         let factory = outcome.final_state.factory;
         let mut operator_generator =
             factory.make_operator_generator(task, self.config.combine_labels)?;
         let abstract_operators = operator_generator
-            .build_abstract_operators_with_deadline(task, deadline)
+            .build_abstract_operators_with_deadline(task, None)
             .context("failed to build abstract operators")?;
         let abstract_operator_footprints = if self.config.compute_operator_footprints {
             factory
@@ -150,6 +154,8 @@ impl DomainAbstractionGenerator {
             abstract_operator_footprints,
             metadata: DomainAbstractionMetadata {
                 solved_by_self,
+                abstraction_use: AbstractionUse::Standalone,
+                stop_reason: Some(stop_reason),
                 ..DomainAbstractionMetadata::default()
             },
         })

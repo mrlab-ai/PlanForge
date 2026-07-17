@@ -7,6 +7,7 @@ pub mod causal_graph;
 pub mod config;
 pub mod evaluation;
 pub mod open_lists;
+pub mod resource_limits;
 pub mod search;
 pub mod successor_generator;
 pub mod task_restriction;

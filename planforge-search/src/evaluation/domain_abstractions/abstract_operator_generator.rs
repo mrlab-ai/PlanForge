@@ -28,11 +28,7 @@ const COMPARISON_FALSE_VAL: usize = 1;
 const COMPARISON_UNKNOWN_VAL: usize = 2;
 
 fn ensure_generation_deadline(deadline: Option<Instant>) -> Result<()> {
-    ensure!(
-        deadline.is_none_or(|deadline| Instant::now() < deadline),
-        "abstract operator generation deadline exceeded"
-    );
-    Ok(())
+    crate::resource_limits::ensure_before_deadline(deadline, "abstract operator generation")
 }
 
 pub type DomainMapping = Vec<Vec<usize>>;

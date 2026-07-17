@@ -8,17 +8,61 @@ use planforge_sas::numeric_task::{
 
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianStopReason, ShortestPaths,
-    Split, StateRegion, TransitionKey, WorkingAbstraction, retain_min_growth_splits,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics,
+    CartesianStopReason, ShortestPaths, Split, StateRegion, TransitionKey, WorkingAbstraction,
+    retain_min_growth_splits,
 };
 use crate::evaluation::domain_abstractions::comparison_expression::Interval;
 
 #[test]
-fn min_growth_is_sticky_after_the_initial_tie() {
+fn min_growth_uses_projected_transition_count() {
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![ExplicitVariable::new(
+            2,
+            "goal".into(),
+            vec!["true".into(), "false".into()],
+            None,
+            1,
+        )],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("y".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+        ],
+        vec![ExplicitFact::new(0, 0)],
+        vec![],
+        vec![0],
+        vec![0.0, 0.0, 1.0],
+        vec![Operator::new(
+            "increment-x".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                2,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 1),
+    );
+    let semantics = CartesianSemantics::new(&task, None).unwrap();
     let mut working = WorkingAbstraction::new(StateRegion {
-        propositions: Vec::new(),
-        numeric: vec![Interval::unbounded(), Interval::unbounded()],
+        propositions: vec![vec![0, 1]],
+        numeric: vec![
+            Interval::unbounded(),
+            Interval::unbounded(),
+            Interval::singleton(1.0),
+        ],
     });
+    working.add_transition(0, 0, 0);
     let split = |var_id| Split::Numeric {
         state_id: 0,
         var_id,
@@ -28,15 +72,10 @@ fn min_growth_is_sticky_after_the_initial_tie() {
         description: String::new(),
     };
 
-    let mut tied = vec![split(0), split(1)];
-    retain_min_growth_splits(&working, &mut tied, |candidate| candidate);
-    assert_eq!(tied.len(), 2);
-
-    working.numeric_refinement_counts[0] = 1;
     let mut candidates = vec![split(0), split(1)];
-    retain_min_growth_splits(&working, &mut candidates, |candidate| candidate);
+    retain_min_growth_splits(&working, &semantics, &mut candidates, |candidate| candidate).unwrap();
     assert_eq!(candidates.len(), 1);
-    assert!(matches!(candidates[0], Split::Numeric { var_id: 0, .. }));
+    assert!(matches!(candidates[0], Split::Numeric { var_id: 1, .. }));
 }
 
 #[test]

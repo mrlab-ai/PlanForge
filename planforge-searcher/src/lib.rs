@@ -578,6 +578,14 @@ pub struct PlannersSearcherCli {
 pub fn run_wrapped_process(cli: &PlannersSearcherCli) -> std::io::Result<()> {
     let current_executable = std::env::current_exe()?;
     let mut child_args = vec![OsString::from("--internal-run")];
+    if let Some(max_memory) = cli.max_memory {
+        child_args.push(OsString::from("--max-memory"));
+        child_args.push(OsString::from(max_memory.to_string()));
+    }
+    if let Some(max_time) = cli.max_time {
+        child_args.push(OsString::from("--max-time"));
+        child_args.push(OsString::from(format_time_limit(max_time)));
+    }
     // Preserve the selected search configuration when re-executing ourselves.
     if let Some(level) = cli.log_level {
         child_args.push(OsString::from("--log-level"));
@@ -671,12 +679,8 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
             let heuristic_override =
                 build_heuristic_from_spec(heuristic_spec, &*task).map_err(std::io::Error::other)?;
 
-            let time_limit = if cli.internal_run { None } else { cli.max_time };
-            let memory_limit = if cli.internal_run {
-                None
-            } else {
-                cli.max_memory
-            };
+            let time_limit = cli.max_time;
+            let memory_limit = cli.max_memory;
             let mut search = if gbfs_priority {
                 AStarSearch::new_gbfs(
                     task.clone(),

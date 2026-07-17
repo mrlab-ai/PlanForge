@@ -32,7 +32,7 @@ use super::abstraction_collections::transition_cost_partitioning::{
     AbstractOperatorFootprint, AbstractTransition, AbstractTransitionSystem,
     ConcreteOperatorFootprint, PropValueId, StateRegion,
 };
-use super::abstraction_task::{SingleGoalTask, validate_abstraction_operator};
+use super::abstraction_task::{AbstractionUse, SingleGoalTask, validate_abstraction_operator};
 use super::domain_abstractions::cegar::flaw_search::state::progress;
 use super::domain_abstractions::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstractions::domain_abstraction_factory::AbstractDistanceTable;
@@ -40,22 +40,18 @@ use super::domain_abstractions::utils::{fact_is_hold, get_initial_state, make_pr
 
 const EPSILON: f64 = 1e-9;
 
-fn fact_choice_key(fact: &ExplicitFact) -> u64 {
-    let var_id = u64::try_from(fact.var()).expect("fact variable id does not fit u64");
-    let value = u64::try_from(fact.value()).expect("fact value does not fit u64");
-    var_id.rotate_left(32) ^ value
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CartesianStopReason {
     ConcretePlan,
     StateLimit,
     TimeLimit,
+    MemoryLimit,
 }
 
 #[derive(Debug, Clone)]
 pub struct CartesianAbstractionMetadata {
     pub solved_by_self: bool,
+    pub abstraction_use: AbstractionUse,
     pub stop_reason: CartesianStopReason,
     pub pending_flaw: Option<String>,
     pub refinements: usize,
@@ -294,6 +290,14 @@ impl CartesianAbstraction {
     pub fn abstract_state_id(&self, propositional: &[usize], numeric: &[f64]) -> Result<usize> {
         self.hierarchy.map_state(propositional, numeric)
     }
+
+    pub fn discard_transition_data(&mut self) {
+        self.transition_system.transitions.clear();
+        self.transition_system.backward.clear();
+        self.transition_system.forward.clear();
+        self.transition_system.state_regions.clear();
+        self.abstract_operator_footprints.clear();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -437,13 +441,6 @@ impl WorkingAbstraction {
 
     fn contains_transition(&self, key: TransitionKey) -> bool {
         self.transition_ids_by_key.contains_key(&key)
-    }
-
-    fn refinement_count(&self, split: &Split) -> usize {
-        match split {
-            Split::Propositional { var_id, .. } => self.propositional_refinement_counts[*var_id],
-            Split::Numeric { var_id, .. } => self.numeric_refinement_counts[*var_id],
-        }
     }
 }
 
@@ -982,10 +979,15 @@ impl CartesianAbstractionGenerator {
 
         let state_packer = Arc::new(make_prop_state_packer(task));
         let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
-        let mut refinements = 0;
+        let mut refinements: usize = 0;
 
         let mut shortest_paths = compute_shortest_paths(&working, &semantics)?;
         let (stop_reason, pending_flaw, solved_plan) = loop {
+            if refinements.is_multiple_of(64)
+                && !crate::resource_limits::poll_and_release_if_exceeded()
+            {
+                break (CartesianStopReason::MemoryLimit, None, None);
+            }
             let check = replay_optimal_abstract_trace(
                 &working,
                 &semantics,
@@ -1070,6 +1072,7 @@ impl CartesianAbstractionGenerator {
             abstract_operator_footprints: footprints,
             metadata: CartesianAbstractionMetadata {
                 solved_by_self: solved_plan.is_some(),
+                abstraction_use: AbstractionUse::Standalone,
                 stop_reason,
                 pending_flaw,
                 refinements,
@@ -1098,8 +1101,8 @@ impl CartesianAbstractionCollectionGenerator {
         Ok(Self { config })
     }
 
-    /// Builds the configured number of variants for every task goal, or one
-    /// full-task abstraction when the goal is empty.
+    /// Builds variants for task goals until the configured collection limit
+    /// is reached, or one full-task abstraction when the goal is empty.
     ///
     /// Each member changes only the goal view. Operators, state mappings, and
     /// concrete operator IDs stay identical to the base task, which makes the
@@ -1125,6 +1128,7 @@ impl CartesianAbstractionCollectionGenerator {
         let start = Instant::now();
         let mut remaining_states = self.config.max_collection_states;
         let mut abstractions = Vec::with_capacity(abstraction_count);
+        let mut stop_reason = "requested abstraction count reached";
         for abstraction_id in 0..abstraction_count {
             let goal_id = abstraction_id / variants_per_goal;
             let variant_id = abstraction_id % variants_per_goal;
@@ -1132,11 +1136,16 @@ impl CartesianAbstractionCollectionGenerator {
             let remaining_time = match self.config.total_max_time {
                 Some(total_max_time) => {
                     let elapsed = start.elapsed();
-                    ensure!(
-                        elapsed < total_max_time,
-                        "Cartesian collection total_max_time expired after {abstraction_id} of {abstraction_count} abstractions"
-                    );
-                    Some(total_max_time - elapsed)
+                    if elapsed >= total_max_time {
+                        if abstractions.is_empty() {
+                            Some(Duration::ZERO)
+                        } else {
+                            stop_reason = "collection time limit";
+                            break;
+                        }
+                    } else {
+                        Some(total_max_time - elapsed)
+                    }
                 }
                 None => None,
             };
@@ -1162,12 +1171,12 @@ impl CartesianAbstractionCollectionGenerator {
                 };
             }
 
-            let goal_task = (goal_count > 0)
-                .then(|| SingleGoalTask::new(task, task.get_goal_fact(goal_id).clone()));
+            let goal_task =
+                (goal_count > 0).then(|| SingleGoalTask::new(task, *task.get_goal_fact(goal_id)));
             let abstraction_task = goal_task
                 .as_ref()
                 .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
-            info!(
+            debug!(
                 "Cartesian collection: building abstraction {}/{abstraction_count}, goal={}, variant={}, max_states={}, seed={:?}",
                 abstraction_id + 1,
                 goal_id,
@@ -1188,14 +1197,20 @@ impl CartesianAbstractionCollectionGenerator {
             remaining_states -= state_count;
             abstraction.metadata.collection_goal_id = (goal_count > 0).then_some(goal_id);
             abstraction.metadata.collection_variant_id = (goal_count > 0).then_some(variant_id);
+            abstraction.metadata.abstraction_use = AbstractionUse::CollectionMember;
             abstractions.push(abstraction);
+            if !crate::resource_limits::poll_and_release_if_exceeded() {
+                stop_reason = "memory limit";
+                break;
+            }
         }
 
         info!(
-            "Cartesian collection: abstractions={}, states={}, elapsed={:.3}s",
+            "Cartesian collection: abstractions={}, states={}, elapsed={:.3}s, stop_reason={}",
             abstractions.len(),
             self.config.max_collection_states - remaining_states,
-            start.elapsed().as_secs_f64()
+            start.elapsed().as_secs_f64(),
+            stop_reason
         );
         Ok(abstractions)
     }
@@ -1497,63 +1512,6 @@ fn concrete_is_goal(
     })
 }
 
-fn fact_refinement_count(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
-    fact: &ExplicitFact,
-) -> Result<usize> {
-    if let Some(tree_id) = semantics
-        .comparison_tree_by_prop_var
-        .get(fact.var())
-        .copied()
-        .flatten()
-    {
-        let tree = semantics
-            .comparison_trees
-            .get(tree_id)
-            .with_context(|| format!("missing comparison tree {tree_id}"))?;
-        return Ok(tree
-            .regular_numeric_var_dependencies(semantics.task)
-            .into_iter()
-            .map(|var_id| working.numeric_refinement_counts[var_id])
-            .max()
-            .unwrap_or(0));
-    }
-    Ok(working
-        .propositional_refinement_counts
-        .get(fact.var())
-        .copied()
-        .with_context(|| {
-            format!(
-                "missing propositional refinement count for var {}",
-                fact.var()
-            )
-        })?)
-}
-
-fn retain_min_growth_facts(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
-    facts: &mut Vec<&ExplicitFact>,
-) -> Result<()> {
-    let refinement_counts = facts
-        .iter()
-        .map(|fact| fact_refinement_count(working, semantics, fact))
-        .collect::<Result<Vec<_>>>()?;
-    let most_refined = refinement_counts
-        .iter()
-        .copied()
-        .max()
-        .context("cannot rank an empty flaw set by growth")?;
-    let mut index = 0;
-    facts.retain(|_| {
-        let retain = refinement_counts[index] == most_refined;
-        index += 1;
-        retain
-    });
-    Ok(())
-}
-
 fn split_choice_key(split: &Split) -> u64 {
     match split {
         Split::Propositional { var_id, wanted, .. } => {
@@ -1573,17 +1531,188 @@ fn split_choice_key(split: &Split) -> u64 {
     }
 }
 
+fn split_child_regions(
+    working: &WorkingAbstraction,
+    split: &Split,
+) -> Result<(StateRegion, StateRegion)> {
+    let parent = working
+        .states
+        .get(split.state_id())
+        .with_context(|| format!("missing split state {}", split.state_id()))?;
+    match split {
+        Split::Propositional {
+            var_id,
+            wanted,
+            witness_value,
+            ..
+        } => {
+            let current = parent
+                .propositions
+                .get(*var_id)
+                .with_context(|| format!("split references missing prop var {var_id}"))?;
+            ensure!(
+                wanted.windows(2).all(|values| values[0] < values[1]),
+                "propositional Cartesian split values must be sorted and unique: {wanted:?}"
+            );
+            let wanted_values = current
+                .iter()
+                .copied()
+                .filter(|value| wanted.binary_search(value).is_ok())
+                .collect::<Vec<_>>();
+            let other_values = current
+                .iter()
+                .copied()
+                .filter(|value| wanted.binary_search(value).is_err())
+                .collect::<Vec<_>>();
+            ensure!(
+                !wanted_values.is_empty() && !other_values.is_empty(),
+                "non-strict propositional Cartesian split on var {var_id}: current={current:?}, wanted={wanted:?}"
+            );
+            let witness_is_wanted = wanted_values.binary_search(witness_value).is_ok();
+            let mut wanted_region = parent.clone();
+            wanted_region.propositions[*var_id] = wanted_values;
+            let mut other_region = parent.clone();
+            other_region.propositions[*var_id] = other_values;
+            Ok(if witness_is_wanted {
+                (wanted_region, other_region)
+            } else {
+                (other_region, wanted_region)
+            })
+        }
+        Split::Numeric {
+            var_id,
+            boundary,
+            lower_includes_boundary,
+            witness_value,
+            ..
+        } => {
+            let current = *parent
+                .numeric
+                .get(*var_id)
+                .with_context(|| format!("split references missing numeric var {var_id}"))?;
+            ensure!(
+                current.can_split_at(*boundary, *lower_includes_boundary),
+                "non-strict numeric Cartesian split on var {var_id} at {boundary}: parent={current:?}, include_lower={lower_includes_boundary}"
+            );
+            let lower = interval_intersection(
+                current,
+                Interval::new(
+                    f64::NEG_INFINITY,
+                    *boundary,
+                    false,
+                    *lower_includes_boundary,
+                ),
+            );
+            let upper = interval_intersection(
+                current,
+                Interval::new(*boundary, f64::INFINITY, !*lower_includes_boundary, false),
+            );
+            let witness_is_lower = lower.contains(*witness_value);
+            ensure!(
+                witness_is_lower ^ upper.contains(*witness_value),
+                "numeric split does not place witness {witness_value} in exactly one child"
+            );
+            let mut lower_region = parent.clone();
+            lower_region.numeric[*var_id] = lower;
+            let mut upper_region = parent.clone();
+            upper_region.numeric[*var_id] = upper;
+            Ok(if witness_is_lower {
+                (lower_region, upper_region)
+            } else {
+                (upper_region, lower_region)
+            })
+        }
+    }
+}
+
+fn projected_transition_count(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    split: &Split,
+) -> Result<usize> {
+    let split_state_id = split.state_id();
+    let new_state_id = working.states.len();
+    let (old_child, new_child) = split_child_regions(working, split)?;
+    let mut incident = working.outgoing[split_state_id].clone();
+    incident.extend(working.incoming[split_state_id].iter().copied());
+    incident.sort_unstable();
+    incident.dedup();
+
+    let unaffected = working
+        .transition_ids_by_key
+        .len()
+        .checked_sub(incident.len())
+        .expect("incident Cartesian transition count exceeds active transition count");
+    let mut replacements = HashSet::new();
+    for transition_id in incident {
+        let transition = working.transition(transition_id);
+        let sources: &[usize] = if transition.source == split_state_id {
+            &[split_state_id, new_state_id]
+        } else {
+            std::slice::from_ref(&transition.source)
+        };
+        let targets: &[usize] = if transition.target == split_state_id {
+            &[split_state_id, new_state_id]
+        } else {
+            std::slice::from_ref(&transition.target)
+        };
+        for &source in sources {
+            let source_region = if source == split_state_id {
+                &old_child
+            } else if source == new_state_id {
+                &new_child
+            } else {
+                &working.states[source]
+            };
+            for &target in targets {
+                let target_region = if target == split_state_id {
+                    &old_child
+                } else if target == new_state_id {
+                    &new_child
+                } else {
+                    &working.states[target]
+                };
+                if semantics.may_transition(
+                    source_region,
+                    transition.concrete_op_id,
+                    target_region,
+                )? {
+                    replacements.insert(TransitionKey {
+                        source,
+                        concrete_op_id: transition.concrete_op_id,
+                        target,
+                    });
+                }
+            }
+        }
+    }
+    unaffected
+        .checked_add(replacements.len())
+        .context("projected Cartesian transition count overflow")
+}
+
 fn retain_min_growth_splits<T>(
     working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
     candidates: &mut Vec<T>,
     split: impl Fn(&T) -> &Split,
-) {
-    let most_refined = candidates
+) -> Result<()> {
+    let projected_transition_counts = candidates
         .iter()
-        .map(|candidate| working.refinement_count(split(candidate)))
-        .max()
-        .expect("cannot rank an empty split candidate set by growth");
-    candidates.retain(|candidate| working.refinement_count(split(candidate)) == most_refined);
+        .map(|candidate| projected_transition_count(working, semantics, split(candidate)))
+        .collect::<Result<Vec<_>>>()?;
+    let minimum = projected_transition_counts
+        .iter()
+        .copied()
+        .min()
+        .context("cannot rank an empty split candidate set by growth")?;
+    let mut index = 0;
+    candidates.retain(|_| {
+        let retain = projected_transition_counts[index] == minimum;
+        index += 1;
+        retain
+    });
+    Ok(())
 }
 
 fn replay_optimal_abstract_trace(
@@ -1623,7 +1752,7 @@ fn replay_optimal_abstract_trace(
                     cost: concrete_cost,
                 }));
             }
-            let mut failed_goals = (0..semantics.task.get_num_goals())
+            let failed_goals = (0..semantics.task.get_num_goals())
                 .map(|goal_id| semantics.task.get_goal_fact(goal_id))
                 .filter(|goal| !fact_is_hold(goal, state_packer, &propositions))
                 .collect::<Vec<_>>();
@@ -1631,21 +1760,24 @@ fn replay_optimal_abstract_trace(
                 !failed_goals.is_empty(),
                 "abstract goal contains a concrete non-goal without a failed goal fact"
             );
-            retain_min_growth_facts(working, semantics, &mut failed_goals)?;
-            let goal_keys = failed_goals
+            let mut candidates = failed_goals
                 .iter()
-                .map(|goal| fact_choice_key(goal))
-                .collect::<Vec<_>>();
-            let failed_goal = failed_goals[semantics.choose_keyed_index(&goal_keys, 0x474F_414C)];
-            return Ok(PlanCheck::Refine(split_failed_fact(
-                working,
-                semantics,
-                abstract_state,
-                failed_goal,
-                &prop_values,
-                &numeric,
-                format!("goal {failed_goal:?}"),
-            )?));
+                .map(|goal| {
+                    split_failed_fact(
+                        working,
+                        semantics,
+                        abstract_state,
+                        goal,
+                        &prop_values,
+                        &numeric,
+                        format!("goal {goal:?}"),
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?;
+            retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
+            let keys = candidates.iter().map(split_choice_key).collect::<Vec<_>>();
+            let index = semantics.choose_keyed_index(&keys, 0x474F_414C);
+            return Ok(PlanCheck::Refine(candidates.swap_remove(index)));
         }
 
         ensure!(
@@ -1661,28 +1793,30 @@ fn replay_optimal_abstract_trace(
         );
         let op_id = transition.concrete_op_id;
         let op = &semantics.task.get_operators()[op_id];
-        let mut failed_preconditions = op
+        let failed_preconditions = op
             .preconditions()
             .iter()
             .filter(|fact| !fact_is_hold(fact, state_packer, &propositions))
             .collect::<Vec<_>>();
         if !failed_preconditions.is_empty() {
-            retain_min_growth_facts(working, semantics, &mut failed_preconditions)?;
-            let precondition_keys = failed_preconditions
+            let mut candidates = failed_preconditions
                 .iter()
-                .map(|precondition| fact_choice_key(precondition))
-                .collect::<Vec<_>>();
-            let failed =
-                failed_preconditions[semantics.choose_keyed_index(&precondition_keys, 0x5052_4543)];
-            return Ok(PlanCheck::Refine(split_failed_fact(
-                working,
-                semantics,
-                abstract_state,
-                failed,
-                &prop_values,
-                &numeric,
-                format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
-            )?));
+                .map(|failed| {
+                    split_failed_fact(
+                        working,
+                        semantics,
+                        abstract_state,
+                        failed,
+                        &prop_values,
+                        &numeric,
+                        format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?;
+            retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
+            let keys = candidates.iter().map(split_choice_key).collect::<Vec<_>>();
+            let index = semantics.choose_keyed_index(&keys, 0x5052_4543);
+            return Ok(PlanCheck::Refine(candidates.swap_remove(index)));
         }
 
         let source_numeric = numeric.clone();
@@ -2118,7 +2252,7 @@ fn comparison_refinement(
         !candidates.is_empty(),
         "comparison tree {tree_id} has no strict regular-variable split in Cartesian state {state_id}"
     );
-    retain_min_growth_splits(working, &mut candidates, |(_, split)| split);
+    retain_min_growth_splits(working, semantics, &mut candidates, |(_, split)| split)?;
     let has_achieving_candidate = candidates.iter().any(|(achieved, _)| *achieved);
     if has_achieving_candidate {
         candidates.retain(|(achieved, _)| *achieved);
@@ -2209,10 +2343,12 @@ fn split_deviation(
         }
         let preimage = semantics.numeric_effect_preimage(target_interval, op_id, var_id)?;
         let source = source_numeric[var_id];
-        ensure!(
-            !preimage.contains(source),
-            "operator {op_id} concrete source {source} for numeric var {var_id} lies in the preimage {preimage:?} of target {target_interval:?}, but successor {successor} is outside"
-        );
+        if preimage.contains(source) {
+            debug!(
+                "operator {op_id} numeric var {var_id}: conservative preimage {preimage:?} contains concrete source {source}; this dimension cannot safely separate successor {successor} from target {target_interval:?}"
+            );
+            continue;
+        }
         let (boundary, lower_includes_boundary) =
             if source < preimage.lower || (source == preimage.lower && !preimage.lower_closed) {
                 (preimage.lower, !preimage.lower_closed)
@@ -2227,6 +2363,17 @@ fn split_deviation(
             boundary.is_finite(),
             "cannot refine an infinite numeric-effect preimage boundary"
         );
+        let parent = working.states[source_state_id].numeric[var_id];
+        ensure!(
+            parent.contains(source),
+            "Cartesian source state {source_state_id} interval {parent:?} does not contain concrete numeric var {var_id}={source}"
+        );
+        if !parent.can_split_at(boundary, lower_includes_boundary) {
+            debug!(
+                "operator {op_id} numeric var {var_id}: preimage boundary {boundary} does not strictly split source interval {parent:?}"
+            );
+            continue;
+        }
         candidates.push(Split::Numeric {
             state_id: source_state_id,
             var_id,
@@ -2240,9 +2387,9 @@ fn split_deviation(
     }
     ensure!(
         !candidates.is_empty(),
-        "concrete successor maps to a different Cartesian state but no differing component was found"
+        "concrete successor maps to a different Cartesian state but no sound strict split separates it from the abstract target"
     );
-    retain_min_growth_splits(working, &mut candidates, |split| split);
+    retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
     let keys = candidates.iter().map(split_choice_key).collect::<Vec<_>>();
     let index = semantics.choose_keyed_index(&keys, 0x4445_5649);
     Ok(candidates.swap_remove(index))
@@ -2446,7 +2593,7 @@ fn finalize_abstraction(
             (source, target, labels)
         }));
     }
-    raw.sort_by(|left, right| left.cmp(right));
+    raw.sort();
     let mut transitions = Vec::with_capacity(raw.len());
     let mut forward = vec![Vec::new(); working.states.len()];
     let mut backward = vec![Vec::new(); working.states.len()];
@@ -2508,7 +2655,7 @@ fn finalize_abstraction(
         backward,
         forward,
         goal_facts: (0..semantics.task.get_num_goals())
-            .map(|goal_id| semantics.task.get_goal_fact(goal_id).clone())
+            .map(|goal_id| *semantics.task.get_goal_fact(goal_id))
             .collect(),
         goal_state_hashes,
         initial_state_hash,
@@ -2608,6 +2755,10 @@ impl CartesianAbstractionHeuristic {
         &self.abstraction
     }
 
+    pub fn discard_transition_data(&mut self) {
+        self.abstraction.discard_transition_data();
+    }
+
     pub fn into_abstraction(self) -> CartesianAbstraction {
         self.abstraction
     }
@@ -2658,6 +2809,11 @@ impl Heuristic for CartesianAbstractionHeuristic {
 
     fn proves_initial_state_optimal(&self) -> bool {
         self.abstraction.metadata.solved_by_self
+            && self
+                .abstraction
+                .metadata
+                .abstraction_use
+                .permits_initial_optimality_proof()
     }
 
     fn heuristic_name(&self) -> String {

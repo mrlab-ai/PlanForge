@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeSet, HashSet};
 
 use planforge_sas::numeric_task::AbstractNumericTask;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstraction;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -72,12 +72,15 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
 
     fn from_validated_parts(
         name: Option<String>,
-        components: Vec<AbstractionComponent<'task>>,
+        mut components: Vec<AbstractionComponent<'task>>,
         max_additive_subsets: Vec<Vec<usize>>,
         relevant_operator_ids: Vec<BTreeSet<usize>>,
     ) -> Result<Self, String> {
         if max_additive_subsets.is_empty() {
             return Err("canonical abstraction heuristic has no additive subsets".to_string());
+        }
+        for component in &mut components {
+            component.discard_transition_data();
         }
         Ok(Self {
             name: name.unwrap_or_else(|| "canonical_abstractions".to_string()),
@@ -185,7 +188,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
             self.max_additive_subsets.len()
         );
         for (component_id, component) in self.components.iter().enumerate() {
-            info!(
+            debug!(
                 "canonical component {component_id}: kind={}, states={}, h={}, relevant_ops={}",
                 component.kind(),
                 component.num_states(),
@@ -215,9 +218,7 @@ impl Heuristic for CanonicalAbstractionHeuristic<'_> {
     }
 
     fn proves_initial_state_optimal(&self) -> bool {
-        self.components
-            .iter()
-            .any(AbstractionComponent::proves_initial_state_optimal)
+        false
     }
 
     fn heuristic_name(&self) -> String {

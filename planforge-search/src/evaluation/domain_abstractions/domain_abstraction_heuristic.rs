@@ -198,6 +198,10 @@ impl DomainAbstractionHeuristic {
         &self.abstraction
     }
 
+    pub fn discard_transition_data(&mut self) {
+        self.abstraction.discard_transition_data();
+    }
+
     pub fn into_abstraction(self) -> DomainAbstraction {
         self.abstraction
     }
@@ -604,6 +608,11 @@ impl Heuristic for DomainAbstractionHeuristic {
 
     fn proves_initial_state_optimal(&self) -> bool {
         self.abstraction.metadata.solved_by_self
+            && self
+                .abstraction
+                .metadata
+                .abstraction_use
+                .permits_initial_optimality_proof()
     }
 
     fn heuristic_name(&self) -> String {

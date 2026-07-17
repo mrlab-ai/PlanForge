@@ -10,7 +10,7 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use ordered_float::NotNan;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
-use tracing::info;
+use tracing::debug;
 
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType, Operator,
@@ -105,11 +105,7 @@ fn current_time_seed() -> u64 {
 }
 
 fn ensure_online_scp_deadline(deadline: Option<Instant>) -> Result<()> {
-    ensure!(
-        deadline.is_none_or(|deadline| Instant::now() < deadline),
-        "online SCP deadline exceeded"
-    );
-    Ok(())
+    crate::resource_limits::ensure_before_deadline(deadline, "online SCP")
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1302,13 +1298,13 @@ impl DomainAbstractionFactory {
         ensure_online_scp_deadline(deadline)?;
         let start = Instant::now();
         let mut generator = self.make_operator_generator(task, combine_labels)?;
-        info!(
+        debug!(
             "domain abstraction factory: operator generator prepared in {:.3}s",
             start.elapsed().as_secs_f64()
         );
         let operator_start = Instant::now();
         let operators = generator.build_abstract_operators_with_deadline(task, deadline)?;
-        info!(
+        debug!(
             "domain abstraction factory: built {} abstract operators in {:.3}s",
             operators.len(),
             operator_start.elapsed().as_secs_f64()
@@ -1325,7 +1321,7 @@ impl DomainAbstractionFactory {
             None,
             deadline,
         )?;
-        info!(
+        debug!(
             "domain abstraction factory: built abstract distance table with {} states in {:.3}s",
             table.distances.len(),
             table_start.elapsed().as_secs_f64()
@@ -1341,7 +1337,7 @@ impl DomainAbstractionFactory {
             &operators,
             &comparison_var_ids,
         );
-        info!(
+        debug!(
             "domain abstraction factory: built match tree in {:.3}s",
             match_tree_start.elapsed().as_secs_f64()
         );
@@ -1359,7 +1355,7 @@ impl DomainAbstractionFactory {
             plan_step_rng,
             deadline,
         );
-        info!(
+        debug!(
             "domain abstraction factory: extracted wildcard plan in {:.3}s",
             plan_start.elapsed().as_secs_f64()
         );

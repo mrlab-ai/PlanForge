@@ -7,6 +7,19 @@ use planforge_sas::numeric_task::{
     NumericVariable, Operator,
 };
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AbstractionUse {
+    Standalone,
+    #[default]
+    CollectionMember,
+}
+
+impl AbstractionUse {
+    pub fn permits_initial_optimality_proof(self) -> bool {
+        matches!(self, Self::Standalone)
+    }
+}
+
 /// A task view that changes only the goal condition.
 ///
 /// Operator IDs, state representations, costs, and ancestor conversions remain
