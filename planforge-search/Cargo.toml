@@ -17,7 +17,16 @@ serde = { version = "1", features = ["derive"] }
 itertools = "0.13"
 rand = { version = "0.8", features = ["small_rng"] }
 rustc-hash = "2"
-highs = "1.12"
+# Optional: the HiGHS LP solver is only used by the posthoc-optimization
+# heuristic. Building `highs`/`highs-sys` pulls in bindgen and therefore
+# requires libclang, which is not always available. Gate it behind a feature
+# so the default build has no libclang dependency.
+highs = { version = "1.12", optional = true }
+
+[features]
+# Enables the HiGHS-backed posthoc-optimization heuristic. Off by default;
+# without it, requesting posthoc optimization fails at runtime.
+highs = ["dep:highs"]
 
 [dev-dependencies]
 planforge-translator = { path = "../planforge-translator" }

@@ -20,6 +20,7 @@ use planforge_search::evaluation::domain_abstractions::domain_abstraction_collec
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use planforge_search::task_restriction::build_restricted_task;
+#[cfg(feature = "highs")]
 use planforge_search::evaluation::domain_abstractions::posthoc_optimization_heuristic::PostHocOptimizationHeuristic;
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planforge_search::evaluation::pattern_databases::pattern_generator_systematic::{
@@ -293,6 +294,7 @@ pub fn build_heuristic_from_spec<'a>(
             .map_err(|e| format!("failed to construct max abstraction heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
+        #[cfg(feature = "highs")]
         "posthoc_optimization" | "pho" => {
             use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
@@ -307,6 +309,12 @@ pub fn build_heuristic_from_spec<'a>(
                 .map_err(|e| format!("failed to construct posthoc_optimization heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
+        #[cfg(not(feature = "highs"))]
+        "posthoc_optimization" | "pho" => Err(
+            "posthoc_optimization requires the HiGHS LP solver, which is not compiled into \
+             this build. Rebuild with `--features highs` (requires libclang) to enable it."
+                .to_string(),
+        ),
         "scp_online" | "scp_online_cartesian" => {
             let (component_sources, combinator_options) = split_component_sources(&spec.args)?;
             if !component_sources.is_empty() {

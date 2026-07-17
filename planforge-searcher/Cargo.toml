@@ -8,6 +8,10 @@ license = "GPL-3.0"
 name = "planforge-searcher"
 doc = false
 
+[features]
+# Forward to planforge-search's optional HiGHS-backed posthoc optimization.
+highs = ["planforge-search/highs"]
+
 [dependencies]
 planforge-sas = { path = "../planforge-sas" }
 planforge-search = { path = "../planforge-search" }
