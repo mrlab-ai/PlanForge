@@ -1734,7 +1734,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             }
             if pos < num_domain_abstractions {
                 let abstraction = &abstractions[pos];
-                info!(
+                debug!(
                     "scp_online: abstract-operator CP step abstraction {pos}, abstract_states={}, standalone_h={}, metadata={}",
                     abstraction_state_count(abstraction),
                     standalone_current_h.get(pos).copied().unwrap_or(0.0),
@@ -2420,7 +2420,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             }
             if pos < num_domain_abstractions {
                 let abstraction = &abstractions[pos];
-                info!(
+                debug!(
                     "scp_online: label CP step abstraction {pos}, abstract_states={}",
                     abstraction_state_count(abstraction)
                 );
@@ -2618,7 +2618,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 continue;
             }
             let abstraction = &abstractions[pos];
-            info!(
+            debug!(
                 "fillSCP: label CP step abstraction {pos}, abstract_states={}",
                 abstraction_state_count(abstraction)
             );
@@ -2783,7 +2783,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 continue;
             }
             let abstraction = &abstractions[pos];
-            info!(
+            debug!(
                 "fillSCP: abstract-operator CP step abstraction {pos}, abstract_states={}, metadata={}",
                 abstraction_state_count(abstraction),
                 abstraction_metadata_summary(abstraction),
@@ -3293,7 +3293,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     "failed to compute SCP table: {error:#}"
                 ))
             })?;
-        info!(
+        debug!(
             "scp_online: label distance-table/CP construction finished in {:.3}s, states={}, saturated_costs={}",
             start.elapsed().as_secs_f64(),
             table.distances.len(),
@@ -3465,12 +3465,12 @@ fn log_label_table_summary(
     saturated_costs: &[f64],
     abstract_state_ids: &[Option<usize>],
 ) {
-    if !enabled!(Level::INFO) {
+    if !enabled!(Level::DEBUG) {
         return;
     }
     let (positive_count, total_positive) = positive_cost_stats(saturated_costs);
     let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
-    info!(
+    debug!(
         "scp_online: label {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_labels={positive_count}, total_positive_saturated={total_positive:.6}"
     );
 }
@@ -3482,12 +3482,12 @@ fn log_transition_table_summary(
     operator_costs: &[f64],
     abstract_state_ids: &[Option<usize>],
 ) {
-    if !enabled!(Level::INFO) {
+    if !enabled!(Level::DEBUG) {
         return;
     }
     let (positive_count, total_positive) = positive_cost_stats(operator_costs);
     let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
-    info!(
+    debug!(
         "scp_online: abstract-operator {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_abstract_ops={positive_count}, total_positive_saturated={total_positive:.6}"
     );
 }
@@ -3496,7 +3496,7 @@ fn log_abstract_operator_footprint_summary(
     abstraction_id: usize,
     footprints: &[AbstractOperatorFootprint],
 ) {
-    if !enabled!(Level::INFO) {
+    if !enabled!(Level::DEBUG) {
         return;
     }
     let stats = abstract_operator_footprint_stats(footprints);
@@ -3505,7 +3505,7 @@ fn log_abstract_operator_footprint_summary(
     } else {
         stats.non_allocable_labels as f64 / stats.total_labels as f64
     };
-    info!(
+    debug!(
         "scp_online: abstract-operator footprints abstraction {abstraction_id}: labels={}, non_allocable_labels={}, non_allocable_ratio={non_allocable_ratio:.3}, infinite_source={}, unsupported_effect={}",
         stats.total_labels,
         stats.non_allocable_labels,
@@ -3791,10 +3791,10 @@ fn truncate_for_log(value: &str, max_chars: usize) -> String {
 }
 
 fn log_transition_residual_summary(remaining_costs: &TransitionResidualCosts) {
-    if !enabled!(Level::INFO) {
+    if !enabled!(Level::DEBUG) {
         return;
     }
-    info!(
+    debug!(
         "scp_online: abstract-operator residuals now store {} region reductions",
         remaining_costs.num_reductions()
     );
