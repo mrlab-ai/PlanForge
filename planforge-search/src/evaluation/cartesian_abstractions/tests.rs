@@ -11,10 +11,43 @@ use planforge_sas::numeric_task::{
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics,
-    CartesianStopReason, ShortestPaths, Split, StateRegion, TransitionKey, WorkingAbstraction,
-    retain_min_growth_splits,
+    CartesianStopReason, OperatorBitSet, ShortestPaths, Split, StateRegion, TransitionKey,
+    WorkingAbstraction, numeric_split_choice_key, retain_min_growth_splits,
 };
 use crate::evaluation::domain_abstractions::comparison_expression::Interval;
+
+#[test]
+fn operator_bitsets_preserve_exact_membership_and_intersections() {
+    let mut left = OperatorBitSet::empty(130);
+    let mut right = OperatorBitSet::empty(130);
+    for operator_id in [0, 1, 63, 64, 65, 129] {
+        assert!(left.insert(operator_id));
+    }
+    assert!(!left.insert(64));
+    for operator_id in [1, 64, 127, 129] {
+        assert!(right.insert(operator_id));
+    }
+
+    assert_eq!(
+        left.intersection_iter(&right).collect::<Vec<_>>(),
+        vec![1, 64, 129]
+    );
+    let difference = left.clone_without(&right);
+    for operator_id in [0, 63, 65] {
+        assert!(difference.contains(operator_id));
+    }
+    for operator_id in [1, 64, 129] {
+        assert!(!difference.contains(operator_id));
+    }
+}
+
+#[test]
+fn numeric_split_keys_include_semantic_identity_and_boundary() {
+    let key = numeric_split_choice_key("x(b0)", 1.0, true);
+    assert_ne!(key, numeric_split_choice_key("x(b1)", 1.0, true));
+    assert_ne!(key, numeric_split_choice_key("x(b0)", 2.0, true));
+    assert_ne!(key, numeric_split_choice_key("x(b0)", 1.0, false));
+}
 
 #[test]
 fn min_growth_uses_projected_transition_count() {
@@ -56,14 +89,17 @@ fn min_growth_uses_projected_transition_count() {
         ExplicitFact::new(0, 1),
     );
     let semantics = CartesianSemantics::new(&task, None).unwrap();
-    let mut working = WorkingAbstraction::new(StateRegion {
-        propositions: vec![vec![0, 1]],
-        numeric: vec![
-            Interval::unbounded(),
-            Interval::unbounded(),
-            Interval::singleton(1.0),
-        ],
-    });
+    let mut working = WorkingAbstraction::new(
+        StateRegion {
+            propositions: vec![vec![0, 1]],
+            numeric: vec![
+                Interval::unbounded(),
+                Interval::unbounded(),
+                Interval::singleton(1.0),
+            ],
+        },
+        1,
+    );
     working.add_transition(0, 0, 0);
     let split = |var_id| Split::Numeric {
         state_id: 0,
@@ -81,12 +117,62 @@ fn min_growth_uses_projected_transition_count() {
 }
 
 #[test]
+fn finalized_abstractions_omit_zero_contribution_self_loops() {
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![ExplicitVariable::new(
+            2,
+            "goal".into(),
+            vec!["true".into(), "false".into()],
+            None,
+            1,
+        )],
+        vec![],
+        vec![ExplicitFact::new(0, 0)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![Operator::new("self-loop".into(), vec![], vec![], vec![], 1)],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 1),
+    );
+    let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        max_states: 1,
+        compute_operator_footprints: true,
+        ..CartesianAbstractionConfig::default()
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+
+    assert!(abstraction.transition_system.transitions.is_empty());
+    assert!(abstraction.abstract_operator_footprints.is_empty());
+    assert!(abstraction.relevant_operator_ids.is_empty());
+    assert_eq!(abstraction.distance_table.distances, vec![0.0]);
+}
+
+#[test]
 fn removed_transitions_are_unlinked_and_their_slots_are_reused() {
-    let mut working = WorkingAbstraction::new(StateRegion {
+    let mut working = WorkingAbstraction::new(
+        StateRegion {
+            propositions: Vec::new(),
+            numeric: Vec::new(),
+        },
+        8,
+    );
+    working.states.push(StateRegion {
         propositions: Vec::new(),
         numeric: Vec::new(),
     });
-    working.add_transition(0, 7, 0);
+    working.outgoing.push(Vec::new());
+    working.incoming.push(Vec::new());
+    working
+        .self_loop_operator_ids
+        .push(OperatorBitSet::empty(8));
+    working.add_transition(0, 7, 1);
     assert_eq!(working.transitions.len(), 1);
 
     let removed = working.remove_incident_transitions(0);
@@ -95,10 +181,10 @@ fn removed_transitions_are_unlinked_and_their_slots_are_reused() {
     assert!(working.incoming[0].is_empty());
     assert!(working.transitions[0].is_none());
 
-    working.add_transition(0, 7, 0);
+    working.add_transition(0, 7, 1);
     assert_eq!(working.transitions.len(), 1);
     assert_eq!(working.outgoing[0], vec![0]);
-    assert_eq!(working.incoming[0], vec![0]);
+    assert_eq!(working.incoming[1], vec![0]);
     assert!(working.transitions[0].is_some());
 }
 
@@ -363,6 +449,86 @@ fn supports_multiplicative_numeric_effects() {
     assert_solved_with_h(&task, 2.0);
 }
 
+fn affine_effect_task(operation: AssignmentOperation, rhs: f64) -> NumericRootTask {
+    NumericRootTask::new(
+        1,
+        Metric::new(false, None),
+        vec![ExplicitVariable::new(
+            1,
+            "dummy".into(),
+            vec!["value".into()],
+            None,
+            0,
+        )],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("rhs".into(), NumericType::Constant, None),
+        ],
+        vec![],
+        vec![],
+        vec![0],
+        vec![0.0, rhs],
+        vec![Operator::new(
+            "affine".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(0, operation, 1, false, vec![])],
+            1,
+        )],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    )
+}
+
+#[test]
+fn exact_affine_preimages_preserve_open_boundaries() {
+    let plus = affine_effect_task(AssignmentOperation::Plus, 1.0);
+    let plus_semantics = CartesianSemantics::new(&plus, None).unwrap();
+    assert_eq!(
+        plus_semantics
+            .numeric_effect_preimage(Interval::new(5.0, 10.0, false, true), 0, 0)
+            .unwrap(),
+        Interval::new(4.0, 9.0, false, true)
+    );
+
+    let times = affine_effect_task(AssignmentOperation::Times, -2.0);
+    let times_semantics = CartesianSemantics::new(&times, None).unwrap();
+    assert_eq!(
+        times_semantics
+            .numeric_effect_preimage(Interval::new(-10.0, -4.0, false, true), 0, 0)
+            .unwrap(),
+        Interval::new(2.0, 5.0, true, false)
+    );
+
+    let divide = affine_effect_task(AssignmentOperation::Divide, -2.0);
+    let divide_semantics = CartesianSemantics::new(&divide, None).unwrap();
+    assert_eq!(
+        divide_semantics
+            .numeric_effect_preimage(Interval::new(-5.0, -2.0, false, true), 0, 0)
+            .unwrap(),
+        Interval::new(4.0, 10.0, true, false)
+    );
+}
+
+#[test]
+fn assignment_preimage_is_universal_exactly_when_target_contains_rhs() {
+    let task = affine_effect_task(AssignmentOperation::Assign, 3.0);
+    let semantics = CartesianSemantics::new(&task, None).unwrap();
+    assert_eq!(
+        semantics
+            .numeric_effect_preimage(Interval::new(2.0, 3.0, true, true), 0, 0)
+            .unwrap(),
+        Interval::unbounded()
+    );
+    assert!(
+        semantics
+            .numeric_effect_preimage(Interval::new(2.0, 3.0, true, false), 0, 0)
+            .is_err()
+    );
+}
+
 #[test]
 fn refines_failed_default_derived_goal() {
     let variables = vec![
@@ -544,6 +710,16 @@ fn goal_collection_builds_every_goal_with_operator_footprints() {
                 abstraction.abstract_operator_footprints.len(),
                 abstraction.transition_system.transitions.len()
             );
+            let mut expected_relevant = abstraction
+                .transition_system
+                .transitions
+                .iter()
+                .filter(|transition| transition.source_hash != transition.target_hash)
+                .flat_map(|transition| transition.concrete_op_ids.iter().copied())
+                .collect::<Vec<_>>();
+            expected_relevant.sort_unstable();
+            expected_relevant.dedup();
+            assert_eq!(abstraction.relevant_operator_ids, expected_relevant);
             abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
         })
         .collect::<Vec<_>>();

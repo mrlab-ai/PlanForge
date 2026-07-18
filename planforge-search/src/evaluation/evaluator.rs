@@ -25,6 +25,8 @@ pub enum EvaluationError {
     ComputationFailed(String),
     /// Invalid state for evaluation.
     InvalidState(String),
+    /// A bounded heuristic-construction attempt exhausted its own deadline.
+    ConstructionDeadlineExceeded,
 }
 
 impl fmt::Display for EvaluationError {
@@ -38,6 +40,9 @@ impl fmt::Display for EvaluationError {
             }
             EvaluationError::InvalidState(msg) => {
                 write!(f, "Invalid state: {}", msg)
+            }
+            EvaluationError::ConstructionDeadlineExceeded => {
+                write!(f, "heuristic construction deadline exceeded")
             }
         }
     }

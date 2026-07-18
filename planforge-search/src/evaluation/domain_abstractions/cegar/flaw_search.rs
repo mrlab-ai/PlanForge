@@ -9,13 +9,8 @@
 //! split at the boundary derived from the regressed-target / required
 //! interval.
 //!
-//! For label-SCP-unfriendly numeric domains the recommended configuration is
-//! `FlawTreatmentVariants::MaxRefinedSingleAtom` (sticky-by-min-growth flaw
-//! selection) combined with `SplitDirection::Backward` and a tight
-//! `FiniteSupportConfig::max_stealable_width` on the cost-partitioning side.
-//! These choices are independent: `SplitDirection` controls how the
-//! abstraction is *refined*; `FiniteSupportConfig` controls which transitions
-//! may *steal cost* at evaluation time.
+//! `SplitDirection` controls refinement only. Transition cost partitioning
+//! separately tracks exact source regions, including unbounded regions.
 
 pub mod flaw_selection;
 pub mod progression;

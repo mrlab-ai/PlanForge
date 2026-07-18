@@ -3,6 +3,7 @@ mod tests;
 
 use planforge_sas::axioms::{CalOperator, ComparisonOperator};
 use planforge_sas::numeric_task::{AbstractNumericTask, AssignmentOperation, NumericType};
+use planforge_sas::utils::float_tolerance;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Interval {
@@ -60,6 +61,18 @@ impl Interval {
     #[inline]
     pub fn unbounded() -> Self {
         UNBOUNDED_INTERVAL
+    }
+
+    /// Align interval boundaries with the numeric state registry's canonical
+    /// lattice. Call this after state-transition arithmetic, not on queries.
+    #[inline]
+    pub fn canonicalized(self) -> Self {
+        Self::new(
+            float_tolerance::canonicalize(self.lower),
+            float_tolerance::canonicalize(self.upper),
+            self.lower_closed,
+            self.upper_closed,
+        )
     }
 
     #[inline]

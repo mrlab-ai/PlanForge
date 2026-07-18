@@ -90,11 +90,7 @@ impl DomainAbstractionGenerator {
             .context("failed to build abstract operators")?;
         let abstract_operator_footprints = if self.config.compute_operator_footprints {
             factory
-                .build_abstract_operator_footprints(
-                    task,
-                    &abstract_operators,
-                    &self.config.finite_support,
-                )
+                .build_abstract_operator_footprints(task, &abstract_operators)
                 .context("failed to build abstract-operator footprints")?
         } else {
             // Heuristics that read only the distance table (canonical, max,

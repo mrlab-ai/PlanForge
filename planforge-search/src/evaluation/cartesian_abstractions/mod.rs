@@ -21,13 +21,14 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
     metric_operator_cost_from_initial_values,
 };
+use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::int_packer::IntDoublePacker;
 use tracing::{debug, info};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 
-use super::abstraction_collections::portfolio::{derive_variant_seed, mix_seed};
+use super::abstraction_collections::portfolio::{derive_variant_seed, mix_seed, stable_text_seed};
 use super::abstraction_collections::transition_cost_partitioning::{
     AbstractOperatorFootprint, AbstractTransition, AbstractTransitionSystem,
     ConcreteOperatorFootprint, PropValueId, StateRegion,
@@ -292,11 +293,11 @@ impl CartesianAbstraction {
     }
 
     pub fn discard_transition_data(&mut self) {
-        self.transition_system.transitions.clear();
-        self.transition_system.backward.clear();
-        self.transition_system.forward.clear();
-        self.transition_system.state_regions.clear();
-        self.abstract_operator_footprints.clear();
+        self.transition_system.transitions = Vec::new();
+        self.transition_system.backward = Vec::new();
+        self.transition_system.forward = Vec::new();
+        self.transition_system.state_regions = Vec::new();
+        self.abstract_operator_footprints = Vec::new();
     }
 }
 
@@ -305,6 +306,106 @@ struct WorkingTransition {
     source: usize,
     target: usize,
     concrete_op_id: usize,
+}
+
+#[derive(Debug, Clone)]
+struct OperatorBitSet {
+    words: Box<[u64]>,
+    operator_count: usize,
+}
+
+impl OperatorBitSet {
+    fn empty(operator_count: usize) -> Self {
+        Self {
+            words: vec![0; operator_count.div_ceil(u64::BITS as usize)].into_boxed_slice(),
+            operator_count,
+        }
+    }
+
+    fn insert(&mut self, operator_id: usize) -> bool {
+        debug_assert!(
+            operator_id < self.operator_count,
+            "operator {operator_id} exceeds Cartesian operator-set size {}",
+            self.operator_count
+        );
+        let word = &mut self.words[operator_id / u64::BITS as usize];
+        let mask = 1_u64 << (operator_id % u64::BITS as usize);
+        if *word & mask != 0 {
+            return false;
+        }
+        *word |= mask;
+        true
+    }
+
+    fn contains(&self, operator_id: usize) -> bool {
+        debug_assert!(
+            operator_id < self.operator_count,
+            "operator {operator_id} exceeds Cartesian operator-set size {}",
+            self.operator_count
+        );
+        self.words[operator_id / u64::BITS as usize] & (1_u64 << (operator_id % u64::BITS as usize))
+            != 0
+    }
+
+    fn intersection_iter<'a>(&'a self, other: &'a Self) -> OperatorBitSetIntersectionIter<'a> {
+        debug_assert_eq!(
+            self.operator_count, other.operator_count,
+            "cannot intersect Cartesian operator sets of different sizes"
+        );
+        OperatorBitSetIntersectionIter {
+            left: &self.words,
+            right: &other.words,
+            operator_count: self.operator_count,
+            word_id: 0,
+            remaining: self.words.first().copied().unwrap_or(0)
+                & other.words.first().copied().unwrap_or(0),
+        }
+    }
+
+    fn clone_without(&self, excluded: &Self) -> Self {
+        debug_assert_eq!(
+            self.operator_count, excluded.operator_count,
+            "cannot subtract Cartesian operator sets of different sizes"
+        );
+        Self {
+            words: self
+                .words
+                .iter()
+                .zip(excluded.words.iter())
+                .map(|(&word, &excluded_word)| word & !excluded_word)
+                .collect(),
+            operator_count: self.operator_count,
+        }
+    }
+}
+
+struct OperatorBitSetIntersectionIter<'a> {
+    left: &'a [u64],
+    right: &'a [u64],
+    operator_count: usize,
+    word_id: usize,
+    remaining: u64,
+}
+
+impl Iterator for OperatorBitSetIntersectionIter<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.remaining != 0 {
+                let bit = self.remaining.trailing_zeros() as usize;
+                self.remaining &= self.remaining - 1;
+                let operator_id = self.word_id * u64::BITS as usize + bit;
+                debug_assert!(
+                    operator_id < self.operator_count,
+                    "Cartesian operator intersection has a set padding bit"
+                );
+                return Some(operator_id);
+            }
+            self.word_id += 1;
+            self.remaining = *self.left.get(self.word_id)? & self.right[self.word_id];
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -323,13 +424,14 @@ struct WorkingAbstraction {
     free_transition_ids: Vec<usize>,
     outgoing: Vec<Vec<usize>>,
     incoming: Vec<Vec<usize>>,
+    self_loop_operator_ids: Vec<OperatorBitSet>,
     transition_ids_by_key: HashMap<TransitionKey, usize>,
     propositional_refinement_counts: Vec<usize>,
     numeric_refinement_counts: Vec<usize>,
 }
 
 impl WorkingAbstraction {
-    fn new(initial_region: StateRegion) -> Self {
+    fn new(initial_region: StateRegion, operator_count: usize) -> Self {
         let propositional_refinement_counts = vec![0; initial_region.propositions.len()];
         let numeric_refinement_counts = vec![0; initial_region.numeric.len()];
         Self {
@@ -340,6 +442,7 @@ impl WorkingAbstraction {
             free_transition_ids: Vec::new(),
             outgoing: vec![Vec::new()],
             incoming: vec![Vec::new()],
+            self_loop_operator_ids: vec![OperatorBitSet::empty(operator_count)],
             transition_ids_by_key: HashMap::new(),
             propositional_refinement_counts,
             numeric_refinement_counts,
@@ -347,6 +450,10 @@ impl WorkingAbstraction {
     }
 
     fn add_transition(&mut self, source: usize, op_id: usize, target: usize) {
+        if source == target {
+            self.self_loop_operator_ids[source].insert(op_id);
+            return;
+        }
         let key = TransitionKey {
             source,
             concrete_op_id: op_id,
@@ -440,7 +547,11 @@ impl WorkingAbstraction {
     }
 
     fn contains_transition(&self, key: TransitionKey) -> bool {
-        self.transition_ids_by_key.contains_key(&key)
+        if key.source == key.target {
+            self.self_loop_operator_ids[key.source].contains(key.concrete_op_id)
+        } else {
+            self.transition_ids_by_key.contains_key(&key)
+        }
     }
 }
 
@@ -477,6 +588,19 @@ impl Split {
             }
         }
     }
+
+    fn dimension(&self) -> SplitDimension {
+        match self {
+            Self::Propositional { var_id, .. } => SplitDimension::Propositional(*var_id),
+            Self::Numeric { var_id, .. } => SplitDimension::Numeric(*var_id),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SplitDimension {
+    Propositional(usize),
+    Numeric(usize),
 }
 
 struct CartesianSemantics<'task> {
@@ -485,7 +609,61 @@ struct CartesianSemantics<'task> {
     comparison_trees: Vec<ComparisonTree>,
     propositional_axioms_by_prop_var: Vec<Vec<usize>>,
     operator_costs: Vec<f64>,
+    prop_split_dependent_operators: Vec<OperatorBitSet>,
+    numeric_split_dependent_operators: Vec<OperatorBitSet>,
     random_seed: Option<u64>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mark_fact_split_dependencies(
+    task: &dyn AbstractNumericTask,
+    fact: &ExplicitFact,
+    comparison_tree_by_prop_var: &[Option<usize>],
+    comparison_trees: &[ComparisonTree],
+    propositional_axioms_by_prop_var: &[Vec<usize>],
+    visiting: &mut [bool],
+    prop_dependencies: &mut [bool],
+    numeric_dependencies: &mut [bool],
+) -> Result<()> {
+    let var_id = fact.var();
+    if let Some(tree_id) = comparison_tree_by_prop_var[var_id] {
+        let tree = comparison_trees
+            .get(tree_id)
+            .with_context(|| format!("missing comparison tree {tree_id}"))?;
+        for numeric_var_id in tree.regular_numeric_var_dependencies(task) {
+            numeric_dependencies[numeric_var_id] = true;
+        }
+        return Ok(());
+    }
+    if propositional_axioms_by_prop_var[var_id].is_empty() {
+        prop_dependencies[var_id] = true;
+        return Ok(());
+    }
+    ensure!(
+        !visiting[var_id],
+        "cyclic propositional axiom dependency through variable {var_id}"
+    );
+    visiting[var_id] = true;
+    for &axiom_id in &propositional_axioms_by_prop_var[var_id] {
+        let axiom = task
+            .axioms()
+            .get(axiom_id)
+            .with_context(|| format!("missing propositional axiom {axiom_id}"))?;
+        for condition in axiom.conditions() {
+            mark_fact_split_dependencies(
+                task,
+                condition,
+                comparison_tree_by_prop_var,
+                comparison_trees,
+                propositional_axioms_by_prop_var,
+                visiting,
+                prop_dependencies,
+                numeric_dependencies,
+            )?;
+        }
+    }
+    visiting[var_id] = false;
+    Ok(())
 }
 
 impl<'task> CartesianSemantics<'task> {
@@ -528,18 +706,73 @@ impl<'task> CartesianSemantics<'task> {
             .iter()
             .map(|op| metric_operator_cost_from_initial_values(task, op))
             .collect();
+        let operator_count = task.get_operators().len();
+        let mut prop_split_dependent_operators = (0..task.get_num_variables())
+            .map(|_| OperatorBitSet::empty(operator_count))
+            .collect::<Vec<_>>();
+        let mut numeric_split_dependent_operators = (0..task.numeric_variables().len())
+            .map(|_| OperatorBitSet::empty(operator_count))
+            .collect::<Vec<_>>();
+        for (op_id, op) in task.get_operators().iter().enumerate() {
+            let mut prop_dependencies = vec![false; task.get_num_variables()];
+            let mut numeric_dependencies = vec![false; task.numeric_variables().len()];
+            let mut visiting = vec![false; task.get_num_variables()];
+            for precondition in op.preconditions() {
+                mark_fact_split_dependencies(
+                    task,
+                    precondition,
+                    &comparison_tree_by_prop_var,
+                    &comparison_trees,
+                    &propositional_axioms_by_prop_var,
+                    &mut visiting,
+                    &mut prop_dependencies,
+                    &mut numeric_dependencies,
+                )?;
+            }
+            for effect in op.effects() {
+                let var_id = effect.var_id();
+                if comparison_tree_by_prop_var[var_id].is_none()
+                    && propositional_axioms_by_prop_var[var_id].is_empty()
+                {
+                    prop_dependencies[var_id] = true;
+                }
+            }
+            for effect in op.assignment_effects() {
+                let var_id = effect.affected_var_id();
+                if task.numeric_variables()[var_id].get_type() == &NumericType::Regular {
+                    numeric_dependencies[var_id] = true;
+                }
+            }
+            debug_assert_eq!(
+                prop_dependencies.len(),
+                task.get_num_variables(),
+                "operator {op_id} propositional dependency width changed"
+            );
+            for (var_id, depends) in prop_dependencies.into_iter().enumerate() {
+                if depends {
+                    prop_split_dependent_operators[var_id].insert(op_id);
+                }
+            }
+            for (var_id, depends) in numeric_dependencies.into_iter().enumerate() {
+                if depends {
+                    numeric_split_dependent_operators[var_id].insert(op_id);
+                }
+            }
+        }
         Ok(Self {
             task,
             comparison_tree_by_prop_var,
             comparison_trees,
             propositional_axioms_by_prop_var,
             operator_costs,
+            prop_split_dependent_operators,
+            numeric_split_dependent_operators,
             random_seed,
         })
     }
 
     fn choose_keyed_index(&self, keys: &[u64], tag: u64) -> usize {
-        assert!(
+        debug_assert!(
             !keys.is_empty(),
             "cannot choose from an empty Cartesian candidate set"
         );
@@ -551,6 +784,51 @@ impl<'task> CartesianSemantics<'task> {
             .min_by_key(|(_, key)| mix_seed(seed ^ tag ^ **key))
             .map(|(index, _)| index)
             .expect("nonempty Cartesian key set has no minimum")
+    }
+
+    fn operator_depends_on_split(&self, op_id: usize, dimension: SplitDimension) -> bool {
+        self.split_dependent_operators(dimension).contains(op_id)
+    }
+
+    fn split_dependent_operators(&self, dimension: SplitDimension) -> &OperatorBitSet {
+        match dimension {
+            SplitDimension::Propositional(var_id) => &self.prop_split_dependent_operators[var_id],
+            SplitDimension::Numeric(var_id) => &self.numeric_split_dependent_operators[var_id],
+        }
+    }
+
+    fn invariant_split_dimension_overlaps(
+        &self,
+        source: &StateRegion,
+        target: &StateRegion,
+        dimension: SplitDimension,
+    ) -> bool {
+        match dimension {
+            SplitDimension::Propositional(var_id) => {
+                sorted_values_overlap(&source.propositions[var_id], &target.propositions[var_id])
+            }
+            SplitDimension::Numeric(var_id) => {
+                source.numeric[var_id].intersects(&target.numeric[var_id])
+            }
+        }
+    }
+
+    fn may_transition_after_independent_split(
+        &self,
+        source: &StateRegion,
+        op_id: usize,
+        target: &StateRegion,
+        dimension: SplitDimension,
+    ) -> Result<bool> {
+        debug_assert!(!self.operator_depends_on_split(op_id, dimension));
+        let result = self.invariant_split_dimension_overlaps(source, target, dimension);
+        #[cfg(debug_assertions)]
+        assert_eq!(
+            result,
+            self.may_transition(source, op_id, target)?,
+            "Cartesian split-dependency routing disagrees with full transition semantics for operator {op_id} and dimension {dimension:?}"
+        );
+        Ok(result)
     }
 
     fn trivial_region(&self) -> Result<StateRegion> {
@@ -576,7 +854,7 @@ impl<'task> CartesianSemantics<'task> {
             .enumerate()
             .map(|(var_id, var)| {
                 if matches!(var.get_type(), NumericType::Constant) {
-                    Interval::singleton(initial_numeric[var_id])
+                    Interval::singleton(float_tolerance::canonicalize(initial_numeric[var_id]))
                 } else {
                     Interval::unbounded()
                 }
@@ -790,6 +1068,75 @@ impl<'task> CartesianSemantics<'task> {
         Ok(true)
     }
 
+    fn propositional_dimension_may_transition(
+        &self,
+        source: &StateRegion,
+        op_id: usize,
+        target: &StateRegion,
+        var_id: usize,
+    ) -> bool {
+        debug_assert!(
+            self.comparison_tree_by_prop_var[var_id].is_none()
+                && self.propositional_axioms_by_prop_var[var_id].is_empty(),
+            "derived proposition {var_id} has no explicit transition relation"
+        );
+        let op = &self.task.get_operators()[op_id];
+        if let Some(effect) = op.effects().iter().find(|effect| effect.var_id() == var_id) {
+            debug_assert!(
+                effect.conditions().is_empty(),
+                "validated Cartesian operator {op_id} has a conditional effect"
+            );
+            return target.propositions[var_id]
+                .binary_search(&(effect.value() as PropValueId))
+                .is_ok();
+        }
+        sorted_values_overlap(&source.propositions[var_id], &target.propositions[var_id])
+    }
+
+    fn split_dimension_may_transition(
+        &self,
+        source: &StateRegion,
+        op_id: usize,
+        target: &StateRegion,
+        dimension: SplitDimension,
+    ) -> Result<bool> {
+        Ok(match dimension {
+            SplitDimension::Propositional(var_id) => {
+                self.propositional_dimension_may_transition(source, op_id, target, var_id)
+            }
+            SplitDimension::Numeric(var_id) => {
+                let image = self.numeric_effect_image(source.numeric[var_id], op_id, var_id)?;
+                image.intersects(&target.numeric[var_id])
+            }
+        })
+    }
+
+    fn parent_loop_source_to_split_children(
+        &self,
+        source: &StateRegion,
+        op_id: usize,
+        targets: [&StateRegion; 2],
+        dimension: SplitDimension,
+    ) -> Result<[bool; 2]> {
+        let may_apply = self.operator_may_apply(source, op_id)?;
+        let mut result = [false; 2];
+        if may_apply {
+            for (index, target) in targets.into_iter().enumerate() {
+                result[index] =
+                    self.split_dimension_may_transition(source, op_id, target, dimension)?;
+            }
+        }
+        #[cfg(debug_assertions)]
+        for (index, target) in targets.into_iter().enumerate() {
+            assert_eq!(
+                result[index],
+                self.may_transition(source, op_id, target)?,
+                "split-dimension routing disagrees with full transition semantics for parent-loop operator {op_id} and dimension {dimension:?}"
+            );
+        }
+        Ok(result)
+    }
+
     fn may_transition(
         &self,
         source: &StateRegion,
@@ -799,47 +1146,13 @@ impl<'task> CartesianSemantics<'task> {
         if !self.operator_may_apply(source, op_id)? {
             return Ok(false);
         }
-        let op = &self.task.get_operators()[op_id];
-
         for var_id in 0..self.task.get_num_variables() {
             if self.comparison_tree_by_prop_var[var_id].is_some()
                 || !self.propositional_axioms_by_prop_var[var_id].is_empty()
             {
                 continue;
             }
-            let source_values = &source.propositions[var_id];
-            let target_values = &target.propositions[var_id];
-            let mut possible = source_values.clone();
-            for effect in op
-                .effects()
-                .iter()
-                .filter(|effect| effect.var_id() == var_id)
-            {
-                let mut conditions_may_hold = true;
-                for condition in effect.conditions() {
-                    if !self.region_admits_fact(source, condition)? {
-                        conditions_may_hold = false;
-                        break;
-                    }
-                }
-                if !conditions_may_hold {
-                    continue;
-                }
-                let mut conditions_guaranteed = true;
-                for condition in effect.conditions() {
-                    if !self.region_guarantees_fact(source, condition)? {
-                        conditions_guaranteed = false;
-                        break;
-                    }
-                }
-                if effect.conditions().is_empty() || conditions_guaranteed {
-                    possible.clear();
-                }
-                possible.push(effect.value() as u32);
-            }
-            possible.sort_unstable();
-            possible.dedup();
-            if !sorted_values_overlap(&possible, target_values) {
+            if !self.propositional_dimension_may_transition(source, op_id, target, var_id) {
                 return Ok(false);
             }
         }
@@ -876,8 +1189,11 @@ impl<'task> CartesianSemantics<'task> {
             .iter()
             .filter(|effect| effect.affected_var_id() == numeric_var_id)
         {
-            let rhs = self.task.get_initial_numeric_state_values()[effect.var_id()];
+            let rhs = float_tolerance::canonicalize(
+                self.task.get_initial_numeric_state_values()[effect.var_id()],
+            );
             image.apply_op(effect.operation(), &Interval::singleton(rhs));
+            image = image.canonicalized();
         }
         Ok(image)
     }
@@ -896,7 +1212,9 @@ impl<'task> CartesianSemantics<'task> {
             .filter(|effect| effect.affected_var_id() == numeric_var_id)
             .rev()
         {
-            let rhs = self.task.get_initial_numeric_state_values()[effect.var_id()];
+            let rhs = float_tolerance::canonicalize(
+                self.task.get_initial_numeric_state_values()[effect.var_id()],
+            );
             match effect.operation() {
                 AssignmentOperation::Assign => {
                     preimage = if preimage.contains(rhs) {
@@ -936,8 +1254,52 @@ impl<'task> CartesianSemantics<'task> {
                         .apply_reverse_op(&AssignmentOperation::Divide, &Interval::singleton(rhs));
                 }
             }
+            preimage = preimage.canonicalized();
         }
         Ok(preimage)
+    }
+
+    fn transition_source_footprint(
+        &self,
+        source: &StateRegion,
+        op_id: usize,
+        target: &StateRegion,
+    ) -> Result<StateRegion> {
+        debug_assert_eq!(
+            source.numeric.len(),
+            target.numeric.len(),
+            "Cartesian transition source/target numeric dimension mismatch"
+        );
+        let mut footprint = source.clone();
+        for (numeric_var_id, variable) in self.task.numeric_variables().iter().enumerate() {
+            match variable.get_type() {
+                NumericType::Constant => {
+                    ensure!(
+                        source.numeric[numeric_var_id].intersects(&target.numeric[numeric_var_id]),
+                        "Cartesian transition for operator {op_id} changes constant numeric variable {numeric_var_id}"
+                    );
+                }
+                NumericType::Regular => {
+                    let preimage = self.numeric_effect_preimage(
+                        target.numeric[numeric_var_id],
+                        op_id,
+                        numeric_var_id,
+                    )?;
+                    footprint.numeric[numeric_var_id] =
+                        interval_intersection(source.numeric[numeric_var_id], preimage);
+                    ensure!(
+                        !footprint.numeric[numeric_var_id].is_empty(),
+                        "Cartesian transition for operator {op_id} has an empty regressed source footprint for numeric variable {numeric_var_id}"
+                    );
+                }
+                // Derived values are functions of regular roots and cost
+                // variables are not Cartesian split dimensions. Their source
+                // restrictions are already represented through the regular
+                // dimensions and operator preconditions.
+                NumericType::Derived | NumericType::Cost => {}
+            }
+        }
+        Ok(footprint)
     }
 
     fn region_is_goal(&self, region: &StateRegion) -> Result<bool> {
@@ -970,7 +1332,10 @@ impl CartesianAbstractionGenerator {
     pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<CartesianAbstraction> {
         let start = Instant::now();
         let semantics = CartesianSemantics::new(task, self.config.random_seed)?;
-        let mut working = WorkingAbstraction::new(semantics.trivial_region()?);
+        let mut working = WorkingAbstraction::new(
+            semantics.trivial_region()?,
+            semantics.task.get_operators().len(),
+        );
         for op_id in 0..task.get_operators().len() {
             if semantics.may_transition(&working.states[0], op_id, &working.states[0])? {
                 working.add_transition(0, op_id, 0);
@@ -1512,7 +1877,11 @@ fn concrete_is_goal(
     })
 }
 
-fn split_choice_key(split: &Split) -> u64 {
+fn numeric_split_choice_key(variable_name: &str, boundary: f64, lower_closed: bool) -> u64 {
+    mix_seed(stable_text_seed(variable_name) ^ boundary.to_bits()) ^ (u64::from(lower_closed) << 63)
+}
+
+fn split_choice_key(semantics: &CartesianSemantics<'_>, split: &Split) -> u64 {
     match split {
         Split::Propositional { var_id, wanted, .. } => {
             let var_id = u64::try_from(*var_id).expect("split variable id does not fit u64");
@@ -1522,11 +1891,12 @@ fn split_choice_key(split: &Split) -> u64 {
         }
         Split::Numeric {
             var_id,
+            boundary,
             lower_includes_boundary,
             ..
         } => {
-            let var_id = u64::try_from(*var_id).expect("split variable id does not fit u64");
-            var_id ^ (u64::from(*lower_includes_boundary) << 63)
+            let variable_name = semantics.task.numeric_variables()[*var_id].name();
+            numeric_split_choice_key(variable_name, *boundary, *lower_includes_boundary)
         }
     }
 }
@@ -1631,6 +2001,7 @@ fn projected_transition_count(
     split: &Split,
 ) -> Result<usize> {
     let split_state_id = split.state_id();
+    let split_dimension = split.dimension();
     let new_state_id = working.states.len();
     let (old_child, new_child) = split_child_regions(working, split)?;
     let mut incident = working.outgoing[split_state_id].clone();
@@ -1646,6 +2017,10 @@ fn projected_transition_count(
     let mut replacements = HashSet::new();
     for transition_id in incident {
         let transition = working.transition(transition_id);
+        debug_assert!(
+            transition.source != transition.target,
+            "Cartesian non-loop storage contains a self loop"
+        );
         let sources: &[usize] = if transition.source == split_state_id {
             &[split_state_id, new_state_id]
         } else {
@@ -1672,14 +2047,49 @@ fn projected_transition_count(
                 } else {
                     &working.states[target]
                 };
-                if semantics.may_transition(
-                    source_region,
-                    transition.concrete_op_id,
-                    target_region,
-                )? {
+                let may_transition = if semantics
+                    .operator_depends_on_split(transition.concrete_op_id, split_dimension)
+                {
+                    semantics.may_transition(
+                        source_region,
+                        transition.concrete_op_id,
+                        target_region,
+                    )?
+                } else {
+                    semantics.may_transition_after_independent_split(
+                        source_region,
+                        transition.concrete_op_id,
+                        target_region,
+                        split_dimension,
+                    )?
+                };
+                if may_transition && source != target {
                     replacements.insert(TransitionKey {
                         source,
                         concrete_op_id: transition.concrete_op_id,
+                        target,
+                    });
+                }
+            }
+        }
+    }
+    let split_dependent_operators = semantics.split_dependent_operators(split_dimension);
+    for concrete_op_id in
+        working.self_loop_operator_ids[split_state_id].intersection_iter(split_dependent_operators)
+    {
+        for (source, source_region) in [(split_state_id, &old_child), (new_state_id, &new_child)] {
+            let targets = [(split_state_id, &old_child), (new_state_id, &new_child)];
+            let may_targets = semantics.parent_loop_source_to_split_children(
+                source_region,
+                concrete_op_id,
+                [targets[0].1, targets[1].1],
+                split_dimension,
+            )?;
+            for ((target, _), may_transition) in targets.into_iter().zip(may_targets) {
+                if source != target && may_transition {
+                    replacements.insert(TransitionKey {
+                        source,
+                        concrete_op_id,
                         target,
                     });
                 }
@@ -1775,7 +2185,10 @@ fn replay_optimal_abstract_trace(
                 })
                 .collect::<Result<Vec<_>>>()?;
             retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
-            let keys = candidates.iter().map(split_choice_key).collect::<Vec<_>>();
+            let keys = candidates
+                .iter()
+                .map(|split| split_choice_key(semantics, split))
+                .collect::<Vec<_>>();
             let index = semantics.choose_keyed_index(&keys, 0x474F_414C);
             return Ok(PlanCheck::Refine(candidates.swap_remove(index)));
         }
@@ -1814,7 +2227,10 @@ fn replay_optimal_abstract_trace(
                 })
                 .collect::<Result<Vec<_>>>()?;
             retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
-            let keys = candidates.iter().map(split_choice_key).collect::<Vec<_>>();
+            let keys = candidates
+                .iter()
+                .map(|split| split_choice_key(semantics, split))
+                .collect::<Vec<_>>();
             let index = semantics.choose_keyed_index(&keys, 0x5052_4543);
             return Ok(PlanCheck::Refine(candidates.swap_remove(index)));
         }
@@ -2259,7 +2675,7 @@ fn comparison_refinement(
     }
     let keys = candidates
         .iter()
-        .map(|(_, split)| split_choice_key(split))
+        .map(|(_, split)| split_choice_key(semantics, split))
         .collect::<Vec<_>>();
     let index = semantics.choose_keyed_index(&keys, 0x434F_4D50);
     Ok(candidates.swap_remove(index).1)
@@ -2310,6 +2726,7 @@ fn split_deviation(
 ) -> Result<Split> {
     let target = &working.states[target_state_id];
     let mut candidates = Vec::new();
+    let mut rejected_numeric_splits = Vec::new();
     for (var_id, allowed) in target.propositions.iter().enumerate() {
         if semantics.comparison_tree_by_prop_var[var_id].is_some()
             || !semantics.propositional_axioms_by_prop_var[var_id].is_empty()
@@ -2344,9 +2761,9 @@ fn split_deviation(
         let preimage = semantics.numeric_effect_preimage(target_interval, op_id, var_id)?;
         let source = source_numeric[var_id];
         if preimage.contains(source) {
-            debug!(
-                "operator {op_id} numeric var {var_id}: conservative preimage {preimage:?} contains concrete source {source}; this dimension cannot safely separate successor {successor} from target {target_interval:?}"
-            );
+            rejected_numeric_splits.push(format!(
+                "var {var_id}: source={source}, successor={successor}, target={target_interval:?}, preimage={preimage:?} contains source"
+            ));
             continue;
         }
         let (boundary, lower_includes_boundary) =
@@ -2359,19 +2776,21 @@ fn split_deviation(
                 );
                 (preimage.upper, preimage.upper_closed)
             };
-        ensure!(
-            boundary.is_finite(),
-            "cannot refine an infinite numeric-effect preimage boundary"
-        );
         let parent = working.states[source_state_id].numeric[var_id];
         ensure!(
             parent.contains(source),
             "Cartesian source state {source_state_id} interval {parent:?} does not contain concrete numeric var {var_id}={source}"
         );
+        if !boundary.is_finite() {
+            rejected_numeric_splits.push(format!(
+                "var {var_id}: source={source}, successor={successor}, target={target_interval:?}, preimage={preimage:?}, parent={parent:?} has only infinite separating boundary"
+            ));
+            continue;
+        }
         if !parent.can_split_at(boundary, lower_includes_boundary) {
-            debug!(
-                "operator {op_id} numeric var {var_id}: preimage boundary {boundary} does not strictly split source interval {parent:?}"
-            );
+            rejected_numeric_splits.push(format!(
+                "var {var_id}: source={source}, successor={successor}, target={target_interval:?}, preimage={preimage:?}, parent={parent:?}, boundary={boundary}, lower_includes_boundary={lower_includes_boundary} is not strict"
+            ));
             continue;
         }
         candidates.push(Split::Numeric {
@@ -2387,10 +2806,15 @@ fn split_deviation(
     }
     ensure!(
         !candidates.is_empty(),
-        "concrete successor maps to a different Cartesian state but no sound strict split separates it from the abstract target"
+        "concrete successor maps from Cartesian state {source_state_id} to a state other than abstract target {target_state_id}, but no sound strict split exists for operator {op_id} ({}); numeric split rejections: [{}]",
+        semantics.task.get_operators()[op_id].name(),
+        rejected_numeric_splits.join("; ")
     );
     retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
-    let keys = candidates.iter().map(split_choice_key).collect::<Vec<_>>();
+    let keys = candidates
+        .iter()
+        .map(|split| split_choice_key(semantics, split))
+        .collect::<Vec<_>>();
     let index = semantics.choose_keyed_index(&keys, 0x4445_5649);
     Ok(candidates.swap_remove(index))
 }
@@ -2401,6 +2825,7 @@ fn apply_split(
     split: Split,
 ) -> Result<usize> {
     let old_state_id = split.state_id();
+    let split_dimension = split.dimension();
     let old_region = working
         .states
         .get(old_state_id)
@@ -2504,6 +2929,17 @@ fn apply_split(
     working.states.push(new_child);
     working.outgoing.push(Vec::new());
     working.incoming.push(Vec::new());
+    let operator_count = semantics.task.get_operators().len();
+    let old_self_loops = std::mem::replace(
+        &mut working.self_loop_operator_ids[old_state_id],
+        OperatorBitSet::empty(operator_count),
+    );
+    let split_dependent_operators = semantics.split_dependent_operators(split_dimension);
+    working.self_loop_operator_ids[old_state_id] =
+        old_self_loops.clone_without(split_dependent_operators);
+    working
+        .self_loop_operator_ids
+        .push(old_self_loops.clone_without(split_dependent_operators));
     let new_leaf_nodes = match &working.hierarchy.nodes[leaf_node_id] {
         RefinementNode::Propositional {
             wanted_child,
@@ -2533,6 +2969,10 @@ fn apply_split(
 
     let old_transitions = working.remove_incident_transitions(old_state_id);
     for transition in old_transitions {
+        debug_assert!(
+            transition.source != transition.target,
+            "Cartesian non-loop storage contains a self loop"
+        );
         let sources: &[usize] = if transition.source == old_state_id {
             &[old_state_id, new_state_id]
         } else {
@@ -2545,12 +2985,40 @@ fn apply_split(
         };
         for &source in sources {
             for &target in targets {
-                if semantics.may_transition(
-                    &working.states[source],
-                    transition.concrete_op_id,
-                    &working.states[target],
-                )? {
+                let may_transition = if semantics
+                    .operator_depends_on_split(transition.concrete_op_id, split_dimension)
+                {
+                    semantics.may_transition(
+                        &working.states[source],
+                        transition.concrete_op_id,
+                        &working.states[target],
+                    )?
+                } else {
+                    semantics.may_transition_after_independent_split(
+                        &working.states[source],
+                        transition.concrete_op_id,
+                        &working.states[target],
+                        split_dimension,
+                    )?
+                };
+                if may_transition {
                     working.add_transition(source, transition.concrete_op_id, target);
+                }
+            }
+        }
+    }
+    for concrete_op_id in old_self_loops.intersection_iter(split_dependent_operators) {
+        for source in [old_state_id, new_state_id] {
+            let targets = [old_state_id, new_state_id];
+            let may_targets = semantics.parent_loop_source_to_split_children(
+                &working.states[source],
+                concrete_op_id,
+                [&working.states[old_state_id], &working.states[new_state_id]],
+                split_dimension,
+            )?;
+            for (target, may_transition) in targets.into_iter().zip(may_targets) {
+                if may_transition {
+                    working.add_transition(source, concrete_op_id, target);
                 }
             }
         }
@@ -2586,6 +3054,10 @@ fn finalize_abstraction(
             ));
         }
     }
+    // Self loops have zero shortest-path and saturated-cost requirements. Keep
+    // them only while refining, where a later split can turn one into an exact
+    // cross-child transition; materializing them here wastes memory without
+    // changing standalone, canonical, label-SCP, or transition-SCP values.
     if combine_labels {
         raw.extend(grouped.into_iter().map(|((source, target), mut labels)| {
             labels.sort_unstable();
@@ -2610,22 +3082,33 @@ fn finalize_abstraction(
         .collect::<Vec<_>>();
     let mut relevant = HashSet::new();
     for (transition_id, (source, target, labels)) in raw.into_iter().enumerate() {
-        for &label in &labels {
-            relevant.insert(label);
+        if source != target {
+            for &label in &labels {
+                relevant.insert(label);
+            }
         }
         if compute_operator_footprints {
             footprints.push(AbstractOperatorFootprint {
                 labels: labels
                     .iter()
                     .copied()
-                    .map(|concrete_op_id| ConcreteOperatorFootprint {
-                        concrete_op_id,
-                        source_region: Arc::clone(&shared_state_regions[source]),
-                        allocable: true,
-                        max_allocation_fraction: 1.0,
-                        non_allocable_reason: None,
+                    .map(|concrete_op_id| {
+                        let footprint = semantics.transition_source_footprint(
+                            &shared_state_regions[source],
+                            concrete_op_id,
+                            &shared_state_regions[target],
+                        )?;
+                        let source_region = if footprint == *shared_state_regions[source] {
+                            Arc::clone(&shared_state_regions[source])
+                        } else {
+                            Arc::new(footprint)
+                        };
+                        Ok(ConcreteOperatorFootprint {
+                            concrete_op_id,
+                            source_region,
+                        })
                     })
-                    .collect(),
+                    .collect::<Result<Vec<_>>>()?,
             });
         }
         transitions.push(AbstractTransition {
@@ -2645,7 +3128,13 @@ fn finalize_abstraction(
         }
     }
     let initial_prop = semantics.task.get_initial_propositional_state_values();
-    let initial_numeric = semantics.task.get_initial_numeric_state_values();
+    let initial_numeric = semantics
+        .task
+        .get_initial_numeric_state_values()
+        .iter()
+        .copied()
+        .map(float_tolerance::canonicalize)
+        .collect::<Vec<_>>();
     let initial_state_hash = working
         .hierarchy
         .map_state(&initial_prop, &initial_numeric)?;

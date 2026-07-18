@@ -1476,8 +1476,14 @@ pub fn translate_task_from_grounded_internal(
     }
     merge_numeric_fluent_type(&mut merged_num_fluents, task.metric.1.clone());
 
-    let num_fluents_vec: Vec<PrimitiveNumericExpression> =
-        merged_num_fluents.values().cloned().collect();
+    let mut num_fluents_vec: Vec<PrimitiveNumericExpression> =
+        merged_num_fluents.into_values().collect();
+    num_fluents_vec.sort_by(|left, right| {
+        left.symbol
+            .cmp(&right.symbol)
+            .then_with(|| left.args.cmp(&right.args))
+            .then_with(|| left.ntype.cmp(&right.ntype))
+    });
     let num_fluents_set: HashSet<PrimitiveNumericExpression> =
         num_fluents_vec.iter().cloned().collect();
 

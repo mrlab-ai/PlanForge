@@ -4,9 +4,7 @@ use std::collections::BTreeSet;
 
 use rand::{SeedableRng, rngs::SmallRng};
 
-use crate::evaluation::abstraction_collections::transition_cost_partitioning::{
-    FiniteSupportConfig, TransitionResidualCosts,
-};
+use crate::evaluation::abstraction_collections::transition_cost_partitioning::TransitionResidualCosts;
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
@@ -994,12 +992,11 @@ fn abstract_operator_footprint_keeps_finite_source_when_target_reaches_tail() {
     };
 
     let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op], &FiniteSupportConfig::default())
+        .build_abstract_operator_footprints(&task, &[op])
         .unwrap();
     let concrete = &footprints[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, 0);
-    assert!(concrete.allocable);
     assert_eq!(
         concrete.source_region.numeric[0],
         Interval::new(9.0, 10.0, true, true)
@@ -1027,12 +1024,11 @@ fn abstract_operator_footprint_tightens_source_by_inverse_target_image() {
     };
 
     let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op], &FiniteSupportConfig::default())
+        .build_abstract_operator_footprints(&task, &[op])
         .unwrap();
     let concrete = &footprints[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, 0);
-    assert!(concrete.allocable);
     assert_eq!(
         concrete.source_region.numeric[0],
         Interval::new(4.0, 5.0, false, true)
@@ -1056,11 +1052,10 @@ fn footprint_active_preimage_allows_boundary_charge() {
     };
 
     let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op], &FiniteSupportConfig::default())
+        .build_abstract_operator_footprints(&task, &[op])
         .unwrap();
     let concrete = &footprints[0].labels[0];
 
-    assert!(concrete.allocable);
     assert_eq!(
         concrete.source_region.numeric[0],
         Interval::new(4.0, 5.0, false, true)
@@ -1083,21 +1078,18 @@ fn abstract_operator_footprint_rejects_empty_inverse_target_image() {
         changed_numeric_vars: vec![0],
     };
 
-    let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op], &FiniteSupportConfig::default())
-        .unwrap();
-    let concrete = &footprints[0].labels[0];
-
-    assert!(!concrete.allocable);
-    assert!(concrete.source_region.numeric[0].is_empty());
-    assert_eq!(
-        concrete.non_allocable_reason,
-        Some(crate::evaluation::abstraction_collections::transition_cost_partitioning::NonAllocableFootprintReason::UnsupportedEffectImage)
+    let error = factory
+        .build_abstract_operator_footprints(&task, &[op])
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("empty regressed source footprint")
     );
 }
 
 #[test]
-fn abstract_operator_footprint_marks_unbounded_changed_tail_non_allocable() {
+fn abstract_operator_footprint_allocates_unbounded_changed_tail() {
     let (task, factory) = additive_numeric_footprint_task();
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operator_generator::AbstractOperator {
@@ -1110,19 +1102,14 @@ fn abstract_operator_footprint_marks_unbounded_changed_tail_non_allocable() {
     };
 
     let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op], &FiniteSupportConfig::default())
+        .build_abstract_operator_footprints(&task, &[op])
         .unwrap();
     let concrete = &footprints[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, 0);
-    assert!(!concrete.allocable);
     assert_eq!(
         concrete.source_region.numeric[0],
         Interval::new(10.0, f64::INFINITY, true, false)
-    );
-    assert_eq!(
-        concrete.non_allocable_reason,
-        Some(crate::evaluation::abstraction_collections::transition_cost_partitioning::NonAllocableFootprintReason::InfiniteActiveSource)
     );
 }
 
@@ -1176,13 +1163,10 @@ fn abstract_operator_footprint_allocates_operator_without_numeric_effects() {
     };
 
     let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op], &FiniteSupportConfig::default())
+        .build_abstract_operator_footprints(&task, &[op])
         .unwrap();
     let concrete = &footprints[0].labels[0];
 
-    assert!(concrete.allocable);
-    assert_eq!(concrete.max_allocation_fraction, 1.0);
-    assert_eq!(concrete.non_allocable_reason, None);
     assert_eq!(concrete.source_region.propositions[0], vec![0]);
 }
 
@@ -1264,11 +1248,10 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
     };
 
     let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op], &FiniteSupportConfig::default())
+        .build_abstract_operator_footprints(&task, &[op])
         .unwrap();
     let concrete = &footprints[0].labels[0];
 
-    assert!(concrete.allocable);
     assert_eq!(
         concrete.source_region.numeric[0],
         Interval::new(0.0, 1.0, false, true)
@@ -1277,12 +1260,10 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
         concrete.source_region.numeric[1],
         Interval::new(f64::NEG_INFINITY, -1.0, false, true)
     );
-    assert!((concrete.max_allocation_fraction - 0.5).abs() < 1e-9);
 
     let residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
     let operator_costs =
-        abstract_operator_costs_from_footprints(1, &footprints, None, None, &residuals, 0, None)
-            .unwrap();
+        abstract_operator_costs_from_footprints(1, &footprints, None, &residuals, 0, None).unwrap();
     assert_eq!(operator_costs, vec![1.0]);
 }
 
@@ -1384,10 +1365,9 @@ fn footprint_one_finite_dim_suffices() {
         changed_numeric_vars: vec![0, 1],
     };
     let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op], &FiniteSupportConfig::default())
+        .build_abstract_operator_footprints(&task, &[op])
         .unwrap();
     let concrete = &footprints[0].labels[0];
-    assert!(concrete.allocable);
     assert_eq!(concrete.source_region.numeric[0], Interval::singleton(0.0));
     assert_eq!(concrete.source_region.numeric[1], Interval::unbounded());
 
@@ -1477,11 +1457,10 @@ fn abstract_operator_footprint_ignores_zero_additive_effect_dimension() {
     };
 
     let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op], &FiniteSupportConfig::default())
+        .build_abstract_operator_footprints(&task, &[op])
         .unwrap();
     let concrete = &footprints[0].labels[0];
 
-    assert!(concrete.allocable);
     assert_eq!(
         concrete.source_region.numeric[0],
         Interval::new(0.0, 1.0, false, true)
@@ -1499,7 +1478,7 @@ fn abstract_operator_footprint_ignores_zero_additive_effect_dimension() {
 }
 
 #[test]
-fn width_threshold_demotes_wide_finite_preimage_to_non_allocable() {
+fn footprint_width_does_not_change_valid_preimage() {
     // Same fixture as `abstract_operator_footprint_tightens_source_by_inverse_target_image`:
     // the preimage source for the operator is `(4.0, 5.0]`, width 1.0.
     let (task, factory) = additive_numeric_footprint_task_with_partitions(vec![
@@ -1516,33 +1495,17 @@ fn width_threshold_demotes_wide_finite_preimage_to_non_allocable() {
         changed_numeric_vars: vec![0],
     };
 
-    // Width 1.0 fits inside default INFINITY threshold → allocable.
-    let permissive = factory
-        .build_abstract_operator_footprints(&task, &[op.clone()], &FiniteSupportConfig::default())
+    let footprints = factory
+        .build_abstract_operator_footprints(&task, &[op])
         .unwrap();
-    assert!(permissive[0].labels[0].allocable);
-
-    // With max_stealable_width = 0.5, width 1.0 exceeds the gate → non-allocable
-    // with the same admissibility consequence as an infinite preimage.
-    let tight = factory
-        .build_abstract_operator_footprints(
-            &task,
-            &[op],
-            &FiniteSupportConfig {
-                max_stealable_width: 0.5,
-            },
-        )
-        .unwrap();
-    let concrete = &tight[0].labels[0];
-    assert!(!concrete.allocable);
     assert_eq!(
-        concrete.non_allocable_reason,
-        Some(crate::evaluation::abstraction_collections::transition_cost_partitioning::NonAllocableFootprintReason::InfiniteActiveSource)
+        footprints[0].labels[0].source_region.numeric[0],
+        Interval::new(4.0, 5.0, false, true)
     );
 }
 
 #[test]
-fn singleton_preimage_is_stealable_even_at_zero_threshold() {
+fn singleton_preimage_is_preserved_exactly() {
     // Partition `x` so that the operator `x += 1` maps singleton `{4.0}` to
     // singleton `{5.0}`. The preimage `{4.0} ∩ shift({5.0}, -1) = {4.0}` is a
     // singleton of width 0.
@@ -1560,17 +1523,9 @@ fn singleton_preimage_is_stealable_even_at_zero_threshold() {
         changed_numeric_vars: vec![0],
     };
 
-    // The tightest possible non-trivial threshold still admits the singleton.
     let footprints = factory
-        .build_abstract_operator_footprints(
-            &task,
-            &[op],
-            &FiniteSupportConfig {
-                max_stealable_width: 0.0,
-            },
-        )
+        .build_abstract_operator_footprints(&task, &[op])
         .unwrap();
     let concrete = &footprints[0].labels[0];
-    assert!(concrete.allocable);
     assert_eq!(concrete.source_region.numeric[0], Interval::singleton(4.0));
 }

@@ -42,7 +42,6 @@ use super::domain_abstraction_heuristic::{
     COMPARISON_FALSE_VAL, COMPARISON_TRUE_VAL, COMPARISON_UNKNOWN_VAL,
 };
 use super::utils::{compute_abstraction_size_u128, debug_print_refinement_summary};
-use crate::evaluation::abstraction_collections::transition_cost_partitioning::FiniteSupportConfig;
 
 #[derive(Debug, Clone)]
 pub struct CegarConfig {
@@ -60,10 +59,6 @@ pub struct CegarConfig {
     pub blacklisted_prop_var_ids: HashSet<usize>,
     pub blacklisted_numeric_var_ids: HashSet<usize>,
     pub initial_seed_splits: Vec<InitialSeedSplit>,
-    /// Width threshold for the finite-support transition-cost-partitioning
-    /// gate applied when the abstraction's operator footprints are built. The
-    /// default reproduces the legacy finite-vs-infinite behavior.
-    pub finite_support: FiniteSupportConfig,
     /// When false, `DomainAbstractionGenerator::generate` skips building the
     /// `Vec<AbstractOperatorFootprint>`. Footprints are only
     /// consumed by abstract-operator transition-cost partitioning
@@ -109,7 +104,6 @@ impl Default for CegarConfig {
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
             initial_seed_splits: Vec::new(),
-            finite_support: FiniteSupportConfig::default(),
             split_direction: None,
             compute_operator_footprints: true,
             max_refined_comparison_vars_per_abstraction: None,

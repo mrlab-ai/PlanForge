@@ -92,6 +92,7 @@ pub(crate) fn validate_scp_combinator_options(args: &[ConfigArg]) -> Result<(), 
         "orders",
         "order_optimization_max_time",
         "saturator",
+        "residual_sweeps",
         "random_seed",
         "use_abstract_operator_cost_partitioning",
     ];

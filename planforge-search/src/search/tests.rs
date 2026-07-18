@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
 
 use planforge_sas::numeric_task::{
     ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
@@ -132,4 +133,52 @@ fn test_search_result_creation() {
 fn test_progress_format_dedupes_rounding_equal_f_layers() {
     assert_eq!(format_progress_value(95.4940004), "95.494000");
     assert_eq!(format_progress_value(95.49400049), "95.494000");
+}
+
+struct FailingHeuristic;
+
+impl Heuristic for FailingHeuristic {
+    fn compute_heuristic(
+        &self,
+        _eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
+        Err(EvaluationError::ComputationFailed(
+            "construction deadline".to_string(),
+        ))
+    }
+}
+
+#[test]
+fn initial_evaluation_error_is_not_reported_as_no_solution() {
+    let task: TaskRef = Arc::new(NumericRootTask::new(
+        4,
+        Metric::new(false, None),
+        vec![ExplicitVariable::new(
+            1,
+            "v".to_string(),
+            vec!["value".to_string()],
+            None,
+            0,
+        )],
+        vec![],
+        vec![],
+        vec![],
+        vec![0],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    ));
+    let registry = StateRegistry::for_task(task.clone());
+    let mut search = AStarSearch::new(task, registry, Some(Box::new(FailingHeuristic)), None, None);
+
+    let error = search.search().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("initial state evaluation failed")
+    );
+    assert!(format!("{error:#}").contains("construction deadline"));
 }

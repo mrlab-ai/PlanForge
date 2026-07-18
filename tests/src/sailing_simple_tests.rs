@@ -90,7 +90,7 @@ fn blind_astar_cost(instance: &str) -> f64 {
     let (task, temp_dir) = sailing_task(instance);
     let state_registry = StateRegistry::for_task(Arc::new(&task));
     let mut search = AStarSearch::new(Arc::new(&task), state_registry, None, None, None);
-    let result = search.search();
+    let result = search.search().expect("blind A* search failed");
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     match result.status {
@@ -115,7 +115,7 @@ fn restricted_blind_astar_cost(instance: &str) -> f64 {
         .into_task();
     let state_registry = StateRegistry::for_task(Arc::new(&restricted_task));
     let mut search = AStarSearch::new(Arc::new(&restricted_task), state_registry, None, None, None);
-    let result = search.search();
+    let result = search.search().expect("restricted blind A* search failed");
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     match result.status {
@@ -152,7 +152,9 @@ fn assert_exact_single_abstraction_search<H>(
         None,
         None,
     );
-    let result = search.search();
+    let result = search
+        .search()
+        .expect("single-abstraction A* search failed");
 
     assert!(
         matches!(result.status, SearchStatus::Solved(_)),

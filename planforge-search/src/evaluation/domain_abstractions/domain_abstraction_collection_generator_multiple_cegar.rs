@@ -36,7 +36,6 @@ use super::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, DomainAbstractionMetadata,
 };
 use super::utils::compute_abstraction_size_u128;
-use crate::evaluation::abstraction_collections::transition_cost_partitioning::FiniteSupportConfig;
 use crate::resource_limits;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -217,10 +216,6 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub init_split_method: InitSplitMethod,
     pub numeric_split_strategy: NumericSplitStrategy,
     pub portfolio_strategy: PortfolioStrategy,
-    /// Flattened so unknown keys (today only `max_stealable_width`) reach
-    /// the nested `FiniteSupportConfig::apply_options`.
-    #[option(flatten)]
-    pub finite_support: FiniteSupportConfig,
     /// Overrides `FlawKind`'s default split direction when set; otherwise the
     /// flaw kind chooses its own default (`Forward` for everything except
     /// `TargetCentered`, which defaults to `Backward`).
@@ -274,7 +269,6 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,
             portfolio_strategy: PortfolioStrategy::Standard,
-            finite_support: FiniteSupportConfig::default(),
             split_direction: None,
             compute_operator_footprints: true,
             max_refined_comparison_vars_per_abstraction: None,
@@ -409,7 +403,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             blacklisted_prop_var_ids,
             blacklisted_numeric_var_ids,
             initial_seed_splits,
-            finite_support: self.config.finite_support,
             split_direction: self.config.split_direction,
             compute_operator_footprints: self.config.compute_operator_footprints,
             max_refined_comparison_vars_per_abstraction: self

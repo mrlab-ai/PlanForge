@@ -450,7 +450,9 @@ impl Task {
                 max_memory,
             )
         };
-        let result = search.search();
+        let result = search
+            .search()
+            .map_err(|error| PlanforgeError::new_err(format!("search failed: {error:#}")))?;
         if let Some(err) = error.borrow_mut().take() {
             return Err(err);
         }

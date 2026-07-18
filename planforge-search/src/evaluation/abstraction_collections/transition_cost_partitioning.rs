@@ -6,15 +6,8 @@
 //! under the operator's numeric effect (computed in
 //! `domain_abstraction_factory::build_concrete_operator_footprint`).
 //!
-//! [`ConcreteOperatorFootprint::allocable`] encodes finite-support
-//! stealability: it is `true` iff the preimage's relevant numeric dimensions
-//! are bounded and narrow enough to allow this transition to steal cost from
-//! the residual pool. The "narrow enough" threshold is configurable via
-//! [`FiniteSupportConfig::max_stealable_width`]; the default (`INFINITY`)
-//! reproduces the prior finite-vs-infinite gate exactly.
-//!
-//! Non-allocable footprints must carry zero saturated cost; this invariant is
-//! enforced by [`TransitionResidualCosts::reduce_by_abstract_operator_footprints`].
+//! Unbounded preimages are ordinary regions. Cost is allocated on their exact
+//! source footprint and remains available on disjoint regions.
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
@@ -26,7 +19,6 @@ use anyhow::{Context, Result, bail, ensure};
 use ordered_float::NotNan;
 use planforge_sas::numeric_task::ExplicitFact;
 use planforge_sas::utils::float_tolerance;
-use serde::{Deserialize, Serialize};
 
 use crate::evaluation::domain_abstractions::comparison_expression::Interval;
 
@@ -34,31 +26,6 @@ const EPSILON: f64 = 1e-9;
 const ABSTRACT_OPERATOR_REGION_HASH: usize = usize::MAX;
 const MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 4096;
 const MAX_TOTAL_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 50_000;
-
-/// Configuration for the finite-support gate on transition stealability.
-///
-/// An abstract transition is allowed to "steal" cost (have a positive
-/// saturated cost in the cost-partitioning) only when every relevant numeric
-/// dimension of its regressed preimage source is either a singleton or has
-/// width at most [`max_stealable_width`](Self::max_stealable_width).
-///
-/// The default `max_stealable_width = f64::INFINITY` reproduces the legacy
-/// finite-vs-infinite behavior: every finite preimage passes, every infinite
-/// preimage fails.
-#[derive(
-    Debug, Clone, Copy, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
-)]
-pub struct FiniteSupportConfig {
-    pub max_stealable_width: f64,
-}
-
-impl Default for FiniteSupportConfig {
-    fn default() -> Self {
-        Self {
-            max_stealable_width: f64::INFINITY,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransition {
@@ -100,16 +67,6 @@ pub struct AbstractOperatorFootprint {
 pub struct ConcreteOperatorFootprint {
     pub concrete_op_id: usize,
     pub source_region: Arc<StateRegion>,
-    pub allocable: bool,
-    pub max_allocation_fraction: f64,
-    pub non_allocable_reason: Option<NonAllocableFootprintReason>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NonAllocableFootprintReason {
-    InfiniteActiveSource,
-    UninformativeSource,
-    UnsupportedEffectImage,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -337,7 +294,6 @@ pub fn build_explicit_abstract_operator_cost_partitioning_table(
     transition_system: &AbstractTransitionSystem,
     footprints: &[AbstractOperatorFootprint],
     budgets: Option<&[AbstractOperatorCostBudget]>,
-    label_rescue_operator_ids: Option<&HashSet<usize>>,
     residual_costs: &TransitionResidualCosts,
     abstraction_id: usize,
     cap_state_id: Option<usize>,
@@ -347,7 +303,6 @@ pub fn build_explicit_abstract_operator_cost_partitioning_table(
         footprints.len(),
         footprints,
         budgets,
-        label_rescue_operator_ids,
         residual_costs,
         abstraction_id,
         deadline,
@@ -565,7 +520,6 @@ fn abstract_operator_costs_from_footprints(
     num_operators: usize,
     footprints: &[AbstractOperatorFootprint],
     budgets: Option<&[AbstractOperatorCostBudget]>,
-    label_rescue_operator_ids: Option<&HashSet<usize>>,
     residual_costs: &TransitionResidualCosts,
     abstraction_id: usize,
     deadline: Option<Instant>,
@@ -583,8 +537,6 @@ fn abstract_operator_costs_from_footprints(
         footprints.len()
     );
     let has_reductions = residual_costs.has_reductions();
-    let uniform_label_residuals =
-        label_rescue_operator_ids.map(|_| residual_costs.operator_costs_for_label_cp());
     let mut operator_costs = vec![f64::INFINITY; num_operators];
     for abstract_op_id in 0..num_operators {
         if abstract_op_id.is_multiple_of(64) {
@@ -609,32 +561,15 @@ fn abstract_operator_costs_from_footprints(
             .iter()
             .enumerate()
             .map(|(label_id, label)| {
-                let residual = if has_reductions && label.allocable {
+                let residual = if has_reductions {
                     residual_costs.cost_for_operator_footprint(
                         abstraction_id,
                         abstract_op_id,
                         label,
                     )
-                } else if has_reductions {
-                    uniform_label_residuals
-                        .as_ref()
-                        .and_then(|costs| costs.get(label.concrete_op_id))
-                        .copied()
-                        .unwrap_or(0.0)
                 } else {
                     residual_costs.base_cost(label.concrete_op_id)
                 };
-                let rescued = matches!(
-                    label.non_allocable_reason,
-                    Some(
-                        NonAllocableFootprintReason::InfiniteActiveSource
-                            | NonAllocableFootprintReason::UninformativeSource
-                    )
-                ) && label_rescue_operator_ids
-                    .is_some_and(|ids| ids.contains(&label.concrete_op_id));
-                if !label.allocable && !rescued {
-                    return 0.0;
-                }
                 let fraction = budget
                     .map(|budget| budget.label_fractions[label_id])
                     .unwrap_or(1.0);
@@ -674,6 +609,7 @@ pub struct LmCutResidualCostVariant {
 #[derive(Debug)]
 struct OperatorResidual {
     base_cost: f64,
+    regional_usage: RegionalUsage,
     reductions: Vec<ResidualReduction>,
     reduction_indices: HashMap<TransitionIdentity, usize>,
     generation: Cell<u64>,
@@ -686,6 +622,368 @@ struct OperatorResidual {
     /// first query after the `generation` advances; invalidated implicitly by
     /// the generation-mismatch check.
     sorted_index: RefCell<Option<SortedReductionIndex>>,
+}
+
+/// A disjoint partition of the part of the concrete state space on which an
+/// operator cost has already been allocated. States outside all cells have
+/// usage zero. Keeping usage, rather than residual cost, avoids materializing
+/// the universal state region.
+#[derive(Debug, Clone, Default)]
+struct RegionalUsage {
+    cells: Vec<RegionalUsageCell>,
+    index: RefCell<Option<RegionalUsageIndex>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RegionalUsageCell {
+    region: StateRegion,
+    amount: f64,
+}
+
+impl PartialEq for RegionalUsage {
+    fn eq(&self, other: &Self) -> bool {
+        self.cells == other.cells
+    }
+}
+
+const REGIONAL_INDEX_MIN_CELLS: usize = 32;
+const REGIONAL_INDEX_BLOCK_SIZE: usize = 32;
+
+#[derive(Debug, Clone)]
+struct RegionalUsageIndex {
+    primary_dim: usize,
+    sorted_cell_ids: Vec<usize>,
+    blocks: Vec<RegionalUsageIndexBlock>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RegionalUsageIndexBlock {
+    start: usize,
+    end: usize,
+    max_upper: f64,
+}
+
+impl RegionalUsage {
+    fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    fn max_over(&self, query: &StateRegion) -> f64 {
+        if self.cells.len() < REGIONAL_INDEX_MIN_CELLS {
+            return self.max_over_cell_ids(query, 0..self.cells.len());
+        }
+        if self.index.borrow().is_none() {
+            *self.index.borrow_mut() = RegionalUsageIndex::build(&self.cells);
+        }
+        let index = self.index.borrow();
+        let Some(index) = index.as_ref() else {
+            return self.max_over_cell_ids(query, 0..self.cells.len());
+        };
+        let query_interval = query.numeric[index.primary_dim];
+        let candidate_end = index.sorted_cell_ids.partition_point(|&cell_id| {
+            self.cells[cell_id].region.numeric[index.primary_dim].lower <= query_interval.upper
+        });
+        let mut maximum = 0.0_f64;
+        for block in &index.blocks {
+            if block.start >= candidate_end {
+                break;
+            }
+            if block.max_upper < query_interval.lower {
+                continue;
+            }
+            for &cell_id in &index.sorted_cell_ids[block.start..block.end.min(candidate_end)] {
+                let cell = &self.cells[cell_id];
+                if cell.region.overlaps(query) {
+                    maximum = maximum.max(cell.amount);
+                }
+            }
+        }
+        maximum
+    }
+
+    fn max_over_cell_ids(&self, query: &StateRegion, cell_ids: impl Iterator<Item = usize>) -> f64 {
+        cell_ids
+            .filter_map(|cell_id| {
+                let cell = &self.cells[cell_id];
+                cell.region.overlaps(query).then_some(cell.amount)
+            })
+            .fold(0.0, f64::max)
+    }
+
+    /// Pointwise maximum assignment. This is used to form the allocation
+    /// envelope of one abstraction table: a concrete transition maps to one
+    /// abstract transition in that table, even when conservative footprints
+    /// overlap.
+    fn maximize(&mut self, region: &StateRegion, amount: f64) {
+        debug_assert!(amount.is_finite() && amount >= 0.0);
+        if amount <= EPSILON {
+            return;
+        }
+        self.overlay(region, |old| old.max(amount), amount);
+    }
+
+    /// Pointwise addition. Table envelopes are independent cost partitions and
+    /// therefore add across completed tables.
+    fn add(&mut self, region: &StateRegion, amount: f64) {
+        debug_assert!(amount.is_finite() && amount >= 0.0);
+        if amount <= EPSILON {
+            return;
+        }
+        self.overlay(region, |old| old + amount, amount);
+    }
+
+    fn overlay(
+        &mut self,
+        region: &StateRegion,
+        update_existing: impl Fn(f64) -> f64,
+        uncovered_amount: f64,
+    ) {
+        debug_assert!(state_region_is_nonempty(region));
+        let old_cells = std::mem::take(&mut self.cells);
+        let mut new_cells = Vec::with_capacity(old_cells.len() + 1);
+        let mut uncovered = vec![region.clone()];
+
+        for cell in old_cells {
+            let Some(intersection) = state_region_intersection(&cell.region, region) else {
+                new_cells.push(cell);
+                continue;
+            };
+            for remainder in subtract_state_region(&cell.region, &intersection) {
+                new_cells.push(RegionalUsageCell {
+                    region: remainder,
+                    amount: cell.amount,
+                });
+            }
+            new_cells.push(RegionalUsageCell {
+                region: intersection.clone(),
+                amount: update_existing(cell.amount),
+            });
+            uncovered = uncovered
+                .into_iter()
+                .flat_map(|piece| subtract_state_region(&piece, &intersection))
+                .collect();
+        }
+
+        new_cells.extend(uncovered.into_iter().map(|region| RegionalUsageCell {
+            region,
+            amount: uncovered_amount,
+        }));
+        new_cells.retain(|cell| cell.amount > EPSILON);
+        debug_assert!(regional_usage_cells_are_disjoint(&new_cells));
+        self.cells = new_cells;
+        *self.index.get_mut() = None;
+    }
+}
+
+impl RegionalUsageIndex {
+    fn build(cells: &[RegionalUsageCell]) -> Option<Self> {
+        let numeric_dimensions = cells.first()?.region.numeric.len();
+        if numeric_dimensions == 0
+            || cells
+                .iter()
+                .any(|cell| cell.region.numeric.len() != numeric_dimensions)
+        {
+            return None;
+        }
+        let primary_dim = (0..numeric_dimensions)
+            .max_by_key(|&dimension| {
+                let mut bounds = HashSet::with_capacity(cells.len());
+                for cell in cells {
+                    let interval = cell.region.numeric[dimension];
+                    bounds.insert((interval.lower.to_bits(), interval.upper.to_bits()));
+                }
+                bounds.len()
+            })
+            .filter(|&dimension| {
+                cells.iter().any(|cell| {
+                    let interval = cell.region.numeric[dimension];
+                    interval.lower.is_finite() || interval.upper.is_finite()
+                })
+            })?;
+        let mut sorted_cell_ids = (0..cells.len()).collect::<Vec<_>>();
+        sorted_cell_ids.sort_unstable_by(|&left, &right| {
+            let left = cells[left].region.numeric[primary_dim];
+            let right = cells[right].region.numeric[primary_dim];
+            left.lower
+                .total_cmp(&right.lower)
+                .then_with(|| left.upper.total_cmp(&right.upper))
+        });
+        let blocks = sorted_cell_ids
+            .chunks(REGIONAL_INDEX_BLOCK_SIZE)
+            .enumerate()
+            .map(|(block_id, cell_ids)| RegionalUsageIndexBlock {
+                start: block_id * REGIONAL_INDEX_BLOCK_SIZE,
+                end: block_id * REGIONAL_INDEX_BLOCK_SIZE + cell_ids.len(),
+                max_upper: cell_ids
+                    .iter()
+                    .map(|&cell_id| cells[cell_id].region.numeric[primary_dim].upper)
+                    .fold(f64::NEG_INFINITY, f64::max),
+            })
+            .collect();
+        Some(Self {
+            primary_dim,
+            sorted_cell_ids,
+            blocks,
+        })
+    }
+}
+
+fn state_region_is_nonempty(region: &StateRegion) -> bool {
+    region.propositions.iter().all(|values| !values.is_empty())
+        && region.numeric.iter().all(|interval| !interval.is_empty())
+}
+
+fn state_region_intersection(left: &StateRegion, right: &StateRegion) -> Option<StateRegion> {
+    debug_assert_eq!(
+        left.propositions.len(),
+        right.propositions.len(),
+        "state-region propositional dimension mismatch"
+    );
+    debug_assert_eq!(
+        left.numeric.len(),
+        right.numeric.len(),
+        "state-region numeric dimension mismatch"
+    );
+    let propositions = left
+        .propositions
+        .iter()
+        .zip(&right.propositions)
+        .map(|(left, right)| sorted_value_intersection(left, right))
+        .collect::<Vec<_>>();
+    if propositions.iter().any(Vec::is_empty) {
+        return None;
+    }
+    let numeric = left
+        .numeric
+        .iter()
+        .copied()
+        .zip(right.numeric.iter().copied())
+        .map(|(left, right)| intersect_intervals(left, right))
+        .collect::<Vec<_>>();
+    if numeric.iter().any(Interval::is_empty) {
+        return None;
+    }
+    Some(StateRegion {
+        propositions,
+        numeric,
+    })
+}
+
+fn sorted_value_intersection(left: &[PropValueId], right: &[PropValueId]) -> Vec<PropValueId> {
+    let mut intersection = Vec::with_capacity(left.len().min(right.len()));
+    let (mut left_index, mut right_index) = (0, 0);
+    while left_index < left.len() && right_index < right.len() {
+        match left[left_index].cmp(&right[right_index]) {
+            std::cmp::Ordering::Less => left_index += 1,
+            std::cmp::Ordering::Greater => right_index += 1,
+            std::cmp::Ordering::Equal => {
+                intersection.push(left[left_index]);
+                left_index += 1;
+                right_index += 1;
+            }
+        }
+    }
+    intersection
+}
+
+fn sorted_value_difference(left: &[PropValueId], right: &[PropValueId]) -> Vec<PropValueId> {
+    left.iter()
+        .copied()
+        .filter(|value| right.binary_search(value).is_err())
+        .collect()
+}
+
+fn intersect_intervals(left: Interval, right: Interval) -> Interval {
+    let lower = left.lower.max(right.lower);
+    let upper = left.upper.min(right.upper);
+    Interval::new(
+        lower,
+        upper,
+        if left.lower > right.lower {
+            left.lower_closed
+        } else if left.lower < right.lower {
+            right.lower_closed
+        } else {
+            left.lower_closed && right.lower_closed
+        },
+        if left.upper < right.upper {
+            left.upper_closed
+        } else if left.upper > right.upper {
+            right.upper_closed
+        } else {
+            left.upper_closed && right.upper_closed
+        },
+    )
+}
+
+/// Returns a disjoint cover of `region \\ removed`. `removed` must be a
+/// nonempty subset of `region`.
+fn subtract_state_region(region: &StateRegion, removed: &StateRegion) -> Vec<StateRegion> {
+    let intersection = state_region_intersection(region, removed)
+        .expect("removed state region must intersect its parent region");
+    debug_assert_eq!(
+        &intersection, removed,
+        "removed state region must be a subset of its parent region"
+    );
+
+    let mut core = region.clone();
+    let mut result = Vec::new();
+    for var_id in 0..core.propositions.len() {
+        let outside =
+            sorted_value_difference(&core.propositions[var_id], &removed.propositions[var_id]);
+        if !outside.is_empty() {
+            let mut piece = core.clone();
+            piece.propositions[var_id] = outside;
+            result.push(piece);
+        }
+        core.propositions[var_id] = removed.propositions[var_id].clone();
+    }
+    for var_id in 0..core.numeric.len() {
+        let parent = core.numeric[var_id];
+        let cut = removed.numeric[var_id];
+        let lower = Interval::new(
+            parent.lower,
+            cut.lower,
+            parent.lower_closed,
+            !cut.lower_closed,
+        );
+        if !lower.is_empty() {
+            let mut piece = core.clone();
+            piece.numeric[var_id] = lower;
+            result.push(piece);
+        }
+        let upper = Interval::new(
+            cut.upper,
+            parent.upper,
+            !cut.upper_closed,
+            parent.upper_closed,
+        );
+        if !upper.is_empty() {
+            let mut piece = core.clone();
+            piece.numeric[var_id] = upper;
+            result.push(piece);
+        }
+        core.numeric[var_id] = cut;
+    }
+    debug_assert!(result.iter().all(state_region_is_nonempty));
+    debug_assert!(regional_regions_are_disjoint(&result));
+    result
+}
+
+fn regional_regions_are_disjoint(regions: &[StateRegion]) -> bool {
+    regions.iter().enumerate().all(|(index, region)| {
+        regions[index + 1..]
+            .iter()
+            .all(|other| !region.overlaps(other))
+    })
+}
+
+fn regional_usage_cells_are_disjoint(cells: &[RegionalUsageCell]) -> bool {
+    cells.iter().enumerate().all(|(index, cell)| {
+        cells[index + 1..]
+            .iter()
+            .all(|other| !cell.region.overlaps(&other.region))
+    })
 }
 
 /// A per-`OperatorResidual` sorted view that lets `max_overlap_reduction`
@@ -910,6 +1208,7 @@ impl TransitionResidualCosts {
             .iter()
             .map(|&base_cost| OperatorResidual {
                 base_cost,
+                regional_usage: RegionalUsage::default(),
                 reductions: Vec::new(),
                 reduction_indices: HashMap::new(),
                 generation: Cell::new(0),
@@ -925,14 +1224,14 @@ impl TransitionResidualCosts {
     pub fn num_reductions(&self) -> usize {
         self.operator_residuals
             .iter()
-            .map(|residual| residual.reductions.len())
+            .map(|residual| residual.reductions.len() + residual.regional_usage.cells.len())
             .sum()
     }
 
     pub fn has_reductions(&self) -> bool {
         self.operator_residuals
             .iter()
-            .any(|residual| !residual.reductions.is_empty())
+            .any(|residual| !residual.reductions.is_empty() || !residual.regional_usage.is_empty())
     }
 
     pub fn base_cost(&self, concrete_op_id: usize) -> f64 {
@@ -952,7 +1251,14 @@ impl TransitionResidualCosts {
                 if let Some(cost) = residual.uniform_cost_cache.get() {
                     return cost;
                 }
-                let reduction = max_overlap_reduction(None, residual, residual.base_cost);
+                let reduction = max_overlap_reduction(None, residual, residual.base_cost).max(
+                    residual
+                        .regional_usage
+                        .cells
+                        .iter()
+                        .map(|cell| cell.amount)
+                        .fold(0.0, f64::max),
+                );
                 let cost = (residual.base_cost - reduction).max(0.0);
                 residual.uniform_cost_cache.set(Some(cost));
                 cost
@@ -1081,10 +1387,14 @@ impl TransitionResidualCosts {
         abstract_op_id: usize,
         footprint: &ConcreteOperatorFootprint,
     ) -> f64 {
-        if !footprint.allocable {
-            return 0.0;
+        let Some(residual) = self.operator_residuals.get(footprint.concrete_op_id) else {
+            return f64::INFINITY;
+        };
+        if !residual.base_cost.is_finite() {
+            return f64::INFINITY;
         }
-        self.cost_for_transition_with_region(
+        let regional = residual.regional_usage.max_over(&footprint.source_region);
+        let legacy = self.cost_for_transition_with_region(
             footprint.concrete_op_id,
             current_abstraction_id,
             ABSTRACT_OPERATOR_REGION_HASH,
@@ -1095,7 +1405,8 @@ impl TransitionResidualCosts {
                 target: Arc::clone(&footprint.source_region),
             },
             None,
-        )
+        );
+        (legacy - regional).max(0.0)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1331,7 +1642,6 @@ impl TransitionResidualCosts {
         &mut self,
         producing_abstraction_id: usize,
         footprints: &[AbstractOperatorFootprint],
-        label_rescue_operator_ids: Option<&HashSet<usize>>,
         tcf: &AbstractOperatorCostFunction,
     ) -> Result<()> {
         ensure!(
@@ -1341,10 +1651,7 @@ impl TransitionResidualCosts {
             tcf.operator_costs.len()
         );
 
-        let mut pending: Vec<(usize, ResidualReduction)> = Vec::new();
-        let mut pending_uniform: Vec<(usize, f64)> = Vec::new();
-        let uniform_label_residuals =
-            label_rescue_operator_ids.map(|_| self.operator_costs_for_label_cp());
+        let mut table_envelopes: HashMap<usize, RegionalUsage> = HashMap::new();
         for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
             ensure!(
                 !saturated.is_finite() || saturated >= -EPSILON,
@@ -1357,59 +1664,7 @@ impl TransitionResidualCosts {
             }
 
             for footprint in &footprints[abstract_op_id].labels {
-                if !footprint.allocable {
-                    if matches!(
-                        footprint.non_allocable_reason,
-                        Some(
-                            NonAllocableFootprintReason::InfiniteActiveSource
-                                | NonAllocableFootprintReason::UninformativeSource
-                        )
-                    ) && label_rescue_operator_ids
-                        .is_some_and(|ids| ids.contains(&footprint.concrete_op_id))
-                    {
-                        let concrete_op_id = footprint.concrete_op_id;
-                        let current_residual = uniform_label_residuals
-                            .as_ref()
-                            .and_then(|costs| costs.get(concrete_op_id))
-                            .copied()
-                            .unwrap_or(f64::INFINITY);
-                        ensure!(
-                            current_residual.is_finite(),
-                            "uniform residual cost for rescued abstract op {abstract_op_id}, concrete op {concrete_op_id} must be finite"
-                        );
-                        ensure!(
-                            saturated <= current_residual + EPSILON,
-                            "rescued abstract-operator reduction {saturated} exceeds current uniform residual cost {current_residual} for concrete operator {concrete_op_id}"
-                        );
-                        if let Some((_, existing)) = pending_uniform
-                            .iter_mut()
-                            .find(|(pending_op_id, _)| *pending_op_id == concrete_op_id)
-                        {
-                            *existing = existing.max(saturated);
-                        } else {
-                            pending_uniform.push((concrete_op_id, saturated));
-                        }
-                        continue;
-                    }
-                    ensure!(
-                        saturated <= EPSILON,
-                        "positive abstract-operator saturated cost {saturated} for non-allocable footprint of abstract op {abstract_op_id}, concrete op {}",
-                        footprint.concrete_op_id
-                    );
-                    continue;
-                }
-                let region = TransitionRegion {
-                    source: Arc::clone(&footprint.source_region),
-                    target: Arc::clone(&footprint.source_region),
-                };
                 let concrete_op_id = footprint.concrete_op_id;
-                ensure!(
-                    footprint.max_allocation_fraction.is_finite()
-                        && footprint.max_allocation_fraction >= -EPSILON
-                        && footprint.max_allocation_fraction <= 1.0 + EPSILON,
-                    "invalid abstract-operator footprint allocation fraction {} for operator {concrete_op_id}",
-                    footprint.max_allocation_fraction
-                );
                 let current_residual = self.cost_for_operator_footprint(
                     producing_abstraction_id,
                     abstract_op_id,
@@ -1438,52 +1693,27 @@ impl TransitionResidualCosts {
                     "residual cost underflow: abstract-operator footprint reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
                     residual.base_cost
                 );
-                let condition = TransitionCondition {
-                    abstraction_id: producing_abstraction_id,
-                    source_hash: ABSTRACT_OPERATOR_REGION_HASH,
-                    abstract_op_id,
-                    target_hash: ABSTRACT_OPERATOR_REGION_HASH,
-                    region: region.clone(),
-                };
-                let amount = saturated.min(residual.base_cost);
-                if let Some((_, existing)) =
-                    pending.iter_mut().find(|(pending_op_id, reduction)| {
-                        *pending_op_id == concrete_op_id
-                            && reduction.condition.identity() == condition.identity()
-                    })
-                {
-                    existing.amount = existing.amount.max(amount);
-                } else {
-                    pending.push((concrete_op_id, ResidualReduction { amount, condition }));
-                }
+                table_envelopes
+                    .entry(concrete_op_id)
+                    .or_default()
+                    .maximize(&footprint.source_region, saturated);
             }
         }
 
-        for (concrete_op_id, amount) in pending_uniform {
-            let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
-                continue;
-            };
-            residual.base_cost = subtract_cost(residual.base_cost, amount).with_context(|| {
-                format!(
-                    "rescued uniform residual reduction underflow for operator {concrete_op_id}"
-                )
-            })?;
-            residual.invalidate_cache();
-        }
-
-        for (concrete_op_id, reduction) in pending {
-            let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
-                continue;
-            };
-            let identity = reduction.condition.identity();
-            if let Some(&index) = residual.reduction_indices.get(&identity) {
-                let existing = &mut residual.reductions[index];
-                existing.amount = (existing.amount + reduction.amount).min(residual.base_cost);
-            } else {
-                let index = residual.reductions.len();
-                residual.reductions.push(reduction);
-                let previous = residual.reduction_indices.insert(identity, index);
-                assert!(previous.is_none(), "duplicate residual reduction identity");
+        for (concrete_op_id, envelope) in table_envelopes {
+            let residual = self
+                .operator_residuals
+                .get_mut(concrete_op_id)
+                .expect("validated concrete operator footprint must exist");
+            for cell in envelope.cells {
+                let already_used = residual.regional_usage.max_over(&cell.region);
+                ensure!(
+                    already_used + cell.amount <= residual.base_cost + EPSILON,
+                    "regional residual cost underflow for operator {concrete_op_id}: used={already_used}, allocation={}, base={}",
+                    cell.amount,
+                    residual.base_cost
+                );
+                residual.regional_usage.add(&cell.region, cell.amount);
             }
             residual.invalidate_cache();
         }
@@ -1800,7 +2030,7 @@ pub fn compute_lookahead_abstract_operator_cost_budgets(
                     let competitors = suffix_index.count_overlapping_abstractions(label);
                     let lookahead_share = 1.0 / (competitors as f64 + 1.0);
                     budgets[abstraction_id][abstract_op_id].label_fractions[label_id] =
-                        label.max_allocation_fraction * lookahead_share;
+                        lookahead_share;
                 }
             }
             suffix_index.add_abstraction(abstraction_id, footprints)?;
@@ -1818,9 +2048,6 @@ impl FootprintOverlapIndex {
     ) -> Result<()> {
         for footprint in footprints {
             for label in &footprint.labels {
-                if !label.allocable {
-                    continue;
-                }
                 let operator_index = self.by_operator.entry(label.concrete_op_id).or_default();
                 let footprint_id = operator_index.footprints.len();
                 operator_index.footprints.push(LaterFootprint {
@@ -1869,9 +2096,6 @@ impl FootprintOverlapIndex {
     }
 
     fn count_overlapping_abstractions(&self, label: &ConcreteOperatorFootprint) -> usize {
-        if !label.allocable {
-            return 0;
-        }
         let Some(operator_index) = self.by_operator.get(&label.concrete_op_id) else {
             return 0;
         };
@@ -2532,16 +2756,12 @@ mod tests {
             labels: vec![ConcreteOperatorFootprint {
                 concrete_op_id: 0,
                 source_region: state_region(0).into(),
-                allocable: true,
-                max_allocation_fraction: 1.0,
-                non_allocable_reason: None,
             }],
         }];
         let residual = TransitionResidualCosts::from_operator_costs(&[5.0]);
         let (distances, saturated) = build_explicit_abstract_operator_cost_partitioning_table(
             &system,
             &footprints,
-            None,
             None,
             &residual,
             0,
@@ -2583,35 +2803,17 @@ mod tests {
     }
 
     fn concrete_footprint(lower: f64, upper: f64) -> ConcreteOperatorFootprint {
-        concrete_footprint_for_op(0, lower, upper, true)
+        concrete_footprint_for_op(0, lower, upper)
     }
 
     fn concrete_footprint_for_op(
         concrete_op_id: usize,
         lower: f64,
         upper: f64,
-        allocable: bool,
-    ) -> ConcreteOperatorFootprint {
-        concrete_footprint_for_op_with_fraction(concrete_op_id, lower, upper, allocable, 1.0)
-    }
-
-    fn concrete_footprint_for_op_with_fraction(
-        concrete_op_id: usize,
-        lower: f64,
-        upper: f64,
-        allocable: bool,
-        max_allocation_fraction: f64,
     ) -> ConcreteOperatorFootprint {
         ConcreteOperatorFootprint {
             concrete_op_id,
             source_region: numeric_state_region(lower, upper).into(),
-            allocable,
-            max_allocation_fraction: if allocable {
-                max_allocation_fraction
-            } else {
-                0.0
-            },
-            non_allocable_reason: None,
         }
     }
 
@@ -2627,31 +2829,12 @@ mod tests {
                 numeric: vec![first, second],
             }
             .into(),
-            allocable: true,
-            max_allocation_fraction: 1.0,
-            non_allocable_reason: None,
         }
     }
 
     fn footprint(lower: f64, upper: f64) -> AbstractOperatorFootprint {
         AbstractOperatorFootprint {
             labels: vec![concrete_footprint(lower, upper)],
-        }
-    }
-
-    fn footprint_with_fraction(
-        lower: f64,
-        upper: f64,
-        max_allocation_fraction: f64,
-    ) -> AbstractOperatorFootprint {
-        AbstractOperatorFootprint {
-            labels: vec![concrete_footprint_for_op_with_fraction(
-                0,
-                lower,
-                upper,
-                true,
-                max_allocation_fraction,
-            )],
         }
     }
 
@@ -2964,7 +3147,6 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 std::slice::from_ref(&reduced),
-                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![3.0],
                 },
@@ -2973,7 +3155,7 @@ mod tests {
 
         let query = concrete_footprint(5.0, 8.0);
         assert_eq!(residuals.cost_for_operator_footprint(1, 0, &query), 7.0);
-        let other_op_query = concrete_footprint_for_op(1, 5.0, 8.0, true);
+        let other_op_query = concrete_footprint_for_op(1, 5.0, 8.0);
         assert_eq!(
             residuals.cost_for_operator_footprint(1, 0, &other_op_query),
             10.0
@@ -2981,14 +3163,13 @@ mod tests {
     }
 
     #[test]
-    fn footprint_reduction_allows_full_cost_for_allocable_fractional_footprint() {
+    fn footprint_reduction_allows_full_cost() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
-        let reduced = footprint_with_fraction(3.0, 7.0, 0.5);
+        let reduced = footprint(3.0, 7.0);
         residuals
             .reduce_by_abstract_operator_footprints(
                 0,
                 std::slice::from_ref(&reduced),
-                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![1.0],
                 },
@@ -3011,7 +3192,6 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 &[reduced],
-                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![0.4],
                 },
@@ -3031,7 +3211,6 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 &[footprint(0.0, 2.0)],
-                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![4.0],
                 },
@@ -3051,7 +3230,6 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 &[footprint(1.0, 10.0)],
-                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![4.0],
                 },
@@ -3071,7 +3249,6 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 &[footprint(0.0, 5.0), footprint(4.0, 10.0)],
-                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![3.0, 4.0],
                 },
@@ -3091,7 +3268,6 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 &[footprint(0.0, 5.0)],
-                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![1.0],
                 },
@@ -3110,7 +3286,6 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 &[footprint(0.0, 5.0)],
-                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![1.0],
                 },
@@ -3138,9 +3313,6 @@ mod tests {
                             numeric: vec![Interval::new(i as f64, (i + 1) as f64, false, true)],
                         }
                         .into(),
-                        allocable: true,
-                        max_allocation_fraction: 1.0,
-                        non_allocable_reason: None,
                     }],
                 })
                 .collect()
@@ -3148,7 +3320,7 @@ mod tests {
 
         fn save_footprint(save_op_id: usize) -> AbstractOperatorFootprint {
             AbstractOperatorFootprint {
-                labels: vec![concrete_footprint_for_op(save_op_id, 0.0, 15.0, true)],
+                labels: vec![concrete_footprint_for_op(save_op_id, 0.0, 15.0)],
             }
         }
 
@@ -3185,7 +3357,6 @@ mod tests {
                 .reduce_by_abstract_operator_footprints(
                     abstraction_id,
                     footprints,
-                    None,
                     &AbstractOperatorCostFunction {
                         operator_costs: vec![1.0; footprints.len()],
                     },
@@ -3244,7 +3415,6 @@ mod tests {
             .reduce_by_abstract_operator_footprints(
                 0,
                 &[x_abstraction],
-                None,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![1.0],
                 },
@@ -3256,6 +3426,147 @@ mod tests {
         assert_eq!(
             residuals.cost_for_operator_footprint(1, 0, &y_abstraction),
             0.0
+        );
+    }
+
+    #[test]
+    fn infinite_tail_reduction_preserves_disjoint_tail_cost() {
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
+        let tail = footprint(f64::NEG_INFINITY, 0.0);
+        residuals
+            .reduce_by_abstract_operator_footprints(
+                0,
+                &[tail],
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![4.0],
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            residuals.cost_for_operator_footprint(1, 0, &concrete_footprint(1.0, f64::INFINITY),),
+            10.0
+        );
+        assert_eq!(
+            residuals.cost_for_operator_footprint(
+                1,
+                0,
+                &concrete_footprint(f64::NEG_INFINITY, f64::INFINITY),
+            ),
+            6.0
+        );
+    }
+
+    #[test]
+    fn open_infinite_tail_does_not_consume_boundary() {
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
+        let open_tail = AbstractOperatorFootprint {
+            labels: vec![ConcreteOperatorFootprint {
+                concrete_op_id: 0,
+                source_region: StateRegion {
+                    propositions: vec![vec![0]],
+                    numeric: vec![Interval::new(f64::NEG_INFINITY, 0.0, false, false)],
+                }
+                .into(),
+            }],
+        };
+        residuals
+            .reduce_by_abstract_operator_footprints(
+                0,
+                &[open_tail],
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![1.0],
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            residuals.cost_for_operator_footprint(1, 0, &concrete_footprint(0.0, 0.0)),
+            1.0
+        );
+    }
+
+    #[test]
+    fn multidimensional_disjoint_regions_preserve_full_cost() {
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
+        let lower_y = AbstractOperatorFootprint {
+            labels: vec![concrete_footprint_2d(
+                0,
+                Interval::closed(0.0, 10.0),
+                Interval::new(f64::NEG_INFINITY, 0.0, false, true),
+            )],
+        };
+        residuals
+            .reduce_by_abstract_operator_footprints(
+                0,
+                &[lower_y],
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![4.0],
+                },
+            )
+            .unwrap();
+
+        let upper_y = concrete_footprint_2d(
+            0,
+            Interval::closed(0.0, 10.0),
+            Interval::new(0.0, f64::INFINITY, false, false),
+        );
+        assert_eq!(residuals.cost_for_operator_footprint(1, 0, &upper_y), 10.0);
+    }
+
+    #[test]
+    fn perpendicular_tail_allocations_preserve_untouched_corner() {
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
+        let left = AbstractOperatorFootprint {
+            labels: vec![concrete_footprint_2d(
+                0,
+                Interval::new(f64::NEG_INFINITY, 0.0, false, true),
+                Interval::unbounded(),
+            )],
+        };
+        let lower = AbstractOperatorFootprint {
+            labels: vec![concrete_footprint_2d(
+                0,
+                Interval::unbounded(),
+                Interval::new(f64::NEG_INFINITY, 0.0, false, true),
+            )],
+        };
+        residuals
+            .reduce_by_abstract_operator_footprints(
+                0,
+                &[left],
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![4.0],
+                },
+            )
+            .unwrap();
+        residuals
+            .reduce_by_abstract_operator_footprints(
+                1,
+                &[lower],
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![3.0],
+                },
+            )
+            .unwrap();
+
+        let upper_right = concrete_footprint_2d(
+            0,
+            Interval::new(0.0, f64::INFINITY, false, false),
+            Interval::new(0.0, f64::INFINITY, false, false),
+        );
+        let lower_left = concrete_footprint_2d(
+            0,
+            Interval::new(f64::NEG_INFINITY, 0.0, false, true),
+            Interval::new(f64::NEG_INFINITY, 0.0, false, true),
+        );
+        assert_eq!(
+            residuals.cost_for_operator_footprint(2, 0, &upper_right),
+            10.0
+        );
+        assert_eq!(
+            residuals.cost_for_operator_footprint(2, 0, &lower_left),
+            3.0
         );
     }
 
@@ -3345,7 +3656,7 @@ mod tests {
     fn lookahead_budget_never_competes_across_concrete_operators() {
         let first = vec![footprint(0.0, 5.0)];
         let second = vec![AbstractOperatorFootprint {
-            labels: vec![concrete_footprint_for_op(1, 3.0, 8.0, true)],
+            labels: vec![concrete_footprint_for_op(1, 3.0, 8.0)],
         }];
         let footprints = vec![first.as_slice(), second.as_slice()];
         let budgets =
@@ -3354,5 +3665,25 @@ mod tests {
 
         assert_eq!(budget_fraction(&budgets, 0, 0, 0), 1.0);
         assert_eq!(budget_fraction(&budgets, 1, 0, 0), 1.0);
+    }
+
+    #[test]
+    fn regional_usage_index_matches_exact_overlap_across_blocks() {
+        let mut usage = RegionalUsage::default();
+        for index in 0..96 {
+            let region = numeric_state_region(index as f64, index as f64 + 0.5);
+            usage.add(&region, (index % 7 + 1) as f64);
+        }
+        assert_eq!(usage.cells.len(), 96);
+
+        let query = numeric_state_region(30.25, 66.25);
+        let expected = usage
+            .cells
+            .iter()
+            .filter(|cell| cell.region.overlaps(&query))
+            .map(|cell| cell.amount)
+            .fold(0.0, f64::max);
+        assert_eq!(usage.max_over(&query), expected);
+        assert!(usage.index.borrow().is_some());
     }
 }

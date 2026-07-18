@@ -225,7 +225,7 @@ fn fd_blind_plan_cost_matches_misc_benchmarks() {
             let result = {
                 let mut search =
                     AStarSearch::new(std::sync::Arc::new(&task), state_registry, None, None, None);
-                search.search()
+                search.search().expect("blind A* search failed")
             };
 
             match (&result.status, &result.plan) {
@@ -517,7 +517,7 @@ fn plant_watering_lmcutnumeric_full_search_solves_without_dead_ends() {
             None,
             None,
         );
-        search.search()
+        search.search().expect("LM-cut A* search failed")
     };
 
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -585,7 +585,7 @@ fn plant_watering_lmcutnumeric_remains_finite_along_blind_solution() {
         let state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
         let mut search =
             AStarSearch::new(std::sync::Arc::new(&task), state_registry, None, None, None);
-        let result = search.search();
+        let result = search.search().expect("blind A* search failed");
         match result {
             planforge_search::search::SearchResult {
                 status: SearchStatus::Solved(_),

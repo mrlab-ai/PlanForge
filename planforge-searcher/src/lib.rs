@@ -704,7 +704,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 if gbfs_priority { "GBFS" } else { "A*" },
                 heuristic_spec,
             );
-            search.search()
+            search.search().map_err(std::io::Error::other)?
         }
     };
 

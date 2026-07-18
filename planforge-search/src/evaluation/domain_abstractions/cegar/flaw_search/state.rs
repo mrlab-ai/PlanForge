@@ -5,6 +5,7 @@ use anyhow::{Result, ensure};
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType};
 use planforge_sas::utils::errors::{AxiomEvalError, InvalidIndex};
+use planforge_sas::utils::float_tolerance;
 use planforge_sas::{
     axioms::AxiomEvaluator, numeric_task::Operator, utils::int_packer::IntDoublePacker,
 };
@@ -415,11 +416,12 @@ pub fn progress(
             continue;
         }
         let operand = numeric_state[assignment_var_id];
-        numeric_state[affected_var_id] = planforge_sas::numeric_task::AssignmentOperation::apply(
-            numeric_state[affected_var_id],
-            eff.operation(),
-            operand,
-        );
+        numeric_state[affected_var_id] =
+            float_tolerance::canonicalize(planforge_sas::numeric_task::AssignmentOperation::apply(
+                numeric_state[affected_var_id],
+                eff.operation(),
+                operand,
+            ));
     }
 
     axiom_evaluator

@@ -20,6 +20,7 @@ mod stats;
 pub use engine::AStarSearch;
 pub use policy::SearchPolicy;
 
+use anyhow::Result;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, Operator, metric_operator_cost_from_initial_values,
 };
@@ -76,19 +77,18 @@ pub struct SearchResult {
 }
 
 pub trait SearchEngine {
-    fn initialize(&mut self);
-    fn step(&mut self) -> SearchStatus;
+    fn initialize(&mut self) -> Result<()>;
+    fn step(&mut self) -> Result<SearchStatus>;
     fn finish(&mut self, status: SearchStatus) -> SearchResult;
-    fn search(&mut self) -> SearchResult {
-        self.initialize();
+    fn search(&mut self) -> Result<SearchResult> {
+        self.initialize()?;
         loop {
-            match self.step() {
+            match self.step()? {
                 SearchStatus::InProgress => continue,
-                terminal => return self.finish(terminal),
+                terminal => return Ok(self.finish(terminal)),
             }
         }
     }
-    fn print_initial_h_values(&mut self);
 }
 
 pub(crate) fn format_progress_value(value: f64) -> String {

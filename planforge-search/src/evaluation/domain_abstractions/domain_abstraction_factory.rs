@@ -2,7 +2,9 @@
 mod tests;
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+#[cfg(any(test, debug_assertions))]
+use std::collections::HashSet;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -32,8 +34,7 @@ use super::utils;
 use crate::evaluation::abstraction_collections::transition_cost_partitioning::{
     AbstractOperatorCostBudget, AbstractOperatorCostFunction, AbstractOperatorFootprint,
     AbstractTransition, AbstractTransitionCostFunction, AbstractTransitionSystem,
-    ConcreteOperatorFootprint, FiniteSupportConfig, NonAllocableFootprintReason, StateRegion,
-    TransitionResidualCosts,
+    ConcreteOperatorFootprint, StateRegion, TransitionResidualCosts,
 };
 
 const COMPARISON_TRUE_VAL: usize = 0;
@@ -805,7 +806,6 @@ impl DomainAbstractionFactory {
         operators: &[AbstractOperator],
         footprints: &[AbstractOperatorFootprint],
         budgets: Option<&[AbstractOperatorCostBudget]>,
-        label_rescue_operator_ids: Option<&HashSet<usize>>,
         residual_costs: &TransitionResidualCosts,
         abstraction_id: usize,
         current_state_id: Option<usize>,
@@ -824,7 +824,6 @@ impl DomainAbstractionFactory {
             operators.len(),
             footprints,
             budgets,
-            label_rescue_operator_ids,
             residual_costs,
             abstraction_id,
             deadline,
@@ -1066,7 +1065,6 @@ impl DomainAbstractionFactory {
         &self,
         task: &dyn AbstractNumericTask,
         operators: &[AbstractOperator],
-        finite_support: &FiniteSupportConfig,
     ) -> Result<Vec<AbstractOperatorFootprint>> {
         operators
             .iter()
@@ -1076,12 +1074,7 @@ impl DomainAbstractionFactory {
                     .iter()
                     .copied()
                     .map(|concrete_op_id| {
-                        self.build_concrete_operator_footprint(
-                            task,
-                            operator,
-                            concrete_op_id,
-                            finite_support,
-                        )
+                        self.build_concrete_operator_footprint(task, operator, concrete_op_id)
                     })
                     .collect::<Result<Vec<_>>>()?;
                 Ok(AbstractOperatorFootprint { labels })
@@ -1094,7 +1087,6 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         abstract_operator: &AbstractOperator,
         concrete_op_id: usize,
-        finite_support: &FiniteSupportConfig,
     ) -> Result<ConcreteOperatorFootprint> {
         let concrete_operator = task.get_operators().get(concrete_op_id).with_context(|| {
             format!("abstract operator references missing concrete operator {concrete_op_id}")
@@ -1119,12 +1111,6 @@ impl DomainAbstractionFactory {
         let mut source_region = abstract_source_region.clone();
         let target_region =
             self.state_region_from_facts(task, &abstract_operator.regression_preconditions)?;
-        let mut non_allocable_reason = None;
-        let mut has_finite_changed_source = false;
-        let mut has_infinite_changed_source = false;
-        let mut precision_sum = 0.0;
-        let mut precision_count = 0usize;
-
         let mut affected_numeric_dimensions =
             deterministic_affected_regular_numeric_vars(task, concrete_operator);
         for (numeric_var_id, view) in self.additive_numeric_views.iter() {
@@ -1158,83 +1144,37 @@ impl DomainAbstractionFactory {
                     source_interval,
                 )
             };
-            let Some(effect_image) = effect_image else {
-                non_allocable_reason
-                    .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
-                continue;
-            };
+            let effect_image = effect_image.with_context(|| {
+                format!(
+                    "restricted SNP operator {concrete_op_id} has no exact deterministic effect image for numeric variable {numeric_var_id}"
+                )
+            })?;
             if effect_image.is_noop_for_source(source_interval) {
                 continue;
             }
-            if effect_image.image.is_empty() {
-                non_allocable_reason
-                    .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
-                continue;
-            }
+            ensure!(
+                !effect_image.image.is_empty(),
+                "restricted SNP operator {concrete_op_id} has an empty effect image for numeric variable {numeric_var_id}"
+            );
             let target_interval = target_region.numeric[numeric_var_id];
-            let Some(inverse_source) = effect_image.inverse_source_for_target(target_interval)
-            else {
-                non_allocable_reason
-                    .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
-                continue;
-            };
+            let inverse_source = effect_image
+                .inverse_source_for_target(target_interval)
+                .with_context(|| {
+                    format!(
+                        "restricted SNP operator {concrete_op_id} cannot reach abstract target {target_interval:?} for numeric variable {numeric_var_id}"
+                    )
+                })?;
             source_region.numeric[numeric_var_id] =
                 interval_intersection(source_interval, inverse_source);
-            if source_region.numeric[numeric_var_id].is_empty() {
-                non_allocable_reason
-                    .get_or_insert(NonAllocableFootprintReason::UnsupportedEffectImage);
-                continue;
-            }
-            precision_sum += changed_source_precision(
-                source_region.numeric[numeric_var_id],
-                effect_image.inverse,
+            ensure!(
+                !source_region.numeric[numeric_var_id].is_empty(),
+                "restricted SNP operator {concrete_op_id} has an empty regressed source footprint for numeric variable {numeric_var_id}"
             );
-            precision_count += 1;
-            let preimage = source_region.numeric[numeric_var_id];
-            if interval_is_finite(preimage) && finite_support_stealable(preimage, finite_support) {
-                has_finite_changed_source = true;
-            } else {
-                // Either an infinite preimage or a finite-but-too-wide one. Both
-                // have the same admissibility consequence: this label cannot
-                // safely steal cost under the finite-support gate.
-                has_infinite_changed_source = true;
-            }
-        }
-        let has_changed_numeric_source = has_finite_changed_source || has_infinite_changed_source;
-        let allocable = has_finite_changed_source
-            || (!has_changed_numeric_source && non_allocable_reason.is_none());
-        if !allocable {
-            if non_allocable_reason.is_none() && has_infinite_changed_source {
-                non_allocable_reason
-                    .get_or_insert(NonAllocableFootprintReason::InfiniteActiveSource);
-            }
-            if !footprint_has_informative_source(self, &source_region)? {
-                non_allocable_reason
-                    .get_or_insert(NonAllocableFootprintReason::UninformativeSource);
-            }
-        } else {
-            non_allocable_reason = None;
         }
 
         Ok(ConcreteOperatorFootprint {
             concrete_op_id,
             source_region: Arc::new(source_region),
-            allocable,
-            max_allocation_fraction: if allocable {
-                let fraction = if precision_count == 0 {
-                    1.0
-                } else {
-                    precision_sum / precision_count as f64
-                };
-                ensure!(
-                    fraction.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&fraction),
-                    "invalid abstract-operator footprint precision {fraction} for operator {concrete_op_id}"
-                );
-                fraction.clamp(0.0, 1.0)
-            } else {
-                0.0
-            },
-            non_allocable_reason,
         })
     }
 
@@ -3418,7 +3358,6 @@ fn abstract_operator_costs_from_footprints(
     num_operators: usize,
     footprints: &[AbstractOperatorFootprint],
     budgets: Option<&[AbstractOperatorCostBudget]>,
-    label_rescue_operator_ids: Option<&HashSet<usize>>,
     residual_costs: &TransitionResidualCosts,
     abstraction_id: usize,
     deadline: Option<Instant>,
@@ -3431,8 +3370,6 @@ fn abstract_operator_costs_from_footprints(
         );
     }
     let has_reductions = residual_costs.has_reductions();
-    let uniform_label_residuals =
-        label_rescue_operator_ids.map(|_| residual_costs.operator_costs_for_label_cp());
     let mut operator_costs = vec![f64::INFINITY; num_operators];
     for abstract_op_id in 0..num_operators {
         if abstract_op_id % 64 == 0 {
@@ -3454,88 +3391,23 @@ fn abstract_operator_costs_from_footprints(
                 footprint.labels.len()
             );
         }
-        operator_costs[abstract_op_id] = if has_reductions {
-            footprint
-                .labels
-                .iter()
-                .enumerate()
-                .map(|(label_id, label)| {
-                    if label.allocable {
-                        let residual = residual_costs.cost_for_operator_footprint(
-                            abstraction_id,
-                            abstract_op_id,
-                            label,
-                        );
-                        abstract_operator_label_cost(
-                            residual,
-                            residual_costs,
-                            label,
-                            budget,
-                            label_id,
-                        )
-                    } else if matches!(
-                        label.non_allocable_reason,
-                        Some(
-                            NonAllocableFootprintReason::InfiniteActiveSource
-                                | NonAllocableFootprintReason::UninformativeSource
-                        )
-                    ) && label_rescue_operator_ids
-                        .is_some_and(|ids| ids.contains(&label.concrete_op_id))
-                    {
-                        let uniform_residual = uniform_label_residuals
-                            .as_ref()
-                            .and_then(|costs| costs.get(label.concrete_op_id))
-                            .copied()
-                            .unwrap_or(f64::INFINITY);
-                        abstract_operator_non_region_label_cost(
-                            uniform_residual,
-                            residual_costs,
-                            label,
-                            budget,
-                            label_id,
-                        )
-                    } else {
-                        0.0
-                    }
-                })
-                .fold(f64::INFINITY, f64::min)
-        } else {
-            footprint
-                .labels
-                .iter()
-                .enumerate()
-                .map(|(label_id, label)| {
-                    let residual = residual_costs.base_cost(label.concrete_op_id);
-                    if label.allocable {
-                        abstract_operator_label_cost(
-                            residual,
-                            residual_costs,
-                            label,
-                            budget,
-                            label_id,
-                        )
-                    } else if matches!(
-                        label.non_allocable_reason,
-                        Some(
-                            NonAllocableFootprintReason::InfiniteActiveSource
-                                | NonAllocableFootprintReason::UninformativeSource
-                        )
-                    ) && label_rescue_operator_ids
-                        .is_some_and(|ids| ids.contains(&label.concrete_op_id))
-                    {
-                        abstract_operator_non_region_label_cost(
-                            residual,
-                            residual_costs,
-                            label,
-                            budget,
-                            label_id,
-                        )
-                    } else {
-                        0.0
-                    }
-                })
-                .fold(f64::INFINITY, f64::min)
-        };
+        operator_costs[abstract_op_id] = footprint
+            .labels
+            .iter()
+            .enumerate()
+            .map(|(label_id, label)| {
+                let residual = if has_reductions {
+                    residual_costs.cost_for_operator_footprint(
+                        abstraction_id,
+                        abstract_op_id,
+                        label,
+                    )
+                } else {
+                    residual_costs.base_cost(label.concrete_op_id)
+                };
+                abstract_operator_label_cost(residual, residual_costs, label, budget, label_id)
+            })
+            .fold(f64::INFINITY, f64::min);
         ensure!(
             operator_costs[abstract_op_id].is_finite(),
             "residual cost for abstract operator {abstract_op_id} is not finite"
@@ -3545,28 +3417,6 @@ fn abstract_operator_costs_from_footprints(
 }
 
 fn abstract_operator_label_cost(
-    residual: f64,
-    residual_costs: &TransitionResidualCosts,
-    label: &ConcreteOperatorFootprint,
-    budget: Option<&AbstractOperatorCostBudget>,
-    label_id: usize,
-) -> f64 {
-    if !label.allocable {
-        return 0.0;
-    }
-    let fraction = if let Some(budget) = budget {
-        budget.label_fractions[label_id]
-    } else {
-        1.0
-    };
-    assert!(
-        fraction.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&fraction),
-        "invalid abstract-operator allocation fraction {fraction}"
-    );
-    residual.min(residual_costs.base_cost(label.concrete_op_id) * fraction.clamp(0.0, 1.0))
-}
-
-fn abstract_operator_non_region_label_cost(
     residual: f64,
     residual_costs: &TransitionResidualCosts,
     label: &ConcreteOperatorFootprint,
@@ -3677,7 +3527,9 @@ fn deterministic_numeric_effect_image(
             return None;
         }
         let rhs_value = match task.numeric_variables()[effect.var_id()].get_type() {
-            NumericType::Constant | NumericType::Cost => *initial_numeric.get(effect.var_id())?,
+            NumericType::Constant | NumericType::Cost => {
+                float_tolerance::canonicalize(*initial_numeric.get(effect.var_id())?)
+            }
             _ => return None,
         };
         if !rhs_value.is_finite() {
@@ -3688,14 +3540,14 @@ fn deterministic_numeric_effect_image(
                 if assignment.is_some() {
                     return None;
                 }
-                delta += rhs_value;
+                delta = float_tolerance::canonicalize(delta + rhs_value);
                 touched = true;
             }
             AssignmentOperation::Minus => {
                 if assignment.is_some() {
                     return None;
                 }
-                delta -= rhs_value;
+                delta = float_tolerance::canonicalize(delta - rhs_value);
                 touched = true;
             }
             AssignmentOperation::Assign => {
@@ -3756,12 +3608,19 @@ fn deterministic_affected_regular_numeric_vars(
         let Some(&rhs_value) = task.get_initial_numeric_state_values().get(effect.var_id()) else {
             continue;
         };
+        let rhs_value = float_tolerance::canonicalize(rhs_value);
         if !rhs_value.is_finite() {
             continue;
         }
         match effect.operation() {
-            AssignmentOperation::Plus => deltas[affected_var_id] += rhs_value,
-            AssignmentOperation::Minus => deltas[affected_var_id] -= rhs_value,
+            AssignmentOperation::Plus => {
+                deltas[affected_var_id] =
+                    float_tolerance::canonicalize(deltas[affected_var_id] + rhs_value)
+            }
+            AssignmentOperation::Minus => {
+                deltas[affected_var_id] =
+                    float_tolerance::canonicalize(deltas[affected_var_id] - rhs_value)
+            }
             AssignmentOperation::Assign => assignments.push(affected_var_id),
             AssignmentOperation::Times | AssignmentOperation::Divide => unreachable!(),
         }
@@ -3784,50 +3643,11 @@ fn shift_interval(interval: Interval, delta: f64) -> Interval {
         interval.lower_closed,
         interval.upper_closed,
     )
-}
-
-fn interval_is_finite(interval: Interval) -> bool {
-    interval.lower.is_finite() && interval.upper.is_finite()
+    .canonicalized()
 }
 
 fn interval_is_singleton(interval: Interval) -> bool {
     interval.lower == interval.upper && interval.lower_closed && interval.upper_closed
-}
-
-/// Width-threshold gate for the finite-support cost-partitioning extension.
-///
-/// Returns `true` iff the interval is a singleton, or iff its width fits inside
-/// `cfg.max_stealable_width`. Caller must have already established that the
-/// interval is finite — infinite intervals are rejected upstream.
-fn finite_support_stealable(interval: Interval, cfg: &FiniteSupportConfig) -> bool {
-    if interval_is_singleton(interval) {
-        return true;
-    }
-    (interval.upper - interval.lower) <= cfg.max_stealable_width
-}
-
-fn changed_source_precision(
-    source_interval: Interval,
-    inverse: DeterministicNumericEffectInverse,
-) -> f64 {
-    if !interval_is_finite(source_interval) {
-        return 0.0;
-    }
-    match inverse {
-        DeterministicNumericEffectInverse::Additive { delta } => {
-            let delta = delta.abs();
-            if delta <= 1e-9 {
-                return 0.0;
-            }
-            let width = source_interval.upper - source_interval.lower;
-            if width <= 1e-9 {
-                1.0
-            } else {
-                (delta / width).min(1.0)
-            }
-        }
-        DeterministicNumericEffectInverse::AssignmentConstant { .. } => 1.0,
-    }
 }
 
 fn interval_intersection(lhs: Interval, rhs: Interval) -> Interval {
@@ -3846,26 +3666,6 @@ fn interval_intersection(lhs: Interval, rhs: Interval) -> Interval {
         (lhs.upper, lhs.upper_closed && rhs.upper_closed)
     };
     Interval::new(lower, upper, lower_closed, upper_closed)
-}
-
-fn footprint_has_informative_source(
-    factory: &DomainAbstractionFactory,
-    source_region: &StateRegion,
-) -> Result<bool> {
-    for (var_id, values) in source_region.propositions.iter().enumerate() {
-        let full_size = factory
-            .domain_mapping
-            .get(var_id)
-            .with_context(|| format!("missing domain mapping for propositional var {var_id}"))?
-            .len();
-        if values.len() < full_size {
-            return Ok(true);
-        }
-    }
-    Ok(source_region
-        .numeric
-        .iter()
-        .any(|interval| interval_is_finite(*interval) && !interval.is_empty()))
 }
 
 fn decode_state_to_vectors(

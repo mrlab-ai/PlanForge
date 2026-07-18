@@ -31,6 +31,22 @@ pub fn handle_axioms(
     }
 
     let mut processed_axioms = axioms.to_vec();
+    processed_axioms.sort_by(|left, right| {
+        left.effect
+            .symbol
+            .cmp(&right.effect.symbol)
+            .then_with(|| left.effect.args.cmp(&right.effect.args))
+            .then_with(|| left.effect.ntype.cmp(&right.effect.ntype))
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.op.cmp(&right.op))
+    });
+    for pair in processed_axioms.windows(2) {
+        assert_ne!(
+            pair[0].effect, pair[1].effect,
+            "duplicate instantiated numeric axiom effect {}",
+            pair[0].effect
+        );
+    }
     identify_constants(&mut processed_axioms);
 
     let constant_axioms: HashSet<InstantiatedNumericAxiom> = processed_axioms
@@ -305,4 +321,36 @@ fn identify_equivalent_axioms(
     }
 
     axiom_map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn derived_axiom(symbol: &str, operand: &str) -> InstantiatedNumericAxiom {
+        InstantiatedNumericAxiom::new(
+            format!("derive-{symbol}"),
+            "+".to_string(),
+            vec![
+                FunctionalExpression::PrimitiveNumericExpression(
+                    PrimitiveNumericExpression::with_type(operand.to_string(), Vec::new(), 'R'),
+                ),
+                FunctionalExpression::NumericConstant(NumericConstant::new(1.0)),
+            ],
+            PrimitiveNumericExpression::with_type(symbol.to_string(), Vec::new(), 'D'),
+        )
+    }
+
+    #[test]
+    fn handling_numeric_axioms_is_independent_of_input_order() {
+        let first = derived_axiom("z", "x");
+        let second = derived_axiom("a", "y");
+
+        let forward = handle_axioms(&[first.clone(), second.clone()]);
+        let reverse = handle_axioms(&[second, first]);
+
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.0[0].effect.symbol, "a");
+        assert_eq!(forward.0[1].effect.symbol, "z");
+    }
 }

@@ -492,6 +492,9 @@ pub(crate) fn get_initial_state(
     let mut buffer = vec![0u64; state_packer.num_bins()];
     set_initial_prop_values(task, state_packer, &mut buffer);
     let mut numeric_state: Vec<f64> = task.get_initial_numeric_state_values().to_vec();
+    for value in &mut numeric_state {
+        *value = float_tolerance::canonicalize(*value);
+    }
 
     axiom_evaluator
         .evaluate_arithmetic_axioms(&mut numeric_state)

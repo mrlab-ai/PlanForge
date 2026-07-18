@@ -62,7 +62,7 @@ fn run(path: &str) {
         Some(Duration::from_secs(5)),
         None,
     );
-    let result = search.search();
+    let result = search.search().expect("search failed");
     let status = match &result.status {
         SearchStatus::Solved(_) => "solved",
         SearchStatus::Failed => "unsolvable",

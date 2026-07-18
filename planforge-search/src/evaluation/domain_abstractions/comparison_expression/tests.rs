@@ -362,3 +362,19 @@ fn comparison_tree_interval_evaluation_fills_derived_intervals() {
     assert_eq!(intervals[2], Interval::singleton(3.0));
     assert_eq!(intervals[3], Interval::singleton(6.0));
 }
+
+#[test]
+fn canonicalized_interval_preserves_open_transition_boundaries() {
+    let target = Interval::new(-74.7, -74.0, false, true);
+    let preimage = Interval::new(
+        target.lower + 7.35,
+        target.upper + 7.35,
+        target.lower_closed,
+        target.upper_closed,
+    )
+    .canonicalized();
+
+    assert_eq!(preimage.lower, -67.35);
+    assert!(!preimage.lower_closed);
+    assert!(!preimage.contains(-67.35));
+}

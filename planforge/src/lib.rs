@@ -187,7 +187,9 @@ pub fn solve_task(
                 if gbfs_priority { "GBFS" } else { "A*" },
                 heuristic,
             );
-            Ok(search.search())
+            search
+                .search()
+                .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
         }
         planforge_searcher::SearchSpec::AstarFs(fast_spec, slow_spec) => {
             // A* with two admissible heuristics: a fast one for ordering
@@ -232,7 +234,9 @@ pub fn solve_task(
                 memory_limit,
             );
             info!("Starting A* fast/slow search with fast={fast_spec:?} slow={slow_spec:?}...");
-            Ok(search.search())
+            search
+                .search()
+                .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
         }
         planforge_searcher::SearchSpec::DaDebug | planforge_searcher::SearchSpec::AstarDaDebug => {
             Err(std::io::Error::other(
