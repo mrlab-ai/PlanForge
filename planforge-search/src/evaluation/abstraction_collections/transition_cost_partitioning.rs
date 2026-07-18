@@ -15,7 +15,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use ordered_float::NotNan;
 use planforge_sas::numeric_task::ExplicitFact;
 use planforge_sas::utils::float_tolerance;
@@ -239,7 +239,7 @@ pub fn build_explicit_label_cost_partitioning_table(
     cap_state_id: Option<usize>,
     deadline: Option<Instant>,
 ) -> Result<(Vec<f64>, Vec<f64>)> {
-    ensure_online_deadline(deadline)?;
+    ensure_scp_table_deadline(deadline)?;
     let transition_costs = transition_system
         .transitions
         .iter()
@@ -334,11 +334,8 @@ pub fn build_explicit_abstract_operator_cost_partitioning_table(
     ))
 }
 
-fn ensure_online_deadline(deadline: Option<Instant>) -> Result<()> {
-    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-        bail!("online SCP deadline exceeded");
-    }
-    Ok(())
+fn ensure_scp_table_deadline(deadline: Option<Instant>) -> Result<()> {
+    crate::resource_limits::ensure_before_deadline(deadline, "SCP table construction")
 }
 
 fn build_explicit_goal_distances(
@@ -369,7 +366,7 @@ fn build_explicit_goal_distances(
     let mut expansions = 0usize;
     while let Some((Reverse(distance), target_id)) = heap.pop() {
         if expansions.is_multiple_of(1024) {
-            ensure_online_deadline(deadline)?;
+            ensure_scp_table_deadline(deadline)?;
         }
         expansions += 1;
         let distance = distance.into_inner();
@@ -540,7 +537,7 @@ fn abstract_operator_costs_from_footprints(
     let mut operator_costs = vec![f64::INFINITY; num_operators];
     for abstract_op_id in 0..num_operators {
         if abstract_op_id.is_multiple_of(64) {
-            ensure_online_deadline(deadline)?;
+            ensure_scp_table_deadline(deadline)?;
         }
         let footprint = &footprints[abstract_op_id];
         ensure!(
@@ -2717,6 +2714,13 @@ fn numeric_regions_overlap(left: &[Interval], right: &[Interval]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expired_scp_table_deadline_uses_shared_typed_error() {
+        let error = ensure_scp_table_deadline(Some(Instant::now())).unwrap_err();
+
+        assert!(crate::resource_limits::is_deadline_exceeded(&error));
+    }
 
     fn two_state_transition_system() -> AbstractTransitionSystem {
         AbstractTransitionSystem {
