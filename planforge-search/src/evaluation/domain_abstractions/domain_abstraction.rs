@@ -104,13 +104,17 @@ impl NumericPartitions {
             return vec![];
         };
 
+        // Concrete numeric states are canonicalized after every assignment.
+        // Keep abstract transition images on the same lattice so a rounding
+        // artifact cannot manufacture overlap with an adjacent partition.
         let result_interval = match operation {
             AssignmentOperation::Assign => rhs,
             AssignmentOperation::Plus => ArithOp::Add.apply_interval(source_interval, rhs),
             AssignmentOperation::Minus => ArithOp::Sub.apply_interval(source_interval, rhs),
             AssignmentOperation::Times => ArithOp::Mul.apply_interval(source_interval, rhs),
             AssignmentOperation::Divide => ArithOp::Div.apply_interval(source_interval, rhs),
-        };
+        }
+        .canonicalized();
 
         let Some(targets) = self.partitions(numeric_var_id) else {
             return vec![];
@@ -129,6 +133,10 @@ impl NumericPartitions {
     ///
     /// Returns `true` if a split was applied.
     pub fn split_at(&mut self, numeric_var_id: usize, value: f64, include_in_lower: bool) -> bool {
+        // Numeric states use the canonical ABS_EPSILON lattice. Storing an
+        // uncanonicalized flaw/regression value as a partition boundary makes
+        // forward image and inverse-image overlap tests disagree.
+        let value = float_tolerance::canonicalize(value);
         let Some(parts) = self.partitions_by_numeric_var.get_mut(numeric_var_id) else {
             return false;
         };

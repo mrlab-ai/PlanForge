@@ -79,6 +79,7 @@ fn cartesian_config_from_collection(
         compute_operator_footprints,
         random_seed: config.random_seed,
         debug: config.debug,
+        ..Default::default()
     })
 }
 
@@ -106,6 +107,7 @@ fn build_canonical_from_sources<'task>(
 
 fn build_scp_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
+    sampling_task: Option<TaskRef<'task>>,
     sources: &[planforge_search::config::ConfigCall],
     options: &[planforge_search::config::ConfigArg],
     name: &str,
@@ -124,12 +126,22 @@ fn build_scp_from_sources<'task>(
         ComponentUse::LabelCostPartitioning
     };
     let components = build_components(task, sources, component_use)?;
-    let heuristic = SaturatedCostPartitioningOnlineHeuristic::from_components(
-        Some(name.to_string()),
-        components,
-        config,
-        task,
-    )
+    let heuristic = if let Some(sampling_task) = sampling_task {
+        SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+            Some(name.to_string()),
+            components,
+            config,
+            task,
+            sampling_task,
+        )
+    } else {
+        SaturatedCostPartitioningOnlineHeuristic::from_components(
+            Some(name.to_string()),
+            components,
+            config,
+            task,
+        )
+    }
     .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
     Ok(Some(Box::new(heuristic)))
 }
@@ -139,6 +151,22 @@ fn build_scp_from_sources<'task>(
 pub fn build_heuristic_from_spec<'a>(
     spec: &HeuristicSpec,
     task: &'a dyn AbstractNumericTask,
+) -> Result<Option<Box<dyn Heuristic + 'a>>, String> {
+    build_heuristic_from_spec_internal(spec, task, None)
+}
+
+pub fn build_heuristic_from_spec_with_task_ref<'a>(
+    spec: &HeuristicSpec,
+    task: &'a dyn AbstractNumericTask,
+    sampling_task: TaskRef<'a>,
+) -> Result<Option<Box<dyn Heuristic + 'a>>, String> {
+    build_heuristic_from_spec_internal(spec, task, Some(sampling_task))
+}
+
+fn build_heuristic_from_spec_internal<'a>(
+    spec: &HeuristicSpec,
+    task: &'a dyn AbstractNumericTask,
+    sampling_task: Option<TaskRef<'a>>,
 ) -> Result<Option<Box<dyn Heuristic + 'a>>, String> {
     match spec.name.as_str() {
         "blind" => {
@@ -165,7 +193,13 @@ pub fn build_heuristic_from_spec<'a>(
         }
         "scp" | "cost_partitioning" => {
             let (sources, options) = split_component_sources(&spec.args)?;
-            build_scp_from_sources(task, &sources, &options, spec.name.as_str())
+            build_scp_from_sources(
+                task,
+                sampling_task.clone(),
+                &sources,
+                &options,
+                spec.name.as_str(),
+            )
         }
         "domain_abstraction" => {
             info!("Building domain abstraction (CEGAR)...");
@@ -195,6 +229,7 @@ pub fn build_heuristic_from_spec<'a>(
                 compute_operator_footprints: false,
                 random_seed: cegar_cfg.random_seed,
                 debug: cegar_cfg.debug,
+                ..Default::default()
             };
             let generator = CartesianAbstractionGenerator::new(cfg)
                 .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?;
@@ -216,6 +251,7 @@ pub fn build_heuristic_from_spec<'a>(
                 compute_operator_footprints: false,
                 random_seed: cegar_cfg.random_seed,
                 debug: cegar_cfg.debug,
+                ..Default::default()
             })
             .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?;
             let abstraction = generator
@@ -320,6 +356,7 @@ pub fn build_heuristic_from_spec<'a>(
             if !component_sources.is_empty() {
                 return build_scp_from_sources(
                     task,
+                    sampling_task.clone(),
                     &component_sources,
                     &combinator_options,
                     spec.name.as_str(),
@@ -386,9 +423,19 @@ pub fn build_heuristic_from_spec<'a>(
                 components.push(AbstractionComponent::cartesian(None, abstraction));
             }
             components.extend(pdbs.into_iter().map(AbstractionComponent::pattern_database));
-            let h = SaturatedCostPartitioningOnlineHeuristic::from_components(
-                None, components, cfg, task,
-            )
+            let h = if let Some(sampling_task) = sampling_task.clone() {
+                SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+                    None,
+                    components,
+                    cfg,
+                    task,
+                    sampling_task,
+                )
+            } else {
+                SaturatedCostPartitioningOnlineHeuristic::from_components(
+                    None, components, cfg, task,
+                )
+            }
             .map_err(|e| format!("failed to construct scp_online heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
@@ -677,7 +724,8 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let result = {
         {
             let heuristic_override =
-                build_heuristic_from_spec(heuristic_spec, &*task).map_err(std::io::Error::other)?;
+                build_heuristic_from_spec_with_task_ref(heuristic_spec, &*task, task.clone())
+                    .map_err(std::io::Error::other)?;
 
             let time_limit = cli.max_time;
             let memory_limit = cli.max_memory;

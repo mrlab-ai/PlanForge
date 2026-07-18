@@ -181,3 +181,37 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         0.3
     );
 }
+
+#[test]
+fn distinct_states_with_the_same_hash_use_the_collision_side_table() {
+    let task: TaskRef = Arc::new(get_root_task());
+    let mut registry = StateRegistry::for_task(task.clone());
+    let initial = registry.get_initial_state();
+    let successor = registry
+        .get_successor_state(&initial, &task.get_operators()[0])
+        .unwrap();
+    assert_ne!(initial.get_id(), successor.get_id());
+
+    let initial_bins = initial.buffer(&registry).to_vec();
+    let successor_bins = successor.buffer(&registry).to_vec();
+    registry.registered_states.clear();
+    registry.registered_state_collisions.clear();
+
+    let forced_hash = 7;
+    registry.insert_registered_state_id(forced_hash, initial.get_id());
+    registry.insert_registered_state_id(forced_hash, successor.get_id());
+
+    assert_eq!(
+        registry.find_registered_state_id(forced_hash, &initial_bins),
+        Some(initial.get_id())
+    );
+    assert_eq!(
+        registry.find_registered_state_id(forced_hash, &successor_bins),
+        Some(successor.get_id())
+    );
+    assert_eq!(registry.registered_states.len(), 1);
+    assert_eq!(
+        registry.registered_state_collisions[&forced_hash],
+        [successor.get_id()]
+    );
+}

@@ -163,7 +163,7 @@ pub fn solve_task(
             // GBFS and A* share heuristic construction; only the open-list
             // priority differs (h vs g+h).
             let gbfs_priority = matches!(spec, planforge_searcher::SearchSpec::Gbfs(_));
-            let heuristic_override = build_heuristic_from_spec(heuristic, &*task)?;
+            let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
             let mut search = if gbfs_priority {
                 AStarSearch::new_gbfs(
                     task.clone(),
@@ -223,8 +223,10 @@ pub fn solve_task(
                     ),
                 ) as Box<dyn planforge_search::evaluation::Heuristic + '_>
             };
-            let fast_h = build_heuristic_from_spec(fast_spec, task_ref)?.unwrap_or_else(make_blind);
-            let slow_h = build_heuristic_from_spec(slow_spec, task_ref)?.unwrap_or_else(make_blind);
+            let fast_h = build_heuristic_from_spec(fast_spec, task_ref, task.clone())?
+                .unwrap_or_else(make_blind);
+            let slow_h = build_heuristic_from_spec(slow_spec, task_ref, task.clone())?
+                .unwrap_or_else(make_blind);
             let mut search = AStarSearch::new_fast_slow(
                 task.clone(),
                 state_registry,
@@ -315,8 +317,10 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
 fn build_heuristic_from_spec<'a>(
     spec: &planforge_searcher::HeuristicSpec,
     task_ref: &'a dyn AbstractNumericTask,
+    sampling_task: TaskRef<'a>,
 ) -> std::io::Result<Option<Box<dyn planforge_search::evaluation::Heuristic + 'a>>> {
-    planforge_searcher::build_heuristic_from_spec(spec, task_ref).map_err(std::io::Error::other)
+    planforge_searcher::build_heuristic_from_spec_with_task_ref(spec, task_ref, sampling_task)
+        .map_err(std::io::Error::other)
 }
 
 fn build_successor_generator(task: &dyn AbstractNumericTask) -> SuccessorTree {

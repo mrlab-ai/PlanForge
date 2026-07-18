@@ -409,7 +409,7 @@ impl<'a> AStarSearch<'a> {
             Err(error) => {
                 return Err(error).context(format!(
                     "slow heuristic evaluation failed for state {}",
-                    entry.state_id
+                    entry.state_id()
                 ));
             }
         };
@@ -417,11 +417,11 @@ impl<'a> AStarSearch<'a> {
         if slow_h.is_infinite() && slow_h.is_sign_positive() {
             // h_s reports a dead end. Mark state and drop the entry.
             self.stats.dead_ends = self.stats.dead_ends.saturating_add(1);
-            if let Some(info) = self.space.node_mut(entry.state_id) {
-                info.is_dead_end = true;
+            if self.space.contains_node(entry.state_id()) {
+                self.space.mark_dead_end(entry.state_id());
             } else {
                 self.space.set_node(
-                    entry.state_id,
+                    entry.state_id(),
                     SearchNodeInfo {
                         parent_state: None,
                         parent_operator_id: None,
@@ -436,7 +436,7 @@ impl<'a> AStarSearch<'a> {
         let combined_h = entry.h_value.into_inner().max(slow_h);
         let new_f = entry.g_value + combined_h;
         self.open_list.insert_with_second(
-            entry.state_id,
+            entry.state_id(),
             entry.g_value,
             combined_h,
             new_f,
@@ -535,7 +535,7 @@ impl<'a> AStarSearch<'a> {
             None => return Ok(SearchStatus::Failed),
         };
 
-        let state_id = entry.state_id;
+        let state_id = entry.state_id();
         let state = self
             .state_registry
             .lookup_state(state_id)
@@ -578,8 +578,8 @@ impl<'a> AStarSearch<'a> {
             );
         }
 
-        if let Some(info) = self.space.node_mut(state_id) {
-            info.is_closed = true;
+        if self.space.contains_node(state_id) {
+            self.space.mark_closed(state_id);
         } else {
             self.space.set_node(
                 state_id,
@@ -700,9 +700,6 @@ impl<'a> AStarSearch<'a> {
             }
 
             if was_closed {
-                if let Some(existing_info) = self.space.node_mut(succ_state_id) {
-                    existing_info.is_closed = false;
-                }
                 self.stats.nodes_reopened += 1;
             }
 

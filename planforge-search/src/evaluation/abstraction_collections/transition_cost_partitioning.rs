@@ -228,11 +228,6 @@ pub struct AbstractOperatorCostFunction {
     pub operator_costs: Vec<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct AbstractOperatorCostBudget {
-    pub label_fractions: Vec<f64>,
-}
-
 pub fn build_explicit_label_cost_partitioning_table(
     transition_system: &AbstractTransitionSystem,
     operator_costs: &[f64],
@@ -293,7 +288,6 @@ pub fn build_explicit_label_cost_partitioning_table(
 pub fn build_explicit_abstract_operator_cost_partitioning_table(
     transition_system: &AbstractTransitionSystem,
     footprints: &[AbstractOperatorFootprint],
-    budgets: Option<&[AbstractOperatorCostBudget]>,
     residual_costs: &TransitionResidualCosts,
     abstraction_id: usize,
     cap_state_id: Option<usize>,
@@ -302,7 +296,6 @@ pub fn build_explicit_abstract_operator_cost_partitioning_table(
     let operator_costs = abstract_operator_costs_from_footprints(
         footprints.len(),
         footprints,
-        budgets,
         residual_costs,
         abstraction_id,
         deadline,
@@ -516,18 +509,10 @@ fn saturated_abstract_operator_costs(
 fn abstract_operator_costs_from_footprints(
     num_operators: usize,
     footprints: &[AbstractOperatorFootprint],
-    budgets: Option<&[AbstractOperatorCostBudget]>,
     residual_costs: &TransitionResidualCosts,
     abstraction_id: usize,
     deadline: Option<Instant>,
 ) -> Result<Vec<f64>> {
-    if let Some(budgets) = budgets {
-        ensure!(
-            budgets.len() >= num_operators,
-            "abstract-operator budget/operator size mismatch: budgets={} operators={num_operators}",
-            budgets.len()
-        );
-    }
     ensure!(
         footprints.len() >= num_operators,
         "abstract-operator footprint/operator size mismatch: footprints={} operators={num_operators}",
@@ -544,20 +529,10 @@ fn abstract_operator_costs_from_footprints(
             !footprint.labels.is_empty(),
             "abstract operator {abstract_op_id} has no concrete footprint labels"
         );
-        let budget = budgets.map(|budgets| &budgets[abstract_op_id]);
-        if let Some(budget) = budget {
-            ensure!(
-                budget.label_fractions.len() == footprint.labels.len(),
-                "abstract-operator budget label count mismatch for abstract op {abstract_op_id}: budgets={} labels={}",
-                budget.label_fractions.len(),
-                footprint.labels.len()
-            );
-        }
         operator_costs[abstract_op_id] = footprint
             .labels
             .iter()
-            .enumerate()
-            .map(|(label_id, label)| {
+            .map(|label| {
                 let residual = if has_reductions {
                     residual_costs.cost_for_operator_footprint(
                         abstraction_id,
@@ -567,15 +542,7 @@ fn abstract_operator_costs_from_footprints(
                 } else {
                     residual_costs.base_cost(label.concrete_op_id)
                 };
-                let fraction = budget
-                    .map(|budget| budget.label_fractions[label_id])
-                    .unwrap_or(1.0);
-                assert!(
-                    fraction.is_finite() && (-EPSILON..=1.0 + EPSILON).contains(&fraction),
-                    "invalid abstract-operator allocation fraction {fraction}"
-                );
-                residual
-                    .min(residual_costs.base_cost(label.concrete_op_id) * fraction.clamp(0.0, 1.0))
+                residual.min(residual_costs.base_cost(label.concrete_op_id))
             })
             .fold(f64::INFINITY, f64::min);
         ensure!(
@@ -606,6 +573,11 @@ pub struct LmCutResidualCostVariant {
 #[derive(Debug)]
 struct OperatorResidual {
     base_cost: f64,
+    /// Regions where prior tables consumed the complete operator cost. These
+    /// may overlap because pointwise max and sum are both equal to the base
+    /// cost there; keeping the cover avoids an unnecessary geometric union.
+    full_regional_usage: RegionalUsage,
+    /// Exact disjoint overlay for genuinely fractional regional allocations.
     regional_usage: RegionalUsage,
     reductions: Vec<ResidualReduction>,
     reduction_indices: HashMap<TransitionIdentity, usize>,
@@ -637,9 +609,54 @@ struct RegionalUsageCell {
     amount: f64,
 }
 
+#[derive(Debug, Clone)]
+enum TableRegionalEnvelope {
+    Full(Vec<StateRegion>),
+    Fractional(RegionalUsage),
+}
+
+impl Default for TableRegionalEnvelope {
+    fn default() -> Self {
+        Self::Full(Vec::new())
+    }
+}
+
 impl PartialEq for RegionalUsage {
     fn eq(&self, other: &Self) -> bool {
         self.cells == other.cells
+    }
+}
+
+impl TableRegionalEnvelope {
+    fn maximize(
+        &mut self,
+        region: &StateRegion,
+        amount: f64,
+        base_cost: f64,
+        deadline: Option<Instant>,
+    ) -> Result<()> {
+        debug_assert!(amount.is_finite() && amount > 0.0);
+        debug_assert!(base_cost.is_finite() && base_cost > 0.0);
+        if amount + EPSILON >= base_cost {
+            match self {
+                Self::Full(regions) => regions.push(region.clone()),
+                Self::Fractional(usage) => usage.maximize(region, base_cost, deadline)?,
+            }
+            return Ok(());
+        }
+
+        if let Self::Full(regions) = self {
+            let regions = std::mem::take(regions);
+            let mut usage = RegionalUsage::default();
+            for full_region in regions {
+                usage.maximize(&full_region, base_cost, deadline)?;
+            }
+            *self = Self::Fractional(usage);
+        }
+        let Self::Fractional(usage) = self else {
+            unreachable!("full regional envelope must have been promoted to fractional overlay")
+        };
+        usage.maximize(region, amount, deadline)
     }
 }
 
@@ -663,6 +680,48 @@ struct RegionalUsageIndexBlock {
 impl RegionalUsage {
     fn is_empty(&self) -> bool {
         self.cells.is_empty()
+    }
+
+    fn append_full_cover(&mut self, regions: Vec<StateRegion>, base_cost: f64) {
+        debug_assert!(base_cost.is_finite() && base_cost > 0.0);
+        self.cells
+            .extend(regions.into_iter().map(|region| RegionalUsageCell {
+                region,
+                amount: base_cost,
+            }));
+        *self.index.get_mut() = None;
+    }
+
+    fn overlaps(&self, query: &StateRegion) -> bool {
+        if self.cells.len() < REGIONAL_INDEX_MIN_CELLS {
+            return self.cells.iter().any(|cell| cell.region.overlaps(query));
+        }
+        if self.index.borrow().is_none() {
+            *self.index.borrow_mut() = RegionalUsageIndex::build(&self.cells);
+        }
+        let index = self.index.borrow();
+        let Some(index) = index.as_ref() else {
+            return self.cells.iter().any(|cell| cell.region.overlaps(query));
+        };
+        let query_interval = query.numeric[index.primary_dim];
+        let candidate_end = index.sorted_cell_ids.partition_point(|&cell_id| {
+            self.cells[cell_id].region.numeric[index.primary_dim].lower <= query_interval.upper
+        });
+        for block in &index.blocks {
+            if block.start >= candidate_end {
+                break;
+            }
+            if block.max_upper < query_interval.lower {
+                continue;
+            }
+            if index.sorted_cell_ids[block.start..block.end.min(candidate_end)]
+                .iter()
+                .any(|&cell_id| self.cells[cell_id].region.overlaps(query))
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn max_over(&self, query: &StateRegion) -> f64 {
@@ -711,22 +770,38 @@ impl RegionalUsage {
     /// envelope of one abstraction table: a concrete transition maps to one
     /// abstract transition in that table, even when conservative footprints
     /// overlap.
-    fn maximize(&mut self, region: &StateRegion, amount: f64) {
+    fn maximize(
+        &mut self,
+        region: &StateRegion,
+        amount: f64,
+        deadline: Option<Instant>,
+    ) -> Result<()> {
         debug_assert!(amount.is_finite() && amount >= 0.0);
         if amount <= EPSILON {
-            return;
+            return Ok(());
         }
-        self.overlay(region, |old| old.max(amount), amount);
+        self.overlay(region, |old| old.max(amount), amount, deadline)
     }
 
     /// Pointwise addition. Table envelopes are independent cost partitions and
     /// therefore add across completed tables.
+    #[cfg(test)]
     fn add(&mut self, region: &StateRegion, amount: f64) {
+        self.add_with_deadline(region, amount, None)
+            .expect("an unbounded regional-usage update cannot exceed a deadline");
+    }
+
+    fn add_with_deadline(
+        &mut self,
+        region: &StateRegion,
+        amount: f64,
+        deadline: Option<Instant>,
+    ) -> Result<()> {
         debug_assert!(amount.is_finite() && amount >= 0.0);
         if amount <= EPSILON {
-            return;
+            return Ok(());
         }
-        self.overlay(region, |old| old + amount, amount);
+        self.overlay(region, |old| old + amount, amount, deadline)
     }
 
     fn overlay(
@@ -734,13 +809,24 @@ impl RegionalUsage {
         region: &StateRegion,
         update_existing: impl Fn(f64) -> f64,
         uncovered_amount: f64,
-    ) {
+        deadline: Option<Instant>,
+    ) -> Result<()> {
         debug_assert!(state_region_is_nonempty(region));
         let old_cells = std::mem::take(&mut self.cells);
         let mut new_cells = Vec::with_capacity(old_cells.len() + 1);
         let mut uncovered = vec![region.clone()];
 
-        for cell in old_cells {
+        let mut old_cells = old_cells.into_iter();
+        while let Some(cell) = old_cells.next() {
+            if new_cells.len().is_multiple_of(64)
+                && let Err(error) = ensure_scp_table_deadline(deadline)
+            {
+                new_cells.push(cell);
+                new_cells.extend(old_cells);
+                self.cells = new_cells;
+                *self.index.get_mut() = None;
+                return Err(error);
+            }
             let Some(intersection) = state_region_intersection(&cell.region, region) else {
                 new_cells.push(cell);
                 continue;
@@ -757,7 +843,13 @@ impl RegionalUsage {
             });
             uncovered = uncovered
                 .into_iter()
-                .flat_map(|piece| subtract_state_region(&piece, &intersection))
+                .flat_map(|piece| {
+                    let Some(covered_piece) = state_region_intersection(&piece, &intersection)
+                    else {
+                        return vec![piece];
+                    };
+                    subtract_state_region(&piece, &covered_piece)
+                })
                 .collect();
         }
 
@@ -769,6 +861,7 @@ impl RegionalUsage {
         debug_assert!(regional_usage_cells_are_disjoint(&new_cells));
         self.cells = new_cells;
         *self.index.get_mut() = None;
+        Ok(())
     }
 }
 
@@ -1166,31 +1259,6 @@ struct IndexedInterval {
     reduction_id: usize,
 }
 
-#[derive(Clone, Debug)]
-struct IndexedLaterFootprint {
-    interval: Interval,
-    later_footprint_id: usize,
-}
-
-#[derive(Clone, Debug)]
-struct LaterFootprint {
-    abstraction_id: usize,
-    source_region: Arc<StateRegion>,
-}
-
-#[derive(Clone, Debug, Default)]
-struct OperatorFootprintOverlapIndex {
-    footprints: Vec<LaterFootprint>,
-    numeric: Vec<Vec<IndexedLaterFootprint>>,
-    unbounded_by_numeric: Vec<Vec<usize>>,
-    unbounded_abstractions_by_numeric: Vec<HashSet<usize>>,
-}
-
-#[derive(Clone, Debug, Default)]
-struct FootprintOverlapIndex {
-    by_operator: HashMap<usize, OperatorFootprintOverlapIndex>,
-}
-
 #[derive(Copy, Clone, Debug)]
 enum RegionFeature {
     SourceProp(usize),
@@ -1205,6 +1273,7 @@ impl TransitionResidualCosts {
             .iter()
             .map(|&base_cost| OperatorResidual {
                 base_cost,
+                full_regional_usage: RegionalUsage::default(),
                 regional_usage: RegionalUsage::default(),
                 reductions: Vec::new(),
                 reduction_indices: HashMap::new(),
@@ -1221,14 +1290,20 @@ impl TransitionResidualCosts {
     pub fn num_reductions(&self) -> usize {
         self.operator_residuals
             .iter()
-            .map(|residual| residual.reductions.len() + residual.regional_usage.cells.len())
+            .map(|residual| {
+                residual.reductions.len()
+                    + residual.full_regional_usage.cells.len()
+                    + residual.regional_usage.cells.len()
+            })
             .sum()
     }
 
     pub fn has_reductions(&self) -> bool {
-        self.operator_residuals
-            .iter()
-            .any(|residual| !residual.reductions.is_empty() || !residual.regional_usage.is_empty())
+        self.operator_residuals.iter().any(|residual| {
+            !residual.reductions.is_empty()
+                || !residual.full_regional_usage.is_empty()
+                || !residual.regional_usage.is_empty()
+        })
     }
 
     pub fn base_cost(&self, concrete_op_id: usize) -> f64 {
@@ -1248,14 +1323,19 @@ impl TransitionResidualCosts {
                 if let Some(cost) = residual.uniform_cost_cache.get() {
                     return cost;
                 }
-                let reduction = max_overlap_reduction(None, residual, residual.base_cost).max(
-                    residual
-                        .regional_usage
-                        .cells
-                        .iter()
-                        .map(|cell| cell.amount)
-                        .fold(0.0, f64::max),
-                );
+                let full_regional_reduction = (!residual.full_regional_usage.is_empty())
+                    .then_some(residual.base_cost)
+                    .unwrap_or(0.0);
+                let reduction = max_overlap_reduction(None, residual, residual.base_cost)
+                    .max(full_regional_reduction)
+                    .max(
+                        residual
+                            .regional_usage
+                            .cells
+                            .iter()
+                            .map(|cell| cell.amount)
+                            .fold(0.0, f64::max),
+                    );
                 let cost = (residual.base_cost - reduction).max(0.0);
                 residual.uniform_cost_cache.set(Some(cost));
                 cost
@@ -1390,7 +1470,14 @@ impl TransitionResidualCosts {
         if !residual.base_cost.is_finite() {
             return f64::INFINITY;
         }
-        let regional = residual.regional_usage.max_over(&footprint.source_region);
+        let regional = if residual
+            .full_regional_usage
+            .overlaps(&footprint.source_region)
+        {
+            residual.base_cost
+        } else {
+            residual.regional_usage.max_over(&footprint.source_region)
+        };
         let legacy = self.cost_for_transition_with_region(
             footprint.concrete_op_id,
             current_abstraction_id,
@@ -1641,6 +1728,21 @@ impl TransitionResidualCosts {
         footprints: &[AbstractOperatorFootprint],
         tcf: &AbstractOperatorCostFunction,
     ) -> Result<()> {
+        self.reduce_by_abstract_operator_footprints_with_deadline(
+            producing_abstraction_id,
+            footprints,
+            tcf,
+            None,
+        )
+    }
+
+    pub fn reduce_by_abstract_operator_footprints_with_deadline(
+        &mut self,
+        producing_abstraction_id: usize,
+        footprints: &[AbstractOperatorFootprint],
+        tcf: &AbstractOperatorCostFunction,
+        deadline: Option<Instant>,
+    ) -> Result<()> {
         ensure!(
             footprints.len() >= tcf.operator_costs.len(),
             "abstract-operator footprint/cost function size mismatch: footprints={} costs={}",
@@ -1648,8 +1750,11 @@ impl TransitionResidualCosts {
             tcf.operator_costs.len()
         );
 
-        let mut table_envelopes: HashMap<usize, RegionalUsage> = HashMap::new();
+        let mut table_envelopes: HashMap<usize, TableRegionalEnvelope> = HashMap::new();
         for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
+            if abstract_op_id.is_multiple_of(64) {
+                ensure_scp_table_deadline(deadline)?;
+            }
             ensure!(
                 !saturated.is_finite() || saturated >= -EPSILON,
                 "negative abstract-operator saturated costs are not supported: abstract op {} has {}",
@@ -1693,24 +1798,59 @@ impl TransitionResidualCosts {
                 table_envelopes
                     .entry(concrete_op_id)
                     .or_default()
-                    .maximize(&footprint.source_region, saturated);
+                    .maximize(
+                        &footprint.source_region,
+                        saturated,
+                        residual.base_cost,
+                        deadline,
+                    )?;
             }
         }
 
         for (concrete_op_id, envelope) in table_envelopes {
+            ensure_scp_table_deadline(deadline)?;
             let residual = self
                 .operator_residuals
                 .get_mut(concrete_op_id)
                 .expect("validated concrete operator footprint must exist");
-            for cell in envelope.cells {
-                let already_used = residual.regional_usage.max_over(&cell.region);
-                ensure!(
-                    already_used + cell.amount <= residual.base_cost + EPSILON,
-                    "regional residual cost underflow for operator {concrete_op_id}: used={already_used}, allocation={}, base={}",
-                    cell.amount,
-                    residual.base_cost
-                );
-                residual.regional_usage.add(&cell.region, cell.amount);
+            match envelope {
+                TableRegionalEnvelope::Full(regions) => {
+                    for region in &regions {
+                        let already_used = if residual.full_regional_usage.overlaps(region) {
+                            residual.base_cost
+                        } else {
+                            residual.regional_usage.max_over(region)
+                        };
+                        ensure!(
+                            already_used <= EPSILON,
+                            "full regional allocation overlaps prior usage for operator {concrete_op_id}: used={already_used}, base={}",
+                            residual.base_cost
+                        );
+                    }
+                    residual
+                        .full_regional_usage
+                        .append_full_cover(regions, residual.base_cost);
+                }
+                TableRegionalEnvelope::Fractional(envelope) => {
+                    for cell in envelope.cells {
+                        let already_used = if residual.full_regional_usage.overlaps(&cell.region) {
+                            residual.base_cost
+                        } else {
+                            residual.regional_usage.max_over(&cell.region)
+                        };
+                        ensure!(
+                            already_used + cell.amount <= residual.base_cost + EPSILON,
+                            "regional residual cost underflow for operator {concrete_op_id}: used={already_used}, allocation={}, base={}",
+                            cell.amount,
+                            residual.base_cost
+                        );
+                        residual.regional_usage.add_with_deadline(
+                            &cell.region,
+                            cell.amount,
+                            deadline,
+                        )?;
+                    }
+                }
             }
             residual.invalidate_cache();
         }
@@ -1981,190 +2121,6 @@ impl OperatorResidual {
         self.full_reduction_index.borrow_mut().replace(index);
         Some(())
     }
-}
-
-pub fn compute_lookahead_abstract_operator_cost_budgets(
-    footprints_by_abstraction: &[&[AbstractOperatorFootprint]],
-    order: &[usize],
-    active_abstractions: &[bool],
-) -> Result<Vec<Vec<AbstractOperatorCostBudget>>> {
-    let mut budgets: Vec<Vec<AbstractOperatorCostBudget>> = footprints_by_abstraction
-        .iter()
-        .map(|footprints| {
-            footprints
-                .iter()
-                .map(|footprint| AbstractOperatorCostBudget {
-                    label_fractions: vec![0.0; footprint.labels.len()],
-                })
-                .collect()
-        })
-        .collect();
-    let mut suffix_index = FootprintOverlapIndex::default();
-
-    for &abstraction_id in order.iter().rev() {
-        if abstraction_id >= footprints_by_abstraction.len() {
-            continue;
-        }
-        let active = active_abstractions
-            .get(abstraction_id)
-            .copied()
-            .unwrap_or(false);
-        if active {
-            let footprints = footprints_by_abstraction[abstraction_id];
-            for (abstract_op_id, footprint) in footprints.iter().enumerate() {
-                ensure!(
-                    abstract_op_id < budgets[abstraction_id].len(),
-                    "missing abstract-operator budget for abstraction {abstraction_id}, abstract op {abstract_op_id}"
-                );
-                ensure!(
-                    budgets[abstraction_id][abstract_op_id]
-                        .label_fractions
-                        .len()
-                        == footprint.labels.len(),
-                    "abstract-operator budget label count mismatch for abstraction {abstraction_id}, abstract op {abstract_op_id}"
-                );
-                for (label_id, label) in footprint.labels.iter().enumerate() {
-                    let competitors = suffix_index.count_overlapping_abstractions(label);
-                    let lookahead_share = 1.0 / (competitors as f64 + 1.0);
-                    budgets[abstraction_id][abstract_op_id].label_fractions[label_id] =
-                        lookahead_share;
-                }
-            }
-            suffix_index.add_abstraction(abstraction_id, footprints)?;
-        }
-    }
-
-    Ok(budgets)
-}
-
-impl FootprintOverlapIndex {
-    fn add_abstraction(
-        &mut self,
-        abstraction_id: usize,
-        footprints: &[AbstractOperatorFootprint],
-    ) -> Result<()> {
-        for footprint in footprints {
-            for label in &footprint.labels {
-                let operator_index = self.by_operator.entry(label.concrete_op_id).or_default();
-                let footprint_id = operator_index.footprints.len();
-                operator_index.footprints.push(LaterFootprint {
-                    abstraction_id,
-                    source_region: label.source_region.clone(),
-                });
-                if operator_index.numeric.len() < label.source_region.numeric.len() {
-                    operator_index
-                        .numeric
-                        .resize_with(label.source_region.numeric.len(), Vec::new);
-                    operator_index
-                        .unbounded_by_numeric
-                        .resize_with(label.source_region.numeric.len(), Vec::new);
-                    operator_index
-                        .unbounded_abstractions_by_numeric
-                        .resize_with(label.source_region.numeric.len(), HashSet::new);
-                }
-                for (var_id, interval) in label.source_region.numeric.iter().copied().enumerate() {
-                    if interval.is_empty() {
-                        continue;
-                    }
-                    if !interval.lower.is_finite() && !interval.upper.is_finite() {
-                        operator_index.unbounded_by_numeric[var_id].push(footprint_id);
-                        operator_index.unbounded_abstractions_by_numeric[var_id]
-                            .insert(abstraction_id);
-                        continue;
-                    }
-                    operator_index.numeric[var_id].push(IndexedLaterFootprint {
-                        interval,
-                        later_footprint_id: footprint_id,
-                    });
-                }
-            }
-        }
-        for operator_index in self.by_operator.values_mut() {
-            for intervals in &mut operator_index.numeric {
-                intervals.sort_by(|left, right| {
-                    left.interval
-                        .lower
-                        .total_cmp(&right.interval.lower)
-                        .then_with(|| left.interval.upper.total_cmp(&right.interval.upper))
-                });
-            }
-        }
-        Ok(())
-    }
-
-    fn count_overlapping_abstractions(&self, label: &ConcreteOperatorFootprint) -> usize {
-        let Some(operator_index) = self.by_operator.get(&label.concrete_op_id) else {
-            return 0;
-        };
-        let mut best_var = None;
-        let mut best_count = usize::MAX;
-        for (var_id, query_interval) in label.source_region.numeric.iter().copied().enumerate() {
-            if query_interval.is_empty()
-                || (!query_interval.lower.is_finite() && !query_interval.upper.is_finite())
-            {
-                continue;
-            }
-            let Some(intervals) = operator_index.numeric.get(var_id) else {
-                continue;
-            };
-            let unbounded_count = operator_index
-                .unbounded_abstractions_by_numeric
-                .get(var_id)
-                .map_or(0, HashSet::len);
-            let count = count_interval_candidates(intervals, query_interval)
-                .saturating_add(unbounded_count);
-            if count < best_count {
-                best_count = count;
-                best_var = Some(var_id);
-            }
-        }
-
-        let mut abstractions = HashSet::new();
-        if let Some(var_id) = best_var {
-            if let Some(intervals) = operator_index.numeric.get(var_id) {
-                for indexed in intervals {
-                    if interval_starts_after(
-                        &indexed.interval,
-                        &label.source_region.numeric[var_id],
-                    ) {
-                        break;
-                    }
-                    if !intervals_overlap(indexed.interval, label.source_region.numeric[var_id]) {
-                        continue;
-                    }
-                    let later = &operator_index.footprints[indexed.later_footprint_id];
-                    if later.source_region.overlaps(&label.source_region) {
-                        abstractions.insert(later.abstraction_id);
-                    }
-                }
-            }
-            if let Some(unbounded_abstractions) =
-                operator_index.unbounded_abstractions_by_numeric.get(var_id)
-            {
-                abstractions.extend(unbounded_abstractions.iter().copied());
-            }
-        } else {
-            for later in &operator_index.footprints {
-                if later.source_region.overlaps(&label.source_region) {
-                    abstractions.insert(later.abstraction_id);
-                }
-            }
-        }
-        abstractions.len()
-    }
-}
-
-fn count_interval_candidates(intervals: &[IndexedLaterFootprint], query: Interval) -> usize {
-    let mut count = 0usize;
-    for indexed in intervals {
-        if interval_starts_after(&indexed.interval, &query) {
-            break;
-        }
-        if intervals_overlap(indexed.interval, query) {
-            count = count.saturating_add(1);
-        }
-    }
-    count
 }
 
 fn build_full_reduction_index(
@@ -2722,6 +2678,88 @@ mod tests {
         assert!(crate::resource_limits::is_deadline_exceeded(&error));
     }
 
+    #[test]
+    fn regional_overlay_handles_multiple_multidimensional_uncovered_pieces() {
+        let region = |x: Interval, y: Interval| StateRegion {
+            propositions: Vec::new(),
+            numeric: vec![x, y],
+        };
+        let first = region(Interval::closed(0.0, 1.0), Interval::closed(0.0, 1.0));
+        let second = region(Interval::closed(0.0, 1.0), Interval::closed(2.0, 3.0));
+        let mut usage = RegionalUsage {
+            cells: vec![
+                RegionalUsageCell {
+                    region: first.clone(),
+                    amount: 1.0,
+                },
+                RegionalUsageCell {
+                    region: second.clone(),
+                    amount: 2.0,
+                },
+            ],
+            index: RefCell::new(None),
+        };
+
+        usage.add(
+            &region(Interval::closed(0.0, 3.0), Interval::closed(0.0, 3.0)),
+            3.0,
+        );
+
+        assert_eq!(usage.max_over(&first), 4.0);
+        assert_eq!(usage.max_over(&second), 5.0);
+        assert_eq!(
+            usage.max_over(&region(
+                Interval::closed(2.0, 3.0),
+                Interval::closed(2.0, 3.0),
+            )),
+            3.0
+        );
+        assert!(regional_usage_cells_are_disjoint(&usage.cells));
+    }
+
+    #[test]
+    fn full_cost_footprints_use_overlap_cover_without_geometric_overlay() {
+        let region = |lower, upper| StateRegion {
+            propositions: Vec::new(),
+            numeric: vec![Interval::closed(lower, upper)],
+        };
+        let footprint = |lower, upper| AbstractOperatorFootprint {
+            labels: vec![ConcreteOperatorFootprint {
+                concrete_op_id: 0,
+                source_region: Arc::new(region(lower, upper)),
+            }],
+        };
+        let footprints = vec![footprint(0.0, 2.0), footprint(1.0, 3.0)];
+        let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
+
+        residuals
+            .reduce_by_abstract_operator_footprints(
+                0,
+                &footprints,
+                &AbstractOperatorCostFunction {
+                    operator_costs: vec![1.0, 1.0],
+                },
+            )
+            .unwrap();
+
+        let residual = &residuals.operator_residuals[0];
+        assert_eq!(residual.full_regional_usage.cells.len(), 2);
+        assert!(residual.regional_usage.cells.is_empty());
+        let overlapping = ConcreteOperatorFootprint {
+            concrete_op_id: 0,
+            source_region: Arc::new(region(1.5, 1.5)),
+        };
+        let disjoint = ConcreteOperatorFootprint {
+            concrete_op_id: 0,
+            source_region: Arc::new(region(4.0, 5.0)),
+        };
+        assert_eq!(
+            residuals.cost_for_operator_footprint(1, 0, &overlapping),
+            0.0
+        );
+        assert_eq!(residuals.cost_for_operator_footprint(1, 0, &disjoint), 1.0);
+    }
+
     fn two_state_transition_system() -> AbstractTransitionSystem {
         AbstractTransitionSystem {
             transitions: vec![AbstractTransition {
@@ -2766,7 +2804,6 @@ mod tests {
         let (distances, saturated) = build_explicit_abstract_operator_cost_partitioning_table(
             &system,
             &footprints,
-            None,
             &residual,
             0,
             None,
@@ -2840,15 +2877,6 @@ mod tests {
         AbstractOperatorFootprint {
             labels: vec![concrete_footprint(lower, upper)],
         }
-    }
-
-    fn budget_fraction(
-        budgets: &[Vec<AbstractOperatorCostBudget>],
-        abstraction_id: usize,
-        abstract_op_id: usize,
-        label_id: usize,
-    ) -> f64 {
-        budgets[abstraction_id][abstract_op_id].label_fractions[label_id]
     }
 
     #[test]
@@ -3572,103 +3600,6 @@ mod tests {
             residuals.cost_for_operator_footprint(2, 0, &lower_left),
             3.0
         );
-    }
-
-    #[test]
-    fn lookahead_budget_splits_overlapping_same_label_abstractions() {
-        let first = vec![footprint(0.0, 5.0)];
-        let second = vec![footprint(3.0, 8.0)];
-        let footprints = vec![first.as_slice(), second.as_slice()];
-        let budgets =
-            compute_lookahead_abstract_operator_cost_budgets(&footprints, &[0, 1], &[true, true])
-                .unwrap();
-
-        assert_eq!(budget_fraction(&budgets, 0, 0, 0), 0.5);
-        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 1.0);
-    }
-
-    #[test]
-    fn lookahead_budget_keeps_disjoint_same_label_footprints_full() {
-        let first = vec![footprint(0.0, 2.0)];
-        let second = vec![footprint(3.0, 8.0)];
-        let footprints = vec![first.as_slice(), second.as_slice()];
-        let budgets =
-            compute_lookahead_abstract_operator_cost_budgets(&footprints, &[0, 1], &[true, true])
-                .unwrap();
-
-        assert_eq!(budget_fraction(&budgets, 0, 0, 0), 1.0);
-        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 1.0);
-    }
-
-    #[test]
-    fn lookahead_budget_splits_three_overlapping_abstractions() {
-        let first = vec![footprint(0.0, 5.0)];
-        let second = vec![footprint(1.0, 6.0)];
-        let third = vec![footprint(2.0, 7.0)];
-        let footprints = vec![first.as_slice(), second.as_slice(), third.as_slice()];
-        let budgets = compute_lookahead_abstract_operator_cost_budgets(
-            &footprints,
-            &[0, 1, 2],
-            &[true, true, true],
-        )
-        .unwrap();
-
-        assert!((budget_fraction(&budgets, 0, 0, 0) - 1.0 / 3.0).abs() < 1e-9);
-        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 0.5);
-        assert_eq!(budget_fraction(&budgets, 2, 0, 0), 1.0);
-    }
-
-    #[test]
-    fn lookahead_budget_counts_unbounded_later_dimension_as_overlap() {
-        let first = vec![AbstractOperatorFootprint {
-            labels: vec![concrete_footprint_2d(
-                0,
-                Interval::closed(0.0, 5.0),
-                Interval::closed(f64::NEG_INFINITY, f64::INFINITY),
-            )],
-        }];
-        let second = vec![AbstractOperatorFootprint {
-            labels: vec![concrete_footprint_2d(
-                0,
-                Interval::closed(f64::NEG_INFINITY, f64::INFINITY),
-                Interval::closed(3.0, 8.0),
-            )],
-        }];
-        let footprints = vec![first.as_slice(), second.as_slice()];
-        let budgets =
-            compute_lookahead_abstract_operator_cost_budgets(&footprints, &[0, 1], &[true, true])
-                .unwrap();
-
-        assert_eq!(budget_fraction(&budgets, 0, 0, 0), 0.5);
-        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 1.0);
-    }
-
-    #[test]
-    fn lookahead_budget_ignores_inactive_later_abstraction() {
-        let first = vec![footprint(0.0, 5.0)];
-        let second = vec![footprint(3.0, 8.0)];
-        let footprints = vec![first.as_slice(), second.as_slice()];
-        let budgets =
-            compute_lookahead_abstract_operator_cost_budgets(&footprints, &[0, 1], &[true, false])
-                .unwrap();
-
-        assert_eq!(budget_fraction(&budgets, 0, 0, 0), 1.0);
-        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 0.0);
-    }
-
-    #[test]
-    fn lookahead_budget_never_competes_across_concrete_operators() {
-        let first = vec![footprint(0.0, 5.0)];
-        let second = vec![AbstractOperatorFootprint {
-            labels: vec![concrete_footprint_for_op(1, 3.0, 8.0)],
-        }];
-        let footprints = vec![first.as_slice(), second.as_slice()];
-        let budgets =
-            compute_lookahead_abstract_operator_cost_budgets(&footprints, &[0, 1], &[true, true])
-                .unwrap();
-
-        assert_eq!(budget_fraction(&budgets, 0, 0, 0), 1.0);
-        assert_eq!(budget_fraction(&budgets, 1, 0, 0), 1.0);
     }
 
     #[test]

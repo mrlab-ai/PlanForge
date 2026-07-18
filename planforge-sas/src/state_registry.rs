@@ -68,7 +68,8 @@ impl Hasher for IdentityU64Hasher {
 }
 
 type IdentityHasherBuilder = BuildHasherDefault<IdentityU64Hasher>;
-type RegisteredStatesMap = HashMap<u64, Vec<StateID>, IdentityHasherBuilder>;
+type RegisteredStatesMap = HashMap<u64, StateID, IdentityHasherBuilder>;
+type RegisteredStateCollisions = HashMap<u64, Vec<StateID>, IdentityHasherBuilder>;
 
 /// Type alias for the state packer used throughout the system.
 type StatePacker = IntDoublePacker;
@@ -310,9 +311,13 @@ pub struct StateRegistry<'a> {
     numeric_constants: Vec<f64>,
     /// Mapping from numeric variable index to packed state index.
     numeric_indices: Vec<Option<usize>>,
-    /// Buckets of registered states for duplicate detection (hash -> `Vec<StateID>`).
-    /// Uses an identity hasher because keys are already 64-bit content hashes.
+    /// First registered state for each content hash. Uses an identity hasher
+    /// because keys are already 64-bit content hashes.
     registered_states: RegisteredStatesMap,
+    /// Additional states for the exceptionally rare case where distinct
+    /// packed states have the same 64-bit content hash. Keeping collisions in
+    /// a side table avoids one heap-allocated `Vec` for every ordinary state.
+    registered_state_collisions: RegisteredStateCollisions,
     /// Per-state cost information storage.
     cost_info: RefCell<PerStateInformation<Vec<f64>>>,
     /// Snapshot of the numeric variable layout, populated at construction.
@@ -430,6 +435,7 @@ impl<'a> StateRegistry<'a> {
                 1024,
                 IdentityHasherBuilder::default(),
             ),
+            registered_state_collisions: RegisteredStateCollisions::default(),
             axiom_evaluator,
             cost_info: RefCell::new(cost_info),
             numeric_var_types,
@@ -481,10 +487,7 @@ impl<'a> StateRegistry<'a> {
 
     /// Return the total number of distinct states registered in this registry.
     pub fn num_registered_states(&self) -> usize {
-        self.registered_states
-            .values()
-            .map(|bucket| bucket.len())
-            .sum()
+        self.state_data_pool.len()
     }
 
     pub fn get_cost_info(&self) -> &RefCell<PerStateInformation<Vec<f64>>> {
@@ -547,12 +550,31 @@ impl<'a> StateRegistry<'a> {
 
     fn find_registered_state_id(&self, key: u64, bins: &[u64]) -> Option<StateID> {
         let num_bins = self.num_state_bins();
-        self.registered_states.get(&key).and_then(|bucket| {
-            bucket
-                .iter()
-                .copied()
-                .find(|&existing_id| self.get_buffer(existing_id)[..num_bins] == bins[..num_bins])
-        })
+        let primary = self.registered_states.get(&key).copied()?;
+        if self.get_buffer(primary)[..num_bins] == bins[..num_bins] {
+            return Some(primary);
+        }
+        self.registered_state_collisions
+            .get(&key)
+            .and_then(|collisions| {
+                collisions.iter().copied().find(|&existing_id| {
+                    self.get_buffer(existing_id)[..num_bins] == bins[..num_bins]
+                })
+            })
+    }
+
+    fn insert_registered_state_id(&mut self, key: u64, state_id: StateID) {
+        match self.registered_states.entry(key) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(state_id);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                self.registered_state_collisions
+                    .entry(key)
+                    .or_default()
+                    .push(state_id);
+            }
+        }
     }
 
     fn insert_id_or_pop_state(&mut self) -> (StateID, bool) {
@@ -580,10 +602,7 @@ impl<'a> StateRegistry<'a> {
             return (existing_id, false);
         }
 
-        self.registered_states
-            .entry(key)
-            .or_insert_with(|| Vec::with_capacity(4))
-            .push(state_id);
+        self.insert_registered_state_id(key, state_id);
         (state_id, true)
     }
 
@@ -606,8 +625,15 @@ impl<'a> StateRegistry<'a> {
         };
 
         let mut existing_id: Option<StateID> = None;
-        if let Some(bucket) = self.registered_states.get(&key) {
-            for &candidate in bucket {
+        if let Some(&primary) = self.registered_states.get(&key) {
+            let candidates = std::iter::once(primary).chain(
+                self.registered_state_collisions
+                    .get(&key)
+                    .into_iter()
+                    .flatten()
+                    .copied(),
+            );
+            for candidate in candidates {
                 let existing = self.get_buffer(candidate);
                 let probe = self.get_buffer(state_id);
                 if bins_eq_masked(
@@ -626,10 +652,7 @@ impl<'a> StateRegistry<'a> {
             return (existing_id, false);
         }
 
-        self.registered_states
-            .entry(key)
-            .or_insert_with(|| Vec::with_capacity(4))
-            .push(state_id);
+        self.insert_registered_state_id(key, state_id);
         (state_id, true)
     }
 

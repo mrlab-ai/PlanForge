@@ -148,6 +148,7 @@ fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionCompo
         compute_operator_footprints: true,
         random_seed: None,
         debug: false,
+        ..Default::default()
     })
     .unwrap()
     .generate(task)

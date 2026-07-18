@@ -1,16 +1,20 @@
 use std::cell::{Ref, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use planforge_sas::numeric_task::{AbstractNumericTask, metric_operator_cost_from_initial_values};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, TaskRef, metric_operator_cost_from_initial_values,
+};
+use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
 use rand::seq::SliceRandom;
-use rand::{SeedableRng, rngs::SmallRng};
+use rand::{Rng, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 use tracing::{Level, debug, enabled, info};
 
 use crate::evaluation::cartesian_abstractions::{
-    CartesianAbstraction, CartesianAbstractionHeuristic, CartesianRefinementHierarchy,
+    CartesianAbstraction, CartesianAbstractionHeuristic, CartesianRefinementDirection,
+    CartesianRefinementHierarchy,
 };
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
@@ -20,6 +24,7 @@ use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
 use crate::evaluation::pattern_databases::pattern_database::{
     PatternDatabase, PdbHeuristicConfig, PdbInternalHeuristic,
 };
+use crate::successor_generator::SuccessorTree;
 
 use crate::evaluation::domain_abstractions::abstract_operator_generator::AbstractOperator;
 use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
@@ -30,8 +35,8 @@ use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::{
     compute_collection_abstract_state_ids,
 };
 use super::transition_cost_partitioning::{
-    AbstractOperatorCostBudget, AbstractOperatorCostFunction, AbstractOperatorFootprint,
-    LmCutResidualOperatorCostPartition, TransitionResidualCosts,
+    AbstractOperatorCostFunction, AbstractOperatorFootprint, LmCutResidualOperatorCostPartition,
+    TransitionResidualCosts,
     build_explicit_abstract_operator_cost_partitioning_table,
     build_explicit_label_cost_partitioning_table,
 };
@@ -140,13 +145,21 @@ impl crate::config::FromOptionValue for Saturator {
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
 pub struct ScpOnlineConfig {
-    /// Whether to rebuild cost partitions during search. When false, exactly
-    /// one partition is built for the first evaluated state and all
-    /// construction-only abstraction data is released immediately afterwards.
+    /// Whether to rebuild cost partitions during search. When false, all cost
+    /// partitions are built before search and construction-only abstraction
+    /// data is released immediately afterwards.
     pub online: bool,
     pub max_time: f64,
     pub table_construction_max_time: f64,
     pub max_size: usize,
+    /// Build a Scorpion-style offline portfolio from random-walk samples.
+    /// This option is only valid with `online=false`.
+    pub diversify: bool,
+    /// Number of reachable concrete states used to judge whether a candidate
+    /// cost partition adds value to the offline portfolio.
+    pub samples: usize,
+    /// Maximum number of diversified cost partitions retained offline.
+    pub max_orders: usize,
     pub interval: usize,
     /// Mirrored into `collection_config.combine_labels` so `combine_labels=true`
     /// sets both. To set them independently, use the nested `collection=…`
@@ -253,6 +266,9 @@ impl FillScpConfig {
             max_time: 0.0,
             table_construction_max_time: self.table_construction_max_time,
             max_size: usize::MAX,
+            diversify: false,
+            samples: 1_000,
+            max_orders: usize::MAX,
             interval: usize::MAX,
             combine_labels: self.combine_labels,
             collection_config: self.collection_config.clone(),
@@ -267,7 +283,7 @@ impl FillScpConfig {
             order_generator: self.order_generator,
             order_optimization_max_time: self.order_optimization_max_time,
             saturator: self.saturator,
-            residual_sweeps: 1,
+            residual_sweeps: 0,
             random_seed: self.random_seed,
             use_abstract_operator_cost_partitioning: self.use_abstract_operator_cost_partitioning,
         }
@@ -286,6 +302,9 @@ impl Default for ScpOnlineConfig {
             max_time: 200.0,
             table_construction_max_time: 30.0,
             max_size: usize::MAX,
+            diversify: false,
+            samples: 1_000,
+            max_orders: usize::MAX,
             // Default: build the SCP heuristic once at evaluation 0 and never
             // rebuild during search. Periodic rebuilds proved expensive enough
             // to dominate per-state cost on label-SCP and abstract-op CP alike.
@@ -310,7 +329,7 @@ impl Default for ScpOnlineConfig {
             // greedy ordering's, especially under abstract-operator CP.
             order_optimization_max_time: 5.0,
             saturator: Saturator::All,
-            residual_sweeps: 1,
+            residual_sweeps: 0,
             random_seed,
             use_abstract_operator_cost_partitioning: false,
         }
@@ -331,16 +350,22 @@ impl ScpOnlineConfig {
 // Lookup tables and CP heuristic
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct LookupTable {
     abstraction_id: usize,
     distances: Vec<f64>,
     unknown_value: f64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 struct CostPartitioningHeuristic {
     lookup_tables: Vec<LookupTable>,
+}
+
+struct CandidateCostPartitions {
+    partitions: Vec<CostPartitioningHeuristic>,
+    best_index: usize,
+    optimization_deadline: Option<Instant>,
 }
 
 impl CostPartitioningHeuristic {
@@ -417,6 +442,7 @@ struct ScpOnlineState {
     rng: SmallRng,
     improvement_ended: bool,
     required_lookup_ids: Vec<usize>,
+    offline_sample_ids: Vec<Vec<Option<usize>>>,
 }
 
 impl ScpOnlineState {
@@ -438,12 +464,14 @@ impl ScpOnlineState {
             rng: SmallRng::seed_from_u64(seed),
             improvement_ended: false,
             required_lookup_ids: Vec::new(),
+            offline_sample_ids: Vec::new(),
         }
     }
 }
 
 pub struct SaturatedCostPartitioningOnlineHeuristic<'task> {
     name: String,
+    task: &'task dyn AbstractNumericTask,
     abstractions: RefCell<Option<Vec<DomainAbstraction>>>,
     abstraction_heuristics: Vec<DomainAbstractionHeuristic>,
     cartesian_abstractions: RefCell<Option<Vec<CartesianAbstraction>>>,
@@ -456,6 +484,7 @@ pub struct SaturatedCostPartitioningOnlineHeuristic<'task> {
     component_ids_scratch: RefCell<Vec<Option<usize>>>,
     prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
+    sampling_task: RefCell<Option<TaskRef<'task>>>,
 }
 
 pub struct FillScpHeuristic<'task> {
@@ -688,7 +717,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         abstractions: Vec<DomainAbstraction>,
         pdbs: Vec<PatternDatabase<'task>>,
         config: ScpOnlineConfig,
-        task: &dyn AbstractNumericTask,
+        task: &'task dyn AbstractNumericTask,
     ) -> Result<Self, EvaluationError> {
         Self::new_with_cartesian(name, abstractions, Vec::new(), pdbs, config, task)
     }
@@ -699,7 +728,28 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         cartesian_abstractions: Vec<CartesianAbstraction>,
         pdbs: Vec<PatternDatabase<'task>>,
         config: ScpOnlineConfig,
-        task: &dyn AbstractNumericTask,
+        task: &'task dyn AbstractNumericTask,
+    ) -> Result<Self, EvaluationError> {
+        Self::new_with_cartesian_and_sampling_task(
+            name,
+            abstractions,
+            cartesian_abstractions,
+            pdbs,
+            config,
+            task,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_cartesian_and_sampling_task(
+        name: Option<String>,
+        abstractions: Vec<DomainAbstraction>,
+        cartesian_abstractions: Vec<CartesianAbstraction>,
+        pdbs: Vec<PatternDatabase<'task>>,
+        config: ScpOnlineConfig,
+        task: &'task dyn AbstractNumericTask,
+        sampling_task: Option<TaskRef<'task>>,
     ) -> Result<Self, EvaluationError> {
         if abstractions.is_empty() && cartesian_abstractions.is_empty() && pdbs.is_empty() {
             return Err(EvaluationError::ComputationFailed(
@@ -709,6 +759,32 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         if config.online && config.interval == 0 {
             return Err(EvaluationError::ComputationFailed(
                 "online SCP interval must be greater than zero".to_string(),
+            ));
+        }
+        if config.online && config.diversify {
+            return Err(EvaluationError::ComputationFailed(
+                "offline SCP diversification requires online=false".to_string(),
+            ));
+        }
+        if config.diversify && config.samples == 0 {
+            return Err(EvaluationError::ComputationFailed(
+                "offline SCP diversification requires samples > 0".to_string(),
+            ));
+        }
+        if config.diversify && config.max_orders == 0 {
+            return Err(EvaluationError::ComputationFailed(
+                "offline SCP diversification requires max_orders > 0".to_string(),
+            ));
+        }
+        if config.diversify && sampling_task.is_none() {
+            return Err(EvaluationError::ComputationFailed(
+                "offline SCP diversification requires an owned task reference for sampling"
+                    .to_string(),
+            ));
+        }
+        if config.max_size == 0 {
+            return Err(EvaluationError::ComputationFailed(
+                "SCP max_size must be greater than zero".to_string(),
             ));
         }
         let abstraction_heuristics = abstractions
@@ -879,6 +955,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
         Ok(Self {
             name: name.unwrap_or_else(|| "scp_online".to_string()),
+            task,
             abstractions: RefCell::new(Some(abstractions)),
             abstraction_heuristics,
             cartesian_abstractions: RefCell::new(Some(cartesian_abstractions)),
@@ -891,6 +968,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             component_ids_scratch: RefCell::new(Vec::new()),
             prop_scratch: RefCell::new(Vec::new()),
             numeric_scratch: RefCell::new(Vec::new()),
+            sampling_task: RefCell::new(sampling_task),
         })
     }
 
@@ -898,7 +976,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         name: Option<String>,
         components: Vec<AbstractionComponent<'task>>,
         config: ScpOnlineConfig,
-        task: &dyn AbstractNumericTask,
+        task: &'task dyn AbstractNumericTask,
     ) -> Result<Self, EvaluationError> {
         let mut domain_abstractions = Vec::new();
         let mut cartesian_abstractions = Vec::new();
@@ -921,6 +999,38 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             pdbs,
             config,
             task,
+        )
+    }
+
+    pub fn from_components_with_sampling_task(
+        name: Option<String>,
+        components: Vec<AbstractionComponent<'task>>,
+        config: ScpOnlineConfig,
+        task: &'task dyn AbstractNumericTask,
+        sampling_task: TaskRef<'task>,
+    ) -> Result<Self, EvaluationError> {
+        let mut domain_abstractions = Vec::new();
+        let mut cartesian_abstractions = Vec::new();
+        let mut pdbs = Vec::new();
+        for component in components {
+            match component {
+                AbstractionComponent::Domain(heuristic) => {
+                    domain_abstractions.push((*heuristic).into_abstraction());
+                }
+                AbstractionComponent::Cartesian(heuristic) => {
+                    cartesian_abstractions.push((*heuristic).into_abstraction());
+                }
+                AbstractionComponent::PatternDatabase(pdb) => pdbs.push(*pdb),
+            }
+        }
+        Self::new_with_cartesian_and_sampling_task(
+            name,
+            domain_abstractions,
+            cartesian_abstractions,
+            pdbs,
+            config,
+            task,
+            Some(sampling_task),
         )
     }
 
@@ -960,7 +1070,43 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         num_domain_abstractions: usize,
         deadline: Option<Instant>,
     ) -> Result<Vec<usize>, EvaluationError> {
-        match self.config.order_generator {
+        let order = self.compute_state_dependent_order(
+            task,
+            state,
+            abstract_state_ids,
+            abstractions,
+            num_domain_abstractions,
+            deadline,
+        )?;
+        if self.config.use_abstract_operator_cost_partitioning
+            && let Some(goal_cover_order) = self.cartesian_goal_cover_order(
+                &order,
+                num_domain_abstractions,
+                &standalone_current_h_values(state, abstract_state_ids, num_domain_abstractions),
+                true,
+            )
+        {
+            if state.evaluated_states == 0 {
+                info!(
+                    "scp_online: using goal-cover transition-SCP order, first_components={:?}",
+                    goal_cover_order.iter().take(24).collect::<Vec<_>>()
+                );
+            }
+            return Ok(goal_cover_order);
+        }
+        Ok(order)
+    }
+
+    fn compute_state_dependent_order(
+        &self,
+        task: &dyn AbstractNumericTask,
+        state: &mut ScpOnlineState,
+        abstract_state_ids: &[Option<usize>],
+        abstractions: &[DomainAbstraction],
+        num_domain_abstractions: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<usize>, EvaluationError> {
+        let order = match self.config.order_generator {
             OrderGenerator::Greedy => Ok(Self::compute_greedy_order_for_state(
                 state,
                 abstract_state_ids,
@@ -982,7 +1128,112 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 num_domain_abstractions,
                 deadline,
             ),
+        };
+        order
+    }
+
+    fn cartesian_goal_cover_order(
+        &self,
+        base_order: &[usize],
+        num_domain_abstractions: usize,
+        standalone_current_h: &[f64],
+        require_pure_cartesian_collection: bool,
+    ) -> Option<Vec<usize>> {
+        let collection = self.cartesian_abstractions.borrow();
+        let collection = collection
+            .as_ref()
+            .expect("Cartesian abstractions were released while SCP order construction was active");
+        cartesian_goal_cover_order(
+            base_order,
+            num_domain_abstractions,
+            collection,
+            standalone_current_h,
+            require_pure_cartesian_collection,
+            GoalCoverOrderVariant::default(),
+        )
+    }
+
+    fn compact_cartesian_goal_cover_orders(
+        &self,
+        base_order: &[usize],
+        num_domain_abstractions: usize,
+        standalone_current_h: &[f64],
+    ) -> Vec<Vec<usize>> {
+        let collection = self.cartesian_abstractions.borrow();
+        let collection = collection
+            .as_ref()
+            .expect("Cartesian abstractions were released while SCP order construction was active");
+        let mut variants_by_goal = HashMap::<usize, usize>::new();
+        for abstraction in collection {
+            if let Some(goal_id) = abstraction.metadata.collection_goal_id {
+                *variants_by_goal.entry(goal_id).or_default() += 1;
+            }
         }
+        let goal_count = variants_by_goal.len();
+        let max_variants = variants_by_goal.values().copied().max().unwrap_or(0);
+        if goal_count == 0 || max_variants < 2 {
+            return Vec::new();
+        }
+
+        let mut variants = Vec::new();
+        // SCP couples otherwise independent goal abstractions through their
+        // shared residual costs. Use a bounded pairwise covering design over
+        // the first anchor, its complementary partner, and the other goals'
+        // representatives. With eight variants, all 64 anchor/representative
+        // pairs occur and every complementary choice is balanced across them.
+        'variants: for anchor_offset in 0..max_variants {
+            for representative_round in 0..max_variants {
+                variants.push(GoalCoverOrderVariant {
+                    anchor_offset,
+                    complementary_round: anchor_offset.wrapping_add(representative_round),
+                    representative_round,
+                    compact: true,
+                    ..Default::default()
+                });
+                if variants.len() == 64 {
+                    break 'variants;
+                }
+            }
+        }
+
+        deduplicate_orders(
+            variants
+                .into_iter()
+                .filter_map(|variant| {
+                    cartesian_goal_cover_order(
+                        base_order,
+                        num_domain_abstractions,
+                        collection,
+                        standalone_current_h,
+                        false,
+                        variant,
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    fn prefixed_cartesian_goal_cover_order(
+        &self,
+        base_order: &[usize],
+        num_domain_abstractions: usize,
+        standalone_current_h: &[f64],
+    ) -> Option<Vec<usize>> {
+        let collection = self.cartesian_abstractions.borrow();
+        let collection = collection
+            .as_ref()
+            .expect("Cartesian abstractions were released while SCP order construction was active");
+        cartesian_goal_cover_order(
+            base_order,
+            num_domain_abstractions,
+            collection,
+            standalone_current_h,
+            false,
+            GoalCoverOrderVariant {
+                non_goal_prefix: true,
+                ..Default::default()
+            },
+        )
     }
 
     fn compute_greedy_order_for_state(
@@ -1273,6 +1524,28 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
     }
 
+    fn reduce_abstract_operator_costs(
+        remaining_costs: &mut TransitionResidualCosts,
+        abstraction_id: usize,
+        footprints: &[AbstractOperatorFootprint],
+        tcf: &AbstractOperatorCostFunction,
+        deadline: Option<Instant>,
+        context: &str,
+    ) -> Result<bool, EvaluationError> {
+        match remaining_costs.reduce_by_abstract_operator_footprints_with_deadline(
+            abstraction_id,
+            footprints,
+            tcf,
+            deadline,
+        ) {
+            Ok(()) => Ok(true),
+            Err(error) if Self::is_online_deadline_error(&error) => Ok(false),
+            Err(error) => Err(EvaluationError::ComputationFailed(format!(
+                "{context}: {error:#}"
+            ))),
+        }
+    }
+
     fn update_improvement_status(&self, state: &mut ScpOnlineState) {
         if !self.config.online {
             return;
@@ -1311,9 +1584,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         state: &mut ScpOnlineState,
         abstract_state_ids: &[Option<usize>],
         num_domain_abstractions: usize,
-    ) -> Result<Option<CostPartitioningHeuristic>, EvaluationError> {
+    ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
         if !self.should_build_cp(state) {
-            return Ok(None);
+            return Ok(Vec::new());
         }
 
         let abstractions_guard = self.abstractions.borrow();
@@ -1323,7 +1596,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         };
         if abstractions.is_empty() && self.cartesian_hierarchies.is_empty() && self.pdbs.is_empty()
         {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let original_costs = self.original_operator_costs.as_slice();
         let deadline = self
@@ -1370,18 +1643,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             );
         }
 
-        let optimization_deadline = if self.config.order_optimization_max_time > 0.0 {
-            self.config
-                .order_optimization_max_time
-                .is_finite()
-                .then(|| {
-                    Instant::now()
-                        + Duration::from_secs_f64(self.config.order_optimization_max_time)
-                })
-        } else {
-            None
-        };
-        let mut cp = if self.config.use_abstract_operator_cost_partitioning {
+        let mut candidates = if self.config.use_abstract_operator_cost_partitioning {
             self.build_best_abstract_operator_cp_from_candidate_orders(
                 task,
                 abstractions,
@@ -1391,7 +1653,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 num_domain_abstractions,
                 original_costs,
                 deadline,
-                optimization_deadline.or(deadline),
+                self.config.order_optimization_max_time,
             )?
         } else {
             self.build_best_label_cp_from_candidate_orders(
@@ -1403,7 +1665,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 num_domain_abstractions,
                 original_costs,
                 deadline,
-                optimization_deadline.or(deadline),
+                self.config.order_optimization_max_time,
             )?
         };
 
@@ -1416,15 +1678,279 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 original_costs,
                 abstract_state_ids,
                 &mut order,
-                &mut cp,
-                optimization_deadline,
+                &mut candidates.partitions[candidates.best_index],
+                candidates.optimization_deadline,
             )?;
         }
 
-        if cp.is_empty() {
-            info!("scp_online: {mode} CP attempt produced no lookup tables");
+        if self.config.online {
+            let best = candidates.partitions.swap_remove(candidates.best_index);
+            if best.is_empty() {
+                info!("scp_online: {mode} CP attempt produced no lookup tables");
+                return Ok(Vec::new());
+            }
+            return Ok(vec![best]);
         }
-        Ok((!cp.is_empty()).then_some(cp))
+        if self.config.diversify {
+            let best = candidates.partitions.swap_remove(candidates.best_index);
+            return self.build_offline_diversified_portfolio(
+                task,
+                state,
+                abstractions,
+                num_domain_abstractions,
+                abstract_state_ids,
+                best,
+                deadline,
+            );
+        }
+        candidates.partitions.retain(|cp| !cp.is_empty());
+        if candidates.partitions.is_empty() {
+            info!("scp_online: {mode} CP attempt produced no lookup tables");
+            return Ok(Vec::new());
+        }
+        info!(
+            "scp_online: retaining {} offline SCP order partitions",
+            candidates.partitions.len()
+        );
+        Ok(candidates.partitions)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_offline_diversified_portfolio(
+        &self,
+        task: &dyn AbstractNumericTask,
+        state: &mut ScpOnlineState,
+        abstractions: &[DomainAbstraction],
+        num_domain_abstractions: usize,
+        initial_abstract_state_ids: &[Option<usize>],
+        initial_cp: CostPartitioningHeuristic,
+        table_deadline: Option<Instant>,
+    ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
+        assert!(!self.config.online);
+        assert!(self.config.diversify);
+        assert!(!initial_cp.is_empty());
+
+        let diversification_deadline = self
+            .config
+            .max_time
+            .is_finite()
+            .then(|| Instant::now() + Duration::from_secs_f64(self.config.max_time.max(0.0)));
+        let deadline = earliest_deadline(table_deadline, diversification_deadline);
+        let initial_h = initial_cp.compute_heuristic(initial_abstract_state_ids);
+        self.generate_offline_samples(state, initial_h, deadline)?;
+        assert!(
+            !state.offline_sample_ids.is_empty(),
+            "offline diversification must retain at least the initial state sample"
+        );
+
+        let mut sample_best = vec![f64::NEG_INFINITY; state.offline_sample_ids.len()];
+        let mut portfolio = Vec::new();
+        let mut portfolio_size_kb = 0usize;
+        retain_if_sample_improving(
+            initial_cp,
+            &state.offline_sample_ids,
+            &mut sample_best,
+            &mut portfolio,
+            &mut portfolio_size_kb,
+            self.config.max_size,
+        );
+
+        let original_costs = self.original_operator_costs.as_slice();
+        let mut evaluated_orders = 1usize;
+        for sample_index in 1..state.offline_sample_ids.len() {
+            if portfolio.len() >= self.config.max_orders
+                || portfolio_size_kb >= self.config.max_size
+                || deadline.is_some_and(|end| Instant::now() >= end)
+            {
+                break;
+            }
+            let sample_ids = state.offline_sample_ids[sample_index].clone();
+            let standalone_h =
+                standalone_current_h_values(state, &sample_ids, num_domain_abstractions);
+            let mut order = self.compute_state_dependent_order(
+                task,
+                state,
+                &sample_ids,
+                abstractions,
+                num_domain_abstractions,
+                deadline,
+            )?;
+            let candidate = if self.config.use_abstract_operator_cost_partitioning {
+                self.build_abstract_operator_cp(
+                    task,
+                    abstractions,
+                    &order,
+                    &sample_ids,
+                    &standalone_h,
+                    num_domain_abstractions,
+                    original_costs,
+                    deadline,
+                    self.config.saturator,
+                )
+            } else {
+                self.build_label_cp(
+                    task,
+                    abstractions,
+                    &order,
+                    &sample_ids,
+                    num_domain_abstractions,
+                    original_costs,
+                    deadline,
+                )
+            };
+            let mut candidate = match candidate {
+                Ok(candidate) => candidate,
+                Err(error) if Self::is_online_deadline_error_eval(&error) => break,
+                Err(error) => return Err(error),
+            };
+            evaluated_orders += 1;
+
+            if self.config.order_optimization_max_time > 0.0 {
+                let local_deadline =
+                    self.config
+                        .order_optimization_max_time
+                        .is_finite()
+                        .then(|| {
+                            Instant::now()
+                                + Duration::from_secs_f64(self.config.order_optimization_max_time)
+                        });
+                self.optimize_order_with_hill_climbing(
+                    task,
+                    abstractions,
+                    &standalone_h,
+                    num_domain_abstractions,
+                    original_costs,
+                    &sample_ids,
+                    &mut order,
+                    &mut candidate,
+                    earliest_deadline(deadline, local_deadline),
+                )?;
+            }
+
+            retain_if_sample_improving(
+                candidate,
+                &state.offline_sample_ids,
+                &mut sample_best,
+                &mut portfolio,
+                &mut portfolio_size_kb,
+                self.config.max_size,
+            );
+        }
+
+        let sample_count = state.offline_sample_ids.len();
+        info!(
+            "scp_online: offline diversification retained {} of {} evaluated partitions over {} samples ({} KiB)",
+            portfolio.len(),
+            evaluated_orders,
+            sample_count,
+            portfolio_size_kb,
+        );
+        state.offline_sample_ids.clear();
+        state.offline_sample_ids.shrink_to_fit();
+        Ok(portfolio)
+    }
+
+    fn generate_offline_samples(
+        &self,
+        state: &mut ScpOnlineState,
+        initial_h: f64,
+        deadline: Option<Instant>,
+    ) -> Result<(), EvaluationError> {
+        if !state.offline_sample_ids.is_empty() {
+            return Ok(());
+        }
+        let sampling_task = self
+            .sampling_task
+            .borrow_mut()
+            .take()
+            .expect("offline diversification was validated to have an owned sampling task");
+        let mut registry = StateRegistry::for_task(sampling_task.clone());
+        let successor_generator = SuccessorTree::new(&*sampling_task);
+        let initial_state = registry.get_initial_state();
+        let average_cost = if self.original_operator_costs.is_empty() {
+            0.0
+        } else {
+            self.original_operator_costs.iter().sum::<f64>()
+                / self.original_operator_costs.len() as f64
+        };
+        let mut applicable = Vec::new();
+        let mut propositional = Vec::new();
+        let mut successor_numeric = Vec::new();
+        let mut successor_cost = Vec::new();
+        let mut expansion_context = ExpansionContext::default();
+        let mut ids = Vec::new();
+
+        self.map_sample_state(&initial_state, &registry, self.task, &mut ids)?;
+        state.offline_sample_ids.push(ids.clone());
+
+        while state.offline_sample_ids.len() < self.config.samples {
+            if deadline.is_some_and(|end| Instant::now() >= end) {
+                info!(
+                    "scp_online: offline sampling deadline reached after {} samples",
+                    state.offline_sample_ids.len()
+                );
+                break;
+            }
+            let walk_length = random_walk_length(initial_h, average_cost, &mut state.rng)?;
+            let mut current = initial_state.clone();
+            for _ in 0..walk_length {
+                if deadline.is_some_and(|end| Instant::now() >= end) {
+                    break;
+                }
+                current.fill_state(&registry, &mut propositional);
+                applicable.clear();
+                successor_generator.get_applicable_operators(&propositional, &mut applicable);
+                let Some(&operator_id) = applicable.choose(&mut state.rng) else {
+                    break;
+                };
+                registry
+                    .build_expansion_context(&current, &mut expansion_context)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to build random-walk expansion context: {error:?}"
+                        ))
+                    })?;
+                let operator = sampling_task
+                    .get_operators()
+                    .get(operator_id as usize)
+                    .expect("successor generator returned an invalid operator id");
+                let (successor, _) = registry
+                    .apply_operator_in_context(
+                        &current,
+                        operator,
+                        &expansion_context,
+                        &mut successor_numeric,
+                        &mut successor_cost,
+                    )
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to apply random-walk operator {}: {error:?}",
+                            operator.name()
+                        ))
+                    })?;
+                current = successor;
+            }
+            self.map_sample_state(&current, &registry, self.task, &mut ids)?;
+            state.offline_sample_ids.push(ids.clone());
+        }
+        info!(
+            "scp_online: generated {} offline random-walk samples",
+            state.offline_sample_ids.len()
+        );
+        Ok(())
+    }
+
+    fn map_sample_state(
+        &self,
+        concrete_state: &ConcreteState,
+        registry: &StateRegistry<'task>,
+        task: &'task dyn AbstractNumericTask,
+        ids: &mut Vec<Option<usize>>,
+    ) -> Result<(), EvaluationError> {
+        let eval_state =
+            EvaluationState::new_with_registry(concrete_state, 0.0, false, task, registry);
+        self.compute_abstract_state_ids_into(&eval_state, None, ids)?;
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1438,10 +1964,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         num_domain_abstractions: usize,
         original_costs: &[f64],
         baseline_deadline: Option<Instant>,
-        candidate_deadline: Option<Instant>,
-    ) -> Result<CostPartitioningHeuristic, EvaluationError> {
+        optimization_max_time: f64,
+    ) -> Result<CandidateCostPartitions, EvaluationError> {
         let mut best_order = incumbent_order.clone();
-        let mut best_cp = self.build_label_cp(
+        let baseline = self.build_label_cp(
             task,
             abstractions,
             &best_order,
@@ -1450,9 +1976,17 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             original_costs,
             baseline_deadline,
         )?;
-        let mut best_h = best_cp.compute_heuristic(abstract_state_ids);
+        let mut best_h = baseline.compute_heuristic(abstract_state_ids);
+        let mut partitions = vec![baseline];
+        let mut best_index = 0;
+        let candidate_deadline = optimization_deadline(optimization_max_time);
 
-        for candidate in self.candidate_label_orders(incumbent_order, standalone_current_h) {
+        for candidate in optimization_max_time
+            .is_sign_positive()
+            .then(|| self.candidate_label_orders(incumbent_order, standalone_current_h))
+            .into_iter()
+            .flatten()
+        {
             if candidate_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 break;
             }
@@ -1478,18 +2012,24 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 Err(error) => return Err(error),
             };
             let candidate_h = candidate_cp.compute_heuristic(abstract_state_ids);
+            let candidate_index = partitions.len();
+            partitions.push(candidate_cp);
             if candidate_h > best_h {
                 if self.config.collection_config.debug {
                     info!("scp_online: label candidate order improved h {best_h} -> {candidate_h}");
                 }
                 best_h = candidate_h;
                 best_order = candidate;
-                best_cp = candidate_cp;
+                best_index = candidate_index;
             }
         }
 
         *incumbent_order = best_order;
-        Ok(best_cp)
+        Ok(CandidateCostPartitions {
+            partitions,
+            best_index,
+            optimization_deadline: candidate_deadline,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1503,10 +2043,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         num_domain_abstractions: usize,
         original_costs: &[f64],
         baseline_deadline: Option<Instant>,
-        candidate_deadline: Option<Instant>,
-    ) -> Result<CostPartitioningHeuristic, EvaluationError> {
+        optimization_max_time: f64,
+    ) -> Result<CandidateCostPartitions, EvaluationError> {
         let mut best_order = incumbent_order.clone();
-        let mut best_cp = self.build_abstract_operator_cp(
+        let baseline = self.build_abstract_operator_cp(
             task,
             abstractions,
             &best_order,
@@ -1516,15 +2056,24 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             original_costs,
             baseline_deadline,
             self.config.saturator,
-            None,
         )?;
-        let mut best_h = best_cp.compute_heuristic(abstract_state_ids);
+        let mut best_h = baseline.compute_heuristic(abstract_state_ids);
+        let mut partitions = vec![baseline];
+        let mut best_index = 0;
+        let candidate_deadline = optimization_deadline(optimization_max_time);
 
-        for candidate in self.candidate_abstract_operator_orders(
-            incumbent_order,
-            abstractions,
-            standalone_current_h,
-        ) {
+        for candidate in optimization_max_time
+            .is_sign_positive()
+            .then(|| {
+                self.candidate_abstract_operator_orders(
+                    incumbent_order,
+                    abstractions,
+                    standalone_current_h,
+                )
+            })
+            .into_iter()
+            .flatten()
+        {
             if candidate_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 break;
             }
@@ -1541,7 +2090,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 original_costs,
                 candidate_deadline,
                 self.config.saturator,
-                None,
             ) {
                 Ok(cp) => cp,
                 Err(error) if Self::is_online_deadline_error_eval(&error) => {
@@ -1553,18 +2101,24 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 Err(error) => return Err(error),
             };
             let candidate_h = candidate_cp.compute_heuristic(abstract_state_ids);
+            let candidate_index = partitions.len();
+            partitions.push(candidate_cp);
             if candidate_h > best_h {
                 if self.config.collection_config.debug {
                     info!("scp_online: candidate order improved h {best_h} -> {candidate_h}");
                 }
                 best_h = candidate_h;
                 best_order = candidate;
-                best_cp = candidate_cp;
+                best_index = candidate_index;
             }
         }
 
         *incumbent_order = best_order;
-        Ok(best_cp)
+        Ok(CandidateCostPartitions {
+            partitions,
+            best_index,
+            optimization_deadline: candidate_deadline,
+        })
     }
 
     fn candidate_abstract_operator_orders(
@@ -1575,6 +2129,33 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     ) -> Vec<Vec<usize>> {
         let mut orders = Vec::new();
         orders.push(base_order.to_vec());
+
+        let mut declaration_order = base_order.to_vec();
+        declaration_order.sort_unstable();
+        orders.push(declaration_order);
+
+        if let Some(prefixed_goal_cover_order) = self.prefixed_cartesian_goal_cover_order(
+            base_order,
+            abstractions.len(),
+            standalone_current_h,
+        ) {
+            orders.push(prefixed_goal_cover_order);
+        }
+
+        orders.extend(self.compact_cartesian_goal_cover_orders(
+            base_order,
+            abstractions.len(),
+            standalone_current_h,
+        ));
+
+        if let Some(goal_cover_order) = self.cartesian_goal_cover_order(
+            base_order,
+            abstractions.len(),
+            standalone_current_h,
+            false,
+        ) {
+            orders.push(goal_cover_order);
+        }
 
         orders.push(max_heuristic_greedy_order(base_order, standalone_current_h));
 
@@ -1623,7 +2204,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             orders.push(random_order);
         }
 
-        orders
+        deduplicate_orders(orders)
     }
 
     fn candidate_label_orders(
@@ -1631,10 +2212,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         base_order: &[usize],
         standalone_current_h: &[f64],
     ) -> Vec<Vec<usize>> {
-        vec![
+        deduplicate_orders(vec![
             base_order.to_vec(),
             max_heuristic_greedy_order(base_order, standalone_current_h),
-        ]
+        ])
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1678,7 +2259,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             original_costs,
                             optimization_deadline,
                             self.config.saturator,
-                            None,
                         )
                     } else {
                         self.build_label_cp(
@@ -1743,7 +2323,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         original_costs: &[f64],
         deadline: Option<Instant>,
         saturator: Saturator,
-        budgets: Option<&[Vec<AbstractOperatorCostBudget>]>,
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
@@ -1788,7 +2367,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     abstraction.combine_labels,
                                     &abstraction.abstract_operators,
                                     &abstraction.abstract_operator_footprints,
-                                    budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
                                     &remaining_costs,
                                     pos,
                                     abstract_state_ids.get(pos).copied().flatten(),
@@ -1830,18 +2408,20 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             ) {
                                 continue;
                             }
-                            cp.add_h_values(pos, table.distances);
-                            remaining_costs
-                            .reduce_by_abstract_operator_footprints(
+                            if !Self::reduce_abstract_operator_costs(
+                                &mut remaining_costs,
                                 pos,
                                 &abstraction.abstract_operator_footprints,
                                 &tcf,
-                            )
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to reduce abstract-operator residual costs: {error:#}"
-                                ))
-                            })?;
+                                deadline,
+                                "failed to reduce abstract-operator residual costs",
+                            )? {
+                                info!(
+                                    "scp_online: abstract-operator abstraction {pos} stopped while reducing residual costs (deadline)"
+                                );
+                                break;
+                            }
+                            cp.add_h_values(pos, table.distances);
                             log_transition_residual_summary(&remaining_costs);
                         }
                         Saturator::Perim => {
@@ -1860,7 +2440,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     abstraction.combine_labels,
                                     &abstraction.abstract_operators,
                                     &abstraction.abstract_operator_footprints,
-                                    budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
@@ -1895,18 +2474,20 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             ) {
                                 continue;
                             }
-                            cp.add_h_values(pos, table.distances);
-                            remaining_costs
-                            .reduce_by_abstract_operator_footprints(
+                            if !Self::reduce_abstract_operator_costs(
+                                &mut remaining_costs,
                                 pos,
                                 &abstraction.abstract_operator_footprints,
                                 &tcf,
-                            )
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to reduce abstract-operator PERIM residual costs: {error:#}"
-                                ))
-                            })?;
+                                deadline,
+                                "failed to reduce abstract-operator PERIM residual costs",
+                            )? {
+                                info!(
+                                    "scp_online: abstract-operator PERIM abstraction {pos} stopped while reducing residual costs (deadline)"
+                                );
+                                break;
+                            }
+                            cp.add_h_values(pos, table.distances);
                             log_transition_residual_summary(&remaining_costs);
                         }
                         Saturator::Perimstar => {
@@ -1925,7 +2506,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     abstraction.combine_labels,
                                     &abstraction.abstract_operators,
                                     &abstraction.abstract_operator_footprints,
-                                    budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
                                     &remaining_costs,
                                     pos,
                                     cap_state_id,
@@ -1960,28 +2540,29 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             ) {
                                 continue;
                             }
-                            cp.add_h_values(pos, perim_table.distances);
-                            remaining_costs
-                            .reduce_by_abstract_operator_footprints(
+                            if !Self::reduce_abstract_operator_costs(
+                                &mut remaining_costs,
                                 pos,
                                 &abstraction.abstract_operator_footprints,
                                 &perim_tcf,
-                            )
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to reduce abstract-operator Perim residual costs: {error:#}"
-                                ))
-                            })?;
+                                deadline,
+                                "failed to reduce abstract-operator Perim residual costs",
+                            )? {
+                                info!(
+                                    "scp_online: abstract-operator Perim abstraction {pos} stopped while reducing residual costs (deadline)"
+                                );
+                                break;
+                            }
+                            cp.add_h_values(pos, perim_table.distances);
                             log_transition_residual_summary(&remaining_costs);
 
                             let (all_table, all_tcf) = match abstraction
                                 .factory
                                 .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
                                     abstraction_task,
-                                    abstraction.combine_labels,
+                                            abstraction.combine_labels,
                                             &abstraction.abstract_operators,
                                             &abstraction.abstract_operator_footprints,
-                                            budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
                                             &remaining_costs,
                                             pos,
                                             cap_state_id,
@@ -2016,18 +2597,20 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             ) {
                                 continue;
                             }
-                            cp.add_h_values(pos, all_table.distances);
-                            remaining_costs
-                            .reduce_by_abstract_operator_footprints(
+                            if !Self::reduce_abstract_operator_costs(
+                                &mut remaining_costs,
                                 pos,
                                 &abstraction.abstract_operator_footprints,
                                 &all_tcf,
-                            )
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to reduce abstract-operator All residual costs: {error:#}"
-                                ))
-                            })?;
+                                deadline,
+                                "failed to reduce abstract-operator All residual costs",
+                            )? {
+                                info!(
+                                    "scp_online: abstract-operator All abstraction {pos} stopped while reducing residual costs (deadline)"
+                                );
+                                break;
+                            }
+                            cp.add_h_values(pos, all_table.distances);
                             log_transition_residual_summary(&remaining_costs);
                         }
                     }
@@ -2040,11 +2623,16 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         pos,
                         &abstraction,
                         abstract_state_ids,
-                        budgets.and_then(|budgets| budgets.get(pos).map(Vec::as_slice)),
                         deadline,
                     );
                     match result {
-                        Ok(()) => {}
+                        Ok(true) => {}
+                        Ok(false) => {
+                            info!(
+                                "scp_online: Cartesian abstract-operator abstraction {pos} stopped while reducing residual costs (deadline)"
+                            );
+                            break;
+                        }
                         Err(error) if Self::is_online_deadline_error_eval(&error) => {
                             info!(
                                 "scp_online: Cartesian abstract-operator abstraction {pos} stopped while computing table (deadline)"
@@ -2111,9 +2699,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         pos: usize,
         abstraction: &CartesianAbstraction,
         abstract_state_ids: &[Option<usize>],
-        budgets: Option<&[AbstractOperatorCostBudget]>,
         deadline: Option<Instant>,
-    ) -> Result<(), EvaluationError> {
+    ) -> Result<bool, EvaluationError> {
         let cap_state_id = abstract_state_ids
             .get(pos)
             .copied()
@@ -2128,7 +2715,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             build_explicit_abstract_operator_cost_partitioning_table(
                 &abstraction.transition_system,
                 &abstraction.abstract_operator_footprints,
-                budgets,
                 residual_costs,
                 pos,
                 cap,
@@ -2144,19 +2730,17 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             })
         };
         let reduce = |residual_costs: &mut TransitionResidualCosts,
-                      tcf: &AbstractOperatorCostFunction|
-         -> Result<(), EvaluationError> {
-            residual_costs
-                .reduce_by_abstract_operator_footprints(
-                    pos,
-                    &abstraction.abstract_operator_footprints,
-                    tcf,
-                )
-                .map_err(|error| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to reduce Cartesian abstract-operator residual costs for component {pos}: {error:#}"
-                    ))
-                })
+                      tcf: &AbstractOperatorCostFunction| {
+            Self::reduce_abstract_operator_costs(
+                residual_costs,
+                pos,
+                &abstraction.abstract_operator_footprints,
+                tcf,
+                deadline,
+                &format!(
+                    "failed to reduce Cartesian abstract-operator residual costs for component {pos}"
+                ),
+            )
         };
 
         match self.config.saturator {
@@ -2168,8 +2752,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     &distances,
                     abstract_state_ids,
                 ) {
+                    if !reduce(remaining_costs, &tcf)? {
+                        return Ok(false);
+                    }
                     cp.add_h_values(pos, distances);
-                    reduce(remaining_costs, &tcf)?;
                 }
             }
             Saturator::Perim => {
@@ -2180,8 +2766,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     &distances,
                     abstract_state_ids,
                 ) {
+                    if !reduce(remaining_costs, &tcf)? {
+                        return Ok(false);
+                    }
                     cp.add_h_values(pos, distances);
-                    reduce(remaining_costs, &tcf)?;
                 }
             }
             Saturator::Perimstar => {
@@ -2192,8 +2780,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     &perim_distances,
                     abstract_state_ids,
                 ) {
+                    if !reduce(remaining_costs, &perim_tcf)? {
+                        return Ok(false);
+                    }
                     cp.add_h_values(pos, perim_distances);
-                    reduce(remaining_costs, &perim_tcf)?;
                 }
                 let (all_distances, all_tcf) = build(remaining_costs, None)?;
                 if !should_skip_zero_current_table(
@@ -2202,12 +2792,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     &all_distances,
                     abstract_state_ids,
                 ) {
+                    if !reduce(remaining_costs, &all_tcf)? {
+                        return Ok(false);
+                    }
                     cp.add_h_values(pos, all_distances);
-                    reduce(remaining_costs, &all_tcf)?;
                 }
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     fn add_transition_pdb_step(
@@ -2704,7 +3296,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     pos,
                     &abstraction,
                     abstract_state_ids,
-                    None,
                     deadline,
                 )?;
                 continue;
@@ -2726,7 +3317,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstraction.combine_labels,
                             &abstraction.abstract_operators,
                             &abstraction.abstract_operator_footprints,
-                            None,
                             &remaining_costs,
                             pos,
                             abstract_state_ids.get(pos).copied().flatten(),
@@ -2753,18 +3343,20 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     ) {
                         continue;
                     }
+                    if !Self::reduce_abstract_operator_costs(
+                        &mut remaining_costs,
+                        pos,
+                        &abstraction.abstract_operator_footprints,
+                        &tcf,
+                        deadline,
+                        "failed to reduce fillSCP abstract-operator residual costs",
+                    )? {
+                        info!(
+                            "fillSCP: abstract-operator abstraction {pos} stopped while reducing residual costs (deadline)"
+                        );
+                        break;
+                    }
                     cp.add_h_values(pos, table.distances);
-                    remaining_costs
-                        .reduce_by_abstract_operator_footprints(
-                            pos,
-                            &abstraction.abstract_operator_footprints,
-                            &tcf,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to reduce fillSCP abstract-operator residual costs: {error:#}"
-                            ))
-                        })?;
                     log_transition_residual_summary(&remaining_costs);
                 }
                 Saturator::Perim => {
@@ -2776,7 +3368,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstraction.combine_labels,
                             &abstraction.abstract_operators,
                             &abstraction.abstract_operator_footprints,
-                            None,
                             &remaining_costs,
                             pos,
                             cap_state_id,
@@ -2803,18 +3394,20 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     ) {
                         continue;
                     }
+                    if !Self::reduce_abstract_operator_costs(
+                        &mut remaining_costs,
+                        pos,
+                        &abstraction.abstract_operator_footprints,
+                        &tcf,
+                        deadline,
+                        "failed to reduce fillSCP abstract-operator PERIM residual costs",
+                    )? {
+                        info!(
+                            "fillSCP: abstract-operator PERIM abstraction {pos} stopped while reducing residual costs (deadline)"
+                        );
+                        break;
+                    }
                     cp.add_h_values(pos, table.distances);
-                    remaining_costs
-                        .reduce_by_abstract_operator_footprints(
-                            pos,
-                            &abstraction.abstract_operator_footprints,
-                            &tcf,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to reduce fillSCP abstract-operator PERIM residual costs: {error:#}"
-                            ))
-                        })?;
                     log_transition_residual_summary(&remaining_costs);
                 }
                 Saturator::Perimstar => {
@@ -2826,7 +3419,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstraction.combine_labels,
                             &abstraction.abstract_operators,
                             &abstraction.abstract_operator_footprints,
-                            None,
                             &remaining_costs,
                             pos,
                             cap_state_id,
@@ -2844,18 +3436,20 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         &perim_table.distances,
                         abstract_state_ids,
                     ) {
+                        if !Self::reduce_abstract_operator_costs(
+                            &mut remaining_costs,
+                            pos,
+                            &abstraction.abstract_operator_footprints,
+                            &perim_tcf,
+                            deadline,
+                            "failed to reduce fillSCP abstract-operator Perim residual costs",
+                        )? {
+                            info!(
+                                "fillSCP: abstract-operator Perim abstraction {pos} stopped while reducing residual costs (deadline)"
+                            );
+                            break;
+                        }
                         cp.add_h_values(pos, perim_table.distances);
-                        remaining_costs
-                            .reduce_by_abstract_operator_footprints(
-                                pos,
-                                &abstraction.abstract_operator_footprints,
-                                &perim_tcf,
-                            )
-                            .map_err(|error| {
-                                EvaluationError::ComputationFailed(format!(
-                                    "failed to reduce fillSCP abstract-operator Perim residual costs: {error:#}"
-                                ))
-                            })?;
                         log_transition_residual_summary(&remaining_costs);
                     }
 
@@ -2866,7 +3460,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstraction.combine_labels,
                             &abstraction.abstract_operators,
                             &abstraction.abstract_operator_footprints,
-                            None,
                             &remaining_costs,
                             pos,
                             cap_state_id,
@@ -2886,18 +3479,20 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     ) {
                         continue;
                     }
+                    if !Self::reduce_abstract_operator_costs(
+                        &mut remaining_costs,
+                        pos,
+                        &abstraction.abstract_operator_footprints,
+                        &all_tcf,
+                        deadline,
+                        "failed to reduce fillSCP abstract-operator All residual costs",
+                    )? {
+                        info!(
+                            "fillSCP: abstract-operator All abstraction {pos} stopped while reducing residual costs (deadline)"
+                        );
+                        break;
+                    }
                     cp.add_h_values(pos, all_table.distances);
-                    remaining_costs
-                        .reduce_by_abstract_operator_footprints(
-                            pos,
-                            &abstraction.abstract_operator_footprints,
-                            &all_tcf,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to reduce fillSCP abstract-operator All residual costs: {error:#}"
-                            ))
-                        })?;
                     log_transition_residual_summary(&remaining_costs);
                 }
             }
@@ -3088,26 +3683,59 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(())
     }
 
-    fn accept_improved_cp(
+    fn retain_cp(
         state: &mut ScpOnlineState,
         cp: CostPartitioningHeuristic,
         abstract_state_ids: &[Option<usize>],
         max_h: &mut f64,
+        retain_alternative: bool,
+        max_size_kb: usize,
     ) {
-        let new_h = cp.compute_heuristic(abstract_state_ids);
-        if new_h > *max_h {
-            let size_kb = cp.estimate_size_in_kb();
+        if state.cp_heuristics.contains(&cp) {
             info!(
-                "scp_online: accepted CP, h {} -> {}, lookup_tables={}, size={} KiB",
+                "scp_online: discarded duplicate CP with {} lookup tables",
+                cp.lookup_tables.len()
+            );
+            return;
+        }
+        let new_h = cp.compute_heuristic(abstract_state_ids);
+        let improves_current_state = new_h > *max_h;
+        let size_kb = cp.estimate_size_in_kb();
+        let fits_size_limit =
+            state.cp_heuristics.is_empty() || state.size_kb.saturating_add(size_kb) <= max_size_kb;
+        if (improves_current_state || retain_alternative) && fits_size_limit {
+            let component_values = cp
+                .lookup_tables
+                .iter()
+                .map(|table| {
+                    let value = abstract_state_ids
+                        .get(table.abstraction_id)
+                        .copied()
+                        .flatten()
+                        .and_then(|state_id| table.distances.get(state_id))
+                        .copied()
+                        .unwrap_or(table.unknown_value);
+                    (table.abstraction_id, value)
+                })
+                .collect::<Vec<_>>();
+            info!(
+                "scp_online: retained CP, current-state h {} -> {}, lookup_tables={}, components={:?}, size={} KiB, alternative={}",
                 *max_h,
                 new_h,
                 cp.lookup_tables.len(),
+                component_values,
                 size_kb,
+                !improves_current_state,
             );
-            state.size_kb = state.size_kb.saturating_add(cp.estimate_size_in_kb());
+            state.size_kb = state.size_kb.saturating_add(size_kb);
             state.cp_heuristics.push(cp);
             state.required_lookup_ids = Self::required_lookup_ids(state);
-            *max_h = new_h;
+            *max_h = (*max_h).max(new_h);
+        } else if !fits_size_limit {
+            info!(
+                "scp_online: discarded CP because storing {} KiB would exceed max_size={} KiB (stored={} KiB)",
+                size_kb, max_size_kb, state.size_kb
+            );
         } else {
             info!(
                 "scp_online: rejected CP, candidate_h={} did not improve current_h={}, lookup_tables={}",
@@ -3319,6 +3947,234 @@ fn abstraction_collection_iteration(
         .unwrap_or(usize::MAX)
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct GoalCoverOrderVariant {
+    anchor_goal_offset: usize,
+    anchor_offset: usize,
+    complementary_round: usize,
+    representative_round: usize,
+    non_goal_prefix: bool,
+    compact: bool,
+}
+
+fn cartesian_goal_cover_order(
+    base_order: &[usize],
+    num_domain_abstractions: usize,
+    cartesian_abstractions: &[CartesianAbstraction],
+    standalone_current_h: &[f64],
+    require_pure_cartesian_collection: bool,
+    variant: GoalCoverOrderVariant,
+) -> Option<Vec<usize>> {
+    let cartesian_end = num_domain_abstractions + cartesian_abstractions.len();
+    let is_goal_cartesian = |component_id: usize| {
+        component_id
+            .checked_sub(num_domain_abstractions)
+            .and_then(|id| cartesian_abstractions.get(id))
+            .is_some_and(|abstraction| abstraction.metadata.collection_goal_id.is_some())
+    };
+    let pure_cartesian_collection = base_order
+        .iter()
+        .copied()
+        .all(|id| id < cartesian_end && is_goal_cartesian(id));
+    if (require_pure_cartesian_collection || variant.compact) && !pure_cartesian_collection {
+        return None;
+    }
+
+    let mut by_goal: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &component_id in base_order {
+        let Some(abstraction) = component_id
+            .checked_sub(num_domain_abstractions)
+            .and_then(|id| cartesian_abstractions.get(id))
+        else {
+            continue;
+        };
+        let Some(goal_id) = abstraction.metadata.collection_goal_id else {
+            continue;
+        };
+        by_goal.entry(goal_id).or_default().push(component_id);
+    }
+    if by_goal.values().all(|components| components.len() < 2) {
+        return None;
+    }
+
+    let current_h = |component_id: usize| {
+        standalone_current_h
+            .get(component_id)
+            .copied()
+            .unwrap_or(0.0)
+    };
+    let abstraction = |component_id: usize| {
+        cartesian_abstractions
+            .get(component_id - num_domain_abstractions)
+            .expect("goal-cover order component must reference a Cartesian abstraction")
+    };
+    let goal_max_h = |components: &[usize]| {
+        components
+            .iter()
+            .copied()
+            .map(current_h)
+            .fold(0.0, f64::max)
+    };
+    let mut sorted_goals = by_goal
+        .iter()
+        .filter(|(_, components)| components.len() >= 2)
+        .collect::<Vec<_>>();
+    sorted_goals.sort_by(|(left_goal, left), (right_goal, right)| {
+        goal_max_h(right)
+            .total_cmp(&goal_max_h(left))
+            .then_with(|| left_goal.cmp(right_goal))
+    });
+    let (&anchor_goal, anchor_components) =
+        sorted_goals[variant.anchor_goal_offset % sorted_goals.len()];
+
+    let compare_anchor = |&left: &usize, &right: &usize| {
+        let left_abstraction = abstraction(left);
+        let right_abstraction = abstraction(right);
+        current_h(right)
+            .total_cmp(&current_h(left))
+            .then_with(|| {
+                right_abstraction
+                    .metadata
+                    .split_selection_rank
+                    .cmp(&left_abstraction.metadata.split_selection_rank)
+            })
+            .then_with(|| {
+                (right_abstraction.metadata.refinement_direction
+                    == CartesianRefinementDirection::Regression)
+                    .cmp(
+                        &(left_abstraction.metadata.refinement_direction
+                            == CartesianRefinementDirection::Regression),
+                    )
+            })
+            .then_with(|| left.cmp(&right))
+    };
+    let mut sorted_anchor_components = anchor_components.clone();
+    sorted_anchor_components.sort_by(compare_anchor);
+    let first_anchor = sorted_anchor_components
+        .get(variant.anchor_offset % sorted_anchor_components.len())
+        .copied()?;
+    let first_metadata = &abstraction(first_anchor).metadata;
+    let mut complementary_anchors = anchor_components
+        .iter()
+        .copied()
+        .filter(|&component_id| component_id != first_anchor)
+        .collect::<Vec<_>>();
+    complementary_anchors.sort_by(|&left, &right| {
+        let complement_score = |component_id: usize| {
+            let metadata = &abstraction(component_id).metadata;
+            (
+                metadata.refinement_direction != first_metadata.refinement_direction,
+                metadata.split_selection_rank == first_metadata.split_selection_rank,
+            )
+        };
+        complement_score(right)
+            .cmp(&complement_score(left))
+            .then_with(|| current_h(right).total_cmp(&current_h(left)))
+            .then_with(|| {
+                abstraction(left)
+                    .transition_system
+                    .transitions
+                    .len()
+                    .cmp(&abstraction(right).transition_system.transitions.len())
+            })
+            .then_with(|| left.cmp(&right))
+    });
+    let complementary_anchor = (!complementary_anchors.is_empty())
+        .then(|| complementary_anchors[variant.complementary_round % complementary_anchors.len()]);
+
+    let mut order = Vec::with_capacity(base_order.len());
+    let mut selected = HashSet::with_capacity(base_order.len());
+    if variant.non_goal_prefix {
+        for &component_id in base_order {
+            if !is_goal_cartesian(component_id) {
+                order.push(component_id);
+                selected.insert(component_id);
+            }
+        }
+    }
+    order.push(first_anchor);
+    selected.insert(first_anchor);
+    if let Some(component_id) = complementary_anchor {
+        order.push(component_id);
+        selected.insert(component_id);
+    }
+
+    let mut other_goals = by_goal
+        .iter()
+        .filter(|(goal_id, _)| **goal_id != anchor_goal)
+        .collect::<Vec<_>>();
+    other_goals.sort_by(|(left_goal, left), (right_goal, right)| {
+        goal_max_h(right)
+            .total_cmp(&goal_max_h(left))
+            .then_with(|| left_goal.cmp(right_goal))
+    });
+    for (representative_index, (_, components)) in other_goals.into_iter().enumerate() {
+        let mut representatives = components.clone();
+        representatives.sort_by(|&left, &right| {
+            let variant_score = |component_id: usize| {
+                let metadata = &abstraction(component_id).metadata;
+                (
+                    metadata.refinement_direction == first_metadata.refinement_direction,
+                    metadata.split_selection_rank == first_metadata.split_selection_rank,
+                )
+            };
+            variant_score(right)
+                .cmp(&variant_score(left))
+                .then_with(|| {
+                    abstraction(left)
+                        .transition_system
+                        .transitions
+                        .len()
+                        .cmp(&abstraction(right).transition_system.transitions.len())
+                })
+                .then_with(|| current_h(right).total_cmp(&current_h(left)))
+                .then_with(|| left.cmp(&right))
+        });
+        let representative_offset = variant
+            .representative_round
+            .wrapping_add(representative_index.wrapping_mul(variant.anchor_offset + 1))
+            % representatives.len();
+        let representative = representatives[representative_offset];
+        order.push(representative);
+        selected.insert(representative);
+    }
+
+    if variant.compact {
+        debug_assert_eq!(order.len(), by_goal.len() + 1);
+        return Some(order);
+    }
+
+    let mut remaining = base_order
+        .iter()
+        .copied()
+        .filter(|component_id| !selected.contains(component_id))
+        .collect::<Vec<_>>();
+    remaining.sort_by(
+        |&left, &right| match (is_goal_cartesian(left), is_goal_cartesian(right)) {
+            (true, true) => abstraction(left)
+                .transition_system
+                .transitions
+                .len()
+                .cmp(&abstraction(right).transition_system.transitions.len())
+                .then_with(|| current_h(right).total_cmp(&current_h(left)))
+                .then_with(|| left.cmp(&right)),
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            (false, false) => base_order
+                .iter()
+                .position(|&id| id == left)
+                .cmp(&base_order.iter().position(|&id| id == right)),
+        },
+    );
+    order.extend(remaining);
+    debug_assert_eq!(order.len(), base_order.len());
+    debug_assert_eq!(
+        order.iter().copied().collect::<HashSet<_>>().len(),
+        base_order.len()
+    );
+    Some(order)
+}
+
 fn max_heuristic_greedy_order(base_order: &[usize], standalone_current_h: &[f64]) -> Vec<usize> {
     let mut order = base_order.to_vec();
     order.sort_by(|&left, &right| {
@@ -3327,6 +4183,83 @@ fn max_heuristic_greedy_order(base_order: &[usize], standalone_current_h: &[f64]
         right_h.total_cmp(&left_h).then_with(|| left.cmp(&right))
     });
     order
+}
+
+fn optimization_deadline(max_time: f64) -> Option<Instant> {
+    (max_time.is_finite() && max_time.is_sign_positive())
+        .then(|| Instant::now() + Duration::from_secs_f64(max_time))
+}
+
+fn earliest_deadline(left: Option<Instant>, right: Option<Instant>) -> Option<Instant> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(deadline), None) | (None, Some(deadline)) => Some(deadline),
+        (None, None) => None,
+    }
+}
+
+fn random_walk_length(
+    initial_h: f64,
+    average_operator_cost: f64,
+    rng: &mut SmallRng,
+) -> Result<usize, EvaluationError> {
+    if !initial_h.is_finite() || initial_h < 0.0 {
+        return Err(EvaluationError::ComputationFailed(format!(
+            "offline SCP sampling requires a finite non-negative initial h, got {initial_h}"
+        )));
+    }
+    if !average_operator_cost.is_finite() || average_operator_cost < 0.0 {
+        return Err(EvaluationError::ComputationFailed(format!(
+            "offline SCP sampling requires a finite non-negative average operator cost, got {average_operator_cost}"
+        )));
+    }
+    let trials_f64 = if initial_h <= f64::EPSILON || average_operator_cost <= f64::EPSILON {
+        10.0
+    } else {
+        4.0 * (initial_h / average_operator_cost).round()
+    };
+    if trials_f64 > usize::MAX as f64 {
+        return Err(EvaluationError::ComputationFailed(format!(
+            "offline SCP random-walk trial count does not fit usize: {trials_f64}"
+        )));
+    }
+    let trials = trials_f64 as usize;
+    Ok((0..trials).filter(|_| rng.gen_bool(0.5)).count())
+}
+
+fn retain_if_sample_improving(
+    candidate: CostPartitioningHeuristic,
+    sample_ids: &[Vec<Option<usize>>],
+    sample_best: &mut [f64],
+    portfolio: &mut Vec<CostPartitioningHeuristic>,
+    portfolio_size_kb: &mut usize,
+    max_size_kb: usize,
+) -> bool {
+    assert_eq!(sample_ids.len(), sample_best.len());
+    if portfolio.contains(&candidate) {
+        return false;
+    }
+    let candidate_size = candidate.estimate_size_in_kb();
+    if !portfolio.is_empty() && portfolio_size_kb.saturating_add(candidate_size) > max_size_kb {
+        return false;
+    }
+    let values = sample_ids
+        .iter()
+        .map(|ids| candidate.compute_heuristic(ids))
+        .collect::<Vec<_>>();
+    if !values
+        .iter()
+        .zip(sample_best.iter())
+        .any(|(&value, &best)| value > best)
+    {
+        return false;
+    }
+    for (best, value) in sample_best.iter_mut().zip(values) {
+        *best = (*best).max(value);
+    }
+    *portfolio_size_kb = portfolio_size_kb.saturating_add(candidate_size);
+    portfolio.push(candidate);
+    true
 }
 
 fn abstraction_is_target_centered(
@@ -3740,13 +4673,21 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
             self.release_abstractions_if_finished(&mut state);
         }
 
-        if let Some(cp) = self.maybe_build_cp(
+        let candidate_partitions = self.maybe_build_cp(
             task,
             &mut state,
             abstract_state_ids,
             num_domain_abstractions,
-        )? {
-            Self::accept_improved_cp(&mut state, cp, abstract_state_ids, &mut max_h);
+        )?;
+        for cp in candidate_partitions {
+            Self::retain_cp(
+                &mut state,
+                cp,
+                abstract_state_ids,
+                &mut max_h,
+                !self.config.online,
+                self.config.max_size,
+            );
         }
 
         if build_cp && (!self.config.online || self.config.interval == usize::MAX) {
@@ -3769,6 +4710,7 @@ mod handcrafted_sailing_tests {
     use std::cell::{Ref, RefMut};
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
     use planforge_sas::numeric_task::{
@@ -3779,6 +4721,11 @@ mod handcrafted_sailing_tests {
     use planforge_translator::translate_to_sas_to_path_fast;
 
     use super::*;
+    use crate::evaluation::cartesian_abstractions::{
+        CartesianAbstraction, CartesianAbstractionCollectionConfig,
+        CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
+        CartesianRefinementDirection,
+    };
     use crate::evaluation::domain_abstractions::cegar::InitialSeedSplit;
     use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
     use crate::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
@@ -3786,6 +4733,154 @@ mod handcrafted_sailing_tests {
         DomainAbstractionMetadata, compute_hash_multipliers,
     };
     use crate::task_restriction::build_restricted_task;
+
+    #[test]
+    #[ignore = "oracle collection report over translated sailing benchmark"]
+    fn sailing_perfect_complementary_cartesian_collection_reaches_optimum_with_transition_scp() {
+        let task = translated_sailing_2_2_task();
+        let restricted_task = build_restricted_task(&task)
+            .expect("sailing task should support restricted task")
+            .expect("sailing task should have promotable roots")
+            .into_task();
+        let abstractions =
+            CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+                abstraction: CartesianAbstractionConfig {
+                    max_states: 1_000,
+                    max_time: Some(Duration::from_secs(5)),
+                    combine_labels: false,
+                    compute_operator_footprints: true,
+                    random_seed: Some(1),
+                    debug: false,
+                    ..Default::default()
+                },
+                variants_per_goal: 4,
+                max_collection_states: 10_000,
+                total_max_time: Some(Duration::from_secs(15)),
+            })
+            .expect("valid oracle Cartesian collection config")
+            .generate(&restricted_task)
+            .expect("failed to build oracle Cartesian collection");
+
+        assert_eq!(abstractions.len(), 8);
+        assert_eq!(
+            abstractions
+                .iter()
+                .map(CartesianAbstraction::num_states)
+                .sum::<usize>(),
+            8_000
+        );
+        for goal_id in 0..2 {
+            let mut modes = abstractions
+                .iter()
+                .filter(|abstraction| abstraction.metadata.collection_goal_id == Some(goal_id))
+                .map(|abstraction| {
+                    (
+                        abstraction.metadata.refinement_direction,
+                        abstraction.metadata.split_selection_rank,
+                    )
+                })
+                .collect::<Vec<_>>();
+            modes.sort_by_key(|(direction, rank)| {
+                (
+                    match direction {
+                        CartesianRefinementDirection::Progression => 0,
+                        CartesianRefinementDirection::Regression => 1,
+                    },
+                    *rank,
+                )
+            });
+            assert_eq!(
+                modes,
+                vec![
+                    (CartesianRefinementDirection::Progression, Some(0)),
+                    (CartesianRefinementDirection::Progression, Some(1)),
+                    (CartesianRefinementDirection::Regression, Some(0)),
+                    (CartesianRefinementDirection::Regression, Some(1)),
+                ]
+            );
+        }
+
+        let standalone_max = abstractions
+            .iter()
+            .map(|abstraction| {
+                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
+            })
+            .fold(0.0f64, f64::max);
+        let standalone_h = abstractions
+            .iter()
+            .map(|abstraction| {
+                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
+            })
+            .collect::<Vec<_>>();
+        let goal_cover_order = cartesian_goal_cover_order(
+            &(0..abstractions.len()).collect::<Vec<_>>(),
+            0,
+            &abstractions,
+            &standalone_h,
+            true,
+            GoalCoverOrderVariant::default(),
+        )
+        .expect("the complementary sailing collection must have a goal-cover order");
+        assert_eq!(&goal_cover_order[..3], &[5, 0, 1]);
+        let transition_h = initial_cartesian_scp_value(&restricted_task, abstractions, true, 10.0);
+
+        println!(
+            "SAILING_PERFECT_COLLECTION standalone_max={standalone_max} transition_scp={transition_h}"
+        );
+        assert_eq!(standalone_max, 40.0);
+        assert_eq!(transition_h, 76.0);
+    }
+
+    fn initial_cartesian_scp_value(
+        task: &dyn AbstractNumericTask,
+        abstractions: Vec<CartesianAbstraction>,
+        use_abstract_operator_cost_partitioning: bool,
+        order_optimization_max_time: f64,
+    ) -> f64 {
+        let initial_prop = task.get_initial_propositional_state_values();
+        let initial_numeric = task.get_initial_numeric_state_values();
+        let abstract_state_ids = abstractions
+            .iter()
+            .map(|abstraction| {
+                Some(
+                    abstraction
+                        .hierarchy
+                        .map_state(&initial_prop, &initial_numeric)
+                        .expect("failed to map sailing initial state"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let config = ScpOnlineConfig {
+            online: true,
+            table_construction_max_time: 30.0,
+            order_optimization_max_time,
+            max_size: 10_000_000,
+            combine_labels: false,
+            saturator: Saturator::All,
+            residual_sweeps: 0,
+            random_seed: Some(1),
+            use_abstract_operator_cost_partitioning,
+            ..Default::default()
+        };
+        let heuristic = SaturatedCostPartitioningOnlineHeuristic::new_with_cartesian(
+            None,
+            vec![],
+            abstractions,
+            vec![],
+            config,
+            task,
+        )
+        .expect("failed to construct oracle SCP heuristic");
+        let mut state = heuristic.state.borrow_mut();
+        let mut partitions = heuristic
+            .maybe_build_cp(task, &mut state, &abstract_state_ids, 0)
+            .expect("oracle SCP construction failed");
+        assert_eq!(partitions.len(), 1);
+        partitions
+            .pop()
+            .expect("one oracle SCP partition")
+            .compute_heuristic(&abstract_state_ids)
+    }
 
     #[test]
     #[ignore = "diagnostic full-task handcrafted sailing abstract-operator SCP report"]
@@ -3827,6 +4922,9 @@ mod handcrafted_sailing_tests {
             max_time: 300.0,
             table_construction_max_time: 30.0,
             max_size: 10_000_000,
+            diversify: false,
+            samples: 1_000,
+            max_orders: usize::MAX,
             interval: usize::MAX,
             combine_labels: false,
             collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig {
@@ -3854,25 +4952,33 @@ mod handcrafted_sailing_tests {
             abstractions,
             vec![],
             config,
-            &task,
+            transformed_task,
         )
         .expect("failed to construct SCP heuristic");
-        let abstract_state_ids = initial_abstract_state_ids(&heuristic, &task);
+        let abstract_state_ids = initial_abstract_state_ids(&heuristic, transformed_task);
         {
             let mut state = heuristic.state.borrow_mut();
             let mut max_h = SaturatedCostPartitioningOnlineHeuristic::compute_max_h(
                 &state,
                 &abstract_state_ids,
             );
-            let cp = heuristic
-                .maybe_build_cp(&task, &mut state, &abstract_state_ids, specs.len())
-                .expect("initial SCP construction failed")
-                .expect("initial SCP should produce a cost partitioning");
-            SaturatedCostPartitioningOnlineHeuristic::accept_improved_cp(
+            let mut partitions = heuristic
+                .maybe_build_cp(
+                    transformed_task,
+                    &mut state,
+                    &abstract_state_ids,
+                    specs.len(),
+                )
+                .expect("initial SCP construction failed");
+            assert_eq!(partitions.len(), 1);
+            let cp = partitions.pop().unwrap();
+            SaturatedCostPartitioningOnlineHeuristic::retain_cp(
                 &mut state,
                 cp,
                 &abstract_state_ids,
                 &mut max_h,
+                true,
+                usize::MAX,
             );
         }
 
@@ -4411,6 +5517,14 @@ mod handcrafted_sailing_tests {
 // Greedy order utilities
 // ---------------------------------------------------------------------------
 
+fn deduplicate_orders(orders: Vec<Vec<usize>>) -> Vec<Vec<usize>> {
+    let mut seen = HashSet::with_capacity(orders.len());
+    orders
+        .into_iter()
+        .filter(|order| seen.insert(order.clone()))
+        .collect()
+}
+
 fn compute_score(h: f64, stolen_costs: f64, scoring_function: ScoringFunction) -> f64 {
     match scoring_function {
         ScoringFunction::MaxHeuristic => h,
@@ -4562,6 +5676,7 @@ mod tests {
     use planforge_sas::state_registry::StateRegistry;
 
     use crate::evaluation::cartesian_abstractions::{
+        CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
         CartesianAbstractionConfig, CartesianAbstractionGenerator,
     };
     use crate::evaluation::domain_abstractions::cegar::CegarConfig;
@@ -4620,6 +5735,7 @@ mod tests {
             compute_operator_footprints: true,
             random_seed: None,
             debug: false,
+            ..Default::default()
         })
         .unwrap()
         .generate(task)
@@ -4676,6 +5792,181 @@ mod tests {
         let max_order = max_heuristic_greedy_order(&base_order, &h_values);
 
         assert_eq!(max_order, vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
+        let task = independent_goals_task();
+        let abstractions =
+            CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+                abstraction: CartesianAbstractionConfig {
+                    max_states: 16,
+                    max_time: None,
+                    combine_labels: false,
+                    compute_operator_footprints: true,
+                    random_seed: Some(1),
+                    debug: false,
+                    ..Default::default()
+                },
+                variants_per_goal: 4,
+                max_collection_states: 128,
+                total_max_time: None,
+            })
+            .unwrap()
+            .generate(&task)
+            .unwrap();
+        let base_order = (0..abstractions.len()).collect::<Vec<_>>();
+        let standalone_h = abstractions
+            .iter()
+            .map(|abstraction| {
+                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
+            })
+            .collect::<Vec<_>>();
+        let order = |variant| {
+            cartesian_goal_cover_order(&base_order, 0, &abstractions, &standalone_h, true, variant)
+                .unwrap()
+        };
+        let goal = |component_id: usize| {
+            abstractions[component_id]
+                .metadata
+                .collection_goal_id
+                .unwrap()
+        };
+        let baseline = order(GoalCoverOrderVariant {
+            compact: true,
+            ..Default::default()
+        });
+        assert_eq!(baseline.len(), 3);
+        assert_eq!(goal(baseline[0]), goal(baseline[1]));
+        assert_ne!(goal(baseline[0]), goal(baseline[2]));
+        let first = &abstractions[baseline[0]].metadata;
+        let complement = &abstractions[baseline[1]].metadata;
+        assert_ne!(first.refinement_direction, complement.refinement_direction);
+        assert_eq!(first.split_selection_rank, complement.split_selection_rank);
+
+        let other_goal = order(GoalCoverOrderVariant {
+            anchor_goal_offset: 1,
+            compact: true,
+            ..Default::default()
+        });
+        assert_ne!(goal(other_goal[0]), goal(baseline[0]));
+
+        let other_anchor = order(GoalCoverOrderVariant {
+            anchor_offset: 1,
+            compact: true,
+            ..Default::default()
+        });
+        assert_ne!(other_anchor[0], baseline[0]);
+
+        let other_representative = order(GoalCoverOrderVariant {
+            representative_round: 1,
+            compact: true,
+            ..Default::default()
+        });
+        assert_eq!(&other_representative[..2], &baseline[..2]);
+        assert_ne!(other_representative[2], baseline[2]);
+
+        let other_complement = order(GoalCoverOrderVariant {
+            complementary_round: 1,
+            compact: true,
+            ..Default::default()
+        });
+        assert_eq!(other_complement[0], baseline[0]);
+        assert_ne!(other_complement[1], baseline[1]);
+
+        let mut mixed = abstractions.clone();
+        mixed.push(cartesian_abstraction(&task));
+        let mixed_order = (0..mixed.len()).collect::<Vec<_>>();
+        let mixed_h = mixed
+            .iter()
+            .map(|abstraction| {
+                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
+            })
+            .collect::<Vec<_>>();
+        let structural_id = mixed.len() - 1;
+        let prefixed = cartesian_goal_cover_order(
+            &mixed_order,
+            0,
+            &mixed,
+            &mixed_h,
+            false,
+            GoalCoverOrderVariant {
+                non_goal_prefix: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(prefixed[0], structural_id);
+    }
+
+    #[test]
+    fn offline_scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
+        let partition = |distances| CostPartitioningHeuristic {
+            lookup_tables: vec![LookupTable {
+                abstraction_id: 0,
+                distances,
+                unknown_value: f64::INFINITY,
+            }],
+        };
+        let mut state = ScpOnlineState::new(Some(1));
+        let mut initial_h = 0.0;
+
+        SaturatedCostPartitioningOnlineHeuristic::retain_cp(
+            &mut state,
+            partition(vec![5.0, 1.0]),
+            &[Some(0)],
+            &mut initial_h,
+            true,
+            usize::MAX,
+        );
+        SaturatedCostPartitioningOnlineHeuristic::retain_cp(
+            &mut state,
+            partition(vec![4.0, 4.0]),
+            &[Some(0)],
+            &mut initial_h,
+            true,
+            usize::MAX,
+        );
+
+        assert_eq!(state.cp_heuristics.len(), 2);
+        assert_eq!(initial_h, 5.0);
+        assert_eq!(
+            SaturatedCostPartitioningOnlineHeuristic::compute_max_h(&state, &[Some(1)]),
+            4.0
+        );
+    }
+
+    #[test]
+    fn online_scp_rejects_a_non_improving_state_specific_order() {
+        let partition = |distances| CostPartitioningHeuristic {
+            lookup_tables: vec![LookupTable {
+                abstraction_id: 0,
+                distances,
+                unknown_value: f64::INFINITY,
+            }],
+        };
+        let mut state = ScpOnlineState::new(Some(1));
+        let mut current_h = 0.0;
+
+        SaturatedCostPartitioningOnlineHeuristic::retain_cp(
+            &mut state,
+            partition(vec![5.0]),
+            &[Some(0)],
+            &mut current_h,
+            false,
+            usize::MAX,
+        );
+        SaturatedCostPartitioningOnlineHeuristic::retain_cp(
+            &mut state,
+            partition(vec![4.0]),
+            &[Some(0)],
+            &mut current_h,
+            false,
+            usize::MAX,
+        );
+
+        assert_eq!(state.cp_heuristics.len(), 1);
+        assert_eq!(current_h, 5.0);
     }
 
     #[test]
@@ -4745,5 +6036,126 @@ mod tests {
         .unwrap();
 
         assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
+    }
+
+    #[test]
+    fn offline_diversification_supports_mixed_abstraction_backends() {
+        let task = std::sync::Arc::new(independent_goals_task());
+        let mut domain_config = CegarConfig::default();
+        domain_config.max_abstraction_size = 16;
+        domain_config.combine_labels = false;
+        domain_config.compute_operator_footprints = true;
+        let domain = DomainAbstractionGenerator::new(domain_config)
+            .unwrap()
+            .generate(&*task)
+            .unwrap();
+        let pattern = Pattern::new(vec![1], vec![]);
+        let pdb = PatternDatabase::new(ProjectedTask::new(&*task, &pattern).unwrap(), 32).unwrap();
+        let components = vec![
+            AbstractionComponent::domain(None, domain),
+            AbstractionComponent::cartesian(None, cartesian_abstraction(&task)),
+            AbstractionComponent::pattern_database(pdb),
+        ];
+        let mut config = scp_config(Saturator::All, true);
+        config.online = false;
+        config.diversify = true;
+        config.samples = 16;
+        config.max_orders = 8;
+        let heuristic =
+            SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+                None,
+                components,
+                config,
+                &*task,
+                task.clone(),
+            )
+            .unwrap();
+
+        assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
+        assert!(heuristic.state.borrow().improvement_ended);
+        assert!(heuristic.state.borrow().offline_sample_ids.is_empty());
+        assert!(heuristic.sampling_task.borrow().is_none());
+        assert!(heuristic.cartesian_abstractions.borrow().is_none());
+    }
+
+    #[test]
+    fn offline_diversification_rejects_online_construction() {
+        let task = std::sync::Arc::new(independent_goals_task());
+        let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
+        let mut config = scp_config(Saturator::All, true);
+        config.online = true;
+        config.diversify = true;
+
+        let result = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+            None,
+            vec![component],
+            config,
+            &*task,
+            task.clone(),
+        );
+        let error = match result {
+            Ok(_) => panic!("online diversified construction must be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("requires online=false"));
+    }
+
+    #[test]
+    fn offline_diversifier_keeps_partitions_that_improve_different_samples() {
+        let partition = |distances| CostPartitioningHeuristic {
+            lookup_tables: vec![LookupTable {
+                abstraction_id: 0,
+                distances,
+                unknown_value: f64::INFINITY,
+            }],
+        };
+        let samples = vec![vec![Some(0)], vec![Some(1)]];
+        let mut best = vec![f64::NEG_INFINITY; samples.len()];
+        let mut portfolio = Vec::new();
+        let mut size_kb = 0;
+
+        assert!(retain_if_sample_improving(
+            partition(vec![5.0, 1.0]),
+            &samples,
+            &mut best,
+            &mut portfolio,
+            &mut size_kb,
+            usize::MAX,
+        ));
+        assert!(retain_if_sample_improving(
+            partition(vec![4.0, 6.0]),
+            &samples,
+            &mut best,
+            &mut portfolio,
+            &mut size_kb,
+            usize::MAX,
+        ));
+        assert!(!retain_if_sample_improving(
+            partition(vec![5.0, 5.0]),
+            &samples,
+            &mut best,
+            &mut portfolio,
+            &mut size_kb,
+            usize::MAX,
+        ));
+
+        assert_eq!(portfolio.len(), 2);
+        assert_eq!(best, vec![5.0, 6.0]);
+    }
+
+    #[test]
+    fn offline_random_walk_lengths_are_deterministic() {
+        let mut left = SmallRng::seed_from_u64(7);
+        let mut right = SmallRng::seed_from_u64(7);
+        let left_lengths = (0..20)
+            .map(|_| random_walk_length(110.0, 1.0, &mut left).unwrap())
+            .collect::<Vec<_>>();
+        let right_lengths = (0..20)
+            .map(|_| random_walk_length(110.0, 1.0, &mut right).unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(left_lengths, right_lengths);
+        assert!(left_lengths.iter().all(|&length| length <= 440));
     }
 }

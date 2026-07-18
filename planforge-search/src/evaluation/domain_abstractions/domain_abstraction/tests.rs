@@ -101,6 +101,36 @@ fn reachable_partitions_overlaps_result_interval() {
 }
 
 #[test]
+fn reachable_partitions_use_the_numeric_state_lattice() {
+    let mut partitions = NumericPartitions::with_partitions(vec![vec![Interval::unbounded()]]);
+    assert!(partitions.split_at(0, -5.9999999999999964, true));
+    assert!(partitions.split_at(0, -5.799999999999997, true));
+    assert!(partitions.split_at(0, -5.6999999999999975, true));
+
+    assert_eq!(
+        partitions.partitions(0).unwrap(),
+        &[
+            Interval::new(f64::NEG_INFINITY, -6.0, false, true),
+            Interval::new(-6.0, -5.8, false, true),
+            Interval::new(-5.8, -5.7, false, true),
+            Interval::new(-5.7, f64::INFINITY, false, false),
+        ]
+    );
+
+    // Concrete execution canonicalizes (-5.8, -5.7] - 0.2 to
+    // (-6.0, -5.9]. It therefore cannot enter the partition ending at -6.0.
+    assert_eq!(
+        partitions.reachable_partitions(
+            0,
+            2,
+            &planforge_sas::numeric_task::AssignmentOperation::Plus,
+            Interval::singleton(-0.2),
+        ),
+        vec![1]
+    );
+}
+
+#[test]
 fn trivial_partitions_use_singletons_for_constants() {
     let numeric_variables = vec![
         NumericVariable::new("x0".into(), NumericType::Regular, None),

@@ -441,6 +441,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         let mut goal_index = 0usize;
         let mut group_index = 0usize;
         let mut complementary_direction = ComplementaryDirection::Regression;
+        let mut complementary_round = 0usize;
         let stop_reason: &str;
         loop {
             let elapsed = start.elapsed().as_secs_f64();
@@ -562,8 +563,15 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 .context("failed to construct single-abstraction CEGAR generator")?;
             let generation_start = Instant::now();
             debug!(
-                "domain abstraction collection: starting CEGAR generation iteration {}, remaining_generation_time={:.2}s, full_goal_task={}, flaw_kind={}",
-                iteration, remaining_generation_time, full_goal_task, flaw_kind
+                "domain abstraction collection: starting CEGAR generation iteration {}, remaining_generation_time={:.2}s, full_goal_task={}, flaw_kind={}, complementary_round={}, goal_index={}, group_index={}, direction={:?}",
+                iteration,
+                remaining_generation_time,
+                full_goal_task,
+                flaw_kind,
+                complementary_round,
+                goal_index,
+                group_index,
+                complementary_direction,
             );
             let mut abstraction = match generator.generate(abstraction_task) {
                 Ok(abstraction) => abstraction,
@@ -671,27 +679,17 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     group_count > 0,
                     "complementary iteration must have at least one root group"
                 );
-                match complementary_direction {
-                    ComplementaryDirection::Regression => {
-                        complementary_direction = ComplementaryDirection::Progression;
-                    }
-                    ComplementaryDirection::Progression => {
-                        group_index += 1;
-                        complementary_direction = ComplementaryDirection::Regression;
-                        if group_index == group_count {
-                            group_index = 0;
-                            goal_index += 1;
-                            if goal_index == goals.len() {
-                                info!(
-                                    "domain abstraction collection: stopping complementary \
-                                     generation after every goal, root group, and direction was \
-                                     attempted"
-                                );
-                                stop_reason = "complementary schedule exhausted";
-                                break;
-                            }
-                        }
-                    }
+                if advance_complementary_schedule(
+                    goals.len(),
+                    group_count,
+                    &mut goal_index,
+                    &mut group_index,
+                    &mut complementary_direction,
+                ) {
+                    complementary_round += 1;
+                    debug!(
+                        "domain abstraction collection: starting complementary round {complementary_round}"
+                    );
                 }
             }
 
@@ -957,6 +955,48 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         append_interleaved_numeric_seeds(&mut seeds, numeric_seed_groups);
         seeds
     }
+}
+
+fn advance_complementary_schedule(
+    goal_count: usize,
+    group_count: usize,
+    goal_index: &mut usize,
+    group_index: &mut usize,
+    direction: &mut ComplementaryDirection,
+) -> bool {
+    assert!(goal_count > 0, "complementary schedule requires a goal");
+    assert!(
+        *goal_index < goal_count,
+        "complementary goal index must be in bounds"
+    );
+    assert!(
+        group_count > 0,
+        "complementary schedule requires a root group"
+    );
+    assert!(
+        *group_index < group_count,
+        "complementary root-group index must be in bounds"
+    );
+
+    if *direction == ComplementaryDirection::Regression {
+        *direction = ComplementaryDirection::Progression;
+        return false;
+    }
+
+    *direction = ComplementaryDirection::Regression;
+    *group_index += 1;
+    if *group_index < group_count {
+        return false;
+    }
+
+    *group_index = 0;
+    *goal_index += 1;
+    if *goal_index < goal_count {
+        return false;
+    }
+
+    *goal_index = 0;
+    true
 }
 
 fn operator_has_unconditional_effect(op: &Operator, fact: &ExplicitFact) -> bool {

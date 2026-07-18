@@ -8,8 +8,8 @@ pub(crate) struct OpenEntry {
     pub(crate) f_value: OrderedFloat<f64>,
     pub(crate) h_value: OrderedFloat<f64>,
     pub(crate) g_value: f64,
-    pub(crate) state_id: StateID,
-    pub(crate) insertion_order: usize,
+    state_id: u32,
+    pub(crate) insertion_order: u64,
     /// `true` iff the operator that generated this successor was reported
     /// as a preferred (helpful) action by the heuristic for the parent
     /// state. Used as a tie-break inside a single queue, and as the queue
@@ -24,6 +24,12 @@ pub(crate) struct OpenEntry {
     /// For ordinary A*/GBFS this field is always `false` and the field
     /// does not affect `Ord`.
     pub(crate) second: bool,
+}
+
+impl OpenEntry {
+    pub(crate) fn state_id(self) -> StateID {
+        self.state_id as StateID
+    }
 }
 
 impl PartialEq for OpenEntry {
@@ -76,7 +82,7 @@ pub(crate) struct DualQueueOpenList {
     regular_heap: BinaryHeap<OpenEntry>,
     preferred_heap: BinaryHeap<OpenEntry>,
     use_preferred_first: bool,
-    next_insertion_order: usize,
+    next_insertion_order: u64,
 }
 
 impl DualQueueOpenList {
@@ -109,16 +115,26 @@ impl DualQueueOpenList {
         is_preferred: bool,
         second: bool,
     ) {
+        let compact_state_id = u32::try_from(state_id)
+            .unwrap_or_else(|_| panic!("open-list state id {state_id} exceeds u32"));
+        assert_ne!(
+            compact_state_id,
+            u32::MAX,
+            "open-list state id {state_id} collides with the reserved compact-id sentinel"
+        );
         let entry = OpenEntry {
             f_value: OrderedFloat(f_value),
             h_value: OrderedFloat(h_value),
             g_value,
-            state_id,
+            state_id: compact_state_id,
             insertion_order: self.next_insertion_order,
             is_preferred,
             second,
         };
-        self.next_insertion_order += 1;
+        self.next_insertion_order = self
+            .next_insertion_order
+            .checked_add(1)
+            .expect("open-list insertion order overflow");
         if self.use_preferred_first && is_preferred {
             self.preferred_heap.push(entry);
         } else {

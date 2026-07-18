@@ -10,9 +10,10 @@ use planforge_sas::numeric_task::{
 
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics,
-    CartesianStopReason, OperatorBitSet, ShortestPaths, Split, StateRegion, TransitionKey,
-    WorkingAbstraction, numeric_split_choice_key, retain_min_growth_splits,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
+    CartesianSemantics, CartesianStopReason, OperatorBitSet, RefinementNode, ShortestPaths, Split,
+    StateRegion, TransitionKey, WorkingAbstraction, numeric_split_choice_key,
+    retain_min_growth_splits, select_next_cartesian_collection_goal,
 };
 use crate::evaluation::domain_abstractions::comparison_expression::Interval;
 
@@ -88,7 +89,7 @@ fn min_growth_uses_projected_transition_count() {
         vec![],
         ExplicitFact::new(0, 1),
     );
-    let semantics = CartesianSemantics::new(&task, None).unwrap();
+    let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     let mut working = WorkingAbstraction::new(
         StateRegion {
             propositions: vec![vec![0, 1]],
@@ -485,7 +486,8 @@ fn affine_effect_task(operation: AssignmentOperation, rhs: f64) -> NumericRootTa
 #[test]
 fn exact_affine_preimages_preserve_open_boundaries() {
     let plus = affine_effect_task(AssignmentOperation::Plus, 1.0);
-    let plus_semantics = CartesianSemantics::new(&plus, None).unwrap();
+    let plus_semantics =
+        CartesianSemantics::new(&plus, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         plus_semantics
             .numeric_effect_preimage(Interval::new(5.0, 10.0, false, true), 0, 0)
@@ -494,7 +496,8 @@ fn exact_affine_preimages_preserve_open_boundaries() {
     );
 
     let times = affine_effect_task(AssignmentOperation::Times, -2.0);
-    let times_semantics = CartesianSemantics::new(&times, None).unwrap();
+    let times_semantics =
+        CartesianSemantics::new(&times, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         times_semantics
             .numeric_effect_preimage(Interval::new(-10.0, -4.0, false, true), 0, 0)
@@ -503,7 +506,8 @@ fn exact_affine_preimages_preserve_open_boundaries() {
     );
 
     let divide = affine_effect_task(AssignmentOperation::Divide, -2.0);
-    let divide_semantics = CartesianSemantics::new(&divide, None).unwrap();
+    let divide_semantics =
+        CartesianSemantics::new(&divide, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         divide_semantics
             .numeric_effect_preimage(Interval::new(-5.0, -2.0, false, true), 0, 0)
@@ -515,7 +519,7 @@ fn exact_affine_preimages_preserve_open_boundaries() {
 #[test]
 fn assignment_preimage_is_universal_exactly_when_target_contains_rhs() {
     let task = affine_effect_task(AssignmentOperation::Assign, 3.0);
-    let semantics = CartesianSemantics::new(&task, None).unwrap();
+    let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         semantics
             .numeric_effect_preimage(Interval::new(2.0, 3.0, true, true), 0, 0)
@@ -723,15 +727,126 @@ fn goal_collection_builds_every_goal_with_operator_footprints() {
             abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
         })
         .collect::<Vec<_>>();
-    assert_eq!(initial_h, vec![2.0, 2.0, 2.0, 3.0, 3.0, 3.0]);
+    assert_eq!(initial_h, vec![2.0, 3.0, 2.0, 3.0, 3.0, 2.0]);
     assert_eq!(abstractions[0].metadata.collection_goal_id, Some(0));
     assert_eq!(abstractions[0].metadata.collection_variant_id, Some(0));
     assert_eq!(abstractions[2].metadata.collection_goal_id, Some(0));
-    assert_eq!(abstractions[2].metadata.collection_variant_id, Some(2));
+    assert_eq!(abstractions[2].metadata.collection_variant_id, Some(1));
     assert_eq!(abstractions[3].metadata.collection_goal_id, Some(1));
-    assert_eq!(abstractions[3].metadata.collection_variant_id, Some(0));
-    assert_eq!(abstractions[5].metadata.collection_goal_id, Some(1));
+    assert_eq!(abstractions[3].metadata.collection_variant_id, Some(1));
+    assert_eq!(abstractions[4].metadata.collection_goal_id, Some(1));
+    assert_eq!(abstractions[4].metadata.collection_variant_id, Some(2));
+    assert_eq!(abstractions[5].metadata.collection_goal_id, Some(0));
     assert_eq!(abstractions[5].metadata.collection_variant_id, Some(2));
+    assert_eq!(
+        abstractions[0].metadata.refinement_direction,
+        CartesianRefinementDirection::Progression
+    );
+    assert_eq!(abstractions[0].metadata.split_selection_rank, Some(0));
+    assert_eq!(
+        abstractions[2].metadata.refinement_direction,
+        CartesianRefinementDirection::Regression
+    );
+    assert_eq!(abstractions[2].metadata.split_selection_rank, Some(0));
+    assert_eq!(
+        abstractions[4].metadata.refinement_direction,
+        CartesianRefinementDirection::Progression
+    );
+    assert_eq!(abstractions[4].metadata.split_selection_rank, Some(1));
+
+    let bounded =
+        CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+            abstraction: CartesianAbstractionConfig {
+                max_states: 64,
+                ..Default::default()
+            },
+            variants_per_goal: 3,
+            max_collection_states: 4,
+            total_max_time: None,
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+    assert_eq!(bounded.len(), 1);
+    assert!(bounded[0].num_states() > 1);
+    assert!(bounded[0].num_states() <= 4);
+}
+
+#[test]
+fn regression_splits_at_comparison_target_while_progression_splits_at_witness() {
+    let task = numeric_goal_task(
+        vec![comparison_variable("x-at-least-three")],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+            NumericVariable::new("three".into(), NumericType::Constant, None),
+        ],
+        vec![0.0, 1.0, 3.0],
+        vec![Operator::new(
+            "increment".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                1,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![ComparisonAxiom::new(
+            0,
+            0,
+            2,
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![],
+    );
+
+    let first_numeric_boundary = |direction| {
+        let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+            max_states: 2,
+            refinement_direction: direction,
+            ..Default::default()
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+        abstraction
+            .hierarchy
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                RefinementNode::Numeric { boundary, .. } => Some(*boundary),
+                _ => None,
+            })
+            .expect("one Cartesian numeric split")
+    };
+
+    assert_eq!(
+        first_numeric_boundary(CartesianRefinementDirection::Progression),
+        0.0
+    );
+    assert_eq!(
+        first_numeric_boundary(CartesianRefinementDirection::Regression),
+        3.0
+    );
+}
+
+#[test]
+fn collection_schedule_covers_each_goal_before_focusing_the_strongest() {
+    let mut counts = vec![0, 0, 0];
+    let strengths = vec![2.0, 5.0, 3.0];
+    let mut selected = Vec::new();
+    for _ in 0..9 {
+        let goal = select_next_cartesian_collection_goal(&counts, &strengths, 3).unwrap();
+        selected.push(goal);
+        counts[goal] += 1;
+    }
+
+    assert_eq!(selected, vec![0, 1, 2, 0, 1, 2, 1, 2, 0]);
+    assert_eq!(counts, vec![3, 3, 3]);
 }
 
 #[test]

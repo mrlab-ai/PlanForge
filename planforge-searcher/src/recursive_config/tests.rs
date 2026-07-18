@@ -117,15 +117,19 @@ fn parses_hierarchical_canonical_abstraction_sources() {
 #[test]
 fn parses_hierarchical_scp_options_and_sources() {
     let h = astar_heuristic(
-        "astar(scp(domain(max_collection_size=1000), cartesian(max_states=100), pdb(max_pdb_states=100), saturator=perimstar, residual_sweeps=2, use_abstract_operator_cost_partitioning=true))",
+        "astar(scp(domain(max_collection_size=1000), cartesian(max_states=100), pdb(max_pdb_states=100), online=false, diversify=true, samples=123, max_orders=17, saturator=perimstar, residual_sweeps=2, use_abstract_operator_cost_partitioning=true))",
     );
     assert_eq!(h.name, "scp");
     let (sources, options) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
     assert_eq!(sources.len(), 3);
-    assert_eq!(options.len(), 3);
+    assert_eq!(options.len(), 7);
     crate::abstraction_config::validate_scp_combinator_options(&options).unwrap();
     let mut config = ScpOnlineConfig::default();
     ApplyOptions::apply_options(&mut config, &options).unwrap();
+    assert!(!config.online);
+    assert!(config.diversify);
+    assert_eq!(config.samples, 123);
+    assert_eq!(config.max_orders, 17);
     assert_eq!(config.residual_sweeps, 2);
 }
 

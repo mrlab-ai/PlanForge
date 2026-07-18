@@ -86,6 +86,44 @@ fn standard_uses_configured_full_goal_flaw_kind() {
 }
 
 #[test]
+fn complementary_schedule_cycles_every_goal_group_and_direction() {
+    let mut goal_index = 0;
+    let mut group_index = 0;
+    let mut direction = ComplementaryDirection::Regression;
+    let mut visited = Vec::new();
+    let group_counts = [2, 1];
+
+    loop {
+        visited.push((goal_index, group_index, direction));
+        let wrapped = advance_complementary_schedule(
+            group_counts.len(),
+            group_counts[goal_index],
+            &mut goal_index,
+            &mut group_index,
+            &mut direction,
+        );
+        if wrapped {
+            break;
+        }
+    }
+
+    assert_eq!(
+        visited,
+        vec![
+            (0, 0, ComplementaryDirection::Regression),
+            (0, 0, ComplementaryDirection::Progression),
+            (0, 1, ComplementaryDirection::Regression),
+            (0, 1, ComplementaryDirection::Progression),
+            (1, 0, ComplementaryDirection::Regression),
+            (1, 0, ComplementaryDirection::Progression),
+        ]
+    );
+    assert_eq!(goal_index, 0);
+    assert_eq!(group_index, 0);
+    assert_eq!(direction, ComplementaryDirection::Regression);
+}
+
+#[test]
 fn numeric_seed_shells_are_interleaved_across_dimensions() {
     let numeric = |numeric_var_id, value| InitialSeedSplit::Numeric {
         numeric_var_id,

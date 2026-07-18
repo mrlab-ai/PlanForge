@@ -58,6 +58,14 @@ pub struct CartesianAbstractionMetadata {
     pub refinements: usize,
     pub collection_goal_id: Option<usize>,
     pub collection_variant_id: Option<usize>,
+    pub refinement_direction: CartesianRefinementDirection,
+    pub split_selection_rank: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CartesianRefinementDirection {
+    Progression,
+    Regression,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +75,8 @@ pub struct CartesianAbstractionConfig {
     pub combine_labels: bool,
     pub compute_operator_footprints: bool,
     pub random_seed: Option<u64>,
+    pub refinement_direction: CartesianRefinementDirection,
+    pub split_selection_rank: Option<usize>,
     pub debug: bool,
 }
 
@@ -78,6 +88,8 @@ impl Default for CartesianAbstractionConfig {
             combine_labels: false,
             compute_operator_footprints: true,
             random_seed: None,
+            refinement_direction: CartesianRefinementDirection::Progression,
+            split_selection_rank: None,
             debug: false,
         }
     }
@@ -612,6 +624,9 @@ struct CartesianSemantics<'task> {
     prop_split_dependent_operators: Vec<OperatorBitSet>,
     numeric_split_dependent_operators: Vec<OperatorBitSet>,
     random_seed: Option<u64>,
+    refinement_direction: CartesianRefinementDirection,
+    split_selection_rank: Option<usize>,
+    target_split_boundaries: Vec<f64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -667,7 +682,10 @@ fn mark_fact_split_dependencies(
 }
 
 impl<'task> CartesianSemantics<'task> {
-    fn new(task: &'task dyn AbstractNumericTask, random_seed: Option<u64>) -> Result<Self> {
+    fn new(
+        task: &'task dyn AbstractNumericTask,
+        config: &CartesianAbstractionConfig,
+    ) -> Result<Self> {
         for (op_id, op) in task.get_operators().iter().enumerate() {
             validate_abstraction_operator(task, op, op_id)?;
         }
@@ -707,6 +725,20 @@ impl<'task> CartesianSemantics<'task> {
             .map(|op| metric_operator_cost_from_initial_values(task, op))
             .collect();
         let operator_count = task.get_operators().len();
+        let mut target_split_boundaries = task
+            .numeric_variables()
+            .iter()
+            .enumerate()
+            .filter(|(_, variable)| variable.get_type() == &NumericType::Constant)
+            .filter_map(|(numeric_var_id, _)| {
+                task.get_initial_numeric_state_values()
+                    .get(numeric_var_id)
+                    .copied()
+                    .filter(|value| value.is_finite())
+            })
+            .collect::<Vec<_>>();
+        target_split_boundaries.sort_by(f64::total_cmp);
+        target_split_boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
         let mut prop_split_dependent_operators = (0..task.get_num_variables())
             .map(|_| OperatorBitSet::empty(operator_count))
             .collect::<Vec<_>>();
@@ -767,7 +799,10 @@ impl<'task> CartesianSemantics<'task> {
             operator_costs,
             prop_split_dependent_operators,
             numeric_split_dependent_operators,
-            random_seed,
+            random_seed: config.random_seed,
+            refinement_direction: config.refinement_direction,
+            split_selection_rank: config.split_selection_rank,
+            target_split_boundaries,
         })
     }
 
@@ -784,6 +819,29 @@ impl<'task> CartesianSemantics<'task> {
             .min_by_key(|(_, key)| mix_seed(seed ^ tag ^ **key))
             .map(|(index, _)| index)
             .expect("nonempty Cartesian key set has no minimum")
+    }
+
+    fn choose_split_index(&self, candidates: &[Split], tag: u64) -> usize {
+        debug_assert!(
+            !candidates.is_empty(),
+            "cannot choose from an empty split set"
+        );
+        if let Some(rank) = self.split_selection_rank {
+            let mut indices = (0..candidates.len()).collect::<Vec<_>>();
+            indices.sort_by_key(|&index| {
+                let dimension = match candidates[index].dimension() {
+                    SplitDimension::Propositional(var_id) => (0usize, var_id),
+                    SplitDimension::Numeric(var_id) => (1usize, var_id),
+                };
+                (dimension, split_choice_key(self, &candidates[index]))
+            });
+            return indices[rank % indices.len()];
+        }
+        let keys = candidates
+            .iter()
+            .map(|split| split_choice_key(self, split))
+            .collect::<Vec<_>>();
+        self.choose_keyed_index(&keys, tag)
     }
 
     fn operator_depends_on_split(&self, op_id: usize, dimension: SplitDimension) -> bool {
@@ -1331,7 +1389,7 @@ impl CartesianAbstractionGenerator {
 
     pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<CartesianAbstraction> {
         let start = Instant::now();
-        let semantics = CartesianSemantics::new(task, self.config.random_seed)?;
+        let semantics = CartesianSemantics::new(task, &self.config)?;
         let mut working = WorkingAbstraction::new(
             semantics.trivial_region()?,
             semantics.task.get_operators().len(),
@@ -1341,7 +1399,6 @@ impl CartesianAbstractionGenerator {
                 working.add_transition(0, op_id, 0);
             }
         }
-
         let state_packer = Arc::new(make_prop_state_packer(task));
         let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
         let mut refinements: usize = 0;
@@ -1443,6 +1500,8 @@ impl CartesianAbstractionGenerator {
                 refinements,
                 collection_goal_id: None,
                 collection_variant_id: None,
+                refinement_direction: self.config.refinement_direction,
+                split_selection_rank: self.config.split_selection_rank,
             },
         })
     }
@@ -1484,20 +1543,28 @@ impl CartesianAbstractionCollectionGenerator {
             .max(1)
             .checked_mul(variants_per_goal)
             .context("Cartesian collection abstraction count overflow")?;
-        ensure!(
-            self.config.max_collection_states >= abstraction_count,
-            "Cartesian max_collection_size {} cannot give at least one state to each of the {abstraction_count} abstractions",
-            self.config.max_collection_states
-        );
-
         let start = Instant::now();
         let mut remaining_states = self.config.max_collection_states;
         let mut abstractions = Vec::with_capacity(abstraction_count);
+        let mut variants_built_by_goal = vec![0usize; goal_count];
+        let mut best_initial_h_by_goal = vec![0.0f64; goal_count];
         let mut stop_reason = "requested abstraction count reached";
         for abstraction_id in 0..abstraction_count {
-            let goal_id = abstraction_id / variants_per_goal;
-            let variant_id = abstraction_id % variants_per_goal;
-            let remaining_abstractions = abstraction_count - abstraction_id;
+            if remaining_states < 2 && !abstractions.is_empty() {
+                stop_reason = "collection size limit";
+                break;
+            }
+            let (goal_id, variant_id) = if goal_count == 0 {
+                (0, 0)
+            } else {
+                let goal_id = select_next_cartesian_collection_goal(
+                    &variants_built_by_goal,
+                    &best_initial_h_by_goal,
+                    variants_per_goal,
+                )
+                .expect("Cartesian collection schedule must have an unfinished goal");
+                (goal_id, variants_built_by_goal[goal_id])
+            };
             let remaining_time = match self.config.total_max_time {
                 Some(total_max_time) => {
                     let elapsed = start.elapsed();
@@ -1515,9 +1582,7 @@ impl CartesianAbstractionCollectionGenerator {
                 None => None,
             };
             let mut abstraction_config = self.config.abstraction.clone();
-            abstraction_config.max_states = abstraction_config
-                .max_states
-                .min(remaining_states - (remaining_abstractions - 1));
+            abstraction_config.max_states = abstraction_config.max_states.min(remaining_states);
             abstraction_config.max_time = match (abstraction_config.max_time, remaining_time) {
                 (Some(per_abstraction), Some(remaining)) => Some(per_abstraction.min(remaining)),
                 (Some(per_abstraction), None) => Some(per_abstraction),
@@ -1525,6 +1590,12 @@ impl CartesianAbstractionCollectionGenerator {
                 (None, None) => None,
             };
             if goal_count > 0 && self.config.variants_per_goal > 1 {
+                abstraction_config.refinement_direction = if variant_id.is_multiple_of(2) {
+                    CartesianRefinementDirection::Progression
+                } else {
+                    CartesianRefinementDirection::Regression
+                };
+                abstraction_config.split_selection_rank = Some(variant_id / 2);
                 abstraction_config.random_seed = if variant_id == 0 {
                     None
                 } else {
@@ -1542,10 +1613,12 @@ impl CartesianAbstractionCollectionGenerator {
                 .as_ref()
                 .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
             debug!(
-                "Cartesian collection: building abstraction {}/{abstraction_count}, goal={}, variant={}, max_states={}, seed={:?}",
+                "Cartesian collection: building abstraction {}/{abstraction_count}, goal={}, variant={}, direction={:?}, split_rank={:?}, max_states={}, seed={:?}",
                 abstraction_id + 1,
                 goal_id,
                 variant_id,
+                abstraction_config.refinement_direction,
+                abstraction_config.split_selection_rank,
                 abstraction_config.max_states,
                 abstraction_config.random_seed
             );
@@ -1563,6 +1636,12 @@ impl CartesianAbstractionCollectionGenerator {
             abstraction.metadata.collection_goal_id = (goal_count > 0).then_some(goal_id);
             abstraction.metadata.collection_variant_id = (goal_count > 0).then_some(variant_id);
             abstraction.metadata.abstraction_use = AbstractionUse::CollectionMember;
+            if goal_count > 0 {
+                variants_built_by_goal[goal_id] += 1;
+                let initial_h = abstraction.distance_table.distances
+                    [abstraction.distance_table.initial_state_hash];
+                best_initial_h_by_goal[goal_id] = best_initial_h_by_goal[goal_id].max(initial_h);
+            }
             abstractions.push(abstraction);
             if !crate::resource_limits::poll_and_release_if_exceeded() {
                 stop_reason = "memory limit";
@@ -1579,6 +1658,40 @@ impl CartesianAbstractionCollectionGenerator {
         );
         Ok(abstractions)
     }
+}
+
+fn select_next_cartesian_collection_goal(
+    variants_built_by_goal: &[usize],
+    best_initial_h_by_goal: &[f64],
+    variants_per_goal: usize,
+) -> Option<usize> {
+    assert_eq!(
+        variants_built_by_goal.len(),
+        best_initial_h_by_goal.len(),
+        "Cartesian collection goal statistics must have equal lengths"
+    );
+    let guaranteed_variants = variants_per_goal.min(2);
+    if let Some(minimum_built) = variants_built_by_goal
+        .iter()
+        .copied()
+        .filter(|&count| count < guaranteed_variants)
+        .min()
+    {
+        return variants_built_by_goal
+            .iter()
+            .position(|&count| count == minimum_built && count < guaranteed_variants);
+    }
+
+    variants_built_by_goal
+        .iter()
+        .enumerate()
+        .filter(|(_, count)| **count < variants_per_goal)
+        .max_by(|(left_id, _), (right_id, _)| {
+            best_initial_h_by_goal[*left_id]
+                .total_cmp(&best_initial_h_by_goal[*right_id])
+                .then_with(|| right_id.cmp(left_id))
+        })
+        .map(|(goal_id, _)| goal_id)
 }
 
 #[derive(Debug)]
@@ -2185,11 +2298,7 @@ fn replay_optimal_abstract_trace(
                 })
                 .collect::<Result<Vec<_>>>()?;
             retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
-            let keys = candidates
-                .iter()
-                .map(|split| split_choice_key(semantics, split))
-                .collect::<Vec<_>>();
-            let index = semantics.choose_keyed_index(&keys, 0x474F_414C);
+            let index = semantics.choose_split_index(&candidates, 0x474F_414C);
             return Ok(PlanCheck::Refine(candidates.swap_remove(index)));
         }
 
@@ -2227,11 +2336,7 @@ fn replay_optimal_abstract_trace(
                 })
                 .collect::<Result<Vec<_>>>()?;
             retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
-            let keys = candidates
-                .iter()
-                .map(|split| split_choice_key(semantics, split))
-                .collect::<Vec<_>>();
-            let index = semantics.choose_keyed_index(&keys, 0x5052_4543);
+            let index = semantics.choose_split_index(&candidates, 0x5052_4543);
             return Ok(PlanCheck::Refine(candidates.swap_remove(index)));
         }
 
@@ -2611,74 +2716,89 @@ fn comparison_refinement(
             .numeric
             .get(var_id)
             .with_context(|| format!("missing Cartesian numeric var {var_id}"))?;
-        for lower_includes_boundary in [true, false] {
-            if !parent.can_split_at(witness_value, lower_includes_boundary) {
-                continue;
-            }
-            let lower = interval_intersection(
-                parent,
-                Interval::new(
-                    f64::NEG_INFINITY,
-                    witness_value,
-                    false,
-                    lower_includes_boundary,
-                ),
-            );
-            let upper = interval_intersection(
-                parent,
-                Interval::new(
-                    witness_value,
-                    f64::INFINITY,
-                    !lower_includes_boundary,
-                    false,
-                ),
-            );
-            let witness_child = if lower.contains(witness_value) {
-                lower
-            } else {
-                ensure!(
-                    upper.contains(witness_value),
-                    "comparison split loses witness {witness_value} for numeric var {var_id}"
+        let mut boundaries = Vec::new();
+        if semantics.refinement_direction == CartesianRefinementDirection::Regression {
+            boundaries.extend(semantics.target_split_boundaries.iter().copied());
+        }
+        boundaries.push(witness_value);
+        boundaries.sort_by(f64::total_cmp);
+        boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
+
+        for boundary in boundaries {
+            for lower_includes_boundary in [true, false] {
+                if !parent.can_split_at(boundary, lower_includes_boundary) {
+                    continue;
+                }
+                let lower = interval_intersection(
+                    parent,
+                    Interval::new(f64::NEG_INFINITY, boundary, false, lower_includes_boundary),
                 );
-                upper
-            };
-            let mut child_numeric = state.numeric.clone();
-            child_numeric[var_id] = witness_child;
-            let result = tree.evaluate_interval(&child_numeric);
-            ensure!(
-                result != Some(!concrete_truth),
-                "comparison interval for tree {tree_id} excludes its concrete witness after splitting numeric var {var_id}"
-            );
-            let achieved = match goal {
-                ComparisonRefinementGoal::ExcludeDesired(_) => result == Some(!desired_truth),
-                ComparisonRefinementGoal::GuaranteeDesired(_) => result == Some(desired_truth),
-            };
-            let candidate = Split::Numeric {
-                state_id,
-                var_id,
-                boundary: witness_value,
-                lower_includes_boundary,
-                witness_value,
-                description: description.clone(),
-            };
-            candidates.push((achieved, candidate));
+                let upper = interval_intersection(
+                    parent,
+                    Interval::new(boundary, f64::INFINITY, !lower_includes_boundary, false),
+                );
+                let (witness_child, other_child) = if lower.contains(witness_value) {
+                    (lower, upper)
+                } else {
+                    ensure!(
+                        upper.contains(witness_value),
+                        "comparison split at {boundary} loses witness {witness_value} for numeric var {var_id}"
+                    );
+                    (upper, lower)
+                };
+                let mut child_numeric = state.numeric.clone();
+                child_numeric[var_id] = witness_child;
+                let witness_result = tree.evaluate_interval(&child_numeric);
+                ensure!(
+                    witness_result != Some(!concrete_truth),
+                    "comparison interval for tree {tree_id} excludes its concrete witness after splitting numeric var {var_id}"
+                );
+                child_numeric[var_id] = other_child;
+                let other_result = tree.evaluate_interval(&child_numeric);
+                let achieved = match goal {
+                    ComparisonRefinementGoal::ExcludeDesired(_) => {
+                        witness_result == Some(!desired_truth)
+                    }
+                    ComparisonRefinementGoal::GuaranteeDesired(_) => {
+                        witness_result == Some(desired_truth)
+                    }
+                };
+                let separates_truth = achieved && other_result == Some(!concrete_truth);
+                let candidate = Split::Numeric {
+                    state_id,
+                    var_id,
+                    boundary,
+                    lower_includes_boundary,
+                    witness_value,
+                    description: description.clone(),
+                };
+                candidates.push((separates_truth, achieved, candidate));
+            }
         }
     }
     ensure!(
         !candidates.is_empty(),
         "comparison tree {tree_id} has no strict regular-variable split in Cartesian state {state_id}"
     );
-    retain_min_growth_splits(working, semantics, &mut candidates, |(_, split)| split)?;
-    let has_achieving_candidate = candidates.iter().any(|(achieved, _)| *achieved);
+    retain_min_growth_splits(working, semantics, &mut candidates, |(_, _, split)| split)?;
+    let has_target_centered_candidate = semantics.refinement_direction
+        == CartesianRefinementDirection::Regression
+        && candidates
+            .iter()
+            .any(|(separates_truth, _, _)| *separates_truth);
+    if has_target_centered_candidate {
+        candidates.retain(|(separates_truth, _, _)| *separates_truth);
+    }
+    let has_achieving_candidate = candidates.iter().any(|(_, achieved, _)| *achieved);
     if has_achieving_candidate {
-        candidates.retain(|(achieved, _)| *achieved);
+        candidates.retain(|(_, achieved, _)| *achieved);
     }
     let keys = candidates
         .iter()
-        .map(|(_, split)| split_choice_key(semantics, split))
+        .map(|(_, _, split)| split_choice_key(semantics, split))
         .collect::<Vec<_>>();
     let index = semantics.choose_keyed_index(&keys, 0x434F_4D50);
-    Ok(candidates.swap_remove(index).1)
+    Ok(candidates.swap_remove(index).2)
 }
 
 fn comparison_truth(prop_value: usize) -> Result<bool> {
@@ -2811,11 +2931,7 @@ fn split_deviation(
         rejected_numeric_splits.join("; ")
     );
     retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
-    let keys = candidates
-        .iter()
-        .map(|split| split_choice_key(semantics, split))
-        .collect::<Vec<_>>();
-    let index = semantics.choose_keyed_index(&keys, 0x4445_5649);
+    let index = semantics.choose_split_index(&candidates, 0x4445_5649);
     Ok(candidates.swap_remove(index))
 }
 

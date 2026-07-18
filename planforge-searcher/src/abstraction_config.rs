@@ -7,7 +7,7 @@ use planforge_search::config::{
 use planforge_search::evaluation::abstraction_collections::component::AbstractionComponent;
 use planforge_search::evaluation::cartesian_abstractions::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
 };
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
@@ -86,6 +86,9 @@ pub(crate) fn validate_scp_combinator_options(args: &[ConfigArg]) -> Result<(), 
         "max_time",
         "table_construction_max_time",
         "max_size",
+        "diversify",
+        "samples",
+        "max_orders",
         "interval",
         "combine_labels",
         "scoring_function",
@@ -330,6 +333,22 @@ fn apply_cartesian_source_options(
             }
             "random_seed" => {
                 config.abstraction.random_seed = Some(u64::from_option_value(arg.value())?);
+            }
+            "refinement_direction" => {
+                let value = String::from_option_value(arg.value())?;
+                config.abstraction.refinement_direction = match value.as_str() {
+                    "progression" => CartesianRefinementDirection::Progression,
+                    "regression" | "target_centered" => CartesianRefinementDirection::Regression,
+                    _ => {
+                        return Err(format!(
+                            "invalid Cartesian refinement_direction `{value}`; expected progression or regression"
+                        ));
+                    }
+                };
+            }
+            "split_selection_rank" => {
+                config.abstraction.split_selection_rank =
+                    Some(usize::from_option_value(arg.value())?);
             }
             "variants_per_goal" if collection => {
                 config.variants_per_goal = usize::from_option_value(arg.value())?;
