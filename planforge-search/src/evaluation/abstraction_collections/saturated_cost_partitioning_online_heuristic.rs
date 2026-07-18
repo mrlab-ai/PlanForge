@@ -85,6 +85,7 @@ pub enum OrderGenerator {
     Greedy,
     DynamicGreedy,
     Random,
+    Diverse,
 }
 
 impl fmt::Display for OrderGenerator {
@@ -93,6 +94,7 @@ impl fmt::Display for OrderGenerator {
             OrderGenerator::Greedy => write!(f, "greedy_orders"),
             OrderGenerator::DynamicGreedy => write!(f, "dynamic_greedy_orders"),
             OrderGenerator::Random => write!(f, "random_orders"),
+            OrderGenerator::Diverse => write!(f, "diverse_orders"),
         }
     }
 }
@@ -105,6 +107,7 @@ impl crate::config::FromOptionValue for OrderGenerator {
             "greedy_orders" | "greedy_orders()" => Ok(Self::Greedy),
             "dynamic_greedy_orders" | "dynamic_greedy_orders()" => Ok(Self::DynamicGreedy),
             "random_orders" | "random_orders()" => Ok(Self::Random),
+            "diverse_orders" | "diverse_orders()" => Ok(Self::Diverse),
             other => Err(format!("invalid OrderGenerator `{other}`")),
         }
     }
@@ -181,6 +184,9 @@ pub struct ScpOnlineConfig {
     pub scoring_function: ScoringFunction,
     #[option(rename = "orders")]
     pub order_generator: OrderGenerator,
+    /// Time reserved for the bounded initial order portfolio when offline
+    /// diversification is enabled. This is independent of hill climbing.
+    pub initial_order_generation_max_time: f64,
     pub order_optimization_max_time: f64,
     pub saturator: Saturator,
     /// Additional traversals over the same abstraction order using the
@@ -281,6 +287,7 @@ impl FillScpConfig {
             pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
             scoring_function: self.scoring_function,
             order_generator: self.order_generator,
+            initial_order_generation_max_time: 10.0,
             order_optimization_max_time: self.order_optimization_max_time,
             saturator: self.saturator,
             residual_sweeps: 0,
@@ -322,11 +329,10 @@ impl Default for ScpOnlineConfig {
             pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
             scoring_function: ScoringFunction::MaxHeuristicPerStolenCosts,
             order_generator: OrderGenerator::Greedy,
-            // Spend a budget on the diversified-candidate + hill-climbing
-            // ordering at preprocessing. With `interval = usize::MAX` the SCP
-            // is only built once, so this runs at most once per search; the
-            // resulting initial-state h is materially better than the random
-            // greedy ordering's, especially under abstract-operator CP.
+            initial_order_generation_max_time: 10.0,
+            // Improve the best initial order after constructing the bounded
+            // initial candidate portfolio. The table-construction deadline
+            // still bounds the complete preprocessing phase.
             order_optimization_max_time: 5.0,
             saturator: Saturator::All,
             residual_sweeps: 0,
@@ -365,7 +371,6 @@ struct CostPartitioningHeuristic {
 struct CandidateCostPartitions {
     partitions: Vec<CostPartitioningHeuristic>,
     best_index: usize,
-    optimization_deadline: Option<Instant>,
 }
 
 impl CostPartitioningHeuristic {
@@ -766,6 +771,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 "offline SCP diversification requires online=false".to_string(),
             ));
         }
+        if config.order_generator == OrderGenerator::Diverse && !config.diversify {
+            return Err(EvaluationError::ComputationFailed(
+                "diverse SCP orders require diversify=true".to_string(),
+            ));
+        }
         if config.diversify && config.samples == 0 {
             return Err(EvaluationError::ComputationFailed(
                 "offline SCP diversification requires samples > 0".to_string(),
@@ -774,6 +784,15 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         if config.diversify && config.max_orders == 0 {
             return Err(EvaluationError::ComputationFailed(
                 "offline SCP diversification requires max_orders > 0".to_string(),
+            ));
+        }
+        if config.diversify
+            && (config.initial_order_generation_max_time.is_nan()
+                || config.initial_order_generation_max_time < 0.0)
+        {
+            return Err(EvaluationError::ComputationFailed(
+                "offline SCP diversification requires initial_order_generation_max_time >= 0"
+                    .to_string(),
             ));
         }
         if config.diversify && sampling_task.is_none() {
@@ -1106,7 +1125,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         num_domain_abstractions: usize,
         deadline: Option<Instant>,
     ) -> Result<Vec<usize>, EvaluationError> {
-        let order = match self.config.order_generator {
+        match self.config.order_generator {
             OrderGenerator::Greedy => Ok(Self::compute_greedy_order_for_state(
                 state,
                 abstract_state_ids,
@@ -1128,8 +1147,48 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 num_domain_abstractions,
                 deadline,
             ),
-        };
-        order
+            OrderGenerator::Diverse => Ok(Self::compute_greedy_order_for_state(
+                state,
+                abstract_state_ids,
+                self.config.scoring_function,
+                abstractions,
+                self.config.use_abstract_operator_cost_partitioning,
+            )),
+        }
+    }
+
+    fn compute_diversification_orders(
+        &self,
+        task: &dyn AbstractNumericTask,
+        state: &mut ScpOnlineState,
+        abstract_state_ids: &[Option<usize>],
+        abstractions: &[DomainAbstraction],
+        num_domain_abstractions: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<Vec<usize>>, EvaluationError> {
+        if self.config.order_generator != OrderGenerator::Diverse {
+            return self
+                .compute_state_dependent_order(
+                    task,
+                    state,
+                    abstract_state_ids,
+                    abstractions,
+                    num_domain_abstractions,
+                    deadline,
+                )
+                .map(|order| vec![order]);
+        }
+
+        let greedy = Self::compute_greedy_order_for_state(
+            state,
+            abstract_state_ids,
+            self.config.scoring_function,
+            abstractions,
+            self.config.use_abstract_operator_cost_partitioning,
+        );
+        let mut random = (0..state.h_values_by_abstraction.len()).collect::<Vec<_>>();
+        random.shuffle(&mut state.rng);
+        Ok(deduplicate_orders(vec![greedy, random]))
     }
 
     fn cartesian_goal_cover_order(
@@ -1169,32 +1228,19 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 *variants_by_goal.entry(goal_id).or_default() += 1;
             }
         }
-        let goal_count = variants_by_goal.len();
+        let goal_count = variants_by_goal
+            .values()
+            .filter(|&&variant_count| variant_count >= 2)
+            .count();
         let max_variants = variants_by_goal.values().copied().max().unwrap_or(0);
         if goal_count == 0 || max_variants < 2 {
             return Vec::new();
         }
 
-        let mut variants = Vec::new();
-        // SCP couples otherwise independent goal abstractions through their
-        // shared residual costs. Use a bounded pairwise covering design over
-        // the first anchor, its complementary partner, and the other goals'
-        // representatives. With eight variants, all 64 anchor/representative
-        // pairs occur and every complementary choice is balanced across them.
-        'variants: for anchor_offset in 0..max_variants {
-            for representative_round in 0..max_variants {
-                variants.push(GoalCoverOrderVariant {
-                    anchor_offset,
-                    complementary_round: anchor_offset.wrapping_add(representative_round),
-                    representative_round,
-                    compact: true,
-                    ..Default::default()
-                });
-                if variants.len() == 64 {
-                    break 'variants;
-                }
-            }
-        }
+        // Rotate the anchor goal before varying its construction variant. This
+        // guarantees coverage of every goal when the 64-order cap is large
+        // enough, including states where that goal is the last one remaining.
+        let variants = compact_goal_cover_variants(goal_count, max_variants);
 
         deduplicate_orders(
             variants
@@ -1643,6 +1689,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             );
         }
 
+        let initial_order_generation_max_time = if self.config.diversify {
+            self.config.initial_order_generation_max_time
+        } else {
+            self.config.order_optimization_max_time
+        };
         let mut candidates = if self.config.use_abstract_operator_cost_partitioning {
             self.build_best_abstract_operator_cp_from_candidate_orders(
                 task,
@@ -1653,7 +1704,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 num_domain_abstractions,
                 original_costs,
                 deadline,
-                self.config.order_optimization_max_time,
+                initial_order_generation_max_time,
             )?
         } else {
             self.build_best_label_cp_from_candidate_orders(
@@ -1665,11 +1716,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 num_domain_abstractions,
                 original_costs,
                 deadline,
-                self.config.order_optimization_max_time,
+                initial_order_generation_max_time,
             )?
         };
 
         if self.config.order_optimization_max_time > 0.0 {
+            let local_deadline = optimization_deadline(self.config.order_optimization_max_time);
             self.optimize_order_with_hill_climbing(
                 task,
                 abstractions,
@@ -1679,7 +1731,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 abstract_state_ids,
                 &mut order,
                 &mut candidates.partitions[candidates.best_index],
-                candidates.optimization_deadline,
+                earliest_deadline(deadline, local_deadline),
             )?;
         }
 
@@ -1693,13 +1745,17 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
         if self.config.diversify {
             let best = candidates.partitions.swap_remove(candidates.best_index);
+            candidates.partitions.retain(|cp| !cp.is_empty());
+            let mut initial_candidates = Vec::with_capacity(candidates.partitions.len() + 1);
+            initial_candidates.push(best);
+            initial_candidates.extend(candidates.partitions);
             return self.build_offline_diversified_portfolio(
                 task,
                 state,
                 abstractions,
                 num_domain_abstractions,
                 abstract_state_ids,
-                best,
+                initial_candidates,
                 deadline,
             );
         }
@@ -1723,12 +1779,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         abstractions: &[DomainAbstraction],
         num_domain_abstractions: usize,
         initial_abstract_state_ids: &[Option<usize>],
-        initial_cp: CostPartitioningHeuristic,
+        initial_candidates: Vec<CostPartitioningHeuristic>,
         table_deadline: Option<Instant>,
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
         assert!(!self.config.online);
         assert!(self.config.diversify);
-        assert!(!initial_cp.is_empty());
+        assert!(!initial_candidates.is_empty());
+        assert!(!initial_candidates[0].is_empty());
 
         let diversification_deadline = self
             .config
@@ -1736,7 +1793,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .is_finite()
             .then(|| Instant::now() + Duration::from_secs_f64(self.config.max_time.max(0.0)));
         let deadline = earliest_deadline(table_deadline, diversification_deadline);
-        let initial_h = initial_cp.compute_heuristic(initial_abstract_state_ids);
+        let initial_h = initial_candidates[0].compute_heuristic(initial_abstract_state_ids);
         self.generate_offline_samples(state, initial_h, deadline)?;
         assert!(
             !state.offline_sample_ids.is_empty(),
@@ -1746,17 +1803,31 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let mut sample_best = vec![f64::NEG_INFINITY; state.offline_sample_ids.len()];
         let mut portfolio = Vec::new();
         let mut portfolio_size_kb = 0usize;
-        retain_if_sample_improving(
-            initial_cp,
-            &state.offline_sample_ids,
-            &mut sample_best,
-            &mut portfolio,
-            &mut portfolio_size_kb,
-            self.config.max_size,
+        let mut evaluated_orders = 0usize;
+        for candidate in initial_candidates {
+            if !portfolio.is_empty()
+                && (portfolio.len() >= self.config.max_orders
+                    || portfolio_size_kb >= self.config.max_size
+                    || deadline.is_some_and(|end| Instant::now() >= end))
+            {
+                break;
+            }
+            evaluated_orders += 1;
+            retain_if_sample_improving(
+                candidate,
+                &state.offline_sample_ids,
+                &mut sample_best,
+                &mut portfolio,
+                &mut portfolio_size_kb,
+                self.config.max_size,
+            );
+        }
+        assert!(
+            !portfolio.is_empty(),
+            "the best initial SCP must be retained as the first portfolio entry"
         );
 
         let original_costs = self.original_operator_costs.as_slice();
-        let mut evaluated_orders = 1usize;
         for sample_index in 1..state.offline_sample_ids.len() {
             if portfolio.len() >= self.config.max_orders
                 || portfolio_size_kb >= self.config.max_size
@@ -1767,7 +1838,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             let sample_ids = state.offline_sample_ids[sample_index].clone();
             let standalone_h =
                 standalone_current_h_values(state, &sample_ids, num_domain_abstractions);
-            let mut order = self.compute_state_dependent_order(
+            let orders = self.compute_diversification_orders(
                 task,
                 state,
                 &sample_ids,
@@ -1775,66 +1846,68 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 num_domain_abstractions,
                 deadline,
             )?;
-            let candidate = if self.config.use_abstract_operator_cost_partitioning {
-                self.build_abstract_operator_cp(
-                    task,
-                    abstractions,
-                    &order,
-                    &sample_ids,
-                    &standalone_h,
-                    num_domain_abstractions,
-                    original_costs,
-                    deadline,
-                    self.config.saturator,
-                )
-            } else {
-                self.build_label_cp(
-                    task,
-                    abstractions,
-                    &order,
-                    &sample_ids,
-                    num_domain_abstractions,
-                    original_costs,
-                    deadline,
-                )
-            };
-            let mut candidate = match candidate {
-                Ok(candidate) => candidate,
-                Err(error) if Self::is_online_deadline_error_eval(&error) => break,
-                Err(error) => return Err(error),
-            };
-            evaluated_orders += 1;
+            for mut order in orders {
+                if portfolio.len() >= self.config.max_orders
+                    || portfolio_size_kb >= self.config.max_size
+                    || deadline.is_some_and(|end| Instant::now() >= end)
+                {
+                    break;
+                }
+                let candidate = if self.config.use_abstract_operator_cost_partitioning {
+                    self.build_abstract_operator_cp(
+                        task,
+                        abstractions,
+                        &order,
+                        &sample_ids,
+                        &standalone_h,
+                        num_domain_abstractions,
+                        original_costs,
+                        deadline,
+                        self.config.saturator,
+                    )
+                } else {
+                    self.build_label_cp(
+                        task,
+                        abstractions,
+                        &order,
+                        &sample_ids,
+                        num_domain_abstractions,
+                        original_costs,
+                        deadline,
+                    )
+                };
+                let mut candidate = match candidate {
+                    Ok(candidate) => candidate,
+                    Err(error) if Self::is_online_deadline_error_eval(&error) => break,
+                    Err(error) => return Err(error),
+                };
+                evaluated_orders += 1;
 
-            if self.config.order_optimization_max_time > 0.0 {
-                let local_deadline =
-                    self.config
-                        .order_optimization_max_time
-                        .is_finite()
-                        .then(|| {
-                            Instant::now()
-                                + Duration::from_secs_f64(self.config.order_optimization_max_time)
-                        });
-                self.optimize_order_with_hill_climbing(
-                    task,
-                    abstractions,
-                    &standalone_h,
-                    num_domain_abstractions,
-                    original_costs,
-                    &sample_ids,
-                    &mut order,
-                    &mut candidate,
-                    earliest_deadline(deadline, local_deadline),
-                )?;
+                if self.config.order_optimization_max_time > 0.0 {
+                    let local_deadline =
+                        optimization_deadline(self.config.order_optimization_max_time);
+                    self.optimize_order_with_hill_climbing(
+                        task,
+                        abstractions,
+                        &standalone_h,
+                        num_domain_abstractions,
+                        original_costs,
+                        &sample_ids,
+                        &mut order,
+                        &mut candidate,
+                        earliest_deadline(deadline, local_deadline),
+                    )?;
+                }
+
+                retain_if_sample_improving(
+                    candidate,
+                    &state.offline_sample_ids,
+                    &mut sample_best,
+                    &mut portfolio,
+                    &mut portfolio_size_kb,
+                    self.config.max_size,
+                );
             }
-
-            retain_if_sample_improving(
-                candidate,
-                &state.offline_sample_ids,
-                &mut sample_best,
-                &mut portfolio,
-                &mut portfolio_size_kb,
-                self.config.max_size,
-            );
         }
 
         let sample_count = state.offline_sample_ids.len();
@@ -1979,7 +2052,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let mut best_h = baseline.compute_heuristic(abstract_state_ids);
         let mut partitions = vec![baseline];
         let mut best_index = 0;
-        let candidate_deadline = optimization_deadline(optimization_max_time);
+        let candidate_deadline = earliest_deadline(
+            baseline_deadline,
+            optimization_deadline(optimization_max_time),
+        );
 
         for candidate in optimization_max_time
             .is_sign_positive()
@@ -2028,7 +2104,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(CandidateCostPartitions {
             partitions,
             best_index,
-            optimization_deadline: candidate_deadline,
         })
     }
 
@@ -2060,7 +2135,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let mut best_h = baseline.compute_heuristic(abstract_state_ids);
         let mut partitions = vec![baseline];
         let mut best_index = 0;
-        let candidate_deadline = optimization_deadline(optimization_max_time);
+        let candidate_deadline = earliest_deadline(
+            baseline_deadline,
+            optimization_deadline(optimization_max_time),
+        );
 
         for candidate in optimization_max_time
             .is_sign_positive()
@@ -2117,7 +2195,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(CandidateCostPartitions {
             partitions,
             best_index,
-            optimization_deadline: candidate_deadline,
         })
     }
 
@@ -3957,6 +4034,34 @@ struct GoalCoverOrderVariant {
     compact: bool,
 }
 
+fn compact_goal_cover_variants(
+    goal_count: usize,
+    variants_per_goal: usize,
+) -> Vec<GoalCoverOrderVariant> {
+    assert!(goal_count > 0);
+    assert!(variants_per_goal > 1);
+    let variant_count = goal_count
+        .saturating_mul(variants_per_goal)
+        .saturating_mul(variants_per_goal)
+        .min(64);
+    (0..variant_count)
+        .map(|variant_index| {
+            let anchor_goal_offset = variant_index % goal_count;
+            let anchor_round = variant_index / goal_count;
+            let anchor_offset = anchor_round % variants_per_goal;
+            let representative_round = (anchor_round / variants_per_goal) % variants_per_goal;
+            GoalCoverOrderVariant {
+                anchor_goal_offset,
+                anchor_offset,
+                complementary_round: anchor_offset.wrapping_add(representative_round),
+                representative_round,
+                compact: true,
+                ..Default::default()
+            }
+        })
+        .collect()
+}
+
 fn cartesian_goal_cover_order(
     base_order: &[usize],
     num_domain_abstractions: usize,
@@ -4940,6 +5045,7 @@ mod handcrafted_sailing_tests {
             pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
             scoring_function: ScoringFunction::MaxHeuristic,
             order_generator: OrderGenerator::Greedy,
+            initial_order_generation_max_time: 0.0,
             order_optimization_max_time: 0.0,
             saturator: Saturator::All,
             random_seed: Some(1),
@@ -5900,6 +6006,18 @@ mod tests {
     }
 
     #[test]
+    fn compact_goal_cover_schedule_visits_every_anchor_goal() {
+        let variants = compact_goal_cover_variants(18, 8);
+        let anchor_goals = variants
+            .iter()
+            .map(|variant| variant.anchor_goal_offset)
+            .collect::<HashSet<_>>();
+
+        assert_eq!(variants.len(), 64);
+        assert_eq!(anchor_goals, (0..18).collect());
+    }
+
+    #[test]
     fn offline_scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
         let partition = |distances| CostPartitioningHeuristic {
             lookup_tables: vec![LookupTable {
@@ -6072,8 +6190,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
-        assert!(heuristic.state.borrow().improvement_ended);
-        assert!(heuristic.state.borrow().offline_sample_ids.is_empty());
+        let state = heuristic.state.borrow();
+        assert!(state.improvement_ended);
+        assert!(state.offline_sample_ids.is_empty());
+        assert!(!state.cp_heuristics.is_empty());
+        assert!(state.cp_heuristics.len() <= 8);
+        drop(state);
         assert!(heuristic.sampling_task.borrow().is_none());
         assert!(heuristic.cartesian_abstractions.borrow().is_none());
     }
@@ -6099,6 +6221,59 @@ mod tests {
         };
 
         assert!(error.to_string().contains("requires online=false"));
+    }
+
+    #[test]
+    fn diverse_orders_require_offline_diversification() {
+        let task = independent_goals_task();
+        let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
+        let mut config = scp_config(Saturator::All, true);
+        config.order_generator = OrderGenerator::Diverse;
+
+        let result = SaturatedCostPartitioningOnlineHeuristic::from_components(
+            None,
+            vec![component],
+            config,
+            &task,
+        );
+        let error = match result {
+            Ok(_) => panic!("diverse orders without diversification must be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("diverse SCP orders require diversify=true")
+        );
+    }
+
+    #[test]
+    fn offline_diversification_rejects_nan_initial_order_budget() {
+        let task = std::sync::Arc::new(independent_goals_task());
+        let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
+        let mut config = scp_config(Saturator::All, true);
+        config.online = false;
+        config.diversify = true;
+        config.initial_order_generation_max_time = f64::NAN;
+
+        let result = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+            None,
+            vec![component],
+            config,
+            &*task,
+            task.clone(),
+        );
+        let error = match result {
+            Ok(_) => panic!("NaN initial-order budget must be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("initial_order_generation_max_time >= 0")
+        );
     }
 
     #[test]
