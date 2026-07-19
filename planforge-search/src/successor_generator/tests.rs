@@ -150,21 +150,6 @@ fn test_per_state_info_subscription() {
 }
 
 #[test]
-fn test_automatic_cleanup_on_drop() {
-    let task = get_root_task();
-
-    let _registry_id = {
-        let state_registry = StateRegistry::for_task(Arc::new(&task));
-        let id = state_registry.id();
-
-        // Verify the cost_info is automatically subscribed
-        assert!(state_registry.get_cost_info().borrow().is_subscribed_to(id));
-
-        id
-    }; // StateRegistry drops here, triggering automatic cleanup
-}
-
-#[test]
 fn test_duplicate_successor_should_not_generate_new_id() {
     let task = get_root_task();
     let mut state_registry = StateRegistry::for_task(Arc::new(&task));
@@ -181,21 +166,21 @@ fn test_duplicate_successor_should_not_generate_new_id() {
 
     assert_eq!(op.name(), "drop");
     assert_eq!(initial_state.get_id(), 0);
-    assert_eq!(state_registry.get_registered_states().len(), 1);
+    assert_eq!(state_registry.num_registered_states(), 1);
 
     // Generate the successor state twice
     let successor1 = state_registry
         .get_successor_state(&initial_state, op)
         .expect("Failed to get first successor state");
 
-    assert_eq!(state_registry.get_registered_states().len(), 2);
+    assert_eq!(state_registry.num_registered_states(), 2);
     assert_eq!(successor1.get_id(), 1);
 
     let successor2 = state_registry
         .get_successor_state(&initial_state, op)
         .expect("Failed to get second successor state");
 
-    assert_eq!(state_registry.get_registered_states().len(), 2);
+    assert_eq!(state_registry.num_registered_states(), 2);
     assert_eq!(successor2.get_id(), 1);
 
     // They should have the same ID if duplicate detection is working

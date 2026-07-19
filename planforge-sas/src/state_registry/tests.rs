@@ -163,27 +163,66 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         ExplicitFact::new(0, 0),
     ));
 
-    let mut state_registry = StateRegistry::for_task(task.clone());
+    for compact in [false, true] {
+        let mut state_registry =
+            StateRegistry::for_task_with_compact_numeric(task.clone(), compact);
 
-    let initial = state_registry.get_initial_state();
-    let first = state_registry
-        .get_successor_state(&initial, &task.get_operators()[0])
-        .unwrap();
-    let second = state_registry
-        .get_successor_state(&initial, &task.get_operators()[1])
-        .unwrap();
+        let initial = state_registry.get_initial_state();
+        let first = state_registry
+            .get_successor_state(&initial, &task.get_operators()[0])
+            .unwrap();
+        let second = state_registry
+            .get_successor_state(&initial, &task.get_operators()[1])
+            .unwrap();
 
-    assert_eq!(first.get_id(), second.get_id());
-    assert_eq!(
-        state_registry
-            .get_numeric_var_value_unevaluated(&first, 0)
-            .unwrap(),
-        0.3
-    );
+        assert_eq!(first.get_id(), second.get_id());
+        assert_eq!(
+            state_registry
+                .get_numeric_var_value_unevaluated(&first, 0)
+                .unwrap(),
+            0.3
+        );
+    }
 }
 
 #[test]
-fn distinct_states_with_the_same_hash_use_the_collision_side_table() {
+fn compact_numeric_states_pack_exact_value_ids_with_propositions() {
+    let task: TaskRef = Arc::new(NumericRootTask::new(
+        2,
+        Metric::new(false, None),
+        vec![ExplicitVariable::new(
+            2,
+            "v0".into(),
+            vec!["off".into(), "on".into()],
+            None,
+            0,
+        )],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("y".into(), NumericType::Regular, None),
+        ],
+        vec![],
+        vec![],
+        vec![0],
+        vec![1.25, -7.5],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    ));
+    let mut regular = StateRegistry::for_task(task.clone());
+    let mut compact = StateRegistry::for_task_with_compact_numeric(task, true);
+    let regular_initial = regular.get_initial_state();
+    let compact_initial = compact.get_initial_state();
+
+    assert_eq!(regular_initial.buffer(&regular).len(), 3);
+    assert_eq!(compact_initial.buffer(&compact).len(), 1);
+    assert_eq!(compact_initial.get_numeric_state(&compact), [1.25, -7.5]);
+}
+
+#[test]
+fn distinct_states_with_the_same_hash_remain_distinguishable() {
     let task: TaskRef = Arc::new(get_root_task());
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
@@ -195,7 +234,6 @@ fn distinct_states_with_the_same_hash_use_the_collision_side_table() {
     let initial_bins = initial.buffer(&registry).to_vec();
     let successor_bins = successor.buffer(&registry).to_vec();
     registry.registered_states.clear();
-    registry.registered_state_collisions.clear();
 
     let forced_hash = 7;
     registry.insert_registered_state_id(forced_hash, initial.get_id());
@@ -209,9 +247,5 @@ fn distinct_states_with_the_same_hash_use_the_collision_side_table() {
         registry.find_registered_state_id(forced_hash, &successor_bins),
         Some(successor.get_id())
     );
-    assert_eq!(registry.registered_states.len(), 1);
-    assert_eq!(
-        registry.registered_state_collisions[&forced_hash],
-        [successor.get_id()]
-    );
+    assert_eq!(registry.registered_states.len(), 2);
 }

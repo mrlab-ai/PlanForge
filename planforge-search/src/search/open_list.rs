@@ -8,27 +8,28 @@ pub(crate) struct OpenEntry {
     pub(crate) f_value: OrderedFloat<f64>,
     pub(crate) h_value: OrderedFloat<f64>,
     pub(crate) g_value: f64,
-    state_id: u32,
-    pub(crate) insertion_order: u64,
-    /// `true` iff the operator that generated this successor was reported
-    /// as a preferred (helpful) action by the heuristic for the parent
-    /// state. Used as a tie-break inside a single queue, and as the queue
-    /// selector for dual-queue GBFS.
-    pub(crate) is_preferred: bool,
-    /// `true` iff this entry has already been popped once and the slow
-    /// admissible heuristic recomputed and folded in. Used only by the
-    /// fast/slow A* variant (`new_fast_slow`). On the first pop of a
-    /// `second == false` entry, the slow heuristic is evaluated, the
-    /// entry is reinserted with `f' = g + max(h_f, h_s)` and
-    /// `second = true`, and the expansion is deferred to the next pop.
-    /// For ordinary A*/GBFS this field is always `false` and the field
-    /// does not affect `Ord`.
-    pub(crate) second: bool,
+    pub(crate) insertion_order: u32,
+    /// Compact state ID plus the preferred and fast/slow-second-pop flags in
+    /// its two high bits. Keeping all priority values as `f64` while packing
+    /// these booleans makes an entry 32 rather than 40 bytes.
+    tagged_state_id: u32,
 }
+
+const PREFERRED_FLAG: u32 = 1 << 31;
+const SECOND_FLAG: u32 = 1 << 30;
+const STATE_ID_MASK: u32 = SECOND_FLAG - 1;
 
 impl OpenEntry {
     pub(crate) fn state_id(self) -> StateID {
-        self.state_id as StateID
+        (self.tagged_state_id & STATE_ID_MASK) as StateID
+    }
+
+    pub(crate) fn is_preferred(self) -> bool {
+        self.tagged_state_id & PREFERRED_FLAG != 0
+    }
+
+    pub(crate) fn is_second(self) -> bool {
+        self.tagged_state_id & SECOND_FLAG != 0
     }
 }
 
@@ -36,7 +37,7 @@ impl PartialEq for OpenEntry {
     fn eq(&self, other: &Self) -> bool {
         self.f_value == other.f_value
             && self.h_value == other.h_value
-            && self.is_preferred == other.is_preferred
+            && self.is_preferred() == other.is_preferred()
             && self.insertion_order == other.insertion_order
     }
 }
@@ -57,7 +58,7 @@ impl Ord for OpenEntry {
         other
             .f_value
             .cmp(&self.f_value)
-            .then_with(|| self.is_preferred.cmp(&other.is_preferred))
+            .then_with(|| self.is_preferred().cmp(&other.is_preferred()))
             .then_with(|| other.h_value.cmp(&self.h_value))
             .then_with(|| other.insertion_order.cmp(&self.insertion_order))
     }
@@ -82,7 +83,7 @@ pub(crate) struct DualQueueOpenList {
     regular_heap: BinaryHeap<OpenEntry>,
     preferred_heap: BinaryHeap<OpenEntry>,
     use_preferred_first: bool,
-    next_insertion_order: u64,
+    next_insertion_order: u32,
 }
 
 impl DualQueueOpenList {
@@ -115,26 +116,27 @@ impl DualQueueOpenList {
         is_preferred: bool,
         second: bool,
     ) {
-        let compact_state_id = u32::try_from(state_id)
-            .unwrap_or_else(|_| panic!("open-list state id {state_id} exceeds u32"));
-        assert_ne!(
-            compact_state_id,
-            u32::MAX,
-            "open-list state id {state_id} collides with the reserved compact-id sentinel"
+        let compact_state_id = u32::try_from(state_id).unwrap_or_else(|_| {
+            panic!("open-list state id {state_id} exceeds the compact representation")
+        });
+        assert!(
+            compact_state_id <= STATE_ID_MASK,
+            "open-list state id {state_id} exceeds the 30-bit compact representation"
         );
+        let tagged_state_id = compact_state_id
+            | if is_preferred { PREFERRED_FLAG } else { 0 }
+            | if second { SECOND_FLAG } else { 0 };
         let entry = OpenEntry {
             f_value: OrderedFloat(f_value),
             h_value: OrderedFloat(h_value),
             g_value,
-            state_id: compact_state_id,
             insertion_order: self.next_insertion_order,
-            is_preferred,
-            second,
+            tagged_state_id,
         };
         self.next_insertion_order = self
             .next_insertion_order
             .checked_add(1)
-            .expect("open-list insertion order overflow");
+            .expect("open-list insertion count exceeds u32");
         if self.use_preferred_first && is_preferred {
             self.preferred_heap.push(entry);
         } else {
@@ -153,5 +155,28 @@ impl DualQueueOpenList {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.regular_heap.is_empty() && self.preferred_heap.is_empty()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.regular_heap.len() + self.preferred_heap.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_entry_is_32_bytes_and_preserves_flags_and_id() {
+        assert_eq!(std::mem::size_of::<OpenEntry>(), 32);
+        let mut open = DualQueueOpenList::new(false);
+        open.insert_with_second(123, 2.0, 3.0, 5.0, true, true);
+        let entry = open.pop().unwrap();
+        assert_eq!(entry.state_id(), 123);
+        assert!(entry.is_preferred());
+        assert!(entry.is_second());
+        assert_eq!(entry.g_value, 2.0);
+        assert_eq!(entry.h_value.into_inner(), 3.0);
+        assert_eq!(entry.f_value.into_inner(), 5.0);
     }
 }

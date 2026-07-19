@@ -89,13 +89,20 @@ impl IntDoublePacker {
     }
 
     pub fn from_abstract_task(task: &dyn AbstractNumericTask) -> Self {
+        Self::from_abstract_task_with_numeric_range(task, u64::MAX)
+    }
+
+    pub fn from_abstract_task_with_numeric_range(
+        task: &dyn AbstractNumericTask,
+        numeric_range: u64,
+    ) -> Self {
         let mut domain_sizes = vec![];
         for var in task.variables().iter() {
             domain_sizes.push(var.domain_size() as u64);
         }
         for numeric_var in task.numeric_variables().iter() {
             if numeric_var.get_type() == &NumericType::Regular {
-                domain_sizes.push(u64::MAX);
+                domain_sizes.push(numeric_range);
             }
         }
         IntDoublePacker::new(&domain_sizes)

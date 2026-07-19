@@ -176,6 +176,11 @@ impl<'a> AStarSearch<'a> {
             policy.is_gbfs() && env::var_os("PLANFORGE_NO_PREFERRED").is_none();
         let num_variables = task.variables().len();
         let num_numeric_variables = task.numeric_variables().len();
+        info!(
+            "State representation: bins={}, compact_numeric={}",
+            state_registry.global_state_packer().num_bins(),
+            state_registry.uses_compact_numeric_values()
+        );
         Self {
             task,
             state_registry,
@@ -275,11 +280,13 @@ impl<'a> AStarSearch<'a> {
         };
 
         info!(
-            "{} = {} [{} evaluated, {} expanded, t={:.6}s, {} KB]",
+            "{} = {} [{} evaluated, {} expanded, {} states, {} open, t={:.6}s, {} KB]",
             self.policy.priority_label(),
             f_layer,
             self.stats.nodes_evaluated,
             self.stats.nodes_expanded,
+            self.state_registry.num_registered_states(),
+            self.open_list.len(),
             start_time.elapsed().as_secs_f64(),
             current_memory_kb(),
         );
@@ -440,7 +447,7 @@ impl<'a> AStarSearch<'a> {
             entry.g_value,
             combined_h,
             new_f,
-            entry.is_preferred,
+            entry.is_preferred(),
             true,
         );
         Ok(())
@@ -561,7 +568,7 @@ impl<'a> AStarSearch<'a> {
         // either a "first pop" that triggers the slow evaluation, or a
         // "second pop" that proceeds to expand. Because max of admissible
         // heuristics is admissible, optimality is preserved.
-        if matches!(self.policy, SearchPolicy::FastSlow { .. }) && !entry.second {
+        if matches!(self.policy, SearchPolicy::FastSlow { .. }) && !entry.is_second() {
             self.evaluate_and_reinsert_for_slow(entry, &state)?;
             return Ok(SearchStatus::InProgress);
         }

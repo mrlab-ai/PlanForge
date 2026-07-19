@@ -396,6 +396,11 @@ pub fn apply_process_limits(
     }
 
     if let Some(memory_limit) = memory_limit {
+        // mimalloc reserves address space in arenas well ahead of committed
+        // resident memory. The wrapper enforces the requested Linux limit
+        // against VmRSS; keep RLIMIT_AS only as an emergency ceiling there.
+        #[cfg(target_os = "linux")]
+        let memory_limit = memory_limit.saturating_mul(4);
         let address_space_limit = libc::rlimit {
             rlim_cur: memory_limit as libc::rlim_t,
             rlim_max: memory_limit as libc::rlim_t,
@@ -408,4 +413,71 @@ pub fn apply_process_limits(
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn process_rss_bytes(pid: u32) -> std::io::Result<u64> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
+    let rss_kib = status
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("VmRSS:").and_then(|value| {
+                value
+                    .split_whitespace()
+                    .next()
+                    .and_then(|part| part.parse::<u64>().ok())
+            })
+        })
+        .ok_or_else(|| std::io::Error::other(format!("VmRSS missing for process {pid}")))?;
+    rss_kib
+        .checked_mul(1024)
+        .ok_or_else(|| std::io::Error::other(format!("VmRSS overflow for process {pid}")))
+}
+
+#[cfg(target_os = "linux")]
+pub fn wait_with_memory_limit(
+    child: &mut std::process::Child,
+    memory_limit: u64,
+) -> std::io::Result<std::process::ExitStatus> {
+    const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        match process_rss_bytes(child.id()) {
+            Ok(rss) if rss >= memory_limit => {
+                child.kill()?;
+                return child.wait();
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(status) = child.try_wait()? {
+                    return Ok(status);
+                }
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::{process_rss_bytes, wait_with_memory_limit};
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::Command;
+
+    #[test]
+    fn reads_current_process_rss() {
+        assert!(process_rss_bytes(std::process::id()).unwrap() > 0);
+    }
+
+    #[test]
+    fn terminates_child_over_resident_memory_limit() {
+        let mut child = Command::new("sleep").arg("10").spawn().unwrap();
+        let status = wait_with_memory_limit(&mut child, 1).unwrap();
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+    }
 }
