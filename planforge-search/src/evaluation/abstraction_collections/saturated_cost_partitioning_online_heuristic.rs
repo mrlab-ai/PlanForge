@@ -1784,8 +1784,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         if self.config.diversify {
             let best = candidates.partitions.swap_remove(candidates.best_index);
             candidates.partitions.retain(|cp| !cp.is_empty());
+            if best.is_empty() && candidates.partitions.is_empty() {
+                info!("scp_online: {mode} CP attempt produced no positive lookup tables");
+                return Ok(Vec::new());
+            }
             let mut initial_candidates = Vec::with_capacity(candidates.partitions.len() + 1);
-            initial_candidates.push(best);
+            if !best.is_empty() {
+                initial_candidates.push(best);
+            }
             initial_candidates.extend(candidates.partitions);
             return self.build_offline_diversified_portfolio(
                 task,
@@ -2163,7 +2169,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             let candidate_h = candidate_cp.compute_heuristic(abstract_state_ids);
             let candidate_index = partitions.len();
             partitions.push(candidate_cp);
-            if candidate_h > best_h {
+            if candidate_h > best_h
+                || (candidate_h == best_h
+                    && partitions[best_index].is_empty()
+                    && !partitions[candidate_index].is_empty())
+            {
                 if self.config.collection_config.debug {
                     info!("scp_online: label candidate order improved h {best_h} -> {candidate_h}");
                 }
@@ -2259,7 +2269,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             let candidate_h = candidate_cp.compute_heuristic(abstract_state_ids);
             let candidate_index = partitions.len();
             partitions.push(candidate_cp);
-            if candidate_h > best_h {
+            if candidate_h > best_h
+                || (candidate_h == best_h
+                    && partitions[best_index].is_empty()
+                    && !partitions[candidate_index].is_empty())
+            {
                 if self.config.collection_config.debug {
                     info!("scp_online: candidate order improved h {best_h} -> {candidate_h}");
                 }

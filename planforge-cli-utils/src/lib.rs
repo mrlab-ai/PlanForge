@@ -440,6 +440,8 @@ pub fn wait_with_memory_limit(
     memory_limit: u64,
 ) -> std::io::Result<std::process::ExitStatus> {
     const POLL_INTERVAL: Duration = Duration::from_millis(50);
+    const MAX_STATUS_READ_FAILURES: usize = 20;
+    let mut consecutive_status_read_failures = 0;
 
     loop {
         if let Some(status) = child.try_wait()? {
@@ -450,14 +452,16 @@ pub fn wait_with_memory_limit(
                 child.kill()?;
                 return child.wait();
             }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(_) => consecutive_status_read_failures = 0,
+            Err(error) => {
                 if let Some(status) = child.try_wait()? {
                     return Ok(status);
                 }
-                return Err(error);
+                consecutive_status_read_failures += 1;
+                if consecutive_status_read_failures >= MAX_STATUS_READ_FAILURES {
+                    return Err(error);
+                }
             }
-            Err(error) => return Err(error),
         }
         std::thread::sleep(POLL_INTERVAL);
     }

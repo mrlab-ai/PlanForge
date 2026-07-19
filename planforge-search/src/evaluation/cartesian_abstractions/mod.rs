@@ -1465,6 +1465,9 @@ impl CartesianAbstractionGenerator {
                 PlanCheck::ConcretePlan(plan) => {
                     break (CartesianStopReason::ConcretePlan, None, Some(plan));
                 }
+                PlanCheck::AbstractDeadEnd(abstract_state_id) => {
+                    return Err(RefinementRootDeadEnd { abstract_state_id }.into());
+                }
                 PlanCheck::Refine(split) => {
                     if working.states.len() >= self.config.max_states {
                         break (
@@ -1726,11 +1729,30 @@ impl CartesianAbstractionCollectionGenerator {
             );
             let generator = CartesianAbstractionGenerator::new(abstraction_config)?;
             let refinement_root = refinement_roots.get(variant_id);
-            let mut abstraction = generator
+            let mut reset_progressive_root = false;
+            let mut abstraction = match generator
                 .generate_from_root(abstraction_task, refinement_root)
-                .with_context(|| {
-                    format!("failed to build Cartesian collection abstraction {abstraction_id}")
-                })?;
+            {
+                Ok(abstraction) => abstraction,
+                Err(error)
+                    if refinement_root.is_some()
+                        && error.downcast_ref::<RefinementRootDeadEnd>().is_some() =>
+                {
+                    reset_progressive_root = true;
+                    info!(
+                        "Cartesian collection: progressive root is an abstract dead end for goal {goal_id}, variant {variant_id}; rebuilding this member from the task initial state"
+                    );
+                    generator.generate_from_root(abstraction_task, None)
+                        .with_context(|| {
+                            format!("failed to rebuild Cartesian collection abstraction {abstraction_id} from the task initial state")
+                        })?
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("failed to build Cartesian collection abstraction {abstraction_id}")
+                    });
+                }
+            };
             let state_count = abstraction.num_states();
             ensure!(
                 state_count <= remaining_states,
@@ -1740,7 +1762,8 @@ impl CartesianAbstractionCollectionGenerator {
             abstraction.metadata.collection_goal_id = (goal_count > 0).then_some(goal_id);
             abstraction.metadata.collection_variant_id = (goal_count > 0).then_some(variant_id);
             abstraction.metadata.abstraction_use = AbstractionUse::CollectionMember;
-            abstraction.metadata.progressive_refinement_root = refinement_root.is_some();
+            abstraction.metadata.progressive_refinement_root =
+                refinement_root.is_some() && !reset_progressive_root;
             if goal_count > 0 && !is_continuation {
                 variants_built_by_goal[goal_id] += 1;
                 initial_abstractions_built += 1;
@@ -1751,8 +1774,14 @@ impl CartesianAbstractionCollectionGenerator {
                 initial_abstractions_built += 1;
             }
             if let Some(root) = refinement_roots.get_mut(variant_id) {
+                if reset_progressive_root {
+                    *root = initial_cartesian_concrete_state(task)?;
+                    satisfied_goals_by_root[variant_id] =
+                        count_satisfied_cartesian_goals(task, root)?;
+                }
                 match abstraction.metadata.concrete_plan_operator_ids.as_deref() {
                     Some(operator_ids) => {
+                        let previous_satisfied_goals = satisfied_goals_by_root[variant_id];
                         *root = replay_cartesian_operator_sequence(task, root, operator_ids)?;
                         let satisfied_goals = count_satisfied_cartesian_goals(task, root)?;
                         satisfied_goals_by_root[variant_id] = satisfied_goals;
@@ -1762,14 +1791,16 @@ impl CartesianAbstractionCollectionGenerator {
                             satisfied_goals,
                             goal_count,
                         );
-                        for retry_goal_id in 0..goal_count {
-                            let was_already_attempted =
-                                variants_built_by_goal[retry_goal_id] > variant_id;
-                            if was_already_attempted
-                                && !cartesian_goal_is_satisfied(task, root, retry_goal_id)?
-                                && !continuation_queue.contains(&(retry_goal_id, variant_id))
-                            {
-                                continuation_queue.push_back((retry_goal_id, variant_id));
+                        if !reset_progressive_root && satisfied_goals > previous_satisfied_goals {
+                            for retry_goal_id in 0..goal_count {
+                                let was_already_attempted =
+                                    variants_built_by_goal[retry_goal_id] > variant_id;
+                                if was_already_attempted
+                                    && !cartesian_goal_is_satisfied(task, root, retry_goal_id)?
+                                    && !continuation_queue.contains(&(retry_goal_id, variant_id))
+                                {
+                                    continuation_queue.push_back((retry_goal_id, variant_id));
+                                }
                             }
                         }
                     }
@@ -2203,8 +2234,26 @@ struct ConcretePlan {
 
 enum PlanCheck {
     ConcretePlan(ConcretePlan),
+    AbstractDeadEnd(usize),
     Refine(Split),
 }
+
+#[derive(Debug)]
+struct RefinementRootDeadEnd {
+    abstract_state_id: usize,
+}
+
+impl std::fmt::Display for RefinementRootDeadEnd {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "concrete refinement root maps to abstract dead end {}",
+            self.abstract_state_id
+        )
+    }
+}
+
+impl std::error::Error for RefinementRootDeadEnd {}
 
 fn approximately_equal(left: f64, right: f64) -> bool {
     (left - right).abs() <= 1e-7 * left.abs().max(right.abs()).max(1.0)
@@ -2486,10 +2535,9 @@ fn replay_optimal_abstract_trace(
     let mut successor_prop_values = Vec::new();
     semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
     let initial_abstract_state = working.hierarchy.map_state(&prop_values, &numeric)?;
-    ensure!(
-        shortest_paths.distances[initial_abstract_state].is_finite(),
-        "concrete initial state maps to abstract dead end {initial_abstract_state}"
-    );
+    if !shortest_paths.distances[initial_abstract_state].is_finite() {
+        return Ok(PlanCheck::AbstractDeadEnd(initial_abstract_state));
+    }
     let abstract_plan_cost = shortest_paths.distances[initial_abstract_state];
     let mut operator_ids = Vec::new();
     let mut concrete_cost = 0.0;
