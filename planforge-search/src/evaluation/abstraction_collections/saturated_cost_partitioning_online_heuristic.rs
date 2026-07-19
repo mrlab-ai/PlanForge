@@ -366,6 +366,7 @@ struct LookupTable {
 #[derive(Debug, Clone, Default, PartialEq)]
 struct CostPartitioningHeuristic {
     lookup_tables: Vec<LookupTable>,
+    specialist_goal_id: Option<usize>,
 }
 
 struct CandidateCostPartitions {
@@ -1217,7 +1218,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         base_order: &[usize],
         num_domain_abstractions: usize,
         standalone_current_h: &[f64],
-    ) -> Vec<Vec<usize>> {
+    ) -> Vec<(usize, Vec<usize>)> {
         let collection = self.cartesian_abstractions.borrow();
         let collection = collection
             .as_ref()
@@ -1228,35 +1229,72 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 *variants_by_goal.entry(goal_id).or_default() += 1;
             }
         }
+        let progressive_roots = collection
+            .iter()
+            .any(|abstraction| abstraction.metadata.progressive_refinement_root);
         let goal_count = variants_by_goal
             .values()
-            .filter(|&&variant_count| variant_count >= 2)
+            .filter(|&&variant_count| progressive_roots || variant_count >= 2)
             .count();
         let max_variants = variants_by_goal.values().copied().max().unwrap_or(0);
-        if goal_count == 0 || max_variants < 2 {
+        if goal_count == 0 || (!progressive_roots && max_variants < 2) {
             return Vec::new();
         }
 
         // Rotate the anchor goal before varying its construction variant. This
         // guarantees coverage of every goal when the 64-order cap is large
         // enough, including states where that goal is the last one remaining.
-        let variants = compact_goal_cover_variants(goal_count, max_variants);
+        let variants = compact_goal_cover_variants(goal_count, max_variants, progressive_roots);
 
-        deduplicate_orders(
-            variants
-                .into_iter()
-                .filter_map(|variant| {
-                    cartesian_goal_cover_order(
-                        base_order,
-                        num_domain_abstractions,
-                        collection,
-                        standalone_current_h,
-                        false,
-                        variant,
-                    )
-                })
-                .collect(),
-        )
+        let mut seen = HashSet::new();
+        variants
+            .into_iter()
+            .filter_map(|variant| {
+                let order = cartesian_goal_cover_order(
+                    base_order,
+                    num_domain_abstractions,
+                    collection,
+                    standalone_current_h,
+                    false,
+                    variant,
+                )?;
+                let first_component = *order
+                    .first()
+                    .expect("compact goal-cover order must not be empty");
+                let goal_id = collection[first_component - num_domain_abstractions]
+                    .metadata
+                    .collection_goal_id
+                    .expect("compact goal-cover order must start with its anchor goal");
+                seen.insert(order.clone()).then_some((goal_id, order))
+            })
+            .collect()
+    }
+
+    fn cartesian_specialist_goal_for_order(
+        &self,
+        order: &[usize],
+        num_domain_abstractions: usize,
+    ) -> Option<usize> {
+        if num_domain_abstractions != 0 {
+            return None;
+        }
+        let collection = self.cartesian_abstractions.borrow();
+        let collection = collection.as_ref()?;
+        if order.len() != collection.len()
+            || !order.iter().copied().all(|id| {
+                collection
+                    .get(id)
+                    .is_some_and(|abstraction| abstraction.metadata.collection_goal_id.is_some())
+            })
+        {
+            return None;
+        }
+        if !collection[order[0]].metadata.progressive_refinement_root {
+            return None;
+        }
+        order
+            .first()
+            .and_then(|&id| collection[id].metadata.collection_goal_id)
     }
 
     fn prefixed_cartesian_goal_cover_order(
@@ -1803,16 +1841,51 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let mut sample_best = vec![f64::NEG_INFINITY; state.offline_sample_ids.len()];
         let mut portfolio = Vec::new();
         let mut portfolio_size_kb = 0usize;
-        let mut evaluated_orders = 0usize;
-        for candidate in initial_candidates {
-            if !portfolio.is_empty()
-                && (portfolio.len() >= self.config.max_orders
-                    || portfolio_size_kb >= self.config.max_size
-                    || deadline.is_some_and(|end| Instant::now() >= end))
+        let mut evaluated_orders = initial_candidates.len();
+        let mandatory_indices =
+            mandatory_goal_specialist_indices(&initial_candidates, &state.offline_sample_ids);
+        if mandatory_indices.len() > self.config.max_orders {
+            return Err(EvaluationError::ComputationFailed(format!(
+                "offline SCP requires {} orders to retain the global best and configured specialists per represented goal, exceeding max_orders={}",
+                mandatory_indices.len(),
+                self.config.max_orders,
+            )));
+        }
+        let represented_goal_count = mandatory_indices
+            .iter()
+            .filter_map(|&index| initial_candidates[index].specialist_goal_id)
+            .collect::<HashSet<_>>()
+            .len();
+        let specialist_count = mandatory_indices
+            .iter()
+            .filter(|&&index| initial_candidates[index].specialist_goal_id.is_some())
+            .count();
+        let mut initial_candidates = initial_candidates.into_iter().map(Some).collect::<Vec<_>>();
+        for index in mandatory_indices {
+            let candidate = initial_candidates[index]
+                .take()
+                .expect("mandatory SCP candidate indices must be unique");
+            retain_mandatory_partition(
+                candidate,
+                &state.offline_sample_ids,
+                &mut sample_best,
+                &mut portfolio,
+                &mut portfolio_size_kb,
+                self.config.max_size,
+            )
+            .map_err(EvaluationError::ComputationFailed)?;
+        }
+        info!(
+            "scp_online: retained {specialist_count} mandatory specialists across {represented_goal_count} goals plus the global best"
+        );
+
+        for candidate in initial_candidates.into_iter().flatten() {
+            if portfolio.len() >= self.config.max_orders
+                || portfolio_size_kb >= self.config.max_size
+                || deadline.is_some_and(|end| Instant::now() >= end)
             {
                 break;
             }
-            evaluated_orders += 1;
             retain_if_sample_improving(
                 candidate,
                 &state.offline_sample_ids,
@@ -1824,7 +1897,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
         assert!(
             !portfolio.is_empty(),
-            "the best initial SCP must be retained as the first portfolio entry"
+            "the global best SCP must be retained"
         );
 
         let original_costs = self.original_operator_costs.as_slice();
@@ -2121,7 +2194,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         optimization_max_time: f64,
     ) -> Result<CandidateCostPartitions, EvaluationError> {
         let mut best_order = incumbent_order.clone();
-        let baseline = self.build_abstract_operator_cp(
+        let mut baseline = self.build_abstract_operator_cp(
             task,
             abstractions,
             &best_order,
@@ -2132,6 +2205,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             baseline_deadline,
             self.config.saturator,
         )?;
+        baseline.specialist_goal_id =
+            self.cartesian_specialist_goal_for_order(&best_order, num_domain_abstractions);
         let mut best_h = baseline.compute_heuristic(abstract_state_ids);
         let mut partitions = vec![baseline];
         let mut best_index = 0;
@@ -2140,7 +2215,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             optimization_deadline(optimization_max_time),
         );
 
-        for candidate in optimization_max_time
+        for (specialist_goal_id, candidate) in optimization_max_time
             .is_sign_positive()
             .then(|| {
                 self.candidate_abstract_operator_orders(
@@ -2158,7 +2233,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             if candidate == best_order {
                 continue;
             }
-            let candidate_cp = match self.build_abstract_operator_cp(
+            let mut candidate_cp = match self.build_abstract_operator_cp(
                 task,
                 abstractions,
                 &candidate,
@@ -2178,6 +2253,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 }
                 Err(error) => return Err(error),
             };
+            candidate_cp.specialist_goal_id = specialist_goal_id.or_else(|| {
+                self.cartesian_specialist_goal_for_order(&candidate, num_domain_abstractions)
+            });
             let candidate_h = candidate_cp.compute_heuristic(abstract_state_ids);
             let candidate_index = partitions.len();
             partitions.push(candidate_cp);
@@ -2203,27 +2281,31 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         base_order: &[usize],
         abstractions: &[DomainAbstraction],
         standalone_current_h: &[f64],
-    ) -> Vec<Vec<usize>> {
+    ) -> Vec<(Option<usize>, Vec<usize>)> {
         let mut orders = Vec::new();
-        orders.push(base_order.to_vec());
+        orders.push((None, base_order.to_vec()));
 
         let mut declaration_order = base_order.to_vec();
         declaration_order.sort_unstable();
-        orders.push(declaration_order);
+        orders.push((None, declaration_order));
 
         if let Some(prefixed_goal_cover_order) = self.prefixed_cartesian_goal_cover_order(
             base_order,
             abstractions.len(),
             standalone_current_h,
         ) {
-            orders.push(prefixed_goal_cover_order);
+            orders.push((None, prefixed_goal_cover_order));
         }
 
-        orders.extend(self.compact_cartesian_goal_cover_orders(
-            base_order,
-            abstractions.len(),
-            standalone_current_h,
-        ));
+        orders.extend(
+            self.compact_cartesian_goal_cover_orders(
+                base_order,
+                abstractions.len(),
+                standalone_current_h,
+            )
+            .into_iter()
+            .map(|(goal_id, order)| (Some(goal_id), order)),
+        );
 
         if let Some(goal_cover_order) = self.cartesian_goal_cover_order(
             base_order,
@@ -2231,14 +2313,17 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             standalone_current_h,
             false,
         ) {
-            orders.push(goal_cover_order);
+            orders.push((None, goal_cover_order));
         }
 
-        orders.push(max_heuristic_greedy_order(base_order, standalone_current_h));
+        orders.push((
+            None,
+            max_heuristic_greedy_order(base_order, standalone_current_h),
+        ));
 
         let mut by_collection = base_order.to_vec();
         by_collection.sort_by_key(|&id| abstraction_collection_iteration(abstractions, id));
-        orders.push(by_collection);
+        orders.push((None, by_collection));
 
         let mut progression_first = base_order.to_vec();
         progression_first.sort_by(|&left, &right| {
@@ -2253,7 +2338,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 })
                 .then_with(|| left.cmp(&right))
         });
-        orders.push(progression_first);
+        orders.push((None, progression_first));
 
         let mut target_first = base_order.to_vec();
         target_first.sort_by(|&left, &right| {
@@ -2268,7 +2353,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 })
                 .then_with(|| left.cmp(&right))
         });
-        orders.push(target_first);
+        orders.push((None, target_first));
 
         for seed_offset in 0..3 {
             let mut random_order = base_order.to_vec();
@@ -2278,10 +2363,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     .unwrap_or(0x5C9_0A11)
                     .wrapping_add(seed_offset),
             ));
-            orders.push(random_order);
+            orders.push((None, random_order));
         }
 
-        deduplicate_orders(orders)
+        deduplicate_specialist_orders(orders)
     }
 
     fn candidate_label_orders(
@@ -4037,13 +4122,18 @@ struct GoalCoverOrderVariant {
 fn compact_goal_cover_variants(
     goal_count: usize,
     variants_per_goal: usize,
+    guarantee_specialist_coverage: bool,
 ) -> Vec<GoalCoverOrderVariant> {
     assert!(goal_count > 0);
-    assert!(variants_per_goal > 1);
-    let variant_count = goal_count
+    assert!(variants_per_goal > 0);
+    let pairwise_variant_count = goal_count
         .saturating_mul(variants_per_goal)
         .saturating_mul(variants_per_goal)
         .min(64);
+    let specialist_coverage_count = guarantee_specialist_coverage
+        .then(|| goal_count.saturating_mul(variants_per_goal.min(4)))
+        .unwrap_or(0);
+    let variant_count = pairwise_variant_count.max(specialist_coverage_count);
     (0..variant_count)
         .map(|variant_index| {
             let anchor_goal_offset = variant_index % goal_count;
@@ -4098,7 +4188,12 @@ fn cartesian_goal_cover_order(
         };
         by_goal.entry(goal_id).or_default().push(component_id);
     }
-    if by_goal.values().all(|components| components.len() < 2) {
+    let progressive_roots = cartesian_abstractions
+        .iter()
+        .any(|abstraction| abstraction.metadata.progressive_refinement_root);
+    if by_goal.is_empty()
+        || (!progressive_roots && by_goal.values().all(|components| components.len() < 2))
+    {
         return None;
     }
 
@@ -4122,7 +4217,7 @@ fn cartesian_goal_cover_order(
     };
     let mut sorted_goals = by_goal
         .iter()
-        .filter(|(_, components)| components.len() >= 2)
+        .filter(|(_, components)| progressive_roots || components.len() >= 2)
         .collect::<Vec<_>>();
     sorted_goals.sort_by(|(left_goal, left), (right_goal, right)| {
         goal_max_h(right)
@@ -4203,6 +4298,13 @@ fn cartesian_goal_cover_order(
         order.push(component_id);
         selected.insert(component_id);
     }
+    if progressive_roots {
+        for component_id in sorted_anchor_components {
+            if selected.insert(component_id) {
+                order.push(component_id);
+            }
+        }
+    }
 
     let mut other_goals = by_goal
         .iter()
@@ -4245,7 +4347,14 @@ fn cartesian_goal_cover_order(
     }
 
     if variant.compact {
-        debug_assert_eq!(order.len(), by_goal.len() + 1);
+        debug_assert_eq!(
+            order.len(),
+            if progressive_roots {
+                by_goal.len() + anchor_components.len() - 1
+            } else {
+                by_goal.len() + 1
+            }
+        );
         return Some(order);
     }
 
@@ -4365,6 +4474,73 @@ fn retain_if_sample_improving(
     *portfolio_size_kb = portfolio_size_kb.saturating_add(candidate_size);
     portfolio.push(candidate);
     true
+}
+
+fn mandatory_goal_specialist_indices(
+    candidates: &[CostPartitioningHeuristic],
+    sample_ids: &[Vec<Option<usize>>],
+) -> Vec<usize> {
+    assert!(!candidates.is_empty());
+    const SPECIALISTS_PER_GOAL: usize = 4;
+    let mut candidates_by_goal = HashMap::<usize, Vec<(usize, f64)>>::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        let Some(goal_id) = candidate.specialist_goal_id else {
+            continue;
+        };
+        let score = sample_ids
+            .iter()
+            .map(|ids| candidate.compute_heuristic(ids))
+            .sum::<f64>();
+        assert!(!score.is_nan(), "goal-specialist SCP score must not be NaN");
+        candidates_by_goal
+            .entry(goal_id)
+            .or_default()
+            .push((index, score));
+    }
+
+    let mut goals = candidates_by_goal.into_iter().collect::<Vec<_>>();
+    goals.sort_by_key(|(goal_id, _)| *goal_id);
+    let mut indices = vec![0];
+    for (_, mut goal_candidates) in goals {
+        goal_candidates.sort_by(|left, right| {
+            (right.0 == 0)
+                .cmp(&(left.0 == 0))
+                .then_with(|| right.1.total_cmp(&left.1))
+                .then_with(|| left.0.cmp(&right.0))
+        });
+        indices.extend(
+            goal_candidates
+                .into_iter()
+                .take(SPECIALISTS_PER_GOAL)
+                .map(|(index, _)| index)
+                .filter(|&index| index != 0),
+        );
+    }
+    indices
+}
+
+fn retain_mandatory_partition(
+    candidate: CostPartitioningHeuristic,
+    sample_ids: &[Vec<Option<usize>>],
+    sample_best: &mut [f64],
+    portfolio: &mut Vec<CostPartitioningHeuristic>,
+    portfolio_size_kb: &mut usize,
+    max_size_kb: usize,
+) -> Result<(), String> {
+    assert_eq!(sample_ids.len(), sample_best.len());
+    let candidate_size = candidate.estimate_size_in_kb();
+    let required_size = portfolio_size_kb.saturating_add(candidate_size);
+    if required_size > max_size_kb {
+        return Err(format!(
+            "mandatory goal-specialist SCPs require {required_size} KiB, exceeding max_size={max_size_kb} KiB"
+        ));
+    }
+    for (best, ids) in sample_best.iter_mut().zip(sample_ids) {
+        *best = (*best).max(candidate.compute_heuristic(ids));
+    }
+    *portfolio_size_kb = required_size;
+    portfolio.push(candidate);
+    Ok(())
 }
 
 fn abstraction_is_target_centered(
@@ -4861,6 +5037,7 @@ mod handcrafted_sailing_tests {
                 variants_per_goal: 4,
                 max_collection_states: 10_000,
                 total_max_time: Some(Duration::from_secs(15)),
+                progressive_goal_roots: false,
             })
             .expect("valid oracle Cartesian collection config")
             .generate(&restricted_task)
@@ -5631,6 +5808,24 @@ fn deduplicate_orders(orders: Vec<Vec<usize>>) -> Vec<Vec<usize>> {
         .collect()
 }
 
+fn deduplicate_specialist_orders(
+    orders: Vec<(Option<usize>, Vec<usize>)>,
+) -> Vec<(Option<usize>, Vec<usize>)> {
+    let mut index_by_order = HashMap::<Vec<usize>, usize>::with_capacity(orders.len());
+    let mut unique = Vec::<(Option<usize>, Vec<usize>)>::with_capacity(orders.len());
+    for (specialist_goal_id, order) in orders {
+        if let Some(&index) = index_by_order.get(&order) {
+            if unique[index].0.is_none() {
+                unique[index].0 = specialist_goal_id;
+            }
+            continue;
+        }
+        index_by_order.insert(order.clone(), unique.len());
+        unique.push((specialist_goal_id, order));
+    }
+    unique
+}
+
 fn compute_score(h: f64, stolen_costs: f64, scoring_function: ScoringFunction) -> f64 {
     match scoring_function {
         ScoringFunction::MaxHeuristic => h,
@@ -5917,6 +6112,7 @@ mod tests {
                 variants_per_goal: 4,
                 max_collection_states: 128,
                 total_max_time: None,
+                progressive_goal_roots: false,
             })
             .unwrap()
             .generate(&task)
@@ -6006,15 +6202,100 @@ mod tests {
     }
 
     #[test]
-    fn compact_goal_cover_schedule_visits_every_anchor_goal() {
-        let variants = compact_goal_cover_variants(18, 8);
+    fn compact_goal_cover_schedule_visits_every_anchor_goal_and_four_variants() {
+        let variants = compact_goal_cover_variants(18, 8, true);
         let anchor_goals = variants
             .iter()
             .map(|variant| variant.anchor_goal_offset)
             .collect::<HashSet<_>>();
 
-        assert_eq!(variants.len(), 64);
+        assert_eq!(variants.len(), 72);
         assert_eq!(anchor_goals, (0..18).collect());
+    }
+
+    #[test]
+    fn compact_goal_cover_schedule_supports_one_abstraction_per_goal() {
+        let variants = compact_goal_cover_variants(18, 1, true);
+        let anchor_goals = variants
+            .iter()
+            .map(|variant| variant.anchor_goal_offset)
+            .collect::<HashSet<_>>();
+
+        assert_eq!(variants.len(), 18);
+        assert_eq!(anchor_goals, (0..18).collect());
+    }
+
+    #[test]
+    fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
+        let task = std::sync::Arc::new(independent_goals_task());
+        let abstractions =
+            CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+                abstraction: CartesianAbstractionConfig {
+                    max_states: 16,
+                    max_time: None,
+                    combine_labels: false,
+                    compute_operator_footprints: true,
+                    random_seed: Some(1),
+                    debug: false,
+                    ..Default::default()
+                },
+                variants_per_goal: 4,
+                max_collection_states: 128,
+                total_max_time: None,
+                progressive_goal_roots: true,
+            })
+            .unwrap()
+            .generate(&*task)
+            .unwrap();
+        let expected_goals = abstractions
+            .iter()
+            .filter_map(|abstraction| abstraction.metadata.collection_goal_id)
+            .collect::<HashSet<_>>();
+        let components = abstractions
+            .into_iter()
+            .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
+            .collect();
+        let mut config = scp_config(Saturator::All, true);
+        config.online = false;
+        config.diversify = true;
+        config.samples = 16;
+        config.max_orders = expected_goals.len() * 4;
+        config.initial_order_generation_max_time = 10.0;
+        let heuristic =
+            SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+                None,
+                components,
+                config,
+                &*task,
+                task.clone(),
+            )
+            .unwrap();
+
+        evaluate_initial(&task, &heuristic).unwrap();
+        let retained_goals = heuristic
+            .state
+            .borrow()
+            .cp_heuristics
+            .iter()
+            .filter_map(|cp| cp.specialist_goal_id)
+            .collect::<HashSet<_>>();
+        assert_eq!(retained_goals, expected_goals);
+        let mut retained_per_goal = HashMap::<usize, usize>::new();
+        for goal_id in heuristic
+            .state
+            .borrow()
+            .cp_heuristics
+            .iter()
+            .filter_map(|cp| cp.specialist_goal_id)
+        {
+            *retained_per_goal.entry(goal_id).or_default() += 1;
+        }
+        assert!(
+            retained_per_goal
+                .values()
+                .all(|&count| (2..=4).contains(&count)),
+            "retained specialists by goal: {retained_per_goal:?}"
+        );
     }
 
     #[test]
@@ -6025,6 +6306,7 @@ mod tests {
                 distances,
                 unknown_value: f64::INFINITY,
             }],
+            specialist_goal_id: None,
         };
         let mut state = ScpOnlineState::new(Some(1));
         let mut initial_h = 0.0;
@@ -6062,6 +6344,7 @@ mod tests {
                 distances,
                 unknown_value: f64::INFINITY,
             }],
+            specialist_goal_id: None,
         };
         let mut state = ScpOnlineState::new(Some(1));
         let mut current_h = 0.0;
@@ -6284,6 +6567,7 @@ mod tests {
                 distances,
                 unknown_value: f64::INFINITY,
             }],
+            specialist_goal_id: None,
         };
         let samples = vec![vec![Some(0)], vec![Some(1)]];
         let mut best = vec![f64::NEG_INFINITY; samples.len()];

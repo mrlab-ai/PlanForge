@@ -354,6 +354,9 @@ fn apply_cartesian_source_options(
             "variants_per_goal" if collection => {
                 config.variants_per_goal = usize::from_option_value(arg.value())?;
             }
+            "progressive_goal_roots" if collection => {
+                config.progressive_goal_roots = bool::from_option_value(arg.value())?;
+            }
             "max_collection_size" if collection => {
                 config.max_collection_states = usize::from_option_value(arg.value())?;
             }

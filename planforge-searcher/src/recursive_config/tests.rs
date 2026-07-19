@@ -138,7 +138,7 @@ fn parses_hierarchical_scp_options_and_sources() {
 #[test]
 fn parses_hierarchical_cartesian_collection_source() {
     let h = astar_heuristic(
-        "astar(scp(cartesian_collection(max_states=1000, variants_per_goal=8, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, use_abstract_operator_cost_partitioning=true))",
+        "astar(scp(cartesian_collection(max_states=1000, variants_per_goal=8, progressive_goal_roots=true, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, use_abstract_operator_cost_partitioning=true))",
     );
     let (sources, options) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
     assert_eq!(sources.len(), 1);

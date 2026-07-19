@@ -701,6 +701,7 @@ fn goal_collection_builds_every_goal_with_operator_footprints() {
             variants_per_goal: 3,
             max_collection_states: 384,
             total_max_time: None,
+            progressive_goal_roots: false,
         })
         .unwrap()
         .generate(&task)
@@ -763,6 +764,7 @@ fn goal_collection_builds_every_goal_with_operator_footprints() {
             variants_per_goal: 3,
             max_collection_states: 4,
             total_max_time: None,
+            progressive_goal_roots: false,
         })
         .unwrap()
         .generate(&task)
@@ -770,6 +772,100 @@ fn goal_collection_builds_every_goal_with_operator_footprints() {
     assert_eq!(bounded.len(), 1);
     assert!(bounded[0].num_states() > 1);
     assert!(bounded[0].num_states() <= 4);
+}
+
+#[test]
+fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
+    let task = NumericRootTask::new(
+        2,
+        Metric::new(true, None),
+        vec![
+            comparison_variable("x-at-least-two"),
+            comparison_variable("x-at-least-four"),
+        ],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+            NumericVariable::new("two".into(), NumericType::Constant, None),
+            NumericVariable::new("four".into(), NumericType::Constant, None),
+        ],
+        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)],
+        vec![],
+        vec![2, 2],
+        vec![0.0, 1.0, 2.0, 4.0],
+        vec![Operator::new(
+            "increment".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                1,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![],
+        vec![
+            ComparisonAxiom::new(0, 0, 2, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(1, 0, 3, ComparisonOperator::GreaterThanOrEqual),
+        ],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let abstractions =
+        CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+            abstraction: CartesianAbstractionConfig {
+                max_states: 64,
+                ..Default::default()
+            },
+            variants_per_goal: 1,
+            max_collection_states: 128,
+            total_max_time: None,
+            progressive_goal_roots: true,
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+
+    assert_eq!(abstractions.len(), 2);
+    assert_eq!(
+        abstractions[0]
+            .metadata
+            .concrete_plan_operator_ids
+            .as_ref()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        abstractions[1]
+            .metadata
+            .concrete_plan_operator_ids
+            .as_ref()
+            .unwrap()
+            .len(),
+        2,
+        "the second CEGAR run must start after the first concrete plan"
+    );
+    let second_initial_h =
+        abstractions[1].distance_table.distances[abstractions[1].distance_table.initial_state_hash];
+    assert!(second_initial_h <= 4.0);
+    for x in 0..=4 {
+        let propositions = vec![usize::from(x < 2), usize::from(x < 4)];
+        let numeric = vec![x as f64, 1.0, 2.0, 4.0];
+        let state_id = abstractions[1]
+            .abstract_state_id(&propositions, &numeric)
+            .unwrap();
+        let h = abstractions[1].distance_table.distances[state_id];
+        let true_distance = (4 - x) as f64;
+        assert!(
+            h <= true_distance,
+            "checkpoint-rooted abstraction overestimates at x={x}: h={h}, h*={true_distance}"
+        );
+    }
 }
 
 #[test]
@@ -930,6 +1026,7 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
             variants_per_goal: 3,
             max_collection_states: 192,
             total_max_time: Some(Duration::ZERO),
+            progressive_goal_roots: false,
         })
         .unwrap()
         .generate(&task)

@@ -60,6 +60,8 @@ pub struct CartesianAbstractionMetadata {
     pub collection_variant_id: Option<usize>,
     pub refinement_direction: CartesianRefinementDirection,
     pub split_selection_rank: Option<usize>,
+    pub concrete_plan_operator_ids: Option<Vec<usize>>,
+    pub progressive_refinement_root: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +103,7 @@ pub struct CartesianAbstractionCollectionConfig {
     pub variants_per_goal: usize,
     pub max_collection_states: usize,
     pub total_max_time: Option<Duration>,
+    pub progressive_goal_roots: bool,
 }
 
 impl Default for CartesianAbstractionCollectionConfig {
@@ -110,8 +113,15 @@ impl Default for CartesianAbstractionCollectionConfig {
             variants_per_goal: 1,
             max_collection_states: 10_000_000,
             total_max_time: None,
+            progressive_goal_roots: false,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct CartesianConcreteState {
+    propositions: Vec<u64>,
+    numeric: Vec<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1388,6 +1398,14 @@ impl CartesianAbstractionGenerator {
     }
 
     pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<CartesianAbstraction> {
+        self.generate_from_root(task, None)
+    }
+
+    fn generate_from_root(
+        &self,
+        task: &dyn AbstractNumericTask,
+        refinement_root: Option<&CartesianConcreteState>,
+    ) -> Result<CartesianAbstraction> {
         let start = Instant::now();
         let semantics = CartesianSemantics::new(task, &self.config)?;
         let mut working = WorkingAbstraction::new(
@@ -1401,6 +1419,31 @@ impl CartesianAbstractionGenerator {
         }
         let state_packer = Arc::new(make_prop_state_packer(task));
         let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
+        let refinement_root = match refinement_root {
+            Some(root) => {
+                ensure!(
+                    root.propositions.len() == state_packer.num_bins(),
+                    "Cartesian refinement root has {} proposition bins, expected {}",
+                    root.propositions.len(),
+                    state_packer.num_bins()
+                );
+                ensure!(
+                    root.numeric.len() == task.numeric_variables().len(),
+                    "Cartesian refinement root has {} numeric values, expected {}",
+                    root.numeric.len(),
+                    task.numeric_variables().len()
+                );
+                root.clone()
+            }
+            None => {
+                let (propositions, numeric) =
+                    get_initial_state(task, &state_packer, &axiom_evaluator)?;
+                CartesianConcreteState {
+                    propositions,
+                    numeric,
+                }
+            }
+        };
         let mut refinements: usize = 0;
 
         let mut shortest_paths = compute_shortest_paths(&working, &semantics)?;
@@ -1416,6 +1459,7 @@ impl CartesianAbstractionGenerator {
                 &shortest_paths,
                 &state_packer,
                 &axiom_evaluator,
+                &refinement_root,
             )?;
             match check {
                 PlanCheck::ConcretePlan(plan) => {
@@ -1470,11 +1514,26 @@ impl CartesianAbstractionGenerator {
                 self.config.compute_operator_footprints,
             )?;
         if let Some(plan) = &solved_plan {
-            validate_concrete_plan(&semantics, &state_packer, &axiom_evaluator, plan)?;
-            let h = distance_table.distances[distance_table.initial_state_hash];
+            validate_concrete_plan(
+                &semantics,
+                &state_packer,
+                &axiom_evaluator,
+                &refinement_root,
+                plan,
+            )?;
+            let mut root_prop_values = Vec::new();
+            semantics.concrete_prop_values(
+                &state_packer,
+                &refinement_root.propositions,
+                &mut root_prop_values,
+            );
+            let root_state_id = working
+                .hierarchy
+                .map_state(&root_prop_values, &refinement_root.numeric)?;
+            let h = distance_table.distances[root_state_id];
             ensure!(
                 (plan.cost - h).abs() <= 1e-7,
-                "concrete Cartesian plan cost {} differs from abstract h(init) {h}",
+                "concrete Cartesian plan cost {} differs from abstract h(refinement root) {h}",
                 plan.cost
             );
         }
@@ -1502,6 +1561,8 @@ impl CartesianAbstractionGenerator {
                 collection_variant_id: None,
                 refinement_direction: self.config.refinement_direction,
                 split_selection_rank: self.config.split_selection_rank,
+                concrete_plan_operator_ids: solved_plan.map(|plan| plan.operator_ids),
+                progressive_refinement_root: false,
             },
         })
     }
@@ -1526,12 +1587,16 @@ impl CartesianAbstractionCollectionGenerator {
     }
 
     /// Builds variants for task goals until the configured collection limit
-    /// is reached, or one full-task abstraction when the goal is empty.
+    /// is reached, or one full-task abstraction when the goal is empty. With
+    /// progressive roots enabled, each variant replays its validated concrete
+    /// plans and uses the reached state as the next CEGAR refinement root.
     ///
     /// Each member changes only the goal view. Operators, state mappings, and
-    /// concrete operator IDs stay identical to the base task, which makes the
-    /// resulting transition systems valid components for canonical and
-    /// transition-cost-partitioned collection heuristics.
+    /// concrete operator IDs stay identical to the base task. Changing the
+    /// refinement root only chooses counterexamples; every hierarchy still
+    /// partitions the full task state space, so the resulting transition
+    /// systems remain admissible components for canonical and cost-partitioned
+    /// collection heuristics.
     pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<Vec<CartesianAbstraction>> {
         let goal_count = task.get_num_goals();
         let variants_per_goal = if goal_count == 0 {
@@ -1546,6 +1611,16 @@ impl CartesianAbstractionCollectionGenerator {
         let start = Instant::now();
         let mut remaining_states = self.config.max_collection_states;
         let mut abstractions = Vec::with_capacity(abstraction_count);
+        let mut refinement_roots = if self.config.progressive_goal_roots && goal_count > 0 {
+            let root = initial_cartesian_concrete_state(task)?;
+            vec![root; variants_per_goal]
+        } else {
+            Vec::new()
+        };
+        let mut satisfied_goals_by_root = refinement_roots
+            .iter()
+            .map(|root| count_satisfied_cartesian_goals(task, root))
+            .collect::<Result<Vec<_>>>()?;
         let mut variants_built_by_goal = vec![0usize; goal_count];
         let mut best_initial_h_by_goal = vec![0.0f64; goal_count];
         let mut stop_reason = "requested abstraction count reached";
@@ -1622,8 +1697,10 @@ impl CartesianAbstractionCollectionGenerator {
                 abstraction_config.max_states,
                 abstraction_config.random_seed
             );
-            let mut abstraction = CartesianAbstractionGenerator::new(abstraction_config)?
-                .generate(abstraction_task)
+            let generator = CartesianAbstractionGenerator::new(abstraction_config)?;
+            let refinement_root = refinement_roots.get(variant_id);
+            let mut abstraction = generator
+                .generate_from_root(abstraction_task, refinement_root)
                 .with_context(|| {
                     format!("failed to build Cartesian collection abstraction {abstraction_id}")
                 })?;
@@ -1636,11 +1713,32 @@ impl CartesianAbstractionCollectionGenerator {
             abstraction.metadata.collection_goal_id = (goal_count > 0).then_some(goal_id);
             abstraction.metadata.collection_variant_id = (goal_count > 0).then_some(variant_id);
             abstraction.metadata.abstraction_use = AbstractionUse::CollectionMember;
+            abstraction.metadata.progressive_refinement_root = refinement_root.is_some();
             if goal_count > 0 {
                 variants_built_by_goal[goal_id] += 1;
                 let initial_h = abstraction.distance_table.distances
                     [abstraction.distance_table.initial_state_hash];
                 best_initial_h_by_goal[goal_id] = best_initial_h_by_goal[goal_id].max(initial_h);
+            }
+            if let Some(root) = refinement_roots.get_mut(variant_id) {
+                match abstraction.metadata.concrete_plan_operator_ids.as_deref() {
+                    Some(operator_ids) => {
+                        *root = replay_cartesian_operator_sequence(task, root, operator_ids)?;
+                        let satisfied_goals = count_satisfied_cartesian_goals(task, root)?;
+                        satisfied_goals_by_root[variant_id] = satisfied_goals;
+                        debug!(
+                            "Cartesian collection: advanced progressive root for variant {variant_id} through {} concrete operators; satisfied_goals={}/{}",
+                            operator_ids.len(),
+                            satisfied_goals,
+                            goal_count,
+                        );
+                    }
+                    None => {
+                        debug!(
+                            "Cartesian collection: goal {goal_id} variant {variant_id} produced no concrete plan; progressive root remains unchanged"
+                        );
+                    }
+                }
             }
             abstractions.push(abstraction);
             if !crate::resource_limits::poll_and_release_if_exceeded() {
@@ -1656,8 +1754,79 @@ impl CartesianAbstractionCollectionGenerator {
             start.elapsed().as_secs_f64(),
             stop_reason
         );
+        if !satisfied_goals_by_root.is_empty() {
+            info!(
+                "Cartesian collection: progressive root goal coverage={satisfied_goals_by_root:?}/{goal_count}"
+            );
+        }
         Ok(abstractions)
     }
+}
+
+fn initial_cartesian_concrete_state(
+    task: &dyn AbstractNumericTask,
+) -> Result<CartesianConcreteState> {
+    let state_packer = Arc::new(make_prop_state_packer(task));
+    let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
+    let (propositions, numeric) = get_initial_state(task, &state_packer, &axiom_evaluator)?;
+    Ok(CartesianConcreteState {
+        propositions,
+        numeric,
+    })
+}
+
+fn replay_cartesian_operator_sequence(
+    task: &dyn AbstractNumericTask,
+    root: &CartesianConcreteState,
+    operator_ids: &[usize],
+) -> Result<CartesianConcreteState> {
+    let state_packer = Arc::new(make_prop_state_packer(task));
+    let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
+    let mut next = root.clone();
+    for (step, &operator_id) in operator_ids.iter().enumerate() {
+        let operator = task.get_operators().get(operator_id).with_context(|| {
+            format!("progressive Cartesian plan step {step} has invalid operator {operator_id}")
+        })?;
+        ensure!(
+            operator.preconditions().iter().all(|fact| fact_is_hold(
+                fact,
+                &state_packer,
+                &next.propositions
+            )),
+            "progressive Cartesian plan operator {operator_id} ({}) is inapplicable at step {step}",
+            operator.name()
+        );
+        progress(
+            operator,
+            &axiom_evaluator,
+            &state_packer,
+            &mut next.propositions,
+            &mut next.numeric,
+        )?;
+    }
+    Ok(next)
+}
+
+fn count_satisfied_cartesian_goals(
+    task: &dyn AbstractNumericTask,
+    state: &CartesianConcreteState,
+) -> Result<usize> {
+    let state_packer = make_prop_state_packer(task);
+    ensure!(
+        state.propositions.len() == state_packer.num_bins(),
+        "Cartesian concrete state has {} proposition bins, expected {}",
+        state.propositions.len(),
+        state_packer.num_bins()
+    );
+    Ok((0..task.get_num_goals())
+        .filter(|&goal_id| {
+            fact_is_hold(
+                task.get_goal_fact(goal_id),
+                &state_packer,
+                &state.propositions,
+            )
+        })
+        .count())
 }
 
 fn select_next_cartesian_collection_goal(
@@ -2244,9 +2413,10 @@ fn replay_optimal_abstract_trace(
     shortest_paths: &ShortestPaths,
     state_packer: &Arc<IntDoublePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
+    refinement_root: &CartesianConcreteState,
 ) -> Result<PlanCheck> {
-    let (mut propositions, mut numeric) =
-        get_initial_state(semantics.task, state_packer, axiom_evaluator)?;
+    let mut propositions = refinement_root.propositions.clone();
+    let mut numeric = refinement_root.numeric.clone();
     let mut prop_values = Vec::new();
     let mut successor_prop_values = Vec::new();
     semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
@@ -2382,10 +2552,11 @@ fn validate_concrete_plan(
     semantics: &CartesianSemantics<'_>,
     state_packer: &Arc<IntDoublePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
+    refinement_root: &CartesianConcreteState,
     plan: &ConcretePlan,
 ) -> Result<()> {
-    let (mut propositions, mut numeric) =
-        get_initial_state(semantics.task, state_packer, axiom_evaluator)?;
+    let mut propositions = refinement_root.propositions.clone();
+    let mut numeric = refinement_root.numeric.clone();
     let mut cost = 0.0;
     for (step, &op_id) in plan.operator_ids.iter().enumerate() {
         let op =
