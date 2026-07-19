@@ -264,7 +264,11 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             debug: false,
             use_wildcard_plans: true,
             combine_labels: true,
-            flaw_kind: FlawKind::Progression,
+            // The Numeric-FD canonical configuration executes the complete
+            // abstract plan and refines from all observed flaws. Collection
+            // callers may still request progression explicitly, while the
+            // complementary portfolio selects its direction per variant.
+            flaw_kind: FlawKind::ExecuteEntirePlan,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,

@@ -1,4 +1,11 @@
 use super::*;
+
+#[test]
+fn standard_collection_defaults_to_numeric_fd_execute_entire_plan() {
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    assert_eq!(config.portfolio_strategy, PortfolioStrategy::Standard);
+    assert_eq!(config.flaw_kind, FlawKind::ExecuteEntirePlan);
+}
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
