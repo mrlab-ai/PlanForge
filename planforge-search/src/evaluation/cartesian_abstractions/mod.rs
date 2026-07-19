@@ -10,7 +10,7 @@
 mod tests;
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -1623,21 +1623,47 @@ impl CartesianAbstractionCollectionGenerator {
             .collect::<Result<Vec<_>>>()?;
         let mut variants_built_by_goal = vec![0usize; goal_count];
         let mut best_initial_h_by_goal = vec![0.0f64; goal_count];
+        let mut continuation_queue = VecDeque::<(usize, usize)>::new();
+        let mut abstraction_id = 0usize;
+        let mut initial_abstractions_built = 0usize;
         let mut stop_reason = "requested abstraction count reached";
-        for abstraction_id in 0..abstraction_count {
+        while initial_abstractions_built < abstraction_count || !continuation_queue.is_empty() {
             if remaining_states < 2 && !abstractions.is_empty() {
                 stop_reason = "collection size limit";
                 break;
             }
-            let (goal_id, variant_id) = if goal_count == 0 {
+            let continuation = if self.config.progressive_goal_roots {
+                loop {
+                    let Some((goal_id, variant_id)) = continuation_queue.pop_front() else {
+                        break None;
+                    };
+                    if !cartesian_goal_is_satisfied(
+                        task,
+                        refinement_roots
+                            .get(variant_id)
+                            .expect("progressive continuation references missing root"),
+                        goal_id,
+                    )? {
+                        break Some((goal_id, variant_id));
+                    }
+                }
+            } else {
+                None
+            };
+            let is_continuation = continuation.is_some();
+            let (goal_id, variant_id) = if let Some(continuation) = continuation {
+                continuation
+            } else if goal_count == 0 {
                 (0, 0)
             } else {
-                let goal_id = select_next_cartesian_collection_goal(
+                let Some(goal_id) = select_next_cartesian_collection_goal(
                     &variants_built_by_goal,
                     &best_initial_h_by_goal,
                     variants_per_goal,
-                )
-                .expect("Cartesian collection schedule must have an unfinished goal");
+                ) else {
+                    stop_reason = "requested abstraction count reached";
+                    break;
+                };
                 (goal_id, variants_built_by_goal[goal_id])
             };
             let remaining_time = match self.config.total_max_time {
@@ -1688,10 +1714,11 @@ impl CartesianAbstractionCollectionGenerator {
                 .as_ref()
                 .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
             debug!(
-                "Cartesian collection: building abstraction {}/{abstraction_count}, goal={}, variant={}, direction={:?}, split_rank={:?}, max_states={}, seed={:?}",
+                "Cartesian collection: building abstraction {}, goal={}, variant={}, continuation={}, direction={:?}, split_rank={:?}, max_states={}, seed={:?}",
                 abstraction_id + 1,
                 goal_id,
                 variant_id,
+                is_continuation,
                 abstraction_config.refinement_direction,
                 abstraction_config.split_selection_rank,
                 abstraction_config.max_states,
@@ -1714,11 +1741,14 @@ impl CartesianAbstractionCollectionGenerator {
             abstraction.metadata.collection_variant_id = (goal_count > 0).then_some(variant_id);
             abstraction.metadata.abstraction_use = AbstractionUse::CollectionMember;
             abstraction.metadata.progressive_refinement_root = refinement_root.is_some();
-            if goal_count > 0 {
+            if goal_count > 0 && !is_continuation {
                 variants_built_by_goal[goal_id] += 1;
+                initial_abstractions_built += 1;
                 let initial_h = abstraction.distance_table.distances
                     [abstraction.distance_table.initial_state_hash];
                 best_initial_h_by_goal[goal_id] = best_initial_h_by_goal[goal_id].max(initial_h);
+            } else if goal_count == 0 {
+                initial_abstractions_built += 1;
             }
             if let Some(root) = refinement_roots.get_mut(variant_id) {
                 match abstraction.metadata.concrete_plan_operator_ids.as_deref() {
@@ -1732,6 +1762,16 @@ impl CartesianAbstractionCollectionGenerator {
                             satisfied_goals,
                             goal_count,
                         );
+                        for retry_goal_id in 0..goal_count {
+                            let was_already_attempted =
+                                variants_built_by_goal[retry_goal_id] > variant_id;
+                            if was_already_attempted
+                                && !cartesian_goal_is_satisfied(task, root, retry_goal_id)?
+                                && !continuation_queue.contains(&(retry_goal_id, variant_id))
+                            {
+                                continuation_queue.push_back((retry_goal_id, variant_id));
+                            }
+                        }
                     }
                     None => {
                         debug!(
@@ -1741,6 +1781,7 @@ impl CartesianAbstractionCollectionGenerator {
                 }
             }
             abstractions.push(abstraction);
+            abstraction_id += 1;
             if !crate::resource_limits::poll_and_release_if_exceeded() {
                 stop_reason = "memory limit";
                 break;
@@ -1827,6 +1868,30 @@ fn count_satisfied_cartesian_goals(
             )
         })
         .count())
+}
+
+fn cartesian_goal_is_satisfied(
+    task: &dyn AbstractNumericTask,
+    state: &CartesianConcreteState,
+    goal_id: usize,
+) -> Result<bool> {
+    let state_packer = make_prop_state_packer(task);
+    ensure!(
+        state.propositions.len() == state_packer.num_bins(),
+        "Cartesian concrete state has {} proposition bins, expected {}",
+        state.propositions.len(),
+        state_packer.num_bins()
+    );
+    ensure!(
+        goal_id < task.get_num_goals(),
+        "Cartesian goal id {goal_id} exceeds {} goals",
+        task.get_num_goals()
+    );
+    Ok(fact_is_hold(
+        task.get_goal_fact(goal_id),
+        &state_packer,
+        &state.propositions,
+    ))
 }
 
 fn select_next_cartesian_collection_goal(

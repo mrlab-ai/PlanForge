@@ -869,6 +869,113 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
 }
 
 #[test]
+fn progressive_goal_roots_retry_an_earlier_unsatisfied_goal_after_advancing() {
+    let task = NumericRootTask::new(
+        2,
+        Metric::new(true, None),
+        vec![
+            comparison_variable("x-at-least-four"),
+            comparison_variable("x-at-least-two"),
+        ],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+            NumericVariable::new("four".into(), NumericType::Constant, None),
+            NumericVariable::new("two".into(), NumericType::Constant, None),
+        ],
+        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)],
+        vec![],
+        vec![2, 2],
+        vec![0.0, 1.0, 4.0, 2.0],
+        vec![Operator::new(
+            "increment".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                1,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![],
+        vec![
+            ComparisonAxiom::new(0, 0, 2, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(1, 0, 3, ComparisonOperator::GreaterThanOrEqual),
+        ],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let abstractions =
+        CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+            abstraction: CartesianAbstractionConfig {
+                max_states: 3,
+                ..Default::default()
+            },
+            variants_per_goal: 1,
+            max_collection_states: 9,
+            total_max_time: None,
+            progressive_goal_roots: true,
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+
+    assert_eq!(abstractions.len(), 3);
+    assert_eq!(
+        abstractions
+            .iter()
+            .map(|abstraction| abstraction.metadata.collection_goal_id)
+            .collect::<Vec<_>>(),
+        vec![Some(0), Some(1), Some(0)]
+    );
+    assert!(
+        abstractions[0]
+            .metadata
+            .concrete_plan_operator_ids
+            .is_none()
+    );
+    assert_eq!(
+        abstractions[1]
+            .metadata
+            .concrete_plan_operator_ids
+            .as_ref()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        abstractions[2]
+            .metadata
+            .concrete_plan_operator_ids
+            .as_ref()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    for abstraction in &abstractions {
+        for x in 0..=4 {
+            let propositions = vec![usize::from(x < 4), usize::from(x < 2)];
+            let numeric = vec![x as f64, 1.0, 4.0, 2.0];
+            let state_id = abstraction
+                .abstract_state_id(&propositions, &numeric)
+                .unwrap();
+            let h = abstraction.distance_table.distances[state_id];
+            let goal = abstraction.metadata.collection_goal_id.unwrap();
+            let target: usize = if goal == 0 { 4 } else { 2 };
+            assert!(
+                h <= target.saturating_sub(x) as f64,
+                "goal {goal} abstraction overestimates at x={x}: h={h}"
+            );
+        }
+    }
+}
+
+#[test]
 fn regression_splits_at_comparison_target_while_progression_splits_at_witness() {
     let task = numeric_goal_task(
         vec![comparison_variable("x-at-least-three")],
