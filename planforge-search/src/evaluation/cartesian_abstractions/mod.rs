@@ -915,7 +915,7 @@ impl<'task> CartesianSemantics<'task> {
             })
             .collect::<Result<Vec<_>>>()?;
         let initial_numeric = self.task.get_initial_numeric_state_values();
-        let numeric = self
+        let numeric: Vec<_> = self
             .task
             .numeric_variables()
             .iter()
@@ -929,8 +929,8 @@ impl<'task> CartesianSemantics<'task> {
             })
             .collect();
         Ok(StateRegion {
-            propositions,
-            numeric,
+            propositions: propositions.into(),
+            numeric: numeric.into(),
         })
     }
 
@@ -1353,12 +1353,14 @@ impl<'task> CartesianSemantics<'task> {
                         op_id,
                         numeric_var_id,
                     )?;
-                    footprint.numeric[numeric_var_id] =
-                        interval_intersection(source.numeric[numeric_var_id], preimage);
+                    let regressed = interval_intersection(source.numeric[numeric_var_id], preimage);
                     ensure!(
-                        !footprint.numeric[numeric_var_id].is_empty(),
+                        !regressed.is_empty(),
                         "Cartesian transition for operator {op_id} has an empty regressed source footprint for numeric variable {numeric_var_id}"
                     );
+                    if regressed != source.numeric[numeric_var_id] {
+                        Arc::make_mut(&mut footprint.numeric)[numeric_var_id] = regressed;
+                    }
                 }
                 // Derived values are functions of regular roots and cost
                 // variables are not Cartesian split dimensions. Their source
@@ -2336,9 +2338,9 @@ fn split_child_regions(
             );
             let witness_is_wanted = wanted_values.binary_search(witness_value).is_ok();
             let mut wanted_region = parent.clone();
-            wanted_region.propositions[*var_id] = wanted_values;
+            Arc::make_mut(&mut wanted_region.propositions)[*var_id] = wanted_values;
             let mut other_region = parent.clone();
-            other_region.propositions[*var_id] = other_values;
+            Arc::make_mut(&mut other_region.propositions)[*var_id] = other_values;
             Ok(if witness_is_wanted {
                 (wanted_region, other_region)
             } else {
@@ -2379,9 +2381,9 @@ fn split_child_regions(
                 "numeric split does not place witness {witness_value} in exactly one child"
             );
             let mut lower_region = parent.clone();
-            lower_region.numeric[*var_id] = lower;
+            Arc::make_mut(&mut lower_region.numeric)[*var_id] = lower;
             let mut upper_region = parent.clone();
-            upper_region.numeric[*var_id] = upper;
+            Arc::make_mut(&mut upper_region.numeric)[*var_id] = upper;
             Ok(if witness_is_lower {
                 (lower_region, upper_region)
             } else {
@@ -3031,13 +3033,13 @@ fn comparison_refinement(
                     (upper, lower)
                 };
                 let mut child_numeric = state.numeric.clone();
-                child_numeric[var_id] = witness_child;
+                Arc::make_mut(&mut child_numeric)[var_id] = witness_child;
                 let witness_result = tree.evaluate_interval(&child_numeric);
                 ensure!(
                     witness_result != Some(!concrete_truth),
                     "comparison interval for tree {tree_id} excludes its concrete witness after splitting numeric var {var_id}"
                 );
-                child_numeric[var_id] = other_child;
+                Arc::make_mut(&mut child_numeric)[var_id] = other_child;
                 let other_result = tree.evaluate_interval(&child_numeric);
                 let achieved = match goal {
                     ComparisonRefinementGoal::ExcludeDesired(_) => {
@@ -3260,9 +3262,9 @@ fn apply_split(
             );
             let witness_is_wanted = wanted_child_values.binary_search(&witness_value).is_ok();
             let mut wanted_region = old_region.clone();
-            wanted_region.propositions[var_id] = wanted_child_values;
+            Arc::make_mut(&mut wanted_region.propositions)[var_id] = wanted_child_values;
             let mut other_region = old_region.clone();
-            other_region.propositions[var_id] = other_child_values;
+            Arc::make_mut(&mut other_region.propositions)[var_id] = other_child_values;
             working.propositional_refinement_counts[var_id] += 1;
             working.hierarchy.split_propositional(
                 leaf_node_id,
@@ -3304,9 +3306,9 @@ fn apply_split(
                 "numeric split does not place witness {witness_value} in exactly one child"
             );
             let mut lower_region = old_region.clone();
-            lower_region.numeric[var_id] = lower;
+            Arc::make_mut(&mut lower_region.numeric)[var_id] = lower;
             let mut upper_region = old_region.clone();
-            upper_region.numeric[var_id] = upper;
+            Arc::make_mut(&mut upper_region.numeric)[var_id] = upper;
             working.numeric_refinement_counts[var_id] += 1;
             working.hierarchy.split_numeric(
                 leaf_node_id,

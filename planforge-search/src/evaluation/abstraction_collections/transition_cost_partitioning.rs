@@ -43,8 +43,8 @@ pub type PropValueId = u32;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StateRegion {
-    pub propositions: Vec<Vec<PropValueId>>,
-    pub numeric: Vec<Interval>,
+    pub propositions: Arc<[Vec<PropValueId>]>,
+    pub numeric: Arc<[Interval]>,
 }
 
 impl StateRegion {
@@ -937,7 +937,7 @@ fn state_region_intersection(left: &StateRegion, right: &StateRegion) -> Option<
     let propositions = left
         .propositions
         .iter()
-        .zip(&right.propositions)
+        .zip(right.propositions.iter())
         .map(|(left, right)| sorted_value_intersection(left, right))
         .collect::<Vec<_>>();
     if propositions.iter().any(Vec::is_empty) {
@@ -954,8 +954,8 @@ fn state_region_intersection(left: &StateRegion, right: &StateRegion) -> Option<
         return None;
     }
     Some(StateRegion {
-        propositions,
-        numeric,
+        propositions: propositions.into(),
+        numeric: numeric.into(),
     })
 }
 
@@ -1023,10 +1023,10 @@ fn subtract_state_region(region: &StateRegion, removed: &StateRegion) -> Vec<Sta
             sorted_value_difference(&core.propositions[var_id], &removed.propositions[var_id]);
         if !outside.is_empty() {
             let mut piece = core.clone();
-            piece.propositions[var_id] = outside;
+            Arc::make_mut(&mut piece.propositions)[var_id] = outside;
             result.push(piece);
         }
-        core.propositions[var_id] = removed.propositions[var_id].clone();
+        Arc::make_mut(&mut core.propositions)[var_id] = removed.propositions[var_id].clone();
     }
     for var_id in 0..core.numeric.len() {
         let parent = core.numeric[var_id];
@@ -1039,7 +1039,7 @@ fn subtract_state_region(region: &StateRegion, removed: &StateRegion) -> Vec<Sta
         );
         if !lower.is_empty() {
             let mut piece = core.clone();
-            piece.numeric[var_id] = lower;
+            Arc::make_mut(&mut piece.numeric)[var_id] = lower;
             result.push(piece);
         }
         let upper = Interval::new(
@@ -1050,10 +1050,10 @@ fn subtract_state_region(region: &StateRegion, removed: &StateRegion) -> Vec<Sta
         );
         if !upper.is_empty() {
             let mut piece = core.clone();
-            piece.numeric[var_id] = upper;
+            Arc::make_mut(&mut piece.numeric)[var_id] = upper;
             result.push(piece);
         }
-        core.numeric[var_id] = cut;
+        Arc::make_mut(&mut core.numeric)[var_id] = cut;
     }
     debug_assert!(result.iter().all(state_region_is_nonempty));
     debug_assert!(regional_regions_are_disjoint(&result));
@@ -1212,7 +1212,7 @@ struct TransitionRegionKey {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct StateRegionKey {
-    propositions: Vec<Vec<PropValueId>>,
+    propositions: Arc<[Vec<PropValueId>]>,
     numeric: Vec<IntervalKey>,
 }
 
@@ -1968,8 +1968,7 @@ fn merge_transition_region(target: &mut TransitionRegion, source: &TransitionReg
 }
 
 fn merge_state_region(target: &mut StateRegion, source: &StateRegion) {
-    for (target_values, source_values) in target
-        .propositions
+    for (target_values, source_values) in Arc::make_mut(&mut target.propositions)
         .iter_mut()
         .zip(source.propositions.iter())
     {
@@ -1977,7 +1976,10 @@ fn merge_state_region(target: &mut StateRegion, source: &StateRegion) {
         target_values.sort_unstable();
         target_values.dedup();
     }
-    for (target_interval, source_interval) in target.numeric.iter_mut().zip(source.numeric.iter()) {
+    for (target_interval, source_interval) in Arc::make_mut(&mut target.numeric)
+        .iter_mut()
+        .zip(source.numeric.iter())
+    {
         *target_interval = interval_hull(*target_interval, *source_interval);
     }
 }
@@ -2681,8 +2683,8 @@ mod tests {
     #[test]
     fn regional_overlay_handles_multiple_multidimensional_uncovered_pieces() {
         let region = |x: Interval, y: Interval| StateRegion {
-            propositions: Vec::new(),
-            numeric: vec![x, y],
+            propositions: Vec::new().into(),
+            numeric: vec![x, y].into(),
         };
         let first = region(Interval::closed(0.0, 1.0), Interval::closed(0.0, 1.0));
         let second = region(Interval::closed(0.0, 1.0), Interval::closed(2.0, 3.0));
@@ -2720,8 +2722,8 @@ mod tests {
     #[test]
     fn full_cost_footprints_use_overlap_cover_without_geometric_overlay() {
         let region = |lower, upper| StateRegion {
-            propositions: Vec::new(),
-            numeric: vec![Interval::closed(lower, upper)],
+            propositions: Vec::new().into(),
+            numeric: vec![Interval::closed(lower, upper)].into(),
         };
         let footprint = |lower, upper| AbstractOperatorFootprint {
             labels: vec![ConcreteOperatorFootprint {
@@ -2817,8 +2819,8 @@ mod tests {
 
     fn state_region(value: usize) -> StateRegion {
         StateRegion {
-            propositions: vec![vec![value as PropValueId]],
-            numeric: vec![],
+            propositions: vec![vec![value as PropValueId]].into(),
+            numeric: Vec::new().into(),
         }
     }
 
@@ -2831,8 +2833,8 @@ mod tests {
 
     fn numeric_state_region(lower: f64, upper: f64) -> StateRegion {
         StateRegion {
-            propositions: vec![vec![0]],
-            numeric: vec![Interval::closed(lower, upper)],
+            propositions: vec![vec![0]].into(),
+            numeric: vec![Interval::closed(lower, upper)].into(),
         }
     }
 
@@ -2866,8 +2868,8 @@ mod tests {
         ConcreteOperatorFootprint {
             concrete_op_id,
             source_region: StateRegion {
-                propositions: vec![vec![0]],
-                numeric: vec![first, second],
+                propositions: vec![vec![0]].into(),
+                numeric: vec![first, second].into(),
             }
             .into(),
         }
@@ -3341,8 +3343,9 @@ mod tests {
                     labels: vec![ConcreteOperatorFootprint {
                         concrete_op_id: 0,
                         source_region: StateRegion {
-                            propositions: vec![vec![0]],
-                            numeric: vec![Interval::new(i as f64, (i + 1) as f64, false, true)],
+                            propositions: vec![vec![0]].into(),
+                            numeric: vec![Interval::new(i as f64, (i + 1) as f64, false, true)]
+                                .into(),
                         }
                         .into(),
                     }],
@@ -3496,8 +3499,8 @@ mod tests {
             labels: vec![ConcreteOperatorFootprint {
                 concrete_op_id: 0,
                 source_region: StateRegion {
-                    propositions: vec![vec![0]],
-                    numeric: vec![Interval::new(f64::NEG_INFINITY, 0.0, false, false)],
+                    propositions: vec![vec![0]].into(),
+                    numeric: vec![Interval::new(f64::NEG_INFINITY, 0.0, false, false)].into(),
                 }
                 .into(),
             }],

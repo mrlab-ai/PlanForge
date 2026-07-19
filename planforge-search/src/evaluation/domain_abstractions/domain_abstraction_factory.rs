@@ -1147,13 +1147,15 @@ impl DomainAbstractionFactory {
                         "restricted SNP operator {concrete_op_id} cannot reach abstract target {target_interval:?} for numeric variable {numeric_var_id}"
                     )
                 })?;
-            source_region.numeric[numeric_var_id] =
-                interval_intersection(source_interval, inverse_source);
+            let regressed_source = interval_intersection(source_interval, inverse_source);
             ensure!(
-                !source_region.numeric[numeric_var_id].is_empty(),
+                !regressed_source.is_empty(),
                 "restricted SNP operator {concrete_op_id} has an empty regressed source footprint for numeric variable {numeric_var_id}: source={source_interval:?}, target={target_interval:?}, image={:?}, inverse_source={inverse_source:?}",
                 effect_image.image,
             );
+            if regressed_source != source_interval {
+                Arc::make_mut(&mut source_region.numeric)[numeric_var_id] = regressed_source;
+            }
         }
 
         Ok(ConcreteOperatorFootprint {
@@ -1810,12 +1812,12 @@ impl DomainAbstractionFactory {
         hash_multipliers: &[usize],
     ) -> Result<StateRegion> {
         Ok(StateRegion {
-            propositions: self.propositional_region_from_hash(state_hash, hash_multipliers)?,
-            numeric: self.numeric_region_from_hash(
-                state_hash,
-                numeric_domain_sizes,
-                hash_multipliers,
-            )?,
+            propositions: self
+                .propositional_region_from_hash(state_hash, hash_multipliers)?
+                .into(),
+            numeric: self
+                .numeric_region_from_hash(state_hash, numeric_domain_sizes, hash_multipliers)?
+                .into(),
         })
     }
 
@@ -1852,8 +1854,8 @@ impl DomainAbstractionFactory {
         }
 
         Ok(StateRegion {
-            propositions,
-            numeric,
+            propositions: propositions.into(),
+            numeric: numeric.into(),
         })
     }
 

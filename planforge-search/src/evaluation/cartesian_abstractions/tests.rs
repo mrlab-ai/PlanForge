@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use planforge_sas::axioms::{
@@ -92,12 +93,13 @@ fn min_growth_uses_projected_transition_count() {
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     let mut working = WorkingAbstraction::new(
         StateRegion {
-            propositions: vec![vec![0, 1]],
+            propositions: vec![vec![0, 1]].into(),
             numeric: vec![
                 Interval::unbounded(),
                 Interval::unbounded(),
                 Interval::singleton(1.0),
-            ],
+            ]
+            .into(),
         },
         1,
     );
@@ -115,6 +117,58 @@ fn min_growth_uses_projected_transition_count() {
     retain_min_growth_splits(&working, &semantics, &mut candidates, |candidate| candidate).unwrap();
     assert_eq!(candidates.len(), 1);
     assert!(matches!(candidates[0], Split::Numeric { var_id: 1, .. }));
+}
+
+#[test]
+fn unchanged_transition_footprints_share_state_dimensions() {
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![ExplicitVariable::new(
+            1,
+            "position".into(),
+            vec!["same".into()],
+            None,
+            0,
+        )],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+        ],
+        vec![ExplicitFact::new(0, 0)],
+        vec![],
+        vec![0],
+        vec![0.0, 1.0],
+        vec![Operator::new(
+            "increment-x".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                1,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
+    let source = StateRegion {
+        propositions: vec![vec![0]].into(),
+        numeric: vec![Interval::unbounded(), Interval::singleton(1.0)].into(),
+    };
+
+    let footprint = semantics
+        .transition_source_footprint(&source, 0, &source)
+        .unwrap();
+
+    assert!(Arc::ptr_eq(&source.propositions, &footprint.propositions));
+    assert!(Arc::ptr_eq(&source.numeric, &footprint.numeric));
 }
 
 #[test]
@@ -159,14 +213,14 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
 fn removed_transitions_are_unlinked_and_their_slots_are_reused() {
     let mut working = WorkingAbstraction::new(
         StateRegion {
-            propositions: Vec::new(),
-            numeric: Vec::new(),
+            propositions: Vec::new().into(),
+            numeric: Vec::new().into(),
         },
         8,
     );
     working.states.push(StateRegion {
-        propositions: Vec::new(),
-        numeric: Vec::new(),
+        propositions: Vec::new().into(),
+        numeric: Vec::new().into(),
     });
     working.outgoing.push(Vec::new());
     working.incoming.push(Vec::new());
