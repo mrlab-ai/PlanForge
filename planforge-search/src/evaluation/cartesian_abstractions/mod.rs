@@ -1594,7 +1594,11 @@ impl CartesianAbstractionCollectionGenerator {
     /// Builds variants for task goals until the configured collection limit
     /// is reached, or one full-task abstraction when the goal is empty. With
     /// progressive roots enabled, each variant replays its validated concrete
-    /// plans and uses the reached state as the next CEGAR refinement root.
+    /// plans and uses a reached non-goal state as the next CEGAR refinement
+    /// root. Reaching the complete task goal makes that lane terminal; later
+    /// members use the task initial state independently. After the requested
+    /// variants, missing initial-root goal specialists are added within the
+    /// same resource limits.
     ///
     /// Each member changes only the goal view. Operators, state mappings, and
     /// concrete operator IDs stay identical to the base task. Changing the
@@ -1616,28 +1620,47 @@ impl CartesianAbstractionCollectionGenerator {
         let start = Instant::now();
         let mut remaining_states = self.config.max_collection_states;
         let mut abstractions = Vec::with_capacity(abstraction_count);
-        let mut refinement_roots = if self.config.progressive_goal_roots && goal_count > 0 {
-            let root = initial_cartesian_concrete_state(task)?;
-            vec![root; variants_per_goal]
-        } else {
-            Vec::new()
-        };
+        let initial_refinement_root = (self.config.progressive_goal_roots && goal_count > 0)
+            .then(|| initial_cartesian_concrete_state(task))
+            .transpose()?;
+        let mut refinement_roots = initial_refinement_root
+            .as_ref()
+            .map_or_else(Vec::new, |root| vec![root.clone(); variants_per_goal]);
         let mut satisfied_goals_by_root = refinement_roots
             .iter()
             .map(|root| count_satisfied_cartesian_goals(task, root))
             .collect::<Result<Vec<_>>>()?;
+        let mut progressive_root_advanced = vec![false; refinement_roots.len()];
+        let mut progressive_lane_complete = vec![false; refinement_roots.len()];
+        let mut initial_root_goal_covered = vec![false; goal_count];
         let mut variants_built_by_goal = vec![0usize; goal_count];
         let mut best_initial_h_by_goal = vec![0.0f64; goal_count];
         let mut continuation_queue = VecDeque::<(usize, usize)>::new();
         let mut abstraction_id = 0usize;
         let mut initial_abstractions_built = 0usize;
         let mut stop_reason = "requested abstraction count reached";
-        while initial_abstractions_built < abstraction_count || !continuation_queue.is_empty() {
+        while initial_abstractions_built < abstraction_count
+            || !continuation_queue.is_empty()
+            || (self.config.progressive_goal_roots
+                && initial_root_goal_covered.iter().any(|covered| !covered))
+        {
             if remaining_states < 2 && !abstractions.is_empty() {
                 stop_reason = "collection size limit";
                 break;
             }
-            let continuation = if self.config.progressive_goal_roots {
+            let scheduled_member_pending = initial_abstractions_built < abstraction_count;
+            let initial_root_specialist_goal = (!scheduled_member_pending
+                && self.config.progressive_goal_roots)
+                .then(|| {
+                    initial_root_goal_covered
+                        .iter()
+                        .position(|covered| !covered)
+                })
+                .flatten();
+            let continuation = if self.config.progressive_goal_roots
+                && !scheduled_member_pending
+                && initial_root_specialist_goal.is_none()
+            {
                 loop {
                     let Some((goal_id, variant_id)) = continuation_queue.pop_front() else {
                         break None;
@@ -1656,11 +1679,10 @@ impl CartesianAbstractionCollectionGenerator {
                 None
             };
             let is_continuation = continuation.is_some();
-            let (goal_id, variant_id) = if let Some(continuation) = continuation {
-                continuation
-            } else if goal_count == 0 {
+            let mut is_initial_root_specialist = false;
+            let (goal_id, variant_id) = if goal_count == 0 {
                 (0, 0)
-            } else {
+            } else if scheduled_member_pending {
                 let Some(goal_id) = select_next_cartesian_collection_goal(
                     &variants_built_by_goal,
                     &best_initial_h_by_goal,
@@ -1670,6 +1692,14 @@ impl CartesianAbstractionCollectionGenerator {
                     break;
                 };
                 (goal_id, variants_built_by_goal[goal_id])
+            } else if let Some(goal_id) = initial_root_specialist_goal {
+                is_initial_root_specialist = true;
+                (goal_id, variants_per_goal)
+            } else if let Some(continuation) = continuation {
+                continuation
+            } else {
+                stop_reason = "requested abstractions and initial-root goal coverage reached";
+                break;
             };
             let remaining_time = match self.config.total_max_time {
                 Some(total_max_time) => {
@@ -1695,20 +1725,26 @@ impl CartesianAbstractionCollectionGenerator {
                 (None, Some(remaining)) => Some(remaining),
                 (None, None) => None,
             };
+            let construction_variant_id = if is_initial_root_specialist {
+                0
+            } else {
+                variant_id
+            };
             if goal_count > 0 && self.config.variants_per_goal > 1 {
-                abstraction_config.refinement_direction = if variant_id.is_multiple_of(2) {
-                    CartesianRefinementDirection::Progression
-                } else {
-                    CartesianRefinementDirection::Regression
-                };
-                abstraction_config.split_selection_rank = Some(variant_id / 2);
-                abstraction_config.random_seed = if variant_id == 0 {
+                abstraction_config.refinement_direction =
+                    if construction_variant_id.is_multiple_of(2) {
+                        CartesianRefinementDirection::Progression
+                    } else {
+                        CartesianRefinementDirection::Regression
+                    };
+                abstraction_config.split_selection_rank = Some(construction_variant_id / 2);
+                abstraction_config.random_seed = if construction_variant_id == 0 {
                     None
                 } else {
                     Some(derive_variant_seed(
                         abstraction_config.random_seed.unwrap_or(0),
                         goal_id,
-                        variant_id - 1,
+                        construction_variant_id - 1,
                     ))
                 };
             }
@@ -1719,18 +1755,31 @@ impl CartesianAbstractionCollectionGenerator {
                 .as_ref()
                 .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
             debug!(
-                "Cartesian collection: building abstraction {}, goal={}, variant={}, continuation={}, direction={:?}, split_rank={:?}, max_states={}, seed={:?}",
+                "Cartesian collection: building abstraction {}, goal={}, variant={}, continuation={}, initial_root_specialist={}, direction={:?}, split_rank={:?}, max_states={}, seed={:?}",
                 abstraction_id + 1,
                 goal_id,
                 variant_id,
                 is_continuation,
+                is_initial_root_specialist,
                 abstraction_config.refinement_direction,
                 abstraction_config.split_selection_rank,
                 abstraction_config.max_states,
                 abstraction_config.random_seed
             );
             let generator = CartesianAbstractionGenerator::new(abstraction_config)?;
-            let refinement_root = refinement_roots.get(variant_id);
+            let lane_is_complete = progressive_lane_complete
+                .get(variant_id)
+                .copied()
+                .unwrap_or(false);
+            let refinement_root = (!is_initial_root_specialist && !lane_is_complete)
+                .then(|| refinement_roots.get(variant_id))
+                .flatten();
+            let built_from_initial_root = is_initial_root_specialist
+                || refinement_root.is_none()
+                || !progressive_root_advanced
+                    .get(variant_id)
+                    .copied()
+                    .unwrap_or(false);
             let mut reset_progressive_root = false;
             let mut abstraction = match generator
                 .generate_from_root(abstraction_task, refinement_root)
@@ -1764,9 +1813,17 @@ impl CartesianAbstractionCollectionGenerator {
             abstraction.metadata.collection_goal_id = (goal_count > 0).then_some(goal_id);
             abstraction.metadata.collection_variant_id = (goal_count > 0).then_some(variant_id);
             abstraction.metadata.abstraction_use = AbstractionUse::CollectionMember;
-            abstraction.metadata.progressive_refinement_root =
-                refinement_root.is_some() && !reset_progressive_root;
-            if goal_count > 0 && !is_continuation {
+            abstraction.metadata.progressive_refinement_root = !is_initial_root_specialist
+                && !lane_is_complete
+                && progressive_root_advanced
+                    .get(variant_id)
+                    .copied()
+                    .unwrap_or(false)
+                && !reset_progressive_root;
+            if goal_count > 0 && (built_from_initial_root || reset_progressive_root) {
+                initial_root_goal_covered[goal_id] = true;
+            }
+            if goal_count > 0 && !is_continuation && !is_initial_root_specialist {
                 variants_built_by_goal[goal_id] += 1;
                 initial_abstractions_built += 1;
                 let initial_h = abstraction.distance_table.distances
@@ -1775,41 +1832,80 @@ impl CartesianAbstractionCollectionGenerator {
             } else if goal_count == 0 {
                 initial_abstractions_built += 1;
             }
-            if let Some(root) = refinement_roots.get_mut(variant_id) {
+            if !is_initial_root_specialist
+                && !lane_is_complete
+                && let Some(root) = refinement_roots.get_mut(variant_id)
+            {
                 if reset_progressive_root {
-                    *root = initial_cartesian_concrete_state(task)?;
+                    *root = initial_refinement_root
+                        .as_ref()
+                        .expect("progressive refinement root requires an initial root")
+                        .clone();
+                    progressive_root_advanced[variant_id] = false;
+                    progressive_lane_complete[variant_id] = true;
                     satisfied_goals_by_root[variant_id] =
                         count_satisfied_cartesian_goals(task, root)?;
-                }
-                match abstraction.metadata.concrete_plan_operator_ids.as_deref() {
-                    Some(operator_ids) => {
-                        let previous_satisfied_goals = satisfied_goals_by_root[variant_id];
-                        *root = replay_cartesian_operator_sequence(task, root, operator_ids)?;
-                        let satisfied_goals = count_satisfied_cartesian_goals(task, root)?;
-                        satisfied_goals_by_root[variant_id] = satisfied_goals;
-                        debug!(
-                            "Cartesian collection: advanced progressive root for variant {variant_id} through {} concrete operators; satisfied_goals={}/{}",
-                            operator_ids.len(),
-                            satisfied_goals,
-                            goal_count,
-                        );
-                        if !reset_progressive_root && satisfied_goals > previous_satisfied_goals {
-                            for retry_goal_id in 0..goal_count {
-                                let was_already_attempted =
-                                    variants_built_by_goal[retry_goal_id] > variant_id;
-                                if was_already_attempted
-                                    && !cartesian_goal_is_satisfied(task, root, retry_goal_id)?
-                                    && !continuation_queue.contains(&(retry_goal_id, variant_id))
-                                {
-                                    continuation_queue.push_back((retry_goal_id, variant_id));
+                    continuation_queue
+                        .retain(|(_, queued_variant_id)| *queued_variant_id != variant_id);
+                    debug!(
+                        "Cartesian collection: dead root made progressive variant {variant_id} terminal after rebuilding goal {goal_id} from the initial state"
+                    );
+                } else {
+                    match abstraction.metadata.concrete_plan_operator_ids.as_deref() {
+                        Some(operator_ids) => {
+                            let previous_satisfied_goals = satisfied_goals_by_root[variant_id];
+                            *root = replay_cartesian_operator_sequence(task, root, operator_ids)?;
+                            let satisfied_goals = count_satisfied_cartesian_goals(task, root)?;
+                            satisfied_goals_by_root[variant_id] = satisfied_goals;
+                            debug!(
+                                "Cartesian collection: advanced progressive root for variant {variant_id} through {} concrete operators; satisfied_goals={}/{}",
+                                operator_ids.len(),
+                                satisfied_goals,
+                                goal_count,
+                            );
+                            if satisfied_goals == goal_count {
+                                *root = initial_refinement_root
+                                    .as_ref()
+                                    .expect("progressive refinement root requires an initial root")
+                                    .clone();
+                                progressive_root_advanced[variant_id] = false;
+                                progressive_lane_complete[variant_id] = true;
+                                satisfied_goals_by_root[variant_id] =
+                                    count_satisfied_cartesian_goals(task, root)?;
+                                continuation_queue.retain(|(_, queued_variant_id)| {
+                                    *queued_variant_id != variant_id
+                                });
+                                debug!(
+                                    "Cartesian collection: full goal reached for variant {variant_id}; made the progressive lane terminal"
+                                );
+                            } else {
+                                progressive_root_advanced[variant_id] = true;
+                                if satisfied_goals > previous_satisfied_goals {
+                                    for (retry_goal_id, &variants_built) in
+                                        variants_built_by_goal.iter().enumerate()
+                                    {
+                                        let was_already_attempted = variants_built > variant_id;
+                                        if was_already_attempted
+                                            && !cartesian_goal_is_satisfied(
+                                                task,
+                                                root,
+                                                retry_goal_id,
+                                            )?
+                                            && !continuation_queue
+                                                .contains(&(retry_goal_id, variant_id))
+                                        {
+                                            continuation_queue
+                                                .push_back((retry_goal_id, variant_id));
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                    None => {
-                        debug!(
-                            "Cartesian collection: goal {goal_id} variant {variant_id} produced no concrete plan; progressive root remains unchanged"
-                        );
+                        None => {
+                            debug!(
+                                "Cartesian collection: goal {goal_id} variant {variant_id} produced no concrete plan; progressive root remains unchanged"
+                            );
+                        }
                     }
                 }
             }
@@ -1821,6 +1917,12 @@ impl CartesianAbstractionCollectionGenerator {
             }
         }
 
+        if stop_reason == "requested abstraction count reached"
+            && self.config.progressive_goal_roots
+            && initial_root_goal_covered.iter().all(|covered| *covered)
+        {
+            stop_reason = "requested abstractions and initial-root goal coverage reached";
+        }
         info!(
             "Cartesian collection: abstractions={}, states={}, elapsed={:.3}s, stop_reason={}",
             abstractions.len(),
@@ -1831,6 +1933,16 @@ impl CartesianAbstractionCollectionGenerator {
         if !satisfied_goals_by_root.is_empty() {
             info!(
                 "Cartesian collection: progressive root goal coverage={satisfied_goals_by_root:?}/{goal_count}"
+            );
+        }
+        if !initial_root_goal_covered.is_empty() {
+            info!(
+                "Cartesian collection: initial-root goal coverage={}/{}",
+                initial_root_goal_covered
+                    .iter()
+                    .filter(|covered| **covered)
+                    .count(),
+                goal_count
             );
         }
         Ok(abstractions)

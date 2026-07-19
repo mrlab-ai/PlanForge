@@ -6273,7 +6273,7 @@ mod tests {
         config.online = false;
         config.diversify = true;
         config.samples = 16;
-        config.max_orders = expected_goals.len() * 4;
+        config.max_orders = 1 + expected_goals.len() * 4;
         config.initial_order_generation_max_time = 10.0;
         let heuristic =
             SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(

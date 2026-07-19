@@ -884,7 +884,7 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
         .generate(&task)
         .unwrap();
 
-    assert_eq!(abstractions.len(), 2);
+    assert_eq!(abstractions.len(), 3);
     assert_eq!(
         abstractions[0]
             .metadata
@@ -907,19 +907,220 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
     let second_initial_h =
         abstractions[1].distance_table.distances[abstractions[1].distance_table.initial_state_hash];
     assert!(second_initial_h <= 4.0);
+    assert_eq!(abstractions[2].metadata.collection_goal_id, Some(1));
+    assert_eq!(abstractions[2].metadata.collection_variant_id, Some(1));
+    assert!(!abstractions[2].metadata.progressive_refinement_root);
+    assert_eq!(
+        abstractions[2]
+            .metadata
+            .concrete_plan_operator_ids
+            .as_ref()
+            .expect("initial-root specialist must find the concrete goal")
+            .len(),
+        4,
+        "a goal first refined from a checkpoint also needs an initial-root specialist"
+    );
     for x in 0..=4 {
         let propositions = vec![usize::from(x < 2), usize::from(x < 4)];
         let numeric = vec![x as f64, 1.0, 2.0, 4.0];
-        let state_id = abstractions[1]
-            .abstract_state_id(&propositions, &numeric)
-            .unwrap();
-        let h = abstractions[1].distance_table.distances[state_id];
         let true_distance = (4 - x) as f64;
-        assert!(
-            h <= true_distance,
-            "checkpoint-rooted abstraction overestimates at x={x}: h={h}, h*={true_distance}"
-        );
+        for (kind, abstraction) in [
+            ("checkpoint-rooted", &abstractions[1]),
+            ("initial-root specialist", &abstractions[2]),
+        ] {
+            let state_id = abstraction
+                .abstract_state_id(&propositions, &numeric)
+                .unwrap();
+            let h = abstraction.distance_table.distances[state_id];
+            assert!(
+                h <= true_distance,
+                "{kind} abstraction overestimates at x={x}: h={h}, h*={true_distance}"
+            );
+        }
     }
+}
+
+#[test]
+fn progressive_goal_roots_make_a_lane_terminal_after_reaching_the_full_goal() {
+    let task = NumericRootTask::new(
+        2,
+        Metric::new(true, None),
+        vec![
+            comparison_variable("x-at-least-four"),
+            comparison_variable("x-at-least-two"),
+        ],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+            NumericVariable::new("four".into(), NumericType::Constant, None),
+            NumericVariable::new("two".into(), NumericType::Constant, None),
+        ],
+        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)],
+        vec![],
+        vec![2, 2],
+        vec![0.0, 1.0, 4.0, 2.0],
+        vec![Operator::new(
+            "increment".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                1,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![],
+        vec![
+            ComparisonAxiom::new(0, 0, 2, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(1, 0, 3, ComparisonOperator::GreaterThanOrEqual),
+        ],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let abstractions =
+        CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+            abstraction: CartesianAbstractionConfig {
+                max_states: 64,
+                ..Default::default()
+            },
+            variants_per_goal: 1,
+            max_collection_states: 192,
+            total_max_time: None,
+            progressive_goal_roots: true,
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+
+    assert_eq!(
+        abstractions
+            .iter()
+            .map(|abstraction| abstraction.metadata.collection_goal_id)
+            .collect::<Vec<_>>(),
+        vec![Some(0), Some(1)]
+    );
+    assert_eq!(
+        abstractions
+            .iter()
+            .map(|abstraction| {
+                abstraction
+                    .metadata
+                    .concrete_plan_operator_ids
+                    .as_ref()
+                    .expect("unbounded one-dimensional abstraction must find a plan")
+                    .len()
+            })
+            .collect::<Vec<_>>(),
+        vec![4, 2],
+        "members after a completed progressive lane must start independently from the initial state"
+    );
+    assert_eq!(
+        abstractions
+            .iter()
+            .map(|abstraction| abstraction.metadata.progressive_refinement_root)
+            .collect::<Vec<_>>(),
+        vec![false, false],
+        "a completed lane must not be progressed or retried again"
+    );
+}
+
+#[test]
+fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
+    let task = NumericRootTask::new(
+        2,
+        Metric::new(true, None),
+        vec![
+            comparison_variable("x-at-least-one"),
+            comparison_variable("x-at-most-zero"),
+        ],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+            NumericVariable::new("zero".into(), NumericType::Constant, None),
+        ],
+        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)],
+        vec![],
+        vec![2, 2],
+        vec![0.0, 1.0, 0.0],
+        vec![Operator::new(
+            "increment".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                1,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![],
+        vec![
+            ComparisonAxiom::new(0, 0, 1, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(1, 0, 2, ComparisonOperator::LessThanOrEqual),
+        ],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+
+    let abstractions =
+        CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+            abstraction: CartesianAbstractionConfig {
+                max_states: 64,
+                ..Default::default()
+            },
+            variants_per_goal: 1,
+            max_collection_states: 192,
+            total_max_time: None,
+            progressive_goal_roots: true,
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+
+    assert_eq!(
+        abstractions.len(),
+        2,
+        "unexpected members: {:?}",
+        abstractions
+            .iter()
+            .map(|abstraction| (
+                abstraction.metadata.collection_goal_id,
+                abstraction.metadata.collection_variant_id,
+                abstraction.metadata.progressive_refinement_root,
+                abstraction.metadata.stop_reason,
+                abstraction.metadata.concrete_plan_operator_ids.as_deref(),
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        abstractions
+            .iter()
+            .map(|abstraction| abstraction.metadata.collection_goal_id)
+            .collect::<Vec<_>>(),
+        vec![Some(0), Some(1)]
+    );
+    assert_eq!(
+        abstractions[0]
+            .metadata
+            .concrete_plan_operator_ids
+            .as_deref(),
+        Some([0].as_slice())
+    );
+    assert_eq!(
+        abstractions[1]
+            .metadata
+            .concrete_plan_operator_ids
+            .as_deref(),
+        Some([].as_slice()),
+        "the dead checkpoint must be rebuilt independently at the satisfying initial state"
+    );
+    assert!(!abstractions[1].metadata.progressive_refinement_root);
 }
 
 #[test]
