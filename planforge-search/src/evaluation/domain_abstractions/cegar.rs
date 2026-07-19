@@ -90,13 +90,13 @@ pub struct CegarConfig {
 impl Default for CegarConfig {
     fn default() -> Self {
         Self {
-            max_abstraction_size: usize::MAX,
-            max_iterations: 10_000,
+            max_abstraction_size: 100_000,
+            max_iterations: usize::MAX,
             max_time: None,
-            use_wildcard_plans: true,
+            use_wildcard_plans: false,
             combine_labels: true,
             debug: false,
-            random_seed: None,
+            random_seed: Some(2011),
             flaw_kind: FlawKind::Progression,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,

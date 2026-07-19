@@ -250,7 +250,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
 impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     fn default() -> Self {
         Self {
-            max_abstraction_size: 10_000,
+            max_abstraction_size: 1_000_000,
             max_collection_size: 10_000_000,
             abstraction_generation_max_time: f64::INFINITY,
             total_max_time: 10.0,
@@ -260,9 +260,9 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             blacklist_option: VariableSubset::All,
             init_split_candidates: VariableSubset::All,
             init_split_quantity: InitSplitQuantity::Single,
-            random_seed: None,
+            random_seed: Some(2011),
             debug: false,
-            use_wildcard_plans: true,
+            use_wildcard_plans: false,
             combine_labels: true,
             // The Numeric-FD canonical configuration executes the complete
             // abstract plan and refines from all observed flaws. Collection
@@ -622,8 +622,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             .unwrap_or(u128::MAX);
 
             let abstraction_key = AbstractionKey::from_abstraction(&abstraction);
+            let elapsed_after_generation = start.elapsed().as_secs_f64();
             if generated_keys.insert(abstraction_key) {
-                time_point_of_last_new_abstraction = elapsed;
+                time_point_of_last_new_abstraction = elapsed_after_generation;
                 let consumed = abstraction_size.min(remaining_collection_size as u128) as usize;
                 remaining_collection_size = remaining_collection_size.saturating_sub(consumed);
                 generated_abstractions.push(abstraction);
@@ -648,13 +649,15 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 );
             }
 
-            let stagnated =
-                elapsed - time_point_of_last_new_abstraction > self.config.stagnation_limit;
+            let stagnated = elapsed_after_generation - time_point_of_last_new_abstraction
+                > self.config.stagnation_limit;
             if remaining_collection_size == 0 {
                 stop_reason = "collection size limit";
                 break;
             }
-            if self.config.total_max_time.is_finite() && elapsed >= self.config.total_max_time {
+            if self.config.total_max_time.is_finite()
+                && elapsed_after_generation >= self.config.total_max_time
+            {
                 stop_reason = "collection time limit";
                 break;
             }

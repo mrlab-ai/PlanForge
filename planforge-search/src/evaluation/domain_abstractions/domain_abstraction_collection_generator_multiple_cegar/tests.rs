@@ -1,9 +1,13 @@
 use super::*;
 
 #[test]
-fn standard_collection_defaults_to_numeric_fd_execute_entire_plan() {
+fn standard_collection_defaults_match_numeric_fd_canonical_configuration() {
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     assert_eq!(config.portfolio_strategy, PortfolioStrategy::Standard);
+    assert_eq!(config.max_abstraction_size, 1_000_000);
+    assert_eq!(config.max_collection_size, 10_000_000);
+    assert!(!config.use_wildcard_plans);
+    assert_eq!(config.random_seed, Some(2011));
     assert_eq!(config.flaw_kind, FlawKind::ExecuteEntirePlan);
 }
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
