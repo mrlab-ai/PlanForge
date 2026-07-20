@@ -6055,19 +6055,26 @@ fn compute_regional_conflict_scores(
 ) -> Result<Vec<f64>, EvaluationError> {
     let component_count = abstractions.len() + cartesian_abstractions.len();
     let mut regions_by_component = Vec::with_capacity(component_count);
-    for (component_id, footprints) in abstractions
+    for (component_id, (footprints, expected_footprints)) in abstractions
         .iter()
-        .map(|abstraction| abstraction.abstract_operator_footprints.as_slice())
-        .chain(
-            cartesian_abstractions
-                .iter()
-                .map(|abstraction| abstraction.abstract_operator_footprints.as_slice()),
-        )
+        .map(|abstraction| {
+            (
+                abstraction.abstract_operator_footprints.as_slice(),
+                abstraction.abstract_operators.len(),
+            )
+        })
+        .chain(cartesian_abstractions.iter().map(|abstraction| {
+            (
+                abstraction.abstract_operator_footprints.as_slice(),
+                abstraction.transition_system.transitions.len(),
+            )
+        }))
         .enumerate()
     {
-        if footprints.is_empty() {
+        if footprints.len() != expected_footprints {
             return Err(EvaluationError::ComputationFailed(format!(
-                "region SCP component {component_id} has no operator footprints"
+                "region SCP component {component_id} has {} operator footprints for {expected_footprints} retained abstract transitions/operators",
+                footprints.len()
             )));
         }
         let mut by_operator = HashMap::<usize, Vec<&StateRegion>>::new();
@@ -6337,6 +6344,54 @@ mod tests {
 
         let err = reduce_costs(&mut remaining, &saturated).unwrap_err();
         assert!(format!("{err}").contains("underflow"));
+    }
+
+    #[test]
+    fn regional_conflict_scoring_accepts_transition_free_components() {
+        let task = independent_goals_task();
+        let mut cartesian = cartesian_abstraction(&task);
+        cartesian.transition_system.transitions.clear();
+        cartesian.abstract_operator_footprints.clear();
+        let mut domain_config = CegarConfig::default();
+        domain_config.max_abstraction_size = 16;
+        domain_config.compute_operator_footprints = true;
+        let mut domain = DomainAbstractionGenerator::new(domain_config)
+            .unwrap()
+            .generate(&task)
+            .unwrap();
+        domain.abstract_operators.clear();
+        domain.abstract_operator_footprints.clear();
+
+        assert_eq!(
+            compute_regional_conflict_scores(
+                &[domain],
+                &[cartesian],
+                &[
+                    vec![f64::NEG_INFINITY; task.get_num_operators()],
+                    vec![f64::NEG_INFINITY; task.get_num_operators()],
+                ],
+                &[2.0, 3.0],
+            )
+            .unwrap(),
+            vec![0.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn regional_conflict_scoring_rejects_missing_footprints() {
+        let task = independent_goals_task();
+        let mut abstraction = cartesian_abstraction(&task);
+        assert!(!abstraction.transition_system.transitions.is_empty());
+        abstraction.abstract_operator_footprints.clear();
+
+        let error = compute_regional_conflict_scores(
+            &[],
+            &[abstraction],
+            &[vec![f64::NEG_INFINITY; task.get_num_operators()]],
+            &[2.0, 3.0],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("has 0 operator footprints for"));
     }
 
     #[test]
