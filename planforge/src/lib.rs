@@ -112,7 +112,11 @@ pub struct PlannersCli {
 pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     let current_executable = std::env::current_exe()?;
     let mut child_args = vec![OsString::from("--internal-run")];
-    if let Some(max_memory) = cli.max_memory {
+    let memory_limit = cli
+        .max_memory
+        .map(planforge_cli_utils::effective_rss_limit)
+        .transpose()?;
+    if let Some(max_memory) = memory_limit {
         child_args.push(OsString::from("--max-memory"));
         child_args.push(OsString::from(max_memory.to_string()));
     }
@@ -135,8 +139,6 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     child_args.extend(cli.inputs.iter().cloned().map(OsString::from));
 
     let time_limit = cli.max_time;
-    let memory_limit = cli.max_memory;
-
     let mut command = Command::new(current_executable);
     command.args(child_args);
     command.stdin(std::process::Stdio::inherit());

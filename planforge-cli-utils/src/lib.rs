@@ -126,6 +126,21 @@ pub fn parse_memory_limit(input: &str) -> Result<u64, String> {
     )
 }
 
+#[cfg(unix)]
+pub fn effective_rss_limit(memory_limit: u64) -> std::io::Result<u64> {
+    let mut address_space_limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    let result = unsafe { libc::getrlimit(libc::RLIMIT_AS, address_space_limit.as_mut_ptr()) };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let address_space_limit = unsafe { address_space_limit.assume_init() };
+    if address_space_limit.rlim_cur == libc::RLIM_INFINITY {
+        Ok(memory_limit)
+    } else {
+        Ok(memory_limit.min(address_space_limit.rlim_cur))
+    }
+}
+
 pub fn parse_time_limit(input: &str) -> Result<Duration, String> {
     let seconds = parse_suffixed_value(
         input,
@@ -469,13 +484,18 @@ pub fn wait_with_memory_limit(
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::{process_rss_bytes, wait_with_memory_limit};
+    use super::{effective_rss_limit, process_rss_bytes, wait_with_memory_limit};
     use std::os::unix::process::ExitStatusExt;
     use std::process::Command;
 
     #[test]
     fn reads_current_process_rss() {
         assert!(process_rss_bytes(std::process::id()).unwrap() > 0);
+    }
+
+    #[test]
+    fn effective_memory_limit_does_not_exceed_requested_limit() {
+        assert!(effective_rss_limit(8 * 1024 * 1024 * 1024).unwrap() <= 8 * 1024 * 1024 * 1024);
     }
 
     #[test]

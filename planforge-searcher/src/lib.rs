@@ -625,7 +625,11 @@ pub struct PlannersSearcherCli {
 pub fn run_wrapped_process(cli: &PlannersSearcherCli) -> std::io::Result<()> {
     let current_executable = std::env::current_exe()?;
     let mut child_args = vec![OsString::from("--internal-run")];
-    if let Some(max_memory) = cli.max_memory {
+    let memory_limit = cli
+        .max_memory
+        .map(planforge_cli_utils::effective_rss_limit)
+        .transpose()?;
+    if let Some(max_memory) = memory_limit {
         child_args.push(OsString::from("--max-memory"));
         child_args.push(OsString::from(max_memory.to_string()));
     }
@@ -646,8 +650,6 @@ pub fn run_wrapped_process(cli: &PlannersSearcherCli) -> std::io::Result<()> {
     child_args.extend([cli.sas_file.clone()].iter().map(OsString::from));
 
     let time_limit = cli.max_time;
-    let memory_limit = cli.max_memory;
-
     let mut command = Command::new(current_executable);
     command.args(child_args);
     command.stdin(std::process::Stdio::inherit());
@@ -658,7 +660,16 @@ pub fn run_wrapped_process(cli: &PlannersSearcherCli) -> std::io::Result<()> {
         command.pre_exec(move || apply_process_limits(time_limit, memory_limit));
     }
 
-    let status = command.status()?;
+    let mut child = command.spawn()?;
+    #[cfg(target_os = "linux")]
+    let status = match memory_limit {
+        Some(memory_limit) => {
+            planforge_cli_utils::wait_with_memory_limit(&mut child, memory_limit)?
+        }
+        None => child.wait()?,
+    };
+    #[cfg(not(target_os = "linux"))]
+    let status = child.wait()?;
     let exit_code = normalize_wrapped_exit(status, time_limit, memory_limit);
 
     std::process::exit(exit_code)
