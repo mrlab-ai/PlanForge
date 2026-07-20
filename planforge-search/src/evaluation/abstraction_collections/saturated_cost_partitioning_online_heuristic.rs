@@ -477,6 +477,8 @@ struct ScpOnlineState {
     size_kb: usize,
     cp_heuristics: Vec<CostPartitioningHeuristic>,
     h_values_by_abstraction: Vec<Vec<f64>>,
+    standalone_lookup_tables: Vec<LookupTable>,
+    pdb_offset: usize,
     stolen_costs_by_abstraction: Vec<f64>,
     rng: SmallRng,
     improvement_ended: bool,
@@ -499,6 +501,8 @@ impl ScpOnlineState {
             size_kb: 0,
             cp_heuristics: Vec::new(),
             h_values_by_abstraction: Vec::new(),
+            standalone_lookup_tables: Vec::new(),
+            pdb_offset: usize::MAX,
             stolen_costs_by_abstraction: Vec::new(),
             rng: SmallRng::seed_from_u64(seed),
             improvement_ended: false,
@@ -1014,6 +1018,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let mut st = ScpOnlineState::new(config.random_seed);
         st.h_values_by_abstraction = h_values;
         st.stolen_costs_by_abstraction = stolen_costs;
+        st.pdb_offset = num_abstractions + num_cartesian_abstractions;
 
         Ok(Self {
             name: name.unwrap_or_else(|| "scp_online".to_string()),
@@ -1602,11 +1607,27 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     }
 
     fn compute_max_h(state: &ScpOnlineState, ids: &[Option<usize>]) -> f64 {
-        state
+        let partitioned = state
             .cp_heuristics
             .iter()
             .map(|cp| cp.compute_heuristic(ids))
-            .fold(0.0, f64::max)
+            .fold(0.0, f64::max);
+        let constructing_standalone = standalone_envelope_value(state, ids);
+        let retained_standalone = state
+            .standalone_lookup_tables
+            .iter()
+            .map(|table| {
+                lookup_distance(
+                    table.abstraction_id,
+                    &table.distances,
+                    table.unknown_value,
+                    ids,
+                )
+            })
+            .fold(0.0, f64::max);
+        partitioned
+            .max(constructing_standalone)
+            .max(retained_standalone)
     }
 
     fn required_lookup_ids(state: &ScpOnlineState) -> Vec<usize> {
@@ -1615,9 +1636,51 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .iter()
             .flat_map(|cp| cp.lookup_tables.iter().map(|table| table.abstraction_id))
             .collect();
+        ids.extend(
+            state
+                .standalone_lookup_tables
+                .iter()
+                .map(|table| table.abstraction_id),
+        );
         ids.sort_unstable();
         ids.dedup();
         ids
+    }
+
+    fn retain_standalone_envelope(state: &mut ScpOnlineState) {
+        assert!(
+            state.standalone_lookup_tables.is_empty(),
+            "standalone envelope must be retained exactly once"
+        );
+        let pdb_offset = state.pdb_offset;
+        state.standalone_lookup_tables = std::mem::take(&mut state.h_values_by_abstraction)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(abstraction_id, distances)| {
+                distances
+                    .iter()
+                    .any(|value| *value > 0.0)
+                    .then_some(LookupTable {
+                        abstraction_id,
+                        distances,
+                        unknown_value: if abstraction_id < pdb_offset {
+                            f64::INFINITY
+                        } else {
+                            0.0
+                        },
+                    })
+            })
+            .collect();
+        state.size_kb = state.size_kb.saturating_add(
+            state
+                .standalone_lookup_tables
+                .iter()
+                .map(|table| table.distances.len())
+                .sum::<usize>()
+                .saturating_mul(std::mem::size_of::<f64>())
+                / 1024,
+        );
+        state.required_lookup_ids = Self::required_lookup_ids(state);
     }
 
     fn is_online_deadline_error(error: &anyhow::Error) -> bool {
@@ -1879,16 +1942,29 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .is_finite()
             .then(|| Instant::now() + Duration::from_secs_f64(self.config.max_time.max(0.0)));
         let deadline = earliest_deadline(table_deadline, diversification_deadline);
-        let initial_h = initial_candidates[0].compute_heuristic(initial_abstract_state_ids);
+        let initial_h = initial_candidates[0]
+            .compute_heuristic(initial_abstract_state_ids)
+            .max(standalone_envelope_value(state, initial_abstract_state_ids));
         self.generate_offline_samples(state, initial_h, deadline)?;
         assert!(
             !state.offline_sample_ids.is_empty(),
             "offline diversification must retain at least the initial state sample"
         );
 
-        let mut sample_best = vec![f64::NEG_INFINITY; state.offline_sample_ids.len()];
+        let mut sample_best = state
+            .offline_sample_ids
+            .iter()
+            .map(|ids| standalone_envelope_value(state, ids))
+            .collect::<Vec<_>>();
         let mut portfolio = Vec::new();
-        let mut portfolio_size_kb = 0usize;
+        let standalone_size_kb = standalone_lookup_values_size_kb(&state.h_values_by_abstraction);
+        if standalone_size_kb > self.config.max_size {
+            return Err(EvaluationError::ComputationFailed(format!(
+                "standalone abstraction envelope requires {standalone_size_kb} KiB, exceeding max_size={} KiB",
+                self.config.max_size
+            )));
+        }
+        let mut portfolio_size_kb = standalone_size_kb;
         let mut evaluated_orders = initial_candidates.len();
         let mandatory_indices =
             mandatory_goal_specialist_indices(&initial_candidates, &state.offline_sample_ids);
@@ -1902,10 +1978,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .filter(|&&index| initial_candidates[index].specialist_goal_id.is_some())
             .count();
         let mut initial_candidates = initial_candidates.into_iter().map(Some).collect::<Vec<_>>();
-        let pdb_offset = num_domain_abstractions + self.cartesian_hierarchies.len();
-        let mut mandatory_partitions =
-            standalone_scp_prefixes(&state.h_values_by_abstraction, pdb_offset);
-        let standalone_prefix_count = mandatory_partitions.len();
+        let mut mandatory_partitions = Vec::new();
         for index in mandatory_indices {
             let candidate = initial_candidates[index]
                 .take()
@@ -1916,7 +1989,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
         if mandatory_partitions.len() > self.config.max_orders {
             return Err(EvaluationError::ComputationFailed(format!(
-                "offline SCP requires {} orders to retain every standalone SCP prefix, the global best, and configured goal specialists, exceeding max_orders={}",
+                "offline SCP requires {} orders to retain the global best and configured goal specialists, exceeding max_orders={}",
                 mandatory_partitions.len(),
                 self.config.max_orders,
             )));
@@ -1933,7 +2006,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .map_err(EvaluationError::ComputationFailed)?;
         }
         info!(
-            "scp_online: retained {standalone_prefix_count} mandatory standalone SCP prefixes and {specialist_count} specialists across {represented_goal_count} goals plus the global best"
+            "scp_online: reserved {standalone_size_kb} KiB for the standalone envelope and retained {specialist_count} specialists across {represented_goal_count} goals plus the global best"
         );
 
         for candidate in initial_candidates.into_iter().flatten() {
@@ -4567,6 +4640,47 @@ fn retain_if_sample_improving(
     true
 }
 
+fn lookup_distance(
+    abstraction_id: usize,
+    distances: &[f64],
+    unknown_value: f64,
+    abstract_state_ids: &[Option<usize>],
+) -> f64 {
+    abstract_state_ids
+        .get(abstraction_id)
+        .copied()
+        .flatten()
+        .and_then(|state_id| distances.get(state_id))
+        .copied()
+        .unwrap_or(unknown_value)
+}
+
+fn standalone_envelope_value(state: &ScpOnlineState, abstract_state_ids: &[Option<usize>]) -> f64 {
+    state
+        .h_values_by_abstraction
+        .iter()
+        .enumerate()
+        .map(|(abstraction_id, distances)| {
+            let unknown_value = if abstraction_id < state.pdb_offset {
+                f64::INFINITY
+            } else {
+                0.0
+            };
+            lookup_distance(abstraction_id, distances, unknown_value, abstract_state_ids)
+        })
+        .fold(0.0, f64::max)
+}
+
+fn standalone_lookup_values_size_kb(tables: &[Vec<f64>]) -> usize {
+    tables
+        .iter()
+        .filter(|distances| distances.iter().any(|value| *value > 0.0))
+        .map(Vec::len)
+        .sum::<usize>()
+        .saturating_mul(std::mem::size_of::<f64>())
+        / 1024
+}
+
 fn mandatory_goal_specialist_indices(
     candidates: &[CostPartitioningHeuristic],
     sample_ids: &[Vec<Option<usize>>],
@@ -4608,25 +4722,6 @@ fn mandatory_goal_specialist_indices(
         );
     }
     indices
-}
-
-fn standalone_scp_prefixes(
-    h_values_by_abstraction: &[Vec<f64>],
-    pdb_offset: usize,
-) -> Vec<CostPartitioningHeuristic> {
-    h_values_by_abstraction
-        .iter()
-        .enumerate()
-        .filter_map(|(abstraction_id, distances)| {
-            let mut cp = CostPartitioningHeuristic::default();
-            if abstraction_id < pdb_offset {
-                cp.add_h_values(abstraction_id, distances.clone());
-            } else {
-                cp.add_pdb_h_values(abstraction_id, distances.clone());
-            }
-            (!cp.is_empty()).then_some(cp)
-        })
-        .collect()
 }
 
 fn retain_mandatory_partition(
@@ -5001,6 +5096,10 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
             abstract_state_ids,
             num_domain_abstractions,
         )?;
+        if build_cp && !self.config.online {
+            Self::retain_standalone_envelope(&mut state);
+            max_h = max_h.max(Self::compute_max_h(&state, abstract_state_ids));
+        }
         for cp in candidate_partitions {
             Self::retain_cp(
                 &mut state,
@@ -5016,8 +5115,10 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
             state.improve_heuristic = false;
         }
         if build_cp && !self.config.online {
-            state.h_values_by_abstraction.clear();
-            state.h_values_by_abstraction.shrink_to_fit();
+            assert!(
+                state.h_values_by_abstraction.is_empty(),
+                "offline standalone tables must move into the retained envelope"
+            );
             state.stolen_costs_by_abstraction.clear();
             state.stolen_costs_by_abstraction.shrink_to_fit();
         }
@@ -6423,9 +6524,8 @@ mod tests {
         config.online = false;
         config.diversify = true;
         config.samples = 16;
-        // The portfolio also retains one mandatory standalone prefix per
-        // component, in addition to goal specialists and the global best.
-        config.max_orders = 64;
+        // Standalone bounds live in one envelope outside the SCP order budget.
+        config.max_orders = 1 + 4 * expected_goals.len();
         config.initial_order_generation_max_time = 10.0;
         let heuristic =
             SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
@@ -6770,29 +6870,41 @@ mod tests {
     }
 
     #[test]
-    fn standalone_scp_prefixes_preserve_every_component_envelope() {
-        let prefixes =
-            standalone_scp_prefixes(&[vec![5.0, 1.0], vec![2.0, 6.0], vec![0.0, 0.0]], 2);
+    fn retained_standalone_envelope_preserves_every_component_without_cp_orders() {
+        let mut state = ScpOnlineState::new(Some(1));
+        state.h_values_by_abstraction = vec![vec![5.0, 1.0], vec![2.0, 6.0], vec![0.0, 0.0]];
+        state.pdb_offset = 2;
         let samples = [vec![Some(0), Some(0), None], vec![Some(1), Some(1), None]];
 
-        assert_eq!(prefixes.len(), 2);
         assert_eq!(
             samples
                 .iter()
-                .map(|ids| {
-                    prefixes
-                        .iter()
-                        .map(|prefix| prefix.compute_heuristic(ids))
-                        .fold(0.0, f64::max)
-                })
+                .map(|ids| SaturatedCostPartitioningOnlineHeuristic::compute_max_h(&state, ids))
                 .collect::<Vec<_>>(),
             vec![5.0, 6.0]
         );
-        assert!(
-            prefixes
+
+        SaturatedCostPartitioningOnlineHeuristic::retain_standalone_envelope(&mut state);
+
+        assert!(state.h_values_by_abstraction.is_empty());
+        assert_eq!(state.standalone_lookup_tables.len(), 2);
+        assert!(state.cp_heuristics.is_empty());
+        assert_eq!(state.required_lookup_ids, vec![0, 1]);
+        assert_eq!(
+            samples
                 .iter()
-                .all(|prefix| prefix.lookup_tables.len() == 1)
+                .map(|ids| SaturatedCostPartitioningOnlineHeuristic::compute_max_h(&state, ids))
+                .collect::<Vec<_>>(),
+            vec![5.0, 6.0]
         );
+    }
+
+    #[test]
+    fn standalone_envelope_size_excludes_tables_that_are_not_retained() {
+        let useful = vec![1.0; 128];
+        let zero = vec![0.0; 128];
+
+        assert_eq!(standalone_lookup_values_size_kb(&[useful, zero]), 1);
     }
 
     #[test]
