@@ -1,7 +1,7 @@
 use super::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use super::numeric_bound::NumericBound;
 use super::numeric_helper::{LinearNumericCondition as NumericCondition, NumericTaskHelper};
-use crate::evaluation::abstraction_collections::transition_cost_partitioning::{
+use crate::evaluation::abstraction_collections::cost_partitioning::{
     LmCutResidualOperatorCostPartition, StateRegion,
 };
 use planforge_sas::axioms::PropositionalAxiom;

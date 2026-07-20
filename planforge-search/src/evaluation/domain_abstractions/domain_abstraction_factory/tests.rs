@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use rand::{SeedableRng, rngs::SmallRng};
 
-use crate::evaluation::abstraction_collections::transition_cost_partitioning::TransitionResidualCosts;
+use crate::evaluation::abstraction_collections::cost_partitioning::TransitionResidualCosts;
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};

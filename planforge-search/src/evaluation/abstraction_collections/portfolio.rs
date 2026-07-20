@@ -1,3 +1,45 @@
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CollectionStrategy {
+    Standard,
+    Complementary,
+}
+
+impl CollectionStrategy {
+    pub fn is_complementary(self) -> bool {
+        matches!(self, Self::Complementary)
+    }
+
+    pub(crate) fn uses_ranked_goals(self) -> bool {
+        self.is_complementary()
+    }
+}
+
+impl fmt::Display for CollectionStrategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Standard => write!(f, "standard"),
+            Self::Complementary => write!(f, "complementary"),
+        }
+    }
+}
+
+impl crate::config::sealed::Sealed for CollectionStrategy {}
+
+impl crate::config::FromOptionValue for CollectionStrategy {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "standard" => Ok(Self::Standard),
+            "complementary" => Ok(Self::Complementary),
+            other => Err(format!("invalid CollectionStrategy `{other}`")),
+        }
+    }
+}
+
 pub(crate) fn mix_seed(mut value: u64) -> u64 {
     value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
     value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);

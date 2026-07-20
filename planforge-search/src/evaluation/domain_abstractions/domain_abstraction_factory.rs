@@ -31,7 +31,7 @@ use super::numeric_context::{
     prepare_comparison_tree_inputs_from_abstract_state_into,
 };
 use super::utils;
-use crate::evaluation::abstraction_collections::transition_cost_partitioning::{
+use crate::evaluation::abstraction_collections::cost_partitioning::{
     AbstractOperatorCostFunction, AbstractOperatorFootprint, AbstractTransition,
     AbstractTransitionCostFunction, AbstractTransitionSystem, ConcreteOperatorFootprint,
     StateRegion, TransitionResidualCosts,

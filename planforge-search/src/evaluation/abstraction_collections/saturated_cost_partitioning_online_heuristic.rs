@@ -34,13 +34,14 @@ use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::{
     DomainAbstractionHeuristic, DomainAbstractionLookupScratch,
     compute_collection_abstract_state_ids,
 };
-use super::transition_cost_partitioning::{
+use super::cost_partitioning::{
     AbstractOperatorCostFunction, AbstractOperatorFootprint, LmCutResidualOperatorCostPartition,
     TransitionResidualCosts,
-    build_explicit_abstract_operator_cost_partitioning_table,
+    build_explicit_regional_cost_partitioning_table,
     build_explicit_label_cost_partitioning_table,
 };
 use super::component::AbstractionComponent;
+use super::portfolio::CollectionStrategy;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -144,6 +145,40 @@ impl crate::config::FromOptionValue for Saturator {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CostPartitioningMethod {
+    Label,
+    Region,
+}
+
+impl CostPartitioningMethod {
+    pub fn uses_regions(self) -> bool {
+        matches!(self, Self::Region)
+    }
+}
+
+impl fmt::Display for CostPartitioningMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Label => write!(f, "label"),
+            Self::Region => write!(f, "region"),
+        }
+    }
+}
+
+impl crate::config::sealed::Sealed for CostPartitioningMethod {}
+
+impl crate::config::FromOptionValue for CostPartitioningMethod {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        match crate::config::atom(value)? {
+            "label" => Ok(Self::Label),
+            "region" => Ok(Self::Region),
+            other => Err(format!("invalid cost partitioning method `{other}`")),
+        }
+    }
+}
+
 #[derive(
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
@@ -194,7 +229,7 @@ pub struct ScpOnlineConfig {
     pub residual_sweeps: usize,
     #[option(also_sets = "collection_config.random_seed")]
     pub random_seed: Option<u64>,
-    pub use_abstract_operator_cost_partitioning: bool,
+    pub partitioning: CostPartitioningMethod,
 }
 
 #[derive(
@@ -213,7 +248,7 @@ pub struct FillScpConfig {
     pub saturator: Saturator,
     #[option(also_sets = "collection_config.random_seed")]
     pub random_seed: Option<u64>,
-    pub use_abstract_operator_cost_partitioning: bool,
+    pub partitioning: CostPartitioningMethod,
     /// Flattened so `precision`, `epsilon`, etc. reach the nested LMcut config.
     /// SCP/fillSCP both flatten collection_config, but this `flatten` only
     /// applies if `collection_config` does not — only one flatten per struct.
@@ -230,8 +265,7 @@ impl Default for FillScpConfig {
     fn default() -> Self {
         let collection_config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             combine_labels: false,
-            portfolio_strategy:
-                crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::PortfolioStrategy::Standard,
+            collection_strategy: CollectionStrategy::Standard,
             ..Default::default()
         };
         let random_seed = collection_config.random_seed;
@@ -244,7 +278,7 @@ impl Default for FillScpConfig {
             order_optimization_max_time: 5.0,
             saturator: Saturator::All,
             random_seed,
-            use_abstract_operator_cost_partitioning: false,
+            partitioning: CostPartitioningMethod::Label,
             lmcut_config: LmCutNumericConfig::default(),
         }
     }
@@ -252,8 +286,7 @@ impl Default for FillScpConfig {
 
 impl FillScpConfig {
     pub fn force_full_goal_tasks(&mut self) {
-        self.collection_config.portfolio_strategy =
-            crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::PortfolioStrategy::Standard;
+        self.collection_config.collection_strategy = CollectionStrategy::Standard;
         self.collection_config.combine_labels = self.combine_labels;
         self.random_seed = self.collection_config.random_seed;
         // Label-mode fillSCP only consumes per-abstraction distance tables — it never
@@ -261,7 +294,7 @@ impl FillScpConfig {
         // is pure memory bloat (the same per-concrete-op `StateRegion` cost that
         // canonical/max already skip via 468f06a). Disable it unconditionally for
         // the label-CP path.
-        if !self.use_abstract_operator_cost_partitioning {
+        if !self.partitioning.uses_regions() {
             self.collection_config.compute_operator_footprints = false;
         }
     }
@@ -292,7 +325,7 @@ impl FillScpConfig {
             saturator: self.saturator,
             residual_sweeps: 0,
             random_seed: self.random_seed,
-            use_abstract_operator_cost_partitioning: self.use_abstract_operator_cost_partitioning,
+            partitioning: self.partitioning,
         }
     }
 }
@@ -314,7 +347,7 @@ impl Default for ScpOnlineConfig {
             max_orders: usize::MAX,
             // Default: build the SCP heuristic once at evaluation 0 and never
             // rebuild during search. Periodic rebuilds proved expensive enough
-            // to dominate per-state cost on label-SCP and abstract-op CP alike.
+            // to dominate per-state cost on label and regional SCP alike.
             // Configure a finite `interval` only when targeted state-specific
             // re-orderings are worth the rebuild time (rarely, in practice).
             interval: usize::MAX,
@@ -337,7 +370,7 @@ impl Default for ScpOnlineConfig {
             saturator: Saturator::All,
             residual_sweeps: 0,
             random_seed,
-            use_abstract_operator_cost_partitioning: false,
+            partitioning: CostPartitioningMethod::Label,
         }
     }
 }
@@ -562,7 +595,7 @@ impl<'task> FillScpHeuristic<'task> {
             standalone_current_h_values(&state, &abstract_state_ids, num_domain_abstractions)
         };
         let (mut cp_heuristic, mut residual_costs, mut residual_partitions) =
-            if config.use_abstract_operator_cost_partitioning {
+            if config.partitioning.uses_regions() {
                 let (cp, costs, partitions) = temp.build_abstract_operator_fill_scp(
                     task,
                     &abstractions,
@@ -603,7 +636,7 @@ impl<'task> FillScpHeuristic<'task> {
                 optimization_deadline,
             )?;
             (cp_heuristic, residual_costs, residual_partitions) =
-                if config.use_abstract_operator_cost_partitioning {
+                if config.partitioning.uses_regions() {
                     let (cp, costs, partitions) = temp.build_abstract_operator_fill_scp(
                         task,
                         &abstractions,
@@ -1098,7 +1131,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             num_domain_abstractions,
             deadline,
         )?;
-        if self.config.use_abstract_operator_cost_partitioning
+        if self.config.partitioning.uses_regions()
             && let Some(goal_cover_order) = self.cartesian_goal_cover_order(
                 &order,
                 num_domain_abstractions,
@@ -1108,7 +1141,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         {
             if state.evaluated_states == 0 {
                 info!(
-                    "scp_online: using goal-cover transition-SCP order, first_components={:?}",
+                    "scp_online: using goal-cover regional-SCP order, first_components={:?}",
                     goal_cover_order.iter().take(24).collect::<Vec<_>>()
                 );
             }
@@ -1132,7 +1165,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 abstract_state_ids,
                 self.config.scoring_function,
                 abstractions,
-                self.config.use_abstract_operator_cost_partitioning,
+                self.config.partitioning.uses_regions(),
             )),
             OrderGenerator::Random => {
                 let total = state.h_values_by_abstraction.len();
@@ -1153,7 +1186,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 abstract_state_ids,
                 self.config.scoring_function,
                 abstractions,
-                self.config.use_abstract_operator_cost_partitioning,
+                self.config.partitioning.uses_regions(),
             )),
         }
     }
@@ -1185,7 +1218,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             abstract_state_ids,
             self.config.scoring_function,
             abstractions,
-            self.config.use_abstract_operator_cost_partitioning,
+            self.config.partitioning.uses_regions(),
         );
         let mut random = (0..state.h_values_by_abstraction.len()).collect::<Vec<_>>();
         random.shuffle(&mut state.rng);
@@ -1325,7 +1358,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         abstract_state_ids: &[Option<usize>],
         scoring_function: ScoringFunction,
         abstractions: &[DomainAbstraction],
-        use_abstract_operator_cost_partitioning: bool,
+        partitioning: bool,
     ) -> Vec<usize> {
         let total = state.h_values_by_abstraction.len();
         let mut order: Vec<usize> = (0..total).collect();
@@ -1355,9 +1388,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     .get(abs_id)
                     .copied()
                     .unwrap_or(0.0);
-                if use_abstract_operator_cost_partitioning
-                    && let Some(abstraction) = abstractions.get(abs_id)
-                {
+                if partitioning && let Some(abstraction) = abstractions.get(abs_id) {
                     compute_abstract_operator_order_score(h, stolen, scoring_function, abstraction)
                 } else {
                     compute_score(h, stolen, scoring_function)
@@ -1383,9 +1414,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         num_domain_abstractions: usize,
         deadline: Option<Instant>,
     ) -> Result<Vec<usize>, EvaluationError> {
-        if self.config.use_abstract_operator_cost_partitioning {
+        if self.config.partitioning.uses_regions() {
             return Err(EvaluationError::ComputationFailed(
-                "dynamic_greedy_orders is only implemented for label SCP; abstract-operator SCP needs residual abstract-operator scoring, not label-order scoring".to_string(),
+                "dynamic_greedy_orders is only implemented for label SCP; regional SCP needs residual regional-cost scoring, not label-order scoring".to_string(),
             ));
         }
 
@@ -1700,8 +1731,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             num_domain_abstractions,
             deadline,
         )?;
-        let mode = if self.config.use_abstract_operator_cost_partitioning {
-            "abstract-operator"
+        let mode = if self.config.partitioning.uses_regions() {
+            "regional"
         } else {
             "label"
         };
@@ -1723,7 +1754,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 &order,
                 abstract_state_ids,
                 self.config.scoring_function,
-                self.config.use_abstract_operator_cost_partitioning,
+                self.config.partitioning.uses_regions(),
             );
         }
 
@@ -1732,7 +1763,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         } else {
             self.config.order_optimization_max_time
         };
-        let mut candidates = if self.config.use_abstract_operator_cost_partitioning {
+        let mut candidates = if self.config.partitioning.uses_regions() {
             self.build_best_abstract_operator_cp_from_candidate_orders(
                 task,
                 abstractions,
@@ -1932,7 +1963,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 {
                     break;
                 }
-                let candidate = if self.config.use_abstract_operator_cost_partitioning {
+                let candidate = if self.config.partitioning.uses_regions() {
                     self.build_abstract_operator_cp(
                         task,
                         abstractions,
@@ -2424,7 +2455,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     }
 
                     incumbent_order.swap(i, j);
-                    let neighbor_result = if self.config.use_abstract_operator_cost_partitioning {
+                    let neighbor_result = if self.config.partitioning.uses_regions() {
                         self.build_abstract_operator_cp(
                             task,
                             abstractions,
@@ -2558,7 +2589,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     }
                                     Err(error) => {
                                         return Err(EvaluationError::ComputationFailed(format!(
-                                        "failed to compute abstract-operator SCP table: {error:#}"
+                                        "failed to compute regional SCP table: {error:#}"
                                     )));
                                     }
                                 };
@@ -2888,7 +2919,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             })?;
 
         let build = |residual_costs: &TransitionResidualCosts, cap| {
-            build_explicit_abstract_operator_cost_partitioning_table(
+            build_explicit_regional_cost_partitioning_table(
                 &abstraction.transition_system,
                 &abstraction.abstract_operator_footprints,
                 residual_costs,
@@ -4657,7 +4688,7 @@ fn log_abstraction_candidate_report(
     order: &[usize],
     abstract_state_ids: &[Option<usize>],
     scoring_function: ScoringFunction,
-    use_abstract_operator_cost_partitioning: bool,
+    partitioning: bool,
 ) {
     let inactive = order
         .iter()
@@ -4695,7 +4726,7 @@ fn log_abstraction_candidate_report(
             );
             continue;
         };
-        let score = if use_abstract_operator_cost_partitioning {
+        let score = if partitioning {
             compute_abstract_operator_order_score(h, stolen, scoring_function, abstraction)
         } else {
             compute_score(h, stolen, scoring_function)
@@ -4825,7 +4856,7 @@ fn abstraction_metadata_summary(abstraction: &DomainAbstraction) -> String {
     format!(
         "iteration={:?},strategy={:?},flaw_kind={:?},full_goal_task={:?},seeds={}",
         metadata.collection_iteration,
-        metadata.portfolio_strategy,
+        metadata.collection_strategy,
         metadata.flaw_kind,
         metadata.full_goal_task,
         metadata.initial_seed_splits.join("|"),
@@ -5031,7 +5062,7 @@ mod handcrafted_sailing_tests {
 
     #[test]
     #[ignore = "oracle collection report over translated sailing benchmark"]
-    fn sailing_perfect_complementary_cartesian_collection_reaches_optimum_with_transition_scp() {
+    fn sailing_perfect_complementary_cartesian_collection_reaches_optimum_with_regional_scp() {
         let task = translated_sailing_2_2_task();
         let restricted_task = build_restricted_task(&task)
             .expect("sailing task should support restricted task")
@@ -5048,6 +5079,7 @@ mod handcrafted_sailing_tests {
                     debug: false,
                     ..Default::default()
                 },
+                collection_strategy: CollectionStrategy::Complementary,
                 variants_per_goal: 4,
                 max_collection_states: 10_000,
                 total_max_time: Some(Duration::from_secs(15)),
@@ -5118,19 +5150,19 @@ mod handcrafted_sailing_tests {
         )
         .expect("the complementary sailing collection must have a goal-cover order");
         assert_eq!(&goal_cover_order[..3], &[5, 0, 1]);
-        let transition_h = initial_cartesian_scp_value(&restricted_task, abstractions, true, 10.0);
+        let regional_h = initial_cartesian_scp_value(&restricted_task, abstractions, true, 10.0);
 
         println!(
-            "SAILING_PERFECT_COLLECTION standalone_max={standalone_max} transition_scp={transition_h}"
+            "SAILING_PERFECT_COLLECTION standalone_max={standalone_max} regional_scp={regional_h}"
         );
         assert_eq!(standalone_max, 40.0);
-        assert_eq!(transition_h, 76.0);
+        assert_eq!(regional_h, 76.0);
     }
 
     fn initial_cartesian_scp_value(
         task: &dyn AbstractNumericTask,
         abstractions: Vec<CartesianAbstraction>,
-        use_abstract_operator_cost_partitioning: bool,
+        partitioning: bool,
         order_optimization_max_time: f64,
     ) -> f64 {
         let initial_prop = task.get_initial_propositional_state_values();
@@ -5155,7 +5187,11 @@ mod handcrafted_sailing_tests {
             saturator: Saturator::All,
             residual_sweeps: 0,
             random_seed: Some(1),
-            use_abstract_operator_cost_partitioning,
+            partitioning: if partitioning {
+                CostPartitioningMethod::Region
+            } else {
+                CostPartitioningMethod::Label
+            },
             ..Default::default()
         };
         let heuristic = SaturatedCostPartitioningOnlineHeuristic::new_with_cartesian(
@@ -5179,8 +5215,8 @@ mod handcrafted_sailing_tests {
     }
 
     #[test]
-    #[ignore = "diagnostic full-task handcrafted sailing abstract-operator SCP report"]
-    fn sailing_handcrafted_four_abstractions_full_task_abstract_operator_scp_initial_h_report() {
+    #[ignore = "diagnostic full-task handcrafted sailing regional SCP report"]
+    fn sailing_handcrafted_four_abstractions_full_task_regional_scp_initial_h_report() {
         let task = translated_sailing_2_2_task();
         let restricted_task = build_restricted_task(&task)
             .expect("sailing task should support restricted task")
@@ -5197,7 +5233,7 @@ mod handcrafted_sailing_tests {
                 .unwrap_or_else(|error| panic!("failed to build {}: {error:#}", spec.name));
             abstraction.metadata = DomainAbstractionMetadata {
                 collection_iteration: Some(index + 1),
-                portfolio_strategy: Some("handcrafted_full_task_sailing".to_string()),
+                collection_strategy: Some("handcrafted_full_task_sailing".to_string()),
                 flaw_kind: None,
                 full_goal_task: Some(false),
                 initial_seed_splits: spec.seed_splits.iter().map(seed_description).collect(),
@@ -5240,7 +5276,7 @@ mod handcrafted_sailing_tests {
             order_optimization_max_time: 0.0,
             saturator: Saturator::All,
             random_seed: Some(1),
-            use_abstract_operator_cost_partitioning: true,
+            partitioning: CostPartitioningMethod::Region,
             residual_sweeps: 1,
         };
 
@@ -6065,7 +6101,11 @@ mod tests {
             order_optimization_max_time: 0.0,
             saturator,
             random_seed: Some(1),
-            use_abstract_operator_cost_partitioning: abstract_operator,
+            partitioning: if abstract_operator {
+                CostPartitioningMethod::Region
+            } else {
+                CostPartitioningMethod::Label
+            },
             ..ScpOnlineConfig::default()
         }
     }
@@ -6123,6 +6163,7 @@ mod tests {
                     debug: false,
                     ..Default::default()
                 },
+                collection_strategy: CollectionStrategy::Complementary,
                 variants_per_goal: 4,
                 max_collection_states: 128,
                 total_max_time: None,
@@ -6253,6 +6294,7 @@ mod tests {
                     debug: false,
                     ..Default::default()
                 },
+                collection_strategy: CollectionStrategy::Complementary,
                 variants_per_goal: 4,
                 max_collection_states: 128,
                 total_max_time: None,

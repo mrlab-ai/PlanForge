@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn standard_collection_defaults_match_numeric_fd_canonical_configuration() {
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    assert_eq!(config.portfolio_strategy, PortfolioStrategy::Standard);
+    assert_eq!(config.collection_strategy, CollectionStrategy::Standard);
     assert_eq!(config.max_abstraction_size, 1_000_000);
     assert_eq!(config.max_collection_size, 10_000_000);
     assert!(!config.use_wildcard_plans);
@@ -82,7 +82,7 @@ fn single_init_split_selection_handles_empty_candidates() {
 #[test]
 fn standard_uses_configured_full_goal_flaw_kind() {
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-        portfolio_strategy: PortfolioStrategy::Standard,
+        collection_strategy: CollectionStrategy::Standard,
         flaw_kind: FlawKind::SequenceBidirectional,
         ..Default::default()
     };

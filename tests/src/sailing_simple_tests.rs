@@ -13,10 +13,10 @@ use planforge_search::evaluation::domain_abstractions::domain_abstraction_collec
     InitSplitMethod,
     InitSplitQuantity,
     NumericSplitStrategy,
-    PortfolioStrategy,
 };
+use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
-    SaturatedCostPartitioningOnlineHeuristic, ScpOnlineConfig,
+    CostPartitioningMethod, SaturatedCostPartitioningOnlineHeuristic, ScpOnlineConfig,
 };
 use planforge_search::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_generator::{
@@ -236,7 +236,7 @@ fn standard_round7_collection_config(
         use_wildcard_plans: true,
         combine_labels: false,
         flaw_kind: FlawKind::SequenceBidirectional,
-        portfolio_strategy: PortfolioStrategy::Complementary,
+        collection_strategy: CollectionStrategy::Complementary,
         random_seed: Some(seed),
         ..Default::default()
     }
@@ -274,7 +274,7 @@ fn scp_online_initial_h_for_collection(
         table_construction_max_time: 100.0,
         collection_config,
         use_numeric_pdbs: false,
-        use_abstract_operator_cost_partitioning: true,
+        partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
     let heuristic =
@@ -465,7 +465,7 @@ fn sailing_simple_scp_online_admissible() {
 fn sailing_simple_complementary_collection_keeps_single_goal_solved_abstractions() {
     let (task, temp_dir) = sailing_task("prob_1b4p_axes");
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-        portfolio_strategy: PortfolioStrategy::Complementary,
+        collection_strategy: CollectionStrategy::Complementary,
         random_seed: Some(1),
         max_abstraction_size: 10_000,
         max_collection_size: 100_000,

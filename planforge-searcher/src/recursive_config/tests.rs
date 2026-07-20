@@ -1,11 +1,13 @@
 use super::*;
 use planforge_search::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig, InitSplitQuantity, PortfolioStrategy,
+    DomainAbstractionCollectionGeneratorMultipleCegarConfig, InitSplitQuantity,
     VariableSubset,
 };
+use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
-    FillScpConfig, OrderGenerator, Saturator, ScoringFunction, ScpOnlineConfig,
+    CostPartitioningMethod, FillScpConfig, OrderGenerator, Saturator, ScoringFunction,
+    ScpOnlineConfig,
 };
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use planforge_search::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -117,7 +119,7 @@ fn parses_hierarchical_canonical_abstraction_sources() {
 #[test]
 fn parses_hierarchical_scp_options_and_sources() {
     let h = astar_heuristic(
-        "astar(scp(domain(max_collection_size=1000), cartesian(max_states=100), pdb(max_pdb_states=100), online=false, diversify=true, samples=123, max_orders=17, orders=diverse_orders, initial_order_generation_max_time=9, saturator=perimstar, residual_sweeps=2, use_abstract_operator_cost_partitioning=true))",
+        "astar(scp(domain(max_collection_size=1000), cartesian(max_states=100), pdb(max_pdb_states=100), online=false, diversify=true, samples=123, max_orders=17, orders=diverse_orders, initial_order_generation_max_time=9, saturator=perimstar, residual_sweeps=2, partitioning=region))",
     );
     assert_eq!(h.name, "scp");
     let (sources, options) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
@@ -138,12 +140,37 @@ fn parses_hierarchical_scp_options_and_sources() {
 #[test]
 fn parses_hierarchical_cartesian_collection_source() {
     let h = astar_heuristic(
-        "astar(scp(cartesian_collection(max_states=1000, variants_per_goal=8, progressive_goal_roots=true, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, use_abstract_operator_cost_partitioning=true))",
+        "astar(scp(cartesian_collection(max_states=1000, collection_strategy=complementary, variants_per_goal=8, progressive_goal_roots=true, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
     );
     let (sources, options) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].name(), "cartesian_collection");
     assert_eq!(options.len(), 2);
+    let config = crate::abstraction_config::apply_cartesian_collection_options(
+        sources[0].args(),
+        crate::abstraction_config::ComponentUse::RegionalCostPartitioning,
+    )
+    .unwrap();
+    assert_eq!(
+        config.collection_strategy,
+        CollectionStrategy::Complementary
+    );
+    assert_eq!(config.variants_per_goal, 8);
+    assert!(config.abstraction.compute_operator_footprints);
+}
+
+#[test]
+fn rejects_boolean_cost_partitioning_mode() {
+    let h = astar_heuristic("astar(scp(domain(), partitioning=label))");
+    let (_, options) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
+    let mut config = ScpOnlineConfig::default();
+    ApplyOptions::apply_options(&mut config, &options).unwrap();
+    assert_eq!(config.partitioning, CostPartitioningMethod::Label);
+
+    let h = astar_heuristic("astar(scp(domain(), partitioning=true))");
+    let (_, options) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
+    let mut config = ScpOnlineConfig::default();
+    assert!(ApplyOptions::apply_options(&mut config, &options).is_err());
 }
 
 #[test]
@@ -197,14 +224,14 @@ fn parses_astar_fill_scp_with_named_options() {
     // LMcut params are now nested via `lmcut=lmcutnumeric(...)` rather than
     // flat at the fillSCP level.
     let h = astar_heuristic(
-        "astar(fillSCP(table_construction_max_time=34.5, use_abstract_operator_cost_partitioning=true, saturator=perimstar, scoring_function=max_heuristic, orders=random_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, split_direction=backward, random_seed=7, debug=true, lmcut=lmcutnumeric(precision=0.5, epsilon=0.25)))",
+        "astar(fillSCP(table_construction_max_time=34.5, partitioning=region, saturator=perimstar, scoring_function=max_heuristic, orders=random_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, split_direction=backward, random_seed=7, debug=true, lmcut=lmcutnumeric(precision=0.5, epsilon=0.25)))",
     );
     assert_eq!(h.name, "fillscp");
 
     let mut cfg = FillScpConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.table_construction_max_time, 34.5);
-    assert!(cfg.use_abstract_operator_cost_partitioning);
+    assert_eq!(cfg.partitioning, CostPartitioningMethod::Region);
     assert_eq!(cfg.saturator, Saturator::Perimstar);
     assert_eq!(cfg.scoring_function, ScoringFunction::MaxHeuristic);
     assert_eq!(cfg.order_generator, OrderGenerator::Random);
@@ -239,7 +266,7 @@ fn parses_astar_fill_scp_with_named_options() {
 #[test]
 fn parses_astar_scp_online_with_named_options() {
     let h = astar_heuristic(
-        "astar(scp_online(max_time=12.5, table_construction_max_time=34.5, max_size=2048, interval=3, use_abstract_operator_cost_partitioning=true, saturator=perimstar, scoring_function=max_heuristic, orders=dynamic_greedy_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, portfolio_strategy=complementary, random_seed=7, debug=true))",
+        "astar(scp_online(max_time=12.5, table_construction_max_time=34.5, max_size=2048, interval=3, partitioning=region, saturator=perimstar, scoring_function=max_heuristic, orders=dynamic_greedy_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, collection_strategy=complementary, random_seed=7, debug=true))",
     );
     let mut cfg = ScpOnlineConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
@@ -247,7 +274,7 @@ fn parses_astar_scp_online_with_named_options() {
     assert_eq!(cfg.table_construction_max_time, 34.5);
     assert_eq!(cfg.max_size, 2048);
     assert_eq!(cfg.interval, 3);
-    assert!(cfg.use_abstract_operator_cost_partitioning);
+    assert_eq!(cfg.partitioning, CostPartitioningMethod::Region);
     assert_eq!(cfg.saturator, Saturator::Perimstar);
     assert_eq!(cfg.scoring_function, ScoringFunction::MaxHeuristic);
     assert_eq!(cfg.order_generator, OrderGenerator::DynamicGreedy);
@@ -270,8 +297,8 @@ fn parses_astar_scp_online_with_named_options() {
         FlawKind::SequenceProgression
     );
     assert_eq!(
-        cfg.collection_config.portfolio_strategy,
-        PortfolioStrategy::Complementary
+        cfg.collection_config.collection_strategy,
+        CollectionStrategy::Complementary
     );
     assert_eq!(cfg.collection_config.random_seed, Some(7));
     assert_eq!(cfg.random_seed, Some(7));
@@ -469,7 +496,7 @@ fn parses_astar_multi_domain_abstractions_with_or_without_parens() {
 #[test]
 fn parses_astar_multi_domain_abstractions_with_named_options() {
     let h = astar_heuristic(
-        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_bidirectional, portfolio_strategy=complementary, random_seed=7, debug=true))",
+        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_bidirectional, collection_strategy=complementary, random_seed=7, debug=true))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
@@ -480,7 +507,7 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
     assert!(!cfg.use_wildcard_plans);
     assert!(cfg.combine_labels);
     assert_eq!(cfg.flaw_kind, FlawKind::SequenceBidirectional);
-    assert_eq!(cfg.portfolio_strategy, PortfolioStrategy::Complementary);
+    assert_eq!(cfg.collection_strategy, CollectionStrategy::Complementary);
     assert_eq!(cfg.random_seed, Some(7));
     assert!(cfg.debug);
 }
@@ -526,7 +553,7 @@ fn display_round_trips_hierarchical_abstraction_collection() {
 #[test]
 fn display_round_trips_scp_online() {
     let parsed = parse_search_spec(
-        "astar(scp_online(max_time=12.5, max_abstraction_size=42, abstraction_generation_max_time=infinity, use_abstract_operator_cost_partitioning=true, saturator=perimstar, scoring_function=min_stolen_costs, orders=random_orders, order_optimization_max_time=0.25))",
+        "astar(scp_online(max_time=12.5, max_abstraction_size=42, abstraction_generation_max_time=infinity, partitioning=region, saturator=perimstar, scoring_function=min_stolen_costs, orders=random_orders, order_optimization_max_time=0.25))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();

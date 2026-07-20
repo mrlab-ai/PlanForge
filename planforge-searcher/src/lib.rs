@@ -120,8 +120,8 @@ fn build_scp_from_sources<'task>(
     validate_scp_combinator_options(options)?;
     let mut config = planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig::default();
     recursive_config::ApplyOptions::apply_options(&mut config, options)?;
-    let component_use = if config.use_abstract_operator_cost_partitioning {
-        ComponentUse::AbstractOperatorCostPartitioning
+    let component_use = if config.partitioning.uses_regions() {
+        ComponentUse::RegionalCostPartitioning
     } else {
         ComponentUse::LabelCostPartitioning
     };
@@ -412,7 +412,7 @@ fn build_heuristic_from_spec_internal<'a>(
                 info!("Building scp_online Cartesian abstraction (CEGAR)...");
                 let cartesian_config = cartesian_config_from_collection(
                     &cfg.collection_config,
-                    cfg.use_abstract_operator_cost_partitioning,
+                    cfg.partitioning.uses_regions(),
                 )?;
                 let abstraction = CartesianAbstractionGenerator::new(cartesian_config)
                     .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?
@@ -451,7 +451,7 @@ fn build_heuristic_from_spec_internal<'a>(
                 info!("Building fillSCP Cartesian abstraction (CEGAR)...");
                 let cartesian_config = cartesian_config_from_collection(
                     &cfg.collection_config,
-                    cfg.use_abstract_operator_cost_partitioning,
+                    cfg.partitioning.uses_regions(),
                 )?;
                 let abstraction = CartesianAbstractionGenerator::new(cartesian_config)
                     .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?

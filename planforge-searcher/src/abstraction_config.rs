@@ -5,6 +5,7 @@ use planforge_search::config::{
     ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue,
 };
 use planforge_search::evaluation::abstraction_collections::component::AbstractionComponent;
+use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use planforge_search::evaluation::cartesian_abstractions::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
@@ -26,12 +27,12 @@ use tracing::info;
 pub(crate) enum ComponentUse {
     Standalone,
     LabelCostPartitioning,
-    AbstractOperatorCostPartitioning,
+    RegionalCostPartitioning,
 }
 
 impl ComponentUse {
     fn needs_operator_footprints(self) -> bool {
-        matches!(self, Self::AbstractOperatorCostPartitioning)
+        matches!(self, Self::RegionalCostPartitioning)
     }
 }
 
@@ -98,7 +99,7 @@ pub(crate) fn validate_scp_combinator_options(args: &[ConfigArg]) -> Result<(), 
         "saturator",
         "residual_sweeps",
         "random_seed",
-        "use_abstract_operator_cost_partitioning",
+        "partitioning",
     ];
 
     let mut seen = HashSet::new();
@@ -268,7 +269,7 @@ fn apply_cartesian_options(
     Ok(apply_cartesian_source_options(args, component_use, false)?.abstraction)
 }
 
-fn apply_cartesian_collection_options(
+pub(crate) fn apply_cartesian_collection_options(
     args: &[ConfigArg],
     component_use: ComponentUse,
 ) -> Result<CartesianAbstractionCollectionConfig, String> {
@@ -353,6 +354,9 @@ fn apply_cartesian_source_options(
             }
             "variants_per_goal" if collection => {
                 config.variants_per_goal = usize::from_option_value(arg.value())?;
+            }
+            "collection_strategy" if collection => {
+                config.collection_strategy = CollectionStrategy::from_option_value(arg.value())?;
             }
             "progressive_goal_roots" if collection => {
                 config.progressive_goal_roots = bool::from_option_value(arg.value())?;

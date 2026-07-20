@@ -5,7 +5,7 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 use super::abstract_operator_generator::AbstractOperator;
 use super::cegar::{Cegar, CegarConfig, CegarStopReason};
 use super::domain_abstraction_factory::{AbstractDistanceTable, DomainAbstractionFactory};
-use crate::evaluation::abstraction_collections::transition_cost_partitioning::AbstractOperatorFootprint;
+use crate::evaluation::abstraction_collections::cost_partitioning::AbstractOperatorFootprint;
 use crate::evaluation::abstraction_task::AbstractionUse;
 
 /// Fully built abstraction artifact that can be used to evaluate concrete states.
@@ -44,7 +44,7 @@ impl DomainAbstraction {
 #[derive(Debug, Clone, Default)]
 pub struct DomainAbstractionMetadata {
     pub collection_iteration: Option<usize>,
-    pub portfolio_strategy: Option<String>,
+    pub collection_strategy: Option<String>,
     pub flaw_kind: Option<String>,
     pub full_goal_task: Option<bool>,
     pub abstraction_use: AbstractionUse,
@@ -96,7 +96,7 @@ impl DomainAbstractionGenerator {
             // Heuristics that read only the distance table (canonical, max,
             // single domain abstraction) do not consume footprints; skipping
             // saves ~12 GB on minecraft-sword-advanced/prob_30x30_5. SCP /
-            // fillSCP / abstract-operator cost partitioning leave the flag
+            // Regional SCP leaves the flag
             // on and pay the cost.
             Vec::new()
         };

@@ -1,4 +1,4 @@
-//! Transition-cost partitioning for numeric-planning domain abstractions.
+//! Label and regional saturated cost partitioning for abstraction components.
 //!
 //! Each [`ConcreteOperatorFootprint::source_region`] stores the *regressed
 //! preimage source* of an abstract operator's effect — the intersection of the
@@ -285,7 +285,7 @@ pub fn build_explicit_label_cost_partitioning_table(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn build_explicit_abstract_operator_cost_partitioning_table(
+pub fn build_explicit_regional_cost_partitioning_table(
     transition_system: &AbstractTransitionSystem,
     footprints: &[AbstractOperatorFootprint],
     residual_costs: &TransitionResidualCosts,
@@ -2794,7 +2794,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_abstract_operator_cost_partitioning_uses_footprints() {
+    fn explicit_regional_cost_partitioning_uses_footprints() {
         let system = two_state_transition_system();
         let footprints = vec![AbstractOperatorFootprint {
             labels: vec![ConcreteOperatorFootprint {
@@ -2803,7 +2803,7 @@ mod tests {
             }],
         }];
         let residual = TransitionResidualCosts::from_operator_costs(&[5.0]);
-        let (distances, saturated) = build_explicit_abstract_operator_cost_partitioning_table(
+        let (distances, saturated) = build_explicit_regional_cost_partitioning_table(
             &system,
             &footprints,
             &residual,

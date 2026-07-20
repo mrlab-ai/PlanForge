@@ -14,7 +14,7 @@ use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 
 use super::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
-use crate::evaluation::abstraction_collections::transition_cost_partitioning::LmCutResidualOperatorCostPartition;
+use crate::evaluation::abstraction_collections::cost_partitioning::LmCutResidualOperatorCostPartition;
 
 // PARITY(numeric-fd): `lmcutnumeric()` in search strings goes through the option
 // parser, so `LmCutNumericConfig::default()` must match the parser defaults rather

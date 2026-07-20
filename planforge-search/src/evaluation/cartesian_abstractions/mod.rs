@@ -28,10 +28,12 @@ use tracing::{debug, info};
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 
-use super::abstraction_collections::portfolio::{derive_variant_seed, mix_seed, stable_text_seed};
-use super::abstraction_collections::transition_cost_partitioning::{
+use super::abstraction_collections::cost_partitioning::{
     AbstractOperatorFootprint, AbstractTransition, AbstractTransitionSystem,
     ConcreteOperatorFootprint, PropValueId, StateRegion,
+};
+use super::abstraction_collections::portfolio::{
+    CollectionStrategy, derive_variant_seed, mix_seed, stable_text_seed,
 };
 use super::abstraction_task::{AbstractionUse, SingleGoalTask, validate_abstraction_operator};
 use super::domain_abstractions::cegar::flaw_search::state::progress;
@@ -100,6 +102,7 @@ impl Default for CartesianAbstractionConfig {
 #[derive(Debug, Clone)]
 pub struct CartesianAbstractionCollectionConfig {
     pub abstraction: CartesianAbstractionConfig,
+    pub collection_strategy: CollectionStrategy,
     pub variants_per_goal: usize,
     pub max_collection_states: usize,
     pub total_max_time: Option<Duration>,
@@ -110,6 +113,7 @@ impl Default for CartesianAbstractionCollectionConfig {
     fn default() -> Self {
         Self {
             abstraction: CartesianAbstractionConfig::default(),
+            collection_strategy: CollectionStrategy::Standard,
             variants_per_goal: 1,
             max_collection_states: 10_000_000,
             total_max_time: None,
@@ -1730,7 +1734,7 @@ impl CartesianAbstractionCollectionGenerator {
             } else {
                 variant_id
             };
-            if goal_count > 0 && self.config.variants_per_goal > 1 {
+            if goal_count > 0 && self.config.collection_strategy.is_complementary() {
                 abstraction_config.refinement_direction =
                     if construction_variant_id.is_multiple_of(2) {
                         CartesianRefinementDirection::Progression
@@ -1747,6 +1751,15 @@ impl CartesianAbstractionCollectionGenerator {
                         construction_variant_id - 1,
                     ))
                 };
+            } else if goal_count > 0
+                && self.config.variants_per_goal > 1
+                && construction_variant_id > 0
+            {
+                abstraction_config.random_seed = Some(derive_variant_seed(
+                    abstraction_config.random_seed.unwrap_or(0),
+                    goal_id,
+                    construction_variant_id - 1,
+                ));
             }
 
             let goal_task =
@@ -3571,7 +3584,7 @@ fn finalize_abstraction(
     // Self loops have zero shortest-path and saturated-cost requirements. Keep
     // them only while refining, where a later split can turn one into an exact
     // cross-child transition; materializing them here wastes memory without
-    // changing standalone, canonical, label-SCP, or transition-SCP values.
+    // changing standalone, canonical, label-SCP, or regional-SCP values.
     if combine_labels {
         raw.extend(grouped.into_iter().map(|((source, target), mut labels)| {
             labels.sort_unstable();

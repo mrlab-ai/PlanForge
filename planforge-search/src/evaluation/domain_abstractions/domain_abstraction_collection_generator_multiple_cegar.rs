@@ -17,7 +17,7 @@ use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::evaluation::abstraction_collections::portfolio::mix_seed;
+use crate::evaluation::abstraction_collections::portfolio::{CollectionStrategy, mix_seed};
 use crate::evaluation::abstraction_task::{AbstractionUse, SingleGoalTask};
 use crate::evaluation::domain_abstractions::cegar::FlawKind;
 
@@ -128,40 +128,6 @@ impl crate::config::FromOptionValue for NumericSplitStrategy {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PortfolioStrategy {
-    Standard,
-    Complementary,
-}
-
-impl fmt::Display for PortfolioStrategy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Standard => write!(f, "standard"),
-            Self::Complementary => write!(f, "complementary"),
-        }
-    }
-}
-
-impl crate::config::sealed::Sealed for PortfolioStrategy {}
-
-impl crate::config::FromOptionValue for PortfolioStrategy {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "standard" => Ok(Self::Standard),
-            "complementary" => Ok(Self::Complementary),
-            other => Err(format!("invalid PortfolioStrategy `{other}`")),
-        }
-    }
-}
-
-impl PortfolioStrategy {
-    fn uses_ranked_goals(self) -> bool {
-        matches!(self, Self::Complementary)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ComplementaryDirection {
     Regression,
@@ -215,7 +181,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub flaw_treatment: FlawTreatmentVariants,
     pub init_split_method: InitSplitMethod,
     pub numeric_split_strategy: NumericSplitStrategy,
-    pub portfolio_strategy: PortfolioStrategy,
+    pub collection_strategy: CollectionStrategy,
     /// Overrides `FlawKind`'s default split direction when set; otherwise the
     /// flaw kind chooses its own default (`Forward` for everything except
     /// `TargetCentered`, which defaults to `Backward`).
@@ -272,7 +238,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,
-            portfolio_strategy: PortfolioStrategy::Standard,
+            collection_strategy: CollectionStrategy::Standard,
             split_direction: None,
             compute_operator_footprints: true,
             max_refined_comparison_vars_per_abstraction: None,
@@ -325,7 +291,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "flaw_treatment={}, ",
                 "init_split_method={}, ",
                 "numeric_split_strategy={}, ",
-                "portfolio_strategy={}, ",
+                "collection_strategy={}, ",
             ),
             self.max_abstraction_size,
             self.max_collection_size,
@@ -344,7 +310,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.flaw_treatment,
             self.init_split_method,
             self.numeric_split_strategy,
-            self.portfolio_strategy,
+            self.collection_strategy,
         )
     }
 }
@@ -425,7 +391,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         let mut goals: Vec<_> = (0..task.get_num_goals())
             .map(|goal_id| task.get_goal_fact(goal_id).clone())
             .collect();
-        if self.config.portfolio_strategy.uses_ranked_goals() {
+        if self.config.collection_strategy.uses_ranked_goals() {
             goals.sort_by(|left, right| compare_goals_for_collection(task, left, right));
         } else {
             goals.shuffle(&mut rng);
@@ -605,7 +571,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let cegar_stop_reason = abstraction.metadata.stop_reason;
             abstraction.metadata = DomainAbstractionMetadata {
                 collection_iteration: Some(iteration),
-                portfolio_strategy: Some(self.config.portfolio_strategy.to_string()),
+                collection_strategy: Some(self.config.collection_strategy.to_string()),
                 flaw_kind: Some(flaw_kind.to_string()),
                 full_goal_task: Some(full_goal_task),
                 abstraction_use: AbstractionUse::CollectionMember,
@@ -764,9 +730,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         complementary_direction: ComplementaryDirection,
         active_root_group: Option<&RootGroup>,
     ) -> Vec<InitialSeedSplit> {
-        match self.config.portfolio_strategy {
-            PortfolioStrategy::Standard => return Vec::new(),
-            PortfolioStrategy::Complementary => {
+        match self.config.collection_strategy {
+            CollectionStrategy::Standard => return Vec::new(),
+            CollectionStrategy::Complementary => {
                 if self.complementary_uses_target_centered_for_goal_count(
                     goal_count,
                     iteration,
@@ -789,9 +755,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 
     fn uses_full_goal_task(&self, goal_count: usize, _iteration: usize) -> bool {
-        match self.config.portfolio_strategy {
-            PortfolioStrategy::Standard => true,
-            PortfolioStrategy::Complementary => goal_count == 0,
+        match self.config.collection_strategy {
+            CollectionStrategy::Standard => true,
+            CollectionStrategy::Complementary => goal_count == 0,
         }
     }
 
@@ -804,10 +770,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         complementary_direction: ComplementaryDirection,
         full_goal_task: bool,
     ) -> u64 {
-        match self.config.portfolio_strategy {
-            PortfolioStrategy::Standard => rng.next_u64(),
-            PortfolioStrategy::Complementary if full_goal_task => rng.next_u64(),
-            PortfolioStrategy::Complementary => {
+        match self.config.collection_strategy {
+            CollectionStrategy::Standard => rng.next_u64(),
+            CollectionStrategy::Complementary if full_goal_task => rng.next_u64(),
+            CollectionStrategy::Complementary => {
                 let direction_id = match complementary_direction {
                     ComplementaryDirection::Regression => 0u64,
                     ComplementaryDirection::Progression => 1u64,
@@ -836,9 +802,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         iteration: usize,
         complementary_direction: ComplementaryDirection,
     ) -> FlawKind {
-        match self.config.portfolio_strategy {
-            PortfolioStrategy::Standard => return self.config.flaw_kind,
-            PortfolioStrategy::Complementary => {
+        match self.config.collection_strategy {
+            CollectionStrategy::Standard => return self.config.flaw_kind,
+            CollectionStrategy::Complementary => {
                 if self.complementary_uses_target_centered_for_goal_count(
                     goal_count,
                     iteration,
@@ -1260,7 +1226,7 @@ fn log_collection_abstraction_debug(
     info!(
         "domain abstraction collection debug: id={abstraction_id}, iteration={:?}, strategy={:?}, flaw_kind={:?}, full_goal_task={:?}, max_abs_size={:?}, states={}, prop_split_vars={}, numeric_split_vars={}, abstract_ops={}, seed_splits={}",
         metadata.collection_iteration,
-        metadata.portfolio_strategy,
+        metadata.collection_strategy,
         metadata.flaw_kind,
         metadata.full_goal_task,
         metadata.max_abstraction_size,
@@ -1292,7 +1258,7 @@ fn log_collection_debug_summary(abstractions: &[DomainAbstraction]) {
         info!(
             "domain abstraction collection debug summary: id={id}, iteration={:?}, strategy={:?}, flaw_kind={:?}, states={}, abstract_ops={}, seed_splits={}",
             abstraction.metadata.collection_iteration,
-            abstraction.metadata.portfolio_strategy,
+            abstraction.metadata.collection_strategy,
             abstraction.metadata.flaw_kind,
             compute_abstraction_size_u128(
                 abstraction.factory.domain_sizes(),
