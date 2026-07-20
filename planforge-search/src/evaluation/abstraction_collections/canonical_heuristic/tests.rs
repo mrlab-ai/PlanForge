@@ -91,6 +91,7 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
         relevant_operator_ids: Vec::new(),
         abstract_operators: Vec::new(),
         abstract_operator_footprints: Vec::new(),
+        regional_transition_system: std::cell::RefCell::new(None),
         metadata: Default::default(),
     }
 }

@@ -942,16 +942,13 @@ fn run_da_debug(
         compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes()).map_err(
             |e| std::io::Error::other(format!("failed to compute hash multipliers: {e:#}")),
         )?;
-    let abstraction = DomainAbstraction {
+    let abstraction = DomainAbstraction::lookup_only(
         factory,
         distance_table,
         hash_multipliers,
-        combine_labels: config.combine_labels,
-        relevant_operator_ids: Vec::new(),
-        abstract_operators: Vec::new(),
-        abstract_operator_footprints: Vec::new(),
-        metadata: Default::default(),
-    };
+        config.combine_labels,
+        Default::default(),
+    );
     let heuristic = DomainAbstractionHeuristic::new(Some("da_debug".to_string()), abstraction);
 
     let mut concrete_plan: Vec<Operator> = Vec::new();

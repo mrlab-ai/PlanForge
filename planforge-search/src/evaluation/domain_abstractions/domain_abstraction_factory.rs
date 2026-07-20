@@ -34,7 +34,8 @@ use super::utils;
 use crate::evaluation::abstraction_collections::cost_partitioning::{
     AbstractOperatorCostFunction, AbstractOperatorFootprint, AbstractTransition,
     AbstractTransitionCostFunction, AbstractTransitionSystem, ConcreteOperatorFootprint,
-    StateRegion, TransitionResidualCosts,
+    RegionalCostAllocation, RegionalCostAllocationEntry, StateRegion, TransitionResidualCosts,
+    state_region_intersection,
 };
 
 const COMPARISON_TRUE_VAL: usize = 0;
@@ -778,6 +779,139 @@ impl DomainAbstractionFactory {
         let tcf =
             self.compute_saturated_transition_costs(transition_system, &transition_costs, &table)?;
         Ok((table, tcf))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_precise_regional_cost_partitioned_distance_table_with_deadline(
+        &self,
+        transition_system: &AbstractTransitionSystem,
+        abstract_operator_footprints: &[AbstractOperatorFootprint],
+        residual_costs: &TransitionResidualCosts,
+        abstraction_id: usize,
+        cap_state_id: Option<usize>,
+        deadline: Option<Instant>,
+    ) -> Result<(AbstractDistanceTable, RegionalCostAllocation)> {
+        ensure_online_scp_deadline(deadline)?;
+        ensure!(
+            transition_system.state_regions.is_empty(),
+            "precise domain regional SCP expects lazy state regions"
+        );
+
+        let transition_costs = transition_system
+            .transitions
+            .iter()
+            .enumerate()
+            .map(|(transition_id, transition)| {
+                if transition_id.is_multiple_of(1024) {
+                    ensure_online_scp_deadline(deadline)?;
+                }
+                let source_region = self.state_region_from_hash(
+                    transition.source_hash,
+                    &transition_system.numeric_domain_sizes,
+                    &transition_system.hash_multipliers,
+                )?;
+                transition
+                    .concrete_op_ids
+                    .iter()
+                    .map(|&concrete_op_id| {
+                        let footprint = precise_transition_footprint(
+                            transition,
+                            concrete_op_id,
+                            &source_region,
+                            abstract_operator_footprints,
+                        )?;
+                        Ok(residual_costs.cost_for_operator_footprint(
+                            abstraction_id,
+                            transition_id,
+                            &footprint,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()
+                    .map(|costs| costs.into_iter().fold(f64::INFINITY, f64::min))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let table = self.build_distance_table_with_transition_costs(
+            transition_system,
+            &transition_costs,
+            &transition_system.hash_multipliers,
+            &transition_system.numeric_domain_sizes,
+        )?;
+
+        let capped_table = if let Some(state_id) = cap_state_id {
+            let h_cap = table.distances.get(state_id).copied().with_context(|| {
+                format!(
+                    "regional perimeter state {state_id} out of bounds for {} states",
+                    table.distances.len()
+                )
+            })?;
+            let mut capped = table.clone();
+            if h_cap.is_finite() {
+                for h in &mut capped.distances {
+                    if !h.is_finite() || *h > h_cap {
+                        *h = f64::NEG_INFINITY;
+                    }
+                }
+            }
+            Some(capped)
+        } else {
+            None
+        };
+        let saturation_table = capped_table.as_ref().unwrap_or(&table);
+        let tcf = self.compute_saturated_transition_costs(
+            transition_system,
+            &transition_costs,
+            saturation_table,
+        )?;
+
+        let lookup_table = if cap_state_id.is_some() {
+            self.build_distance_table_with_transition_costs(
+                transition_system,
+                &tcf.transition_costs,
+                &transition_system.hash_multipliers,
+                &transition_system.numeric_domain_sizes,
+            )?
+        } else {
+            table
+        };
+
+        let mut entries = Vec::new();
+        for (transition_id, transition) in transition_system.transitions.iter().enumerate() {
+            if transition_id.is_multiple_of(1024) {
+                ensure_online_scp_deadline(deadline)?;
+            }
+            let saturated = tcf.transition_costs[transition_id];
+            if !saturated.is_finite() || saturated <= 1e-9 {
+                continue;
+            }
+            let source_region = self.state_region_from_hash(
+                transition.source_hash,
+                &transition_system.numeric_domain_sizes,
+                &transition_system.hash_multipliers,
+            )?;
+            for &concrete_op_id in &transition.concrete_op_ids {
+                let footprint = precise_transition_footprint(
+                    transition,
+                    concrete_op_id,
+                    &source_region,
+                    abstract_operator_footprints,
+                )?;
+                let current_residual = residual_costs.cost_for_operator_footprint(
+                    abstraction_id,
+                    transition_id,
+                    &footprint,
+                );
+                ensure!(
+                    saturated <= current_residual + 1e-7,
+                    "regional transition allocation {saturated} exceeds residual {current_residual} for transition {transition_id}, operator {concrete_op_id}"
+                );
+                entries.push(RegionalCostAllocationEntry {
+                    footprint,
+                    amount: saturated,
+                });
+            }
+        }
+
+        Ok((lookup_table, RegionalCostAllocation::new(entries)))
     }
 
     pub fn build_abstract_operator_cost_partitioned_distance_table_from_system_with_deadline(
@@ -3279,6 +3413,46 @@ impl DomainAbstractionFactory {
 
         Ok(f64::INFINITY)
     }
+}
+
+fn precise_transition_footprint(
+    transition: &AbstractTransition,
+    concrete_op_id: usize,
+    source_state_region: &StateRegion,
+    abstract_operator_footprints: &[AbstractOperatorFootprint],
+) -> Result<ConcreteOperatorFootprint> {
+    let abstract_footprint = abstract_operator_footprints
+        .get(transition.abstract_op_id)
+        .with_context(|| {
+            format!(
+                "transition {} references missing abstract-operator footprint {}",
+                transition.transition_id, transition.abstract_op_id
+            )
+        })?;
+    let label_footprint = abstract_footprint
+        .labels
+        .iter()
+        .find(|footprint| footprint.concrete_op_id == concrete_op_id)
+        .with_context(|| {
+            format!(
+                "transition {} abstract operator {} has no footprint for concrete operator {concrete_op_id}",
+                transition.transition_id, transition.abstract_op_id
+            )
+        })?;
+    let source_region = state_region_intersection(
+        source_state_region,
+        &label_footprint.source_region,
+    )
+    .with_context(|| {
+        format!(
+            "transition {} has an empty precise source footprint for concrete operator {concrete_op_id}",
+            transition.transition_id
+        )
+    })?;
+    Ok(ConcreteOperatorFootprint {
+        concrete_op_id,
+        source_region: Arc::new(source_region),
+    })
 }
 
 fn compute_num_states(domain_sizes: &[usize], numeric_domain_sizes: &[usize]) -> Result<usize> {

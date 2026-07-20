@@ -228,6 +228,27 @@ pub struct AbstractOperatorCostFunction {
     pub operator_costs: Vec<f64>,
 }
 
+#[derive(Debug, Clone)]
+pub struct RegionalCostAllocation {
+    entries: Vec<RegionalCostAllocationEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RegionalCostAllocationEntry {
+    pub footprint: ConcreteOperatorFootprint,
+    pub amount: f64,
+}
+
+impl RegionalCostAllocation {
+    pub fn new(entries: Vec<RegionalCostAllocationEntry>) -> Self {
+        Self { entries }
+    }
+
+    pub fn entries(&self) -> &[RegionalCostAllocationEntry] {
+        &self.entries
+    }
+}
+
 pub fn build_explicit_label_cost_partitioning_table(
     transition_system: &AbstractTransitionSystem,
     operator_costs: &[f64],
@@ -923,7 +944,10 @@ fn state_region_is_nonempty(region: &StateRegion) -> bool {
         && region.numeric.iter().all(|interval| !interval.is_empty())
 }
 
-fn state_region_intersection(left: &StateRegion, right: &StateRegion) -> Option<StateRegion> {
+pub(crate) fn state_region_intersection(
+    left: &StateRegion,
+    right: &StateRegion,
+) -> Option<StateRegion> {
     debug_assert_eq!(
         left.propositions.len(),
         right.propositions.len(),
@@ -1750,7 +1774,7 @@ impl TransitionResidualCosts {
             tcf.operator_costs.len()
         );
 
-        let mut table_envelopes: HashMap<usize, TableRegionalEnvelope> = HashMap::new();
+        let mut entries = Vec::new();
         for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
             if abstract_op_id.is_multiple_of(64) {
                 ensure_scp_table_deadline(deadline)?;
@@ -1795,16 +1819,65 @@ impl TransitionResidualCosts {
                     "residual cost underflow: abstract-operator footprint reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
                     residual.base_cost
                 );
-                table_envelopes
-                    .entry(concrete_op_id)
-                    .or_default()
-                    .maximize(
-                        &footprint.source_region,
-                        saturated,
-                        residual.base_cost,
-                        deadline,
-                    )?;
+                entries.push(RegionalCostAllocationEntry {
+                    footprint: footprint.clone(),
+                    amount: saturated,
+                });
             }
+        }
+
+        self.reduce_by_regional_allocation_with_deadline(
+            &RegionalCostAllocation::new(entries),
+            deadline,
+        )
+    }
+
+    pub fn reduce_by_regional_allocation_with_deadline(
+        &mut self,
+        allocation: &RegionalCostAllocation,
+        deadline: Option<Instant>,
+    ) -> Result<()> {
+        let mut table_envelopes: HashMap<usize, TableRegionalEnvelope> = HashMap::new();
+        for (entry_id, entry) in allocation.entries.iter().enumerate() {
+            if entry_id.is_multiple_of(64) {
+                ensure_scp_table_deadline(deadline)?;
+            }
+            ensure!(
+                entry.amount.is_finite() && entry.amount >= -EPSILON,
+                "regional allocation entry {entry_id} has invalid amount {}",
+                entry.amount
+            );
+            if entry.amount <= EPSILON {
+                continue;
+            }
+            let concrete_op_id = entry.footprint.concrete_op_id;
+            let residual = self
+                .operator_residuals
+                .get(concrete_op_id)
+                .with_context(|| {
+                    format!(
+                        "regional allocation references missing concrete operator {concrete_op_id}"
+                    )
+                })?;
+            ensure!(
+                residual.base_cost.is_finite() && residual.base_cost > EPSILON,
+                "regional allocation requires a positive finite base cost for operator {concrete_op_id}"
+            );
+            ensure!(
+                entry.amount <= residual.base_cost + EPSILON,
+                "regional allocation {} exceeds base cost {} for operator {concrete_op_id}",
+                entry.amount,
+                residual.base_cost
+            );
+            table_envelopes
+                .entry(concrete_op_id)
+                .or_default()
+                .maximize(
+                    &entry.footprint.source_region,
+                    entry.amount,
+                    residual.base_cost,
+                    deadline,
+                )?;
         }
 
         for (concrete_op_id, envelope) in table_envelopes {

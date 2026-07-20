@@ -187,9 +187,8 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// `TargetCentered`, which defaults to `Backward`).
     pub split_direction: Option<SplitDirection>,
     /// Pass-through for `CegarConfig::compute_operator_footprints`. Default
-    /// `true`. SCP/fillSCP wrappers leave it on; canonical/max wrappers turn
-    /// it off to skip ~12 GB of per-concrete-op `StateRegion` storage on
-    /// large tasks like minecraft-sword-advanced/prob_30x30_5.
+    /// `true`. Hierarchical combinators disable it during CEGAR and construct
+    /// footprints after collection generation when region SCP needs them.
     /// Set internally by heuristic construction; not exposed as a CLI option.
     #[option(skip)]
     pub compute_operator_footprints: bool,

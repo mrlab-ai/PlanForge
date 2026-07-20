@@ -4,7 +4,9 @@ use std::collections::BTreeSet;
 
 use rand::{SeedableRng, rngs::SmallRng};
 
-use crate::evaluation::abstraction_collections::cost_partitioning::TransitionResidualCosts;
+use crate::evaluation::abstraction_collections::cost_partitioning::{
+    AbstractOperatorFootprint, ConcreteOperatorFootprint, StateRegion, TransitionResidualCosts,
+};
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
@@ -180,6 +182,96 @@ fn transition_cost_partitioned_table_uses_abstract_transitions() {
     assert_eq!(transition_system.transitions.len(), 1);
     assert_eq!(table.distances[table.initial_state_hash], 1.0);
     assert_eq!(tcf.transition_costs, vec![1.0]);
+}
+
+#[test]
+fn precise_regional_table_charges_only_the_transition_source_partition() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "p".into(),
+        vec!["p0".into(), "p1".into()],
+        None,
+        0,
+    )];
+    let op = Operator::new(
+        "move".into(),
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(vec![], 0, None, 1)],
+        vec![],
+        1,
+    );
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![op],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 1),
+    );
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let mut operator_generator = factory.make_operator_generator(&task, false).unwrap();
+    let abstract_operators = operator_generator.build_abstract_operators(&task).unwrap();
+    assert_eq!(abstract_operators.len(), 1);
+    let transition_system = factory
+        .build_abstract_transition_system_from_operators_without_regions_with_deadline(
+            &task,
+            false,
+            &abstract_operators,
+            None,
+        )
+        .unwrap();
+    let footprints = vec![AbstractOperatorFootprint {
+        labels: vec![ConcreteOperatorFootprint {
+            concrete_op_id: 0,
+            source_region: StateRegion {
+                propositions: vec![vec![0, 1]].into(),
+                numeric: Vec::new().into(),
+            }
+            .into(),
+        }],
+    }];
+    let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
+
+    let (table, allocation) = factory
+        .build_precise_regional_cost_partitioned_distance_table_with_deadline(
+            &transition_system,
+            &footprints,
+            &residuals,
+            0,
+            None,
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(table.distances[table.initial_state_hash], 1.0);
+    assert_eq!(allocation.entries().len(), 1);
+    assert_eq!(
+        allocation.entries()[0].footprint.source_region.propositions[0],
+        vec![0]
+    );
+    residuals
+        .reduce_by_regional_allocation_with_deadline(&allocation, None)
+        .unwrap();
+
+    let disjoint_source = ConcreteOperatorFootprint {
+        concrete_op_id: 0,
+        source_region: StateRegion {
+            propositions: vec![vec![1]].into(),
+            numeric: Vec::new().into(),
+        }
+        .into(),
+    };
+    assert_eq!(
+        residuals.cost_for_operator_footprint(1, 0, &disjoint_source),
+        1.0
+    );
 }
 
 #[test]

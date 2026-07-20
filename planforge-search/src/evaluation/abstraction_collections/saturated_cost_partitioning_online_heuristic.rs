@@ -36,7 +36,7 @@ use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::{
 };
 use super::cost_partitioning::{
     AbstractOperatorCostFunction, AbstractOperatorFootprint, LmCutResidualOperatorCostPartition,
-    TransitionResidualCosts,
+    RegionalCostAllocation, StateRegion, TransitionResidualCosts,
     build_explicit_regional_cost_partitioning_table,
     build_explicit_label_cost_partitioning_table,
 };
@@ -997,10 +997,19 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
         let surplus_costs =
             compute_all_surplus_costs(&original_costs, &saturated_costs_by_abstraction);
-        let stolen_costs: Vec<f64> = saturated_costs_by_abstraction
+        let mut stolen_costs: Vec<f64> = saturated_costs_by_abstraction
             .iter()
             .map(|saturated| compute_costs_stolen_by_heuristic(saturated, &surplus_costs))
             .collect();
+        if config.partitioning.uses_regions() {
+            let regional_scores = compute_regional_conflict_scores(
+                &abstractions,
+                &cartesian_abstractions,
+                &saturated_costs_by_abstraction,
+                &original_costs,
+            )?;
+            stolen_costs[..regional_scores.len()].copy_from_slice(&regional_scores);
+        }
 
         let mut st = ScpOnlineState::new(config.random_seed);
         st.h_values_by_abstraction = h_values;
@@ -1164,8 +1173,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 state,
                 abstract_state_ids,
                 self.config.scoring_function,
-                abstractions,
-                self.config.partitioning.uses_regions(),
             )),
             OrderGenerator::Random => {
                 let total = state.h_values_by_abstraction.len();
@@ -1185,8 +1192,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 state,
                 abstract_state_ids,
                 self.config.scoring_function,
-                abstractions,
-                self.config.partitioning.uses_regions(),
             )),
         }
     }
@@ -1217,8 +1222,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             state,
             abstract_state_ids,
             self.config.scoring_function,
-            abstractions,
-            self.config.partitioning.uses_regions(),
         );
         let mut random = (0..state.h_values_by_abstraction.len()).collect::<Vec<_>>();
         random.shuffle(&mut state.rng);
@@ -1357,8 +1360,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         state: &mut ScpOnlineState,
         abstract_state_ids: &[Option<usize>],
         scoring_function: ScoringFunction,
-        abstractions: &[DomainAbstraction],
-        partitioning: bool,
     ) -> Vec<usize> {
         let total = state.h_values_by_abstraction.len();
         let mut order: Vec<usize> = (0..total).collect();
@@ -1388,11 +1389,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     .get(abs_id)
                     .copied()
                     .unwrap_or(0.0);
-                if partitioning && let Some(abstraction) = abstractions.get(abs_id) {
-                    compute_abstract_operator_order_score(h, stolen, scoring_function, abstraction)
-                } else {
-                    compute_score(h, stolen, scoring_function)
-                }
+                compute_score(h, stolen, scoring_function)
             })
             .collect();
 
@@ -1661,6 +1658,21 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
     }
 
+    fn reduce_regional_allocation(
+        remaining_costs: &mut TransitionResidualCosts,
+        allocation: &RegionalCostAllocation,
+        deadline: Option<Instant>,
+        context: &str,
+    ) -> Result<bool, EvaluationError> {
+        match remaining_costs.reduce_by_regional_allocation_with_deadline(allocation, deadline) {
+            Ok(()) => Ok(true),
+            Err(error) if Self::is_online_deadline_error(&error) => Ok(false),
+            Err(error) => Err(EvaluationError::ComputationFailed(format!(
+                "{context}: {error:#}"
+            ))),
+        }
+    }
+
     fn update_improvement_status(&self, state: &mut ScpOnlineState) {
         if !self.config.online {
             return;
@@ -1754,7 +1766,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 &order,
                 abstract_state_ids,
                 self.config.scoring_function,
-                self.config.partitioning.uses_regions(),
             );
         }
 
@@ -2567,6 +2578,22 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         &abstraction.abstract_operator_footprints,
                     );
                     let abstraction_task = abstraction.task_for_factory(task);
+                    let transition_system = match abstraction
+                        .regional_transition_system(abstraction_task, deadline)
+                    {
+                        Ok(system) => system,
+                        Err(error) if Self::is_online_deadline_error(&error) => {
+                            info!(
+                                "scp_online: region SCP abstraction {pos} stopped while building its transition system (deadline)"
+                            );
+                            break;
+                        }
+                        Err(error) => {
+                            return Err(EvaluationError::ComputationFailed(format!(
+                                "failed to build domain region-SCP transition system: {error:#}"
+                            )));
+                        }
+                    };
                     match saturator {
                         Saturator::All => {
                             self.log_abstract_operator_label_diagnostic(
@@ -2576,16 +2603,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 abstract_state_ids,
                                 &remaining_costs,
                             )?;
-                            let (table, tcf) = match abstraction
+                            let (table, allocation) = match abstraction
                                 .factory
-                                .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                                    abstraction_task,
-                                    abstraction.combine_labels,
-                                    &abstraction.abstract_operators,
+                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
+                                    &transition_system,
                                     &abstraction.abstract_operator_footprints,
                                     &remaining_costs,
                                     pos,
-                                    abstract_state_ids.get(pos).copied().flatten(),
                                     None,
                                     deadline,
                                 ) {
@@ -2606,15 +2630,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 "all",
                                 pos,
                                 &table.distances,
-                                &tcf.operator_costs,
+                                &regional_allocation_amounts(&allocation),
                                 abstract_state_ids,
-                            );
-                            log_movement_abstract_operator_costs(
-                                pos,
-                                abstraction,
-                                abstraction_task,
-                                &tcf,
-                                &remaining_costs,
                             );
                             if should_skip_zero_current_table(
                                 self.config.diversify,
@@ -2625,13 +2642,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             ) {
                                 continue;
                             }
-                            if !Self::reduce_abstract_operator_costs(
+                            if !Self::reduce_regional_allocation(
                                 &mut remaining_costs,
-                                pos,
-                                &abstraction.abstract_operator_footprints,
-                                &tcf,
+                                &allocation,
                                 deadline,
-                                "failed to reduce abstract-operator residual costs",
+                                "failed to reduce precise regional residual costs",
                             )? {
                                 info!(
                                     "scp_online: abstract-operator abstraction {pos} stopped while reducing residual costs (deadline)"
@@ -2650,16 +2665,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 abstract_state_ids,
                                 &remaining_costs,
                             )?;
-                            let (table, tcf) = match abstraction
+                            let (table, allocation) = match abstraction
                                 .factory
-                                .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                                    abstraction_task,
-                                    abstraction.combine_labels,
-                                    &abstraction.abstract_operators,
+                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
+                                    &transition_system,
                                     &abstraction.abstract_operator_footprints,
                                     &remaining_costs,
                                     pos,
-                                    cap_state_id,
                                     cap_state_id,
                                     deadline,
                                 ) {
@@ -2680,7 +2692,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 "perim",
                                 pos,
                                 &table.distances,
-                                &tcf.operator_costs,
+                                &regional_allocation_amounts(&allocation),
                                 abstract_state_ids,
                             );
                             if should_skip_zero_current_table(
@@ -2692,13 +2704,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             ) {
                                 continue;
                             }
-                            if !Self::reduce_abstract_operator_costs(
+                            if !Self::reduce_regional_allocation(
                                 &mut remaining_costs,
-                                pos,
-                                &abstraction.abstract_operator_footprints,
-                                &tcf,
+                                &allocation,
                                 deadline,
-                                "failed to reduce abstract-operator PERIM residual costs",
+                                "failed to reduce precise regional PERIM residual costs",
                             )? {
                                 info!(
                                     "scp_online: abstract-operator PERIM abstraction {pos} stopped while reducing residual costs (deadline)"
@@ -2717,16 +2727,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 abstract_state_ids,
                                 &remaining_costs,
                             )?;
-                            let (perim_table, perim_tcf) = match abstraction
+                            let (perim_table, perim_allocation) = match abstraction
                                 .factory
-                                .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                                    abstraction_task,
-                                    abstraction.combine_labels,
-                                    &abstraction.abstract_operators,
+                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
+                                    &transition_system,
                                     &abstraction.abstract_operator_footprints,
                                     &remaining_costs,
                                     pos,
-                                    cap_state_id,
                                     cap_state_id,
                                     deadline,
                                 ) {
@@ -2747,7 +2754,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 "perimstar/perim",
                                 pos,
                                 &perim_table.distances,
-                                &perim_tcf.operator_costs,
+                                &regional_allocation_amounts(&perim_allocation),
                                 abstract_state_ids,
                             );
                             if should_skip_zero_current_table(
@@ -2759,13 +2766,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             ) {
                                 continue;
                             }
-                            if !Self::reduce_abstract_operator_costs(
+                            if !Self::reduce_regional_allocation(
                                 &mut remaining_costs,
-                                pos,
-                                &abstraction.abstract_operator_footprints,
-                                &perim_tcf,
+                                &perim_allocation,
                                 deadline,
-                                "failed to reduce abstract-operator Perim residual costs",
+                                "failed to reduce precise regional Perim residual costs",
                             )? {
                                 info!(
                                     "scp_online: abstract-operator Perim abstraction {pos} stopped while reducing residual costs (deadline)"
@@ -2775,16 +2780,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             cp.add_h_values(pos, perim_table.distances);
                             log_transition_residual_summary(&remaining_costs);
 
-                            let (all_table, all_tcf) = match abstraction
+                            let (all_table, all_allocation) = match abstraction
                                 .factory
-                                .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                                    abstraction_task,
-                                            abstraction.combine_labels,
-                                            &abstraction.abstract_operators,
+                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
+                                    &transition_system,
                                             &abstraction.abstract_operator_footprints,
                                             &remaining_costs,
                                             pos,
-                                            cap_state_id,
                                     None,
                                     deadline,
                                 ) {
@@ -2805,7 +2807,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 "perimstar/all",
                                 pos,
                                 &all_table.distances,
-                                &all_tcf.operator_costs,
+                                &regional_allocation_amounts(&all_allocation),
                                 abstract_state_ids,
                             );
                             if should_skip_zero_current_table(
@@ -2817,13 +2819,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             ) {
                                 continue;
                             }
-                            if !Self::reduce_abstract_operator_costs(
+                            if !Self::reduce_regional_allocation(
                                 &mut remaining_costs,
-                                pos,
-                                &abstraction.abstract_operator_footprints,
-                                &all_tcf,
+                                &all_allocation,
                                 deadline,
-                                "failed to reduce abstract-operator All residual costs",
+                                "failed to reduce precise regional All residual costs",
                             )? {
                                 info!(
                                     "scp_online: abstract-operator All abstraction {pos} stopped while reducing residual costs (deadline)"
@@ -4702,6 +4702,14 @@ fn positive_cost_stats(costs: &[f64]) -> (usize, f64) {
         .fold((0, 0.0), |(count, total), cost| (count + 1, total + cost))
 }
 
+fn regional_allocation_amounts(allocation: &RegionalCostAllocation) -> Vec<f64> {
+    allocation
+        .entries()
+        .iter()
+        .map(|entry| entry.amount)
+        .collect()
+}
+
 fn log_label_table_summary(
     step: &str,
     abstraction_id: usize,
@@ -4757,7 +4765,6 @@ fn log_abstraction_candidate_report(
     order: &[usize],
     abstract_state_ids: &[Option<usize>],
     scoring_function: ScoringFunction,
-    partitioning: bool,
 ) {
     let inactive = order
         .iter()
@@ -4795,11 +4802,7 @@ fn log_abstraction_candidate_report(
             );
             continue;
         };
-        let score = if partitioning {
-            compute_abstract_operator_order_score(h, stolen, scoring_function, abstraction)
-        } else {
-            compute_score(h, stolen, scoring_function)
-        };
+        let score = compute_score(h, stolen, scoring_function);
         let stats = abstract_operator_footprint_stats(&abstraction.abstract_operator_footprints);
         let metadata = &abstraction.metadata;
         let seeds = truncate_for_log(&metadata.initial_seed_splits.join("|"), 220);
@@ -4951,82 +4954,6 @@ fn log_transition_residual_summary(remaining_costs: &TransitionResidualCosts) {
     );
 }
 
-/// Per-abstraction debug print of every abstract operator for the seven sailing
-/// movement operators (or any operator whose concrete name starts with `go_`).
-/// For each abstract op, logs the underlying numeric source-region preimage,
-/// the residual cost the abstract op saw at distance-table time (i.e. base cost
-/// minus reductions filed by abstractions processed earlier in the SCP order),
-/// and the saturated cost this abstraction reserved on the abstract op.
-///
-/// Gated by `tracing::Level::DEBUG` so it can be turned on with
-/// `--log-level debug` without changing the source. With sailing's roughly
-/// 25 000+ abstract operators per abstraction, the output is large; users
-/// looking at it typically `grep` for the operator name and a specific
-/// abstraction id.
-fn log_movement_abstract_operator_costs(
-    abstraction_id: usize,
-    abstraction: &DomainAbstraction,
-    abstraction_task: &dyn AbstractNumericTask,
-    tcf: &AbstractOperatorCostFunction,
-    remaining_costs: &TransitionResidualCosts,
-) {
-    if !enabled!(Level::DEBUG) {
-        return;
-    }
-    let concrete_operators = abstraction_task.get_operators();
-    for (abstract_op_id, (_abstract_op, footprints)) in abstraction
-        .abstract_operators
-        .iter()
-        .zip(abstraction.abstract_operator_footprints.iter())
-        .enumerate()
-    {
-        let saturated = tcf
-            .operator_costs
-            .get(abstract_op_id)
-            .copied()
-            .unwrap_or(0.0);
-        for footprint in &footprints.labels {
-            let Some(op) = concrete_operators.get(footprint.concrete_op_id) else {
-                continue;
-            };
-            if !op.name().starts_with("go_") {
-                continue;
-            }
-            let residual = remaining_costs.cost_for_operator_footprint(
-                abstraction_id,
-                abstract_op_id,
-                footprint,
-            );
-            let bounded_dims: Vec<String> = footprint
-                .source_region
-                .numeric
-                .iter()
-                .enumerate()
-                .filter(|(_, iv)| iv.lower.is_finite() || iv.upper.is_finite())
-                .map(|(var_id, iv)| {
-                    format!(
-                        "n{var_id}={}{},{}{}",
-                        if iv.lower_closed { "[" } else { "(" },
-                        iv.lower,
-                        iv.upper,
-                        if iv.upper_closed { "]" } else { ")" }
-                    )
-                })
-                .collect();
-            tracing::debug!(
-                "scp_online debug movement op abstraction={abstraction_id} \
-                 abstract_op_id={abstract_op_id} concrete_op_id={} name={} \
-                 bounded_source=[{}] pre_sat_residual={:.3} saturated={:.3}",
-                footprint.concrete_op_id,
-                op.name(),
-                bounded_dims.join(", "),
-                residual,
-                saturated,
-            );
-        }
-    }
-}
-
 impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
     fn compute_heuristic(
         &self,
@@ -5128,12 +5055,33 @@ mod handcrafted_sailing_tests {
         CartesianRefinementDirection,
     };
     use crate::evaluation::domain_abstractions::cegar::InitialSeedSplit;
+    use crate::evaluation::domain_abstractions::comparison_expression::Interval;
     use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
     use crate::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
     use crate::evaluation::domain_abstractions::domain_abstraction_generator::{
         DomainAbstractionMetadata, compute_hash_multipliers,
     };
     use crate::task_restriction::build_restricted_task;
+
+    #[test]
+    fn regional_order_conflict_preserves_disjoint_infinite_tails() {
+        let region = |lower, upper, lower_closed, upper_closed| StateRegion {
+            propositions: Vec::new().into(),
+            numeric: vec![Interval::new(lower, upper, lower_closed, upper_closed)].into(),
+        };
+        let left_tail = region(f64::NEG_INFINITY, 0.0, false, true);
+        let right_tail = region(0.0, f64::INFINITY, false, false);
+        let overlapping_tail = region(-1.0, f64::INFINITY, true, false);
+
+        assert_eq!(
+            pair_regional_conflict(&[&left_tail], 1.0, &[&right_tail], 1.0, 1.0),
+            0.0
+        );
+        assert_eq!(
+            pair_regional_conflict(&[&left_tail], 1.0, &[&overlapping_tail], 1.0, 1.0),
+            1.0
+        );
+    }
 
     #[test]
     #[ignore = "oracle collection report over translated sailing benchmark"]
@@ -5551,6 +5499,7 @@ mod handcrafted_sailing_tests {
             relevant_operator_ids,
             abstract_operators,
             abstract_operator_footprints,
+            regional_transition_system: RefCell::new(None),
             metadata: DomainAbstractionMetadata::default(),
         })
     }
@@ -5959,22 +5908,6 @@ fn compute_score(h: f64, stolen_costs: f64, scoring_function: ScoringFunction) -
     }
 }
 
-fn compute_abstract_operator_order_score(
-    h: f64,
-    stolen_costs: f64,
-    scoring_function: ScoringFunction,
-    abstraction: &DomainAbstraction,
-) -> f64 {
-    if h <= 1e-9 {
-        return -1.0e100;
-    }
-    let base = compute_score(h, stolen_costs, scoring_function);
-    let size_penalty = ((abstraction_state_count(abstraction) as f64) / 10_000.0)
-        .max(1.0)
-        .sqrt();
-    base / size_penalty
-}
-
 fn standalone_current_h_values(
     state: &ScpOnlineState,
     abstract_state_ids: &[Option<usize>],
@@ -6011,6 +5944,106 @@ fn compute_costs_stolen_by_heuristic(saturated: &[f64], surplus: &[f64]) -> f64 
         .zip(surplus.iter())
         .map(|(&s, &su)| compute_stolen_costs(s, su))
         .sum()
+}
+
+fn compute_regional_conflict_scores(
+    abstractions: &[DomainAbstraction],
+    cartesian_abstractions: &[CartesianAbstraction],
+    saturated_by_component: &[Vec<f64>],
+    operator_costs: &[f64],
+) -> Result<Vec<f64>, EvaluationError> {
+    let component_count = abstractions.len() + cartesian_abstractions.len();
+    let mut regions_by_component = Vec::with_capacity(component_count);
+    for (component_id, footprints) in abstractions
+        .iter()
+        .map(|abstraction| abstraction.abstract_operator_footprints.as_slice())
+        .chain(
+            cartesian_abstractions
+                .iter()
+                .map(|abstraction| abstraction.abstract_operator_footprints.as_slice()),
+        )
+        .enumerate()
+    {
+        if footprints.is_empty() {
+            return Err(EvaluationError::ComputationFailed(format!(
+                "region SCP component {component_id} has no operator footprints"
+            )));
+        }
+        let mut by_operator = HashMap::<usize, Vec<&StateRegion>>::new();
+        for footprint in footprints {
+            for label in &footprint.labels {
+                if label.concrete_op_id >= operator_costs.len() {
+                    return Err(EvaluationError::ComputationFailed(format!(
+                        "region SCP component {component_id} footprint references missing operator {}",
+                        label.concrete_op_id
+                    )));
+                }
+                by_operator
+                    .entry(label.concrete_op_id)
+                    .or_default()
+                    .push(&label.source_region);
+            }
+        }
+        regions_by_component.push(by_operator);
+    }
+
+    let mut scores = vec![0.0; component_count];
+    for left in 0..component_count {
+        for right in left + 1..component_count {
+            let left_saturated = &saturated_by_component[left];
+            let right_saturated = &saturated_by_component[right];
+            for (&operator_id, left_regions) in &regions_by_component[left] {
+                let Some(right_regions) = regions_by_component[right].get(&operator_id) else {
+                    continue;
+                };
+                let left_amount = left_saturated
+                    .get(operator_id)
+                    .copied()
+                    .unwrap_or(f64::NEG_INFINITY);
+                let right_amount = right_saturated
+                    .get(operator_id)
+                    .copied()
+                    .unwrap_or(f64::NEG_INFINITY);
+                let base_cost = operator_costs[operator_id];
+                if !left_amount.is_finite() || !right_amount.is_finite() || !base_cost.is_finite() {
+                    continue;
+                }
+                let conflict = pair_regional_conflict(
+                    left_regions,
+                    left_amount,
+                    right_regions,
+                    right_amount,
+                    base_cost,
+                );
+                if conflict > 1e-9 {
+                    scores[left] += conflict;
+                    scores[right] += conflict;
+                }
+            }
+        }
+    }
+    Ok(scores)
+}
+
+fn pair_regional_conflict(
+    left_regions: &[&StateRegion],
+    left_amount: f64,
+    right_regions: &[&StateRegion],
+    right_amount: f64,
+    base_cost: f64,
+) -> f64 {
+    let excess = (left_amount + right_amount - base_cost).max(0.0);
+    if excess <= 1e-9 {
+        return 0.0;
+    }
+    if left_regions
+        .iter()
+        .any(|left| right_regions.iter().any(|right| left.overlaps(right)))
+    {
+        excess
+    } else {
+        0.0
+    }
 }
 
 fn compute_surplus_cost(saturated_by_abs: &[Vec<f64>], op_id: usize, remaining_cost: f64) -> f64 {
@@ -6390,7 +6423,9 @@ mod tests {
         config.online = false;
         config.diversify = true;
         config.samples = 16;
-        config.max_orders = 1 + expected_goals.len() * 4;
+        // The portfolio also retains one mandatory standalone prefix per
+        // component, in addition to goal specialists and the global best.
+        config.max_orders = 64;
         config.initial_order_generation_max_time = 10.0;
         let heuristic =
             SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(

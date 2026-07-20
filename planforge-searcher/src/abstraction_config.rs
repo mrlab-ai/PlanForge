@@ -136,15 +136,28 @@ pub(crate) fn build_components<'task>(
             "domain" | "domain_abstractions" => {
                 let mut config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
                 config.apply_options(source.args())?;
-                config.compute_operator_footprints = component_use.needs_operator_footprints();
+                // Footprints do not influence CEGAR. Build them after the collection so
+                // canonical, label SCP, and region SCP receive the same generation budget.
+                config.compute_operator_footprints = false;
                 info!("Building domain abstraction source {source_index}...");
-                let abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
-                    .generate_collection(task)
-                    .map_err(|error| {
-                        format!(
-                            "failed to build domain abstraction source {source_index}: {error:#}"
-                        )
-                    })?;
+                let mut abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+                    config,
+                )
+                .generate_collection(task)
+                .map_err(|error| {
+                    format!("failed to build domain abstraction source {source_index}: {error:#}")
+                })?;
+                if component_use.needs_operator_footprints() {
+                    for (component_index, abstraction) in abstractions.iter_mut().enumerate() {
+                        abstraction
+                            .ensure_abstract_operator_footprints(task)
+                            .map_err(|error| {
+                                format!(
+                                    "failed to build regional footprints for domain abstraction source {source_index}, component {component_index}: {error:#}"
+                                )
+                            })?;
+                    }
+                }
                 components.extend(abstractions.into_iter().enumerate().map(
                     |(component_index, abstraction)| {
                         AbstractionComponent::domain(

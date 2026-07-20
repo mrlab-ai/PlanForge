@@ -1,3 +1,6 @@
+use std::cell::{Ref, RefCell};
+use std::time::Instant;
+
 use anyhow::{Context, Result, ensure};
 
 use planforge_sas::numeric_task::AbstractNumericTask;
@@ -5,7 +8,9 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 use super::abstract_operator_generator::AbstractOperator;
 use super::cegar::{Cegar, CegarConfig, CegarStopReason};
 use super::domain_abstraction_factory::{AbstractDistanceTable, DomainAbstractionFactory};
-use crate::evaluation::abstraction_collections::cost_partitioning::AbstractOperatorFootprint;
+use crate::evaluation::abstraction_collections::cost_partitioning::{
+    AbstractOperatorFootprint, AbstractTransitionSystem,
+};
 use crate::evaluation::abstraction_task::AbstractionUse;
 
 /// Fully built abstraction artifact that can be used to evaluate concrete states.
@@ -18,10 +23,31 @@ pub struct DomainAbstraction {
     pub relevant_operator_ids: Vec<usize>,
     pub abstract_operators: Vec<AbstractOperator>,
     pub abstract_operator_footprints: Vec<AbstractOperatorFootprint>,
+    pub(crate) regional_transition_system: RefCell<Option<AbstractTransitionSystem>>,
     pub metadata: DomainAbstractionMetadata,
 }
 
 impl DomainAbstraction {
+    pub fn lookup_only(
+        factory: DomainAbstractionFactory,
+        distance_table: AbstractDistanceTable,
+        hash_multipliers: Vec<usize>,
+        combine_labels: bool,
+        metadata: DomainAbstractionMetadata,
+    ) -> Self {
+        Self {
+            factory,
+            distance_table,
+            hash_multipliers,
+            combine_labels,
+            relevant_operator_ids: Vec::new(),
+            abstract_operators: Vec::new(),
+            abstract_operator_footprints: Vec::new(),
+            regional_transition_system: RefCell::new(None),
+            metadata,
+        }
+    }
+
     pub fn task_for_factory<'task>(
         &'task self,
         fallback: &'task dyn AbstractNumericTask,
@@ -32,6 +58,64 @@ impl DomainAbstraction {
     pub fn discard_transition_data(&mut self) {
         self.abstract_operators.clear();
         self.abstract_operator_footprints.clear();
+        self.regional_transition_system.get_mut().take();
+    }
+
+    pub fn ensure_abstract_operator_footprints(
+        &mut self,
+        task: &dyn AbstractNumericTask,
+    ) -> Result<()> {
+        if !self.abstract_operator_footprints.is_empty() {
+            ensure!(
+                self.abstract_operator_footprints.len() == self.abstract_operators.len(),
+                "domain abstraction has {} operator footprints for {} abstract operators",
+                self.abstract_operator_footprints.len(),
+                self.abstract_operators.len()
+            );
+            return Ok(());
+        }
+        ensure!(
+            !self.abstract_operators.is_empty(),
+            "cannot construct regional footprints after abstract operators were discarded"
+        );
+        self.abstract_operator_footprints = self
+            .factory
+            .build_abstract_operator_footprints(task, &self.abstract_operators)
+            .context("failed to build abstract-operator footprints")?;
+        ensure!(
+            self.abstract_operator_footprints.len() == self.abstract_operators.len(),
+            "domain footprint construction produced {} entries for {} abstract operators",
+            self.abstract_operator_footprints.len(),
+            self.abstract_operators.len()
+        );
+        Ok(())
+    }
+
+    pub fn regional_transition_system<'a>(
+        &'a self,
+        task: &dyn AbstractNumericTask,
+        deadline: Option<Instant>,
+    ) -> Result<Ref<'a, AbstractTransitionSystem>> {
+        if self.regional_transition_system.borrow().is_none() {
+            let mut transition_system = self
+                .factory
+                .build_abstract_transition_system_from_operators_without_regions_with_deadline(
+                    task,
+                    self.combine_labels,
+                    &self.abstract_operators,
+                    deadline,
+                )?;
+            transition_system.forward.clear();
+            *self.regional_transition_system.borrow_mut() = Some(transition_system);
+        }
+        Ok(Ref::map(
+            self.regional_transition_system.borrow(),
+            |transition_system| {
+                transition_system
+                    .as_ref()
+                    .expect("regional transition system was initialized")
+            },
+        ))
     }
 
     pub fn lookup_clone(&self) -> Self {
@@ -96,8 +180,8 @@ impl DomainAbstractionGenerator {
             // Heuristics that read only the distance table (canonical, max,
             // single domain abstraction) do not consume footprints; skipping
             // saves ~12 GB on minecraft-sword-advanced/prob_30x30_5. SCP /
-            // Regional SCP leaves the flag
-            // on and pay the cost.
+            // Callers that need regional SCP can construct footprints from
+            // the finalized abstraction after collection generation.
             Vec::new()
         };
         let distance_table = factory
@@ -148,6 +232,7 @@ impl DomainAbstractionGenerator {
             relevant_operator_ids,
             abstract_operators,
             abstract_operator_footprints,
+            regional_transition_system: RefCell::new(None),
             metadata: DomainAbstractionMetadata {
                 solved_by_self,
                 abstraction_use: AbstractionUse::Standalone,
