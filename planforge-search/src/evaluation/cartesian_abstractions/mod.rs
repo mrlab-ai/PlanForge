@@ -3,8 +3,9 @@
 //! Unlike the factorized domain abstraction, splitting one Cartesian state
 //! adds exactly one state. Every abstract transition is a may-transition of a
 //! grounded concrete operator. CEGAR replays a deterministic optimal abstract
-//! trace and refines its first witnessed flaw; only a successfully replayed
-//! concrete plan may set `solved_by_self`.
+//! trace. The default refines its first witnessed flaw; the explicit
+//! whole-plan mode ranks all sound witnesses on an acyclic adaptive trace.
+//! Only a successfully replayed concrete plan may set `solved_by_self`.
 
 #[cfg(test)]
 mod tests;
@@ -36,7 +37,9 @@ use super::abstraction_collections::portfolio::{
     CollectionStrategy, derive_variant_seed, mix_seed, stable_text_seed,
 };
 use super::abstraction_task::{AbstractionUse, SingleGoalTask, validate_abstraction_operator};
-use super::domain_abstractions::cegar::flaw_search::state::progress;
+use super::cegar::{
+    CegarDriver, CegarIterationResult, CegarStopReason, FlawKind, progress_concrete_state,
+};
 use super::domain_abstractions::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstractions::domain_abstraction_factory::AbstractDistanceTable;
 use super::domain_abstractions::utils::{fact_is_hold, get_initial_state, make_prop_state_packer};
@@ -79,6 +82,7 @@ pub struct CartesianAbstractionConfig {
     pub combine_labels: bool,
     pub compute_operator_footprints: bool,
     pub random_seed: Option<u64>,
+    pub flaw_kind: FlawKind,
     pub refinement_direction: CartesianRefinementDirection,
     pub split_selection_rank: Option<usize>,
     pub debug: bool,
@@ -92,6 +96,7 @@ impl Default for CartesianAbstractionConfig {
             combine_labels: false,
             compute_operator_footprints: true,
             random_seed: None,
+            flaw_kind: FlawKind::Progression,
             refinement_direction: CartesianRefinementDirection::Progression,
             split_selection_rank: None,
             debug: false,
@@ -619,6 +624,56 @@ impl Split {
         match self {
             Self::Propositional { var_id, .. } => SplitDimension::Propositional(*var_id),
             Self::Numeric { var_id, .. } => SplitDimension::Numeric(*var_id),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum SplitIdentity {
+    Propositional {
+        state_id: usize,
+        var_id: usize,
+        wanted: Vec<PropValueId>,
+        witness_value: PropValueId,
+    },
+    Numeric {
+        state_id: usize,
+        var_id: usize,
+        boundary_bits: u64,
+        lower_includes_boundary: bool,
+        witness_bits: u64,
+    },
+}
+
+impl From<&Split> for SplitIdentity {
+    fn from(split: &Split) -> Self {
+        match split {
+            Split::Propositional {
+                state_id,
+                var_id,
+                wanted,
+                witness_value,
+                ..
+            } => Self::Propositional {
+                state_id: *state_id,
+                var_id: *var_id,
+                wanted: wanted.clone(),
+                witness_value: *witness_value,
+            },
+            Split::Numeric {
+                state_id,
+                var_id,
+                boundary,
+                lower_includes_boundary,
+                witness_value,
+                ..
+            } => Self::Numeric {
+                state_id: *state_id,
+                var_id: *var_id,
+                boundary_bits: boundary.to_bits(),
+                lower_includes_boundary: *lower_includes_boundary,
+                witness_bits: witness_value.to_bits(),
+            },
         }
     }
 }
@@ -1380,6 +1435,14 @@ pub struct CartesianAbstractionGenerator {
 impl CartesianAbstractionGenerator {
     pub fn new(config: CartesianAbstractionConfig) -> Result<Self> {
         ensure!(config.max_states > 0, "Cartesian max_states must be > 0");
+        ensure!(
+            matches!(
+                config.flaw_kind,
+                FlawKind::Progression | FlawKind::ExecuteEntirePlan
+            ),
+            "Cartesian abstractions support flaw_kind=progression and flaw_kind=execute_entire_plan, not flaw_kind={}",
+            config.flaw_kind
+        );
         Ok(Self { config })
     }
 
@@ -1433,65 +1496,83 @@ impl CartesianAbstractionGenerator {
         let mut refinements: usize = 0;
 
         let mut shortest_paths = compute_shortest_paths(&working, &semantics)?;
-        let (stop_reason, pending_flaw, solved_plan) = loop {
-            if refinements.is_multiple_of(64)
-                && !crate::resource_limits::poll_and_release_if_exceeded()
-            {
-                break (CartesianStopReason::MemoryLimit, None, None);
-            }
-            let check = replay_optimal_abstract_trace(
-                &working,
-                &semantics,
-                &shortest_paths,
-                &state_packer,
-                &axiom_evaluator,
-                &refinement_root,
-            )?;
-            match check {
-                PlanCheck::ConcretePlan(plan) => {
-                    break (CartesianStopReason::ConcretePlan, None, Some(plan));
-                }
-                PlanCheck::AbstractDeadEnd(abstract_state_id) => {
-                    return Err(RefinementRootDeadEnd { abstract_state_id }.into());
-                }
-                PlanCheck::Refine(split) => {
-                    if working.states.len() >= self.config.max_states {
-                        break (
-                            CartesianStopReason::StateLimit,
-                            Some(split.description().to_string()),
-                            None,
-                        );
-                    }
-                    if self
-                        .config
-                        .max_time
-                        .is_some_and(|max_time| start.elapsed() >= max_time)
-                    {
-                        break (
-                            CartesianStopReason::TimeLimit,
-                            Some(split.description().to_string()),
-                            None,
-                        );
-                    }
-                    if self.config.debug {
-                        debug!(
-                            "Cartesian refinement {} at {} states: {}",
-                            refinements,
-                            working.states.len(),
-                            split.description()
-                        );
-                    }
-                    let old_state_id = split.state_id();
-                    let new_state_id = apply_split(&mut working, &semantics, split)?;
-                    shortest_paths = update_shortest_paths_after_split(
+        let mut pending_flaw = None;
+        let mut solved_plan = None;
+        let run = CegarDriver::new(usize::MAX, None).run_from_zero_based(
+            start,
+            |_iteration, _deadline| {
+                let check = match self.config.flaw_kind {
+                    FlawKind::Progression => replay_optimal_abstract_trace(
                         &working,
                         &semantics,
-                        shortest_paths,
-                        old_state_id,
-                        new_state_id,
-                    )?;
-                    refinements += 1;
+                        &shortest_paths,
+                        &state_packer,
+                        &axiom_evaluator,
+                        &refinement_root,
+                    )?,
+                    FlawKind::ExecuteEntirePlan => replay_entire_optimal_abstract_trace(
+                        &working,
+                        &semantics,
+                        &shortest_paths,
+                        &state_packer,
+                        &axiom_evaluator,
+                        &refinement_root,
+                    )?,
+                    _ => unreachable!(
+                        "unsupported Cartesian flaw kind passed constructor validation"
+                    ),
+                };
+                match check {
+                    PlanCheck::ConcretePlan(plan) => {
+                        solved_plan = Some(plan);
+                        Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan))
+                    }
+                    PlanCheck::AbstractDeadEnd(abstract_state_id) => {
+                        Err(RefinementRootDeadEnd { abstract_state_id }.into())
+                    }
+                    PlanCheck::Refine(split) => {
+                        if working.states.len() >= self.config.max_states {
+                            pending_flaw = Some(split.description().to_string());
+                            return Ok(CegarIterationResult::Stop(CegarStopReason::SizeLimit));
+                        }
+                        if self
+                            .config
+                            .max_time
+                            .is_some_and(|max_time| start.elapsed() >= max_time)
+                        {
+                            pending_flaw = Some(split.description().to_string());
+                            return Ok(CegarIterationResult::Stop(CegarStopReason::TimeLimit));
+                        }
+                        if self.config.debug {
+                            debug!(
+                                "Cartesian refinement {} at {} states: {}",
+                                refinements,
+                                working.states.len(),
+                                split.description()
+                            );
+                        }
+                        let old_state_id = split.state_id();
+                        let new_state_id = apply_split(&mut working, &semantics, split)?;
+                        update_shortest_paths_after_split(
+                            &working,
+                            &semantics,
+                            &mut shortest_paths,
+                            old_state_id,
+                            new_state_id,
+                        )?;
+                        refinements += 1;
+                        Ok(CegarIterationResult::Continue)
+                    }
                 }
+            },
+        )?;
+        let stop_reason = match run.stop_reason {
+            CegarStopReason::ConcretePlan => CartesianStopReason::ConcretePlan,
+            CegarStopReason::SizeLimit => CartesianStopReason::StateLimit,
+            CegarStopReason::TimeLimit => CartesianStopReason::TimeLimit,
+            CegarStopReason::MemoryLimit => CartesianStopReason::MemoryLimit,
+            CegarStopReason::IterationLimit | CegarStopReason::NoRefinableFlaw => {
+                unreachable!("Cartesian CEGAR driver returned unsupported stop reason")
             }
         };
 
@@ -1975,7 +2056,7 @@ fn replay_cartesian_operator_sequence(
             "progressive Cartesian plan operator {operator_id} ({}) is inapplicable at step {step}",
             operator.name()
         );
-        progress(
+        progress_concrete_state(
             operator,
             &axiom_evaluator,
             &state_packer,
@@ -2186,10 +2267,10 @@ fn compute_shortest_paths(
 fn update_shortest_paths_after_split(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
-    mut shortest_paths: ShortestPaths,
+    shortest_paths: &mut ShortestPaths,
     split_state_id: usize,
     new_state_id: usize,
-) -> Result<ShortestPaths> {
+) -> Result<()> {
     let old_num_states = shortest_paths.distances.len();
     ensure!(
         new_state_id == old_num_states && working.states.len() == old_num_states + 1,
@@ -2222,13 +2303,13 @@ fn update_shortest_paths_after_split(
 
     invalidate(
         split_state_id,
-        &mut shortest_paths,
+        shortest_paths,
         &mut invalid_states,
         &mut queue,
     );
     invalidate(
         new_state_id,
-        &mut shortest_paths,
+        shortest_paths,
         &mut invalid_states,
         &mut queue,
     );
@@ -2241,7 +2322,7 @@ fn update_shortest_paths_after_split(
                 .expect("Cartesian shortest-path dependent has no generating transition");
             assert_eq!(transition.target, target);
             shortest_paths.dependent_positions[source] = None;
-            invalidate(source, &mut shortest_paths, &mut invalid_states, &mut queue);
+            invalidate(source, shortest_paths, &mut invalid_states, &mut queue);
         }
     }
 
@@ -2330,7 +2411,7 @@ fn update_shortest_paths_after_split(
     for state_id in invalid_states {
         shortest_paths.invalid[state_id] = false;
     }
-    Ok(shortest_paths)
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -2731,7 +2812,7 @@ fn replay_optimal_abstract_trace(
         }
 
         let source_numeric = numeric.clone();
-        progress(
+        progress_concrete_state(
             op,
             axiom_evaluator,
             state_packer,
@@ -2746,12 +2827,14 @@ fn replay_optimal_abstract_trace(
             return Ok(PlanCheck::Refine(split_deviation(
                 working,
                 semantics,
-                abstract_state,
-                transition.target,
-                op_id,
-                &successor_prop_values,
-                &source_numeric,
-                &numeric,
+                DeviationWitness {
+                    source_state_id: abstract_state,
+                    target_state_id: transition.target,
+                    op_id,
+                    successor_prop: &successor_prop_values,
+                    source_numeric: &source_numeric,
+                    successor_numeric: &numeric,
+                },
             )?));
         }
 
@@ -2764,6 +2847,187 @@ fn replay_optimal_abstract_trace(
             "Cartesian generating transition is not distance preserving"
         );
         concrete_cost += op_cost;
+        operator_ids.push(op_id);
+    }
+}
+
+fn select_min_growth_split(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    mut candidates: Vec<Split>,
+    tag: u64,
+) -> Result<Split> {
+    ensure!(
+        !candidates.is_empty(),
+        "cannot select a Cartesian refinement from an empty candidate set"
+    );
+    retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
+    let index = semantics.choose_split_index(&candidates, tag);
+    Ok(candidates.swap_remove(index))
+}
+
+fn select_min_growth_refinement(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    candidates: Vec<Split>,
+) -> Result<PlanCheck> {
+    Ok(PlanCheck::Refine(select_min_growth_split(
+        working,
+        semantics,
+        candidates,
+        0x454E_5449,
+    )?))
+}
+
+fn push_unique_split(
+    candidates: &mut Vec<Split>,
+    identities: &mut HashSet<SplitIdentity>,
+    split: Split,
+) {
+    if identities.insert(SplitIdentity::from(&split)) {
+        candidates.push(split);
+    }
+}
+
+/// Replays the current optimal abstract policy against one concrete execution
+/// and ranks every witnessed flaw together. After a deviation, replay resumes
+/// from the abstract state containing the real concrete successor. This keeps
+/// every split tied to a concrete witness and avoids inventing projected states.
+fn replay_entire_optimal_abstract_trace(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    shortest_paths: &ShortestPaths,
+    state_packer: &Arc<IntDoublePacker>,
+    axiom_evaluator: &AxiomEvaluator<'_>,
+    refinement_root: &CartesianConcreteState,
+) -> Result<PlanCheck> {
+    let mut propositions = refinement_root.propositions.clone();
+    let mut numeric = refinement_root.numeric.clone();
+    let mut prop_values = Vec::new();
+    let mut successor_prop_values = Vec::new();
+    let mut operator_ids = Vec::new();
+    let mut concrete_cost = 0.0;
+    let mut candidates = Vec::new();
+    let mut candidate_identities = HashSet::new();
+    let mut visited_abstract_states = HashSet::new();
+
+    loop {
+        semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
+        let abstract_state = working.hierarchy.map_state(&prop_values, &numeric)?;
+        if !visited_abstract_states.insert(abstract_state) {
+            ensure!(
+                !candidates.is_empty(),
+                "Cartesian whole-plan replay cycled without witnessing a flaw"
+            );
+            return select_min_growth_refinement(working, semantics, candidates);
+        }
+        let abstract_distance = shortest_paths.distances[abstract_state];
+        if !abstract_distance.is_finite() {
+            return if candidates.is_empty() {
+                Ok(PlanCheck::AbstractDeadEnd(abstract_state))
+            } else {
+                select_min_growth_refinement(working, semantics, candidates)
+            };
+        }
+
+        if shortest_paths.is_goal[abstract_state] {
+            if concrete_is_goal(semantics, state_packer, &propositions) {
+                return if candidates.is_empty() {
+                    Ok(PlanCheck::ConcretePlan(ConcretePlan {
+                        operator_ids,
+                        cost: concrete_cost,
+                    }))
+                } else {
+                    select_min_growth_refinement(working, semantics, candidates)
+                };
+            }
+            for goal_id in 0..semantics.task.get_num_goals() {
+                let goal = semantics.task.get_goal_fact(goal_id);
+                if !fact_is_hold(goal, state_packer, &propositions) {
+                    let split = split_failed_fact(
+                        working,
+                        semantics,
+                        abstract_state,
+                        goal,
+                        &prop_values,
+                        &numeric,
+                        format!("goal {goal:?}"),
+                    )?;
+                    push_unique_split(&mut candidates, &mut candidate_identities, split);
+                }
+            }
+            ensure!(
+                !candidates.is_empty(),
+                "abstract goal contains a concrete non-goal without a refinable failed goal fact"
+            );
+            return select_min_growth_refinement(working, semantics, candidates);
+        }
+
+        let transition = shortest_paths.generating_transition[abstract_state].context(
+            "non-goal Cartesian state with finite distance has no generating transition",
+        )?;
+        ensure!(
+            working.contains_transition(transition),
+            "Cartesian shortest path references missing transition {transition:?}"
+        );
+        ensure!(
+            approximately_equal(
+                semantics.operator_costs[transition.concrete_op_id]
+                    + shortest_paths.distances[transition.target],
+                abstract_distance
+            ),
+            "Cartesian generating transition is not distance preserving"
+        );
+
+        let op_id = transition.concrete_op_id;
+        let op = &semantics.task.get_operators()[op_id];
+        for failed in op
+            .preconditions()
+            .iter()
+            .filter(|fact| !fact_is_hold(fact, state_packer, &propositions))
+        {
+            let split = split_failed_fact(
+                working,
+                semantics,
+                abstract_state,
+                failed,
+                &prop_values,
+                &numeric,
+                format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
+            )?;
+            push_unique_split(&mut candidates, &mut candidate_identities, split);
+        }
+
+        let source_numeric = numeric.clone();
+        progress_concrete_state(
+            op,
+            axiom_evaluator,
+            state_packer,
+            &mut propositions,
+            &mut numeric,
+        )?;
+        semantics.concrete_prop_values(state_packer, &propositions, &mut successor_prop_values);
+        let concrete_target = working
+            .hierarchy
+            .map_state(&successor_prop_values, &numeric)?;
+        if concrete_target != transition.target {
+            for split in split_deviation_candidates(
+                working,
+                semantics,
+                DeviationWitness {
+                    source_state_id: abstract_state,
+                    target_state_id: transition.target,
+                    op_id,
+                    successor_prop: &successor_prop_values,
+                    source_numeric: &source_numeric,
+                    successor_numeric: &numeric,
+                },
+            )? {
+                push_unique_split(&mut candidates, &mut candidate_identities, split);
+            }
+        }
+
+        concrete_cost += semantics.operator_costs[op_id];
         operator_ids.push(op_id);
     }
 }
@@ -2790,7 +3054,7 @@ fn validate_concrete_plan(
                 op.name()
             );
         }
-        progress(
+        progress_concrete_state(
             op,
             axiom_evaluator,
             state_packer,
@@ -3227,16 +3491,38 @@ fn all_conditions_admitted(
     Ok(true)
 }
 
-fn split_deviation(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
+#[derive(Clone, Copy)]
+struct DeviationWitness<'a> {
     source_state_id: usize,
     target_state_id: usize,
     op_id: usize,
-    successor_prop: &[usize],
-    source_numeric: &[f64],
-    successor_numeric: &[f64],
+    successor_prop: &'a [usize],
+    source_numeric: &'a [f64],
+    successor_numeric: &'a [f64],
+}
+
+fn split_deviation(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    witness: DeviationWitness<'_>,
 ) -> Result<Split> {
+    let candidates = split_deviation_candidates(working, semantics, witness)?;
+    select_min_growth_split(working, semantics, candidates, 0x4445_5649)
+}
+
+fn split_deviation_candidates(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    witness: DeviationWitness<'_>,
+) -> Result<Vec<Split>> {
+    let DeviationWitness {
+        source_state_id,
+        target_state_id,
+        op_id,
+        successor_prop,
+        source_numeric,
+        successor_numeric,
+    } = witness;
     let target = &working.states[target_state_id];
     let mut candidates = Vec::new();
     let mut rejected_numeric_splits = Vec::new();
@@ -3329,9 +3615,7 @@ fn split_deviation(
         semantics.task.get_operators()[op_id].name(),
         rejected_numeric_splits.join("; ")
     );
-    retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
-    let index = semantics.choose_split_index(&candidates, 0x4445_5649);
-    Ok(candidates.swap_remove(index))
+    Ok(candidates)
 }
 
 fn apply_split(

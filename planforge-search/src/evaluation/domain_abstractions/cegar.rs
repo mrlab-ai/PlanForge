@@ -19,13 +19,12 @@ use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, Operator};
 
 use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
 
-pub use flaw_search::FlawKind;
 pub use flaw_search::SplitDirection;
 pub use flaw_search::flaw_selection::{FlawTreatment, FlawTreatmentVariants, InitSplitMethod};
 
-use crate::evaluation::domain_abstractions::cegar::flaw_search::state::{
-    FlawSearchState, progress,
-};
+use crate::evaluation::cegar::{CegarDriver, CegarIterationResult, progress_concrete_state};
+pub use crate::evaluation::cegar::{CegarStopReason, FlawKind};
+use crate::evaluation::domain_abstractions::cegar::flaw_search::state::FlawSearchState;
 use crate::evaluation::domain_abstractions::utils::{
     fact_is_hold, get_initial_state, make_prop_state_packer,
 };
@@ -160,15 +159,6 @@ pub struct CegarOutcome {
     pub solved_by_self: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CegarStopReason {
-    ConcretePlan,
-    TimeLimit,
-    MemoryLimit,
-    IterationLimit,
-    NoRefinableFlaw,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RefinementSummary {
     pub refined_propositional_vars: HashSet<usize>,
@@ -266,8 +256,7 @@ impl Cegar {
             )?;
         }
 
-        let mut iteration: usize = 1;
-
+        let iteration = 1usize;
         let mut factory = DomainAbstractionFactory::new(
             task,
             domain_mapping,
@@ -280,22 +269,9 @@ impl Cegar {
         })?;
         let mut wildcard_plan = None;
         let mut solved_by_self = false;
-        let mut stop_reason = CegarStopReason::IterationLimit;
-
-        while iteration <= config.max_iterations {
-            if iteration.is_multiple_of(64)
-                && !crate::resource_limits::poll_and_release_if_exceeded()
-            {
-                stop_reason = CegarStopReason::MemoryLimit;
-                break;
-            }
-            if let Some(max_time) = config.max_time
-                && start.elapsed() >= max_time
-            {
-                stop_reason = CegarStopReason::TimeLimit;
-                break;
-            }
-
+        let run = CegarDriver::new(config.max_iterations, config.max_time).run_from(
+            start,
+            |iteration, deadline| {
             if config.debug {
                 super::utils::debug_print_abstraction_stats(
                     iteration,
@@ -306,7 +282,6 @@ impl Cegar {
 
             let iteration_start = Instant::now();
             let plan_start = Instant::now();
-            let deadline = config.max_time.map(|max_time| start + max_time);
             match factory.compute_plan_with_rng_and_deadline(
                 task,
                 config.combine_labels,
@@ -321,8 +296,7 @@ impl Cegar {
                         "CEGAR: deadline expired while computing abstract plan at iteration {}; stopping refinement",
                         iteration
                     );
-                    stop_reason = CegarStopReason::TimeLimit;
-                    break;
+                    return Ok(CegarIterationResult::Stop(CegarStopReason::TimeLimit));
                 }
                 Err(error) => {
                     return Err(error).with_context(|| {
@@ -380,8 +354,7 @@ impl Cegar {
             }
             if flaws.is_empty() {
                 solved_by_self = true;
-                stop_reason = CegarStopReason::ConcretePlan;
-                break;
+                return Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan));
             }
             let eligible_flaws =
                 filter_eligible_flaws(task, &factory.partitions, &factory.domain_sizes, &flaws);
@@ -397,8 +370,9 @@ impl Cegar {
                     flaws.len(),
                     iteration
                 );
-                stop_reason = CegarStopReason::NoRefinableFlaw;
-                break;
+                return Ok(CegarIterationResult::Stop(
+                    CegarStopReason::NoRefinableFlaw,
+                ));
             }
 
             let before_size = if config.debug {
@@ -445,8 +419,9 @@ impl Cegar {
                 );
             }
             if refined.is_empty() {
-                stop_reason = CegarStopReason::NoRefinableFlaw;
-                break;
+                return Ok(CegarIterationResult::Stop(
+                    CegarStopReason::NoRefinableFlaw,
+                ));
             }
             let split_values: Vec<_> = eligible_flaws
                 .flaws
@@ -487,8 +462,10 @@ impl Cegar {
                 );
             }
 
-            iteration += 1;
-        }
+            Ok(CegarIterationResult::Continue)
+        })?;
+        let iteration = run.next_iteration;
+        let stop_reason = run.stop_reason;
 
         if config.debug || std::env::var_os("DA_DUMP_FINAL_ABSTRACTION").is_some() {
             log_final_target_centered_abstraction(task, &factory);
@@ -655,7 +632,7 @@ fn wildcard_plan_is_real(
                 continue;
             };
             if is_applicable(&prop_state, &state_packer, op) {
-                progress(
+                progress_concrete_state(
                     op,
                     &axiom_evaluator,
                     &state_packer,

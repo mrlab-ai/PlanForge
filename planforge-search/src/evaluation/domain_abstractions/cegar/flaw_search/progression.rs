@@ -15,7 +15,7 @@ use super::target_centered::{
 };
 use super::{
     Flaw, NumericFlaw, PropFlaw, SplitDirection, can_split_numeric_var,
-    dependent_numeric_flaws_for_comparison_prop_var, state::progress,
+    dependent_numeric_flaws_for_comparison_prop_var,
 };
 use crate::evaluation::domain_abstractions::{
     additive_numeric_views::numeric_dimension_delta_for_operator,
@@ -250,7 +250,7 @@ pub(crate) fn progress_and_get_deviation_flaws(
     let mut next_prop_state = prop_state.to_vec();
     let mut next_numeric_state = numeric_state.to_vec();
     let mut flawed = false;
-    progress(
+    crate::evaluation::cegar::progress_concrete_state(
         op,
         axiom_evaluator,
         state_packer,

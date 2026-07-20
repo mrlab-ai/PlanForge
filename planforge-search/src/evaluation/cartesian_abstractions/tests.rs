@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,9 +13,9 @@ use planforge_sas::numeric_task::{
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
-    CartesianSemantics, CartesianStopReason, OperatorBitSet, RefinementNode, ShortestPaths, Split,
-    StateRegion, TransitionKey, WorkingAbstraction, numeric_split_choice_key,
-    retain_min_growth_splits, select_next_cartesian_collection_goal,
+    CartesianSemantics, CartesianStopReason, FlawKind, OperatorBitSet, RefinementNode,
+    ShortestPaths, Split, StateRegion, TransitionKey, WorkingAbstraction, numeric_split_choice_key,
+    push_unique_split, retain_min_growth_splits, select_next_cartesian_collection_goal,
 };
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use crate::evaluation::domain_abstractions::comparison_expression::Interval;
@@ -50,6 +51,29 @@ fn numeric_split_keys_include_semantic_identity_and_boundary() {
     assert_ne!(key, numeric_split_choice_key("x(b1)", 1.0, true));
     assert_ne!(key, numeric_split_choice_key("x(b0)", 2.0, true));
     assert_ne!(key, numeric_split_choice_key("x(b0)", 1.0, false));
+}
+
+#[test]
+fn whole_plan_candidates_deduplicate_identical_refinements() {
+    let split = Split::Numeric {
+        state_id: 3,
+        var_id: 1,
+        boundary: 2.0,
+        lower_includes_boundary: true,
+        witness_value: 1.0,
+        description: "first witness".into(),
+    };
+    let mut candidates = Vec::new();
+    let mut identities = HashSet::new();
+    push_unique_split(&mut candidates, &mut identities, split.clone());
+    let mut duplicate = split;
+    let Split::Numeric { description, .. } = &mut duplicate else {
+        unreachable!()
+    };
+    *description = "same refinement seen later".into();
+    push_unique_split(&mut candidates, &mut identities, duplicate);
+
+    assert_eq!(candidates.len(), 1);
 }
 
 #[test]
@@ -118,6 +142,17 @@ fn min_growth_uses_projected_transition_count() {
     retain_min_growth_splits(&working, &semantics, &mut candidates, |candidate| candidate).unwrap();
     assert_eq!(candidates.len(), 1);
     assert!(matches!(candidates[0], Split::Numeric { var_id: 1, .. }));
+}
+
+#[test]
+fn unsupported_cartesian_flaw_kinds_are_rejected() {
+    let error = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        flaw_kind: FlawKind::Regression,
+        ..Default::default()
+    })
+    .err()
+    .expect("unsupported flaw kind must fail");
+    assert!(error.to_string().contains("flaw_kind=regression"));
 }
 
 #[test]
@@ -1490,24 +1525,31 @@ fn numeric_goal_task(
 }
 
 fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
-    let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        max_states: 64,
-        ..Default::default()
-    })
-    .unwrap()
-    .generate(task)
-    .unwrap();
-    assert_eq!(
-        abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
-        expected_h
-    );
-    assert!(abstraction.metadata.solved_by_self);
-    assert_eq!(
-        abstraction.metadata.stop_reason,
-        CartesianStopReason::ConcretePlan
-    );
-    assert_eq!(
-        abstraction.abstract_operator_footprints.len(),
-        abstraction.transition_system.transitions.len()
-    );
+    for flaw_kind in [FlawKind::Progression, FlawKind::ExecuteEntirePlan] {
+        let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+            max_states: 64,
+            flaw_kind,
+            ..Default::default()
+        })
+        .unwrap()
+        .generate(task)
+        .unwrap();
+        assert_eq!(
+            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+            expected_h,
+            "unexpected initial h for {flaw_kind}"
+        );
+        assert!(
+            abstraction.metadata.solved_by_self,
+            "{flaw_kind} failed to produce a concrete plan"
+        );
+        assert_eq!(
+            abstraction.metadata.stop_reason,
+            CartesianStopReason::ConcretePlan
+        );
+        assert_eq!(
+            abstraction.abstract_operator_footprints.len(),
+            abstraction.transition_system.transitions.len()
+        );
+    }
 }

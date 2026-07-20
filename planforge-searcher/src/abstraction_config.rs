@@ -10,6 +10,7 @@ use planforge_search::evaluation::cartesian_abstractions::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
 };
+use planforge_search::evaluation::cegar::FlawKind;
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
@@ -348,6 +349,18 @@ fn apply_cartesian_source_options(
             }
             "random_seed" => {
                 config.abstraction.random_seed = Some(u64::from_option_value(arg.value())?);
+            }
+            "flaw_kind" => {
+                let flaw_kind = FlawKind::from_option_value(arg.value())?;
+                if !matches!(
+                    flaw_kind,
+                    FlawKind::Progression | FlawKind::ExecuteEntirePlan
+                ) {
+                    return Err(format!(
+                        "Cartesian abstractions do not support flaw_kind={flaw_kind}; expected progression or execute_entire_plan"
+                    ));
+                }
+                config.abstraction.flaw_kind = flaw_kind;
             }
             "refinement_direction" => {
                 let value = String::from_option_value(arg.value())?;

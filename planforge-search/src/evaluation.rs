@@ -7,6 +7,7 @@
 pub mod abstraction_collections;
 pub(crate) mod abstraction_task;
 pub mod cartesian_abstractions;
+pub mod cegar;
 pub mod domain_abstractions;
 pub mod evaluator;
 pub mod ff_heuristic;

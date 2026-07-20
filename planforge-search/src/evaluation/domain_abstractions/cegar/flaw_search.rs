@@ -31,6 +31,7 @@ use planforge_sas::utils::linear_effects::{LinearExpression, linearize_numeric_v
 use serde::{Deserialize, Serialize};
 
 use super::determine_include_in_lower;
+use crate::evaluation::cegar::FlawKind;
 use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
 use crate::evaluation::domain_abstractions::additive_numeric_views::{
     comparison_refinement_dimensions, is_refinable_numeric_dimension,
@@ -128,49 +129,6 @@ impl crate::config::FromOptionValue for Option<SplitDirection> {
             "forward_partition_deviation" => Ok(Some(SplitDirection::ForwardPartitionDeviation)),
             "backward" => Ok(Some(SplitDirection::Backward)),
             other => Err(format!("invalid SplitDirection `{other}`")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum FlawKind {
-    Progression,
-    Regression,
-    ExecuteEntirePlan,
-    SequenceProgression,
-    SequenceRegression,
-    SequenceBidirectional,
-    TargetCentered,
-}
-
-impl fmt::Display for FlawKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Progression => write!(f, "progression"),
-            Self::Regression => write!(f, "regression"),
-            Self::ExecuteEntirePlan => write!(f, "execute_entire_plan"),
-            Self::SequenceProgression => write!(f, "sequence_progression"),
-            Self::SequenceRegression => write!(f, "sequence_regression"),
-            Self::SequenceBidirectional => write!(f, "sequence_bidirectional"),
-            Self::TargetCentered => write!(f, "target_centered"),
-        }
-    }
-}
-
-impl crate::config::sealed::Sealed for FlawKind {}
-
-impl crate::config::FromOptionValue for FlawKind {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "progression" => Ok(Self::Progression),
-            "regression" => Ok(Self::Regression),
-            "execute_entire_plan" => Ok(Self::ExecuteEntirePlan),
-            "sequence_progression" => Ok(Self::SequenceProgression),
-            "sequence_regression" => Ok(Self::SequenceRegression),
-            "sequence_bidirectional" => Ok(Self::SequenceBidirectional),
-            "target_centered" => Ok(Self::TargetCentered),
-            other => Err(format!("invalid FlawKind `{other}`")),
         }
     }
 }

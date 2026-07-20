@@ -15,12 +15,12 @@ use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{
     AbstractDistanceTable, DomainAbstractionFactory, WildcardPlanResult,
 };
+use crate::evaluation::cegar::progress_concrete_state;
 use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::SplitDirection;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::progression::{
     get_progression_numeric_deviation_flaws, get_progression_precondition_flaws,
 };
-use crate::evaluation::domain_abstractions::cegar::flaw_search::state::progress;
 
 pub(crate) fn compute_abstraction_size_u128(
     domain_sizes: &[usize],
@@ -673,7 +673,7 @@ fn debug_print_concrete_trace(
 
             let mut cand_buffer = buffer.clone();
             let mut cand_numeric = numeric_state.clone();
-            progress(
+            progress_concrete_state(
                 op,
                 &axiom_evaluator,
                 &state_packer,

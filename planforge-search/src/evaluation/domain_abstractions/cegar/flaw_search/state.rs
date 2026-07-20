@@ -5,14 +5,13 @@ use anyhow::{Result, ensure};
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType};
 use planforge_sas::utils::errors::{AxiomEvalError, InvalidIndex};
-use planforge_sas::utils::float_tolerance;
 use planforge_sas::{
     axioms::AxiomEvaluator, numeric_task::Operator, utils::int_packer::IntDoublePacker,
 };
 
 use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
 use crate::evaluation::domain_abstractions::comparison_expression::{Interval, UNBOUNDED_INTERVAL};
-use crate::evaluation::domain_abstractions::utils::{fact_is_hold, get_initial_state};
+use crate::evaluation::domain_abstractions::utils::get_initial_state;
 
 /// States used during the search of flaws.
 /// Some variables may have a concrete value (`concrete_prop`), while
@@ -372,66 +371,4 @@ pub fn get_initial_flaw_search_state<'a>(
         numeric_state,
         domain_mapping,
     ))
-}
-
-pub fn progress(
-    op: &Operator,
-    axiom_evaluator: &AxiomEvaluator,
-    packer: &IntDoublePacker,
-    prop_state: &mut [u64],
-    numeric_state: &mut [f64],
-) -> Result<()> {
-    // Propositional effects (respect conditions).
-    for eff in op.effects().iter() {
-        let mut ok = true;
-        for cond in eff.conditions().iter() {
-            if !fact_is_hold(cond, packer, prop_state) {
-                ok = false;
-                break;
-            }
-        }
-        if ok {
-            packer.set(prop_state, eff.var_id(), eff.value() as u64);
-        }
-    }
-
-    // Numeric assignment effects.
-    for eff in op.assignment_effects().iter() {
-        if eff.is_conditional() {
-            let mut ok = true;
-            for cond in eff.conditions().iter() {
-                if !fact_is_hold(cond, packer, prop_state) {
-                    ok = false;
-                    break;
-                }
-            }
-            if !ok {
-                continue;
-            }
-        }
-
-        let assignment_var_id = eff.var_id();
-        let affected_var_id = eff.affected_var_id();
-        if assignment_var_id >= numeric_state.len() || affected_var_id >= numeric_state.len() {
-            continue;
-        }
-        let operand = numeric_state[assignment_var_id];
-        numeric_state[affected_var_id] =
-            float_tolerance::canonicalize(planforge_sas::numeric_task::AssignmentOperation::apply(
-                numeric_state[affected_var_id],
-                eff.operation(),
-                operand,
-            ));
-    }
-
-    axiom_evaluator
-        .evaluate_arithmetic_axioms(numeric_state)
-        .map_err(|e| {
-            anyhow::anyhow!("failed to evaluate arithmetic axioms after operator: {e:?}")
-        })?;
-    axiom_evaluator
-        .evaluate(prop_state, numeric_state)
-        .map_err(|e| anyhow::anyhow!("failed to evaluate axioms after operator: {e:?}"))?;
-
-    Ok(())
 }

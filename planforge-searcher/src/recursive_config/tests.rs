@@ -140,7 +140,7 @@ fn parses_hierarchical_scp_options_and_sources() {
 #[test]
 fn parses_hierarchical_cartesian_collection_source() {
     let h = astar_heuristic(
-        "astar(scp(cartesian_collection(max_states=1000, collection_strategy=complementary, variants_per_goal=8, progressive_goal_roots=true, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
+        "astar(scp(cartesian_collection(max_states=1000, flaw_kind=execute_entire_plan, collection_strategy=complementary, variants_per_goal=8, progressive_goal_roots=true, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
     );
     let (sources, options) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
     assert_eq!(sources.len(), 1);
@@ -156,7 +156,32 @@ fn parses_hierarchical_cartesian_collection_source() {
         CollectionStrategy::Complementary
     );
     assert_eq!(config.variants_per_goal, 8);
+    assert_eq!(config.abstraction.flaw_kind, FlawKind::ExecuteEntirePlan);
     assert!(config.abstraction.compute_operator_footprints);
+}
+
+#[test]
+fn hierarchical_cartesian_collection_preserves_first_flaw_default() {
+    let h = astar_heuristic("astar(canonical(cartesian_collection(max_states=1000)))");
+    let (sources, _) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
+    let config = crate::abstraction_config::apply_cartesian_collection_options(
+        sources[0].args(),
+        crate::abstraction_config::ComponentUse::Standalone,
+    )
+    .unwrap();
+    assert_eq!(config.abstraction.flaw_kind, FlawKind::Progression);
+}
+
+#[test]
+fn hierarchical_cartesian_collection_rejects_unsupported_flaw_kind() {
+    let h = astar_heuristic("astar(canonical(cartesian_collection(flaw_kind=regression)))");
+    let (sources, _) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
+    let error = crate::abstraction_config::apply_cartesian_collection_options(
+        sources[0].args(),
+        crate::abstraction_config::ComponentUse::Standalone,
+    )
+    .expect_err("unsupported Cartesian flaw kind must fail during parsing");
+    assert!(error.contains("flaw_kind=regression"));
 }
 
 #[test]
