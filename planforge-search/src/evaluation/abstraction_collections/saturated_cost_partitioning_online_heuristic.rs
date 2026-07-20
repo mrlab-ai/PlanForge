@@ -1881,13 +1881,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let mut evaluated_orders = initial_candidates.len();
         let mandatory_indices =
             mandatory_goal_specialist_indices(&initial_candidates, &state.offline_sample_ids);
-        if mandatory_indices.len() > self.config.max_orders {
-            return Err(EvaluationError::ComputationFailed(format!(
-                "offline SCP requires {} orders to retain the global best and configured specialists per represented goal, exceeding max_orders={}",
-                mandatory_indices.len(),
-                self.config.max_orders,
-            )));
-        }
         let represented_goal_count = mandatory_indices
             .iter()
             .filter_map(|&index| initial_candidates[index].specialist_goal_id)
@@ -1898,10 +1891,26 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .filter(|&&index| initial_candidates[index].specialist_goal_id.is_some())
             .count();
         let mut initial_candidates = initial_candidates.into_iter().map(Some).collect::<Vec<_>>();
+        let pdb_offset = num_domain_abstractions + self.cartesian_hierarchies.len();
+        let mut mandatory_partitions =
+            standalone_scp_prefixes(&state.h_values_by_abstraction, pdb_offset);
+        let standalone_prefix_count = mandatory_partitions.len();
         for index in mandatory_indices {
             let candidate = initial_candidates[index]
                 .take()
                 .expect("mandatory SCP candidate indices must be unique");
+            if !mandatory_partitions.contains(&candidate) {
+                mandatory_partitions.push(candidate);
+            }
+        }
+        if mandatory_partitions.len() > self.config.max_orders {
+            return Err(EvaluationError::ComputationFailed(format!(
+                "offline SCP requires {} orders to retain every standalone SCP prefix, the global best, and configured goal specialists, exceeding max_orders={}",
+                mandatory_partitions.len(),
+                self.config.max_orders,
+            )));
+        }
+        for candidate in mandatory_partitions {
             retain_mandatory_partition(
                 candidate,
                 &state.offline_sample_ids,
@@ -1913,7 +1922,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .map_err(EvaluationError::ComputationFailed)?;
         }
         info!(
-            "scp_online: retained {specialist_count} mandatory specialists across {represented_goal_count} goals plus the global best"
+            "scp_online: retained {standalone_prefix_count} mandatory standalone SCP prefixes and {specialist_count} specialists across {represented_goal_count} goals plus the global best"
         );
 
         for candidate in initial_candidates.into_iter().flatten() {
@@ -2608,6 +2617,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 &remaining_costs,
                             );
                             if should_skip_zero_current_table(
+                                self.config.diversify,
                                 "all",
                                 pos,
                                 &table.distances,
@@ -2674,6 +2684,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 abstract_state_ids,
                             );
                             if should_skip_zero_current_table(
+                                self.config.diversify,
                                 "perim",
                                 pos,
                                 &table.distances,
@@ -2740,6 +2751,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 abstract_state_ids,
                             );
                             if should_skip_zero_current_table(
+                                self.config.diversify,
                                 "perimstar/perim",
                                 pos,
                                 &perim_table.distances,
@@ -2797,6 +2809,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 abstract_state_ids,
                             );
                             if should_skip_zero_current_table(
+                                self.config.diversify,
                                 "perimstar/all",
                                 pos,
                                 &all_table.distances,
@@ -2954,6 +2967,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             Saturator::All => {
                 let (distances, tcf) = build(remaining_costs, None)?;
                 if !should_skip_zero_current_table(
+                    self.config.diversify,
                     "Cartesian abstract-operator all",
                     pos,
                     &distances,
@@ -2968,6 +2982,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             Saturator::Perim => {
                 let (distances, tcf) = build(remaining_costs, Some(cap_state_id))?;
                 if !should_skip_zero_current_table(
+                    self.config.diversify,
                     "Cartesian abstract-operator perim",
                     pos,
                     &distances,
@@ -2982,6 +2997,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             Saturator::Perimstar => {
                 let (perim_distances, perim_tcf) = build(remaining_costs, Some(cap_state_id))?;
                 if !should_skip_zero_current_table(
+                    self.config.diversify,
                     "Cartesian abstract-operator perimstar/perim",
                     pos,
                     &perim_distances,
@@ -2994,6 +3010,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 }
                 let (all_distances, all_tcf) = build(remaining_costs, None)?;
                 if !should_skip_zero_current_table(
+                    self.config.diversify,
                     "Cartesian abstract-operator perimstar/all",
                     pos,
                     &all_distances,
@@ -3167,6 +3184,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstract_state_ids,
                         );
                         if should_skip_zero_current_table(
+                            self.config.diversify,
                             "label all",
                             pos,
                             &distances,
@@ -3202,6 +3220,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstract_state_ids,
                         );
                         if should_skip_zero_current_table(
+                            self.config.diversify,
                             "label perim",
                             pos,
                             &distances,
@@ -3237,6 +3256,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstract_state_ids,
                         );
                         if !should_skip_zero_current_table(
+                            self.config.diversify,
                             "label perimstar/perim",
                             pos,
                             &perim_distances,
@@ -3261,6 +3281,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstract_state_ids,
                         );
                         if should_skip_zero_current_table(
+                            self.config.diversify,
                             "label perimstar/all",
                             pos,
                             &all_distances,
@@ -3366,6 +3387,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         abstract_state_ids,
                     );
                     if should_skip_zero_current_table(
+                        self.config.diversify,
                         "fillSCP label all",
                         pos,
                         &distances,
@@ -3401,6 +3423,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         abstract_state_ids,
                     );
                     if should_skip_zero_current_table(
+                        self.config.diversify,
                         "fillSCP label perim",
                         pos,
                         &distances,
@@ -3429,6 +3452,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         h_cap,
                     )?;
                     if !should_skip_zero_current_table(
+                        self.config.diversify,
                         "fillSCP label perimstar/perim",
                         pos,
                         &perim_distances,
@@ -3446,6 +3470,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         deadline,
                     )?;
                     if should_skip_zero_current_table(
+                        self.config.diversify,
                         "fillSCP label perimstar/all",
                         pos,
                         &all_distances,
@@ -3543,6 +3568,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         abstract_state_ids,
                     );
                     if should_skip_zero_current_table(
+                        self.config.diversify,
                         "fillSCP abstract-operator all",
                         pos,
                         &table.distances,
@@ -3594,6 +3620,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         abstract_state_ids,
                     );
                     if should_skip_zero_current_table(
+                        self.config.diversify,
                         "fillSCP abstract-operator perim",
                         pos,
                         &table.distances,
@@ -3638,6 +3665,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             ))
                         })?;
                     if !should_skip_zero_current_table(
+                        self.config.diversify,
                         "fillSCP abstract-operator perimstar/perim",
                         pos,
                         &perim_table.distances,
@@ -3679,6 +3707,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             ))
                         })?;
                     if should_skip_zero_current_table(
+                        self.config.diversify,
                         "fillSCP abstract-operator perimstar/all",
                         pos,
                         &all_table.distances,
@@ -3750,6 +3779,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             Saturator::All => {
                 let (distances, saturated) = build(remaining_costs, None)?;
                 if !should_skip_zero_current_table(
+                    self.config.diversify,
                     "Cartesian label all",
                     pos,
                     &distances,
@@ -3762,6 +3792,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             Saturator::Perim => {
                 let (distances, saturated) = build(remaining_costs, Some(cap_state_id))?;
                 if !should_skip_zero_current_table(
+                    self.config.diversify,
                     "Cartesian label perim",
                     pos,
                     &distances,
@@ -3775,6 +3806,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 let (perim_distances, perim_saturated) =
                     build(remaining_costs, Some(cap_state_id))?;
                 if !should_skip_zero_current_table(
+                    self.config.diversify,
                     "Cartesian label perimstar/perim",
                     pos,
                     &perim_distances,
@@ -3785,6 +3817,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 }
                 let (all_distances, all_saturated) = build(remaining_costs, None)?;
                 if !should_skip_zero_current_table(
+                    self.config.diversify,
                     "Cartesian label perimstar/all",
                     pos,
                     &all_distances,
@@ -3826,7 +3859,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             "failed to compute PDB SCP table {pdb_id}: {error}"
                         ))
                     })?;
-                if should_skip_zero_current_table("pdb all", pos, &distances, abstract_state_ids) {
+                if should_skip_zero_current_table(
+                    self.config.diversify,
+                    "pdb all",
+                    pos,
+                    &distances,
+                    abstract_state_ids,
+                ) {
                     return Ok(());
                 }
                 cp.add_pdb_h_values(pos, distances);
@@ -3841,8 +3880,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             "failed to compute PDB PERIM table {pdb_id}: {error}"
                         ))
                     })?;
-                if should_skip_zero_current_table("pdb perim", pos, &distances, abstract_state_ids)
-                {
+                if should_skip_zero_current_table(
+                    self.config.diversify,
+                    "pdb perim",
+                    pos,
+                    &distances,
+                    abstract_state_ids,
+                ) {
                     return Ok(());
                 }
                 cp.add_pdb_h_values(pos, distances);
@@ -3858,6 +3902,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         ))
                     })?;
                 if !should_skip_zero_current_table(
+                    self.config.diversify,
                     "pdb perimstar/perim",
                     pos,
                     &perim_dists,
@@ -3875,6 +3920,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         ))
                     })?;
                 if should_skip_zero_current_table(
+                    self.config.diversify,
                     "pdb perimstar/all",
                     pos,
                     &all_dists,
@@ -4564,6 +4610,25 @@ fn mandatory_goal_specialist_indices(
     indices
 }
 
+fn standalone_scp_prefixes(
+    h_values_by_abstraction: &[Vec<f64>],
+    pdb_offset: usize,
+) -> Vec<CostPartitioningHeuristic> {
+    h_values_by_abstraction
+        .iter()
+        .enumerate()
+        .filter_map(|(abstraction_id, distances)| {
+            let mut cp = CostPartitioningHeuristic::default();
+            if abstraction_id < pdb_offset {
+                cp.add_h_values(abstraction_id, distances.clone());
+            } else {
+                cp.add_pdb_h_values(abstraction_id, distances.clone());
+            }
+            (!cp.is_empty()).then_some(cp)
+        })
+        .collect()
+}
+
 fn retain_mandatory_partition(
     candidate: CostPartitioningHeuristic,
     sample_ids: &[Vec<Option<usize>>],
@@ -4612,11 +4677,15 @@ fn current_h_for_distances(
 }
 
 fn should_skip_zero_current_table(
+    diversify: bool,
     step: &str,
     abstraction_id: usize,
     distances: &[f64],
     abstract_state_ids: &[Option<usize>],
 ) -> bool {
+    if diversify {
+        return false;
+    }
     let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
     if current_h > 1e-9 {
         return false;
@@ -5018,6 +5087,12 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
 
         if build_cp && (!self.config.online || self.config.interval == usize::MAX) {
             state.improve_heuristic = false;
+        }
+        if build_cp && !self.config.online {
+            state.h_values_by_abstraction.clear();
+            state.h_values_by_abstraction.shrink_to_fit();
+            state.stolen_costs_by_abstraction.clear();
+            state.stolen_costs_by_abstraction.shrink_to_fit();
         }
         self.update_improvement_status(&mut state);
         self.release_abstractions_if_finished(&mut state);
@@ -6657,6 +6732,53 @@ mod tests {
 
         assert_eq!(portfolio.len(), 2);
         assert_eq!(best, vec![5.0, 6.0]);
+    }
+
+    #[test]
+    fn standalone_scp_prefixes_preserve_every_component_envelope() {
+        let prefixes =
+            standalone_scp_prefixes(&[vec![5.0, 1.0], vec![2.0, 6.0], vec![0.0, 0.0]], 2);
+        let samples = [vec![Some(0), Some(0), None], vec![Some(1), Some(1), None]];
+
+        assert_eq!(prefixes.len(), 2);
+        assert_eq!(
+            samples
+                .iter()
+                .map(|ids| {
+                    prefixes
+                        .iter()
+                        .map(|prefix| prefix.compute_heuristic(ids))
+                        .fold(0.0, f64::max)
+                })
+                .collect::<Vec<_>>(),
+            vec![5.0, 6.0]
+        );
+        assert!(
+            prefixes
+                .iter()
+                .all(|prefix| prefix.lookup_tables.len() == 1)
+        );
+    }
+
+    #[test]
+    fn diversified_scp_keeps_tables_that_are_zero_only_at_the_initial_state() {
+        let distances = [0.0, 4.0];
+        let initial_state = [Some(0)];
+
+        assert!(should_skip_zero_current_table(
+            false,
+            "test",
+            0,
+            &distances,
+            &initial_state,
+        ));
+        assert!(!should_skip_zero_current_table(
+            true,
+            "test",
+            0,
+            &distances,
+            &initial_state,
+        ));
     }
 
     #[test]
