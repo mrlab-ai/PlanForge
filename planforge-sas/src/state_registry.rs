@@ -33,7 +33,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Pass-through hasher for `u64` keys that are already well-distributed hashes.
+/// Pass-through hasher for dense integer IDs and already-mixed state hashes.
 #[derive(Default)]
 pub struct IdentityU64Hasher(u64);
 
@@ -65,7 +65,45 @@ impl Hasher for IdentityU64Hasher {
     }
 }
 
-type IdentityHasherBuilder = BuildHasherDefault<IdentityU64Hasher>;
+/// Fast mixer for exact `f64` bit patterns. Raw IEEE-754 bits are not
+/// well-distributed in their low bits (consecutive integers share long zero
+/// suffixes), so a pass-through hasher makes the compact-value table
+/// degenerate into long probe chains.
+#[derive(Default)]
+struct MixedU64Hasher(u64);
+
+impl Hasher for MixedU64Hasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        if bytes.len() == 8 {
+            self.0 = u64::from_ne_bytes(bytes.try_into().unwrap());
+        } else {
+            for &byte in bytes {
+                self.0 = self.0.rotate_left(5) ^ u64::from(byte);
+            }
+        }
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        self.0 = value;
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.0 = value as u64;
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        let mut value = self.0;
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
+    }
+}
+
+type MixedHasherBuilder = BuildHasherDefault<MixedU64Hasher>;
 
 type RegisteredStates = HashTable<u32>;
 
@@ -390,14 +428,14 @@ pub struct StateRegistry<'a> {
     /// after dedup so we can skip it entirely on duplicate states.
     has_axiom_derived_bits: bool,
     /// Exact canonical-f64 interning for optional compact state storage.
-    /// IDs use 16 bits in the state packer; the default representation keeps
+    /// IDs use 32 bits in the state packer; the default representation keeps
     /// raw 64-bit values and avoids the lookup on numeric effects.
     compact_numeric_values: Option<RefCell<CompactNumericValues>>,
 }
 
 #[derive(Debug, Default)]
 struct CompactNumericValues {
-    ids_by_bits: HashMap<u64, u16, IdentityHasherBuilder>,
+    ids_by_bits: HashMap<u64, u32, MixedHasherBuilder>,
     values: Vec<f64>,
 }
 
@@ -411,7 +449,7 @@ impl<'a> StateRegistry<'a> {
 
     pub fn for_task_with_compact_numeric(task: TaskRef<'a>, compact_numeric: bool) -> Self {
         let packer = Arc::new(if compact_numeric {
-            StatePacker::from_abstract_task_with_numeric_range(&*task, u16::MAX as u64)
+            StatePacker::from_abstract_task_with_numeric_range(&*task, u32::MAX as u64)
         } else {
             StatePacker::from_abstract_task(&*task)
         });
@@ -518,13 +556,8 @@ impl<'a> StateRegistry<'a> {
         if let Some(&id) = interner.ids_by_bits.get(&bits) {
             return id as u64;
         }
-        let id = u16::try_from(interner.values.len())
-            .expect("compact numeric state value table exceeds 16-bit ID capacity");
-        assert_ne!(
-            id,
-            u16::MAX,
-            "compact numeric value ID reached reserved limit"
-        );
+        let id = u32::try_from(interner.values.len())
+            .expect("compact numeric state value table exceeds 32-bit ID capacity");
         interner.values.push(canonical);
         let previous = interner.ids_by_bits.insert(bits, id);
         assert!(

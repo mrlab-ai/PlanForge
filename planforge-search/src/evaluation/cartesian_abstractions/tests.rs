@@ -166,6 +166,7 @@ fn unchanged_transition_footprints_share_state_dimensions() {
 
     let footprint = semantics
         .transition_source_footprint(&source, 0, &source)
+        .unwrap()
         .unwrap();
 
     assert!(Arc::ptr_eq(&source.propositions, &footprint.propositions));
@@ -546,6 +547,7 @@ fn exact_affine_preimages_preserve_open_boundaries() {
     assert_eq!(
         plus_semantics
             .numeric_effect_preimage(Interval::new(5.0, 10.0, false, true), 0, 0)
+            .unwrap()
             .unwrap(),
         Interval::new(4.0, 9.0, false, true)
     );
@@ -556,6 +558,7 @@ fn exact_affine_preimages_preserve_open_boundaries() {
     assert_eq!(
         times_semantics
             .numeric_effect_preimage(Interval::new(-10.0, -4.0, false, true), 0, 0)
+            .unwrap()
             .unwrap(),
         Interval::new(2.0, 5.0, true, false)
     );
@@ -566,6 +569,7 @@ fn exact_affine_preimages_preserve_open_boundaries() {
     assert_eq!(
         divide_semantics
             .numeric_effect_preimage(Interval::new(-5.0, -2.0, false, true), 0, 0)
+            .unwrap()
             .unwrap(),
         Interval::new(4.0, 10.0, true, false)
     );
@@ -578,13 +582,32 @@ fn assignment_preimage_is_universal_exactly_when_target_contains_rhs() {
     assert_eq!(
         semantics
             .numeric_effect_preimage(Interval::new(2.0, 3.0, true, true), 0, 0)
+            .unwrap()
             .unwrap(),
         Interval::unbounded()
     );
     assert!(
         semantics
             .numeric_effect_preimage(Interval::new(2.0, 3.0, true, false), 0, 0)
-            .is_err()
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn assignment_outside_target_is_not_a_cartesian_transition() {
+    let task = affine_effect_task(AssignmentOperation::Assign, 3.0);
+    let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
+    let source = semantics.trivial_region().unwrap();
+    let mut target = source.clone();
+    Arc::make_mut(&mut target.numeric)[0] = Interval::new(2.0, 3.0, true, false);
+
+    assert!(!semantics.may_transition(&source, 0, &target).unwrap());
+    assert!(
+        semantics
+            .transition_source_footprint(&source, 0, &target)
+            .unwrap()
+            .is_none()
     );
 }
 

@@ -750,6 +750,7 @@ impl<'task> CartesianSemantics<'task> {
                     .copied()
                     .filter(|value| value.is_finite())
             })
+            .map(float_tolerance::canonicalize)
             .collect::<Vec<_>>();
         target_split_boundaries.sort_by(f64::total_cmp);
         target_split_boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
@@ -1176,10 +1177,9 @@ impl<'task> CartesianSemantics<'task> {
             SplitDimension::Propositional(var_id) => {
                 self.propositional_dimension_may_transition(source, op_id, target, var_id)
             }
-            SplitDimension::Numeric(var_id) => {
-                let image = self.numeric_effect_image(source.numeric[var_id], op_id, var_id)?;
-                image.intersects(&target.numeric[var_id])
-            }
+            SplitDimension::Numeric(var_id) => self
+                .numeric_effect_preimage(target.numeric[var_id], op_id, var_id)?
+                .is_some_and(|preimage| preimage.intersects(&source.numeric[var_id])),
         })
     }
 
@@ -1229,45 +1229,30 @@ impl<'task> CartesianSemantics<'task> {
             }
         }
 
-        for numeric_var_id in 0..self.task.numeric_variables().len() {
-            if matches!(
-                self.task.numeric_variables()[numeric_var_id].get_type(),
-                NumericType::Constant
-            ) {
-                if !source.numeric[numeric_var_id].intersects(&target.numeric[numeric_var_id]) {
-                    return Ok(false);
+        for (numeric_var_id, variable) in self.task.numeric_variables().iter().enumerate() {
+            match variable.get_type() {
+                NumericType::Constant => {
+                    if !source.numeric[numeric_var_id].intersects(&target.numeric[numeric_var_id]) {
+                        return Ok(false);
+                    }
                 }
-                continue;
-            }
-            let image =
-                self.numeric_effect_image(source.numeric[numeric_var_id], op_id, numeric_var_id)?;
-            if !image.intersects(&target.numeric[numeric_var_id]) {
-                return Ok(false);
+                NumericType::Regular => {
+                    let Some(preimage) = self.numeric_effect_preimage(
+                        target.numeric[numeric_var_id],
+                        op_id,
+                        numeric_var_id,
+                    )?
+                    else {
+                        return Ok(false);
+                    };
+                    if !preimage.intersects(&source.numeric[numeric_var_id]) {
+                        return Ok(false);
+                    }
+                }
+                NumericType::Derived | NumericType::Cost => {}
             }
         }
         Ok(true)
-    }
-
-    fn numeric_effect_image(
-        &self,
-        source: Interval,
-        op_id: usize,
-        numeric_var_id: usize,
-    ) -> Result<Interval> {
-        let mut image = source;
-        let op = &self.task.get_operators()[op_id];
-        for effect in op
-            .assignment_effects()
-            .iter()
-            .filter(|effect| effect.affected_var_id() == numeric_var_id)
-        {
-            let rhs = float_tolerance::canonicalize(
-                self.task.get_initial_numeric_state_values()[effect.var_id()],
-            );
-            image.apply_op(effect.operation(), &Interval::singleton(rhs));
-            image = image.canonicalized();
-        }
-        Ok(image)
     }
 
     fn numeric_effect_preimage(
@@ -1275,7 +1260,7 @@ impl<'task> CartesianSemantics<'task> {
         target: Interval,
         op_id: usize,
         numeric_var_id: usize,
-    ) -> Result<Interval> {
+    ) -> Result<Option<Interval>> {
         let mut preimage = target;
         let op = &self.task.get_operators()[op_id];
         for effect in op
@@ -1289,13 +1274,10 @@ impl<'task> CartesianSemantics<'task> {
             );
             match effect.operation() {
                 AssignmentOperation::Assign => {
-                    preimage = if preimage.contains(rhs) {
-                        Interval::unbounded()
-                    } else {
-                        bail!(
-                            "operator {op_id} assignment image for numeric var {numeric_var_id} cannot intersect target {target:?}"
-                        )
-                    };
+                    if !preimage.contains(rhs) {
+                        return Ok(None);
+                    }
+                    preimage = Interval::unbounded();
                 }
                 AssignmentOperation::Plus => {
                     preimage
@@ -1307,13 +1289,10 @@ impl<'task> CartesianSemantics<'task> {
                 }
                 AssignmentOperation::Times => {
                     if rhs == 0.0 {
-                        preimage = if preimage.contains(0.0) {
-                            Interval::unbounded()
-                        } else {
-                            bail!(
-                                "operator {op_id} zero multiplication image for numeric var {numeric_var_id} cannot intersect target {target:?}"
-                            )
-                        };
+                        if !preimage.contains(0.0) {
+                            return Ok(None);
+                        }
+                        preimage = Interval::unbounded();
                     } else {
                         preimage.apply_reverse_op(
                             &AssignmentOperation::Times,
@@ -1328,7 +1307,7 @@ impl<'task> CartesianSemantics<'task> {
             }
             preimage = preimage.canonicalized();
         }
-        Ok(preimage)
+        Ok(Some(preimage))
     }
 
     fn transition_source_footprint(
@@ -1336,7 +1315,7 @@ impl<'task> CartesianSemantics<'task> {
         source: &StateRegion,
         op_id: usize,
         target: &StateRegion,
-    ) -> Result<StateRegion> {
+    ) -> Result<Option<StateRegion>> {
         debug_assert_eq!(
             source.numeric.len(),
             target.numeric.len(),
@@ -1346,22 +1325,23 @@ impl<'task> CartesianSemantics<'task> {
         for (numeric_var_id, variable) in self.task.numeric_variables().iter().enumerate() {
             match variable.get_type() {
                 NumericType::Constant => {
-                    ensure!(
-                        source.numeric[numeric_var_id].intersects(&target.numeric[numeric_var_id]),
-                        "Cartesian transition for operator {op_id} changes constant numeric variable {numeric_var_id}"
-                    );
+                    if !source.numeric[numeric_var_id].intersects(&target.numeric[numeric_var_id]) {
+                        return Ok(None);
+                    }
                 }
                 NumericType::Regular => {
-                    let preimage = self.numeric_effect_preimage(
+                    let Some(preimage) = self.numeric_effect_preimage(
                         target.numeric[numeric_var_id],
                         op_id,
                         numeric_var_id,
-                    )?;
+                    )?
+                    else {
+                        return Ok(None);
+                    };
                     let regressed = interval_intersection(source.numeric[numeric_var_id], preimage);
-                    ensure!(
-                        !regressed.is_empty(),
-                        "Cartesian transition for operator {op_id} has an empty regressed source footprint for numeric variable {numeric_var_id}"
-                    );
+                    if regressed.is_empty() {
+                        return Ok(None);
+                    }
                     if regressed != source.numeric[numeric_var_id] {
                         Arc::make_mut(&mut footprint.numeric)[numeric_var_id] = regressed;
                     }
@@ -1373,7 +1353,7 @@ impl<'task> CartesianSemantics<'task> {
                 NumericType::Derived | NumericType::Cost => {}
             }
         }
-        Ok(footprint)
+        Ok(Some(footprint))
     }
 
     fn region_is_goal(&self, region: &StateRegion) -> Result<bool> {
@@ -3116,9 +3096,11 @@ fn comparison_refinement(
         .with_context(|| format!("missing Cartesian state {state_id}"))?;
     let mut candidates = Vec::new();
     for var_id in tree.regular_numeric_var_dependencies(semantics.task) {
-        let witness_value = *numeric_values
-            .get(var_id)
-            .with_context(|| format!("missing concrete numeric var {var_id}"))?;
+        let witness_value = float_tolerance::canonicalize(
+            *numeric_values
+                .get(var_id)
+                .with_context(|| format!("missing concrete numeric var {var_id}"))?,
+        );
         ensure!(
             witness_value.is_finite(),
             "comparison split witness for numeric var {var_id} is non-finite: {witness_value}"
@@ -3289,7 +3271,13 @@ fn split_deviation(
         if target_interval.contains(successor) {
             continue;
         }
-        let preimage = semantics.numeric_effect_preimage(target_interval, op_id, var_id)?;
+        let preimage = semantics
+            .numeric_effect_preimage(target_interval, op_id, var_id)?
+            .with_context(|| {
+                format!(
+                    "Cartesian transition for operator {op_id} has no numeric preimage for var {var_id} and target {target_interval:?}"
+                )
+            })?;
         let source = source_numeric[var_id];
         if preimage.contains(source) {
             rejected_numeric_splits.push(format!(
@@ -3624,7 +3612,12 @@ fn finalize_abstraction(
                             &shared_state_regions[source],
                             concrete_op_id,
                             &shared_state_regions[target],
-                        )?;
+                        )?
+                        .with_context(|| {
+                            format!(
+                                "emitted Cartesian transition {source} --{concrete_op_id}--> {target} has an empty source footprint"
+                            )
+                        })?;
                         let source_region = if footprint == *shared_state_regions[source] {
                             Arc::clone(&shared_state_regions[source])
                         } else {

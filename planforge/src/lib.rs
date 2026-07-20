@@ -90,7 +90,7 @@ pub struct PlannersCli {
     #[arg(long = "restrict-task")]
     pub restrict_task: bool,
 
-    /// Store exact canonical numeric values through checked 16-bit interned IDs.
+    /// Store exact canonical numeric values through checked 32-bit interned IDs.
     #[arg(long = "compact-numeric-states")]
     pub compact_numeric_states: bool,
 

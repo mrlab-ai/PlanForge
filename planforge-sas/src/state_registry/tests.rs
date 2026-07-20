@@ -258,8 +258,35 @@ fn compact_numeric_states_pack_exact_value_ids_with_propositions() {
     let compact_initial = compact.get_initial_state();
 
     assert_eq!(regular_initial.buffer(&regular).len(), 3);
-    assert_eq!(compact_initial.buffer(&compact).len(), 1);
+    assert_eq!(compact_initial.buffer(&compact).len(), 2);
     assert_eq!(compact_initial.get_numeric_state(&compact), [1.25, -7.5]);
+}
+
+#[test]
+fn compact_numeric_states_support_more_than_u16_distinct_values() {
+    let task: TaskRef = Arc::new(NumericRootTask::new(
+        1,
+        Metric::new(false, None),
+        vec![],
+        vec![NumericVariable::new("x".into(), NumericType::Regular, None)],
+        vec![],
+        vec![],
+        vec![],
+        vec![0.0],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    ));
+    let registry = StateRegistry::for_task_with_compact_numeric(task, true);
+
+    let mut last = 0;
+    for value in 0..=u16::MAX as u32 + 1 {
+        last = registry.pack_regular_numeric(value as f64);
+    }
+    assert_eq!(last, u16::MAX as u64 + 1);
+    assert_eq!(registry.unpack_regular_numeric(last), u16::MAX as f64 + 1.0);
 }
 
 #[test]

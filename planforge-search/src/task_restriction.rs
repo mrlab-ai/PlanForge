@@ -5,6 +5,7 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable,
     Metric, NumericRootTask, NumericType, NumericVariable, Operator,
+    metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::float_tolerance;
 use tracing::info;
@@ -267,9 +268,10 @@ fn build_task(
     for &original_id in numeric_var_ids {
         let expr = root_exprs.get(&original_id).cloned().unwrap_or_else(|| {
             match task.numeric_variables()[original_id].get_type() {
-                NumericType::Constant | NumericType::Cost => {
+                NumericType::Constant => {
                     AffineExpression::constant(initial_numeric[original_id], num_original_numeric)
                 }
+                NumericType::Cost => AffineExpression::var(original_id, num_original_numeric),
                 _ => AffineExpression::var(original_id, num_original_numeric),
             }
         });
@@ -330,7 +332,7 @@ fn build_task(
             .and_then(|mapped| *mapped)
     });
 
-    let task = NumericRootTask::new(
+    let transformed_task = NumericRootTask::new(
         1,
         Metric::new(task.metric().is_min(), metric_var_id),
         variables,
@@ -347,10 +349,32 @@ fn build_task(
         Vec::<AssignmentAxiom>::new(),
         ExplicitFact::new(0, 0),
     );
-    validate_restricted_task(&task)
+    validate_restricted_task(&transformed_task)
         .map_err(|reason| anyhow::anyhow!("restricted task construction failed: {reason}"))?;
 
-    Ok(Some(RestrictedTask { task }))
+    ensure!(
+        task.get_operators().len() == transformed_task.get_operators().len(),
+        "restricted task changed the operator count"
+    );
+    for (operator_id, (source, transformed)) in task
+        .get_operators()
+        .iter()
+        .zip(transformed_task.get_operators())
+        .enumerate()
+    {
+        let source_cost = metric_operator_cost_from_initial_values(task, source);
+        let transformed_cost =
+            metric_operator_cost_from_initial_values(&transformed_task, transformed);
+        ensure!(
+            approx_eq(source_cost, transformed_cost),
+            "restricted task changed metric cost of operator {operator_id} ({}): {source_cost} -> {transformed_cost}",
+            source.name()
+        );
+    }
+
+    Ok(Some(RestrictedTask {
+        task: transformed_task,
+    }))
 }
 
 fn renumber_propositional_axiom_layers(
@@ -433,7 +457,7 @@ fn transform_operator(
             operator.name()
         );
         let source_value = match task.numeric_variables()[effect.var_id()].get_type() {
-            NumericType::Constant | NumericType::Cost => initial_numeric[effect.var_id()],
+            NumericType::Constant => initial_numeric[effect.var_id()],
             _ => bail!(
                 "restricted task requires constant RHS numeric effects in operator {}",
                 operator.name()
@@ -515,7 +539,7 @@ fn transform_operator_with_assignment(
             operator.name()
         );
         let source_value = match task.numeric_variables()[effect.var_id()].get_type() {
-            NumericType::Constant | NumericType::Cost => initial_numeric[effect.var_id()],
+            NumericType::Constant => initial_numeric[effect.var_id()],
             _ => bail!(
                 "restricted task requires constant RHS numeric effects in operator {}",
                 operator.name()
@@ -627,7 +651,8 @@ impl ConstantPool {
         transformed_to_expr: &mut Vec<AffineExpression>,
         num_original_numeric: usize,
     ) -> usize {
-        let bits = float_tolerance::canonical_bits(value);
+        let value = float_tolerance::canonicalize(value);
+        let bits = value.to_bits();
         if let Some(&id) = self.by_bits.get(&bits) {
             return id;
         }
@@ -670,9 +695,10 @@ impl Linearizer<'_> {
         let num_vars = self.task.numeric_variables().len();
         let expr = match self.task.numeric_variables()[numeric_var_id].get_type() {
             NumericType::Regular => AffineExpression::var(numeric_var_id, num_vars),
-            NumericType::Constant | NumericType::Cost => {
+            NumericType::Constant => {
                 AffineExpression::constant(self.initial_numeric[numeric_var_id], num_vars)
             }
+            NumericType::Cost => AffineExpression::var(numeric_var_id, num_vars),
             NumericType::Derived => {
                 let axiom_id = self.assignment_lookup[numeric_var_id].with_context(|| {
                     format!("missing assignment axiom for numeric variable {numeric_var_id}")
@@ -889,6 +915,74 @@ mod tests {
         assert_eq!(
             transformed.get_initial_numeric_state_values()[assignment_effects[0].var_id()],
             0.0
+        );
+    }
+
+    #[test]
+    fn restricted_task_preserves_metric_increment_on_assignment_operator() {
+        let variables = vec![ExplicitVariable::new(
+            2,
+            "cmp".into(),
+            vec!["true".into(), "false".into()],
+            Some(0),
+            1,
+        )];
+        let numeric_variables = vec![
+            NumericVariable::new("fuel".into(), NumericType::Regular, None),
+            NumericVariable::new("capacity".into(), NumericType::Constant, None),
+            NumericVariable::new("capacity-minus-fuel".into(), NumericType::Derived, Some(0)),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+            NumericVariable::new("total-cost".into(), NumericType::Cost, None),
+        ];
+        let operator = Operator::new(
+            "refuel".into(),
+            vec![],
+            vec![],
+            vec![
+                AssignmentEffect::new(0, AssignmentOperation::Assign, 1, false, vec![]),
+                AssignmentEffect::new(4, AssignmentOperation::Plus, 3, false, vec![]),
+            ],
+            0,
+        );
+        let task = NumericRootTask::new(
+            1,
+            Metric::new(true, Some(4)),
+            variables,
+            numeric_variables,
+            vec![ExplicitFact::new(0, 0)],
+            vec![],
+            vec![1],
+            vec![4.0, 6.0, 2.0, 1.0, 0.0],
+            vec![operator],
+            vec![],
+            vec![ComparisonAxiom::new(
+                0,
+                2,
+                3,
+                ComparisonOperator::GreaterThan,
+            )],
+            vec![AssignmentAxiom::new(2, CalOperator::Difference, 1, 0)],
+            ExplicitFact::new(0, 0),
+        );
+
+        let restricted = build_restricted_task(&task)
+            .unwrap()
+            .expect("task should be restricted");
+        let transformed = restricted.task();
+        assert_eq!(
+            metric_operator_cost_from_initial_values(&task, &task.get_operators()[0]),
+            1.0
+        );
+        assert_eq!(
+            metric_operator_cost_from_initial_values(transformed, &transformed.get_operators()[0]),
+            1.0
+        );
+        let metric_var_id = transformed.metric().var_id().unwrap();
+        assert!(
+            transformed.get_operators()[0]
+                .assignment_effects()
+                .iter()
+                .any(|effect| effect.affected_var_id() == metric_var_id)
         );
     }
 
