@@ -1,4 +1,5 @@
 use crate::{
+    axioms::PropositionalAxiom,
     numeric_task::{
         Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
         NumericVariable, Operator, TaskRef,
@@ -15,6 +16,46 @@ fn test_state_registry_initial_state() {
     let mut state_registry = StateRegistry::for_task(task);
     let initial_state = state_registry.get_initial_state();
     assert_eq!(initial_state.get_state(&state_registry), [1, 0]);
+}
+
+#[test]
+fn initial_state_registration_does_not_mutate_shared_task() {
+    let task: TaskRef = Arc::new(NumericRootTask::new(
+        4,
+        Metric::new(false, None),
+        vec![ExplicitVariable::new(
+            2,
+            "derived".into(),
+            vec!["false".into(), "true".into()],
+            Some(0),
+            0,
+        )],
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![],
+        vec![PropositionalAxiom::new(vec![], 0, 0, 1)],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    ));
+    let original_propositions = task.get_initial_propositional_state_values().to_vec();
+    let original_numeric = task.get_initial_numeric_state_values().to_vec();
+    let mut registry = StateRegistry::for_task(task.clone());
+
+    let initial = registry.get_initial_state();
+
+    assert_eq!(initial.get_state(&registry), [1]);
+    assert_eq!(
+        task.get_initial_propositional_state_values().as_slice(),
+        original_propositions
+    );
+    assert_eq!(
+        task.get_initial_numeric_state_values().as_slice(),
+        original_numeric
+    );
 }
 
 #[test]

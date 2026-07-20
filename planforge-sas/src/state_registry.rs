@@ -781,12 +781,6 @@ impl<'a> StateRegistry<'a> {
             self.set_cost_information(&init_state, &_cost_variables);
         }
 
-        // Update the task's initial state values to reflect axiom evaluation.
-        *self.task.get_initial_propositional_state_values_mut() = init_state.get_state(self);
-        *self.task.get_initial_numeric_state_values_mut() = self
-            .get_numeric_vars(&init_state)
-            .expect("Failed to get numeric variables for initial state");
-
         #[cfg(debug_assertions)]
         self.log_initial_state_info(&_cost_variables);
 
