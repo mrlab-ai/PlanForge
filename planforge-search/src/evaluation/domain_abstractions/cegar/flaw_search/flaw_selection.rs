@@ -485,8 +485,12 @@ pub(super) fn fix_single_flaw_min_growth(
         ));
     }
     candidates.shuffle(rng);
-    candidates.sort_by(|(left, left_growth), (right, right_growth)| {
-        compare_growth_keys(*left_growth, *right_growth).then_with(|| left.idx.cmp(&right.idx))
+    // `sort_by` is stable, so equal-growth candidates retain their seeded
+    // shuffled order. Breaking ties by the original flaw index here would
+    // silently undo the shuffle and make every collection member choose the
+    // same variable.
+    candidates.sort_by(|(_, left_growth), (_, right_growth)| {
+        compare_growth_keys(*left_growth, *right_growth)
     });
     candidates
         .into_iter()
@@ -629,5 +633,32 @@ mod tests {
             .as_ref()
             .expect("comparison flaw should restrict dependent numeric flaws");
         assert_eq!(restricted, &vec![numeric_flaw(0)]);
+    }
+
+    #[test]
+    fn min_growth_randomizes_equal_growth_candidates_across_seeds() {
+        let flaws = vec![
+            Flaw::Numeric(numeric_flaw(0)),
+            Flaw::Numeric(numeric_flaw(1)),
+            Flaw::Numeric(numeric_flaw(2)),
+        ];
+        let comparison_var_ids = HashSet::new();
+        let mut first_choices = HashSet::new();
+
+        for seed in 0..32 {
+            let mut domain_sizes = Vec::new();
+            let mut numeric_domain_sizes = vec![1, 1, 1];
+            let mut rng = SmallRng::seed_from_u64(seed);
+            let chosen = fix_single_flaw_min_growth(
+                &flaws,
+                &comparison_var_ids,
+                &mut domain_sizes,
+                &mut numeric_domain_sizes,
+                &mut rng,
+            );
+            first_choices.insert(chosen[0].idx);
+        }
+
+        assert_eq!(first_choices, HashSet::from([0, 1, 2]));
     }
 }

@@ -14,8 +14,9 @@ use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
     CartesianSemantics, CartesianStopReason, FlawKind, OperatorBitSet, RefinementNode,
-    ShortestPaths, Split, StateRegion, TransitionKey, WorkingAbstraction, numeric_split_choice_key,
-    push_unique_split, retain_min_growth_splits, select_next_cartesian_collection_goal,
+    ShortestPaths, Split, StateRegion, TransitionKey, WorkingAbstraction, artifact_unwanted_score,
+    numeric_split_choice_key, push_unique_split, retain_min_growth_splits,
+    select_next_cartesian_collection_goal,
 };
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use crate::evaluation::domain_abstractions::comparison_expression::Interval;
@@ -61,6 +62,7 @@ fn whole_plan_candidates_deduplicate_identical_refinements() {
         boundary: 2.0,
         lower_includes_boundary: true,
         witness_value: 1.0,
+        desired_contains_witness: false,
         description: "first witness".into(),
     };
     let mut candidates = Vec::new();
@@ -135,6 +137,7 @@ fn min_growth_uses_projected_transition_count() {
         boundary: 0.0,
         lower_includes_boundary: true,
         witness_value: 0.0,
+        desired_contains_witness: false,
         description: String::new(),
     };
 
@@ -142,6 +145,77 @@ fn min_growth_uses_projected_transition_count() {
     retain_min_growth_splits(&working, &semantics, &mut candidates, |candidate| candidate).unwrap();
     assert_eq!(candidates.len(), 1);
     assert!(matches!(candidates[0], Split::Numeric { var_id: 1, .. }));
+}
+
+#[test]
+fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tails() {
+    let working = WorkingAbstraction::new(
+        StateRegion {
+            propositions: vec![vec![0, 1, 2, 3]].into(),
+            numeric: vec![Interval::new(-10.0, 10.0, true, true)].into(),
+        },
+        0,
+    );
+    let propositional = Split::Propositional {
+        state_id: 0,
+        var_id: 0,
+        wanted: vec![2, 3],
+        witness_value: 0,
+        description: String::new(),
+    };
+    assert_eq!(
+        artifact_unwanted_score(&working, &propositional).unwrap(),
+        2.0
+    );
+
+    let finite_numeric = Split::Numeric {
+        state_id: 0,
+        var_id: 0,
+        boundary: 4.0,
+        lower_includes_boundary: false,
+        witness_value: 8.0,
+        desired_contains_witness: false,
+        description: String::new(),
+    };
+    assert_eq!(
+        artifact_unwanted_score(&working, &finite_numeric).unwrap(),
+        7.0
+    );
+    let mut witness_is_desired = finite_numeric.clone();
+    let Split::Numeric {
+        desired_contains_witness,
+        ..
+    } = &mut witness_is_desired
+    else {
+        unreachable!()
+    };
+    *desired_contains_witness = true;
+    assert_eq!(
+        artifact_unwanted_score(&working, &witness_is_desired).unwrap(),
+        14.0
+    );
+
+    let open_tail = WorkingAbstraction::new(
+        StateRegion {
+            propositions: vec![vec![0, 1]].into(),
+            numeric: vec![Interval::unbounded()].into(),
+        },
+        0,
+    );
+    let desired_open_tail = Split::Numeric {
+        state_id: 0,
+        var_id: 0,
+        boundary: 4.0,
+        lower_includes_boundary: false,
+        witness_value: 8.0,
+        desired_contains_witness: false,
+        description: String::new(),
+    };
+    assert!(
+        artifact_unwanted_score(&open_tail, &desired_open_tail)
+            .unwrap()
+            .is_infinite()
+    );
 }
 
 #[test]

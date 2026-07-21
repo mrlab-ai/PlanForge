@@ -431,8 +431,23 @@ pub fn apply_process_limits(
 }
 
 #[cfg(target_os = "linux")]
-fn process_rss_bytes(pid: u32) -> std::io::Result<u64> {
-    let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProcessMemory {
+    Resident(u64),
+    Exited,
+}
+
+#[cfg(target_os = "linux")]
+fn parse_process_memory(pid: u32, status: &str) -> std::io::Result<ProcessMemory> {
+    let state = status
+        .lines()
+        .find_map(|line| line.strip_prefix("State:"))
+        .and_then(|value| value.split_whitespace().next())
+        .ok_or_else(|| std::io::Error::other(format!("State missing for process {pid}")))?;
+    if state == "Z" || state == "X" {
+        return Ok(ProcessMemory::Exited);
+    }
+
     let rss_kib = status
         .lines()
         .find_map(|line| {
@@ -443,10 +458,17 @@ fn process_rss_bytes(pid: u32) -> std::io::Result<u64> {
                     .and_then(|part| part.parse::<u64>().ok())
             })
         })
-        .ok_or_else(|| std::io::Error::other(format!("VmRSS missing for process {pid}")))?;
-    rss_kib
+        .ok_or_else(|| std::io::Error::other(format!("VmRSS missing for live process {pid}")))?;
+    let rss_bytes = rss_kib
         .checked_mul(1024)
-        .ok_or_else(|| std::io::Error::other(format!("VmRSS overflow for process {pid}")))
+        .ok_or_else(|| std::io::Error::other(format!("VmRSS overflow for process {pid}")))?;
+    Ok(ProcessMemory::Resident(rss_bytes))
+}
+
+#[cfg(target_os = "linux")]
+fn process_memory(pid: u32) -> std::io::Result<ProcessMemory> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
+    parse_process_memory(pid, &status)
 }
 
 #[cfg(target_os = "linux")]
@@ -462,12 +484,13 @@ pub fn wait_with_memory_limit(
         if let Some(status) = child.try_wait()? {
             return Ok(status);
         }
-        match process_rss_bytes(child.id()) {
-            Ok(rss) if rss >= memory_limit => {
+        match process_memory(child.id()) {
+            Ok(ProcessMemory::Resident(rss)) if rss >= memory_limit => {
                 child.kill()?;
                 return child.wait();
             }
-            Ok(_) => consecutive_status_read_failures = 0,
+            Ok(ProcessMemory::Resident(_)) => consecutive_status_read_failures = 0,
+            Ok(ProcessMemory::Exited) => return child.wait(),
             Err(error) => {
                 if let Some(status) = child.try_wait()? {
                     return Ok(status);
@@ -484,13 +507,35 @@ pub fn wait_with_memory_limit(
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::{effective_rss_limit, process_rss_bytes, wait_with_memory_limit};
+    use super::{
+        ProcessMemory, effective_rss_limit, parse_process_memory, process_memory,
+        wait_with_memory_limit,
+    };
     use std::os::unix::process::ExitStatusExt;
     use std::process::Command;
 
     #[test]
     fn reads_current_process_rss() {
-        assert!(process_rss_bytes(std::process::id()).unwrap() > 0);
+        assert!(matches!(
+            process_memory(std::process::id()).unwrap(),
+            ProcessMemory::Resident(rss) if rss > 0
+        ));
+    }
+
+    #[test]
+    fn recognizes_zombie_without_rss_as_exited() {
+        let status = "Name:\ttest\nState:\tZ (zombie)\nThreads:\t1\n";
+        assert_eq!(
+            parse_process_memory(42, status).unwrap(),
+            ProcessMemory::Exited
+        );
+    }
+
+    #[test]
+    fn rejects_live_process_without_rss() {
+        let status = "Name:\ttest\nState:\tR (running)\nThreads:\t1\n";
+        let error = parse_process_memory(42, status).unwrap_err();
+        assert_eq!(error.to_string(), "VmRSS missing for live process 42");
     }
 
     #[test]

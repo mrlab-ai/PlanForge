@@ -37,7 +37,7 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::num::NonZero;
 use time::format_description::well_known::iso8601::{Config, TimePrecision};
 use tracing_subscriber::fmt::time::UtcTime;
@@ -88,7 +88,7 @@ fn build_max_from_sources<'task>(
     sources: &[planforge_search::config::ConfigCall],
     name: &str,
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, String> {
-    let components = build_components(task, sources, ComponentUse::Standalone)?;
+    let components = build_components(task, sources, ComponentUse::Standalone, None)?;
     let heuristic = MaxAbstractionHeuristic::new(Some(name.to_string()), components)
         .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
     Ok(Some(Box::new(heuristic)))
@@ -98,8 +98,14 @@ fn build_canonical_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
     sources: &[planforge_search::config::ConfigCall],
     name: &str,
+    construction_deadline: Option<Instant>,
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, String> {
-    let components = build_components(task, sources, ComponentUse::Standalone)?;
+    let components = build_components(
+        task,
+        sources,
+        ComponentUse::Standalone,
+        construction_deadline,
+    )?;
     let heuristic = CanonicalAbstractionHeuristic::new(Some(name.to_string()), task, components)
         .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
     Ok(Some(Box::new(heuristic)))
@@ -111,6 +117,7 @@ fn build_scp_from_sources<'task>(
     sources: &[planforge_search::config::ConfigCall],
     options: &[planforge_search::config::ConfigArg],
     name: &str,
+    construction_deadline: Option<Instant>,
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, String> {
     if sources.is_empty() {
         return Err(format!(
@@ -125,7 +132,18 @@ fn build_scp_from_sources<'task>(
     } else {
         ComponentUse::LabelCostPartitioning
     };
-    let components = build_components(task, sources, component_use)?;
+    let components = build_components(task, sources, component_use, construction_deadline)?;
+    if let Some(deadline) = construction_deadline {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| "shared abstraction construction deadline exceeded".to_string())?
+            .as_secs_f64();
+        config.table_construction_max_time = config.table_construction_max_time.min(remaining);
+        config.initial_order_generation_max_time =
+            config.initial_order_generation_max_time.min(remaining);
+        config.order_optimization_max_time = config.order_optimization_max_time.min(remaining);
+    }
     let heuristic = if let Some(sampling_task) = sampling_task {
         SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
             Some(name.to_string()),
@@ -188,17 +206,19 @@ fn build_heuristic_from_spec_internal<'a>(
             build_max_from_sources(task, &sources, "max")
         }
         "canonical" => {
-            let sources = require_only_component_sources("canonical", &spec.args)?;
-            build_canonical_from_sources(task, &sources, "canonical")
+            let (sources, construction_deadline) =
+                abstraction_config::canonical_sources_and_deadline(&spec.args)?;
+            build_canonical_from_sources(task, &sources, "canonical", construction_deadline)
         }
         "scp" | "cost_partitioning" => {
-            let (sources, options) = split_component_sources(&spec.args)?;
+            let source_config = abstraction_config::scp_sources_options_and_deadline(&spec.args)?;
             build_scp_from_sources(
                 task,
                 sampling_task.clone(),
-                &sources,
-                &options,
+                &source_config.sources,
+                &source_config.options,
                 spec.name.as_str(),
+                source_config.construction_deadline,
             )
         }
         "domain_abstraction" => {
@@ -352,14 +372,17 @@ fn build_heuristic_from_spec_internal<'a>(
                 .to_string(),
         ),
         "scp_online" | "scp_online_cartesian" => {
-            let (component_sources, combinator_options) = split_component_sources(&spec.args)?;
+            let (component_sources, _) = split_component_sources(&spec.args)?;
             if !component_sources.is_empty() {
+                let source_config =
+                    abstraction_config::scp_sources_options_and_deadline(&spec.args)?;
                 return build_scp_from_sources(
                     task,
                     sampling_task.clone(),
-                    &component_sources,
-                    &combinator_options,
+                    &source_config.sources,
+                    &source_config.options,
                     spec.name.as_str(),
+                    source_config.construction_deadline,
                 );
             }
             let mut cfg = planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig::default();

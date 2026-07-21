@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use planforge_search::config::{
     ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue,
@@ -9,7 +9,9 @@ use planforge_search::evaluation::abstraction_collections::portfolio::Collection
 use planforge_search::evaluation::cartesian_abstractions::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
+    CartesianSplitSelection,
 };
+use planforge_search::evaluation::cartesian_abstractions::icaps26::Icaps26SplitSelection;
 use planforge_search::evaluation::cegar::FlawKind;
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
@@ -60,6 +62,73 @@ pub(crate) fn split_component_sources(
     Ok((sources, options))
 }
 
+fn take_construction_deadline(
+    options: Vec<ConfigArg>,
+) -> Result<(Vec<ConfigArg>, Option<Instant>), String> {
+    let mut remaining_options = Vec::with_capacity(options.len());
+    let mut max_time = None;
+    for option in options {
+        if option.key() != Some("construction_max_time") {
+            remaining_options.push(option);
+            continue;
+        }
+        if max_time.is_some() {
+            return Err("duplicate option `construction_max_time`".to_string());
+        }
+        let seconds = f64::from_option_value(option.value())?;
+        if !seconds.is_finite() || seconds <= 0.0 {
+            return Err(format!(
+                "construction_max_time must be finite and > 0, got {seconds}"
+            ));
+        }
+        let duration = Duration::try_from_secs_f64(seconds)
+            .map_err(|error| format!("invalid construction_max_time {seconds}: {error}"))?;
+        max_time = Some(duration);
+    }
+    let deadline = max_time
+        .map(|duration| {
+            Instant::now()
+                .checked_add(duration)
+                .ok_or_else(|| "construction_max_time is too large".to_string())
+        })
+        .transpose()?;
+    Ok((remaining_options, deadline))
+}
+
+pub(crate) fn canonical_sources_and_deadline(
+    args: &[ConfigArg],
+) -> Result<(Vec<ConfigCall>, Option<Instant>), String> {
+    let (sources, options) = split_component_sources(args)?;
+    let (options, deadline) = take_construction_deadline(options)?;
+    if let Some(option) = options.first() {
+        let key = option.key().unwrap_or("<positional>");
+        return Err(format!("unknown `canonical` combinator option `{key}`"));
+    }
+    if sources.is_empty() {
+        return Err("`canonical` requires at least one abstraction source".to_string());
+    }
+    Ok((sources, deadline))
+}
+
+pub(crate) struct ScpSourceConfig {
+    pub sources: Vec<ConfigCall>,
+    pub options: Vec<ConfigArg>,
+    pub construction_deadline: Option<Instant>,
+}
+
+pub(crate) fn scp_sources_options_and_deadline(
+    args: &[ConfigArg],
+) -> Result<ScpSourceConfig, String> {
+    let (sources, options) = split_component_sources(args)?;
+    let (options, construction_deadline) = take_construction_deadline(options)?;
+    validate_scp_combinator_options(&options)?;
+    Ok(ScpSourceConfig {
+        sources,
+        options,
+        construction_deadline,
+    })
+}
+
 pub(crate) fn require_only_component_sources(
     combinator: &str,
     args: &[ConfigArg],
@@ -71,12 +140,12 @@ pub(crate) fn require_only_component_sources(
             |key| format!("{key}={}", format_config_value(option.value())),
         );
         return Err(format!(
-            "`{combinator}` accepts only domain(...), cartesian(...), cartesian_collection(...), and pdb(...) sources; got `{description}`"
+            "`{combinator}` accepts only domain(...), cartesian(...), cartesian_collection(...), icaps26_cartesian(...), and pdb(...) sources; got `{description}`"
         ));
     }
     if sources.is_empty() {
         return Err(format!(
-            "`{combinator}` requires at least one domain(...), cartesian(...), cartesian_collection(...), or pdb(...) source"
+            "`{combinator}` requires at least one domain(...), cartesian(...), cartesian_collection(...), icaps26_cartesian(...), or pdb(...) source"
         ));
     }
     Ok(sources)
@@ -125,18 +194,27 @@ pub(crate) fn build_components<'task>(
     task: &'task dyn AbstractNumericTask,
     sources: &[ConfigCall],
     component_use: ComponentUse,
+    construction_deadline: Option<Instant>,
 ) -> Result<Vec<AbstractionComponent<'task>>, String> {
     if sources.is_empty() {
         return Err("an abstraction collection requires at least one source".to_string());
     }
 
+    let construction_start = Instant::now();
     let mut components = Vec::new();
     for (source_index, source) in sources.iter().enumerate() {
+        let remaining = remaining_construction_time(construction_deadline)?;
         let before = components.len();
         match source.name() {
             "domain" | "domain_abstractions" => {
                 let mut config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
                 config.apply_options(source.args())?;
+                if let Some(remaining) = remaining {
+                    let seconds = remaining.as_secs_f64();
+                    config.total_max_time = config.total_max_time.min(seconds);
+                    config.abstraction_generation_max_time =
+                        config.abstraction_generation_max_time.min(seconds);
+                }
                 // Footprints do not influence CEGAR. Build them after the collection so
                 // canonical, label SCP, and region SCP receive the same generation budget.
                 config.compute_operator_footprints = false;
@@ -169,7 +247,8 @@ pub(crate) fn build_components<'task>(
                 ));
             }
             "cartesian" | "cartesian_abstraction" => {
-                let config = apply_cartesian_options(source.args(), component_use)?;
+                let mut config = apply_cartesian_options(source.args(), component_use)?;
+                cap_duration(&mut config.max_time, remaining);
                 info!("Building Cartesian abstraction source {source_index}...");
                 let abstraction = CartesianAbstractionGenerator::new(config)
                     .map_err(|error| {
@@ -187,7 +266,9 @@ pub(crate) fn build_components<'task>(
                 ));
             }
             "cartesian_collection" | "cartesian_abstraction_collection" => {
-                let config = apply_cartesian_collection_options(source.args(), component_use)?;
+                let mut config = apply_cartesian_collection_options(source.args(), component_use)?;
+                cap_duration(&mut config.total_max_time, remaining);
+                cap_duration(&mut config.abstraction.max_time, remaining);
                 info!("Building Cartesian abstraction collection source {source_index}...");
                 let abstractions = CartesianAbstractionCollectionGenerator::new(config)
                     .map_err(|error| {
@@ -208,6 +289,28 @@ pub(crate) fn build_components<'task>(
                             abstraction,
                         )
                     },
+                ));
+            }
+            "icaps26_cartesian" => {
+                validate_restricted_task(task)?;
+                let mut config = apply_icaps26_cartesian_options(source.args(), component_use)?;
+                cap_duration(&mut config.max_time, remaining);
+                info!("Building ICAPS 2026 Cartesian abstraction source {source_index}...");
+                let abstraction = CartesianAbstractionGenerator::new(config)
+                    .map_err(|error| {
+                        format!(
+                            "failed to construct ICAPS 2026 Cartesian source {source_index}: {error:#}"
+                        )
+                    })?
+                    .generate(task)
+                    .map_err(|error| {
+                        format!(
+                            "failed to build ICAPS 2026 Cartesian source {source_index}: {error:#}"
+                        )
+                    })?;
+                components.push(AbstractionComponent::cartesian(
+                    Some(format!("icaps26_cartesian_{source_index}")),
+                    abstraction,
                 ));
             }
             "pdb" | "numeric_pdb" => {
@@ -237,7 +340,7 @@ pub(crate) fn build_components<'task>(
             }
             other => {
                 return Err(format!(
-                    "unknown abstraction source `{other}`; expected domain(...), cartesian(...), cartesian_collection(...), or pdb(...)"
+                    "unknown abstraction source `{other}`; expected domain(...), cartesian(...), cartesian_collection(...), icaps26_cartesian(...), or pdb(...)"
                 ));
             }
         }
@@ -249,7 +352,61 @@ pub(crate) fn build_components<'task>(
         }
     }
 
+    let states = components
+        .iter()
+        .map(AbstractionComponent::num_states)
+        .collect::<Vec<_>>();
+    let total_states = states.iter().try_fold(0usize, |total, states| {
+        total.checked_add(*states).ok_or_else(|| {
+            "abstraction collection state count exceeds addressable memory".to_string()
+        })
+    })?;
+    let domain_abstract_operators = components
+        .iter()
+        .filter_map(AbstractionComponent::as_domain)
+        .map(|abstraction| abstraction.abstract_operators.len())
+        .try_fold(0usize, |total, operators| {
+            total.checked_add(operators).ok_or_else(|| {
+                "domain abstract-operator count exceeds addressable memory".to_string()
+            })
+        })?;
+    let cartesian_transitions = components
+        .iter()
+        .filter_map(AbstractionComponent::as_cartesian)
+        .map(|abstraction| abstraction.transition_system.transitions.len())
+        .try_fold(0usize, |total, transitions| {
+            total
+                .checked_add(transitions)
+                .ok_or_else(|| "Cartesian transition count exceeds addressable memory".to_string())
+        })?;
+    info!(
+        "Abstraction collection: abstractions={}, total_states={}, states={:?}, domain_abstract_operators={}, cartesian_transitions={}, construction_time={:.3}s",
+        components.len(),
+        total_states,
+        states,
+        domain_abstract_operators,
+        cartesian_transitions,
+        construction_start.elapsed().as_secs_f64(),
+    );
+
     Ok(components)
+}
+
+fn remaining_construction_time(deadline: Option<Instant>) -> Result<Option<Duration>, String> {
+    let Some(deadline) = deadline else {
+        return Ok(None);
+    };
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .map(Some)
+        .ok_or_else(|| "shared abstraction construction deadline exceeded".to_string())
+}
+
+fn cap_duration(limit: &mut Option<Duration>, remaining: Option<Duration>) {
+    if let Some(remaining) = remaining {
+        *limit = Some(limit.map_or(remaining, |current| current.min(remaining)));
+    }
 }
 
 fn component_source_call(value: &ConfigValue) -> Option<ConfigCall> {
@@ -271,9 +428,77 @@ fn is_component_source_name(name: &str) -> bool {
             | "cartesian_abstraction"
             | "cartesian_collection"
             | "cartesian_abstraction_collection"
+            | "icaps26_cartesian"
             | "pdb"
             | "numeric_pdb"
     )
+}
+
+pub(crate) fn apply_icaps26_cartesian_options(
+    args: &[ConfigArg],
+    component_use: ComponentUse,
+) -> Result<CartesianAbstractionConfig, String> {
+    let mut config = CartesianAbstractionConfig {
+        max_states: usize::MAX,
+        max_time: Some(Duration::from_secs(900)),
+        ..CartesianAbstractionConfig::default()
+    };
+    config.compute_operator_footprints = component_use.needs_operator_footprints();
+    config.random_seed = Some(2011);
+    config.refinement_direction = CartesianRefinementDirection::Regression;
+    config.split_selection = CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MaxUnwanted);
+
+    let mut seen = HashSet::new();
+    for arg in args {
+        let key = arg
+            .key()
+            .ok_or_else(|| "all options for `icaps26_cartesian` must be named".to_string())?;
+        if !seen.insert(key) {
+            return Err(format!("duplicate option `{key}` for `icaps26_cartesian`"));
+        }
+        match key {
+            "pick" => {
+                let value = String::from_option_value(arg.value())?;
+                let policy = match value.to_ascii_lowercase().as_str() {
+                    "random" => Icaps26SplitSelection::Random,
+                    "min_unwanted" => Icaps26SplitSelection::MinUnwanted,
+                    "max_unwanted" => Icaps26SplitSelection::MaxUnwanted,
+                    _ => {
+                        return Err(format!(
+                            "invalid ICAPS 2026 split selector `{value}`; expected random, min_unwanted, or max_unwanted"
+                        ));
+                    }
+                };
+                config.split_selection = CartesianSplitSelection::Icaps26(policy);
+            }
+            "max_states" => {
+                config.max_states = usize::from_option_value(arg.value())?;
+            }
+            "max_time" => {
+                let seconds = f64::from_option_value(arg.value())?;
+                config.max_time = if seconds.is_infinite() {
+                    None
+                } else {
+                    Some(Duration::try_from_secs_f64(seconds).map_err(|error| {
+                        format!("invalid ICAPS 2026 max_time {seconds}: {error}")
+                    })?)
+                };
+            }
+            "random_seed" => {
+                config.random_seed = Some(u64::from_option_value(arg.value())?);
+            }
+            "combine_labels" => {
+                config.combine_labels = bool::from_option_value(arg.value())?;
+            }
+            "debug" => {
+                config.debug = bool::from_option_value(arg.value())?;
+            }
+            other => {
+                return Err(format!("unknown option `{other}` for `icaps26_cartesian`"));
+            }
+        }
+    }
+    Ok(config)
 }
 
 fn apply_cartesian_options(

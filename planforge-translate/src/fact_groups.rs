@@ -46,7 +46,6 @@ struct GroupCoverQueue {
     max_size: usize,
     groups_by_size: Vec<Vec<HashSet<Atom>>>,
     top: Option<HashSet<Atom>>,
-    all_groups: Vec<HashSet<Atom>>,
 }
 
 impl GroupCoverQueue {
@@ -56,25 +55,21 @@ impl GroupCoverQueue {
                 max_size: 0,
                 groups_by_size: vec![],
                 top: None,
-                all_groups: vec![],
             };
         }
 
         let max_size = groups.iter().map(|g| g.len()).max().unwrap_or(0);
         let mut groups_by_size: Vec<Vec<HashSet<Atom>>> = vec![vec![]; max_size + 1];
-        let mut all_groups: Vec<HashSet<Atom>> = vec![];
 
         for group in groups {
             let group_set: HashSet<Atom> = group.iter().cloned().collect();
             groups_by_size[group_set.len()].push(group_set.clone());
-            all_groups.push(group_set);
         }
 
         let mut q = GroupCoverQueue {
             max_size,
             groups_by_size,
             top: None,
-            all_groups,
         };
         q.update_top();
         q
@@ -85,18 +80,19 @@ impl GroupCoverQueue {
     }
 
     fn pop(&mut self) -> Vec<Atom> {
-        let result: Vec<Atom> = self.top.take().unwrap().into_iter().collect();
+        let selected = self.top.take().unwrap();
         if options::USE_PARTIAL_ENCODING {
-            for fact in &result {
-                // Remove fact from all groups that contain it
-                // This is a simplified version - in Python it modifies groups in-place
-                for group in &mut self.all_groups {
-                    group.remove(fact);
+            // Queued groups are the source of truth for future selections.
+            // Removing from a detached clone leaves overlapping facts in later
+            // groups and violates partial encoding.
+            for groups in &mut self.groups_by_size {
+                for group in groups {
+                    group.retain(|fact| !selected.contains(fact));
                 }
             }
         }
         self.update_top();
-        result
+        selected.into_iter().collect()
     }
 
     fn update_top(&mut self) {
@@ -129,6 +125,37 @@ impl GroupCoverQueue {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{Atom, choose_groups};
+    use std::collections::HashSet;
+
+    fn atom(predicate: &str, argument: &str) -> Atom {
+        Atom::new(predicate.to_string(), vec![argument.to_string()])
+    }
+
+    #[test]
+    fn partial_encoding_removes_selected_facts_from_queued_groups() {
+        let shared = atom("tree", "cell6");
+        let left = atom("tree", "cell5");
+        let right = atom("crafting_table", "cell6");
+        let groups = vec![
+            vec![shared.clone(), left.clone()],
+            vec![shared.clone(), right.clone()],
+        ];
+        let reachable = HashSet::from([shared.clone(), left, right]);
+
+        let selected = choose_groups(&groups, &reachable);
+        let occurrences = selected
+            .iter()
+            .flatten()
+            .filter(|fact| **fact == shared)
+            .count();
+
+        assert_eq!(occurrences, 1);
+    }
+}
+
 /// Python: def choose_groups(groups, reachable_facts)
 fn choose_groups(groups: &[Vec<Atom>], reachable_facts: &HashSet<Atom>) -> Vec<Vec<Atom>> {
     let mut queue = GroupCoverQueue::new(groups);
@@ -144,6 +171,17 @@ fn choose_groups(groups: &[Vec<Atom>], reachable_facts: &HashSet<Atom>) -> Vec<V
     info!("{} uncovered facts", uncovered_facts.len());
     for fact in &uncovered_facts {
         result.push(vec![fact.clone()]);
+    }
+    if options::USE_PARTIAL_ENCODING {
+        let mut seen = HashSet::new();
+        for group in &result {
+            for fact in group {
+                assert!(
+                    seen.insert(fact),
+                    "partial encoding selected overlapping groups for {fact:?}: {result:?}"
+                );
+            }
+        }
     }
     result
 }

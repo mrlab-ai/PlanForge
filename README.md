@@ -17,6 +17,10 @@ Production-quality on the admissible search and heuristic paths (A\* with blind,
 - **Domain abstractions** — CEGAR-built abstractions with comparison-axiom-aware refinement. Multiple combination strategies are available:
   - *Canonical* (max over compatible additive subsets).
   - *Saturated cost partitioning* (SCP), including a fill-SCP variant that combines per-label SCP with LM-cut over residual costs.
+- **Cartesian abstractions** — numeric Cartesian CEGAR abstractions usable through
+  the same canonical, label-SCP, and regional-SCP combinators. The separate
+  `icaps26_cartesian(...)` source implements the full-task, first-flaw,
+  desired-region split policies from Schindler, Speck, and Helmert (ICAPS 2026).
 - **LM-cut** — numeric landmark-cut heuristic, usable standalone or as a residual-cost component inside SCP.
 - **Posthoc optimization** — Pommerening/Röger/Helmert AAAI 2013 LP heuristic over a CEGAR-built domain-abstraction collection. The dual LP `max Σ h_i(s)·X_i s.t. Σ_{i : o relevant for i} X_i ≤ 1 for each positive-cost operator o` is solved per state by HiGHS. Dominates canonical (max-over-additive) but pays per-state LP cost; useful when the abstractions overlap heavily and a strict max underuses them.
 - **FF** — Hoffmann/Nebel relaxed-plan heuristic with Metric-FF style monotonic numeric relaxation. Each numeric variable tracks a `(max_reachable, min_reachable)` envelope through the relaxed planning graph; comparison-axiom facts become available when the envelope makes them satisfiable. Non-admissible in general; useful as a fast guide for greedy search and competitive with blind on small numeric instances.
@@ -53,6 +57,25 @@ Single-call PDDL pipeline:
               --max-time 30m --max-memory 8G \
               domain.pddl problem.pddl
 
+Hierarchical abstraction sources make collection generation and combination
+independent. For example:
+
+    planforge --restrict-task --search \
+      'astar(canonical(cartesian_collection(max_states=1000,max_collection_size=100000),construction_max_time=900))' \
+      domain.pddl problem.pddl
+
+    planforge --restrict-task --search \
+      'astar(scp(domain(max_abstraction_size=1000,max_collection_size=100000),online=false,partitioning=region,construction_max_time=900))' \
+      domain.pddl problem.pddl
+
+    planforge --restrict-task --search \
+      'astar(canonical(icaps26_cartesian(pick=min_unwanted,max_time=900)))' \
+      domain.pddl problem.pddl
+
+`icaps26_cartesian` accepts `pick=random|min_unwanted|max_unwanted` and requires
+an integer restricted SNP task. `construction_max_time` is one shared budget
+for source generation and offline SCP table construction.
+
 Pre-translated SAS+:
 
     planforge --search 'astar(lmcutnumeric())' \
@@ -72,6 +95,10 @@ Common options:
   - `gbfs(lmcutnumeric())`
 - `--max-time DURATION` — wall-clock budget (`30m`, `1h`, `45s`).
 - `--max-memory SIZE` — address-space cap (`8G`, `4096M`).
+- `--restrict-task` — convert an SNP task to its restricted representation;
+  already restricted tasks are retained unchanged.
+- `--compact-numeric-states` — intern exact canonical `f64` values behind
+  compact integer IDs in the search state registry.
 
 ## Layout
 
@@ -91,7 +118,12 @@ Integration tests cover translator output, preprocessor invariants, state-regist
 
 ## Resource limits
 
-`--max-memory` sets the process's `RLIMIT_AS`. Heuristic construction additionally consults a polled RSS limit derived from `--max-memory` so the planner can stop adding abstractions cleanly before any external (slurm, cgroup) limit fires. Search-loop polling is not yet wired through; long A\* runs near the memory ceiling can still be killed by external supervisors.
+On Linux, `--max-memory` is enforced against resident memory by the parent
+process. A larger `RLIMIT_AS` remains as an emergency ceiling because mimalloc
+reserves address space ahead of committed pages. Heuristic construction and
+search also release their fixed memory padding as the resident limit is
+approached, leaving room for a controlled planner exit before an external
+Slurm or cgroup limit fires.
 
 ## License
 

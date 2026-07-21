@@ -6,6 +6,7 @@ use rand::{SeedableRng, rngs::SmallRng};
 
 use crate::evaluation::abstraction_collections::cost_partitioning::{
     AbstractOperatorFootprint, ConcreteOperatorFootprint, StateRegion, TransitionResidualCosts,
+    build_explicit_label_cost_partitioning_table,
 };
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::PropositionalAxiom;
@@ -182,6 +183,88 @@ fn transition_cost_partitioned_table_uses_abstract_transitions() {
     assert_eq!(transition_system.transitions.len(), 1);
     assert_eq!(table.distances[table.initial_state_hash], 1.0);
     assert_eq!(tcf.transition_costs, vec![1.0]);
+}
+
+#[test]
+fn explicit_transition_system_matches_implicit_distances_across_comparison_cascades() {
+    let variables = vec![
+        ExplicitVariable::new(
+            3,
+            "x-lt-ten".into(),
+            vec!["true".into(), "false".into(), "unknown".into()],
+            Some(0),
+            COMPARISON_UNKNOWN_VAL,
+        ),
+        ExplicitVariable::new(
+            2,
+            "goal".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            0,
+        ),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("ten".into(), NumericType::Constant, None),
+        NumericVariable::new("twenty".into(), NumericType::Constant, None),
+    ];
+    let operators = vec![
+        Operator::new(
+            "increase-x".into(),
+            vec![ExplicitFact::new(0, COMPARISON_TRUE_VAL)],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                2,
+                false,
+                vec![],
+            )],
+            1,
+        ),
+        Operator::new(
+            "finish".into(),
+            vec![ExplicitFact::new(0, COMPARISON_FALSE_VAL)],
+            vec![Effect::new(vec![], 1, Some(0), 1)],
+            vec![],
+            1,
+        ),
+    ];
+    let task = NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        variables,
+        numeric_variables,
+        vec![ExplicitFact::new(1, 1)],
+        vec![],
+        vec![COMPARISON_UNKNOWN_VAL, 0],
+        vec![0.0, 10.0, 20.0],
+        operators,
+        vec![],
+        vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)],
+        vec![],
+        ExplicitFact::new(0, COMPARISON_UNKNOWN_VAL),
+    );
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let implicit = factory
+        .build_abstract_distance_table(&task, false, false)
+        .unwrap();
+    let mut generator = factory.make_operator_generator(&task, false).unwrap();
+    let abstract_operators = generator.build_abstract_operators(&task).unwrap();
+    let transition_system = factory
+        .build_abstract_transition_system_from_operators_without_regions_with_deadline(
+            &task,
+            false,
+            &abstract_operators,
+            None,
+        )
+        .unwrap();
+    let (explicit, _) =
+        build_explicit_label_cost_partitioning_table(&transition_system, &[1.0, 1.0], None, None)
+            .unwrap();
+
+    assert_eq!(explicit, implicit.distances);
+    assert_eq!(explicit[implicit.initial_state_hash], 2.0);
 }
 
 #[test]

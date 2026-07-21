@@ -9,6 +9,7 @@ fn standard_collection_defaults_match_numeric_fd_canonical_configuration() {
     assert!(!config.use_wildcard_plans);
     assert_eq!(config.random_seed, Some(2011));
     assert_eq!(config.flaw_kind, FlawKind::ExecuteEntirePlan);
+    assert!(!config.interleave_split_directions);
 }
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
 use planforge_sas::numeric_task::{
@@ -94,6 +95,64 @@ fn standard_uses_configured_full_goal_flaw_kind() {
         generator.flaw_kind_for_goal_count(11, 1),
         FlawKind::SequenceBidirectional
     );
+}
+
+#[test]
+fn standard_can_interleave_split_directions_on_the_full_task() {
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        collection_strategy: CollectionStrategy::Standard,
+        flaw_kind: FlawKind::ExecuteEntirePlan,
+        interleave_split_directions: true,
+        ..Default::default()
+    };
+    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
+
+    assert!(generator.uses_full_goal_task(18, 1));
+    assert!(generator.uses_full_goal_task(18, 2));
+    assert_eq!(
+        generator.flaw_kind_for_goal_count(18, 1),
+        FlawKind::ExecuteEntirePlan
+    );
+    assert_eq!(
+        generator.split_direction_for_iteration(1),
+        Some(SplitDirection::Forward)
+    );
+    assert_eq!(
+        generator.split_direction_for_iteration(2),
+        Some(SplitDirection::Backward)
+    );
+    assert_eq!(
+        generator.split_direction_for_iteration(3),
+        Some(SplitDirection::Forward)
+    );
+}
+
+#[test]
+fn interleaving_rejects_ambiguous_direction_configuration() {
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        interleave_split_directions: true,
+        split_direction: Some(SplitDirection::Forward),
+        ..Default::default()
+    };
+    let error = DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
+        .validate_supported_options()
+        .unwrap_err();
+
+    assert!(error.to_string().contains("cannot be combined"));
+}
+
+#[test]
+fn interleaving_rejects_single_goal_complementary_collections() {
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        collection_strategy: CollectionStrategy::Complementary,
+        interleave_split_directions: true,
+        ..Default::default()
+    };
+    let error = DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
+        .validate_supported_options()
+        .unwrap_err();
+
+    assert!(error.to_string().contains("collection_strategy=standard"));
 }
 
 #[test]

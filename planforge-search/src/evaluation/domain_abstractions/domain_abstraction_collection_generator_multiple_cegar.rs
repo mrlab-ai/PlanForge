@@ -182,6 +182,11 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub init_split_method: InitSplitMethod,
     pub numeric_split_strategy: NumericSplitStrategy,
     pub collection_strategy: CollectionStrategy,
+    /// Alternate forward and backward split-value selection between full-task
+    /// collection members. This is orthogonal to flaw collection: in
+    /// particular, `execute_entire_plan` still collects every flaw along the
+    /// abstract plan in both directions.
+    pub interleave_split_directions: bool,
     /// Overrides `FlawKind`'s default split direction when set; otherwise the
     /// flaw kind chooses its own default (`Forward` for everything except
     /// `TargetCentered`, which defaults to `Backward`).
@@ -238,6 +243,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             init_split_method: InitSplitMethod::InitValue,
             numeric_split_strategy: NumericSplitStrategy::Standard,
             collection_strategy: CollectionStrategy::Standard,
+            interleave_split_directions: false,
             split_direction: None,
             compute_operator_footprints: true,
             max_refined_comparison_vars_per_abstraction: None,
@@ -291,6 +297,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "init_split_method={}, ",
                 "numeric_split_strategy={}, ",
                 "collection_strategy={}, ",
+                "interleave_split_directions={}, ",
             ),
             self.max_abstraction_size,
             self.max_collection_size,
@@ -310,6 +317,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.init_split_method,
             self.numeric_split_strategy,
             self.collection_strategy,
+            self.interleave_split_directions,
         )
     }
 }
@@ -332,6 +340,16 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         if self.config.numeric_split_strategy != NumericSplitStrategy::Standard {
             bail!("`numeric_split_strategy=exclusion` is not supported in the current Rust port");
         }
+        if self.config.interleave_split_directions {
+            if self.config.collection_strategy != CollectionStrategy::Standard {
+                bail!("`interleave_split_directions=true` requires `collection_strategy=standard`");
+            }
+            if self.config.split_direction.is_some() {
+                bail!(
+                    "`interleave_split_directions=true` cannot be combined with a fixed `split_direction`"
+                );
+            }
+        }
         Ok(())
     }
 
@@ -349,6 +367,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         blacklisted_numeric_var_ids: HashSet<usize>,
         random_seed: Option<u64>,
         flaw_kind: FlawKind,
+        split_direction: Option<SplitDirection>,
     ) -> CegarConfig {
         CegarConfig {
             max_abstraction_size,
@@ -372,7 +391,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             blacklisted_prop_var_ids,
             blacklisted_numeric_var_ids,
             initial_seed_splits,
-            split_direction: self.config.split_direction,
+            split_direction,
             compute_operator_footprints: self.config.compute_operator_footprints,
             max_refined_comparison_vars_per_abstraction: self
                 .config
@@ -506,6 +525,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 iteration,
                 complementary_direction,
             );
+            let split_direction = self.split_direction_for_iteration(iteration);
             let seed_descriptions = initial_seed_splits
                 .iter()
                 .map(seed_split_description)
@@ -527,16 +547,18 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 blacklisted_numeric_var_ids,
                 Some(cegar_random_seed),
                 flaw_kind,
+                split_direction,
             );
             let generator = DomainAbstractionGenerator::new(cegar_config)
                 .context("failed to construct single-abstraction CEGAR generator")?;
             let generation_start = Instant::now();
             debug!(
-                "domain abstraction collection: starting CEGAR generation iteration {}, remaining_generation_time={:.2}s, full_goal_task={}, flaw_kind={}, complementary_round={}, goal_index={}, group_index={}, direction={:?}",
+                "domain abstraction collection: starting CEGAR generation iteration {}, remaining_generation_time={:.2}s, full_goal_task={}, flaw_kind={}, split_direction={:?}, complementary_round={}, goal_index={}, group_index={}, direction={:?}",
                 iteration,
                 remaining_generation_time,
                 full_goal_task,
                 flaw_kind,
+                split_direction,
                 complementary_round,
                 goal_index,
                 group_index,
@@ -758,6 +780,18 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             CollectionStrategy::Standard => true,
             CollectionStrategy::Complementary => goal_count == 0,
         }
+    }
+
+    fn split_direction_for_iteration(&self, iteration: usize) -> Option<SplitDirection> {
+        if !self.config.interleave_split_directions {
+            return self.config.split_direction;
+        }
+        assert!(iteration > 0, "collection iterations are one-based");
+        Some(if iteration % 2 == 1 {
+            SplitDirection::Forward
+        } else {
+            SplitDirection::Backward
+        })
     }
 
     fn cegar_random_seed(

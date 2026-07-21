@@ -27,6 +27,7 @@ experiments/
 
 # playground python files
 *.py
+!/lab-files/abstraction_parser.py
 __pycache__/
 others
 profile.json.gz
@@ -45,6 +46,7 @@ codex-implement.log
 /docs/
 /dominik/
 /ipc2023
+/ipc2026
 /numeric-fd
 /*.sas
 /sailing.txt

@@ -1668,10 +1668,34 @@ impl DomainAbstractionFactory {
             if target_hash % 64 == 0 {
                 ensure_online_scp_deadline(deadline)?;
             }
-            match_tree.get_applicable_operator_ids(target_hash, &mut applicable_operator_ids);
+            let base_target = if comparison_branching {
+                let possible_targets = self.enumerate_states_with_evaluated_comparisons_cached(
+                    target_hash,
+                    task,
+                    numeric_domain_sizes,
+                    hash_multipliers,
+                    &comparison_var_ids,
+                    &[],
+                    &mut comparison_enumeration_cache,
+                    &mut cached_comparison_state_count,
+                    &mut comparison_enumeration_scratch,
+                )?;
+                if !possible_targets.contains(&target_hash) {
+                    continue;
+                }
+                self.reset_comparison_vars_to_unknown_except(
+                    target_hash,
+                    hash_multipliers,
+                    &comparison_var_ids,
+                    &[],
+                )?
+            } else {
+                target_hash
+            };
+            match_tree.get_applicable_operator_ids(base_target, &mut applicable_operator_ids);
             for &abstract_op_id in &applicable_operator_ids {
                 let op = &operators[abstract_op_id];
-                let predecessor_i64 = target_hash as i64 + op.hash_effect as i64;
+                let predecessor_i64 = base_target as i64 + op.hash_effect as i64;
                 if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
@@ -1807,6 +1831,22 @@ impl DomainAbstractionFactory {
                 numeric_domain_sizes,
                 hash_multipliers,
             ) {
+                if comparison_branching {
+                    let possible_states = self.enumerate_states_with_evaluated_comparisons_cached(
+                        state_hash,
+                        task,
+                        numeric_domain_sizes,
+                        hash_multipliers,
+                        &comparison_var_ids,
+                        &[],
+                        &mut comparison_enumeration_cache,
+                        &mut cached_comparison_state_count,
+                        &mut comparison_enumeration_scratch,
+                    )?;
+                    if !possible_states.contains(&state_hash) {
+                        continue;
+                    }
+                }
                 goal_state_hashes.push(state_hash);
             }
         }

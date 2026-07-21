@@ -7,6 +7,7 @@
 //! whole-plan mode ranks all sound witnesses on an acyclic adaptive trace.
 //! Only a successfully replayed concrete plan may set `solved_by_self`.
 
+pub mod icaps26;
 #[cfg(test)]
 mod tests;
 
@@ -43,6 +44,7 @@ use super::cegar::{
 use super::domain_abstractions::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstractions::domain_abstraction_factory::AbstractDistanceTable;
 use super::domain_abstractions::utils::{fact_is_hold, get_initial_state, make_prop_state_packer};
+use icaps26::Icaps26SplitSelection;
 
 const EPSILON: f64 = 1e-9;
 
@@ -75,6 +77,12 @@ pub enum CartesianRefinementDirection {
     Regression,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CartesianSplitSelection {
+    MinTransitionGrowth,
+    Icaps26(Icaps26SplitSelection),
+}
+
 #[derive(Debug, Clone)]
 pub struct CartesianAbstractionConfig {
     pub max_states: usize,
@@ -85,6 +93,7 @@ pub struct CartesianAbstractionConfig {
     pub flaw_kind: FlawKind,
     pub refinement_direction: CartesianRefinementDirection,
     pub split_selection_rank: Option<usize>,
+    pub split_selection: CartesianSplitSelection,
     pub debug: bool,
 }
 
@@ -99,6 +108,7 @@ impl Default for CartesianAbstractionConfig {
             flaw_kind: FlawKind::Progression,
             refinement_direction: CartesianRefinementDirection::Progression,
             split_selection_rank: None,
+            split_selection: CartesianSplitSelection::MinTransitionGrowth,
             debug: false,
         }
     }
@@ -601,6 +611,7 @@ enum Split {
         boundary: f64,
         lower_includes_boundary: bool,
         witness_value: f64,
+        desired_contains_witness: bool,
         description: String,
     },
 }
@@ -695,6 +706,7 @@ struct CartesianSemantics<'task> {
     random_seed: Option<u64>,
     refinement_direction: CartesianRefinementDirection,
     split_selection_rank: Option<usize>,
+    split_selection: CartesianSplitSelection,
     target_split_boundaries: Vec<f64>,
 }
 
@@ -872,6 +884,7 @@ impl<'task> CartesianSemantics<'task> {
             random_seed: config.random_seed,
             refinement_direction: config.refinement_direction,
             split_selection_rank: config.split_selection_rank,
+            split_selection: config.split_selection,
             target_split_boundaries,
         })
     }
@@ -2866,12 +2879,121 @@ fn select_min_growth_split(
     Ok(candidates.swap_remove(index))
 }
 
-fn select_min_growth_refinement(
+fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Split) -> Result<f64> {
+    let parent = working
+        .states
+        .get(split.state_id())
+        .with_context(|| format!("missing split state {}", split.state_id()))?;
+    match split {
+        Split::Propositional { var_id, wanted, .. } => {
+            let current = parent
+                .propositions
+                .get(*var_id)
+                .with_context(|| format!("split references missing prop var {var_id}"))?;
+            let wanted_count = current
+                .iter()
+                .filter(|value| wanted.binary_search(value).is_ok())
+                .count();
+            ensure!(
+                wanted_count > 0 && wanted_count < current.len(),
+                "ICAPS 2026 selector received a non-strict propositional split"
+            );
+            Ok((current.len() - wanted_count) as f64)
+        }
+        Split::Numeric {
+            var_id,
+            desired_contains_witness,
+            ..
+        } => {
+            let (witness_region, other_region) = split_child_regions(working, split)?;
+            let desired_region = if *desired_contains_witness {
+                witness_region
+            } else {
+                other_region
+            };
+            let desired = desired_region.numeric[*var_id];
+            if !desired.lower.is_finite() || !desired.upper.is_finite() {
+                return Ok(f64::INFINITY);
+            }
+            let current = parent.numeric[*var_id];
+            if !current.lower.is_finite() || !current.upper.is_finite() {
+                return Ok(f64::INFINITY);
+            }
+            let current_values = integer_interval_cardinality(current);
+            let desired_values = integer_interval_cardinality(desired);
+            let unwanted = current_values - desired_values;
+            ensure!(
+                unwanted.is_sign_positive() && unwanted != 0.0,
+                "ICAPS 2026 selector received a numeric split with no unwanted values"
+            );
+            Ok(unwanted)
+        }
+    }
+}
+
+fn integer_interval_cardinality(interval: Interval) -> f64 {
+    debug_assert!(interval.lower.is_finite() && interval.upper.is_finite());
+    let first = if interval.lower_closed {
+        interval.lower.ceil()
+    } else {
+        interval.lower.floor() + 1.0
+    };
+    let last = if interval.upper_closed {
+        interval.upper.floor()
+    } else {
+        interval.upper.ceil() - 1.0
+    };
+    (last - first + 1.0).max(0.0)
+}
+
+fn select_refinement_split(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    mut candidates: Vec<Split>,
+    tag: u64,
+) -> Result<Split> {
+    match semantics.split_selection {
+        CartesianSplitSelection::MinTransitionGrowth => {
+            select_min_growth_split(working, semantics, candidates, tag)
+        }
+        CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random) => {
+            ensure!(
+                !candidates.is_empty(),
+                "cannot select a Cartesian refinement from an empty candidate set"
+            );
+            let index = semantics.choose_split_index(&candidates, tag);
+            Ok(candidates.swap_remove(index))
+        }
+        CartesianSplitSelection::Icaps26(policy) => {
+            ensure!(
+                !candidates.is_empty(),
+                "cannot select a Cartesian refinement from an empty candidate set"
+            );
+            let mut selected = 0;
+            let mut selected_score = artifact_unwanted_score(working, &candidates[0])?;
+            for (index, candidate) in candidates.iter().enumerate().skip(1) {
+                let score = artifact_unwanted_score(working, candidate)?;
+                let better = match policy {
+                    Icaps26SplitSelection::MinUnwanted => score < selected_score,
+                    Icaps26SplitSelection::MaxUnwanted => score > selected_score,
+                    Icaps26SplitSelection::Random => unreachable!(),
+                };
+                if better {
+                    selected = index;
+                    selected_score = score;
+                }
+            }
+            Ok(candidates.swap_remove(selected))
+        }
+    }
+}
+
+fn select_refinement(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     candidates: Vec<Split>,
 ) -> Result<PlanCheck> {
-    Ok(PlanCheck::Refine(select_min_growth_split(
+    Ok(PlanCheck::Refine(select_refinement_split(
         working,
         semantics,
         candidates,
@@ -2919,14 +3041,14 @@ fn replay_entire_optimal_abstract_trace(
                 !candidates.is_empty(),
                 "Cartesian whole-plan replay cycled without witnessing a flaw"
             );
-            return select_min_growth_refinement(working, semantics, candidates);
+            return select_refinement(working, semantics, candidates);
         }
         let abstract_distance = shortest_paths.distances[abstract_state];
         if !abstract_distance.is_finite() {
             return if candidates.is_empty() {
                 Ok(PlanCheck::AbstractDeadEnd(abstract_state))
             } else {
-                select_min_growth_refinement(working, semantics, candidates)
+                select_refinement(working, semantics, candidates)
             };
         }
 
@@ -2938,7 +3060,7 @@ fn replay_entire_optimal_abstract_trace(
                         cost: concrete_cost,
                     }))
                 } else {
-                    select_min_growth_refinement(working, semantics, candidates)
+                    select_refinement(working, semantics, candidates)
                 };
             }
             for goal_id in 0..semantics.task.get_num_goals() {
@@ -2960,7 +3082,7 @@ fn replay_entire_optimal_abstract_trace(
                 !candidates.is_empty(),
                 "abstract goal contains a concrete non-goal without a refinable failed goal fact"
             );
-            return select_min_growth_refinement(working, semantics, candidates);
+            return select_refinement(working, semantics, candidates);
         }
 
         let transition = shortest_paths.generating_transition[abstract_state].context(
@@ -3427,6 +3549,10 @@ fn comparison_refinement(
                     boundary,
                     lower_includes_boundary,
                     witness_value,
+                    desired_contains_witness: matches!(
+                        goal,
+                        ComparisonRefinementGoal::GuaranteeDesired(_)
+                    ),
                     description: description.clone(),
                 };
                 candidates.push((separates_truth, achieved, candidate));
@@ -3437,7 +3563,9 @@ fn comparison_refinement(
         !candidates.is_empty(),
         "comparison tree {tree_id} has no strict regular-variable split in Cartesian state {state_id}"
     );
-    retain_min_growth_splits(working, semantics, &mut candidates, |(_, _, split)| split)?;
+    if semantics.split_selection == CartesianSplitSelection::MinTransitionGrowth {
+        retain_min_growth_splits(working, semantics, &mut candidates, |(_, _, split)| split)?;
+    }
     let has_target_centered_candidate = semantics.refinement_direction
         == CartesianRefinementDirection::Regression
         && candidates
@@ -3450,12 +3578,12 @@ fn comparison_refinement(
     if has_achieving_candidate {
         candidates.retain(|(_, achieved, _)| *achieved);
     }
-    let keys = candidates
-        .iter()
-        .map(|(_, _, split)| split_choice_key(semantics, split))
-        .collect::<Vec<_>>();
-    let index = semantics.choose_keyed_index(&keys, 0x434F_4D50);
-    Ok(candidates.swap_remove(index).2)
+    select_refinement_split(
+        working,
+        semantics,
+        candidates.into_iter().map(|(_, _, split)| split).collect(),
+        0x434F_4D50,
+    )
 }
 
 fn comparison_truth(prop_value: usize) -> Result<bool> {
@@ -3507,7 +3635,7 @@ fn split_deviation(
     witness: DeviationWitness<'_>,
 ) -> Result<Split> {
     let candidates = split_deviation_candidates(working, semantics, witness)?;
-    select_min_growth_split(working, semantics, candidates, 0x4445_5649)
+    select_refinement_split(working, semantics, candidates, 0x4445_5649)
 }
 
 fn split_deviation_candidates(
@@ -3604,6 +3732,7 @@ fn split_deviation_candidates(
             boundary,
             lower_includes_boundary,
             witness_value: source,
+            desired_contains_witness: false,
             description: format!(
                 "operator {op_id} successor numeric var {var_id}={successor} outside target {target_interval:?}"
             ),

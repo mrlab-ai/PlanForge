@@ -1,8 +1,10 @@
 use super::*;
 use planforge_search::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
+use planforge_search::evaluation::cartesian_abstractions::CartesianSplitSelection;
+use planforge_search::evaluation::cartesian_abstractions::icaps26::Icaps26SplitSelection;
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig, InitSplitQuantity,
-    VariableSubset,
+    DomainAbstractionCollectionGeneratorMultipleCegarConfig, FlawTreatmentVariants,
+    InitSplitQuantity, VariableSubset,
 };
 use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
@@ -161,6 +163,84 @@ fn parses_hierarchical_cartesian_collection_source() {
 }
 
 #[test]
+fn parses_strict_icaps26_cartesian_source() {
+    let h = astar_heuristic(
+        "astar(scp(icaps26_cartesian(pick=min_unwanted,max_time=900,random_seed=7),online=false,partitioning=region))",
+    );
+    let (sources, options) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].name(), "icaps26_cartesian");
+    assert_eq!(options.len(), 2);
+    let config = crate::abstraction_config::apply_icaps26_cartesian_options(
+        sources[0].args(),
+        crate::abstraction_config::ComponentUse::RegionalCostPartitioning,
+    )
+    .unwrap();
+    assert_eq!(
+        config.split_selection,
+        CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MinUnwanted)
+    );
+    assert_eq!(config.max_time, Some(std::time::Duration::from_secs(900)));
+    assert_eq!(config.random_seed, Some(7));
+    assert_eq!(
+        config.refinement_direction,
+        planforge_search::evaluation::cartesian_abstractions::CartesianRefinementDirection::Regression
+    );
+    assert!(config.compute_operator_footprints);
+
+    let defaults = crate::abstraction_config::apply_icaps26_cartesian_options(
+        &[],
+        crate::abstraction_config::ComponentUse::Standalone,
+    )
+    .unwrap();
+    assert_eq!(defaults.random_seed, Some(2011));
+}
+
+#[test]
+fn parses_shared_construction_deadlines_for_canonical_and_scp() {
+    let canonical =
+        astar_heuristic("astar(canonical(cartesian(max_states=100),construction_max_time=900))");
+    let (sources, deadline) =
+        crate::abstraction_config::canonical_sources_and_deadline(&canonical.args).unwrap();
+    assert_eq!(sources.len(), 1);
+    assert!(deadline.is_some());
+
+    let scp = astar_heuristic(
+        "astar(scp(cartesian(max_states=100),online=false,construction_max_time=900))",
+    );
+    let source_config =
+        crate::abstraction_config::scp_sources_options_and_deadline(&scp.args).unwrap();
+    assert_eq!(source_config.sources.len(), 1);
+    assert_eq!(source_config.options.len(), 1);
+    assert_eq!(source_config.options[0].key(), Some("online"));
+    assert!(source_config.construction_deadline.is_some());
+}
+
+#[test]
+fn rejects_invalid_shared_construction_deadlines() {
+    for value in ["0", "-1", "infinity"] {
+        let h = astar_heuristic(&format!(
+            "astar(canonical(cartesian(),construction_max_time={value}))"
+        ));
+        let error = crate::abstraction_config::canonical_sources_and_deadline(&h.args)
+            .expect_err("invalid construction deadline must fail");
+        assert!(error.contains("construction_max_time"));
+    }
+}
+
+#[test]
+fn icaps26_cartesian_rejects_native_refinement_options() {
+    let h = astar_heuristic("astar(canonical(icaps26_cartesian(flaw_kind=execute_entire_plan)))");
+    let (sources, _) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
+    let error = crate::abstraction_config::apply_icaps26_cartesian_options(
+        sources[0].args(),
+        crate::abstraction_config::ComponentUse::Standalone,
+    )
+    .unwrap_err();
+    assert!(error.contains("unknown option `flaw_kind`"));
+}
+
+#[test]
 fn hierarchical_cartesian_collection_preserves_first_flaw_default() {
     let h = astar_heuristic("astar(canonical(cartesian_collection(max_states=1000)))");
     let (sources, _) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
@@ -231,6 +311,26 @@ fn parses_forward_partition_deviation_split_direction() {
         Some(planforge_search::evaluation::domain_abstractions::cegar::SplitDirection::ForwardPartitionDeviation)
     );
     assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
+}
+
+#[test]
+fn parses_full_task_interleaved_domain_collection() {
+    let h = astar_heuristic(
+        "astar(canonical(domain(collection_strategy=standard,interleave_split_directions=true,flaw_kind=execute_entire_plan,flaw_treatment=min_growth_single_atom)))",
+    );
+    let (sources, options) = crate::abstraction_config::split_component_sources(&h.args).unwrap();
+    assert_eq!(sources.len(), 1);
+    assert!(options.is_empty());
+    let mut source = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    ApplyOptions::apply_options(&mut source, sources[0].args()).unwrap();
+
+    assert_eq!(source.collection_strategy, CollectionStrategy::Standard);
+    assert!(source.interleave_split_directions);
+    assert_eq!(source.flaw_kind, FlawKind::ExecuteEntirePlan);
+    assert_eq!(
+        source.flaw_treatment,
+        FlawTreatmentVariants::MinGrowthSingleAtom
+    );
 }
 
 #[test]
