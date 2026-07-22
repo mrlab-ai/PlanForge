@@ -10,7 +10,7 @@ use planforge_sas::numeric_task::{
     NumericRootTask, NumericType, NumericVariable, Operator,
 };
 
-use super::icaps26::Icaps26SplitSelection;
+use super::icaps26::{ArtifactMt19937, Icaps26SplitSelection};
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
@@ -22,6 +22,13 @@ use super::{
 };
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use crate::evaluation::domain_abstractions::comparison_expression::Interval;
+
+#[test]
+fn icaps_rng_matches_std_mt19937_uniform_integer_distribution() {
+    let mut rng = ArtifactMt19937::new(2011);
+    let sampled = [2, 3, 5, 7, 11, 100, 2, 17].map(|bound| rng.uniform_index(bound));
+    assert_eq!(sampled, [1, 0, 2, 5, 4, 50, 1, 8]);
+}
 
 #[test]
 fn operator_bitsets_preserve_exact_membership_and_intersections() {
@@ -122,6 +129,110 @@ fn icaps_prevail_conditions_fix_the_post_value_only_in_artifact_mode() {
     )
     .unwrap();
     assert!(!icaps.may_transition(&source, 0, &target).unwrap());
+}
+
+#[test]
+fn icaps_split_preserves_artifact_loop_and_arc_order() {
+    let operators = vec![
+        Operator::new("independent".into(), vec![], vec![], vec![], 1),
+        Operator::new(
+            "set-right".into(),
+            vec![],
+            vec![Effect::new(vec![], 0, None, 1)],
+            vec![],
+            1,
+        ),
+        Operator::new(
+            "set-left".into(),
+            vec![],
+            vec![Effect::new(vec![], 0, None, 0)],
+            vec![],
+            1,
+        ),
+        Operator::new(
+            "prevail-left".into(),
+            vec![ExplicitFact::new(0, 0)],
+            vec![],
+            vec![],
+            1,
+        ),
+        Operator::new(
+            "prevail-right".into(),
+            vec![ExplicitFact::new(0, 1)],
+            vec![],
+            vec![],
+            1,
+        ),
+    ];
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![ExplicitVariable::new(
+            2,
+            "position".into(),
+            vec!["left".into(), "right".into()],
+            None,
+            0,
+        )],
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        operators,
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let semantics = CartesianSemantics::new(
+        &task,
+        &CartesianAbstractionConfig {
+            split_selection: CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MinUnwanted),
+            ..CartesianAbstractionConfig::default()
+        },
+    )
+    .unwrap();
+    let mut working = WorkingAbstraction::new_icaps26(
+        StateRegion {
+            propositions: vec![vec![0, 1]].into(),
+            numeric: vec![].into(),
+        },
+        5,
+    );
+    for op_id in 0..5 {
+        working.add_transition(0, op_id, 0);
+    }
+
+    apply_split(
+        &mut working,
+        &semantics,
+        Split::Propositional {
+            state_id: 0,
+            var_id: 0,
+            wanted: vec![1],
+            witness_value: 0,
+            description: String::new(),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        working.icaps_self_loop_order.as_ref().unwrap(),
+        &vec![vec![0, 2, 3], vec![0, 1, 4]]
+    );
+    let arcs = working
+        .active_transition_ids()
+        .map(|id| {
+            let transition = working.transition(id);
+            (
+                transition.source,
+                transition.concrete_op_id,
+                transition.target,
+            )
+        })
+        .collect::<HashSet<_>>();
+    assert_eq!(arcs, HashSet::from([(0, 1, 1), (1, 2, 0)]));
 }
 
 #[test]

@@ -26,7 +26,6 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::int_packer::IntDoublePacker;
-use rand::{Rng, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -46,7 +45,7 @@ use super::cegar::{
 use super::domain_abstractions::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstractions::domain_abstraction_factory::AbstractDistanceTable;
 use super::domain_abstractions::utils::{fact_is_hold, get_initial_state, make_prop_state_packer};
-use icaps26::Icaps26SplitSelection;
+use icaps26::{ArtifactMt19937, Icaps26SplitSelection};
 
 const EPSILON: f64 = 1e-9;
 
@@ -468,6 +467,7 @@ struct WorkingAbstraction {
     outgoing: Vec<Vec<usize>>,
     incoming: Vec<Vec<usize>>,
     self_loop_operator_ids: Vec<OperatorBitSet>,
+    icaps_self_loop_order: Option<Vec<Vec<usize>>>,
     transition_ids_by_key: Option<HashMap<TransitionKey, usize>>,
     propositional_refinement_counts: Vec<usize>,
     numeric_refinement_counts: Vec<usize>,
@@ -498,6 +498,7 @@ impl WorkingAbstraction {
             outgoing: vec![Vec::new()],
             incoming: vec![Vec::new()],
             self_loop_operator_ids: vec![OperatorBitSet::empty(operator_count)],
+            icaps_self_loop_order: (!index_transitions).then(|| vec![Vec::new()]),
             transition_ids_by_key: index_transitions.then(HashMap::new),
             propositional_refinement_counts,
             numeric_refinement_counts,
@@ -506,7 +507,11 @@ impl WorkingAbstraction {
 
     fn add_transition(&mut self, source: usize, op_id: usize, target: usize) {
         if source == target {
-            self.self_loop_operator_ids[source].insert(op_id);
+            if self.self_loop_operator_ids[source].insert(op_id)
+                && let Some(loop_order) = &mut self.icaps_self_loop_order
+            {
+                loop_order[source].push(op_id);
+            }
             return;
         }
         let key = TransitionKey {
@@ -745,7 +750,7 @@ struct CartesianSemantics<'task> {
     numeric_split_dependent_operators: Vec<OperatorBitSet>,
     numeric_integer_lattice: Vec<bool>,
     random_seed: Option<u64>,
-    icaps_random: Option<RefCell<SmallRng>>,
+    icaps_random: Option<RefCell<ArtifactMt19937>>,
     refinement_direction: CartesianRefinementDirection,
     split_selection_rank: Option<usize>,
     split_selection: CartesianSplitSelection,
@@ -915,11 +920,19 @@ impl<'task> CartesianSemantics<'task> {
                 }
             }
         }
-        let icaps_random = matches!(
+        let icaps_random = if matches!(
             config.split_selection,
             CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random)
-        )
-        .then(|| RefCell::new(SmallRng::seed_from_u64(config.random_seed.unwrap_or(2011))));
+        ) {
+            let seed = config.random_seed.unwrap_or(2011);
+            ensure!(
+                u32::try_from(seed).is_ok(),
+                "ICAPS artifact random seed exceeds 32 bits: {seed}"
+            );
+            Some(RefCell::new(ArtifactMt19937::new(seed as u32)))
+        } else {
+            None
+        };
         let initial_numeric = task.get_initial_numeric_state_values();
         let mut numeric_integer_lattice = initial_numeric
             .iter()
@@ -1000,7 +1013,7 @@ impl<'task> CartesianSemantics<'task> {
             .as_ref()
             .expect("ICAPS random selector must initialize its RNG")
             .borrow_mut()
-            .gen_range(0..candidate_count)
+            .uniform_index(candidate_count)
     }
 
     fn operator_depends_on_split(&self, op_id: usize, dimension: SplitDimension) -> bool {
@@ -3620,6 +3633,9 @@ fn select_refinement_split(
                 !candidates.is_empty(),
                 "cannot select a Cartesian refinement from an empty candidate set"
             );
+            if candidates.len() == 1 {
+                return Ok(candidates.pop().expect("checked nonempty split set"));
+            }
             let index = semantics.choose_icaps_random_index(candidates.len());
             Ok(candidates.swap_remove(index))
         }
@@ -4411,6 +4427,181 @@ fn split_deviation_candidates(
     Ok(candidates)
 }
 
+fn icaps26_retire_arc(working: &mut WorkingAbstraction, transition_id: usize) -> WorkingTransition {
+    assert!(
+        working.transition_ids_by_key.is_none(),
+        "ICAPS arc refinement requires unindexed transitions"
+    );
+    working.transitions[transition_id]
+        .take()
+        .expect("ICAPS adjacency references a removed transition")
+}
+
+fn icaps26_release_arc_slot(working: &mut WorkingAbstraction, transition_id: usize) {
+    assert!(
+        working.transitions[transition_id].is_none(),
+        "ICAPS retired transition slot is occupied"
+    );
+    working.free_transition_ids.push(transition_id);
+}
+
+fn icaps26_swap_remove_arc(adjacency: &mut Vec<usize>, transition_id: usize) {
+    let position = adjacency
+        .iter()
+        .position(|&candidate| candidate == transition_id)
+        .expect("ICAPS counterpart adjacency is missing an arc");
+    adjacency.swap_remove(position);
+}
+
+fn add_icaps26_propositional_loop_replacements(
+    working: &mut WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    op_id: usize,
+    var_id: usize,
+    old_state_id: usize,
+    new_state_id: usize,
+) {
+    let op = &semantics.task.get_operators()[op_id];
+    let pre = op
+        .preconditions()
+        .iter()
+        .find(|fact| fact.var() == var_id)
+        .map(ExplicitFact::value);
+    let effect = op
+        .effects()
+        .iter()
+        .find(|effect| effect.var_id() == var_id)
+        .map(|effect| effect.value());
+    let post = effect.or(pre);
+    let old_contains = |value: usize| {
+        working.states[old_state_id].propositions[var_id]
+            .binary_search(&(value as PropValueId))
+            .is_ok()
+    };
+
+    match (pre, post) {
+        (None, None) => {
+            working.add_transition(old_state_id, op_id, old_state_id);
+            working.add_transition(new_state_id, op_id, new_state_id);
+        }
+        (None, Some(post)) if !old_contains(post) => {
+            working.add_transition(old_state_id, op_id, new_state_id);
+            working.add_transition(new_state_id, op_id, new_state_id);
+        }
+        (None, Some(post)) => {
+            assert!(old_contains(post));
+            working.add_transition(old_state_id, op_id, old_state_id);
+            working.add_transition(new_state_id, op_id, old_state_id);
+        }
+        (Some(pre), Some(post)) if old_contains(pre) => {
+            if old_contains(post) {
+                working.add_transition(old_state_id, op_id, old_state_id);
+            } else {
+                working.add_transition(old_state_id, op_id, new_state_id);
+            }
+        }
+        (Some(_), Some(post)) => {
+            if old_contains(post) {
+                working.add_transition(new_state_id, op_id, old_state_id);
+            } else {
+                working.add_transition(new_state_id, op_id, new_state_id);
+            }
+        }
+        (Some(_), None) => unreachable!("a prevail condition defines its own post value"),
+    }
+}
+
+fn apply_icaps26_transition_split(
+    working: &mut WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    old_state_id: usize,
+    new_state_id: usize,
+    split_dimension: SplitDimension,
+    old_loop_order: Vec<usize>,
+) -> Result<()> {
+    let old_incoming = std::mem::take(&mut working.incoming[old_state_id]);
+    for transition_id in old_incoming {
+        let transition = icaps26_retire_arc(working, transition_id);
+        debug_assert_eq!(transition.target, old_state_id);
+        let source = transition.source;
+        for target in [old_state_id, new_state_id] {
+            if semantics.split_dimension_may_transition(
+                &working.states[source],
+                transition.concrete_op_id,
+                &working.states[target],
+                split_dimension,
+            )? {
+                working.add_transition(source, transition.concrete_op_id, target);
+            }
+        }
+        icaps26_swap_remove_arc(&mut working.outgoing[source], transition_id);
+        icaps26_release_arc_slot(working, transition_id);
+    }
+
+    let old_outgoing = std::mem::take(&mut working.outgoing[old_state_id]);
+    for transition_id in old_outgoing {
+        let transition = icaps26_retire_arc(working, transition_id);
+        debug_assert_eq!(transition.source, old_state_id);
+        let target = transition.target;
+        for source in [old_state_id, new_state_id] {
+            if semantics.operator_may_apply(&working.states[source], transition.concrete_op_id)?
+                && semantics.split_dimension_may_transition(
+                    &working.states[source],
+                    transition.concrete_op_id,
+                    &working.states[target],
+                    split_dimension,
+                )?
+            {
+                working.add_transition(source, transition.concrete_op_id, target);
+            }
+        }
+        icaps26_swap_remove_arc(&mut working.incoming[target], transition_id);
+        icaps26_release_arc_slot(working, transition_id);
+    }
+
+    for op_id in old_loop_order {
+        match split_dimension {
+            SplitDimension::Propositional(var_id) => {
+                add_icaps26_propositional_loop_replacements(
+                    working,
+                    semantics,
+                    op_id,
+                    var_id,
+                    old_state_id,
+                    new_state_id,
+                );
+            }
+            SplitDimension::Numeric(_) => {
+                let old_targets = semantics.parent_loop_source_to_split_children(
+                    &working.states[old_state_id],
+                    op_id,
+                    [&working.states[old_state_id], &working.states[new_state_id]],
+                    split_dimension,
+                )?;
+                let new_targets = semantics.parent_loop_source_to_split_children(
+                    &working.states[new_state_id],
+                    op_id,
+                    [&working.states[old_state_id], &working.states[new_state_id]],
+                    split_dimension,
+                )?;
+                if old_targets[0] {
+                    working.add_transition(old_state_id, op_id, old_state_id);
+                }
+                if new_targets[1] {
+                    working.add_transition(new_state_id, op_id, new_state_id);
+                }
+                if old_targets[1] {
+                    working.add_transition(old_state_id, op_id, new_state_id);
+                }
+                if new_targets[0] {
+                    working.add_transition(new_state_id, op_id, old_state_id);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn apply_split(
     working: &mut WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
@@ -4516,17 +4707,28 @@ fn apply_split(
     working.states.push(new_child);
     working.outgoing.push(Vec::new());
     working.incoming.push(Vec::new());
+    let icaps_old_loop_order = working.icaps_self_loop_order.as_mut().map(|loop_order| {
+        let old = std::mem::take(&mut loop_order[old_state_id]);
+        loop_order.push(Vec::new());
+        old
+    });
     let operator_count = semantics.task.get_operators().len();
     let old_self_loops = std::mem::replace(
         &mut working.self_loop_operator_ids[old_state_id],
         OperatorBitSet::empty(operator_count),
     );
     let split_dependent_operators = semantics.split_dependent_operators(split_dimension);
-    working.self_loop_operator_ids[old_state_id] =
-        old_self_loops.clone_without(split_dependent_operators);
-    working
-        .self_loop_operator_ids
-        .push(old_self_loops.clone_without(split_dependent_operators));
+    if icaps_old_loop_order.is_some() {
+        working
+            .self_loop_operator_ids
+            .push(OperatorBitSet::empty(operator_count));
+    } else {
+        working.self_loop_operator_ids[old_state_id] =
+            old_self_loops.clone_without(split_dependent_operators);
+        working
+            .self_loop_operator_ids
+            .push(old_self_loops.clone_without(split_dependent_operators));
+    }
     let new_leaf_nodes = match &working.hierarchy.nodes[leaf_node_id] {
         RefinementNode::Propositional {
             wanted_child,
@@ -4553,6 +4755,18 @@ fn apply_split(
     };
     working.leaf_node_ids[old_state_id] = old_leaf_node;
     working.leaf_node_ids.push(new_leaf_node);
+
+    if let Some(old_loop_order) = icaps_old_loop_order {
+        apply_icaps26_transition_split(
+            working,
+            semantics,
+            old_state_id,
+            new_state_id,
+            split_dimension,
+            old_loop_order,
+        )?;
+        return Ok(new_state_id);
+    }
 
     let old_transitions = working.remove_incident_transitions(old_state_id);
     for transition in old_transitions {
