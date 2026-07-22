@@ -28,8 +28,8 @@ from abstraction_parser import AbstractionParser
 
 
 PLANFORGE_REVISION = "5687d0b"
-ICAPS_ARTIFACT_REPO = "/proj/parground/users/x_mfrit/code/numeric-fd"
-ICAPS_ARTIFACT_REVISION = "ICAPS2021"
+ICAPS_ARTIFACT_REPO = "/proj/parground/users/x_mfrit/code/icaps26-cartesian-artifact/numeric-fast-downward"
+ICAPS_ARTIFACT_REVISION = "566c14d71b4700b617ef7e5c2ef7f125b673939d"
 SOCS_ARTIFACT_REPO = "/proj/parground/users/x_mfrit/code/numeric-fd-socs26"
 SOCS_ARTIFACT_REVISION = "f642e715316939fafd88f8705429980138f32ade"
 REPO = str(project.get_repo_base())
@@ -41,6 +41,7 @@ PLANNER_TIME = "1800s"
 PLANNER_MEMORY = "8G"
 EXTERNAL_WALL_TIME = 2700
 SLURM_ACCOUNT = "naiss2025-5-382"
+REPAIR_ONLY = os.environ.get("IPC26_0053_REPAIR") == "1"
 ENV = TetralithEnvironment(
     email="markus.fritzsche@liu.se",
     memory_per_cpu="10G",
@@ -74,10 +75,24 @@ RUST_ICAPS = OrderedDict(
 CPP_ICAPS = OrderedDict(
     (
         f"cpp-icaps-cartesian-{pick.lower()}",
-        ["--search", f"astar(cegar(pick={pick}))"],
+        ["--search", f"astar(cegar(subtasks=[original()],pick={pick},max_time=900))"],
     )
     for pick in ("MIN_UNWANTED", "MAX_UNWANTED", "RANDOM")
 )
+ICAPS_SUPPORTED_DOMAINS = {
+    "counters-sym_sas", "counters_sas", "delivery_sas", "depots-sym_sas",
+    "depots_sas", "drone_sas", "expedition_sas",
+    "farmland-ipc23-adapted-goal-factors_sas",
+    "fn-counters-small_instances_sas", "forestfire_sas",
+    "line-exchange-snp-ipc26", "minecraft-pogo-advanced_sas",
+    "minecraft-sword-advanced_sas", "mprime_sas", "pathwaysmetric_sas",
+    "petri-net-ipc26", "petri-net_sas", "plant-watering_sas",
+    "rover-ipc23_sas", "rover-unit_sas", "settlers-snp-ipc26", "sugar_sas",
+    "zenotravel-ipc23_sas", "zenotravel_sas",
+}
+MISSING_LMCUT = {
+    ("sailing-ipc23_sas", f"pfile{i}.sas") for i in (1, 2, 3, 4, 6, 7, 9, 18)
+}
 CPP_SOCS_NAME = "cpp-socs-canonical"
 CPP_SOCS_OPTIONS = [
     "--search",
@@ -150,8 +165,8 @@ def val_inputs(run, task):
     return None
 
 
-def add_val(run, task):
-    inputs = val_inputs(run, task)
+def add_val(run, task, inputs=None):
+    inputs = inputs or val_inputs(run, task)
     if not inputs:
         run.set_property("val_enabled", False)
         return
@@ -178,7 +193,12 @@ class CppRun(Run):
     def __init__(self, exp, algo, task, family):
         super().__init__(exp)
         is_sas = task.problem_file.suffix == ".sas"
-        if is_sas:
+        if family == "cpp-icaps" and is_sas:
+            inputs = val_inputs(self, task)
+            if not inputs:
+                raise RuntimeError(f"missing PDDL source for ICAPS artifact: {task}")
+            inputs = list(inputs)
+        elif is_sas:
             self.add_resource("task", task.problem_file, "task.sas", symlink=True)
             inputs = ["{task}"]
         else:
@@ -188,7 +208,7 @@ class CppRun(Run):
         driver = os.path.join(
             exp.path, algo.cached_revision.get_relative_exp_path("fast-downward.py")
         )
-        if family == "cpp-icaps" and not is_sas:
+        if family == "cpp-icaps" and not REPAIR_ONLY and not is_sas:
             # The immutable ICAPS 2021 artifact is distributed for its original
             # translated SAS fragment. Its Python-2-era translator cannot ingest
             # the newer PDDL benchmarks, so record these without executing it.
@@ -200,7 +220,7 @@ class CppRun(Run):
         else:
             command = [sys.executable, driver] + algo.driver_options + inputs + algo.component_options
         self.add_command("planner", command, wall_time_limit=EXTERNAL_WALL_TIME)
-        add_val(self, task)
+        add_val(self, task, tuple(inputs) if family == "cpp-icaps" else None)
         self.set_property("algorithm", algo.name)
         self.set_property("repo", algo.cached_revision.repo)
         self.set_property("local_revision", algo.cached_revision.local_rev)
@@ -250,7 +270,7 @@ class HybridExperiment(Experiment):
         algorithm.allowed = None if allowed is None else set(allowed)
         self.rust_algorithms[name] = algorithm
 
-    def add_cpp(self, name, repo, revision, options, family, group):
+    def add_cpp(self, name, repo, revision, options, family, group, allowed=None):
         cached = CachedFastDownwardRevision(
             self.revision_cache, repo, revision, ["release64", "-j6"]
         )
@@ -262,6 +282,7 @@ class HybridExperiment(Experiment):
         algorithm = FastDownwardAlgorithm(name, cached, driver, options)
         algorithm.family = family
         algorithm.group = group
+        algorithm.allowed = None if allowed is None else set(allowed)
         self.cpp_algorithms[name] = algorithm
 
     def revisions(self):
@@ -279,7 +300,8 @@ class HybridExperiment(Experiment):
                     self.add_run(HybridRustRun(self, algorithm, task))
         for algorithm in self.cpp_algorithms.values():
             for task in self.tasks(algorithm.group):
-                self.add_run(CppRun(self, algorithm, task, algorithm.family))
+                if algorithm.allowed is None or task_key(task) in algorithm.allowed:
+                    self.add_run(CppRun(self, algorithm, task, algorithm.family))
         self.set_property("algorithms", list(self.rust_algorithms) + list(self.cpp_algorithms))
         self.set_property("slurm_account", SLURM_ACCOUNT)
         super().build(**kwargs)
@@ -414,21 +436,33 @@ def print_info(exp, reruns):
 
 
 reruns, rerun_options = exact_bug_reruns()
-exp = HybridExperiment(environment=ENV)
+repair_path = HERE / "data" / "0053-repair" if REPAIR_ONLY else None
+exp = HybridExperiment(environment=ENV, path=repair_path)
 for root, names in ALL_SUITES:
     exp.add_suite(root, names, "all")
 for root, names in NEW_IPC26_SUITES:
     exp.add_suite(root, names, "new")
-for name, options in RUST_ICAPS.items():
-    exp.add_rust(name, options)
-for name, allowed in sorted(reruns.items()):
-    exp.add_rust(name, rerun_options[name], allowed)
-for name, options in CPP_ICAPS.items():
-    exp.add_cpp(name, ICAPS_ARTIFACT_REPO, ICAPS_ARTIFACT_REVISION, options, "cpp-icaps", "all")
-exp.add_cpp(
-    CPP_SOCS_NAME, SOCS_ARTIFACT_REPO, SOCS_ARTIFACT_REVISION,
-    CPP_SOCS_OPTIONS, "cpp-socs", "new",
-)
+if REPAIR_ONLY:
+    exp.add_rust("lmcut", BASE_RUST_OPTIONS + ["--search", "astar(lmcutnumeric())"], MISSING_LMCUT)
+    supported_tasks = {
+        task_key(task) for task in exp.tasks("all") if task.domain in ICAPS_SUPPORTED_DOMAINS
+    }
+    for name, options in CPP_ICAPS.items():
+        exp.add_cpp(
+            name, ICAPS_ARTIFACT_REPO, ICAPS_ARTIFACT_REVISION, options,
+            "cpp-icaps", "all", supported_tasks,
+        )
+else:
+    for name, options in RUST_ICAPS.items():
+        exp.add_rust(name, options)
+    for name, allowed in sorted(reruns.items()):
+        exp.add_rust(name, rerun_options[name], allowed)
+    for name, options in CPP_ICAPS.items():
+        exp.add_cpp(name, ICAPS_ARTIFACT_REPO, ICAPS_ARTIFACT_REVISION, options, "cpp-icaps", "all")
+    exp.add_cpp(
+        CPP_SOCS_NAME, SOCS_ARTIFACT_REPO, SOCS_ARTIFACT_REVISION,
+        CPP_SOCS_OPTIONS, "cpp-socs", "new",
+    )
 
 exp.add_parser(exp.EXITCODE_PARSER if hasattr(exp, "EXITCODE_PARSER") else project.ExitcodeParser())
 exp.add_parser(project.TranslatorParser())
