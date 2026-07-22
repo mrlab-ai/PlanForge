@@ -216,6 +216,27 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
             .unwrap()
             .is_infinite()
     );
+
+    let fractional = WorkingAbstraction::new(
+        StateRegion {
+            propositions: vec![vec![0, 1]].into(),
+            numeric: vec![Interval::new(0.0, 0.5, true, true)].into(),
+        },
+        0,
+    );
+    let fractional_split = Split::Numeric {
+        state_id: 0,
+        var_id: 0,
+        boundary: 0.25,
+        lower_includes_boundary: true,
+        witness_value: 0.0,
+        desired_contains_witness: true,
+        description: String::new(),
+    };
+    assert_eq!(
+        artifact_unwanted_score(&fractional, &fractional_split).unwrap(),
+        0.25
+    );
 }
 
 #[test]

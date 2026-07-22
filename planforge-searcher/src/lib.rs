@@ -49,10 +49,47 @@ pub mod recursive_config;
 pub use recursive_config::{HeuristicSpec, SearchSpec, parse_heuristic_spec, parse_search_spec};
 
 use abstraction_config::{
-    ComponentUse, build_components, require_only_component_sources, split_component_sources,
-    validate_scp_combinator_options,
+    ComponentUse, build_components, remaining_construction_time, require_only_component_sources,
+    split_component_sources, validate_scp_combinator_options,
 };
 use planforge_search::evaluation::Heuristic;
+
+#[derive(Debug)]
+pub enum HeuristicBuildError {
+    ConstructionTimeout,
+    Failure(String),
+}
+
+impl HeuristicBuildError {
+    pub fn into_io_error(self) -> std::io::Error {
+        match self {
+            Self::ConstructionTimeout => std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "shared abstraction construction deadline exceeded",
+            ),
+            Self::Failure(message) => std::io::Error::other(message),
+        }
+    }
+}
+
+impl std::fmt::Display for HeuristicBuildError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ConstructionTimeout => {
+                formatter.write_str("shared abstraction construction deadline exceeded")
+            }
+            Self::Failure(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for HeuristicBuildError {}
+
+impl From<String> for HeuristicBuildError {
+    fn from(message: String) -> Self {
+        Self::Failure(message)
+    }
+}
 
 fn cartesian_config_from_collection(
     config: &planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig,
@@ -87,7 +124,7 @@ fn build_max_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
     sources: &[planforge_search::config::ConfigCall],
     name: &str,
-) -> Result<Option<Box<dyn Heuristic + 'task>>, String> {
+) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
     let components = build_components(task, sources, ComponentUse::Standalone, None)?;
     let heuristic = MaxAbstractionHeuristic::new(Some(name.to_string()), components)
         .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
@@ -99,15 +136,17 @@ fn build_canonical_from_sources<'task>(
     sources: &[planforge_search::config::ConfigCall],
     name: &str,
     construction_deadline: Option<Instant>,
-) -> Result<Option<Box<dyn Heuristic + 'task>>, String> {
+) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
     let components = build_components(
         task,
         sources,
         ComponentUse::Standalone,
         construction_deadline,
     )?;
+    remaining_construction_time(construction_deadline)?;
     let heuristic = CanonicalAbstractionHeuristic::new(Some(name.to_string()), task, components)
         .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
+    remaining_construction_time(construction_deadline)?;
     Ok(Some(Box::new(heuristic)))
 }
 
@@ -118,11 +157,12 @@ fn build_scp_from_sources<'task>(
     options: &[planforge_search::config::ConfigArg],
     name: &str,
     construction_deadline: Option<Instant>,
-) -> Result<Option<Box<dyn Heuristic + 'task>>, String> {
+) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
     if sources.is_empty() {
         return Err(format!(
             "`{name}` requires at least one domain(...), cartesian(...), cartesian_collection(...), or pdb(...) source"
-        ));
+        )
+        .into());
     }
     validate_scp_combinator_options(options)?;
     let mut config = planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig::default();
@@ -133,12 +173,8 @@ fn build_scp_from_sources<'task>(
         ComponentUse::LabelCostPartitioning
     };
     let components = build_components(task, sources, component_use, construction_deadline)?;
-    if let Some(deadline) = construction_deadline {
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .filter(|remaining| !remaining.is_zero())
-            .ok_or_else(|| "shared abstraction construction deadline exceeded".to_string())?
-            .as_secs_f64();
+    if let Some(remaining) = remaining_construction_time(construction_deadline)? {
+        let remaining = remaining.as_secs_f64();
         config.table_construction_max_time = config.table_construction_max_time.min(remaining);
         config.initial_order_generation_max_time =
             config.initial_order_generation_max_time.min(remaining);
@@ -161,6 +197,7 @@ fn build_scp_from_sources<'task>(
         )
     }
     .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
+    remaining_construction_time(construction_deadline)?;
     Ok(Some(Box::new(heuristic)))
 }
 
@@ -169,7 +206,7 @@ fn build_scp_from_sources<'task>(
 pub fn build_heuristic_from_spec<'a>(
     spec: &HeuristicSpec,
     task: &'a dyn AbstractNumericTask,
-) -> Result<Option<Box<dyn Heuristic + 'a>>, String> {
+) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError> {
     build_heuristic_from_spec_internal(spec, task, None)
 }
 
@@ -177,7 +214,7 @@ pub fn build_heuristic_from_spec_with_task_ref<'a>(
     spec: &HeuristicSpec,
     task: &'a dyn AbstractNumericTask,
     sampling_task: TaskRef<'a>,
-) -> Result<Option<Box<dyn Heuristic + 'a>>, String> {
+) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError> {
     build_heuristic_from_spec_internal(spec, task, Some(sampling_task))
 }
 
@@ -185,17 +222,17 @@ fn build_heuristic_from_spec_internal<'a>(
     spec: &HeuristicSpec,
     task: &'a dyn AbstractNumericTask,
     sampling_task: Option<TaskRef<'a>>,
-) -> Result<Option<Box<dyn Heuristic + 'a>>, String> {
+) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError> {
     match spec.name.as_str() {
         "blind" => {
             if !spec.args.is_empty() {
-                return Err("`blind` does not accept arguments".to_string());
+                return Err("`blind` does not accept arguments".to_string().into());
             }
             Ok(None)
         }
         "ff" => {
             if !spec.args.is_empty() {
-                return Err("`ff` does not accept arguments".to_string());
+                return Err("`ff` does not accept arguments".to_string().into());
             }
             let h = planforge_search::evaluation::ff_heuristic::FfHeuristic::new(task)
                 .map_err(|e| format!("failed to construct ff heuristic: {e}"))?;
@@ -369,7 +406,8 @@ fn build_heuristic_from_spec_internal<'a>(
         "posthoc_optimization" | "pho" => Err(
             "posthoc_optimization requires the HiGHS LP solver, which is not compiled into \
              this build. Rebuild with `--features highs` (requires libclang) to enable it."
-                .to_string(),
+                .to_string()
+                .into(),
         ),
         "scp_online" | "scp_online_cartesian" => {
             let (component_sources, _) = split_component_sources(&spec.args)?;
@@ -575,7 +613,7 @@ fn build_heuristic_from_spec_internal<'a>(
                 .map_err(|e| format!("failed to build lmcutnumeric heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        other => Err(format!("unknown heuristic `{other}`")),
+        other => Err(format!("unknown heuristic `{other}`").into()),
     }
 }
 
@@ -759,7 +797,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
         {
             let heuristic_override =
                 build_heuristic_from_spec_with_task_ref(heuristic_spec, &*task, task.clone())
-                    .map_err(std::io::Error::other)?;
+                    .map_err(HeuristicBuildError::into_io_error)?;
 
             let time_limit = cli.max_time;
             let memory_limit = cli.max_memory;

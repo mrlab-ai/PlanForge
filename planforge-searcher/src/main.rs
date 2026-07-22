@@ -16,6 +16,12 @@ fn main() -> std::io::Result<()> {
     planforge_search::resource_limits::reserve_memory_padding(cli.max_memory)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
 
-    let result = run_internal(&cli)?;
-    std::process::exit(exit_code_for_search_status(&result.status));
+    match run_internal(&cli) {
+        Ok(result) => std::process::exit(exit_code_for_search_status(&result.status)),
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+            tracing::info!("Time limit reached during heuristic construction.");
+            std::process::exit(planforge_cli_utils::EXIT_TIMEOUT);
+        }
+        Err(error) => Err(error),
+    }
 }

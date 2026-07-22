@@ -26,6 +26,8 @@ use planforge_search::evaluation::pattern_databases::validate_restricted_task;
 use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
+use crate::HeuristicBuildError;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ComponentUse {
     Standalone,
@@ -195,9 +197,11 @@ pub(crate) fn build_components<'task>(
     sources: &[ConfigCall],
     component_use: ComponentUse,
     construction_deadline: Option<Instant>,
-) -> Result<Vec<AbstractionComponent<'task>>, String> {
+) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError> {
     if sources.is_empty() {
-        return Err("an abstraction collection requires at least one source".to_string());
+        return Err("an abstraction collection requires at least one source"
+            .to_string()
+            .into());
     }
 
     let construction_start = Instant::now();
@@ -341,14 +345,16 @@ pub(crate) fn build_components<'task>(
             other => {
                 return Err(format!(
                     "unknown abstraction source `{other}`; expected domain(...), cartesian(...), cartesian_collection(...), icaps26_cartesian(...), or pdb(...)"
-                ));
+                )
+                .into());
             }
         }
         if components.len() == before {
             return Err(format!(
                 "abstraction source `{}` produced no components",
                 source.name()
-            ));
+            )
+            .into());
         }
     }
 
@@ -392,7 +398,9 @@ pub(crate) fn build_components<'task>(
     Ok(components)
 }
 
-fn remaining_construction_time(deadline: Option<Instant>) -> Result<Option<Duration>, String> {
+pub(crate) fn remaining_construction_time(
+    deadline: Option<Instant>,
+) -> Result<Option<Duration>, HeuristicBuildError> {
     let Some(deadline) = deadline else {
         return Ok(None);
     };
@@ -400,7 +408,7 @@ fn remaining_construction_time(deadline: Option<Instant>) -> Result<Option<Durat
         .checked_duration_since(Instant::now())
         .filter(|remaining| !remaining.is_zero())
         .map(Some)
-        .ok_or_else(|| "shared abstraction construction deadline exceeded".to_string())
+        .ok_or(HeuristicBuildError::ConstructionTimeout)
 }
 
 fn cap_duration(limit: &mut Option<Duration>, remaining: Option<Duration>) {
@@ -643,9 +651,15 @@ fn format_config_value(value: &ConfigValue) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use planforge_search::config::{ConfigArg, ConfigCall, ConfigValue};
 
-    use super::{require_only_component_sources, split_component_sources};
+    use crate::HeuristicBuildError;
+
+    use super::{
+        remaining_construction_time, require_only_component_sources, split_component_sources,
+    };
 
     #[test]
     fn separates_component_sources_from_combinator_options() {
@@ -676,5 +690,12 @@ mod tests {
         )];
         let error = require_only_component_sources("canonical", &args).unwrap_err();
         assert!(error.contains("accepts only"));
+    }
+
+    #[test]
+    fn expired_shared_deadline_is_a_typed_timeout() {
+        let error = remaining_construction_time(Some(Instant::now())).unwrap_err();
+        assert!(matches!(error, HeuristicBuildError::ConstructionTimeout));
+        assert_eq!(error.into_io_error().kind(), std::io::ErrorKind::TimedOut);
     }
 }

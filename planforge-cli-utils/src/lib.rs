@@ -434,6 +434,7 @@ pub fn apply_process_limits(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProcessMemory {
     Resident(u64),
+    ResidentUnavailable,
     Exited,
 }
 
@@ -448,17 +449,16 @@ fn parse_process_memory(pid: u32, status: &str) -> std::io::Result<ProcessMemory
         return Ok(ProcessMemory::Exited);
     }
 
-    let rss_kib = status
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("VmRSS:").and_then(|value| {
-                value
-                    .split_whitespace()
-                    .next()
-                    .and_then(|part| part.parse::<u64>().ok())
-            })
+    let Some(rss_kib) = status.lines().find_map(|line| {
+        line.strip_prefix("VmRSS:").and_then(|value| {
+            value
+                .split_whitespace()
+                .next()
+                .and_then(|part| part.parse::<u64>().ok())
         })
-        .ok_or_else(|| std::io::Error::other(format!("VmRSS missing for live process {pid}")))?;
+    }) else {
+        return Ok(ProcessMemory::ResidentUnavailable);
+    };
     let rss_bytes = rss_kib
         .checked_mul(1024)
         .ok_or_else(|| std::io::Error::other(format!("VmRSS overflow for process {pid}")))?;
@@ -468,7 +468,33 @@ fn parse_process_memory(pid: u32, status: &str) -> std::io::Result<ProcessMemory
 #[cfg(target_os = "linux")]
 fn process_memory(pid: u32) -> std::io::Result<ProcessMemory> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
-    parse_process_memory(pid, &status)
+    match parse_process_memory(pid, &status)? {
+        ProcessMemory::ResidentUnavailable => {
+            let statm = std::fs::read_to_string(format!("/proc/{pid}/statm"))?;
+            parse_process_statm(pid, &statm)
+        }
+        memory => Ok(memory),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn parse_process_statm(pid: u32, statm: &str) -> std::io::Result<ProcessMemory> {
+    let resident_pages = statm
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| std::io::Error::other(format!("resident pages missing for process {pid}")))?
+        .parse::<u64>()
+        .map_err(|_| std::io::Error::other(format!("invalid resident pages for process {pid}")))?;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if page_size <= 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let rss_bytes = resident_pages
+        .checked_mul(page_size as u64)
+        .ok_or_else(|| {
+            std::io::Error::other(format!("resident memory overflow for process {pid}"))
+        })?;
+    Ok(ProcessMemory::Resident(rss_bytes))
 }
 
 #[cfg(target_os = "linux")]
@@ -491,6 +517,9 @@ pub fn wait_with_memory_limit(
             }
             Ok(ProcessMemory::Resident(_)) => consecutive_status_read_failures = 0,
             Ok(ProcessMemory::Exited) => return child.wait(),
+            Ok(ProcessMemory::ResidentUnavailable) => {
+                unreachable!("process_memory resolves unavailable VmRSS through statm")
+            }
             Err(error) => {
                 if let Some(status) = child.try_wait()? {
                     return Ok(status);
@@ -508,8 +537,8 @@ pub fn wait_with_memory_limit(
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::{
-        ProcessMemory, effective_rss_limit, parse_process_memory, process_memory,
-        wait_with_memory_limit,
+        ProcessMemory, effective_rss_limit, parse_process_memory, parse_process_statm,
+        process_memory, wait_with_memory_limit,
     };
     use std::os::unix::process::ExitStatusExt;
     use std::process::Command;
@@ -532,10 +561,20 @@ mod tests {
     }
 
     #[test]
-    fn rejects_live_process_without_rss() {
+    fn reports_live_process_without_rss_for_statm_fallback() {
         let status = "Name:\ttest\nState:\tR (running)\nThreads:\t1\n";
-        let error = parse_process_memory(42, status).unwrap_err();
-        assert_eq!(error.to_string(), "VmRSS missing for live process 42");
+        assert_eq!(
+            parse_process_memory(42, status).unwrap(),
+            ProcessMemory::ResidentUnavailable
+        );
+    }
+
+    #[test]
+    fn parses_resident_pages_from_statm() {
+        assert!(matches!(
+            parse_process_statm(42, "100 25 0 0 0 0 0").unwrap(),
+            ProcessMemory::Resident(bytes) if bytes > 0
+        ));
     }
 
     #[test]

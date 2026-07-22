@@ -353,7 +353,7 @@ fn build_heuristic_from_spec<'a>(
     sampling_task: TaskRef<'a>,
 ) -> std::io::Result<Option<Box<dyn planforge_search::evaluation::Heuristic + 'a>>> {
     planforge_searcher::build_heuristic_from_spec_with_task_ref(spec, task_ref, sampling_task)
-        .map_err(std::io::Error::other)
+        .map_err(planforge_searcher::HeuristicBuildError::into_io_error)
 }
 
 fn build_successor_generator(task: &dyn AbstractNumericTask) -> SuccessorTree {

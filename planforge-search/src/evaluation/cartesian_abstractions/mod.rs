@@ -2921,12 +2921,20 @@ fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Split) -> Resul
             }
             let current_values = integer_interval_cardinality(current);
             let desired_values = integer_interval_cardinality(desired);
-            let unwanted = current_values - desired_values;
+            let unwanted_values = current_values - desired_values;
             ensure!(
-                unwanted.is_sign_positive() && unwanted != 0.0,
-                "ICAPS 2026 selector received a numeric split with no unwanted values"
+                unwanted_values >= 0.0,
+                "ICAPS 2026 desired interval contains more integer values than its parent"
             );
-            Ok(unwanted)
+            let unwanted_width = (current.upper - current.lower) - (desired.upper - desired.lower);
+            ensure!(
+                unwanted_width >= 0.0,
+                "ICAPS 2026 desired interval is wider than its parent"
+            );
+            // Integer cardinality exactly preserves the artifact selector on
+            // integer tasks. Width also gives strict fractional SNP splits a
+            // meaningful score instead of treating them as impossible.
+            Ok(unwanted_values.max(unwanted_width))
         }
     }
 }
