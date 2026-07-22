@@ -334,6 +334,18 @@ class HybridParser(Parser):
         self.add_function(parse_hybrid, file="driver.log")
 
 
+def parse_rust_only(content, props):
+    if props.get("planner_family") == "rust":
+        parser_globals = project.PlanForgeParser.__init__.__globals__
+        parser_globals["_parse_planforge"](content, props)
+
+
+class RustParser(Parser):
+    def __init__(self):
+        super().__init__()
+        self.add_function(parse_rust_only, file="driver.log")
+
+
 def merge_0052(exp):
     current_path = Path(exp.eval_dir) / "properties"
     current = json.loads(current_path.read_text())
@@ -408,12 +420,12 @@ exp.add_cpp(
     CPP_SOCS_OPTIONS, "cpp-socs", "new",
 )
 
-exp.add_parser(project.PlanForgeParser())
 exp.add_parser(exp.EXITCODE_PARSER if hasattr(exp, "EXITCODE_PARSER") else project.ExitcodeParser())
 exp.add_parser(project.TranslatorParser())
 exp.add_parser(project.SingleSearchParser())
 exp.add_parser(project.PlannerParser())
 exp.add_parser(AbstractionParser())
+exp.add_parser(RustParser())
 exp.add_parser(HybridParser())
 
 exp.add_step("info", print_info, exp, reruns)
