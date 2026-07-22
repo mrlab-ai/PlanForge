@@ -301,8 +301,18 @@ def read_file(name):
         return ""
 
 
+def planner_family(props):
+    family = props.get("planner_family")
+    if family:
+        return family
+    try:
+        return json.loads(Path("static-properties").read_text()).get("planner_family")
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def parse_hybrid(_content, props):
-    if props.get("planner_family") == "cpp-icaps":
+    if planner_family(props) == "cpp-icaps":
         text = read_file("run.log") + "\n" + read_file("run.err")
         if props.get("planner_exit_code") == 3 or any(x.lower() in text.lower() for x in UNSUPPORTED_MARKERS):
             props["unsupported"] = 1
@@ -335,7 +345,7 @@ class HybridParser(Parser):
 
 
 def parse_rust_only(content, props):
-    if props.get("planner_family") == "rust":
+    if planner_family(props) == "rust":
         parser_globals = project.PlanForgeParser.__init__.__globals__
         parser_globals["_parse_planforge"](content, props)
 
