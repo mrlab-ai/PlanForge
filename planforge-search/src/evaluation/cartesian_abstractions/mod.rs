@@ -497,7 +497,11 @@ impl WorkingAbstraction {
             free_transition_ids: Vec::new(),
             outgoing: vec![Vec::new()],
             incoming: vec![Vec::new()],
-            self_loop_operator_ids: vec![OperatorBitSet::empty(operator_count)],
+            self_loop_operator_ids: vec![OperatorBitSet::empty(if index_transitions {
+                operator_count
+            } else {
+                0
+            })],
             icaps_self_loop_order: (!index_transitions).then(|| vec![Vec::new()]),
             transition_ids_by_key: index_transitions.then(HashMap::new),
             propositional_refinement_counts,
@@ -507,10 +511,14 @@ impl WorkingAbstraction {
 
     fn add_transition(&mut self, source: usize, op_id: usize, target: usize) {
         if source == target {
-            if self.self_loop_operator_ids[source].insert(op_id)
-                && let Some(loop_order) = &mut self.icaps_self_loop_order
-            {
+            if let Some(loop_order) = &mut self.icaps_self_loop_order {
+                debug_assert!(
+                    !loop_order[source].contains(&op_id),
+                    "ICAPS Cartesian refinement generated a duplicate self-loop"
+                );
                 loop_order[source].push(op_id);
+            } else {
+                self.self_loop_operator_ids[source].insert(op_id);
             }
             return;
         }
@@ -625,7 +633,11 @@ impl WorkingAbstraction {
 
     fn contains_transition(&self, key: TransitionKey) -> bool {
         if key.source == key.target {
-            self.self_loop_operator_ids[key.source].contains(key.concrete_op_id)
+            if let Some(loop_order) = &self.icaps_self_loop_order {
+                loop_order[key.source].contains(&key.concrete_op_id)
+            } else {
+                self.self_loop_operator_ids[key.source].contains(key.concrete_op_id)
+            }
         } else if let Some(transition_ids_by_key) = &self.transition_ids_by_key {
             transition_ids_by_key.contains_key(&key)
         } else {
@@ -2364,18 +2376,26 @@ struct ShortestPaths {
 #[derive(Debug)]
 struct Icaps26AbstractSearch {
     h_values: Vec<f64>,
+    g_values: Vec<f64>,
+    predecessors: Vec<Option<TransitionKey>>,
+    open: BinaryHeap<(Reverse<NotNan<f64>>, usize, usize)>,
 }
 
 impl Icaps26AbstractSearch {
     fn trivial() -> Self {
         Self {
             h_values: vec![0.0],
+            g_values: vec![f64::INFINITY],
+            predecessors: vec![None],
+            open: BinaryHeap::new(),
         }
     }
 
     fn inherit_split_state(&mut self, split_state_id: usize, new_state_id: usize) {
         assert_eq!(new_state_id, self.h_values.len());
         self.h_values.push(self.h_values[split_state_id]);
+        self.g_values.push(f64::INFINITY);
+        self.predecessors.push(None);
     }
 
     fn find_plan(
@@ -2387,20 +2407,22 @@ impl Icaps26AbstractSearch {
     ) -> Result<Option<Vec<TransitionKey>>> {
         ensure!(self.h_values.len() == working.states.len());
         ensure!(is_goal.len() == working.states.len());
-        let mut g_values = vec![f64::INFINITY; working.states.len()];
-        let mut predecessors = vec![None; working.states.len()];
-        let mut open = BinaryHeap::new();
+        ensure!(self.g_values.len() == working.states.len());
+        ensure!(self.predecessors.len() == working.states.len());
+        self.g_values.fill(f64::INFINITY);
+        self.predecessors.fill(None);
+        self.open.clear();
+        self.g_values[initial_state] = 0.0;
         let mut sequence = 0usize;
-        g_values[initial_state] = 0.0;
-        open.push((
+        self.open.push((
             Reverse(NotNan::new(self.h_values[initial_state]).unwrap()),
             sequence,
             initial_state,
         ));
 
         let mut abstract_goal = None;
-        while let Some((Reverse(old_f), _, state_id)) = open.pop() {
-            let current_f = g_values[state_id] + self.h_values[state_id];
+        while let Some((Reverse(old_f), _, state_id)) = self.open.pop() {
+            let current_f = self.g_values[state_id] + self.h_values[state_id];
             if current_f + EPSILON < old_f.into_inner() {
                 continue;
             }
@@ -2411,10 +2433,10 @@ impl Icaps26AbstractSearch {
             for &transition_id in &working.outgoing[state_id] {
                 let transition = working.transition(transition_id);
                 let candidate =
-                    g_values[state_id] + semantics.operator_costs[transition.concrete_op_id];
-                if candidate < g_values[transition.target] {
-                    g_values[transition.target] = candidate;
-                    predecessors[transition.target] = Some(TransitionKey {
+                    self.g_values[state_id] + semantics.operator_costs[transition.concrete_op_id];
+                if candidate < self.g_values[transition.target] {
+                    self.g_values[transition.target] = candidate;
+                    self.predecessors[transition.target] = Some(TransitionKey {
                         source: transition.source,
                         concrete_op_id: transition.concrete_op_id,
                         target: transition.target,
@@ -2423,7 +2445,7 @@ impl Icaps26AbstractSearch {
                         .checked_add(1)
                         .context("ICAPS Cartesian abstract-search insertion counter overflow")?;
                     let f = candidate + self.h_values[transition.target];
-                    open.push((
+                    self.open.push((
                         Reverse(NotNan::new(f).context(
                             "ICAPS Cartesian abstract search produced a non-finite key",
                         )?),
@@ -2439,7 +2461,7 @@ impl Icaps26AbstractSearch {
         };
         let mut plan = Vec::new();
         while state_id != initial_state {
-            let transition = predecessors[state_id].with_context(|| {
+            let transition = self.predecessors[state_id].with_context(|| {
                 format!(
                     "ICAPS Cartesian abstract goal state {state_id} has no predecessor from initial state {initial_state}"
                 )
@@ -4712,23 +4734,25 @@ fn apply_split(
         loop_order.push(Vec::new());
         old
     });
-    let operator_count = semantics.task.get_operators().len();
-    let old_self_loops = std::mem::replace(
-        &mut working.self_loop_operator_ids[old_state_id],
-        OperatorBitSet::empty(operator_count),
-    );
-    let split_dependent_operators = semantics.split_dependent_operators(split_dimension);
-    if icaps_old_loop_order.is_some() {
+    let old_self_loops = if icaps_old_loop_order.is_some() {
         working
             .self_loop_operator_ids
-            .push(OperatorBitSet::empty(operator_count));
+            .push(OperatorBitSet::empty(0));
+        None
     } else {
+        let operator_count = semantics.task.get_operators().len();
+        let old_self_loops = std::mem::replace(
+            &mut working.self_loop_operator_ids[old_state_id],
+            OperatorBitSet::empty(operator_count),
+        );
+        let split_dependent_operators = semantics.split_dependent_operators(split_dimension);
         working.self_loop_operator_ids[old_state_id] =
             old_self_loops.clone_without(split_dependent_operators);
         working
             .self_loop_operator_ids
             .push(old_self_loops.clone_without(split_dependent_operators));
-    }
+        Some(old_self_loops)
+    };
     let new_leaf_nodes = match &working.hierarchy.nodes[leaf_node_id] {
         RefinementNode::Propositional {
             wanted_child,
@@ -4768,6 +4792,8 @@ fn apply_split(
         return Ok(new_state_id);
     }
 
+    let old_self_loops = old_self_loops.expect("native Cartesian split lost its self loops");
+    let split_dependent_operators = semantics.split_dependent_operators(split_dimension);
     let old_transitions = working.remove_incident_transitions(old_state_id);
     for transition in old_transitions {
         debug_assert!(

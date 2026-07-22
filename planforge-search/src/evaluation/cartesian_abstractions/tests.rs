@@ -412,16 +412,27 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
             })
             .collect::<Vec<_>>();
         transitions.sort_unstable();
-        let loops = working
-            .self_loop_operator_ids
-            .iter()
-            .map(|operators| operators.intersection_iter(operators).collect::<Vec<_>>())
-            .collect::<Vec<_>>();
+        let loops = if let Some(loop_order) = &working.icaps_self_loop_order {
+            loop_order.clone()
+        } else {
+            working
+                .self_loop_operator_ids
+                .iter()
+                .map(|operators| operators.intersection_iter(operators).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        };
         (transitions, loops)
     };
     assert_eq!(snapshot(&indexed), snapshot(&icaps));
     assert!(indexed.transition_ids_by_key.is_some());
     assert!(icaps.transition_ids_by_key.is_none());
+    assert!(
+        icaps
+            .self_loop_operator_ids
+            .iter()
+            .all(|operators| operators.words.is_empty()),
+        "ICAPS abstractions must not duplicate ordered loops in bitsets"
+    );
 }
 
 #[test]
