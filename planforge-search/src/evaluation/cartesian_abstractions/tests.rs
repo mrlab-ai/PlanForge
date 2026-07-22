@@ -311,6 +311,31 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
     semantics.split_selection = config.split_selection;
     let selected = select_refinement_split(&working, &semantics, candidates, 0).unwrap();
     assert!(matches!(selected, Split::Propositional { wanted, .. } if wanted.len() == 1));
+
+    config.split_selection = CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random);
+    config.random_seed = Some(2011);
+    let random_a = CartesianSemantics::new(&task, &config).unwrap();
+    let random_b = CartesianSemantics::new(&task, &config).unwrap();
+    let draw = |semantics: &CartesianSemantics<'_>| {
+        (0..32)
+            .map(|_| {
+                let selected = select_refinement_split(
+                    &working,
+                    semantics,
+                    vec![split(vec![1]), split(vec![1, 2, 3])],
+                    0,
+                )
+                .unwrap();
+                match selected {
+                    Split::Propositional { wanted, .. } => wanted.len(),
+                    Split::Numeric { .. } => unreachable!(),
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    let sequence = draw(&random_a);
+    assert_eq!(sequence, draw(&random_b));
+    assert!(sequence.contains(&1) && sequence.contains(&3));
 }
 
 #[test]

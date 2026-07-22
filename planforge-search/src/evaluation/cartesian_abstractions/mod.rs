@@ -11,6 +11,7 @@ pub mod icaps26;
 #[cfg(test)]
 mod tests;
 
+use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -25,6 +26,7 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::int_packer::IntDoublePacker;
+use rand::{Rng, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -704,6 +706,7 @@ struct CartesianSemantics<'task> {
     prop_split_dependent_operators: Vec<OperatorBitSet>,
     numeric_split_dependent_operators: Vec<OperatorBitSet>,
     random_seed: Option<u64>,
+    icaps_random: Option<RefCell<SmallRng>>,
     refinement_direction: CartesianRefinementDirection,
     split_selection_rank: Option<usize>,
     split_selection: CartesianSplitSelection,
@@ -873,6 +876,11 @@ impl<'task> CartesianSemantics<'task> {
                 }
             }
         }
+        let icaps_random = matches!(
+            config.split_selection,
+            CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random)
+        )
+        .then(|| RefCell::new(SmallRng::seed_from_u64(config.random_seed.unwrap_or(2011))));
         Ok(Self {
             task,
             comparison_tree_by_prop_var,
@@ -882,6 +890,7 @@ impl<'task> CartesianSemantics<'task> {
             prop_split_dependent_operators,
             numeric_split_dependent_operators,
             random_seed: config.random_seed,
+            icaps_random,
             refinement_direction: config.refinement_direction,
             split_selection_rank: config.split_selection_rank,
             split_selection: config.split_selection,
@@ -925,6 +934,15 @@ impl<'task> CartesianSemantics<'task> {
             .map(|split| split_choice_key(self, split))
             .collect::<Vec<_>>();
         self.choose_keyed_index(&keys, tag)
+    }
+
+    fn choose_icaps_random_index(&self, candidate_count: usize) -> usize {
+        debug_assert!(candidate_count > 0, "cannot choose from an empty split set");
+        self.icaps_random
+            .as_ref()
+            .expect("ICAPS random selector must initialize its RNG")
+            .borrow_mut()
+            .gen_range(0..candidate_count)
     }
 
     fn operator_depends_on_split(&self, op_id: usize, dimension: SplitDimension) -> bool {
@@ -2980,7 +2998,7 @@ fn select_refinement_split(
                 !candidates.is_empty(),
                 "cannot select a Cartesian refinement from an empty candidate set"
             );
-            let index = semantics.choose_split_index(&candidates, tag);
+            let index = semantics.choose_icaps_random_index(candidates.len());
             Ok(candidates.swap_remove(index))
         }
         CartesianSplitSelection::Icaps26(policy) => {
