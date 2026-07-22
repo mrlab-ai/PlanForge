@@ -10,13 +10,14 @@ use planforge_sas::numeric_task::{
     NumericRootTask, NumericType, NumericVariable, Operator,
 };
 
+use super::icaps26::Icaps26SplitSelection;
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
-    CartesianSemantics, CartesianStopReason, FlawKind, OperatorBitSet, RefinementNode,
-    ShortestPaths, Split, StateRegion, TransitionKey, WorkingAbstraction, artifact_unwanted_score,
-    numeric_split_choice_key, push_unique_split, retain_min_growth_splits,
-    select_next_cartesian_collection_goal,
+    CartesianSemantics, CartesianSplitSelection, CartesianStopReason, FlawKind, OperatorBitSet,
+    RefinementNode, ShortestPaths, Split, StateRegion, TransitionKey, WorkingAbstraction,
+    artifact_unwanted_score, numeric_split_choice_key, push_unique_split, retain_min_growth_splits,
+    select_next_cartesian_collection_goal, select_refinement_split,
 };
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use crate::evaluation::domain_abstractions::comparison_expression::Interval;
@@ -237,6 +238,79 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
         artifact_unwanted_score(&fractional, &fractional_split).unwrap(),
         0.25
     );
+
+    let open_integer_interval = WorkingAbstraction::new(
+        StateRegion {
+            propositions: vec![vec![0, 1]].into(),
+            numeric: vec![Interval::new(5.0, 10.0, false, true)].into(),
+        },
+        0,
+    );
+    let open_integer_split = Split::Numeric {
+        state_id: 0,
+        var_id: 0,
+        boundary: 7.0,
+        lower_includes_boundary: false,
+        witness_value: 6.0,
+        desired_contains_witness: false,
+        description: String::new(),
+    };
+    assert_eq!(
+        artifact_unwanted_score(&open_integer_interval, &open_integer_split).unwrap(),
+        1.0
+    );
+}
+
+#[test]
+fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![ExplicitVariable::new(
+            4,
+            "location".into(),
+            vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            None,
+            3,
+        )],
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 3),
+    );
+    let mut config = CartesianAbstractionConfig {
+        split_selection: CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MinUnwanted),
+        ..CartesianAbstractionConfig::default()
+    };
+    let mut semantics = CartesianSemantics::new(&task, &config).unwrap();
+    let working = WorkingAbstraction::new(
+        StateRegion {
+            propositions: vec![vec![0, 1, 2, 3]].into(),
+            numeric: semantics.trivial_region().unwrap().numeric,
+        },
+        0,
+    );
+    let split = |wanted| Split::Propositional {
+        state_id: 0,
+        var_id: 0,
+        wanted,
+        witness_value: 0,
+        description: String::new(),
+    };
+    let candidates = vec![split(vec![1]), split(vec![1, 2, 3])];
+    let selected = select_refinement_split(&working, &semantics, candidates.clone(), 0).unwrap();
+    assert!(matches!(selected, Split::Propositional { wanted, .. } if wanted.len() == 3));
+
+    config.split_selection = CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MaxUnwanted);
+    semantics.split_selection = config.split_selection;
+    let selected = select_refinement_split(&working, &semantics, candidates, 0).unwrap();
+    assert!(matches!(selected, Split::Propositional { wanted, .. } if wanted.len() == 1));
 }
 
 #[test]

@@ -892,8 +892,14 @@ impl NumericRootTask {
     }
 
     pub fn from_file(file_name: impl AsRef<std::path::Path>) -> Self {
-        let file_content = std::fs::read_to_string(file_name).unwrap();
-        Self::from_str(&file_content)
+        Self::try_from_file(file_name).expect("failed to read numeric SAS task")
+    }
+
+    pub fn try_from_file(file_name: impl AsRef<std::path::Path>) -> Result<Self, String> {
+        let path = file_name.as_ref();
+        let file_content = std::fs::read_to_string(path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        Self::try_from_str(&file_content)
     }
 
     /// Parse a `NumericRootTask` from the preprocessor's text format, returning a

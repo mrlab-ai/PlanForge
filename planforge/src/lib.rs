@@ -295,7 +295,8 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         )
     } else {
         let path = cli.inputs[0].clone();
-        (NumericRootTask::from_file(&path), path)
+        let task = NumericRootTask::try_from_file(&path).map_err(std::io::Error::other)?;
+        (task, path)
     };
     if cli.restrict_task {
         let original_numeric_count = task.numeric_variables().len();

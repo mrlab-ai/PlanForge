@@ -743,7 +743,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let sas_file = &cli.sas_file;
 
     let start_time = std::time::Instant::now();
-    let mut task = NumericRootTask::from_file(sas_file);
+    let mut task = NumericRootTask::try_from_file(sas_file).map_err(std::io::Error::other)?;
     if cli.restrict_task {
         let original_numeric_count = task.numeric_variables().len();
         if let Some(restricted_task) = build_restricted_task(&task).map_err(|err| {

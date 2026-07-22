@@ -2767,7 +2767,7 @@ fn replay_optimal_abstract_trace(
                 !failed_goals.is_empty(),
                 "abstract goal contains a concrete non-goal without a failed goal fact"
             );
-            let mut candidates = failed_goals
+            let candidates = failed_goals
                 .iter()
                 .map(|goal| {
                     split_failed_fact(
@@ -2781,9 +2781,12 @@ fn replay_optimal_abstract_trace(
                     )
                 })
                 .collect::<Result<Vec<_>>>()?;
-            retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
-            let index = semantics.choose_split_index(&candidates, 0x474F_414C);
-            return Ok(PlanCheck::Refine(candidates.swap_remove(index)));
+            return Ok(PlanCheck::Refine(select_refinement_split(
+                working,
+                semantics,
+                candidates,
+                0x474F_414C,
+            )?));
         }
 
         ensure!(
@@ -2805,7 +2808,7 @@ fn replay_optimal_abstract_trace(
             .filter(|fact| !fact_is_hold(fact, state_packer, &propositions))
             .collect::<Vec<_>>();
         if !failed_preconditions.is_empty() {
-            let mut candidates = failed_preconditions
+            let candidates = failed_preconditions
                 .iter()
                 .map(|failed| {
                     split_failed_fact(
@@ -2819,9 +2822,12 @@ fn replay_optimal_abstract_trace(
                     )
                 })
                 .collect::<Result<Vec<_>>>()?;
-            retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
-            let index = semantics.choose_split_index(&candidates, 0x5052_4543);
-            return Ok(PlanCheck::Refine(candidates.swap_remove(index)));
+            return Ok(PlanCheck::Refine(select_refinement_split(
+                working,
+                semantics,
+                candidates,
+                0x5052_4543,
+            )?));
         }
 
         let source_numeric = numeric.clone();
@@ -2931,10 +2937,15 @@ fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Split) -> Resul
                 unwanted_width >= 0.0,
                 "ICAPS 2026 desired interval is wider than its parent"
             );
-            // Integer cardinality exactly preserves the artifact selector on
-            // integer tasks. Width also gives strict fractional SNP splits a
-            // meaningful score instead of treating them as impossible.
-            Ok(unwanted_values.max(unwanted_width))
+            // Preserve the artifact's integer-task ordering whenever the
+            // excluded child contains an integer value. Strict fractional
+            // splits can exclude no integer while still having positive
+            // width; only that previously unsupported case uses the width.
+            Ok(if unwanted_values > 0.0 {
+                unwanted_values
+            } else {
+                unwanted_width
+            })
         }
     }
 }

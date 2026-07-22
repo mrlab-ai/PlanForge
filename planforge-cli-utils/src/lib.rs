@@ -588,4 +588,16 @@ mod tests {
         let status = wait_with_memory_limit(&mut child, 1).unwrap();
         assert_eq!(status.signal(), Some(libc::SIGKILL));
     }
+
+    #[test]
+    fn handles_process_status_races_for_quickly_exiting_children() {
+        for _ in 0..100 {
+            let mut child = Command::new("true").spawn().unwrap();
+            assert!(
+                wait_with_memory_limit(&mut child, u64::MAX)
+                    .unwrap()
+                    .success()
+            );
+        }
+    }
 }
