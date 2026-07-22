@@ -836,3 +836,17 @@ fn unknown_heuristic_name_propagates() {
     let h = astar_heuristic("astar(does_not_exist)");
     assert_eq!(h.name, "does_not_exist");
 }
+
+#[test]
+fn contains_call_finds_only_nested_icaps_cartesian_sources() {
+    let icaps = parse_search_spec(
+        "astar(scp(cartesian_collection(source=icaps26_cartesian(pick=min_unwanted))))",
+    )
+    .unwrap();
+    assert!(icaps.contains_call("icaps26_cartesian"));
+
+    let native =
+        parse_search_spec("astar(scp(cartesian_collection(source=cartesian(max_states=1000))))")
+            .unwrap();
+    assert!(!native.contains_call("icaps26_cartesian"));
+}

@@ -19,7 +19,9 @@ use planforge_search::evaluation::domain_abstractions::domain_abstraction_collec
 };
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
-use planforge_search::task_restriction::build_restricted_task;
+use planforge_search::task_restriction::{
+    build_icaps26_restricted_task, build_restricted_task,
+};
 #[cfg(feature = "highs")]
 use planforge_search::evaluation::domain_abstractions::posthoc_optimization_heuristic::PostHocOptimizationHeuristic;
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
@@ -746,7 +748,12 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let mut task = NumericRootTask::try_from_file(sas_file).map_err(std::io::Error::other)?;
     if cli.restrict_task {
         let original_numeric_count = task.numeric_variables().len();
-        if let Some(restricted_task) = build_restricted_task(&task).map_err(|err| {
+        let restricted_task = if cli.search.contains_call("icaps26_cartesian") {
+            build_icaps26_restricted_task(&task)
+        } else {
+            build_restricted_task(&task)
+        };
+        if let Some(restricted_task) = restricted_task.map_err(|err| {
             std::io::Error::other(format!("failed to build restricted task: {err:#}"))
         })? {
             task = restricted_task.into_task();

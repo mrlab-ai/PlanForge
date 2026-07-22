@@ -130,6 +130,19 @@ pub fn release_padding() {
     }
 }
 
+/// Releases process-local emergency memory after an allocation failure.
+///
+/// The allocator retries the failed allocation once. CEGAR observes the
+/// missing padding at its next resource poll and finalizes its partial result.
+pub fn release_padding_for_oom() -> bool {
+    let Ok(mut padding) = padding_cell().lock() else {
+        return false;
+    };
+    let was_reserved = padding.is_some();
+    *padding = None;
+    was_reserved
+}
+
 fn current_rss_bytes() -> Option<u64> {
     #[cfg(target_os = "linux")]
     {

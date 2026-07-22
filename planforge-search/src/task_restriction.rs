@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::{Context, Result, bail, ensure};
-use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom};
+use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable,
     Metric, NumericRootTask, NumericType, NumericVariable, Operator,
@@ -253,6 +253,209 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
     build_task(task, &initial_numeric, &root_exprs, &numeric_var_ids)
 }
 
+/// Builds the restricted representation consumed by the ICAPS 2026 Cartesian
+/// artifact: regular variables remain Cartesian dimensions and unary affine
+/// conditions become thresholds on those variables.
+pub fn build_icaps26_restricted_task(
+    task: &dyn AbstractNumericTask,
+) -> Result<Option<RestrictedTask>> {
+    if task.comparison_axioms().is_empty() {
+        validate_restricted_task(task).map_err(anyhow::Error::msg)?;
+        info!("ICAPS 2026 restricted task: no numeric conditions to normalize");
+        return Ok(None);
+    }
+
+    let initial_numeric = task.get_initial_numeric_state_values().to_vec();
+    let num_original_numeric = task.numeric_variables().len();
+    let mut linearizer = Linearizer {
+        task,
+        assignment_lookup: build_assignment_lookup(task),
+        initial_numeric: &initial_numeric,
+        memo: vec![None; num_original_numeric],
+        visiting: vec![false; num_original_numeric],
+    };
+    let mut used_comparison_vars = BTreeSet::new();
+    for operator in task.get_operators() {
+        used_comparison_vars.extend(operator.preconditions().iter().map(ExplicitFact::var));
+    }
+    used_comparison_vars
+        .extend((0..task.get_num_goals()).map(|goal_id| task.get_goal_fact(goal_id).var()));
+    for axiom in task.axioms() {
+        used_comparison_vars.extend(axiom.conditions().iter().map(ExplicitFact::var));
+    }
+
+    let mut comparisons = Vec::new();
+    for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
+        if !used_comparison_vars.contains(&comparison_axiom.get_affected_var_id()) {
+            continue;
+        }
+        let difference = linearizer
+            .linearize(comparison_axiom.get_left_var_id())?
+            .sub(linearizer.linearize(comparison_axiom.get_right_var_id())?);
+        comparisons.push((comparison_axiom_id, difference));
+    }
+
+    let retained_original_ids = task
+        .numeric_variables()
+        .iter()
+        .enumerate()
+        .filter_map(|(var_id, variable)| {
+            (!matches!(variable.get_type(), NumericType::Derived)).then_some(var_id)
+        })
+        .collect::<Vec<_>>();
+    let mut original_to_transformed = vec![None; num_original_numeric];
+    let mut numeric_variables = Vec::with_capacity(retained_original_ids.len());
+    let mut numeric_initial = Vec::with_capacity(retained_original_ids.len());
+    let mut transformed_to_expr = Vec::with_capacity(retained_original_ids.len());
+    let mut constants = ConstantPool::default();
+    for original_id in retained_original_ids {
+        let transformed_id = numeric_variables.len();
+        original_to_transformed[original_id] = Some(transformed_id);
+        let variable = task.numeric_variables()[original_id].clone();
+        let value = initial_numeric[original_id];
+        if matches!(variable.get_type(), NumericType::Constant) {
+            constants.by_bits.insert(
+                float_tolerance::canonicalize(value).to_bits(),
+                transformed_id,
+            );
+            transformed_to_expr.push(AffineExpression::constant(value, num_original_numeric));
+        } else {
+            transformed_to_expr.push(AffineExpression::var(original_id, num_original_numeric));
+        }
+        numeric_variables.push(variable);
+        numeric_initial.push(value);
+    }
+
+    let mut normalized_comparisons = Vec::with_capacity(comparisons.len());
+    for (comparison_axiom_id, difference) in comparisons {
+        let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
+        let dependencies = difference.non_zero_vars();
+        let (left, threshold, operator) = if dependencies.len() == 1 {
+            let original_var_id = dependencies[0];
+            ensure!(
+                matches!(
+                    task.numeric_variables()[original_var_id].get_type(),
+                    NumericType::Regular
+                ),
+                "ICAPS 2026 comparison axiom {comparison_axiom_id} depends on non-regular numeric variable {original_var_id}"
+            );
+            let coefficient = difference.coefficients[original_var_id];
+            ensure!(
+                coefficient.is_finite() && !approx_eq(coefficient, 0.0),
+                "ICAPS 2026 comparison axiom {comparison_axiom_id} has invalid coefficient {coefficient}"
+            );
+            (
+                original_to_transformed[original_var_id]
+                    .expect("retained ICAPS regular variable has no transformed id"),
+                float_tolerance::canonicalize(-difference.constant / coefficient),
+                if coefficient > 0.0 {
+                    comparison_axiom.get_operator().clone()
+                } else {
+                    reverse_comparison(comparison_axiom.get_operator())
+                },
+            )
+        } else {
+            ensure!(
+                dependencies.iter().all(|&var_id| matches!(
+                    task.numeric_variables()[var_id].get_type(),
+                    NumericType::Regular
+                )),
+                "ICAPS 2026 comparison axiom {comparison_axiom_id} has non-regular dependencies {dependencies:?}"
+            );
+            let auxiliary_id = numeric_variables.len();
+            numeric_variables.push(NumericVariable::new(
+                format!("icaps26-condition-{comparison_axiom_id}"),
+                NumericType::Regular,
+                None,
+            ));
+            numeric_initial.push(difference.evaluate(&initial_numeric)?);
+            transformed_to_expr.push(difference);
+            (auxiliary_id, 0.0, comparison_axiom.get_operator().clone())
+        };
+        ensure!(
+            threshold.is_finite(),
+            "ICAPS 2026 comparison axiom {comparison_axiom_id} has non-finite threshold {threshold}"
+        );
+        normalized_comparisons.push((comparison_axiom_id, left, threshold, operator));
+    }
+
+    let root_exprs = BTreeMap::new();
+    let mut operators = Vec::with_capacity(task.get_operators().len());
+    for operator in task.get_operators() {
+        operators.push(transform_operator(
+            task,
+            operator,
+            &initial_numeric,
+            &root_exprs,
+            &original_to_transformed,
+            EffectCoordinateMode::AllTransformed,
+            &mut constants,
+            &mut numeric_variables,
+            &mut numeric_initial,
+            &mut transformed_to_expr,
+        )?);
+    }
+
+    let mut comparison_axioms = Vec::with_capacity(normalized_comparisons.len());
+    for (comparison_axiom_id, left, threshold, operator) in normalized_comparisons {
+        let right = constants.get_or_insert(
+            threshold,
+            &mut numeric_variables,
+            &mut numeric_initial,
+            &mut transformed_to_expr,
+            num_original_numeric,
+        );
+        comparison_axioms.push(ComparisonAxiom::new(
+            task.comparison_axioms()[comparison_axiom_id].get_affected_var_id(),
+            left,
+            right,
+            operator,
+        ));
+    }
+
+    let variables = renumber_propositional_axiom_layers(task, &comparison_axioms);
+    let metric_var_id = task.metric().var_id().and_then(|var_id| {
+        original_to_transformed
+            .get(var_id)
+            .and_then(|mapped| *mapped)
+    });
+    let transformed_task = NumericRootTask::new(
+        1,
+        Metric::new(task.metric().is_min(), metric_var_id),
+        variables,
+        numeric_variables,
+        (0..task.get_num_goals())
+            .map(|goal_id| *task.get_goal_fact(goal_id))
+            .collect(),
+        vec![],
+        task.get_initial_propositional_state_values().to_vec(),
+        numeric_initial,
+        operators,
+        task.axioms().clone(),
+        comparison_axioms,
+        Vec::new(),
+        ExplicitFact::new(0, 0),
+    );
+    validate_restricted_task(&transformed_task).map_err(|reason| {
+        anyhow::anyhow!("ICAPS 2026 restricted task construction failed: {reason}")
+    })?;
+    ensure_operator_costs_unchanged(task, &transformed_task)?;
+    Ok(Some(RestrictedTask {
+        task: transformed_task,
+    }))
+}
+
+fn reverse_comparison(operator: &ComparisonOperator) -> ComparisonOperator {
+    match operator {
+        ComparisonOperator::LessThan => ComparisonOperator::GreaterThan,
+        ComparisonOperator::LessThanOrEqual => ComparisonOperator::GreaterThanOrEqual,
+        ComparisonOperator::Equal => ComparisonOperator::Equal,
+        ComparisonOperator::GreaterThanOrEqual => ComparisonOperator::LessThanOrEqual,
+        ComparisonOperator::GreaterThan => ComparisonOperator::LessThan,
+        ComparisonOperator::UnEqual => ComparisonOperator::UnEqual,
+    }
+}
+
 fn build_task(
     task: &dyn AbstractNumericTask,
     initial_numeric: &[f64],
@@ -302,6 +505,7 @@ fn build_task(
             initial_numeric,
             root_exprs,
             &original_to_transformed,
+            EffectCoordinateMode::OriginalMapping,
             &mut constants,
             &mut numeric_variables,
             &mut numeric_initial,
@@ -352,29 +556,37 @@ fn build_task(
     validate_restricted_task(&transformed_task)
         .map_err(|reason| anyhow::anyhow!("restricted task construction failed: {reason}"))?;
 
+    ensure_operator_costs_unchanged(task, &transformed_task)?;
+
+    Ok(Some(RestrictedTask {
+        task: transformed_task,
+    }))
+}
+
+fn ensure_operator_costs_unchanged(
+    source_task: &dyn AbstractNumericTask,
+    transformed_task: &dyn AbstractNumericTask,
+) -> Result<()> {
     ensure!(
-        task.get_operators().len() == transformed_task.get_operators().len(),
+        source_task.get_operators().len() == transformed_task.get_operators().len(),
         "restricted task changed the operator count"
     );
-    for (operator_id, (source, transformed)) in task
+    for (operator_id, (source, transformed)) in source_task
         .get_operators()
         .iter()
         .zip(transformed_task.get_operators())
         .enumerate()
     {
-        let source_cost = metric_operator_cost_from_initial_values(task, source);
+        let source_cost = metric_operator_cost_from_initial_values(source_task, source);
         let transformed_cost =
-            metric_operator_cost_from_initial_values(&transformed_task, transformed);
+            metric_operator_cost_from_initial_values(transformed_task, transformed);
         ensure!(
             approx_eq(source_cost, transformed_cost),
             "restricted task changed metric cost of operator {operator_id} ({}): {source_cost} -> {transformed_cost}",
             source.name()
         );
     }
-
-    Ok(Some(RestrictedTask {
-        task: transformed_task,
-    }))
+    Ok(())
 }
 
 fn renumber_propositional_axiom_layers(
@@ -421,12 +633,19 @@ fn renumber_propositional_axiom_layers(
         .collect()
 }
 
+#[derive(Clone, Copy)]
+enum EffectCoordinateMode {
+    OriginalMapping,
+    AllTransformed,
+}
+
 fn transform_operator(
     task: &dyn AbstractNumericTask,
     operator: &Operator,
     initial_numeric: &[f64],
     root_exprs: &BTreeMap<usize, AffineExpression>,
     original_to_transformed: &[Option<usize>],
+    coordinate_mode: EffectCoordinateMode,
     constants: &mut ConstantPool,
     numeric_variables: &mut Vec<NumericVariable>,
     numeric_initial: &mut Vec<f64>,
@@ -442,6 +661,7 @@ fn transform_operator(
             operator,
             initial_numeric,
             original_to_transformed,
+            coordinate_mode,
             constants,
             numeric_variables,
             numeric_initial,
@@ -477,21 +697,42 @@ fn transform_operator(
         }
     }
 
-    let mut assignment_effects = Vec::new();
-    for (original_id, mapped) in original_to_transformed.iter().enumerate() {
-        let Some(transformed_id) = *mapped else {
-            continue;
-        };
-        let delta = root_exprs
-            .get(&original_id)
-            .map(|expr| {
-                expr.coefficients
+    let transformed_deltas = match coordinate_mode {
+        EffectCoordinateMode::OriginalMapping => original_to_transformed
+            .iter()
+            .enumerate()
+            .filter_map(|(original_id, &mapped)| {
+                mapped.map(|transformed_id| {
+                    let delta = root_exprs
+                        .get(&original_id)
+                        .map(|expr| {
+                            expr.coefficients
+                                .iter()
+                                .zip(deltas.iter())
+                                .map(|(&coefficient, &delta)| coefficient * delta)
+                                .sum::<f64>()
+                        })
+                        .unwrap_or(deltas[original_id]);
+                    (transformed_id, delta)
+                })
+            })
+            .collect::<Vec<_>>(),
+        EffectCoordinateMode::AllTransformed => transformed_to_expr
+            .iter()
+            .enumerate()
+            .map(|(transformed_id, expr)| {
+                let delta = expr
+                    .coefficients
                     .iter()
                     .zip(deltas.iter())
                     .map(|(&coefficient, &delta)| coefficient * delta)
-                    .sum::<f64>()
+                    .sum::<f64>();
+                (transformed_id, delta)
             })
-            .unwrap_or(deltas[original_id]);
+            .collect(),
+    };
+    let mut assignment_effects = Vec::new();
+    for (transformed_id, delta) in transformed_deltas {
         if approx_eq(delta, 0.0) {
             continue;
         }
@@ -525,6 +766,7 @@ fn transform_operator_with_assignment(
     operator: &Operator,
     initial_numeric: &[f64],
     original_to_transformed: &[Option<usize>],
+    coordinate_mode: EffectCoordinateMode,
     constants: &mut ConstantPool,
     numeric_variables: &mut Vec<NumericVariable>,
     numeric_initial: &mut Vec<f64>,
@@ -578,14 +820,24 @@ fn transform_operator_with_assignment(
         }
     }
 
+    let coordinate_ids = match coordinate_mode {
+        EffectCoordinateMode::OriginalMapping => original_to_transformed
+            .iter()
+            .filter_map(|&mapped| mapped)
+            .collect::<Vec<_>>(),
+        EffectCoordinateMode::AllTransformed => (0..transformed_to_expr.len()).collect(),
+    };
+    let transformed_effects = coordinate_ids
+        .into_iter()
+        .map(|transformed_id| {
+            let expr = &transformed_to_expr[transformed_id];
+            let successor_expr = expr.apply_effects(&additive_deltas, &assigned_constants);
+            let delta_expr = successor_expr.clone().sub(expr.clone());
+            (transformed_id, successor_expr, delta_expr)
+        })
+        .collect::<Vec<_>>();
     let mut assignment_effects = Vec::new();
-    for (original_id, mapped) in original_to_transformed.iter().enumerate() {
-        let Some(transformed_id) = *mapped else {
-            continue;
-        };
-        let expr = &transformed_to_expr[transformed_id];
-        let successor_expr = expr.apply_effects(&additive_deltas, &assigned_constants);
-        let delta_expr = successor_expr.clone().sub(expr.clone());
+    for (transformed_id, successor_expr, delta_expr) in transformed_effects {
         if delta_expr.non_zero_vars().is_empty() {
             let delta = delta_expr.constant;
             if approx_eq(delta, 0.0) {
@@ -609,7 +861,7 @@ fn transform_operator_with_assignment(
         }
         ensure!(
             successor_expr.non_zero_vars().is_empty(),
-            "restricted task cannot express assignment effect on transformed numeric variable {original_id} in operator {}",
+            "restricted task cannot express assignment effect on transformed numeric variable {transformed_id} in operator {}",
             operator.name()
         );
         let const_id = constants.get_or_insert(
@@ -849,6 +1101,28 @@ mod tests {
         assert!(
             build_restricted_task(transformed).unwrap().is_none(),
             "applying task restriction twice must be a no-op"
+        );
+
+        let icaps = build_icaps26_restricted_task(&task)
+            .unwrap()
+            .expect("ICAPS translation should materialize the multivariate condition");
+        let icaps = icaps.task();
+        let auxiliary_id = icaps
+            .numeric_variables()
+            .iter()
+            .position(|variable| variable.name() == "icaps26-condition-0")
+            .expect("ICAPS condition auxiliary is missing");
+        assert_eq!(icaps.get_initial_numeric_state_values()[auxiliary_id], -5.0);
+        assert_eq!(icaps.comparison_axioms()[0].get_left_var_id(), auxiliary_id);
+        let auxiliary_effect = icaps.get_operators()[0]
+            .assignment_effects()
+            .iter()
+            .find(|effect| effect.affected_var_id() == auxiliary_id)
+            .expect("operator must update the ICAPS condition auxiliary");
+        assert_eq!(auxiliary_effect.operation(), &AssignmentOperation::Plus);
+        assert_eq!(
+            icaps.get_initial_numeric_state_values()[auxiliary_effect.var_id()],
+            1.0
         );
     }
 

@@ -45,6 +45,14 @@ impl HeuristicSpec {
             args: Vec::new(),
         }
     }
+
+    pub fn contains_call(&self, name: &str) -> bool {
+        self.name == name
+            || self
+                .args
+                .iter()
+                .any(|arg| config_value_contains_call(arg.value(), name))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +65,29 @@ pub enum SearchSpec {
     AstarFs(HeuristicSpec, HeuristicSpec),
     DaDebug,
     AstarDaDebug,
+}
+
+impl SearchSpec {
+    pub fn contains_call(&self, name: &str) -> bool {
+        match self {
+            Self::Astar(heuristic) | Self::Gbfs(heuristic) => heuristic.contains_call(name),
+            Self::AstarFs(fast, slow) => fast.contains_call(name) || slow.contains_call(name),
+            Self::DaDebug | Self::AstarDaDebug => false,
+        }
+    }
+}
+
+fn config_value_contains_call(value: &ConfigValue, name: &str) -> bool {
+    match value {
+        ConfigValue::Atom(_) => false,
+        ConfigValue::Call(call) => {
+            call.name() == name
+                || call
+                    .args()
+                    .iter()
+                    .any(|arg| config_value_contains_call(arg.value(), name))
+        }
+    }
 }
 
 // =============================================================================

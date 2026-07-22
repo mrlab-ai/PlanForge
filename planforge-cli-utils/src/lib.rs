@@ -1,8 +1,8 @@
 use std::alloc::{GlobalAlloc, Layout};
 use std::os::unix::process::ExitStatusExt;
 
-use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Once, OnceLock};
 use std::time::Duration;
 use tracing::info;
 
@@ -40,9 +40,27 @@ pub static GLOBAL_ALLOCATOR: ReportingAllocator = ReportingAllocator;
 static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[cfg(unix)]
+static OOM_RECOVERY: OnceLock<fn() -> bool> = OnceLock::new();
+
+#[cfg(unix)]
+pub fn install_oom_recovery(recovery: fn() -> bool) {
+    OOM_RECOVERY
+        .set(recovery)
+        .expect("out-of-memory recovery hook must be installed once");
+}
+
+#[cfg(unix)]
+fn recover_from_oom() -> bool {
+    OOM_RECOVERY.get().is_some_and(|recovery| recovery())
+}
+
+#[cfg(unix)]
 unsafe impl GlobalAlloc for ReportingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { MIMALLOC.alloc(layout) };
+        let mut ptr = unsafe { MIMALLOC.alloc(layout) };
+        if ptr.is_null() && recover_from_oom() {
+            ptr = unsafe { MIMALLOC.alloc(layout) };
+        }
         if ptr.is_null() {
             unsafe { report_out_of_memory_and_exit() };
         }
@@ -50,7 +68,10 @@ unsafe impl GlobalAlloc for ReportingAllocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { MIMALLOC.alloc_zeroed(layout) };
+        let mut ptr = unsafe { MIMALLOC.alloc_zeroed(layout) };
+        if ptr.is_null() && recover_from_oom() {
+            ptr = unsafe { MIMALLOC.alloc_zeroed(layout) };
+        }
         if ptr.is_null() {
             unsafe { report_out_of_memory_and_exit() };
         }
@@ -58,7 +79,10 @@ unsafe impl GlobalAlloc for ReportingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let new_ptr = unsafe { MIMALLOC.realloc(ptr, layout, new_size) };
+        let mut new_ptr = unsafe { MIMALLOC.realloc(ptr, layout, new_size) };
+        if new_ptr.is_null() && recover_from_oom() {
+            new_ptr = unsafe { MIMALLOC.realloc(ptr, layout, new_size) };
+        }
         if new_ptr.is_null() {
             unsafe { report_out_of_memory_and_exit() };
         }
@@ -177,14 +201,13 @@ pub fn format_time_limit(limit: Duration) -> String {
 pub fn peak_memory_kb() -> u64 {
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         for line in status.lines() {
-            if let Some(value) = line.strip_prefix("VmPeak:") {
-                if let Some(kb) = value
+            if let Some(value) = line.strip_prefix("VmPeak:")
+                && let Some(kb) = value
                     .split_whitespace()
                     .next()
                     .and_then(|part| part.parse::<u64>().ok())
-                {
-                    return kb;
-                }
+            {
+                return kb;
             }
         }
     }

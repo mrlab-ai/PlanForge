@@ -16,8 +16,9 @@ use super::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
     CartesianSemantics, CartesianSplitSelection, CartesianStopReason, FlawKind, OperatorBitSet,
     RefinementNode, ShortestPaths, Split, StateRegion, TransitionKey, WorkingAbstraction,
-    artifact_unwanted_score, numeric_split_choice_key, push_unique_split, retain_min_growth_splits,
-    select_next_cartesian_collection_goal, select_refinement_split,
+    apply_split, artifact_unwanted_score, numeric_split_choice_key, numeric_split_intervals,
+    push_unique_split, retain_min_growth_splits, select_next_cartesian_collection_goal,
+    select_refinement_split,
 };
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use crate::evaluation::domain_abstractions::comparison_expression::Interval;
@@ -56,6 +57,74 @@ fn numeric_split_keys_include_semantic_identity_and_boundary() {
 }
 
 #[test]
+fn icaps_numeric_splits_preserve_integer_lattices_without_dropping_continuous_values() {
+    let (integer_lower, integer_upper) =
+        numeric_split_intervals(Interval::unbounded(), 0.0, false, true).unwrap();
+    assert!(integer_lower.contains(-1.0));
+    assert!(integer_upper.contains(0.0));
+    assert!(!integer_lower.contains(-0.5));
+    assert!(!integer_upper.contains(-0.5));
+
+    let (continuous_lower, continuous_upper) =
+        numeric_split_intervals(Interval::unbounded(), 0.0, false, false).unwrap();
+    assert!(continuous_lower.contains(-0.5));
+    assert!(!continuous_lower.contains(0.0));
+    assert!(continuous_upper.contains(0.0));
+}
+
+#[test]
+fn icaps_prevail_conditions_fix_the_post_value_only_in_artifact_mode() {
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![ExplicitVariable::new(
+            2,
+            "position".into(),
+            vec!["left".into(), "right".into()],
+            None,
+            0,
+        )],
+        vec![],
+        vec![ExplicitFact::new(0, 0)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![Operator::new(
+            "prevail-left".into(),
+            vec![ExplicitFact::new(0, 0)],
+            vec![],
+            vec![],
+            1,
+        )],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let source = StateRegion {
+        propositions: vec![vec![0, 1]].into(),
+        numeric: vec![].into(),
+    };
+    let target = StateRegion {
+        propositions: vec![vec![1]].into(),
+        numeric: vec![].into(),
+    };
+
+    let native = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
+    assert!(native.may_transition(&source, 0, &target).unwrap());
+
+    let icaps = CartesianSemantics::new(
+        &task,
+        &CartesianAbstractionConfig {
+            split_selection: CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MinUnwanted),
+            ..CartesianAbstractionConfig::default()
+        },
+    )
+    .unwrap();
+    assert!(!icaps.may_transition(&source, 0, &target).unwrap());
+}
+
+#[test]
 fn whole_plan_candidates_deduplicate_identical_refinements() {
     let split = Split::Numeric {
         state_id: 3,
@@ -64,6 +133,7 @@ fn whole_plan_candidates_deduplicate_identical_refinements() {
         lower_includes_boundary: true,
         witness_value: 1.0,
         desired_contains_witness: false,
+        integer_lattice: false,
         description: "first witness".into(),
     };
     let mut candidates = Vec::new();
@@ -139,6 +209,7 @@ fn min_growth_uses_projected_transition_count() {
         lower_includes_boundary: true,
         witness_value: 0.0,
         desired_contains_witness: false,
+        integer_lattice: false,
         description: String::new(),
     };
 
@@ -146,6 +217,100 @@ fn min_growth_uses_projected_transition_count() {
     retain_min_growth_splits(&working, &semantics, &mut candidates, |candidate| candidate).unwrap();
     assert_eq!(candidates.len(), 1);
     assert!(matches!(candidates[0], Split::Numeric { var_id: 1, .. }));
+}
+
+#[test]
+fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![ExplicitVariable::new(
+            2,
+            "location".into(),
+            vec!["left".into(), "right".into()],
+            None,
+            0,
+        )],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+        ],
+        vec![ExplicitFact::new(0, 0)],
+        vec![],
+        vec![0],
+        vec![0.0, 1.0],
+        vec![Operator::new(
+            "increment-x".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                1,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let config = CartesianAbstractionConfig::default();
+    let semantics = CartesianSemantics::new(&task, &config).unwrap();
+    let region = semantics.trivial_region().unwrap();
+    let mut indexed = WorkingAbstraction::new(region.clone(), 1);
+    let mut icaps = WorkingAbstraction::new_icaps26(region, 1);
+    indexed.add_transition(0, 0, 0);
+    icaps.add_transition(0, 0, 0);
+
+    let numeric_split = Split::Numeric {
+        state_id: 0,
+        var_id: 0,
+        boundary: 0.0,
+        lower_includes_boundary: true,
+        witness_value: 0.0,
+        desired_contains_witness: true,
+        integer_lattice: false,
+        description: String::new(),
+    };
+    apply_split(&mut indexed, &semantics, numeric_split.clone()).unwrap();
+    apply_split(&mut icaps, &semantics, numeric_split).unwrap();
+
+    let propositional_split = Split::Propositional {
+        state_id: 0,
+        var_id: 0,
+        wanted: vec![0],
+        witness_value: 0,
+        description: String::new(),
+    };
+    apply_split(&mut indexed, &semantics, propositional_split.clone()).unwrap();
+    apply_split(&mut icaps, &semantics, propositional_split).unwrap();
+
+    let snapshot = |working: &WorkingAbstraction| {
+        let mut transitions = working
+            .active_transition_ids()
+            .map(|transition_id| {
+                let transition = working.transition(transition_id);
+                (
+                    transition.source,
+                    transition.concrete_op_id,
+                    transition.target,
+                )
+            })
+            .collect::<Vec<_>>();
+        transitions.sort_unstable();
+        let loops = working
+            .self_loop_operator_ids
+            .iter()
+            .map(|operators| operators.intersection_iter(operators).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        (transitions, loops)
+    };
+    assert_eq!(snapshot(&indexed), snapshot(&icaps));
+    assert!(indexed.transition_ids_by_key.is_some());
+    assert!(icaps.transition_ids_by_key.is_none());
 }
 
 #[test]
@@ -176,6 +341,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
         lower_includes_boundary: false,
         witness_value: 8.0,
         desired_contains_witness: false,
+        integer_lattice: false,
         description: String::new(),
     };
     assert_eq!(
@@ -210,6 +376,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
         lower_includes_boundary: false,
         witness_value: 8.0,
         desired_contains_witness: false,
+        integer_lattice: false,
         description: String::new(),
     };
     assert!(
@@ -232,6 +399,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
         lower_includes_boundary: true,
         witness_value: 0.0,
         desired_contains_witness: true,
+        integer_lattice: false,
         description: String::new(),
     };
     assert_eq!(
@@ -253,6 +421,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
         lower_includes_boundary: false,
         witness_value: 6.0,
         desired_contains_witness: false,
+        integer_lattice: false,
         description: String::new(),
     };
     assert_eq!(

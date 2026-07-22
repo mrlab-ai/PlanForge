@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
 use ordered_float::NotNan;
-use planforge_sas::axioms::AxiomEvaluator;
+use planforge_sas::axioms::{AxiomEvaluator, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
     metric_operator_cost_from_initial_values,
@@ -468,13 +468,25 @@ struct WorkingAbstraction {
     outgoing: Vec<Vec<usize>>,
     incoming: Vec<Vec<usize>>,
     self_loop_operator_ids: Vec<OperatorBitSet>,
-    transition_ids_by_key: HashMap<TransitionKey, usize>,
+    transition_ids_by_key: Option<HashMap<TransitionKey, usize>>,
     propositional_refinement_counts: Vec<usize>,
     numeric_refinement_counts: Vec<usize>,
 }
 
 impl WorkingAbstraction {
     fn new(initial_region: StateRegion, operator_count: usize) -> Self {
+        Self::new_with_transition_index(initial_region, operator_count, true)
+    }
+
+    fn new_icaps26(initial_region: StateRegion, operator_count: usize) -> Self {
+        Self::new_with_transition_index(initial_region, operator_count, false)
+    }
+
+    fn new_with_transition_index(
+        initial_region: StateRegion,
+        operator_count: usize,
+        index_transitions: bool,
+    ) -> Self {
         let propositional_refinement_counts = vec![0; initial_region.propositions.len()];
         let numeric_refinement_counts = vec![0; initial_region.numeric.len()];
         Self {
@@ -486,7 +498,7 @@ impl WorkingAbstraction {
             outgoing: vec![Vec::new()],
             incoming: vec![Vec::new()],
             self_loop_operator_ids: vec![OperatorBitSet::empty(operator_count)],
-            transition_ids_by_key: HashMap::new(),
+            transition_ids_by_key: index_transitions.then(HashMap::new),
             propositional_refinement_counts,
             numeric_refinement_counts,
         }
@@ -502,8 +514,21 @@ impl WorkingAbstraction {
             concrete_op_id: op_id,
             target,
         };
-        if self.transition_ids_by_key.contains_key(&key) {
-            return;
+        if let Some(transition_ids_by_key) = &self.transition_ids_by_key {
+            if transition_ids_by_key.contains_key(&key) {
+                return;
+            }
+        } else {
+            debug_assert!(
+                !self.outgoing[source].iter().any(|&transition_id| {
+                    self.transitions[transition_id]
+                        .as_ref()
+                        .is_some_and(|transition| {
+                            transition.concrete_op_id == op_id && transition.target == target
+                        })
+                }),
+                "ICAPS Cartesian refinement generated a duplicate transition"
+            );
         }
         let transition = WorkingTransition {
             source,
@@ -522,8 +547,10 @@ impl WorkingAbstraction {
             self.transitions.push(Some(transition));
             transition_id
         };
-        let old = self.transition_ids_by_key.insert(key, transition_id);
-        assert!(old.is_none(), "duplicate Cartesian transition key");
+        if let Some(transition_ids_by_key) = &mut self.transition_ids_by_key {
+            let old = transition_ids_by_key.insert(key, transition_id);
+            assert!(old.is_none(), "duplicate Cartesian transition key");
+        }
         self.outgoing[source].push(transition_id);
         self.incoming[target].push(transition_id);
     }
@@ -532,16 +559,18 @@ impl WorkingAbstraction {
         let transition = self.transitions[transition_id]
             .take()
             .expect("Cartesian adjacency references a removed transition");
-        let removed_id = self.transition_ids_by_key.remove(&TransitionKey {
-            source: transition.source,
-            concrete_op_id: transition.concrete_op_id,
-            target: transition.target,
-        });
-        assert_eq!(
-            removed_id,
-            Some(transition_id),
-            "active Cartesian transition key is missing or inconsistent"
-        );
+        if let Some(transition_ids_by_key) = &mut self.transition_ids_by_key {
+            let removed_id = transition_ids_by_key.remove(&TransitionKey {
+                source: transition.source,
+                concrete_op_id: transition.concrete_op_id,
+                target: transition.target,
+            });
+            assert_eq!(
+                removed_id,
+                Some(transition_id),
+                "active Cartesian transition key is missing or inconsistent"
+            );
+        }
         self.free_transition_ids.push(transition_id);
         transition
     }
@@ -592,8 +621,13 @@ impl WorkingAbstraction {
     fn contains_transition(&self, key: TransitionKey) -> bool {
         if key.source == key.target {
             self.self_loop_operator_ids[key.source].contains(key.concrete_op_id)
+        } else if let Some(transition_ids_by_key) = &self.transition_ids_by_key {
+            transition_ids_by_key.contains_key(&key)
         } else {
-            self.transition_ids_by_key.contains_key(&key)
+            self.outgoing[key.source].iter().any(|&transition_id| {
+                let transition = self.transition(transition_id);
+                transition.concrete_op_id == key.concrete_op_id && transition.target == key.target
+            })
         }
     }
 }
@@ -614,6 +648,7 @@ enum Split {
         lower_includes_boundary: bool,
         witness_value: f64,
         desired_contains_witness: bool,
+        integer_lattice: bool,
         description: String,
     },
 }
@@ -655,6 +690,7 @@ enum SplitIdentity {
         boundary_bits: u64,
         lower_includes_boundary: bool,
         witness_bits: u64,
+        integer_lattice: bool,
     },
 }
 
@@ -679,6 +715,7 @@ impl From<&Split> for SplitIdentity {
                 boundary,
                 lower_includes_boundary,
                 witness_value,
+                integer_lattice,
                 ..
             } => Self::Numeric {
                 state_id: *state_id,
@@ -686,6 +723,7 @@ impl From<&Split> for SplitIdentity {
                 boundary_bits: boundary.to_bits(),
                 lower_includes_boundary: *lower_includes_boundary,
                 witness_bits: witness_value.to_bits(),
+                integer_lattice: *integer_lattice,
             },
         }
     }
@@ -705,6 +743,7 @@ struct CartesianSemantics<'task> {
     operator_costs: Vec<f64>,
     prop_split_dependent_operators: Vec<OperatorBitSet>,
     numeric_split_dependent_operators: Vec<OperatorBitSet>,
+    numeric_integer_lattice: Vec<bool>,
     random_seed: Option<u64>,
     icaps_random: Option<RefCell<SmallRng>>,
     refinement_direction: CartesianRefinementDirection,
@@ -881,6 +920,24 @@ impl<'task> CartesianSemantics<'task> {
             CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random)
         )
         .then(|| RefCell::new(SmallRng::seed_from_u64(config.random_seed.unwrap_or(2011))));
+        let initial_numeric = task.get_initial_numeric_state_values();
+        let mut numeric_integer_lattice = initial_numeric
+            .iter()
+            .map(|&value| approximately_equal(value, value.round()))
+            .collect::<Vec<_>>();
+        for op in task.get_operators() {
+            for effect in op.assignment_effects() {
+                let rhs = initial_numeric[effect.var_id()];
+                let preserves_integers = match effect.operation() {
+                    AssignmentOperation::Plus
+                    | AssignmentOperation::Minus
+                    | AssignmentOperation::Assign
+                    | AssignmentOperation::Times => approximately_equal(rhs, rhs.round()),
+                    AssignmentOperation::Divide => approximately_equal(rhs.abs(), 1.0),
+                };
+                numeric_integer_lattice[effect.affected_var_id()] &= preserves_integers;
+            }
+        }
         Ok(Self {
             task,
             comparison_tree_by_prop_var,
@@ -889,6 +946,7 @@ impl<'task> CartesianSemantics<'task> {
             operator_costs,
             prop_split_dependent_operators,
             numeric_split_dependent_operators,
+            numeric_integer_lattice,
             random_seed: config.random_seed,
             icaps_random,
             refinement_direction: config.refinement_direction,
@@ -1249,6 +1307,16 @@ impl<'task> CartesianSemantics<'task> {
                 .binary_search(&(effect.value() as PropValueId))
                 .is_ok();
         }
+        if matches!(self.split_selection, CartesianSplitSelection::Icaps26(_))
+            && let Some(precondition) = op
+                .preconditions()
+                .iter()
+                .find(|precondition| precondition.var() == var_id)
+        {
+            return target.propositions[var_id]
+                .binary_search(&(precondition.value() as PropValueId))
+                .is_ok();
+        }
         sorted_values_overlap(&source.propositions[var_id], &target.propositions[var_id])
     }
 
@@ -1263,10 +1331,51 @@ impl<'task> CartesianSemantics<'task> {
             SplitDimension::Propositional(var_id) => {
                 self.propositional_dimension_may_transition(source, op_id, target, var_id)
             }
-            SplitDimension::Numeric(var_id) => self
-                .numeric_effect_preimage(target.numeric[var_id], op_id, var_id)?
-                .is_some_and(|preimage| preimage.intersects(&source.numeric[var_id])),
+            SplitDimension::Numeric(var_id) => self.numeric_dimension_may_transition(
+                source.numeric[var_id],
+                op_id,
+                target.numeric[var_id],
+                var_id,
+            )?,
         })
+    }
+
+    fn numeric_dimension_may_transition(
+        &self,
+        source: Interval,
+        op_id: usize,
+        target: Interval,
+        var_id: usize,
+    ) -> Result<bool> {
+        let Some(preimage) = self.numeric_effect_preimage(target, op_id, var_id)? else {
+            return Ok(false);
+        };
+        let source = if matches!(self.split_selection, CartesianSplitSelection::Icaps26(_)) {
+            interval_intersection(source, self.icaps_numeric_precondition(op_id, var_id)?)
+        } else {
+            source
+        };
+        Ok(!source.is_empty() && preimage.intersects(&source))
+    }
+
+    fn icaps_numeric_precondition(&self, op_id: usize, var_id: usize) -> Result<Interval> {
+        let mut interval = Interval::unbounded();
+        for fact in self.task.get_operators()[op_id].preconditions() {
+            let Some(tree_id) = self
+                .comparison_tree_by_prop_var
+                .get(fact.var())
+                .copied()
+                .flatten()
+            else {
+                continue;
+            };
+            let (condition_var_id, condition) =
+                icaps_comparison_interval(self, tree_id, fact.value())?;
+            if condition_var_id == var_id {
+                interval = interval_intersection(interval, condition);
+            }
+        }
+        Ok(interval)
     }
 
     fn parent_loop_source_to_split_children(
@@ -1323,15 +1432,12 @@ impl<'task> CartesianSemantics<'task> {
                     }
                 }
                 NumericType::Regular => {
-                    let Some(preimage) = self.numeric_effect_preimage(
-                        target.numeric[numeric_var_id],
+                    if !self.numeric_dimension_may_transition(
+                        source.numeric[numeric_var_id],
                         op_id,
+                        target.numeric[numeric_var_id],
                         numeric_var_id,
-                    )?
-                    else {
-                        return Ok(false);
-                    };
-                    if !preimage.intersects(&source.numeric[numeric_var_id]) {
+                    )? {
                         return Ok(false);
                     }
                 }
@@ -1488,10 +1594,16 @@ impl CartesianAbstractionGenerator {
     ) -> Result<CartesianAbstraction> {
         let start = Instant::now();
         let semantics = CartesianSemantics::new(task, &self.config)?;
-        let mut working = WorkingAbstraction::new(
-            semantics.trivial_region()?,
-            semantics.task.get_operators().len(),
-        );
+        let initial_region = semantics.trivial_region()?;
+        let operator_count = semantics.task.get_operators().len();
+        let mut working = if matches!(
+            self.config.split_selection,
+            CartesianSplitSelection::Icaps26(_)
+        ) {
+            WorkingAbstraction::new_icaps26(initial_region, operator_count)
+        } else {
+            WorkingAbstraction::new(initial_region, operator_count)
+        };
         for op_id in 0..task.get_operators().len() {
             if semantics.may_transition(&working.states[0], op_id, &working.states[0])? {
                 working.add_transition(0, op_id, 0);
@@ -1525,13 +1637,58 @@ impl CartesianAbstractionGenerator {
             }
         };
         let mut refinements: usize = 0;
+        let poll_memory_every_iteration = matches!(
+            self.config.split_selection,
+            CartesianSplitSelection::Icaps26(_)
+        );
 
-        let mut shortest_paths = compute_shortest_paths(&working, &semantics)?;
+        let mut shortest_paths = if matches!(
+            self.config.split_selection,
+            CartesianSplitSelection::Icaps26(_)
+        ) {
+            compute_shortest_paths_with_goals(&working, &semantics, vec![true])?
+        } else {
+            compute_shortest_paths(&working, &semantics)?
+        };
+        let mut icaps_abstract_search =
+            poll_memory_every_iteration.then(Icaps26AbstractSearch::trivial);
         let mut pending_flaw = None;
         let mut solved_plan = None;
         let run = CegarDriver::new(usize::MAX, None).run_from_zero_based(
             start,
             |_iteration, _deadline| {
+                if poll_memory_every_iteration
+                    && !crate::resource_limits::poll_and_release_if_exceeded()
+                {
+                    return Ok(CegarIterationResult::Stop(CegarStopReason::MemoryLimit));
+                }
+                let selected_plan = if let Some(abstract_search) = &mut icaps_abstract_search {
+                    let mut initial_prop_values = Vec::new();
+                    semantics.concrete_prop_values(
+                        &state_packer,
+                        &refinement_root.propositions,
+                        &mut initial_prop_values,
+                    );
+                    let initial_state = working
+                        .hierarchy
+                        .map_state(&initial_prop_values, &refinement_root.numeric)?;
+                    match abstract_search.find_plan(
+                        &working,
+                        &semantics,
+                        initial_state,
+                        &shortest_paths.is_goal,
+                    )? {
+                        Some(plan) => Some(plan),
+                        None => {
+                            return Err(RefinementRootDeadEnd {
+                                abstract_state_id: initial_state,
+                            }
+                            .into());
+                        }
+                    }
+                } else {
+                    None
+                };
                 let check = match self.config.flaw_kind {
                     FlawKind::Progression => replay_optimal_abstract_trace(
                         &working,
@@ -1540,6 +1697,7 @@ impl CartesianAbstractionGenerator {
                         &state_packer,
                         &axiom_evaluator,
                         &refinement_root,
+                        selected_plan.as_deref(),
                     )?,
                     FlawKind::ExecuteEntirePlan => replay_entire_optimal_abstract_trace(
                         &working,
@@ -1576,10 +1734,9 @@ impl CartesianAbstractionGenerator {
                         }
                         if self.config.debug {
                             debug!(
-                                "Cartesian refinement {} at {} states: {}",
+                                "Cartesian refinement {} at {} states: {split:?}",
                                 refinements,
-                                working.states.len(),
-                                split.description()
+                                working.states.len()
                             );
                         }
                         let old_state_id = split.state_id();
@@ -1591,6 +1748,9 @@ impl CartesianAbstractionGenerator {
                             old_state_id,
                             new_state_id,
                         )?;
+                        if let Some(abstract_search) = &mut icaps_abstract_search {
+                            abstract_search.inherit_split_state(old_state_id, new_state_id);
+                        }
                         refinements += 1;
                         Ok(CegarIterationResult::Continue)
                     }
@@ -2188,6 +2348,107 @@ struct ShortestPaths {
     invalid: Vec<bool>,
 }
 
+#[derive(Debug)]
+struct Icaps26AbstractSearch {
+    h_values: Vec<f64>,
+}
+
+impl Icaps26AbstractSearch {
+    fn trivial() -> Self {
+        Self {
+            h_values: vec![0.0],
+        }
+    }
+
+    fn inherit_split_state(&mut self, split_state_id: usize, new_state_id: usize) {
+        assert_eq!(new_state_id, self.h_values.len());
+        self.h_values.push(self.h_values[split_state_id]);
+    }
+
+    fn find_plan(
+        &mut self,
+        working: &WorkingAbstraction,
+        semantics: &CartesianSemantics<'_>,
+        initial_state: usize,
+        is_goal: &[bool],
+    ) -> Result<Option<Vec<TransitionKey>>> {
+        ensure!(self.h_values.len() == working.states.len());
+        ensure!(is_goal.len() == working.states.len());
+        let mut g_values = vec![f64::INFINITY; working.states.len()];
+        let mut predecessors = vec![None; working.states.len()];
+        let mut open = BinaryHeap::new();
+        let mut sequence = 0usize;
+        g_values[initial_state] = 0.0;
+        open.push((
+            Reverse(NotNan::new(self.h_values[initial_state]).unwrap()),
+            sequence,
+            initial_state,
+        ));
+
+        let mut abstract_goal = None;
+        while let Some((Reverse(old_f), _, state_id)) = open.pop() {
+            let current_f = g_values[state_id] + self.h_values[state_id];
+            if current_f + EPSILON < old_f.into_inner() {
+                continue;
+            }
+            if is_goal[state_id] {
+                abstract_goal = Some(state_id);
+                break;
+            }
+            for &transition_id in &working.outgoing[state_id] {
+                let transition = working.transition(transition_id);
+                let candidate =
+                    g_values[state_id] + semantics.operator_costs[transition.concrete_op_id];
+                if candidate < g_values[transition.target] {
+                    g_values[transition.target] = candidate;
+                    predecessors[transition.target] = Some(TransitionKey {
+                        source: transition.source,
+                        concrete_op_id: transition.concrete_op_id,
+                        target: transition.target,
+                    });
+                    sequence = sequence
+                        .checked_add(1)
+                        .context("ICAPS Cartesian abstract-search insertion counter overflow")?;
+                    let f = candidate + self.h_values[transition.target];
+                    open.push((
+                        Reverse(NotNan::new(f).context(
+                            "ICAPS Cartesian abstract search produced a non-finite key",
+                        )?),
+                        sequence,
+                        transition.target,
+                    ));
+                }
+            }
+        }
+
+        let Some(mut state_id) = abstract_goal else {
+            return Ok(None);
+        };
+        let mut plan = Vec::new();
+        while state_id != initial_state {
+            let transition = predecessors[state_id].with_context(|| {
+                format!(
+                    "ICAPS Cartesian abstract goal state {state_id} has no predecessor from initial state {initial_state}"
+                )
+            })?;
+            plan.push(transition);
+            state_id = transition.source;
+        }
+        plan.reverse();
+
+        for transition in plan.iter().rev() {
+            let path_h = self.h_values[transition.target]
+                + semantics.operator_costs[transition.concrete_op_id];
+            ensure!(
+                path_h + EPSILON >= self.h_values[transition.source],
+                "ICAPS Cartesian inherited h-value decreased along selected abstract plan"
+            );
+            self.h_values[transition.source] = path_h;
+        }
+        Ok(Some(plan))
+    }
+}
+
 impl ShortestPaths {
     fn remove_generating_transition(&mut self, source: usize) {
         let Some(old) = self.generating_transition[source].take() else {
@@ -2235,6 +2496,15 @@ fn compute_shortest_paths(
             is_goal[state_id] = true;
         }
     }
+    compute_shortest_paths_with_goals(working, semantics, is_goal)
+}
+
+fn compute_shortest_paths_with_goals(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    is_goal: Vec<bool>,
+) -> Result<ShortestPaths> {
+    ensure!(is_goal.len() == working.states.len());
     ensure!(
         is_goal.iter().any(|is_goal| *is_goal),
         "Cartesian abstraction has no abstract goal state"
@@ -2325,11 +2595,20 @@ fn update_shortest_paths_after_split(
     shortest_paths.generating_transition.push(None);
     shortest_paths.dependents.push(Vec::new());
     shortest_paths.dependent_positions.push(None);
-    shortest_paths.is_goal[split_state_id] =
-        semantics.region_is_goal(&working.states[split_state_id])?;
-    shortest_paths
-        .is_goal
-        .push(semantics.region_is_goal(&working.states[new_state_id])?);
+    if matches!(
+        semantics.split_selection,
+        CartesianSplitSelection::Icaps26(_)
+    ) {
+        let parent_was_goal = shortest_paths.is_goal[split_state_id];
+        shortest_paths.is_goal[split_state_id] = false;
+        shortest_paths.is_goal.push(parent_was_goal);
+    } else {
+        shortest_paths.is_goal[split_state_id] =
+            semantics.region_is_goal(&working.states[split_state_id])?;
+        shortest_paths
+            .is_goal
+            .push(semantics.region_is_goal(&working.states[new_state_id])?);
+    }
     shortest_paths.invalid.push(false);
 
     invalidate(
@@ -2569,6 +2848,7 @@ fn split_child_regions(
             boundary,
             lower_includes_boundary,
             witness_value,
+            integer_lattice,
             ..
         } => {
             let current = *parent
@@ -2579,19 +2859,12 @@ fn split_child_regions(
                 current.can_split_at(*boundary, *lower_includes_boundary),
                 "non-strict numeric Cartesian split on var {var_id} at {boundary}: parent={current:?}, include_lower={lower_includes_boundary}"
             );
-            let lower = interval_intersection(
+            let (lower, upper) = numeric_split_intervals(
                 current,
-                Interval::new(
-                    f64::NEG_INFINITY,
-                    *boundary,
-                    false,
-                    *lower_includes_boundary,
-                ),
-            );
-            let upper = interval_intersection(
-                current,
-                Interval::new(*boundary, f64::INFINITY, !*lower_includes_boundary, false),
-            );
+                *boundary,
+                *lower_includes_boundary,
+                *integer_lattice,
+            )?;
             let witness_is_lower = lower.contains(*witness_value);
             ensure!(
                 witness_is_lower ^ upper.contains(*witness_value),
@@ -2610,6 +2883,45 @@ fn split_child_regions(
     }
 }
 
+fn numeric_split_intervals(
+    parent: Interval,
+    boundary: f64,
+    lower_includes_boundary: bool,
+    integer_lattice: bool,
+) -> Result<(Interval, Interval)> {
+    let (lower_bound, upper_bound, lower_closed, upper_closed) = if integer_lattice {
+        ensure!(
+            boundary.is_finite() && approximately_equal(boundary, boundary.round()),
+            "integer Cartesian split has non-integer boundary {boundary}"
+        );
+        if lower_includes_boundary {
+            (boundary, boundary + 1.0, true, true)
+        } else {
+            (boundary - 1.0, boundary, true, true)
+        }
+    } else {
+        (
+            boundary,
+            boundary,
+            lower_includes_boundary,
+            !lower_includes_boundary,
+        )
+    };
+    let lower = interval_intersection(
+        parent,
+        Interval::new(f64::NEG_INFINITY, lower_bound, false, lower_closed),
+    );
+    let upper = interval_intersection(
+        parent,
+        Interval::new(upper_bound, f64::INFINITY, upper_closed, false),
+    );
+    ensure!(
+        !lower.is_empty() && !upper.is_empty(),
+        "non-strict numeric Cartesian split at {boundary}: parent={parent:?}, include_lower={lower_includes_boundary}, integer_lattice={integer_lattice}"
+    );
+    Ok((lower, upper))
+}
+
 fn projected_transition_count(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
@@ -2626,6 +2938,8 @@ fn projected_transition_count(
 
     let unaffected = working
         .transition_ids_by_key
+        .as_ref()
+        .expect("projected transition growth requires the native transition index")
         .len()
         .checked_sub(incident.len())
         .expect("incident Cartesian transition count exceeds active transition count");
@@ -2747,6 +3061,7 @@ fn replay_optimal_abstract_trace(
     state_packer: &Arc<IntDoublePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
     refinement_root: &CartesianConcreteState,
+    selected_plan: Option<&[TransitionKey]>,
 ) -> Result<PlanCheck> {
     let mut propositions = refinement_root.propositions.clone();
     let mut numeric = refinement_root.numeric.clone();
@@ -2760,6 +3075,7 @@ fn replay_optimal_abstract_trace(
     let abstract_plan_cost = shortest_paths.distances[initial_abstract_state];
     let mut operator_ids = Vec::new();
     let mut concrete_cost = 0.0;
+    let mut selected_plan_pos = 0usize;
 
     loop {
         semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
@@ -2771,6 +3087,10 @@ fn replay_optimal_abstract_trace(
         );
 
         if shortest_paths.is_goal[abstract_state] {
+            ensure!(
+                selected_plan.is_none_or(|plan| selected_plan_pos == plan.len()),
+                "ICAPS Cartesian selected plan reaches an abstract goal before its final transition"
+            );
             if concrete_is_goal(semantics, state_packer, &propositions) {
                 return Ok(PlanCheck::ConcretePlan(ConcretePlan {
                     operator_ids,
@@ -2785,20 +3105,32 @@ fn replay_optimal_abstract_trace(
                 !failed_goals.is_empty(),
                 "abstract goal contains a concrete non-goal without a failed goal fact"
             );
-            let candidates = failed_goals
-                .iter()
-                .map(|goal| {
-                    split_failed_fact(
-                        working,
-                        semantics,
-                        abstract_state,
-                        goal,
-                        &prop_values,
-                        &numeric,
-                        format!("goal {goal:?}"),
-                    )
-                })
-                .collect::<Result<Vec<_>>>()?;
+            let candidates = if selected_plan.is_some() {
+                icaps_splits_for_facts(
+                    working,
+                    semantics,
+                    abstract_state,
+                    &failed_goals,
+                    &prop_values,
+                    &numeric,
+                    "failed goal",
+                )?
+            } else {
+                failed_goals
+                    .iter()
+                    .map(|goal| {
+                        split_failed_fact(
+                            working,
+                            semantics,
+                            abstract_state,
+                            goal,
+                            &prop_values,
+                            &numeric,
+                            format!("goal {goal:?}"),
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
             return Ok(PlanCheck::Refine(select_refinement_split(
                 working,
                 semantics,
@@ -2811,9 +3143,23 @@ fn replay_optimal_abstract_trace(
             operator_ids.len() <= working.states.len(),
             "Cartesian generating transitions contain a cycle"
         );
-        let transition = shortest_paths.generating_transition[abstract_state].context(
-            "non-goal Cartesian state with finite distance has no generating transition",
-        )?;
+        let transition = if let Some(plan) = selected_plan {
+            let transition = *plan.get(selected_plan_pos).with_context(|| {
+                format!(
+                    "ICAPS Cartesian selected plan ends in non-goal abstract state {abstract_state}"
+                )
+            })?;
+            ensure!(
+                transition.source == abstract_state,
+                "ICAPS Cartesian selected plan expects source {}, concrete trace maps to {abstract_state}",
+                transition.source
+            );
+            transition
+        } else {
+            shortest_paths.generating_transition[abstract_state].context(
+                "non-goal Cartesian state with finite distance has no generating transition",
+            )?
+        };
         ensure!(
             working.contains_transition(transition),
             "Cartesian shortest path references missing transition {transition:?}"
@@ -2826,20 +3172,35 @@ fn replay_optimal_abstract_trace(
             .filter(|fact| !fact_is_hold(fact, state_packer, &propositions))
             .collect::<Vec<_>>();
         if !failed_preconditions.is_empty() {
-            let candidates = failed_preconditions
-                .iter()
-                .map(|failed| {
-                    split_failed_fact(
-                        working,
-                        semantics,
-                        abstract_state,
-                        failed,
-                        &prop_values,
-                        &numeric,
-                        format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
-                    )
-                })
-                .collect::<Result<Vec<_>>>()?;
+            let candidates = if selected_plan.is_some() {
+                icaps_splits_for_facts(
+                    working,
+                    semantics,
+                    abstract_state,
+                    &failed_preconditions,
+                    &prop_values,
+                    &numeric,
+                    &format!(
+                        "operator {op_id} ({}) preconditions {failed_preconditions:?}",
+                        op.name()
+                    ),
+                )?
+            } else {
+                failed_preconditions
+                    .iter()
+                    .map(|failed| {
+                        split_failed_fact(
+                            working,
+                            semantics,
+                            abstract_state,
+                            failed,
+                            &prop_values,
+                            &numeric,
+                            format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
             return Ok(PlanCheck::Refine(select_refinement_split(
                 working,
                 semantics,
@@ -2885,7 +3246,268 @@ fn replay_optimal_abstract_trace(
         );
         concrete_cost += op_cost;
         operator_ids.push(op_id);
+        selected_plan_pos += usize::from(selected_plan.is_some());
     }
+}
+
+fn icaps_splits_for_facts(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    state_id: usize,
+    facts: &[&ExplicitFact],
+    prop_values: &[usize],
+    numeric_values: &[f64],
+    description: &str,
+) -> Result<Vec<Split>> {
+    let mut desired = semantics.trivial_region()?;
+    for fact in facts {
+        constrain_icaps_desired_region(semantics, &mut desired, fact).with_context(|| {
+            format!("failed to construct ICAPS desired region for {description}")
+        })?;
+    }
+    icaps_splits_for_desired_region(
+        working,
+        semantics,
+        state_id,
+        &desired,
+        prop_values,
+        numeric_values,
+        description,
+    )
+    .with_context(|| format!("failed to split ICAPS desired region for {description}"))
+}
+
+fn constrain_icaps_desired_region(
+    semantics: &CartesianSemantics<'_>,
+    desired: &mut StateRegion,
+    fact: &ExplicitFact,
+) -> Result<()> {
+    if let Some(comparison_axiom_id) = semantics
+        .comparison_tree_by_prop_var
+        .get(fact.var())
+        .copied()
+        .flatten()
+    {
+        let (numeric_var_id, interval) =
+            icaps_comparison_interval(semantics, comparison_axiom_id, fact.value())?;
+        let current = desired.numeric[numeric_var_id];
+        let restricted = interval_intersection(current, interval);
+        ensure!(
+            !restricted.is_empty(),
+            "ICAPS desired comparison fact {fact:?} has an empty intersection on numeric variable {numeric_var_id}"
+        );
+        Arc::make_mut(&mut desired.numeric)[numeric_var_id] = restricted;
+        return Ok(());
+    }
+
+    let supporting_axioms = semantics
+        .propositional_axioms_by_prop_var
+        .get(fact.var())
+        .with_context(|| format!("missing propositional variable {}", fact.var()))?;
+    if !supporting_axioms.is_empty() {
+        let matching = supporting_axioms
+            .iter()
+            .filter(|&&axiom_id| semantics.task.axioms()[axiom_id].effect_value() == fact.value())
+            .copied()
+            .collect::<Vec<_>>();
+        ensure!(
+            matching.len() == 1,
+            "ICAPS desired derived fact {fact:?} requires exactly one supporting axiom, found {}",
+            matching.len()
+        );
+        for condition in semantics.task.axioms()[matching[0]].conditions() {
+            constrain_icaps_desired_region(semantics, desired, condition)?;
+        }
+        return Ok(());
+    }
+
+    let values = desired
+        .propositions
+        .get(fact.var())
+        .with_context(|| format!("missing desired propositional variable {}", fact.var()))?;
+    ensure!(
+        values.binary_search(&(fact.value() as PropValueId)).is_ok(),
+        "inconsistent ICAPS desired fact {fact:?}"
+    );
+    Arc::make_mut(&mut desired.propositions)[fact.var()] = vec![fact.value() as PropValueId];
+    Ok(())
+}
+
+fn icaps_comparison_interval(
+    semantics: &CartesianSemantics<'_>,
+    comparison_axiom_id: usize,
+    desired_prop_value: usize,
+) -> Result<(usize, Interval)> {
+    let axiom = semantics
+        .task
+        .comparison_axioms()
+        .get(comparison_axiom_id)
+        .with_context(|| format!("missing comparison axiom {comparison_axiom_id}"))?;
+    let left_id = axiom.get_left_var_id();
+    let right_id = axiom.get_right_var_id();
+    let left_type = semantics.task.numeric_variables()[left_id].get_type();
+    let right_type = semantics.task.numeric_variables()[right_id].get_type();
+    let initial = semantics.task.get_initial_numeric_state_values();
+    let (numeric_var_id, threshold, mut operator) = match (left_type, right_type) {
+        (NumericType::Regular, NumericType::Constant) => {
+            (left_id, initial[right_id], axiom.get_operator().clone())
+        }
+        (NumericType::Constant, NumericType::Regular) => (
+            right_id,
+            initial[left_id],
+            reverse_comparison_operator(axiom.get_operator()),
+        ),
+        _ => bail!(
+            "ICAPS 2026 requires each numeric condition to compare one regular variable with one constant; comparison axiom {comparison_axiom_id} has operand types {left_type:?} and {right_type:?}"
+        ),
+    };
+    ensure!(
+        threshold.is_finite(),
+        "ICAPS numeric comparison axiom {comparison_axiom_id} has non-finite threshold {threshold}"
+    );
+    if !comparison_truth(desired_prop_value)? {
+        operator = negate_comparison_operator(&operator)?;
+    }
+    let threshold = float_tolerance::canonicalize(threshold);
+    let interval = match operator {
+        ComparisonOperator::LessThan => Interval::new(f64::NEG_INFINITY, threshold, false, false),
+        ComparisonOperator::LessThanOrEqual => {
+            Interval::new(f64::NEG_INFINITY, threshold, false, true)
+        }
+        ComparisonOperator::Equal => Interval::singleton(threshold),
+        ComparisonOperator::GreaterThanOrEqual => {
+            Interval::new(threshold, f64::INFINITY, true, false)
+        }
+        ComparisonOperator::GreaterThan => Interval::new(threshold, f64::INFINITY, false, false),
+        ComparisonOperator::UnEqual => bail!(
+            "ICAPS 2026 cannot represent a not-equal numeric condition as one interval (comparison axiom {comparison_axiom_id})"
+        ),
+    };
+    Ok((numeric_var_id, interval))
+}
+
+fn reverse_comparison_operator(operator: &ComparisonOperator) -> ComparisonOperator {
+    match operator {
+        ComparisonOperator::LessThan => ComparisonOperator::GreaterThan,
+        ComparisonOperator::LessThanOrEqual => ComparisonOperator::GreaterThanOrEqual,
+        ComparisonOperator::Equal => ComparisonOperator::Equal,
+        ComparisonOperator::GreaterThanOrEqual => ComparisonOperator::LessThanOrEqual,
+        ComparisonOperator::GreaterThan => ComparisonOperator::LessThan,
+        ComparisonOperator::UnEqual => ComparisonOperator::UnEqual,
+    }
+}
+
+fn negate_comparison_operator(operator: &ComparisonOperator) -> Result<ComparisonOperator> {
+    Ok(match operator {
+        ComparisonOperator::LessThan => ComparisonOperator::GreaterThanOrEqual,
+        ComparisonOperator::LessThanOrEqual => ComparisonOperator::GreaterThan,
+        ComparisonOperator::Equal => ComparisonOperator::UnEqual,
+        ComparisonOperator::GreaterThanOrEqual => ComparisonOperator::LessThan,
+        ComparisonOperator::GreaterThan => ComparisonOperator::LessThanOrEqual,
+        ComparisonOperator::UnEqual => ComparisonOperator::Equal,
+    })
+}
+
+fn icaps_splits_for_desired_region(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    state_id: usize,
+    desired: &StateRegion,
+    prop_values: &[usize],
+    numeric_values: &[f64],
+    description: &str,
+) -> Result<Vec<Split>> {
+    let current = working
+        .states
+        .get(state_id)
+        .with_context(|| format!("missing Cartesian state {state_id}"))?;
+    let mut candidates = Vec::new();
+    for (var_id, current_values) in current.propositions.iter().enumerate() {
+        if semantics.comparison_tree_by_prop_var[var_id].is_some()
+            || !semantics.propositional_axioms_by_prop_var[var_id].is_empty()
+        {
+            continue;
+        }
+        let witness = prop_values[var_id] as PropValueId;
+        let desired_values = &desired.propositions[var_id];
+        if desired_values.binary_search(&witness).is_ok() {
+            continue;
+        }
+        ensure!(
+            current_values.binary_search(&witness).is_ok(),
+            "ICAPS concrete witness {witness} is outside Cartesian prop var {var_id}"
+        );
+        let wanted = current_values
+            .iter()
+            .copied()
+            .filter(|value| desired_values.binary_search(value).is_ok())
+            .collect::<Vec<_>>();
+        ensure!(
+            !wanted.is_empty(),
+            "ICAPS desired region does not overlap Cartesian prop var {var_id}"
+        );
+        candidates.push(Split::Propositional {
+            state_id,
+            var_id,
+            wanted,
+            witness_value: witness,
+            description: description.to_string(),
+        });
+    }
+
+    for (var_id, (&parent, &target)) in current
+        .numeric
+        .iter()
+        .zip(desired.numeric.iter())
+        .enumerate()
+    {
+        let witness = numeric_values[var_id];
+        if target.contains(witness) {
+            continue;
+        }
+        ensure!(
+            parent.contains(witness) && parent.intersects(&target),
+            "ICAPS desired numeric interval {target:?} does not overlap parent {parent:?} containing witness {witness} for var {var_id}"
+        );
+        let witness_is_below =
+            witness < target.lower || (witness == target.lower && !target.lower_closed);
+        let (boundary, lower_includes_boundary) = if witness_is_below {
+            ensure!(
+                target.lower.is_finite(),
+                "ICAPS lower split boundary is infinite"
+            );
+            (target.lower, !target.lower_closed)
+        } else {
+            ensure!(
+                witness > target.upper || (witness == target.upper && !target.upper_closed),
+                "ICAPS numeric witness is neither below nor above desired interval"
+            );
+            ensure!(
+                target.upper.is_finite(),
+                "ICAPS upper split boundary is infinite"
+            );
+            (target.upper, target.upper_closed)
+        };
+        ensure!(
+            parent.can_split_at(boundary, lower_includes_boundary),
+            "ICAPS desired numeric split is not strict for var {var_id}: parent={parent:?}, target={target:?}"
+        );
+        candidates.push(Split::Numeric {
+            state_id,
+            var_id,
+            boundary,
+            lower_includes_boundary,
+            witness_value: witness,
+            desired_contains_witness: false,
+            integer_lattice: semantics.numeric_integer_lattice[var_id],
+            description: description.to_string(),
+        });
+    }
+    ensure!(
+        !candidates.is_empty(),
+        "ICAPS flaw has no concrete value outside its desired region"
+    );
+    Ok(candidates)
 }
 
 fn select_min_growth_split(
@@ -3590,6 +4212,7 @@ fn comparison_refinement(
                         goal,
                         ComparisonRefinementGoal::GuaranteeDesired(_)
                     ),
+                    integer_lattice: false,
                     description: description.clone(),
                 };
                 candidates.push((separates_truth, achieved, candidate));
@@ -3770,6 +4393,10 @@ fn split_deviation_candidates(
             lower_includes_boundary,
             witness_value: source,
             desired_contains_witness: false,
+            integer_lattice: matches!(
+                semantics.split_selection,
+                CartesianSplitSelection::Icaps26(_)
+            ) && semantics.numeric_integer_lattice[var_id],
             description: format!(
                 "operator {op_id} successor numeric var {var_id}={successor} outside target {target_interval:?}"
             ),
@@ -3848,21 +4475,16 @@ fn apply_split(
             boundary,
             lower_includes_boundary,
             witness_value,
+            integer_lattice,
             ..
         } => {
             let parent = old_region.numeric[var_id];
-            let lower = interval_intersection(
+            let (lower, upper) = numeric_split_intervals(
                 parent,
-                Interval::new(f64::NEG_INFINITY, boundary, false, lower_includes_boundary),
-            );
-            let upper = interval_intersection(
-                parent,
-                Interval::new(boundary, f64::INFINITY, !lower_includes_boundary, false),
-            );
-            ensure!(
-                !lower.is_empty() && !upper.is_empty(),
-                "non-strict numeric Cartesian split on var {var_id} at {boundary}: parent={parent:?}, include_lower={lower_includes_boundary}"
-            );
+                boundary,
+                lower_includes_boundary,
+                integer_lattice,
+            )?;
             let witness_is_lower = lower.contains(witness_value);
             ensure!(
                 witness_is_lower ^ upper.contains(witness_value),

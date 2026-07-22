@@ -20,7 +20,7 @@ use planforge_search::open_lists::{OpenList, SearchNode, TieBreakingOpenList};
 use planforge_search::search::{AStarSearch, SearchEngine};
 use planforge_search::search::{SearchResult, SearchStatus, compute_effective_operator_costs};
 use planforge_search::successor_generator::SuccessorTree;
-use planforge_search::task_restriction::build_restricted_task;
+use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
 use planforge_searcher::*;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -300,7 +300,12 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     };
     if cli.restrict_task {
         let original_numeric_count = task.numeric_variables().len();
-        if let Some(restricted_task) = build_restricted_task(&task).map_err(|err| {
+        let restricted_task = if cli.search.contains_call("icaps26_cartesian") {
+            build_icaps26_restricted_task(&task)
+        } else {
+            build_restricted_task(&task)
+        };
+        if let Some(restricted_task) = restricted_task.map_err(|err| {
             std::io::Error::other(format!("failed to build restricted task: {err:#}"))
         })? {
             task = restricted_task.into_task();

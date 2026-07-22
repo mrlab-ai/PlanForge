@@ -15,6 +15,10 @@ fn main() -> std::io::Result<()> {
 
     planforge_search::resource_limits::reserve_memory_padding(cli.max_memory)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+    #[cfg(unix)]
+    planforge_cli_utils::install_oom_recovery(
+        planforge_search::resource_limits::release_padding_for_oom,
+    );
 
     match run_internal(&cli) {
         Ok(result) => std::process::exit(exit_code_for_search_status(&result.status)),

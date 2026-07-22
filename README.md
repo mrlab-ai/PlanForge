@@ -73,7 +73,10 @@ independent. For example:
       domain.pddl problem.pddl
 
 `icaps26_cartesian` accepts `pick=random|min_unwanted|max_unwanted` and requires
-an integer restricted SNP task. `construction_max_time` is one shared budget
+`--restrict-task`. It reproduces the artifact semantics on integer restricted
+tasks; the dedicated affine restriction and continuous-split extensions cover
+the full supported SNP benchmark set without changing other heuristics.
+`construction_max_time` is one shared budget
 for source generation and offline SCP table construction.
 
 Pre-translated SAS+:
