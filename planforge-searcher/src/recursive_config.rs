@@ -1,4 +1,5 @@
 use std::fmt;
+use std::time::Duration;
 
 // Re-export the parser AST nodes + the trait from `planforge-search`, where
 // the typed configs live. The derive emits absolute paths into those types,
@@ -475,6 +476,7 @@ pub fn apply_da_options(cfg: &mut CegarConfig, args: &[ConfigArg]) -> Result<(),
     const ORDER: &[&str] = &[
         "max_abstraction_size",
         "max_iterations",
+        "max_time",
         "use_wildcard_plans",
         "combine_labels",
         "random_seed",
@@ -486,6 +488,16 @@ pub fn apply_da_options(cfg: &mut CegarConfig, args: &[ConfigArg]) -> Result<(),
         match key {
             "max_abstraction_size" => cfg.max_abstraction_size = parse(value)?,
             "max_iterations" => cfg.max_iterations = parse(value)?,
+            "max_time" => {
+                let seconds = f64::from_option_value(value)?;
+                cfg.max_time = if seconds.is_infinite() {
+                    None
+                } else {
+                    Some(Duration::try_from_secs_f64(seconds).map_err(|error| {
+                        format!("invalid domain-abstraction max_time {seconds}: {error}")
+                    })?)
+                };
+            }
             "use_wildcard_plans" => cfg.use_wildcard_plans = parse(value)?,
             "combine_labels" => cfg.combine_labels = parse(value)?,
             "random_seed" => cfg.random_seed = parse(value)?,

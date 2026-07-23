@@ -321,6 +321,22 @@ fn parses_execute_entire_plan_flaw_kind() {
 }
 
 #[test]
+fn parses_single_domain_abstraction_time_limit() {
+    let h = astar_heuristic(
+        "astar(domain_abstraction(max_abstraction_size=1000,max_time=900,flaw_kind=execute_entire_plan))",
+    );
+    let mut cfg = CegarConfig::default();
+    apply_da_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.max_abstraction_size, 1000);
+    assert_eq!(cfg.max_time, Some(std::time::Duration::from_secs(900)));
+    assert_eq!(cfg.flaw_kind, FlawKind::ExecuteEntirePlan);
+
+    let h = astar_heuristic("astar(domain_abstraction(max_time=infinity))");
+    apply_da_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.max_time, None);
+}
+
+#[test]
 fn parses_forward_partition_deviation_split_direction() {
     let spec = parse_search_spec(
         "astar(canonical_domain_abstractions(split_direction=forward_partition_deviation))",
