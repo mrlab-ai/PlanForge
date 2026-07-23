@@ -435,7 +435,10 @@ def print_info(exp, reruns):
     print(f"limits: planner={PLANNER_TIME}, memory={PLANNER_MEMORY}, wall={EXTERNAL_WALL_TIME}s")
 
 
-reruns, rerun_options = exact_bug_reruns()
+if REPAIR_ONLY:
+    reruns, rerun_options = {}, {}
+else:
+    reruns, rerun_options = exact_bug_reruns()
 repair_path = HERE / "data" / "0053-repair" if REPAIR_ONLY else None
 exp = HybridExperiment(environment=ENV, path=repair_path)
 for root, names in ALL_SUITES:

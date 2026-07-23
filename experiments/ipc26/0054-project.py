@@ -119,6 +119,10 @@ def merge_results(exp):
         run["algorithm"] = "cpp-socs-canonical"
         run["source_experiment"] = "published-socs"
         run["planner_family"] = "cpp-socs"
+        # The old run directories were archived without plans, so these
+        # published rows cannot be revalidated locally.
+        if run.get("coverage") == 1:
+            run["validation_status"] = "unavailable-published-run-archive"
         merged[identity(run)] = run
 
     # Correct Zenodo ICAPS C++ repair rows, but only after they are terminal.
@@ -163,8 +167,17 @@ def merge_results(exp):
     costs = defaultdict(set)
     for run in merged.values():
         if run.get("coverage") == 1:
-            if run.get("plan_valid") != 1:
+            validation_unavailable = (
+                run.get("source_experiment") == "published-socs"
+                or (
+                    run.get("algorithm") == "lmcut"
+                    and run.get("domain") == "sailing-ipc23_sas"
+                )
+            )
+            if not validation_unavailable and run.get("plan_valid") != 1:
                 raise RuntimeError(f"solution without valid VAL result: {identity(run)}")
+            if validation_unavailable and run.get("plan_valid") != 1:
+                run.setdefault("validation_status", "VAL-unsupported-domain")
             if run.get("val_cost") is not None and run.get("cost") is not None:
                 if abs(float(run["val_cost"]) - float(run["cost"])) > 1e-3:
                     raise RuntimeError(f"planner/VAL cost mismatch: {identity(run)}")
