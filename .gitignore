@@ -28,6 +28,7 @@ experiments/
 # playground python files
 *.py
 !/lab-files/abstraction_parser.py
+!/lab-files/benchmark_suites.py
 __pycache__/
 others
 profile.json.gz
