@@ -186,6 +186,14 @@ fn parses_strict_icaps26_cartesian_source() {
         config.refinement_direction,
         planforge_search::evaluation::cartesian_abstractions::CartesianRefinementDirection::Regression
     );
+    assert_eq!(
+        config.abstract_plan_selection,
+        planforge_search::evaluation::cartesian_abstractions::CartesianAbstractPlanSelection::StableAStar
+    );
+    assert_eq!(
+        config.flaw_candidate_generation,
+        planforge_search::evaluation::cartesian_abstractions::CartesianFlawCandidateGeneration::DesiredRegion
+    );
     assert!(config.compute_operator_footprints);
     assert!(config.retain_transition_system);
 

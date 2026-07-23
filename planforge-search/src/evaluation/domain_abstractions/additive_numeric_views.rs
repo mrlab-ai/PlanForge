@@ -30,6 +30,10 @@ impl AdditiveNumericView {
             })
     }
 
+    pub(crate) fn operator_deltas(&self) -> &[f64] {
+        &self.operator_deltas
+    }
+
     pub(crate) fn evaluate(&self, numeric_values: &[f64]) -> f64 {
         self.expression.evaluate(numeric_values)
     }

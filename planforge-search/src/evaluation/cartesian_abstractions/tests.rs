@@ -15,10 +15,10 @@ use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
     CartesianSemantics, CartesianSplitSelection, CartesianStopReason, FlawKind, OperatorBitSet,
-    RefinementNode, ShortestPaths, Split, StateRegion, TransitionKey, WorkingAbstraction,
-    apply_split, artifact_unwanted_score, numeric_split_choice_key, numeric_split_intervals,
-    push_unique_split, retain_min_growth_splits, select_next_cartesian_collection_goal,
-    select_refinement_split,
+    RefinementNode, ShortestPaths, Split, SplitDimension, StateRegion, TransitionKey,
+    WorkingAbstraction, apply_split, artifact_unwanted_score, numeric_split_choice_key,
+    numeric_split_intervals, push_unique_split, retain_min_growth_splits,
+    select_next_cartesian_collection_goal, select_refinement_split,
 };
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use crate::evaluation::domain_abstractions::comparison_expression::Interval;
@@ -77,6 +77,12 @@ fn icaps_numeric_splits_preserve_integer_lattices_without_dropping_continuous_va
     assert!(continuous_lower.contains(-0.5));
     assert!(!continuous_lower.contains(0.0));
     assert!(continuous_upper.contains(0.0));
+
+    let integer_parent = Interval::new(f64::NEG_INFINITY, 1.0, false, false);
+    assert!(
+        numeric_split_intervals(integer_parent, 0.0, true, true).is_err(),
+        "an integer split must reject a child containing only values in (0, 1)"
+    );
 }
 
 #[test]
@@ -328,6 +334,91 @@ fn min_growth_uses_projected_transition_count() {
     retain_min_growth_splits(&working, &semantics, &mut candidates, |candidate| candidate).unwrap();
     assert_eq!(candidates.len(), 1);
     assert!(matches!(candidates[0], Split::Numeric { var_id: 1, .. }));
+}
+
+#[test]
+fn max_additive_steps_prioritizes_the_longest_exact_numeric_distance() {
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![ExplicitVariable::new(
+            2,
+            "goal".into(),
+            vec!["true".into(), "false".into()],
+            None,
+            1,
+        )],
+        vec![
+            NumericVariable::new("long".into(), NumericType::Regular, None),
+            NumericVariable::new("short".into(), NumericType::Regular, None),
+            NumericVariable::new("half".into(), NumericType::Constant, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+        ],
+        vec![ExplicitFact::new(0, 0)],
+        vec![],
+        vec![0],
+        vec![-10.0, -2.0, 0.5, 1.0],
+        vec![
+            Operator::new(
+                "increment-long".into(),
+                vec![],
+                vec![],
+                vec![AssignmentEffect::new(
+                    0,
+                    AssignmentOperation::Plus,
+                    2,
+                    false,
+                    vec![],
+                )],
+                1,
+            ),
+            Operator::new(
+                "increment-short".into(),
+                vec![],
+                vec![],
+                vec![AssignmentEffect::new(
+                    1,
+                    AssignmentOperation::Plus,
+                    3,
+                    false,
+                    vec![],
+                )],
+                1,
+            ),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 1),
+    );
+    let config = CartesianAbstractionConfig {
+        split_selection: CartesianSplitSelection::MaxAdditiveSteps,
+        ..Default::default()
+    };
+    let semantics = CartesianSemantics::new(&task, &config).unwrap();
+    let mut working = WorkingAbstraction::new(semantics.trivial_region().unwrap(), 2);
+    for op_id in 0..2 {
+        working.add_transition(0, op_id, 0);
+    }
+    let split = |var_id, witness_value| Split::Numeric {
+        state_id: 0,
+        var_id,
+        boundary: 0.0,
+        lower_includes_boundary: true,
+        witness_value,
+        desired_contains_witness: false,
+        integer_lattice: false,
+        description: String::new(),
+    };
+
+    let selected = select_refinement_split(
+        &working,
+        &semantics,
+        vec![split(0, -10.0), split(1, -2.0)],
+        0,
+    )
+    .unwrap();
+    assert!(matches!(selected, Split::Numeric { var_id: 0, .. }));
 }
 
 #[test]
@@ -627,6 +718,80 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
     let sequence = draw(&random_a);
     assert_eq!(sequence, draw(&random_b));
     assert!(sequence.contains(&1) && sequence.contains(&3));
+}
+
+#[test]
+fn native_random_and_least_refined_selectors_are_independent() {
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![
+            ExplicitVariable::new(2, "left".into(), vec!["zero".into(), "one".into()], None, 0),
+            ExplicitVariable::new(
+                2,
+                "right".into(),
+                vec!["zero".into(), "one".into()],
+                None,
+                0,
+            ),
+        ],
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0, 0],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let split = |var_id| Split::Propositional {
+        state_id: 0,
+        var_id,
+        wanted: vec![1],
+        witness_value: 0,
+        description: String::new(),
+    };
+    let candidates = vec![split(0), split(1)];
+
+    let random_config = CartesianAbstractionConfig {
+        split_selection: CartesianSplitSelection::Random,
+        random_seed: Some(7),
+        ..CartesianAbstractionConfig::default()
+    };
+    let random_a = CartesianSemantics::new(&task, &random_config).unwrap();
+    let random_b = CartesianSemantics::new(&task, &random_config).unwrap();
+    let working = WorkingAbstraction::new(
+        StateRegion {
+            propositions: vec![vec![0, 1], vec![0, 1]].into(),
+            numeric: vec![].into(),
+        },
+        0,
+    );
+    let draw = |semantics: &CartesianSemantics<'_>| {
+        (0..32)
+            .map(|_| {
+                select_refinement_split(&working, semantics, candidates.clone(), 0)
+                    .unwrap()
+                    .dimension()
+            })
+            .collect::<Vec<_>>()
+    };
+    let sequence = draw(&random_a);
+    assert_eq!(sequence, draw(&random_b));
+    assert!(sequence.contains(&SplitDimension::Propositional(0)));
+    assert!(sequence.contains(&SplitDimension::Propositional(1)));
+
+    let least_refined_config = CartesianAbstractionConfig {
+        split_selection: CartesianSplitSelection::LeastRefined,
+        ..CartesianAbstractionConfig::default()
+    };
+    let least_refined = CartesianSemantics::new(&task, &least_refined_config).unwrap();
+    let mut unbalanced = working;
+    unbalanced.propositional_refinement_counts[0] = 3;
+    let selected = select_refinement_split(&unbalanced, &least_refined, candidates, 0).unwrap();
+    assert_eq!(selected.dimension(), SplitDimension::Propositional(1));
 }
 
 #[test]
@@ -971,6 +1136,72 @@ fn supports_snp_assignment_axiom_comparisons() {
 }
 
 #[test]
+fn desired_region_uses_additive_snp_coordinate() {
+    let variables = vec![comparison_variable("sum-at-four")];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+        NumericVariable::new("sum".into(), NumericType::Derived, None),
+        NumericVariable::new("four".into(), NumericType::Constant, None),
+    ];
+    let increment = |name: &str, var_id| {
+        Operator::new(
+            name.into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                var_id,
+                AssignmentOperation::Plus,
+                2,
+                false,
+                vec![],
+            )],
+            1,
+        )
+    };
+    let task = numeric_goal_task(
+        variables,
+        numeric_variables,
+        // The stored value of the derived sum is intentionally stale. The
+        // Cartesian initial-state hash must use the axiom-evaluated value 3.
+        vec![2.0, 1.0, 1.0, 0.0, 4.0],
+        vec![increment("increment-x", 0), increment("increment-y", 1)],
+        vec![ComparisonAxiom::new(
+            0,
+            3,
+            4,
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![AssignmentAxiom::new(3, CalOperator::Sum, 0, 1)],
+    );
+
+    for abstract_plan_selection in [
+        super::CartesianAbstractPlanSelection::BackwardShortestPath,
+        super::CartesianAbstractPlanSelection::StableAStar,
+    ] {
+        let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+            max_states: 32,
+            random_seed: Some(1),
+            refinement_direction: CartesianRefinementDirection::Regression,
+            abstract_plan_selection,
+            flaw_candidate_generation: super::CartesianFlawCandidateGeneration::DesiredRegion,
+            split_selection: CartesianSplitSelection::Random,
+            ..Default::default()
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+
+        assert_eq!(
+            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+            1.0
+        );
+        assert!(abstraction.metadata.solved_by_self);
+    }
+}
+
+#[test]
 fn supports_nonlinear_snp_assignment_axiom_comparisons() {
     let variables = vec![comparison_variable("product-at-nine")];
     let numeric_variables = vec![
@@ -1005,6 +1236,58 @@ fn supports_nonlinear_snp_assignment_axiom_comparisons() {
     );
 
     assert_solved_with_h(&task, 2.0);
+}
+
+#[test]
+fn desired_region_rejects_non_additive_snp_coordinate() {
+    let variables = vec![comparison_variable("product-at-nine")];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+        NumericVariable::new("product".into(), NumericType::Derived, None),
+        NumericVariable::new("nine".into(), NumericType::Constant, None),
+    ];
+    let task = numeric_goal_task(
+        variables,
+        numeric_variables,
+        vec![1.0, 1.0, 1.0, 0.0, 9.0],
+        vec![Operator::new(
+            "increment-both".into(),
+            vec![],
+            vec![],
+            vec![
+                AssignmentEffect::new(0, AssignmentOperation::Plus, 2, false, vec![]),
+                AssignmentEffect::new(1, AssignmentOperation::Plus, 2, false, vec![]),
+            ],
+            1,
+        )],
+        vec![ComparisonAxiom::new(
+            0,
+            3,
+            4,
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![AssignmentAxiom::new(3, CalOperator::Product, 0, 1)],
+    );
+    let error = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        max_states: 32,
+        random_seed: Some(1),
+        refinement_direction: CartesianRefinementDirection::Regression,
+        abstract_plan_selection: super::CartesianAbstractPlanSelection::StableAStar,
+        flaw_candidate_generation: super::CartesianFlawCandidateGeneration::DesiredRegion,
+        split_selection: CartesianSplitSelection::Random,
+        ..Default::default()
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap_err();
+
+    let diagnostic = format!("{error:#}");
+    assert!(
+        diagnostic.contains("exact additive coordinate"),
+        "unexpected diagnostic: {diagnostic}"
+    );
 }
 
 #[test]

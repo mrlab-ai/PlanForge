@@ -7,9 +7,10 @@ use planforge_search::config::{
 use planforge_search::evaluation::abstraction_collections::component::AbstractionComponent;
 use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use planforge_search::evaluation::cartesian_abstractions::{
-    CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
-    CartesianSplitSelection,
+    CartesianAbstractPlanSelection, CartesianAbstractionCollectionConfig,
+    CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
+    CartesianAbstractionGenerator, CartesianFlawCandidateGeneration,
+    CartesianRefinementDirection, CartesianSplitSelection,
 };
 use planforge_search::evaluation::cartesian_abstractions::icaps26::Icaps26SplitSelection;
 use planforge_search::evaluation::cegar::FlawKind;
@@ -459,6 +460,8 @@ pub(crate) fn apply_icaps26_cartesian_options(
     config.retain_transition_system = component_use.needs_transition_system();
     config.random_seed = Some(2011);
     config.refinement_direction = CartesianRefinementDirection::Regression;
+    config.abstract_plan_selection = CartesianAbstractPlanSelection::StableAStar;
+    config.flaw_candidate_generation = CartesianFlawCandidateGeneration::DesiredRegion;
     config.split_selection = CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MaxUnwanted);
 
     let mut seen = HashSet::new();
@@ -612,6 +615,48 @@ fn apply_cartesian_source_options(
                     }
                 };
             }
+            "split_selection" => {
+                let value = String::from_option_value(arg.value())?;
+                config.abstraction.split_selection = match value.as_str() {
+                    "min_transition_growth" | "min_growth" => {
+                        CartesianSplitSelection::MinTransitionGrowth
+                    }
+                    "max_additive_steps" => CartesianSplitSelection::MaxAdditiveSteps,
+                    "random" => CartesianSplitSelection::Random,
+                    "least_refined" => CartesianSplitSelection::LeastRefined,
+                    _ => {
+                        return Err(format!(
+                            "invalid Cartesian split_selection `{value}`; expected min_transition_growth, max_additive_steps, random, or least_refined"
+                        ));
+                    }
+                };
+            }
+            "abstract_plan" => {
+                let value = String::from_option_value(arg.value())?;
+                config.abstraction.abstract_plan_selection = match value.as_str() {
+                    "backward_shortest_path" => {
+                        CartesianAbstractPlanSelection::BackwardShortestPath
+                    }
+                    "stable_astar" => CartesianAbstractPlanSelection::StableAStar,
+                    _ => {
+                        return Err(format!(
+                            "invalid Cartesian abstract_plan `{value}`; expected backward_shortest_path or stable_astar"
+                        ));
+                    }
+                };
+            }
+            "flaw_candidates" => {
+                let value = String::from_option_value(arg.value())?;
+                config.abstraction.flaw_candidate_generation = match value.as_str() {
+                    "general" => CartesianFlawCandidateGeneration::General,
+                    "desired_region" => CartesianFlawCandidateGeneration::DesiredRegion,
+                    _ => {
+                        return Err(format!(
+                            "invalid Cartesian flaw_candidates `{value}`; expected general or desired_region"
+                        ));
+                    }
+                };
+            }
             "split_selection_rank" => {
                 config.abstraction.split_selection_rank =
                     Some(usize::from_option_value(arg.value())?);
@@ -664,7 +709,11 @@ mod tests {
     use crate::HeuristicBuildError;
 
     use super::{
-        remaining_construction_time, require_only_component_sources, split_component_sources,
+        ComponentUse, apply_cartesian_options, remaining_construction_time,
+        require_only_component_sources, split_component_sources,
+    };
+    use planforge_search::evaluation::cartesian_abstractions::{
+        CartesianAbstractPlanSelection, CartesianFlawCandidateGeneration, CartesianSplitSelection,
     };
 
     #[test]
@@ -703,5 +752,74 @@ mod tests {
         let error = remaining_construction_time(Some(Instant::now())).unwrap_err();
         assert!(matches!(error, HeuristicBuildError::ConstructionTimeout));
         assert_eq!(error.into_io_error().kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn parses_native_cartesian_split_selection() {
+        for (name, expected) in [
+            (
+                "min_transition_growth",
+                CartesianSplitSelection::MinTransitionGrowth,
+            ),
+            (
+                "max_additive_steps",
+                CartesianSplitSelection::MaxAdditiveSteps,
+            ),
+            ("random", CartesianSplitSelection::Random),
+            ("least_refined", CartesianSplitSelection::LeastRefined),
+        ] {
+            let args = vec![ConfigArg::new(
+                Some("split_selection".to_string()),
+                ConfigValue::Atom(name.to_string()),
+            )];
+            let config = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap();
+            assert_eq!(config.split_selection, expected);
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_native_cartesian_split_selection() {
+        let args = vec![ConfigArg::new(
+            Some("split_selection".to_string()),
+            ConfigValue::Atom("magic".to_string()),
+        )];
+        let error = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap_err();
+        assert!(error.contains("invalid Cartesian split_selection"));
+    }
+
+    #[test]
+    fn parses_native_cartesian_abstract_plan_selection() {
+        for (name, expected) in [
+            (
+                "backward_shortest_path",
+                CartesianAbstractPlanSelection::BackwardShortestPath,
+            ),
+            ("stable_astar", CartesianAbstractPlanSelection::StableAStar),
+        ] {
+            let args = vec![ConfigArg::new(
+                Some("abstract_plan".to_string()),
+                ConfigValue::Atom(name.to_string()),
+            )];
+            let config = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap();
+            assert_eq!(config.abstract_plan_selection, expected);
+        }
+    }
+
+    #[test]
+    fn parses_native_cartesian_flaw_candidate_generation() {
+        for (name, expected) in [
+            ("general", CartesianFlawCandidateGeneration::General),
+            (
+                "desired_region",
+                CartesianFlawCandidateGeneration::DesiredRegion,
+            ),
+        ] {
+            let args = vec![ConfigArg::new(
+                Some("flaw_candidates".to_string()),
+                ConfigValue::Atom(name.to_string()),
+            )];
+            let config = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap();
+            assert_eq!(config.flaw_candidate_generation, expected);
+        }
     }
 }
