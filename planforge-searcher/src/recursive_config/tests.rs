@@ -197,6 +197,30 @@ fn parses_strict_icaps26_cartesian_source() {
 }
 
 #[test]
+fn parses_matched_single_abstraction_icaps26_configuration() {
+    let h = astar_heuristic("astar(canonical(icaps26_cartesian(pick=random,max_time=900)))");
+    let (sources, construction_deadline) =
+        crate::abstraction_config::canonical_sources_and_deadline(&h.args).unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].name(), "icaps26_cartesian");
+    assert!(
+        construction_deadline.is_none(),
+        "the published 900-second limit bounds CEGAR, not the outer combinator"
+    );
+    let config = crate::abstraction_config::apply_icaps26_cartesian_options(
+        sources[0].args(),
+        crate::abstraction_config::ComponentUse::Standalone,
+    )
+    .unwrap();
+    assert_eq!(config.max_states, usize::MAX);
+    assert_eq!(config.max_time, Some(std::time::Duration::from_secs(900)));
+    assert_eq!(
+        config.split_selection,
+        CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random)
+    );
+}
+
+#[test]
 fn parses_shared_construction_deadlines_for_canonical_and_scp() {
     let canonical =
         astar_heuristic("astar(canonical(cartesian(max_states=100),construction_max_time=900))");
