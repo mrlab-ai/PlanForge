@@ -16,7 +16,7 @@ if str(LAB_FILES) not in sys.path:
 from abstraction_parser import AbstractionParser
 
 
-REVISION = "49934df"
+REVISION = "4a489ac"
 REPO = project.get_repo_base()
 PROFILE = "release"
 BUILD_OPTIONS = ["-j", "6"]
