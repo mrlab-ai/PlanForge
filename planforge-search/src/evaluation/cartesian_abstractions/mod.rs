@@ -70,6 +70,8 @@ pub struct CartesianAbstractionMetadata {
     pub split_selection_rank: Option<usize>,
     pub concrete_plan_operator_ids: Option<Vec<usize>>,
     pub progressive_refinement_root: bool,
+    /// Number of non-loop transitions built before optional standalone compaction.
+    pub transition_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +92,8 @@ pub struct CartesianAbstractionConfig {
     pub max_time: Option<Duration>,
     pub combine_labels: bool,
     pub compute_operator_footprints: bool,
+    /// Retain the explicit graph required by cost partitioning.
+    pub retain_transition_system: bool,
     pub random_seed: Option<u64>,
     pub flaw_kind: FlawKind,
     pub refinement_direction: CartesianRefinementDirection,
@@ -105,6 +109,7 @@ impl Default for CartesianAbstractionConfig {
             max_time: None,
             combine_labels: false,
             compute_operator_footprints: true,
+            retain_transition_system: true,
             random_seed: None,
             flaw_kind: FlawKind::Progression,
             refinement_direction: CartesianRefinementDirection::Progression,
@@ -1792,13 +1797,23 @@ impl CartesianAbstractionGenerator {
             }
         };
 
+        let working_transition_count = working.active_transition_ids().count();
         let (transition_system, distance_table, relevant_operator_ids, footprints) =
-            finalize_abstraction(
-                &working,
-                &semantics,
-                self.config.combine_labels,
-                self.config.compute_operator_footprints,
-            )?;
+            if self.config.retain_transition_system {
+                finalize_abstraction(
+                    &working,
+                    &semantics,
+                    self.config.combine_labels,
+                    self.config.compute_operator_footprints,
+                )?
+            } else {
+                finalize_standalone_abstraction(&working, &semantics, &shortest_paths)?
+            };
+        let transition_count = if self.config.retain_transition_system {
+            transition_system.transitions.len()
+        } else {
+            working_transition_count
+        };
         if let Some(plan) = &solved_plan {
             validate_concrete_plan(
                 &semantics,
@@ -1826,7 +1841,7 @@ impl CartesianAbstractionGenerator {
         info!(
             "Cartesian abstraction: states={}, transitions={}, refinements={}, h(init)={}, stop={stop_reason:?}, elapsed={:.3}s",
             distance_table.distances.len(),
-            transition_system.transitions.len(),
+            transition_count,
             refinements,
             distance_table.distances[distance_table.initial_state_hash],
             start.elapsed().as_secs_f64()
@@ -1849,6 +1864,7 @@ impl CartesianAbstractionGenerator {
                 split_selection_rank: self.config.split_selection_rank,
                 concrete_plan_operator_ids: solved_plan.map(|plan| plan.operator_ids),
                 progressive_refinement_root: false,
+                transition_count,
             },
         })
     }
@@ -5011,6 +5027,69 @@ fn finalize_abstraction(
         distance_table,
         relevant_operator_ids,
         footprints,
+    ))
+}
+
+fn finalize_standalone_abstraction(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    shortest_paths: &ShortestPaths,
+) -> Result<(
+    AbstractTransitionSystem,
+    AbstractDistanceTable,
+    Vec<usize>,
+    Vec<AbstractOperatorFootprint>,
+)> {
+    ensure!(
+        shortest_paths.distances.len() == working.states.len(),
+        "Cartesian shortest-path/state count mismatch during standalone finalization"
+    );
+    let initial_prop = semantics.task.get_initial_propositional_state_values();
+    let initial_numeric = semantics
+        .task
+        .get_initial_numeric_state_values()
+        .iter()
+        .copied()
+        .map(float_tolerance::canonicalize)
+        .collect::<Vec<_>>();
+    let initial_state_hash = working
+        .hierarchy
+        .map_state(&initial_prop, &initial_numeric)?;
+    let goal_facts = (0..semantics.task.get_num_goals())
+        .map(|goal_id| *semantics.task.get_goal_fact(goal_id))
+        .collect::<Vec<_>>();
+    let mut relevant_operator_ids = working
+        .active_transition_ids()
+        .map(|transition_id| working.transition(transition_id).concrete_op_id)
+        .collect::<Vec<_>>();
+    relevant_operator_ids.sort_unstable();
+    relevant_operator_ids.dedup();
+
+    let distance_table = AbstractDistanceTable {
+        distances: shortest_paths.distances.clone(),
+        generating_op_ids: vec![None; working.states.len()],
+        initial_state_hash,
+        goal_facts: goal_facts.clone(),
+        hash_multipliers: Vec::new(),
+        numeric_domain_sizes: Vec::new(),
+    };
+    let transition_system = AbstractTransitionSystem {
+        transitions: Vec::new(),
+        duplicate_transition_attempts: 0,
+        backward: Vec::new(),
+        forward: Vec::new(),
+        goal_facts,
+        goal_state_hashes: Vec::new(),
+        initial_state_hash,
+        hash_multipliers: Vec::new(),
+        numeric_domain_sizes: Vec::new(),
+        state_regions: Vec::new(),
+    };
+    Ok((
+        transition_system,
+        distance_table,
+        relevant_operator_ids,
+        Vec::new(),
     ))
 }
 

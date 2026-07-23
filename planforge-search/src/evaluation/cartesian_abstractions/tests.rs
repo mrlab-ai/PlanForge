@@ -732,6 +732,63 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
 }
 
 #[test]
+fn standalone_finalization_reuses_exact_distances_without_materializing_transitions() {
+    let task = NumericRootTask::new(
+        1,
+        Metric::new(true, None),
+        vec![ExplicitVariable::new(
+            2,
+            "goal".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            0,
+        )],
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![Operator::new(
+            "achieve".into(),
+            vec![ExplicitFact::new(0, 0)],
+            vec![Effect::new(vec![], 0, Some(0), 1)],
+            vec![],
+            3,
+        )],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    );
+    let generate = |retain_transition_system| {
+        CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+            max_states: 2,
+            compute_operator_footprints: false,
+            retain_transition_system,
+            ..CartesianAbstractionConfig::default()
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap()
+    };
+
+    let full = generate(true);
+    let standalone = generate(false);
+    assert_eq!(
+        standalone.distance_table.distances,
+        full.distance_table.distances
+    );
+    assert_eq!(standalone.relevant_operator_ids, full.relevant_operator_ids);
+    assert_eq!(
+        standalone.metadata.transition_count,
+        full.metadata.transition_count
+    );
+    assert!(!full.transition_system.transitions.is_empty());
+    assert!(standalone.transition_system.transitions.is_empty());
+    assert!(standalone.transition_system.state_regions.is_empty());
+}
+
+#[test]
 fn removed_transitions_are_unlinked_and_their_slots_are_reused() {
     let mut working = WorkingAbstraction::new(
         StateRegion {

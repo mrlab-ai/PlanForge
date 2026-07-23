@@ -39,6 +39,10 @@ impl ComponentUse {
     fn needs_operator_footprints(self) -> bool {
         matches!(self, Self::RegionalCostPartitioning)
     }
+
+    fn needs_transition_system(self) -> bool {
+        !matches!(self, Self::Standalone)
+    }
 }
 
 pub(crate) fn split_component_sources(
@@ -379,7 +383,7 @@ pub(crate) fn build_components<'task>(
     let cartesian_transitions = components
         .iter()
         .filter_map(AbstractionComponent::as_cartesian)
-        .map(|abstraction| abstraction.transition_system.transitions.len())
+        .map(|abstraction| abstraction.metadata.transition_count)
         .try_fold(0usize, |total, transitions| {
             total
                 .checked_add(transitions)
@@ -452,6 +456,7 @@ pub(crate) fn apply_icaps26_cartesian_options(
         ..CartesianAbstractionConfig::default()
     };
     config.compute_operator_footprints = component_use.needs_operator_footprints();
+    config.retain_transition_system = component_use.needs_transition_system();
     config.random_seed = Some(2011);
     config.refinement_direction = CartesianRefinementDirection::Regression;
     config.split_selection = CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MaxUnwanted);
@@ -639,6 +644,7 @@ fn apply_cartesian_source_options(
         }
     }
     config.abstraction.compute_operator_footprints = component_use.needs_operator_footprints();
+    config.abstraction.retain_transition_system = component_use.needs_transition_system();
     Ok(config)
 }
 

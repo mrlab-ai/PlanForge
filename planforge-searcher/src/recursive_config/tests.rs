@@ -187,6 +187,7 @@ fn parses_strict_icaps26_cartesian_source() {
         planforge_search::evaluation::cartesian_abstractions::CartesianRefinementDirection::Regression
     );
     assert!(config.compute_operator_footprints);
+    assert!(config.retain_transition_system);
 
     let defaults = crate::abstraction_config::apply_icaps26_cartesian_options(
         &[],
@@ -218,6 +219,7 @@ fn parses_matched_single_abstraction_icaps26_configuration() {
         config.split_selection,
         CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random)
     );
+    assert!(!config.retain_transition_system);
 }
 
 #[test]
