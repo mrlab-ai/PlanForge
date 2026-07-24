@@ -14,6 +14,8 @@ pub mod ff_heuristic;
 pub mod g_evaluator;
 pub mod heuristic;
 pub mod numeric_landmarks;
+#[cfg(feature = "cplex")]
+pub mod numeric_potentials;
 pub mod pattern_databases;
 #[cfg(test)]
 mod tests;

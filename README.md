@@ -22,7 +22,13 @@ Production-quality on the admissible search and heuristic paths (A\* with blind,
   `icaps26_cartesian(...)` source implements the full-task, first-flaw,
   desired-region split policies from Schindler, Speck, and Helmert (ICAPS 2026).
 - **LM-cut** — numeric landmark-cut heuristic, usable standalone or as a residual-cost component inside SCP.
-- **Posthoc optimization** — Pommerening/Röger/Helmert AAAI 2013 LP heuristic over a CEGAR-built domain-abstraction collection. The dual LP `max Σ h_i(s)·X_i s.t. Σ_{i : o relevant for i} X_i ≤ 1 for each positive-cost operator o` is solved per state by HiGHS. Dominates canonical (max-over-additive) but pays per-state LP cost; useful when the abstractions overlap heavily and a strict max underuses them.
+- **Numeric potentials** — admissible CPLEX-backed numeric and propositional
+  potential functions with initial-state, all-states, sampled, and diverse
+  portfolio objectives. The implementation also supports reachable bounds,
+  goal-conditioned functions and cost partitions, exact dead-end rays,
+  online enrichment with `mpd=true`, duality validation, and joint
+  potential/domain-abstraction OCP.
+- **Posthoc optimization** — Pommerening/Röger/Helmert AAAI 2013 LP heuristic over a CEGAR-built domain-abstraction collection. The dual LP `max Σ h_i(s)·X_i s.t. Σ_{i : o relevant for i} X_i ≤ 1 for each positive-cost operator o` is solved per state by CPLEX. The model remains resident and only its objective changes between states. It dominates canonical (max-over-additive) but pays per-state LP cost; useful when the abstractions overlap heavily and a strict max underuses them.
 - **FF** — Hoffmann/Nebel relaxed-plan heuristic with Metric-FF style monotonic numeric relaxation. Each numeric variable tracks a `(max_reachable, min_reachable)` envelope through the relaxed planning graph; comparison-axiom facts become available when the envelope makes them satisfiable. Non-admissible in general; useful as a fast guide for greedy search and competitive with blind on small numeric instances.
 
 ## Search
@@ -39,15 +45,19 @@ Stable Rust, no nightly features:
 
 The primary binary is `target/release/planforge`. Smaller-scope binaries (`planforge-translator`, `planforge-preprocessor`, `planforge-searcher`) are built alongside it and are useful for staging.
 
-### HiGHS prerequisites
+### CPLEX prerequisites
 
-`planforge-search` depends on the [HiGHS](https://highs.dev) LP solver via the `highs` crate, which builds HiGHS from C++ source and runs `bindgen` over its C headers. The build therefore needs:
+LP-backed heuristics use the native IBM ILOG CPLEX 22.2 C API. Build them with:
 
-- a C++17 compiler (`g++` 11+)
-- `cmake` 3.20+
-- a working `libclang` (set `LIBCLANG_PATH` to its directory if it is not on the default loader path)
+    CPLEX_ROOT=/path/to/CPLEX_Studio/cplex cargo build --release --features cplex
 
-On the cluster nodes used during development, `LIBCLANG_PATH` pointed at the Clang module's `lib/` directory and an `LD_LIBRARY_PATH` entry shadowed the missing `libtinfo.so.5` with the system's `libtinfo.so.6`.
+`CPLEX_ROOT` must contain `include/ilcplex/cplex.h` and
+`lib/x86-64_linux/static_pic/libcplex.a`. PlanForge links the provided
+position-independent static library, uses one solver thread, and checks at
+heuristic startup that the active license accepts and solves a 1001-column
+model. Community Edition and any other size-restricted license are rejected.
+A build without `cplex` can run non-LP heuristics, but requesting an LP-backed
+heuristic is an explicit configuration error.
 
 ## Running
 
@@ -92,6 +102,8 @@ Common options:
   - `astar(lmcutnumeric())`
   - `astar(canonical_domain_abstractions(...))`
   - `astar(fillSCP(...))`
+  - `astar(numeric_potential(opt=initial_state,max_potential=1e8))`
+  - `astar(numeric_potential(opt=diverse_samples,num_heuristics=4,num_samples=100,max_potential=1e8,cache_estimates=true,invalidate_online_cache_on_growth=true),mpd=true)`
   - `astar(posthoc_optimization(...))` — LP-based dominator of canonical; `pho(...)` is accepted as an alias
   - `astar(ff())`
   - `gbfs(ff())` — fast non-admissible search
@@ -111,6 +123,7 @@ Workspace crates:
 - `planforge-translator`, `planforge-preprocessor`, `planforge-searcher` — staged binaries for translator-only, preprocessor-only, and search-only invocations.
 - `planforge-translate`, `planforge-preprocess`, `planforge-search`, `planforge-sas` — the corresponding libraries.
 - `planforge-cli-utils` — shared CLI plumbing (exit codes, resource limits, allocator).
+- `planforge-cplex` — small checked native CPLEX ownership and sparse-LP layer.
 - `tests` — integration tests.
 
 ## Testing

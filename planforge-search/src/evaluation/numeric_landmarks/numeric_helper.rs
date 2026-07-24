@@ -211,6 +211,44 @@ impl NumericTaskHelper {
         )
     }
 
+    /// Build the task metadata required by numeric potentials.
+    ///
+    /// Potentials consume materialized comparison conditions and numeric
+    /// variable bounds, but never the landmark-only mutex-action matrix or
+    /// quadratic condition-dominance table. Avoiding those unused structures
+    /// is essential on tasks with thousands of numeric comparisons.
+    pub(crate) fn new_potentials(
+        task: &dyn AbstractNumericTask,
+        precision: f64,
+        default_epsilon: f64,
+        build_bound_metadata: bool,
+    ) -> Self {
+        let mut helper = Self {
+            fact_to_axiom_marker: vec![None; task.get_num_variables()],
+            numeric_variable_index_by_task_id: vec![None; task.numeric_variables().len()],
+            ..Self::default()
+        };
+        helper.numeric_variable_ids = task.regular_numeric_variable_ids();
+        for (local_var_id, &task_var_id) in helper.numeric_variable_ids.iter().enumerate() {
+            if let Some(index) = helper
+                .numeric_variable_index_by_task_id
+                .get_mut(task_var_id)
+            {
+                *index = Some(local_var_id);
+            }
+        }
+        helper.build_numeric_conditions(task);
+        if build_bound_metadata {
+            helper.build_numeric_goals(task, precision);
+            helper.build_actions(task, precision, false);
+            helper.build_propositions(task);
+            helper.calculates_bounds_numeric_variables(task, precision, 9_999_999.0);
+            helper.calculate_small_m(precision, 9_999_999.0);
+            helper.calculate_epsilons(task.get_operators().len(), precision, default_epsilon);
+        }
+        helper
+    }
+
     fn new_with_options(
         task: &dyn AbstractNumericTask,
         precision: f64,
@@ -334,6 +372,13 @@ impl NumericTaskHelper {
 
     pub(crate) fn get_n_numeric_conditions(&self) -> usize {
         self.normalized_conditions.len()
+    }
+
+    pub(crate) fn numeric_variable_bounds(&self, local_var_id: usize) -> Option<(f64, f64)> {
+        Some((
+            *self.numeric_variable_lower_bounds.get(local_var_id)?,
+            *self.numeric_variable_upper_bounds.get(local_var_id)?,
+        ))
     }
 
     pub(crate) fn linearized_effect_for_action_assignment(
@@ -1559,7 +1604,10 @@ impl NumericTaskHelper {
         let lhs = comparison_axiom.get_left_var_id();
         let rhs = comparison_axiom.get_right_var_id();
         let fact = ExplicitFact::new(affected_var_id, fact_value);
-        let fact_name = task.get_fact_name(&fact).to_string();
+        let fact_name = match task.get_fact_name(&fact) {
+            "" => format!("comparison fact {affected_var_id}={fact_value}"),
+            name => name.to_string(),
+        };
 
         match operator {
             ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
@@ -1569,7 +1617,7 @@ impl NumericTaskHelper {
                     rhs,
                     matches!(operator, ComparisonOperator::GreaterThan),
                     fact_name,
-                )])
+                )?])
             }
             ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => {
                 Some(vec![self.build_condition(
@@ -1578,11 +1626,11 @@ impl NumericTaskHelper {
                     lhs,
                     matches!(operator, ComparisonOperator::LessThan),
                     fact_name,
-                )])
+                )?])
             }
             ComparisonOperator::Equal => Some(vec![
-                self.build_condition(task, lhs, rhs, false, fact_name.clone()),
-                self.build_condition(task, rhs, lhs, false, fact_name),
+                self.build_condition(task, lhs, rhs, false, fact_name.clone())?,
+                self.build_condition(task, rhs, lhs, false, fact_name)?,
             ]),
             ComparisonOperator::UnEqual => None,
         }
@@ -1595,27 +1643,31 @@ impl NumericTaskHelper {
         negative_var_id: usize,
         is_strictly_greater: bool,
         name: String,
-    ) -> LinearNumericCondition {
-        let positive_expression =
-            task.linearize_numeric_var(positive_var_id)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "failed to linearize numeric helper lhs variable {positive_var_id}: {error}"
-                    )
-                });
-        let negative_expression =
-            task.linearize_numeric_var(negative_var_id)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "failed to linearize numeric helper rhs variable {negative_var_id}: {error}"
-                    )
-                });
+    ) -> Option<LinearNumericCondition> {
+        let positive_expression = match task.linearize_numeric_var(positive_var_id) {
+            Ok(expression) => expression,
+            Err(error) => {
+                tracing::warn!(
+                    "Ignoring nonlinear numeric comparison feature `{name}`: variable {positive_var_id} cannot be linearized ({error})"
+                );
+                return None;
+            }
+        };
+        let negative_expression = match task.linearize_numeric_var(negative_var_id) {
+            Ok(expression) => expression,
+            Err(error) => {
+                tracing::warn!(
+                    "Ignoring nonlinear numeric comparison feature `{name}`: variable {negative_var_id} cannot be linearized ({error})"
+                );
+                return None;
+            }
+        };
         let expression = positive_expression.subtract(&negative_expression);
-        LinearNumericCondition::from_expression(
+        Some(LinearNumericCondition::from_expression(
             expression,
             is_strictly_greater,
             format!("numeric ({name})"),
-        )
+        ))
     }
 }
 

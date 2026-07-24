@@ -35,6 +35,25 @@ pub trait Heuristic: Evaluator {
         false
     }
 
+    /// Monotonic version of the heuristic function used for open-list keys.
+    ///
+    /// Static heuristics keep the default revision zero. A dynamic admissible
+    /// heuristic increments this value only when its pointwise estimate can
+    /// increase (for example, after adding a certified potential to a maximum
+    /// ensemble). A* can then opt into pop-time re-evaluation without adding
+    /// version fields to every open-list entry.
+    fn revision(&self) -> u64 {
+        0
+    }
+
+    /// Whether MPD must recompute this heuristic on every pop.
+    ///
+    /// This is the uncached C++ heuristic contract: without cached estimates,
+    /// MPD cannot use a clean-cache marker to skip the pop-time computation.
+    fn reevaluate_on_every_pop(&self) -> bool {
+        false
+    }
+
     /// Return true if dead ends detected by this heuristic are reliable.
     fn dead_ends_are_reliable(&self) -> bool {
         false

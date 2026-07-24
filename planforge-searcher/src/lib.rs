@@ -22,7 +22,7 @@ use planforge_search::evaluation::domain_abstractions::domain_abstraction_heuris
 use planforge_search::task_restriction::{
     build_icaps26_restricted_task, build_restricted_task,
 };
-#[cfg(feature = "highs")]
+#[cfg(feature = "cplex")]
 use planforge_search::evaluation::domain_abstractions::posthoc_optimization_heuristic::PostHocOptimizationHeuristic;
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planforge_search::evaluation::pattern_databases::pattern_generator_systematic::{
@@ -49,6 +49,27 @@ mod abstraction_config;
 pub mod recursive_config;
 
 pub use recursive_config::{HeuristicSpec, SearchSpec, parse_heuristic_spec, parse_search_spec};
+
+pub fn preflight_required_backends(spec: &SearchSpec) -> std::io::Result<()> {
+    if !spec.contains_call("numeric_potential")
+        && !spec.contains_call("pot_da_ocp")
+        && !spec.contains_call("posthoc_optimization")
+        && !spec.contains_call("pho")
+    {
+        return Ok(());
+    }
+    #[cfg(feature = "cplex")]
+    {
+        planforge_search::evaluation::numeric_potentials::assert_cplex_ready()
+            .map_err(std::io::Error::other)
+    }
+    #[cfg(not(feature = "cplex"))]
+    {
+        Err(std::io::Error::other(
+            "the requested LP-backed heuristic requires unrestricted CPLEX, which is not compiled into this build; rebuild with `--features cplex` and set CPLEX_ROOT",
+        ))
+    }
+}
 
 use abstraction_config::{
     ComponentUse, build_components, remaining_construction_time, require_only_component_sources,
@@ -389,7 +410,7 @@ fn build_heuristic_from_spec_internal<'a>(
             .map_err(|e| format!("failed to construct max abstraction heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        #[cfg(feature = "highs")]
+        #[cfg(feature = "cplex")]
         "posthoc_optimization" | "pho" => {
             use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
@@ -404,10 +425,138 @@ fn build_heuristic_from_spec_internal<'a>(
                 .map_err(|e| format!("failed to construct posthoc_optimization heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        #[cfg(not(feature = "highs"))]
+        #[cfg(not(feature = "cplex"))]
         "posthoc_optimization" | "pho" => Err(
-            "posthoc_optimization requires the HiGHS LP solver, which is not compiled into \
-             this build. Rebuild with `--features highs` (requires libclang) to enable it."
+            "posthoc_optimization requires CPLEX, which is not compiled into this build. \
+             Rebuild with `--features cplex` and set CPLEX_ROOT to an unrestricted CPLEX \
+             installation."
+                .to_string()
+                .into(),
+        ),
+        #[cfg(feature = "cplex")]
+        "pot_da_ocp" => {
+            use planforge_search::config::{
+                ApplyOptions, ConfigArg, FromOptionValue, for_each_option,
+            };
+            use planforge_search::evaluation::numeric_potentials::{
+                NumericPotentialConfig, PotentialAbstractionOcpHeuristic,
+            };
+
+            const ORDER: &[&str] = &[
+                "abstraction",
+                "nonnegative",
+                "max_potential",
+                "ignore_numeric_variables",
+                "bounds",
+                "precision",
+                "epsilon",
+                "dump_lp",
+            ];
+            let mut abstraction_call = None;
+            let mut nonnegative = false;
+            let mut potential_args = Vec::new();
+            for_each_option(&spec.args, ORDER, |key, value| {
+                match key {
+                    "abstraction" => abstraction_call = Some(value.as_call()?.clone()),
+                    "nonnegative" => nonnegative = bool::from_option_value(value)?,
+                    other => potential_args.push(ConfigArg::new(
+                        Some(other.to_string()),
+                        value.clone(),
+                    )),
+                }
+                Ok(())
+            })?;
+            let abstraction_call = abstraction_call.ok_or_else(|| {
+                "pot_da_ocp requires abstraction=domain_abstraction_cegar(...)".to_string()
+            })?;
+            if !matches!(
+                abstraction_call.name(),
+                "domain_abstraction_cegar" | "domain_abstraction"
+            ) {
+                return Err(format!(
+                    "pot_da_ocp requires a domain_abstraction_cegar generator, got `{}`",
+                    abstraction_call.name()
+                )
+                .into());
+            }
+            let mut record_transition_system = false;
+            let mut max_recorded_transitions = 100_000_usize;
+            let mut da_args = Vec::new();
+            for arg in abstraction_call.args() {
+                match arg.key() {
+                    Some("record_transition_system") => {
+                        record_transition_system =
+                            bool::from_option_value(arg.value())?;
+                    }
+                    Some("record_transition_system_max_transitions") => {
+                        max_recorded_transitions =
+                            usize::from_option_value(arg.value())?;
+                    }
+                    _ => da_args.push(arg.clone()),
+                }
+            }
+            if !record_transition_system {
+                return Err(
+                    "pot_da_ocp requires record_transition_system=true in its abstraction generator"
+                        .to_string()
+                        .into(),
+                );
+            }
+            let mut da_config = CegarConfig::default();
+            recursive_config::apply_da_options(&mut da_config, &da_args)?;
+            da_config.compute_operator_footprints = false;
+            info!("Building recorded domain abstraction for pot_da_ocp...");
+            let abstraction = DomainAbstractionGenerator::new(da_config)
+                .map_err(|error| format!("failed to construct pot_da_ocp abstraction: {error:#}"))?
+                .generate(task)
+                .map_err(|error| format!("failed to build pot_da_ocp abstraction: {error:#}"))?;
+            let mut potential_config = NumericPotentialConfig::default();
+            potential_config.apply_options(&potential_args)?;
+            let task_ref = sampling_task.ok_or_else(|| {
+                "pot_da_ocp requires an owned task reference".to_string()
+            })?;
+            let heuristic = PotentialAbstractionOcpHeuristic::new(
+                task,
+                task_ref,
+                abstraction,
+                potential_config,
+                nonnegative,
+                max_recorded_transitions,
+            )
+            .map_err(|error| format!("failed to construct pot_da_ocp: {error}"))?;
+            Ok(Some(Box::new(heuristic) as Box<dyn Heuristic + 'a>))
+        }
+        #[cfg(not(feature = "cplex"))]
+        "pot_da_ocp" => Err(
+            "pot_da_ocp requires unrestricted CPLEX, which is not compiled into this build. \
+             Rebuild with `--features cplex` and set CPLEX_ROOT to an unrestricted CPLEX \
+             installation."
+                .to_string()
+                .into(),
+        ),
+        #[cfg(feature = "cplex")]
+        "numeric_potential" => {
+            use planforge_search::config::ApplyOptions;
+            use planforge_search::evaluation::numeric_potentials::{
+                NumericPotentialConfig, NumericPotentialHeuristic,
+            };
+
+            let mut config = NumericPotentialConfig::default();
+            config.apply_options(&spec.args)?;
+            let task_ref = sampling_task.ok_or_else(|| {
+                "numeric_potential requires an owned task reference".to_string()
+            })?;
+            let heuristic = NumericPotentialHeuristic::from_config(task, task_ref, config)
+                .map_err(|error| {
+                    format!("failed to construct numeric_potential heuristic: {error}")
+                })?;
+            Ok(Some(Box::new(heuristic) as Box<dyn Heuristic + 'a>))
+        }
+        #[cfg(not(feature = "cplex"))]
+        "numeric_potential" => Err(
+            "numeric_potential requires unrestricted CPLEX, which is not compiled into this build. \
+             Rebuild with `--features cplex` and set CPLEX_ROOT to an unrestricted CPLEX \
+             installation."
                 .to_string()
                 .into(),
         ),
@@ -741,6 +890,7 @@ pub fn run_wrapped_process(cli: &PlannersSearcherCli) -> std::io::Result<()> {
 #[allow(clippy::field_reassign_with_default)]
 pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> {
     register_event_handlers();
+    preflight_required_backends(&cli.search)?;
 
     let sas_file = &cli.sas_file;
 
@@ -781,9 +931,9 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     // Both A* and GBFS go through identical heuristic construction; only the
     // open-list priority differs. Project the search spec onto (heuristic,
     // priority kind) and let the shared block below build the heuristic.
-    let (heuristic_spec, gbfs_priority) = match &cli.search {
-        crate::recursive_config::SearchSpec::Astar(h) => (h, false),
-        crate::recursive_config::SearchSpec::Gbfs(h) => (h, true),
+    let (heuristic_spec, gbfs_priority, mpd) = match &cli.search {
+        crate::recursive_config::SearchSpec::Astar(h, mpd) => (h, false, *mpd),
+        crate::recursive_config::SearchSpec::Gbfs(h) => (h, true, false),
         crate::recursive_config::SearchSpec::DaDebug => {
             return Err(std::io::Error::other(
                 "`da_debug()` is implemented in the `planforge` binary path, not `planforge-searcher`",
@@ -817,12 +967,13 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                     memory_limit,
                 )
             } else {
-                AStarSearch::new(
+                AStarSearch::new_with_mpd(
                     task.clone(),
                     state_registry,
                     heuristic_override,
                     time_limit,
                     memory_limit,
+                    mpd,
                 )
             };
 

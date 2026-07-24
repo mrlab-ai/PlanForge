@@ -58,7 +58,8 @@ impl HeuristicSpec {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchSpec {
-    Astar(HeuristicSpec),
+    /// A* with an optional monotonically-dynamic pop-time re-evaluation.
+    Astar(HeuristicSpec, bool),
     Gbfs(HeuristicSpec),
     /// A* with two admissible heuristics: a *fast* one for initial open-
     /// list ordering and a *slow* but possibly tighter one evaluated
@@ -71,7 +72,7 @@ pub enum SearchSpec {
 impl SearchSpec {
     pub fn contains_call(&self, name: &str) -> bool {
         match self {
-            Self::Astar(heuristic) | Self::Gbfs(heuristic) => heuristic.contains_call(name),
+            Self::Astar(heuristic, _) | Self::Gbfs(heuristic) => heuristic.contains_call(name),
             Self::AstarFs(fast, slow) => fast.contains_call(name) || slow.contains_call(name),
             Self::DaDebug | Self::AstarDaDebug => false,
         }
@@ -117,7 +118,8 @@ impl fmt::Display for HeuristicSpec {
 impl fmt::Display for SearchSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Astar(h) => write!(f, "astar({h})"),
+            Self::Astar(h, false) => write!(f, "astar({h})"),
+            Self::Astar(h, true) => write!(f, "astar({h}, mpd=true)"),
             Self::Gbfs(h) => write!(f, "gbfs({h})"),
             Self::AstarFs(fast, slow) => write!(f, "astar_fs(fast={fast}, slow={slow})"),
             Self::DaDebug => write!(f, "da_debug()"),
@@ -365,7 +367,10 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchSpec, String> {
     }
 
     match call.name.as_str() {
-        "astar" => Ok(SearchSpec::Astar(extract_heuristic_for_search(call)?)),
+        "astar" => {
+            let (heuristic, mpd) = extract_astar_options(call)?;
+            Ok(SearchSpec::Astar(heuristic, mpd))
+        }
         "gbfs" => Ok(SearchSpec::Gbfs(extract_heuristic_for_search(call)?)),
         "astar_fs" => {
             let mut fast = None;
@@ -394,6 +399,35 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchSpec, String> {
         }
         other => Err(format!("unknown search engine `{other}`")),
     }
+}
+
+fn extract_astar_options(call: &ConfigCall) -> Result<(HeuristicSpec, bool), String> {
+    let mut heuristic = None;
+    let mut mpd = false;
+    let mut saw_mpd = false;
+    for arg in &call.args {
+        match arg.key.as_deref() {
+            None | Some("heuristic") => {
+                if heuristic.is_some() {
+                    return Err("`astar(...)` received more than one heuristic".to_string());
+                }
+                heuristic = Some(heuristic_spec_from_value(&arg.value)?);
+            }
+            Some("mpd") => {
+                if saw_mpd {
+                    return Err("duplicate option `mpd` for `astar`".to_string());
+                }
+                saw_mpd = true;
+                mpd = match &arg.value {
+                    ConfigValue::Atom(value) if value == "true" => true,
+                    ConfigValue::Atom(value) if value == "false" => false,
+                    _ => return Err("`astar` option `mpd` expects true or false".to_string()),
+                };
+            }
+            Some(other) => return Err(format!("unknown option `{other}` for `astar`")),
+        }
+    }
+    Ok((heuristic.unwrap_or_else(HeuristicSpec::blind), mpd))
 }
 
 fn extract_heuristic_for_search(call: &ConfigCall) -> Result<HeuristicSpec, String> {

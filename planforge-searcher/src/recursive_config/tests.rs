@@ -19,7 +19,7 @@ use planforge_search::evaluation::pattern_databases::variable_order_finder::Gree
 
 fn astar_heuristic(input: &str) -> HeuristicSpec {
     match parse_search_spec(input).unwrap() {
-        SearchSpec::Astar(h) => h,
+        SearchSpec::Astar(h, _) => h,
         other => panic!("expected astar(...), got {other:?}"),
     }
 }
@@ -47,6 +47,26 @@ fn parses_astar_blind_with_or_without_unit_parens() {
     let h = astar_heuristic("astar(blind())");
     assert_eq!(h.name, "blind");
     assert!(h.args.is_empty());
+}
+
+#[test]
+fn parses_and_round_trips_astar_mpd() {
+    let parsed = parse_search_spec("astar(blind(), mpd=true)").unwrap();
+    assert!(matches!(&parsed, SearchSpec::Astar(_, true)));
+    assert_eq!(parsed.to_string(), "astar(blind(), mpd=true)");
+    assert_eq!(parse_search_spec(&parsed.to_string()).unwrap(), parsed);
+
+    let default = parse_search_spec("astar(blind())").unwrap();
+    assert!(matches!(default, SearchSpec::Astar(_, false)));
+}
+
+#[test]
+fn rejects_invalid_or_duplicate_astar_mpd() {
+    let error = parse_search_spec("astar(blind(), mpd=yes)").unwrap_err();
+    assert!(error.contains("expects true or false"), "got `{error}`");
+
+    let error = parse_search_spec("astar(blind(), mpd=true, mpd=false)").unwrap_err();
+    assert!(error.contains("duplicate option `mpd`"), "got `{error}`");
 }
 
 #[test]
@@ -318,7 +338,7 @@ fn parses_execute_entire_plan_flaw_kind() {
         parse_search_spec("astar(canonical_domain_abstractions(flaw_kind=execute_entire_plan))")
             .unwrap();
     let h = match &spec {
-        SearchSpec::Astar(h) => h,
+        SearchSpec::Astar(h, _) => h,
         _ => panic!("expected astar(...)"),
     };
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
@@ -351,7 +371,7 @@ fn parses_forward_partition_deviation_split_direction() {
     )
     .unwrap();
     let h = match &spec {
-        SearchSpec::Astar(h) => h,
+        SearchSpec::Astar(h, _) => h,
         _ => panic!("expected astar(...)"),
     };
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();

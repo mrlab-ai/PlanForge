@@ -29,6 +29,7 @@ struct SearchEvaluation {
     f_value: f64,
     g_value: f64,
     is_dead_end: bool,
+    heuristic_revision: u64,
 }
 
 pub struct AStarSearch<'a> {
@@ -56,6 +57,10 @@ pub struct AStarSearch<'a> {
 
     last_reported_f_layer: Option<i64>,
     best_reported_heuristic_value: Option<OrderedFloat<f64>>,
+    /// Per-state heuristic revision at the most recent evaluation. Allocated
+    /// only for A* with `mpd=true`; ordinary static searches pay no per-state
+    /// memory cost.
+    heuristic_revisions: Option<Vec<u64>>,
 }
 
 impl<'a> AStarSearch<'a> {
@@ -74,6 +79,28 @@ impl<'a> AStarSearch<'a> {
             time_limit,
             max_memory_bytes,
             SearchPolicy::AStar,
+            false,
+        )
+    }
+
+    /// Create A* with optional pop-time re-evaluation for monotonically
+    /// strengthening dynamic heuristics (`mpd` in Fast Downward).
+    pub fn new_with_mpd(
+        task: TaskRef<'a>,
+        state_registry: StateRegistry<'a>,
+        heuristic: Option<Box<dyn Heuristic + 'a>>,
+        time_limit: Option<Duration>,
+        max_memory_bytes: Option<u64>,
+        mpd: bool,
+    ) -> Self {
+        Self::with_policy(
+            task,
+            state_registry,
+            heuristic,
+            time_limit,
+            max_memory_bytes,
+            SearchPolicy::AStar,
+            mpd,
         )
     }
 
@@ -96,6 +123,7 @@ impl<'a> AStarSearch<'a> {
             time_limit,
             max_memory_bytes,
             SearchPolicy::Gbfs,
+            false,
         )
     }
 
@@ -128,6 +156,7 @@ impl<'a> AStarSearch<'a> {
             SearchPolicy::FastSlow {
                 slow: heuristic_slow,
             },
+            false,
         )
     }
 
@@ -138,6 +167,7 @@ impl<'a> AStarSearch<'a> {
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
         policy: SearchPolicy<'a>,
+        mpd: bool,
     ) -> Self {
         let successor_generator = SuccessorTree::new(&*task);
 
@@ -205,6 +235,7 @@ impl<'a> AStarSearch<'a> {
             next_memory_check_expanded: 0,
             last_reported_f_layer: None,
             best_reported_heuristic_value: None,
+            heuristic_revisions: mpd.then(Vec::new),
         }
     }
 
@@ -238,7 +269,7 @@ impl<'a> AStarSearch<'a> {
             nodes_expanded: self.stats.nodes_expanded,
             nodes_reopened: self.stats.nodes_reopened,
             nodes_evaluated: self.stats.nodes_evaluated,
-            evaluations: self.stats.nodes_evaluated,
+            evaluations: self.stats.evaluations,
             nodes_generated: self.stats.nodes_generated,
             dead_ends: self.stats.dead_ends,
             nodes_expanded_until_last_jump: self.stats.counters_at_last_jump.expanded,
@@ -366,6 +397,7 @@ impl<'a> AStarSearch<'a> {
                     f_value: f64::INFINITY,
                     g_value,
                     is_dead_end: true,
+                    heuristic_revision: self.heuristic.revision(),
                 }
             }
             Ok(h_value) => SearchEvaluation {
@@ -373,6 +405,7 @@ impl<'a> AStarSearch<'a> {
                 f_value: self.policy.priority_value(g_value, h_value),
                 g_value,
                 is_dead_end: false,
+                heuristic_revision: self.heuristic.revision(),
             },
             Err(EvaluationError::DeadEnd { reliable }) => {
                 let _ = reliable;
@@ -381,11 +414,80 @@ impl<'a> AStarSearch<'a> {
                     f_value: f64::INFINITY,
                     g_value,
                     is_dead_end: true,
+                    heuristic_revision: self.heuristic.revision(),
                 }
             }
             Err(err) => return Err(anyhow!(err)),
         };
         Ok(evaluation)
+    }
+
+    fn record_heuristic_revision(&mut self, state_id: usize, revision: u64) {
+        let Some(revisions) = &mut self.heuristic_revisions else {
+            return;
+        };
+        if revisions.len() <= state_id {
+            revisions.resize(state_id + 1, 0);
+        }
+        revisions[state_id] = revision;
+    }
+
+    fn recorded_heuristic_revision(&self, state_id: usize) -> u64 {
+        self.heuristic_revisions
+            .as_ref()
+            .and_then(|revisions| revisions.get(state_id))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Re-evaluate a popped entry if a dynamic heuristic strengthened since
+    /// this state was last evaluated. Returns true when the current pop is
+    /// consumed (reinserted or pruned), false when expansion should continue.
+    fn reevaluate_stale_entry(&mut self, entry: OpenEntry, state: &ConcreteState) -> Result<bool> {
+        if self.heuristic_revisions.is_none() {
+            return Ok(false);
+        }
+        if !self.heuristic.reevaluate_on_every_pop()
+            && self.recorded_heuristic_revision(entry.state_id()) >= self.heuristic.revision()
+        {
+            return Ok(false);
+        }
+
+        let evaluation = self.evaluate_state(state, entry.g_value).with_context(|| {
+            format!(
+                "pop-time heuristic re-evaluation failed for state {}",
+                entry.state_id()
+            )
+        })?;
+        self.stats.evaluations += 1;
+        self.record_heuristic_revision(entry.state_id(), evaluation.heuristic_revision);
+
+        let previous_h = entry.h_value.into_inner();
+        assert!(
+            evaluation.h_value + 1e-9 >= previous_h,
+            "dynamic heuristic decreased for state {} at revision {}: {} -> {}",
+            entry.state_id(),
+            evaluation.heuristic_revision,
+            previous_h,
+            evaluation.h_value,
+        );
+        if evaluation.is_dead_end {
+            self.stats.dead_ends += 1;
+            self.space.mark_dead_end(entry.state_id());
+            return Ok(true);
+        }
+        if evaluation.h_value > previous_h {
+            self.open_list.insert_with_second(
+                entry.state_id(),
+                entry.g_value,
+                evaluation.h_value,
+                evaluation.f_value,
+                entry.is_preferred(),
+                entry.is_second(),
+            );
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Compute the slow heuristic for `state`, fold it into the entry via
@@ -479,6 +581,11 @@ impl<'a> AStarSearch<'a> {
             .evaluate_state(&initial_state, 0.0)
             .context("initial state evaluation failed")?;
         self.stats.nodes_evaluated += 1;
+        self.stats.evaluations += 1;
+        self.record_heuristic_revision(
+            initial_state.get_id(),
+            initial_evaluation.heuristic_revision,
+        );
         if initial_evaluation.is_dead_end {
             self.stats.dead_ends += 1;
         } else {
@@ -557,6 +664,10 @@ impl<'a> AStarSearch<'a> {
         if let Some(current_info) = self.space.node(state_id)
             && current_info.g_value < entry.g_value
         {
+            return Ok(SearchStatus::InProgress);
+        }
+
+        if self.reevaluate_stale_entry(entry, &state)? {
             return Ok(SearchStatus::InProgress);
         }
 
@@ -730,9 +841,11 @@ impl<'a> AStarSearch<'a> {
                             operator.name()
                         )
                     })?;
+                self.stats.evaluations += 1;
                 if !improved_duplicate {
                     self.stats.nodes_evaluated += 1;
                 }
+                self.record_heuristic_revision(succ_state_id, evaluation.heuristic_revision);
 
                 // Snapshot the heuristic's preferred-operator IDs for the
                 // successor *now*, before any other state's evaluation
@@ -839,7 +952,7 @@ impl<'a> AStarSearch<'a> {
                     nodes_expanded: self.stats.nodes_expanded,
                     nodes_reopened: self.stats.nodes_reopened,
                     nodes_evaluated: self.stats.nodes_evaluated,
-                    evaluations: self.stats.nodes_evaluated,
+                    evaluations: self.stats.evaluations,
                     nodes_generated: self.stats.nodes_generated,
                     dead_ends: self.stats.dead_ends,
                     nodes_expanded_until_last_jump: self.stats.counters_at_last_jump.expanded,

@@ -2,10 +2,12 @@ use super::*;
 use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
 
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
+    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
     Operator, TaskRef,
 };
 use planforge_sas::state_registry::StateRegistry;
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -181,4 +183,150 @@ fn initial_evaluation_error_is_not_reported_as_no_solution() {
             .contains("initial state evaluation failed")
     );
     assert!(format!("{error:#}").contains("construction deadline"));
+}
+
+struct RevisionControlledHeuristic {
+    revision: Rc<Cell<u64>>,
+    calls: Rc<Cell<usize>>,
+    reevaluate_on_every_pop: bool,
+}
+
+impl Heuristic for RevisionControlledHeuristic {
+    fn compute_heuristic(
+        &self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
+        self.calls.set(self.calls.get() + 1);
+        Ok(if eval_state.is_goal() {
+            0.0
+        } else {
+            self.revision.get() as f64
+        })
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision.get()
+    }
+
+    fn reevaluate_on_every_pop(&self) -> bool {
+        self.reevaluate_on_every_pop
+    }
+}
+
+fn one_step_task() -> TaskRef<'static> {
+    Arc::new(NumericRootTask::new(
+        4,
+        Metric::new(false, None),
+        vec![ExplicitVariable::new(
+            2,
+            "location".to_string(),
+            vec!["start".to_string(), "goal".to_string()],
+            None,
+            0,
+        )],
+        vec![],
+        vec![ExplicitFact::new(0, 1)],
+        vec![],
+        vec![0],
+        vec![],
+        vec![Operator::new(
+            "finish".to_string(),
+            vec![ExplicitFact::new(0, 0)],
+            vec![Effect::new(vec![], 0, Some(0), 1)],
+            vec![],
+            1,
+        )],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    ))
+}
+
+#[test]
+fn mpd_reevaluates_and_reinserts_a_stale_open_entry() {
+    let revision = Rc::new(Cell::new(0));
+    let calls = Rc::new(Cell::new(0));
+    let heuristic = RevisionControlledHeuristic {
+        revision: Rc::clone(&revision),
+        calls: Rc::clone(&calls),
+        reevaluate_on_every_pop: false,
+    };
+    let task = one_step_task();
+    let registry = StateRegistry::for_task(task.clone());
+    let mut search =
+        AStarSearch::new_with_mpd(task, registry, Some(Box::new(heuristic)), None, None, true);
+
+    search.initialize().unwrap();
+    assert_eq!(calls.get(), 1);
+
+    revision.set(1);
+    assert_eq!(search.step().unwrap(), SearchStatus::InProgress);
+    assert_eq!(calls.get(), 2, "stale initial entry must be re-evaluated");
+
+    let result = loop {
+        match search.step().unwrap() {
+            SearchStatus::InProgress => {}
+            terminal => break search.finish(terminal),
+        }
+    };
+    assert!(matches!(result.status, SearchStatus::Solved(_)));
+    assert_eq!(result.solution_cost, Some(1.0));
+    assert_eq!(result.nodes_evaluated, 2);
+    assert_eq!(result.evaluations, 3);
+}
+
+#[test]
+fn static_astar_does_not_pay_for_revision_checks() {
+    let revision = Rc::new(Cell::new(0));
+    let calls = Rc::new(Cell::new(0));
+    let heuristic = RevisionControlledHeuristic {
+        revision: Rc::clone(&revision),
+        calls: Rc::clone(&calls),
+        reevaluate_on_every_pop: false,
+    };
+    let task = one_step_task();
+    let registry = StateRegistry::for_task(task.clone());
+    let mut search = AStarSearch::new(task, registry, Some(Box::new(heuristic)), None, None);
+
+    search.initialize().unwrap();
+    revision.set(1);
+    let result = loop {
+        match search.step().unwrap() {
+            SearchStatus::InProgress => {}
+            terminal => break search.finish(terminal),
+        }
+    };
+
+    assert!(matches!(result.status, SearchStatus::Solved(_)));
+    assert_eq!(calls.get(), 2);
+    assert_eq!(result.nodes_evaluated, result.evaluations);
+}
+
+#[test]
+fn uncached_mpd_reevaluates_every_popped_entry() {
+    let revision = Rc::new(Cell::new(0));
+    let calls = Rc::new(Cell::new(0));
+    let heuristic = RevisionControlledHeuristic {
+        revision,
+        calls: Rc::clone(&calls),
+        reevaluate_on_every_pop: true,
+    };
+    let task = one_step_task();
+    let registry = StateRegistry::for_task(task.clone());
+    let mut search =
+        AStarSearch::new_with_mpd(task, registry, Some(Box::new(heuristic)), None, None, true);
+
+    search.initialize().unwrap();
+    let result = loop {
+        match search.step().unwrap() {
+            SearchStatus::InProgress => {}
+            terminal => break search.finish(terminal),
+        }
+    };
+
+    assert!(matches!(result.status, SearchStatus::Solved(_)));
+    assert_eq!(calls.get(), 4);
+    assert_eq!(result.nodes_evaluated, 2);
+    assert_eq!(result.evaluations, 4);
 }

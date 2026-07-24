@@ -998,8 +998,13 @@ impl AbstractNumericTask for NumericRootTask {
         ""
     }
 
-    fn are_facts_mutex(&self, _fact1: &ExplicitFact, _fact2: &ExplicitFact) -> bool {
-        false
+    fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
+        if fact1.var() == fact2.var() {
+            return fact1.value() != fact2.value();
+        }
+        self.mutexes
+            .iter()
+            .any(|group| group.contains(fact1) && group.contains(fact2))
     }
 
     fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {

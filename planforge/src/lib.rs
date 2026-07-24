@@ -187,35 +187,31 @@ pub fn solve_task_with_state_storage(
     let state_registry =
         StateRegistry::for_task_with_compact_numeric(task.clone(), compact_numeric_states);
     match spec {
-        planforge_searcher::SearchSpec::Astar(heuristic)
-        | planforge_searcher::SearchSpec::Gbfs(heuristic) => {
-            // GBFS and A* share heuristic construction; only the open-list
-            // priority differs (h vs g+h).
-            let gbfs_priority = matches!(spec, planforge_searcher::SearchSpec::Gbfs(_));
+        planforge_searcher::SearchSpec::Astar(heuristic, mpd) => {
             let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
-            let mut search = if gbfs_priority {
-                AStarSearch::new_gbfs(
-                    task.clone(),
-                    state_registry,
-                    heuristic_override,
-                    time_limit,
-                    memory_limit,
-                )
-            } else {
-                AStarSearch::new(
-                    task.clone(),
-                    state_registry,
-                    heuristic_override,
-                    time_limit,
-                    memory_limit,
-                )
-            };
-
-            info!(
-                "Starting {} search with {:?}...",
-                if gbfs_priority { "GBFS" } else { "A*" },
-                heuristic,
+            let mut search = AStarSearch::new_with_mpd(
+                task.clone(),
+                state_registry,
+                heuristic_override,
+                time_limit,
+                memory_limit,
+                *mpd,
             );
+            info!("Starting A* search with {heuristic:?}, mpd={mpd}...");
+            search
+                .search()
+                .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
+        }
+        planforge_searcher::SearchSpec::Gbfs(heuristic) => {
+            let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
+            let mut search = AStarSearch::new_gbfs(
+                task.clone(),
+                state_registry,
+                heuristic_override,
+                time_limit,
+                memory_limit,
+            );
+            info!("Starting GBFS search with {heuristic:?}...");
             search
                 .search()
                 .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
@@ -280,6 +276,7 @@ pub fn solve_task_with_state_storage(
 #[allow(clippy::field_reassign_with_default)]
 pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     register_event_handlers();
+    planforge_searcher::preflight_required_backends(&cli.search)?;
 
     let start_time = std::time::Instant::now();
     let (mut task, sas_label) = if cli.inputs.len() == 2 {
@@ -331,7 +328,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     let time_limit = cli.max_time;
     let memory_limit = cli.max_memory;
     let result = match &cli.search {
-        planforge_searcher::SearchSpec::Astar(_)
+        planforge_searcher::SearchSpec::Astar(_, _)
         | planforge_searcher::SearchSpec::Gbfs(_)
         | planforge_searcher::SearchSpec::AstarFs(_, _) => solve_task_with_state_storage(
             task.clone(),

@@ -20,10 +20,9 @@
 //! The dual has one variable per abstraction (small) and one constraint per
 //! positive-cost operator (the large axis), so we solve the dual.
 //!
-//! The LP is solved by HiGHS via the [`highs`] crate. The constraint matrix
-//! and bounds are independent of state, so we precompute the relevance
-//! bitmap once at construction and rebuild only the per-state objective
-//! before each call.
+//! The LP is solved by native CPLEX. The constraint matrix and bounds are
+//! independent of state, so the model remains loaded and each state changes
+//! only the objective, retaining CPLEX's basis and warm-start information.
 //!
 //! Reference: Pommerening, Röger, Helmert (AAAI 2013), "Getting the most out
 //! of pattern databases for classical planning".
@@ -34,7 +33,10 @@ mod tests;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
-use highs::{HighsModelStatus, RowProblem, Sense};
+use planforge_cplex::{
+    Constraint as LpConstraint, Model as LpModel, ObjectiveSense, SolveStatus, Variable,
+    assert_unrestricted_license,
+};
 use planforge_sas::numeric_task::{AbstractNumericTask, metric_operator_cost_from_initial_values};
 use rustc_hash::FxHashMap;
 use tracing::info;
@@ -62,6 +64,7 @@ pub struct PostHocOptimizationHeuristic {
     /// appear with coefficient 1 in that constraint. Constraint right-hand
     /// side is uniformly 1.
     constraints: Vec<Vec<usize>>,
+    lp_model: RefCell<Option<LpModel>>,
     state_value_cache: RefCell<Vec<Option<f64>>>,
     lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
     diagnostics_logged: RefCell<bool>,
@@ -100,8 +103,13 @@ impl PostHocOptimizationHeuristic {
 
         let constraints = build_constraints(&relevant_operators, &original_costs, heuristics.len());
 
+        assert_unrestricted_license().map_err(|error| {
+            format!("posthoc_optimization requires unrestricted CPLEX: {error}")
+        })?;
+        let lp_model = build_lp_model(heuristics.len(), &constraints)?;
+
         info!(
-            "posthoc_optimization: abstractions={}, lp_constraints={} (HiGHS)",
+            "posthoc_optimization: abstractions={}, lp_constraints={} (CPLEX)",
             heuristics.len(),
             constraints.len(),
         );
@@ -110,6 +118,7 @@ impl PostHocOptimizationHeuristic {
             name: name.unwrap_or_else(|| "posthoc_optimization".to_string()),
             heuristics,
             constraints,
+            lp_model: RefCell::new(lp_model),
             state_value_cache: RefCell::new(Vec::new()),
             lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
             diagnostics_logged: RefCell::new(false),
@@ -197,57 +206,40 @@ impl PostHocOptimizationHeuristic {
             return Ok(h_values[active[0]]);
         }
 
-        // Build the dual LP with HiGHS.
-        let mut problem = RowProblem::default();
-        let mut col_for_active = vec![None; h_values.len()];
-        for &abstraction_id in &active {
-            let col = problem.add_column(h_values[abstraction_id], 0.0..);
-            col_for_active[abstraction_id] = Some(col);
-        }
-
-        let mut row_buffer: Vec<(highs::Col, f64)> = Vec::new();
-        let mut row_count = 0usize;
-        for constraint in &self.constraints {
-            row_buffer.clear();
-            for &abstraction_id in constraint {
-                if let Some(slot) = col_for_active.get(abstraction_id) {
-                    if let Some(col) = *slot {
-                        row_buffer.push((col, 1.0));
-                    }
-                }
-            }
-            if row_buffer.is_empty() {
-                continue;
-            }
-            problem.add_row(..=1.0, row_buffer.as_slice());
-            row_count += 1;
-        }
-        // Invariant: with ≥ 2 active abstractions (h_i > 0 for both), each had
-        // at least one positive-cost relevant operator that produced a
-        // constraint in `self.constraints`; the active columns therefore must
-        // appear in at least one row. If we somehow projected every row to
-        // empty, that's a bug — either in `build_constraints` or in the
-        // active-set filtering above.
+        // Invariant: with at least two active abstractions, each has a
+        // positive-cost relevant operator and therefore occurs in the
+        // persistent model.
         assert!(
-            row_count > 0,
-            "posthoc_optimization: active set {:?} produced no LP rows; \
-             this indicates a bug in `build_constraints` or active-set filtering",
-            active
+            !self.constraints.is_empty(),
+            "posthoc_optimization: active set {active:?} produced no LP rows; \
+             this indicates a bug in `build_constraints`",
+        );
+        assert_eq!(
+            h_values.len(),
+            self.lp_model
+                .borrow()
+                .as_ref()
+                .expect("nonempty active set requires an LP model")
+                .num_columns(),
+            "posthoc objective dimension differs from its persistent model",
         );
 
-        let mut model = problem.optimise(Sense::Maximise);
-        model.make_quiet();
-        let solved = model.solve();
-        match solved.status() {
-            // Clamp tiny IEEE-754 noise; the dual LP optimum is ≥ 0 by
-            // construction (every X_i ≥ 0, every h_i ≥ 0).
-            HighsModelStatus::Optimal => Ok(solved.objective_value().max(0.0)),
-            HighsModelStatus::Infeasible => Ok(f64::INFINITY),
+        let mut model = self.lp_model.borrow_mut();
+        let model = model
+            .as_mut()
+            .expect("nonempty active set requires an LP model");
+        model.set_objective(h_values).map_err(lp_evaluation_error)?;
+        match model.solve().map_err(lp_evaluation_error)? {
+            SolveStatus::Optimal => model
+                .objective_value()
+                .map(|value| value.max(0.0))
+                .map_err(lp_evaluation_error),
+            SolveStatus::Infeasible => Ok(f64::INFINITY),
             other => Err(EvaluationError::ComputationFailed(format!(
-                "posthoc_optimization: HiGHS returned `{other:?}` for a well-formed LP \
-                 (active={} abstractions, {row_count} constraints); \
-                 not falling back — investigate the LP / solver inputs",
-                active.len()
+                "posthoc_optimization: CPLEX returned `{other:?}` for a well-formed LP \
+                 (active={} abstractions, {} constraints); not falling back",
+                active.len(),
+                self.constraints.len(),
             ))),
         }
     }
@@ -279,6 +271,42 @@ impl PostHocOptimizationHeuristic {
             );
         }
     }
+}
+
+fn build_lp_model(
+    num_abstractions: usize,
+    constraints: &[Vec<usize>],
+) -> Result<Option<LpModel>, String> {
+    if num_abstractions == 0 {
+        assert!(
+            constraints.is_empty(),
+            "zero-abstraction posthoc model cannot contain constraints"
+        );
+        return Ok(None);
+    }
+    let variables = vec![Variable::new(0.0, LpModel::infinity(), 0.0); num_abstractions];
+    let constraints: Vec<LpConstraint> = constraints
+        .iter()
+        .map(|constraint| {
+            LpConstraint::new(
+                -LpModel::infinity(),
+                1.0,
+                constraint
+                    .iter()
+                    .map(|&abstraction_id| (abstraction_id, 1.0))
+                    .collect(),
+            )
+        })
+        .collect();
+    let mut model = LpModel::new("posthoc-optimization").map_err(|error| error.to_string())?;
+    model
+        .load(ObjectiveSense::Maximize, &variables, &constraints)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(model))
+}
+
+fn lp_evaluation_error(error: planforge_cplex::Error) -> EvaluationError {
+    EvaluationError::ComputationFailed(format!("posthoc_optimization CPLEX failure: {error}"))
 }
 
 impl Heuristic for PostHocOptimizationHeuristic {
@@ -355,7 +383,7 @@ fn build_constraints(
     let mut constraints = Vec::new();
     for (operator_id, mut abstraction_ids) in operator_to_abstractions {
         let cost = original_costs.get(operator_id).copied().unwrap_or(0.0);
-        if !(cost > 0.0) {
+        if !matches!(cost.partial_cmp(&0.0), Some(std::cmp::Ordering::Greater)) {
             // Free operators impose no constraint in the dual LP.
             continue;
         }

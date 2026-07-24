@@ -38,6 +38,22 @@ use crate::evaluation::abstraction_collections::cost_partitioning::{
     state_region_intersection,
 };
 
+pub enum OcpTransitionSystemBuild {
+    Complete(AbstractTransitionSystem),
+    ConcreteLabelCapExceeded { required_at_least: usize },
+}
+
+impl OcpTransitionSystemBuild {
+    fn into_complete(self) -> Result<AbstractTransitionSystem> {
+        match self {
+            Self::Complete(system) => Ok(system),
+            Self::ConcreteLabelCapExceeded { .. } => {
+                Err(anyhow!("transition cap triggered without a configured cap"))
+            }
+        }
+    }
+}
+
 const COMPARISON_TRUE_VAL: usize = 0;
 const COMPARISON_FALSE_VAL: usize = 1;
 const COMPARISON_UNKNOWN_VAL: usize = 2;
@@ -632,7 +648,10 @@ impl DomainAbstractionFactory {
     ) -> Result<AbstractTransitionSystem> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let operators = generator.build_abstract_operators(task)?;
-        self.build_transition_system_with_operators(task, &generator, &operators, deadline, true)
+        self.build_transition_system_with_operators(
+            task, &generator, &operators, deadline, true, false, None,
+        )?
+        .into_complete()
     }
 
     pub fn build_abstract_transition_system_from_operators_with_deadline(
@@ -643,7 +662,10 @@ impl DomainAbstractionFactory {
         deadline: Option<Instant>,
     ) -> Result<AbstractTransitionSystem> {
         let generator = self.make_operator_generator(task, combine_labels)?;
-        self.build_transition_system_with_operators(task, &generator, operators, deadline, true)
+        self.build_transition_system_with_operators(
+            task, &generator, operators, deadline, true, false, None,
+        )?
+        .into_complete()
     }
 
     pub fn build_abstract_transition_system_from_operators_without_regions_with_deadline(
@@ -654,7 +676,34 @@ impl DomainAbstractionFactory {
         deadline: Option<Instant>,
     ) -> Result<AbstractTransitionSystem> {
         let generator = self.make_operator_generator(task, combine_labels)?;
-        self.build_transition_system_with_operators(task, &generator, operators, deadline, false)
+        self.build_transition_system_with_operators(
+            task, &generator, operators, deadline, false, false, None,
+        )?
+        .into_complete()
+    }
+
+    /// Build the transition relation required by potential/abstraction OCP.
+    /// Unlike shortest-path transition systems, this retains abstract
+    /// self-loops: `d(s)-d(s) <= c(a)` is the necessary `c(a) >= 0`
+    /// constraint for every concrete label that can stutter abstractly.
+    pub fn build_ocp_transition_system_from_operators_with_deadline(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+        operators: &[AbstractOperator],
+        deadline: Option<Instant>,
+        max_concrete_label_transitions: usize,
+    ) -> Result<OcpTransitionSystemBuild> {
+        let generator = self.make_operator_generator(task, combine_labels)?;
+        self.build_transition_system_with_operators(
+            task,
+            &generator,
+            operators,
+            deadline,
+            false,
+            true,
+            Some(max_concrete_label_transitions),
+        )
     }
 
     pub fn relevant_operator_ids_from_operators_with_deadline(
@@ -1563,7 +1612,7 @@ impl DomainAbstractionFactory {
             task,
             operators,
             match_tree,
-            &goal_facts,
+            goal_facts,
             init_hash,
             numeric_domain_sizes,
             hash_multipliers,
@@ -1590,6 +1639,7 @@ impl DomainAbstractionFactory {
     }
 
     #[allow(clippy::needless_range_loop)]
+    #[allow(clippy::too_many_arguments)]
     fn build_transition_system_with_operators(
         &self,
         task: &dyn AbstractNumericTask,
@@ -1597,7 +1647,9 @@ impl DomainAbstractionFactory {
         operators: &[AbstractOperator],
         deadline: Option<Instant>,
         materialize_state_regions: bool,
-    ) -> Result<AbstractTransitionSystem> {
+        include_self_loops: bool,
+        max_concrete_label_transitions: Option<usize>,
+    ) -> Result<OcpTransitionSystemBuild> {
         ensure_online_scp_deadline(deadline)?;
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
@@ -1618,8 +1670,8 @@ impl DomainAbstractionFactory {
             &comparison_var_ids,
         );
 
-        let mut transitions: Vec<AbstractTransition> = Vec::new();
-        transitions.reserve(num_states);
+        let mut transitions: Vec<AbstractTransition> = Vec::with_capacity(num_states);
+        let mut concrete_label_transition_count = 0usize;
         let mut backward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
         let mut forward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
         let mut state_regions = Vec::new();
@@ -1706,38 +1758,44 @@ impl DomainAbstractionFactory {
                 // predecessor hash are wildcarded — enumerate every state hash
                 // whose comparison-axiom variables are consistent with the
                 // operator's comparison preconditions.
-                let push_source = |source_hash: usize,
-                                   transitions: &mut Vec<AbstractTransition>,
-                                   backward: &mut Vec<Vec<usize>>,
-                                   forward: &mut Vec<Vec<usize>>,
-                                   #[cfg(debug_assertions)] seen: &mut HashSet<(
-                    usize,
-                    usize,
-                    usize,
-                )>| {
-                    if source_hash == target_hash {
-                        return;
-                    }
-                    #[cfg(debug_assertions)]
-                    {
-                        let triple = (abstract_op_id, source_hash, target_hash);
-                        debug_assert!(
-                            seen.insert(triple),
-                            "duplicate AbstractTransition triple {:?}",
-                            triple
-                        );
-                    }
-                    let transition_id = transitions.len();
-                    transitions.push(AbstractTransition {
-                        transition_id,
-                        abstract_op_id,
-                        concrete_op_ids: op.concrete_op_ids.clone(),
-                        source_hash,
-                        target_hash,
-                    });
-                    backward[target_hash].push(transition_id);
-                    forward[source_hash].push(transition_id);
-                };
+                let push_source =
+                    |source_hash: usize,
+                     transitions: &mut Vec<AbstractTransition>,
+                     concrete_label_transition_count: &mut usize,
+                     backward: &mut Vec<Vec<usize>>,
+                     forward: &mut Vec<Vec<usize>>,
+                     #[cfg(debug_assertions)] seen: &mut HashSet<(usize, usize, usize)>|
+                     -> bool {
+                        if source_hash == target_hash && !include_self_loops {
+                            return true;
+                        }
+                        let required = concrete_label_transition_count
+                            .saturating_add(op.concrete_op_ids.len());
+                        if max_concrete_label_transitions.is_some_and(|cap| required > cap) {
+                            return false;
+                        }
+                        *concrete_label_transition_count = required;
+                        #[cfg(debug_assertions)]
+                        {
+                            let triple = (abstract_op_id, source_hash, target_hash);
+                            debug_assert!(
+                                seen.insert(triple),
+                                "duplicate AbstractTransition triple {:?}",
+                                triple
+                            );
+                        }
+                        let transition_id = transitions.len();
+                        transitions.push(AbstractTransition {
+                            transition_id,
+                            abstract_op_id,
+                            concrete_op_ids: op.concrete_op_ids.clone(),
+                            source_hash,
+                            target_hash,
+                        });
+                        backward[target_hash].push(transition_id);
+                        forward[source_hash].push(transition_id);
+                        true
+                    };
 
                 if comparison_branching {
                     let possible_predecessors = self
@@ -1753,24 +1811,36 @@ impl DomainAbstractionFactory {
                             &mut comparison_enumeration_scratch,
                         )?;
                     for &source_hash in possible_predecessors.iter() {
-                        push_source(
+                        if !push_source(
                             source_hash,
                             &mut transitions,
+                            &mut concrete_label_transition_count,
                             &mut backward,
                             &mut forward,
                             #[cfg(debug_assertions)]
                             &mut seen_transition_triples,
-                        );
+                        ) {
+                            return Ok(OcpTransitionSystemBuild::ConcreteLabelCapExceeded {
+                                required_at_least: concrete_label_transition_count
+                                    .saturating_add(op.concrete_op_ids.len()),
+                            });
+                        }
                     }
                 } else {
-                    push_source(
+                    if !push_source(
                         base_predecessor,
                         &mut transitions,
+                        &mut concrete_label_transition_count,
                         &mut backward,
                         &mut forward,
                         #[cfg(debug_assertions)]
                         &mut seen_transition_triples,
-                    );
+                    ) {
+                        return Ok(OcpTransitionSystemBuild::ConcreteLabelCapExceeded {
+                            required_at_least: concrete_label_transition_count
+                                .saturating_add(op.concrete_op_ids.len()),
+                        });
+                    }
                 }
             }
         }
@@ -1851,18 +1921,20 @@ impl DomainAbstractionFactory {
             }
         }
 
-        Ok(AbstractTransitionSystem {
-            transitions,
-            duplicate_transition_attempts,
-            backward,
-            forward,
-            goal_facts,
-            goal_state_hashes,
-            initial_state_hash: init_hash,
-            hash_multipliers: hash_multipliers.to_vec(),
-            numeric_domain_sizes: numeric_domain_sizes.to_vec(),
-            state_regions: state_regions.into_iter().map(Arc::new).collect(),
-        })
+        Ok(OcpTransitionSystemBuild::Complete(
+            AbstractTransitionSystem {
+                transitions,
+                duplicate_transition_attempts,
+                backward,
+                forward,
+                goal_facts,
+                goal_state_hashes,
+                initial_state_hash: init_hash,
+                hash_multipliers: hash_multipliers.to_vec(),
+                numeric_domain_sizes: numeric_domain_sizes.to_vec(),
+                state_regions: state_regions.into_iter().map(Arc::new).collect(),
+            },
+        ))
     }
 
     fn relevant_operator_ids_with_operators(

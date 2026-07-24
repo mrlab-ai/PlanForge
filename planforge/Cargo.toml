@@ -9,8 +9,8 @@ name = "planforge"
 doc = false
 
 [features]
-# Forward to planforge-search's optional HiGHS-backed posthoc optimization.
-highs = ["planforge-searcher/highs", "planforge-search/highs"]
+# Forward to every LP-backed component.
+cplex = ["planforge-searcher/cplex", "planforge-search/cplex"]
 
 [dependencies]
 planforge-sas = { path = "../planforge-sas" }
