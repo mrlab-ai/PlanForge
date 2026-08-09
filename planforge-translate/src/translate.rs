@@ -16,6 +16,87 @@ use super::pddl::f_expression::*;
 use super::sas_tasks::*;
 use super::simplify;
 
+/// A partial assignment of values to SAS variables.
+///
+/// A condition constrains a handful of variables, so a linear scan beats
+/// hashing a `usize`, which profiling showed to dominate the translation of
+/// large tasks. Insertion order is preserved on purpose: Fast Downward's
+/// dictionaries are ordered and the translation picks "the smallest" and
+/// "the first" entry out of them, so a hashed port would make the SAS task
+/// depend on the hash seed.
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+struct Assignment {
+    pairs: Vec<(usize, usize)>,
+}
+
+impl Assignment {
+    fn get(&self, var: usize) -> Option<usize> {
+        self.pairs
+            .iter()
+            .find_map(|&(other, value)| (other == var).then_some(value))
+    }
+
+    fn set(&mut self, var: usize, value: usize) {
+        match self.pairs.iter_mut().find(|(other, _)| *other == var) {
+            Some(pair) => pair.1 = value,
+            None => self.pairs.push((var, value)),
+        }
+    }
+
+    fn remove(&mut self, var: usize) {
+        self.pairs.retain(|&(other, _)| other != var);
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.pairs.iter().copied()
+    }
+
+    fn len(&self) -> usize {
+        self.pairs.len()
+    }
+
+    fn into_pairs(self) -> Vec<(usize, usize)> {
+        self.pairs
+    }
+
+    fn sorted_pairs(&self) -> Vec<(usize, usize)> {
+        let mut pairs = self.pairs.clone();
+        pairs.sort_unstable();
+        pairs
+    }
+}
+
+/// The values each variable may still take while a condition is translated.
+/// Almost every entry is a singleton; only a negative literal widens one.
+#[derive(Default)]
+struct Domains {
+    entries: Vec<(usize, Vec<usize>)>,
+}
+
+impl Domains {
+    fn get(&self, var: usize) -> Option<&[usize]> {
+        self.entries
+            .iter()
+            .find_map(|(other, values)| (*other == var).then_some(values.as_slice()))
+    }
+
+    fn set(&mut self, var: usize, values: Vec<usize>) {
+        debug_assert!(!values.is_empty(), "a variable with no value is a conflict");
+        match self.entries.iter_mut().find(|(other, _)| *other == var) {
+            Some(entry) => entry.1 = values,
+            None => self.entries.push((var, values)),
+        }
+    }
+
+    fn set_single(&mut self, var: usize, value: usize) {
+        self.set(var, vec![value]);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 // ============================================================
 // strips_to_sas_dictionary
 // ============================================================
@@ -96,7 +177,8 @@ fn strips_to_sas_dictionary(
 // translate_strips_conditions_aux
 // ============================================================
 
-/// Python: def translate_strips_conditions_aux(conditions, dictionary, ranges, numeric_dictionary, comparison_axioms, mutex_check=False)
+/// Translates a conjunction of ground literals into the finite-domain
+/// conditions that entail it, or `None` if it is unsatisfiable.
 fn translate_strips_conditions_aux(
     conditions: &[Condition],
     dictionary: &mut HashMap<Atom, Vec<(usize, usize)>>,
@@ -105,8 +187,8 @@ fn translate_strips_conditions_aux(
     comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
     sas_comp_axioms: &mut Vec<SASCompareAxiom>,
     mutex_check: bool,
-) -> Option<Vec<HashMap<usize, usize>>> {
-    let mut condition: HashMap<usize, HashSet<usize>> = HashMap::new();
+) -> Option<Vec<Assignment>> {
+    let mut condition = Domains::default();
 
     for fact in conditions {
         match fact {
@@ -121,17 +203,12 @@ fn translate_strips_conditions_aux(
 
                 // Check if fact is already in dictionary
                 if let Some(atom) = condition_to_atom(fact) {
-                    if dictionary.contains_key(&atom) {
-                        let pairs = &dictionary[&atom];
+                    if let Some(pairs) = dictionary.get(&atom) {
                         let (var, val) = pairs[0];
-                        if let Some(existing) = condition.get(&var) {
-                            if !existing.contains(&val) {
-                                return None; // conflicting
-                            }
+                        if condition.get(var).is_some_and(|vals| !vals.contains(&val)) {
+                            return None; // conflicting
                         }
-                        let entry = condition.entry(var).or_insert_with(HashSet::new);
-                        entry.clear();
-                        entry.insert(val);
+                        condition.set_single(var, val);
                         continue;
                     }
                 }
@@ -161,14 +238,10 @@ fn translate_strips_conditions_aux(
                     if let Some(atom) = condition_to_atom(&lookup_fact) {
                         if let Some(pairs) = dictionary.get(&atom) {
                             let (var, val) = pairs[0];
-                            if let Some(existing) = condition.get(&var) {
-                                if !existing.contains(&val) {
-                                    return None;
-                                }
+                            if condition.get(var).is_some_and(|vals| !vals.contains(&val)) {
+                                return None;
                             }
-                            let entry = condition.entry(var).or_insert_with(HashSet::new);
-                            entry.clear();
-                            entry.insert(val);
+                            condition.set_single(var, val);
                         }
                     }
                 } else {
@@ -203,9 +276,7 @@ fn translate_strips_conditions_aux(
                     if let Some(atom) = condition_to_atom(lookup_fact) {
                         if let Some(pairs) = dictionary.get(&atom) {
                             let (var, val) = pairs[0];
-                            let entry = condition.entry(var).or_insert_with(HashSet::new);
-                            entry.clear();
-                            entry.insert(val);
+                            condition.set_single(var, val);
                         }
                     }
                 }
@@ -213,14 +284,10 @@ fn translate_strips_conditions_aux(
             Condition::Atom(atom) => {
                 if let Some(pairs) = dictionary.get(atom) {
                     for &(var, val) in pairs {
-                        if let Some(existing) = condition.get(&var) {
-                            if !existing.contains(&val) {
-                                return None; // conflicting
-                            }
+                        if condition.get(var).is_some_and(|vals| !vals.contains(&val)) {
+                            return None; // conflicting
                         }
-                        let entry = condition.entry(var).or_insert_with(HashSet::new);
-                        entry.clear();
-                        entry.insert(val);
+                        condition.set_single(var, val);
                     }
                 }
                 // Static facts that aren't in dictionary can be ignored (they're static true)
@@ -241,74 +308,76 @@ fn translate_strips_conditions_aux(
             }
             Condition::NegatedAtom(natom) => {
                 let pos_atom = Atom::new(natom.predicate.clone(), natom.args.clone());
-                let mut done = false;
-                let mut new_condition: HashMap<usize, HashSet<usize>> = HashMap::new();
+                let mut constrained_existing = false;
+                let mut fresh = Domains::default();
 
                 if let Some(pairs) = dictionary.get(&pos_atom) {
                     for &(var, val) in pairs {
-                        let poss_vals: HashSet<usize> =
-                            (0..ranges[var]).filter(|&v| v != val).collect();
-
-                        if let Some(existing) = condition.get(&var) {
-                            // Constrain existing condition
-                            done = true;
-                            let intersection: HashSet<usize> =
-                                existing.intersection(&poss_vals).cloned().collect();
-                            if intersection.is_empty() {
-                                return None; // conflicting
+                        match condition.get(var) {
+                            Some(existing) => {
+                                constrained_existing = true;
+                                let intersection: Vec<usize> =
+                                    existing.iter().copied().filter(|&v| v != val).collect();
+                                if intersection.is_empty() {
+                                    return None; // conflicting
+                                }
+                                condition.set(var, intersection);
                             }
-                            condition.insert(var, intersection);
-                        } else {
-                            new_condition.insert(var, poss_vals);
+                            None => {
+                                fresh.set(var, (0..ranges[var]).filter(|&v| v != val).collect())
+                            }
                         }
                     }
                 }
 
-                if !done && !new_condition.is_empty() {
-                    // Pick the smallest new condition
-                    let mut candidates: Vec<(usize, HashSet<usize>)> =
-                        new_condition.into_iter().collect();
-                    candidates.sort_by_key(|(_, vals)| vals.len());
-                    let (var, vals) = candidates.into_iter().next().unwrap();
-                    condition.insert(var, vals);
+                // A negative literal is satisfied as soon as one of the
+                // variables covering it moves off the deleted value, so the
+                // variable with the fewest remaining values is enough.
+                if !constrained_existing && !fresh.is_empty() {
+                    let (var, values) = fresh
+                        .entries
+                        .into_iter()
+                        .min_by_key(|(_, values)| values.len())
+                        .expect("checked non-empty");
+                    condition.set(var, values);
                 }
             }
             _ => continue,
         }
     }
 
-    // Multiply out
     Some(multiply_out(condition))
 }
 
-/// Multiply out a condition with potentially multiple values per variable into
-/// a list of flat conditions (each variable mapped to a single value).
-fn multiply_out(condition: HashMap<usize, HashSet<usize>>) -> Vec<HashMap<usize, usize>> {
-    let mut sorted_conds: Vec<(usize, HashSet<usize>)> = condition.into_iter().collect();
-    sorted_conds.sort_by_key(|(_, vals)| vals.len());
+/// Expands a condition that allows several values per variable into the flat
+/// assignments it stands for, fewest alternatives first.
+fn multiply_out(condition: Domains) -> Vec<Assignment> {
+    let mut entries = condition.entries;
+    entries.sort_by_key(|(_, values)| values.len());
 
-    let mut flat_conds: Vec<HashMap<usize, usize>> = vec![HashMap::new()];
-
-    for (var, vals) in sorted_conds {
-        if vals.len() == 1 {
-            let val = *vals.iter().next().unwrap();
-            for cond in &mut flat_conds {
-                cond.insert(var, val);
-            }
-        } else {
-            let mut new_conds = vec![];
-            for cond in &flat_conds {
-                for &val in &vals {
-                    let mut new_cond = cond.clone();
-                    new_cond.insert(var, val);
-                    new_conds.push(new_cond);
+    let mut flat = vec![Assignment::default()];
+    for (var, values) in entries {
+        match values.as_slice() {
+            [value] => {
+                for assignment in &mut flat {
+                    assignment.set(var, *value);
                 }
             }
-            flat_conds = new_conds;
+            values => {
+                flat = flat
+                    .iter()
+                    .flat_map(|assignment| {
+                        values.iter().map(move |&value| {
+                            let mut extended = assignment.clone();
+                            extended.set(var, value);
+                            extended
+                        })
+                    })
+                    .collect();
+            }
         }
     }
-
-    flat_conds
+    flat
 }
 
 // ============================================================
@@ -325,9 +394,9 @@ fn translate_strips_conditions(
     mutex_ranges: &mut Vec<usize>,
     comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
     sas_comp_axioms: &mut Vec<SASCompareAxiom>,
-) -> Option<Vec<HashMap<usize, usize>>> {
+) -> Option<Vec<Assignment>> {
     if conditions.is_empty() {
-        return Some(vec![HashMap::new()]); // Quick exit for common case
+        return Some(vec![Assignment::default()]); // Quick exit for common case
     }
 
     // Check if the condition violates any mutexes
@@ -428,7 +497,7 @@ fn negate_and_translate_condition(
     mutex_ranges: &mut Vec<usize>,
     comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
     sas_comp_axioms: &mut Vec<SASCompareAxiom>,
-) -> Option<Vec<HashMap<usize, usize>>> {
+) -> Option<Vec<Assignment>> {
     // condition is a list of lists of literals (DNF)
     // the result is the negation of the condition in DNF in FDR
 
@@ -497,15 +566,14 @@ fn translate_strips_operator_aux(
     mutex_dict: &mut HashMap<Atom, Vec<(usize, usize)>>,
     mutex_ranges: &mut Vec<usize>,
     implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
-    condition: &HashMap<usize, usize>,
+    condition: &Assignment,
     comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
     sas_comp_axioms: &mut Vec<SASCompareAxiom>,
     num_vals: &[f64],
     relevant_numeric: &[usize],
 ) -> Option<SASOperator> {
     // Collect all add effects
-    let mut effects_by_variable: HashMap<usize, HashMap<usize, Vec<HashMap<usize, usize>>>> =
-        HashMap::new();
+    let mut effects_by_variable: HashMap<usize, HashMap<usize, Vec<Assignment>>> = HashMap::new();
     let mut add_conds_by_variable: HashMap<usize, Vec<Vec<Condition>>> = HashMap::new();
 
     for (conditions_list, fact) in &operator.add_effects {
@@ -539,7 +607,7 @@ fn translate_strips_operator_aux(
     }
 
     // Collect all del effects
-    let mut del_effects_by_variable: HashMap<usize, HashMap<usize, Vec<HashMap<usize, usize>>>> =
+    let mut del_effects_by_variable: HashMap<usize, HashMap<usize, Vec<Assignment>>> =
         HashMap::new();
 
     for (conditions_list, fact) in &operator.del_effects {
@@ -569,10 +637,8 @@ fn translate_strips_operator_aux(
     }
 
     // Collect all (numeric) assignment effects
-    let mut ass_effects_by_variable: HashMap<
-        usize,
-        HashMap<(String, usize), Vec<HashMap<usize, usize>>>,
-    > = HashMap::new();
+    let mut ass_effects_by_variable: HashMap<usize, HashMap<(String, usize), Vec<Assignment>>> =
+        HashMap::new();
 
     for (conditions_list, assignment) in &operator.assign_effects {
         let eff_condition_list = translate_strips_conditions(
@@ -614,7 +680,7 @@ fn translate_strips_operator_aux(
                         .or_insert_with(HashMap::new)
                         .entry((cost_assignment.symbol.clone(), expr_var))
                         .or_insert_with(Vec::new)
-                        .push(HashMap::new());
+                        .push(Assignment::default());
                 }
             }
         }
@@ -646,24 +712,20 @@ fn translate_strips_operator_aux(
         for (&val, conds) in del_vals {
             for cond in conds {
                 let mut guard_cond = cond.clone();
-                if let Some(&existing) = guard_cond.get(&var) {
-                    if existing != val {
-                        continue; // Condition inconsistent with deleted atom
-                    }
+                if guard_cond.get(var).is_some_and(|existing| existing != val) {
+                    continue; // Condition inconsistent with deleted atom
                 }
-                guard_cond.insert(var, val);
+                guard_cond.set(var, val);
 
                 for no_add_cond in no_add_effect_condition.as_ref().unwrap() {
                     let mut new_cond = guard_cond.clone();
                     let mut contradicts = false;
-                    for (&cvar, &cval) in no_add_cond {
-                        if let Some(&existing) = new_cond.get(&cvar) {
-                            if existing != cval {
-                                contradicts = true;
-                                break;
-                            }
+                    for (cvar, cval) in no_add_cond.iter() {
+                        if new_cond.get(cvar).is_some_and(|existing| existing != cval) {
+                            contradicts = true;
+                            break;
                         }
-                        new_cond.insert(cvar, cval);
+                        new_cond.set(cvar, cval);
                     }
                     if !contradicts {
                         effects_by_variable
@@ -739,9 +801,9 @@ fn build_sas_operator(
     simplified_effect_condition_counter: &mut usize,
     added_implied_precondition_counter: &mut usize,
     name: &str,
-    condition: &HashMap<usize, usize>,
-    effects_by_variable: &HashMap<usize, HashMap<usize, Vec<HashMap<usize, usize>>>>,
-    ass_effects_by_variable: &HashMap<usize, HashMap<(String, usize), Vec<HashMap<usize, usize>>>>,
+    condition: &Assignment,
+    effects_by_variable: &HashMap<usize, HashMap<usize, Vec<Assignment>>>,
+    ass_effects_by_variable: &HashMap<usize, HashMap<(String, usize), Vec<Assignment>>>,
     cost: f64,
     ranges: &[usize],
     implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
@@ -749,7 +811,7 @@ fn build_sas_operator(
 ) -> Option<SASOperator> {
     let implied_precondition: HashSet<(usize, usize)> = if options::ADD_IMPLIED_PRECONDITIONS {
         let mut ip = HashSet::new();
-        for fact in condition.iter().map(|(&k, &v)| (k, v)) {
+        for fact in condition.iter() {
             if let Some(implied) = implied_facts.get(&fact) {
                 for &f in implied {
                     ip.insert(f);
@@ -761,12 +823,12 @@ fn build_sas_operator(
         HashSet::new()
     };
 
-    let mut prevail_and_pre: HashMap<usize, usize> = condition.clone();
+    let mut prevail_and_pre = condition.clone();
     let mut pre_post: Vec<(usize, i32, usize, Vec<(usize, usize)>)> = vec![];
     let mut num_pre_post: Vec<(usize, String, usize, Vec<(usize, usize)>)> = vec![];
 
     for (&var, effects) in effects_by_variable {
-        let orig_pre = condition.get(&var).map(|&v| v as i32).unwrap_or(-1);
+        let orig_pre = condition.get(var).map_or(-1, |value| value as i32);
         let mut added_effect = false;
 
         for (&post, eff_conditions) in effects {
@@ -778,11 +840,7 @@ fn build_sas_operator(
 
             let mut eff_condition_lists: Vec<Vec<(usize, usize)>> = eff_conditions
                 .iter()
-                .map(|ec| {
-                    let mut items: Vec<(usize, usize)> = ec.iter().map(|(&k, &v)| (k, v)).collect();
-                    items.sort();
-                    items
-                })
+                .map(Assignment::sorted_pairs)
                 .collect();
 
             if ranges[var] == 2 {
@@ -804,7 +862,7 @@ fn build_sas_operator(
                 let mut eff_condition_contradicts = false;
 
                 for &(variable, value) in eff_condition {
-                    if let Some(&prevail_val) = prevail_and_pre.get(&variable) {
+                    if let Some(prevail_val) = prevail_and_pre.get(variable) {
                         if prevail_val != value {
                             eff_condition_contradicts = true;
                             break;
@@ -824,7 +882,7 @@ fn build_sas_operator(
         }
 
         if added_effect {
-            prevail_and_pre.remove(&var);
+            prevail_and_pre.remove(var);
         }
     }
 
@@ -832,11 +890,7 @@ fn build_sas_operator(
         for ((ass_op, post_var), eff_conditions) in effects {
             let eff_condition_lists: Vec<Vec<(usize, usize)>> = eff_conditions
                 .iter()
-                .map(|ec| {
-                    let mut items: Vec<(usize, usize)> = ec.iter().map(|(&k, &v)| (k, v)).collect();
-                    items.sort();
-                    items
-                })
+                .map(Assignment::sorted_pairs)
                 .collect();
 
             for eff_condition in &eff_condition_lists {
@@ -860,7 +914,7 @@ fn build_sas_operator(
     }
 
     // Remove effect variables from prevail
-    let prevail: Vec<(usize, usize)> = prevail_and_pre.into_iter().collect();
+    let prevail = prevail_and_pre.into_pairs();
 
     Some(SASOperator::new(
         name.to_string(),
@@ -957,8 +1011,7 @@ fn translate_strips_axiom(
 
     let mut axioms = vec![];
     for condition in conditions.unwrap() {
-        let cond_pairs: Vec<(usize, usize)> = condition.into_iter().collect();
-        axioms.push(SASAxiom::new(cond_pairs, effect));
+        axioms.push(SASAxiom::new(condition.into_pairs(), effect));
     }
     axioms
 }
@@ -1181,7 +1234,7 @@ fn translate_task(
     let goal_dict_list = goal_dict_list.unwrap();
     assert!(goal_dict_list.len() == 1, "Negative goal not supported");
 
-    let goal_pairs: Vec<(usize, usize)> = goal_dict_list[0].iter().map(|(&k, &v)| (k, v)).collect();
+    let goal_pairs: Vec<(usize, usize)> = goal_dict_list[0].iter().collect();
 
     if goal_pairs.is_empty() {
         return Ok(trivial_task(true, "Empty goal"));
@@ -1374,7 +1427,6 @@ fn translate_task(
     );
     let gc_pair = global_constraint_facts
         .iter()
-        .map(|(&var, &value)| (var, value))
         .next()
         .expect("length checked above");
 
