@@ -196,3 +196,49 @@ fn metric_cost_reads_parent_values_across_effects() {
 
     assert_eq!(delta, 3.0);
 }
+
+/// PDDL grounding produces operators like mprime's `drink ?n ?n`, whose two
+/// additive effects target the same variable. Both deltas apply to the parent
+/// value, so they cancel — and the result must not depend on which one is
+/// stored first.
+#[test]
+fn additive_effects_on_one_variable_accumulate() {
+    let minus_one = AssignmentEffect::new(X, AssignmentOperation::Minus, ONE, false, vec![]);
+
+    let forwards = successor_values(vec![plus(X, ONE), minus_one.clone()]);
+    let backwards = successor_values(vec![minus_one, plus(X, ONE)]);
+
+    assert_eq!(forwards[X], 10.0);
+    assert_eq!(backwards[X], 10.0);
+}
+
+/// Two additive effects that do not cancel still sum onto the parent value.
+#[test]
+fn additive_effects_on_one_variable_sum() {
+    let values = successor_values(vec![plus(X, ONE), plus(X, ONE)]);
+
+    assert_eq!(values[X], 12.0);
+}
+
+/// A repeat that mixes an assignment with an addition has no order-independent
+/// reading, so it must be rejected rather than resolved by effect order.
+#[test]
+fn conflicting_repeated_assignment_target_is_rejected() {
+    let effects = vec![
+        AssignmentEffect::new(X, AssignmentOperation::Assign, ONE, false, vec![]),
+        plus(X, ONE),
+    ];
+    let task: TaskRef = Arc::new(task_with_effects(effects, None));
+    let mut registry = StateRegistry::for_task(task.clone());
+    let initial = registry.get_initial_state();
+
+    let error = registry
+        .get_successor_state(&initial, &task.get_operators()[0])
+        .expect_err("a conflicting repeated target must be rejected");
+
+    assert!(
+        error.message.contains("non-additive"),
+        "unexpected message: {}",
+        error.message
+    );
+}
