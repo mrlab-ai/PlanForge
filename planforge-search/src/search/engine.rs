@@ -14,14 +14,129 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use ordered_float::OrderedFloat;
-use planforge_sas::numeric_task::{ExplicitFact, TaskRef};
-use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+use planforge_sas::numeric_task::{ExplicitFact, Operator, TaskRef};
+use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 use std::env;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
 const MEMORY_CHECK_EXPANSION_INTERVAL: usize = 1024;
+
+/// Outcome of taking one entry off the open list.
+enum PoppedNode {
+    /// Expand this entry's state.
+    Expand(OpenEntry, ConcreteState),
+    /// The entry is closed, superseded or deferred; the search continues.
+    Skipped,
+    /// The open list holds nothing more.
+    Exhausted,
+}
+
+/// Trace flags one expansion reads, hoisted out of the successor loop.
+#[derive(Debug, Clone, Copy)]
+struct ExpansionTrace {
+    initial_successors: bool,
+    improved_duplicates: bool,
+    generated_states: bool,
+    evaluated_successors: bool,
+}
+
+/// The values every successor of one expansion shares.
+struct ParentExpansion {
+    state_id: StateID,
+    g_value: f64,
+    /// Operators the heuristic called helpful in the parent, or `None` when
+    /// the heuristic does not report preferred operators.
+    preferred_operator_ids: Option<Box<[u32]>>,
+    trace: ExpansionTrace,
+}
+
+impl ParentExpansion {
+    #[inline]
+    fn trace_generated(&self, succ_state_id: StateID, operator: &Operator, new_g_value: f64) {
+        if !self.trace.generated_states {
+            return;
+        }
+        debug!(
+            "TRACE generated parent_sid={} succ_sid={} op={} g={}",
+            self.state_id,
+            succ_state_id,
+            operator.name(),
+            format_progress_value(new_g_value)
+        );
+    }
+
+    #[inline]
+    fn trace_evaluated_successor(
+        &self,
+        succ_state_id: StateID,
+        operator: &Operator,
+        new_g_value: f64,
+        evaluation: &SearchEvaluation,
+    ) {
+        if !self.trace.evaluated_successors {
+            return;
+        }
+        debug!(
+            "TRACE evaluated-successor parent_sid={} succ_sid={} op={} g={:.17} h={:.17} f={:.17} dead_end={}",
+            self.state_id,
+            succ_state_id,
+            operator.name(),
+            new_g_value,
+            evaluation.h_value,
+            evaluation.f_value,
+            evaluation.is_dead_end,
+        );
+    }
+
+    #[inline]
+    fn trace_improved_duplicate(
+        &self,
+        succ_state_id: StateID,
+        operator: &Operator,
+        old_g: Option<f64>,
+        new_g_value: f64,
+        evaluation: &SearchEvaluation,
+    ) {
+        if !self.trace.improved_duplicates {
+            return;
+        }
+        debug!(
+            "TRACE improved-duplicate sid={} op={} old_g={} new_g={} h={} dead_end={}",
+            succ_state_id,
+            operator.name(),
+            old_g
+                .map(format_progress_value)
+                .unwrap_or_else(|| "<missing>".to_string()),
+            format_progress_value(new_g_value),
+            format_progress_value(evaluation.h_value),
+            evaluation.is_dead_end,
+        );
+    }
+
+    #[inline]
+    fn trace_initial_successor(
+        &self,
+        succ_state_id: StateID,
+        operator: &Operator,
+        new_g_value: f64,
+        evaluation: &SearchEvaluation,
+    ) {
+        if !self.trace.initial_successors {
+            return;
+        }
+        debug!(
+            "TRACE initial-successor op={} g={} h={} f={} dead_end={} state_id={}",
+            operator.name(),
+            format_progress_value(new_g_value),
+            format_progress_value(evaluation.h_value),
+            format_progress_value(evaluation.f_value),
+            evaluation.is_dead_end,
+            succ_state_id
+        );
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct SearchEvaluation {
@@ -652,14 +767,37 @@ impl<'a> AStarSearch<'a> {
             return Ok(status);
         }
 
-        if self.open_list.is_empty() {
-            return Ok(SearchStatus::Failed);
+        let (entry, state) = match self.pop_next_to_expand()? {
+            PoppedNode::Expand(entry, state) => (entry, state),
+            PoppedNode::Skipped => return Ok(SearchStatus::InProgress),
+            PoppedNode::Exhausted => return Ok(SearchStatus::Failed),
+        };
+        let state_id = entry.state_id();
+
+        self.maybe_print_f_layer(entry, &start_time);
+        self.trace_expanded(entry, state_id);
+        self.close_expanded_node(entry, state_id);
+
+        if self.is_goal_state(&state) {
+            return Ok(SearchStatus::Solved(state_id));
         }
 
-        // Get next node from open list
-        let entry = match self.open_list.pop() {
-            Some(entry) => entry,
-            None => return Ok(SearchStatus::Failed),
+        self.expand_successors(&state, state_id, &start_time)?;
+        Ok(SearchStatus::InProgress)
+    }
+
+    /// Take the cheapest open entry that is actually worth expanding.
+    ///
+    /// An entry is skipped when its state is already closed, when a cheaper
+    /// path to it has been found since it was queued, or when it is a stale
+    /// re-evaluation. Under a fast/slow policy the first pop of an entry only
+    /// triggers the slow heuristic and reinserts it; the second pop expands.
+    fn pop_next_to_expand(&mut self) -> Result<PoppedNode> {
+        if self.open_list.is_empty() {
+            return Ok(PoppedNode::Exhausted);
+        }
+        let Some(entry) = self.open_list.pop() else {
+            return Ok(PoppedNode::Exhausted);
         };
 
         let state_id = entry.state_id();
@@ -668,20 +806,19 @@ impl<'a> AStarSearch<'a> {
             .lookup_state(state_id)
             .map_err(|error| anyhow!("open list references missing state {state_id}: {error:?}"))?;
 
-        // Check if already closed.
-        if self.space.node(state_id).is_some_and(|info| info.is_closed) {
-            return Ok(SearchStatus::InProgress);
-        }
-
-        // Check if this node is stale (better path found since it was added to open list).
-        if let Some(current_info) = self.space.node(state_id)
-            && current_info.g_value < entry.g_value
-        {
-            return Ok(SearchStatus::InProgress);
+        if let Some(info) = self.space.node(state_id) {
+            if info.is_closed {
+                return Ok(PoppedNode::Skipped);
+            }
+            // A cheaper path to this state was found after the entry was
+            // queued, so the entry describes a path we no longer take.
+            if info.g_value < entry.g_value {
+                return Ok(PoppedNode::Skipped);
+            }
         }
 
         if self.reevaluate_stale_entry(entry, &state)? {
-            return Ok(SearchStatus::InProgress);
+            return Ok(PoppedNode::Skipped);
         }
 
         // Fast/slow A* lazy slow-heuristic step. If a slow heuristic is
@@ -694,21 +831,16 @@ impl<'a> AStarSearch<'a> {
         // heuristics is admissible, optimality is preserved.
         if matches!(self.policy, SearchPolicy::FastSlow { .. }) && !entry.is_second() {
             self.evaluate_and_reinsert_for_slow(entry, &state)?;
-            return Ok(SearchStatus::InProgress);
+            return Ok(PoppedNode::Skipped);
         }
 
-        self.maybe_print_f_layer(entry, &start_time);
+        Ok(PoppedNode::Expand(entry, state))
+    }
 
-        if self.config.trace.expanded_states {
-            debug!(
-                "TRACE expanded sid={} g={:.17} h={:.17} f={:.17}",
-                state_id,
-                entry.g_value,
-                entry.h_value.into_inner(),
-                entry.f_value.into_inner()
-            );
-        }
-
+    /// Close the node the search is about to expand, creating it if the open
+    /// list reached it without a search-space entry, and count the expansion.
+    #[inline]
+    fn close_expanded_node(&mut self, entry: OpenEntry, state_id: StateID) {
         if self.space.contains_node(state_id) {
             self.space.mark_closed(state_id);
         } else {
@@ -724,39 +856,45 @@ impl<'a> AStarSearch<'a> {
             );
         }
         self.stats.nodes_expanded += 1;
+    }
 
-        if self.is_goal_state(&state) {
-            return Ok(SearchStatus::Solved(state_id));
-        }
-
-        // Get the current best `g`-value for this state.
-        let current_g = if let Some(info) = self.space.node(state_id) {
-            info.g_value
-        } else {
-            0.0 // Initial state.
+    /// Generate, evaluate and queue every successor of an expanded state.
+    fn expand_successors(
+        &mut self,
+        state: &ConcreteState,
+        state_id: StateID,
+        start_time: &Instant,
+    ) -> Result<()> {
+        let parent = ParentExpansion {
+            state_id,
+            g_value: self
+                .space
+                .node(state_id)
+                .expect("expanded node is closed before its successors are generated")
+                .g_value,
+            // Reading via `take` is intentional: once we've started expanding
+            // `state` we won't need the preferred operators again unless the
+            // node is reopened, in which case `evaluate_state` resnapshots.
+            // It also reclaims the boxed slice's memory eagerly.
+            preferred_operator_ids: self.space.take_preferred(state_id),
+            trace: ExpansionTrace {
+                initial_successors: self.stats.nodes_expanded == 1
+                    && self.config.trace.initial_successors,
+                improved_duplicates: self.config.trace.improved_duplicates,
+                generated_states: self.config.trace.generated_states,
+                evaluated_successors: self.config.trace.evaluated_successors,
+            },
         };
 
-        // Snapshot of this parent's preferred-operator IDs. Reading via
-        // `take` is intentional: once we've started expanding `state` we
-        // won't need them again unless the node is reopened, in which case
-        // `evaluate_state` will resnapshot. Using `take` also reclaims the
-        // boxed slice's memory eagerly.
-        let parent_preferred_ids = self.space.take_preferred(state_id);
-
-        self.populate_applicable_operators(&state);
+        self.populate_applicable_operators(state);
         let mut applicable_operators = std::mem::take(&mut self.scratch.applicable_operators);
-        let trace_initial_successors =
-            self.stats.nodes_expanded == 1 && self.config.trace.initial_successors;
-        let trace_improved_duplicates = self.config.trace.improved_duplicates;
-        let trace_generated_states = self.config.trace.generated_states;
-        let trace_evaluated_successors = self.config.trace.evaluated_successors;
 
         // Fill the parent's numeric/cost/metric values once; reuse across all
         // successors below.
         let mut expansion_context = std::mem::take(&mut self.scratch.expansion_context);
         if let Err(error) = self
             .state_registry
-            .build_expansion_context(&state, &mut expansion_context)
+            .build_expansion_context(state, &mut expansion_context)
         {
             self.scratch.expansion_context = expansion_context;
             self.scratch.applicable_operators = applicable_operators;
@@ -774,10 +912,10 @@ impl<'a> AStarSearch<'a> {
             let operator = operators
                 .get(operator_id)
                 .expect("successor generator returned an invalid operator id");
-            let (succ_state, op_cost) = self
+            let (succ_state, metric_op_cost) = self
                 .state_registry
                 .apply_operator_in_context(
-                    &state,
+                    state,
                     operator,
                     &expansion_context,
                     &mut self.scratch.successor_numeric,
@@ -789,155 +927,153 @@ impl<'a> AStarSearch<'a> {
                         operator.name()
                     )
                 })?;
-            let succ_state_id = succ_state.get_id();
-            let op_cost = if self.config.use_metric {
-                op_cost
-            } else {
-                self.config
-                    .operator_costs
-                    .get(operator_id)
-                    .copied()
-                    .unwrap_or(operator.cost() as f64)
-            };
-            let new_g_value = current_g + op_cost;
-
-            // Count every successfully constructed successor state.
-            self.stats.nodes_generated += 1;
-            if trace_generated_states {
-                debug!(
-                    "TRACE generated parent_sid={} succ_sid={} op={} g={}",
-                    state_id,
-                    succ_state_id,
-                    operator.name(),
-                    format_progress_value(new_g_value)
-                );
-            }
-
-            // Check if we've seen this state before.
-            let mut improved_duplicate = false;
-            let mut was_closed = false;
-            let mut old_g = None;
-            if let Some(existing_info) = self.space.node(succ_state_id) {
-                if existing_info.is_dead_end {
-                    continue;
-                }
-                if existing_info.g_value <= new_g_value {
-                    // We already have a better or equal path.
-                    continue;
-                }
-                improved_duplicate = true;
-                was_closed = existing_info.is_closed;
-                old_g = Some(existing_info.g_value);
-            }
-
-            if was_closed {
-                self.stats.nodes_reopened += 1;
-            }
-
-            // Is this successor reached via one of the parent's
-            // preferred (helpful) operators? We use the parent snapshot
-            // taken above; per-successor it's a small linear scan, but
-            // helpful-action lists from FF are typically tiny (single
-            // digits), so this is cheap compared to evaluating the
-            // successor.
-            let is_preferred = parent_preferred_ids
-                .as_deref()
-                .is_some_and(|ids| ids.contains(&op_id));
-
-            // Evaluate and add to open list.
-            {
-                let evaluation = self
-                    .evaluate_state(&succ_state, new_g_value)
-                    .with_context(|| {
-                        format!(
-                            "heuristic evaluation failed for successor state {succ_state_id} generated by operator {operator_id} ({})",
-                            operator.name()
-                        )
-                    })?;
-                self.stats.evaluations += 1;
-                if !improved_duplicate {
-                    self.stats.nodes_evaluated += 1;
-                }
-                self.record_heuristic_revision(succ_state_id, evaluation.heuristic_revision);
-
-                // Snapshot the heuristic's preferred-operator IDs for the
-                // successor *now*, before any other state's evaluation
-                // overwrites the heuristic's internal scratch. Stored on
-                // the search space and read back when this successor is
-                // later expanded.
-                let preferred_ids = self.heuristic.get_preferred_operator_ids();
-                self.space.store_preferred(succ_state_id, preferred_ids);
-
-                if trace_evaluated_successors {
-                    debug!(
-                        "TRACE evaluated-successor parent_sid={} succ_sid={} op={} g={:.17} h={:.17} f={:.17} dead_end={}",
-                        state_id,
-                        succ_state_id,
-                        operator.name(),
-                        new_g_value,
-                        evaluation.h_value,
-                        evaluation.f_value,
-                        evaluation.is_dead_end,
-                    );
-                }
-
-                if improved_duplicate && trace_improved_duplicates {
-                    debug!(
-                        "TRACE improved-duplicate sid={} op={} old_g={} new_g={} h={} dead_end={}",
-                        succ_state_id,
-                        operator.name(),
-                        old_g
-                            .map(format_progress_value)
-                            .unwrap_or_else(|| "<missing>".to_string()),
-                        format_progress_value(new_g_value),
-                        format_progress_value(evaluation.h_value),
-                        evaluation.is_dead_end,
-                    );
-                }
-
-                let node_info = SearchNodeInfo {
-                    parent_state: Some(state_id),
-                    parent_operator_id: Some(operator_id),
-                    g_value: new_g_value,
-                    is_dead_end: evaluation.is_dead_end,
-                    is_closed: false,
-                };
-
-                // Record/update best `g`-value, parent pointers, and dead-end status.
-                self.space.set_node(succ_state_id, node_info);
-
-                if trace_initial_successors {
-                    debug!(
-                        "TRACE initial-successor op={} g={} h={} f={} dead_end={} state_id={}",
-                        operator.name(),
-                        format_progress_value(new_g_value),
-                        format_progress_value(evaluation.h_value),
-                        format_progress_value(evaluation.f_value),
-                        evaluation.is_dead_end,
-                        succ_state_id
-                    );
-                }
-                if evaluation.is_dead_end {
-                    self.stats.dead_ends += 1;
-                    continue;
-                }
-
-                let _ = self.maybe_report_heuristic_progress(&evaluation, &start_time);
-                self.open_list.insert(
-                    succ_state_id,
-                    new_g_value,
-                    evaluation.h_value,
-                    evaluation.f_value,
-                    is_preferred,
-                );
-            }
+            self.process_successor(
+                &parent,
+                operator,
+                operator_id,
+                op_id,
+                &succ_state,
+                metric_op_cost,
+                start_time,
+            )?;
         }
 
         applicable_operators.clear();
         self.scratch.applicable_operators = applicable_operators;
         self.scratch.expansion_context = expansion_context;
+        Ok(())
+    }
 
-        Ok(SearchStatus::InProgress)
+    /// Account for one generated successor: skip it if the search space
+    /// already holds it on an at-least-as-good path, otherwise evaluate it,
+    /// record the improved path, and queue it unless it is a dead end.
+    #[inline]
+    fn process_successor(
+        &mut self,
+        parent: &ParentExpansion,
+        operator: &Operator,
+        operator_id: usize,
+        op_id: u32,
+        succ_state: &ConcreteState,
+        metric_op_cost: f64,
+        start_time: &Instant,
+    ) -> Result<()> {
+        let succ_state_id = succ_state.get_id();
+        let new_g_value =
+            parent.g_value + self.operator_cost(operator_id, operator, metric_op_cost);
+
+        // Count every successfully constructed successor state.
+        self.stats.nodes_generated += 1;
+        parent.trace_generated(succ_state_id, operator, new_g_value);
+
+        let (improved_duplicate, was_closed, old_g) = match self.space.node(succ_state_id) {
+            // A dead end stays a dead end, and an at-least-as-good path is
+            // already recorded — either way there is nothing to do.
+            Some(info) if info.is_dead_end || info.g_value <= new_g_value => return Ok(()),
+            Some(info) => (true, info.is_closed, Some(info.g_value)),
+            None => (false, false, None),
+        };
+        if was_closed {
+            self.stats.nodes_reopened += 1;
+        }
+
+        // Is this successor reached via one of the parent's preferred
+        // (helpful) operators? Per-successor it's a small linear scan, but
+        // helpful-action lists from FF are typically tiny (single digits), so
+        // this is cheap compared to evaluating the successor.
+        let is_preferred = parent
+            .preferred_operator_ids
+            .as_deref()
+            .is_some_and(|ids| ids.contains(&op_id));
+
+        let evaluation = self
+            .evaluate_state(succ_state, new_g_value)
+            .with_context(|| {
+                format!(
+                    "heuristic evaluation failed for successor state {succ_state_id} generated by operator {operator_id} ({})",
+                    operator.name()
+                )
+            })?;
+        self.stats.evaluations += 1;
+        if !improved_duplicate {
+            self.stats.nodes_evaluated += 1;
+        }
+        self.record_heuristic_revision(succ_state_id, evaluation.heuristic_revision);
+
+        // Snapshot the heuristic's preferred-operator IDs for the successor
+        // *now*, before any other state's evaluation overwrites the
+        // heuristic's internal scratch. Stored on the search space and read
+        // back when this successor is later expanded.
+        let preferred_ids = self.heuristic.get_preferred_operator_ids();
+        self.space.store_preferred(succ_state_id, preferred_ids);
+
+        parent.trace_evaluated_successor(succ_state_id, operator, new_g_value, &evaluation);
+        if improved_duplicate {
+            parent.trace_improved_duplicate(
+                succ_state_id,
+                operator,
+                old_g,
+                new_g_value,
+                &evaluation,
+            );
+        }
+
+        // Record/update best `g`-value, parent pointers, and dead-end status.
+        self.space.set_node(
+            succ_state_id,
+            SearchNodeInfo {
+                parent_state: Some(parent.state_id),
+                parent_operator_id: Some(operator_id),
+                g_value: new_g_value,
+                is_dead_end: evaluation.is_dead_end,
+                is_closed: false,
+            },
+        );
+
+        parent.trace_initial_successor(succ_state_id, operator, new_g_value, &evaluation);
+        if evaluation.is_dead_end {
+            self.stats.dead_ends += 1;
+            return Ok(());
+        }
+
+        let _ = self.maybe_report_heuristic_progress(&evaluation, start_time);
+        self.open_list.insert(
+            succ_state_id,
+            new_g_value,
+            evaluation.h_value,
+            evaluation.f_value,
+            is_preferred,
+        );
+        Ok(())
+    }
+
+    /// Cost charged for applying `operator`: the task metric when the search
+    /// optimises it, otherwise the configured (unit or per-operator) cost.
+    #[inline]
+    fn operator_cost(&self, operator_id: usize, operator: &Operator, metric_op_cost: f64) -> f64 {
+        if self.config.use_metric {
+            metric_op_cost
+        } else {
+            self.config
+                .operator_costs
+                .get(operator_id)
+                .copied()
+                .unwrap_or(operator.cost() as f64)
+        }
+    }
+
+    #[inline]
+    fn trace_expanded(&self, entry: OpenEntry, state_id: StateID) {
+        if !self.config.trace.expanded_states {
+            return;
+        }
+        debug!(
+            "TRACE expanded sid={} g={:.17} h={:.17} f={:.17}",
+            state_id,
+            entry.g_value,
+            entry.h_value.into_inner(),
+            entry.f_value.into_inner()
+        );
     }
 
     pub fn finish(&mut self, status: SearchStatus) -> SearchResult {
