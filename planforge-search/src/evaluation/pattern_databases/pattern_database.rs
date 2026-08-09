@@ -1560,289 +1560,406 @@ impl<'task> PatternDatabase<'task> {
     }
 
     fn build(&mut self, max_states: usize) -> Result<(), String> {
-        let (
-            built_states,
-            distances,
-            reached_goal_states,
-            goal_state_ids,
-            frontier_states,
-            transition_predecessors,
-            truncated,
-            exhausted_abstract_state_space,
-        ) = {
-            let mut predecessors: Vec<Vec<(usize, usize)>> = Vec::with_capacity(max_states);
-            let successor_generator =
-                GroundedSuccessorGenerator::construct_node_from_task(&self.task);
-            let mut state_registry = StateRegistry::for_task(Arc::new(&self.task));
-            let mut applicable_operators: Vec<u32> = Vec::new();
-            let initial_registry_state = state_registry.get_initial_state();
-            let mut current_propositional: Vec<usize> = Vec::new();
-            let mut successor_numeric: Vec<f64> = Vec::new();
-            let mut successor_cost_values: Vec<f64> = Vec::new();
-            let mut expansion_context = ExpansionContext::default();
-            let mut representative_states: Vec<ConcreteState> = vec![initial_registry_state];
-            let mut closed = vec![false];
-            let mut seen_or_closed = vec![true];
-            let mut open: BinaryHeap<PdbOpenEntry> = BinaryHeap::new();
-            open.push(PdbOpenEntry {
-                state_id: 0,
-                f: NotNan::new(0.0).unwrap(),
-                g: NotNan::new(0.0).unwrap(),
-            });
-            let mut seen_count = 0usize;
-            let mut goal_states: Vec<usize> = Vec::new();
-            let mut truncated = false;
-            let uses_lmcut = matches!(
-                self.heuristic_config.exploration_heuristic,
-                PdbInternalHeuristic::Lmcut
-            ) || matches!(
-                self.heuristic_config.frontier_heuristic,
-                PdbInternalHeuristic::Lmcut
-            );
-            let mut construction_lmcut = if uses_lmcut {
-                Some(LmcutInnerHeuristic::new(&self.task))
-            } else {
-                None
-            };
-            let mut heuristic_cache: Vec<Option<InnerHeuristicResult>> = Vec::new();
-            let mut compute_inner_h = |heuristic: PdbInternalHeuristic,
-                                       state_id: usize,
-                                       state: &ConcreteState,
-                                       registry: &StateRegistry<'_>|
-             -> Result<InnerHeuristicResult, String> {
-                match heuristic {
-                    PdbInternalHeuristic::Zero => Ok(InnerHeuristicResult {
-                        dead_end: false,
-                        value: 0.0,
-                    }),
-                    PdbInternalHeuristic::Blind => Ok(InnerHeuristicResult {
-                        dead_end: false,
-                        value: 0.0,
-                    }),
-                    PdbInternalHeuristic::Lmcut => {
-                        if heuristic_cache.len() <= state_id {
-                            heuristic_cache.resize(state_id + 1, None);
-                        }
-                        if let Some(result) = heuristic_cache[state_id] {
-                            return Ok(result);
-                        }
-                        let result = construction_lmcut
-                            .as_mut()
-                            .expect("LM-cut inner heuristic must be initialized when configured")
-                            .evaluate_from_concrete_state(state, registry)?;
-                        heuristic_cache[state_id] = Some(result);
-                        Ok(result)
-                    }
-                }
-            };
-            predecessors.push(Vec::new());
-
-            loop {
-                if seen_count >= max_states {
-                    truncated = true;
-                    break;
-                }
-                let Some(entry) = open.pop() else {
-                    break;
-                };
-                let state_id = entry.state_id;
-                if representative_states.len().is_multiple_of(500) {
-                    info!(
-                        "Expanding state {}/{} ({} reached goal states, {} truncated frontier states)",
-                        state_id + 1,
-                        representative_states.len(),
-                        goal_states.len(),
-                        0
-                    );
-                }
-                if state_id < closed.len() && closed[state_id] {
-                    continue;
-                }
-                if state_id >= closed.len() {
-                    closed.resize(state_id + 1, false);
-                }
-                closed[state_id] = true;
-
-                applicable_operators.clear();
-                let current_registry_state = representative_states[state_id].clone();
-                current_registry_state.fill_state(&state_registry, &mut current_propositional);
-                if self.is_goal_state(&current_propositional) {
-                    goal_states.push(state_id);
-                }
-                successor_generator
-                    .get_applicable_operators(&current_propositional, &mut applicable_operators);
-                state_registry
-                    .build_expansion_context(&current_registry_state, &mut expansion_context)
-                    .map_err(|err| err.message)?;
-
-                let operators = self.task.get_operators();
-                for &op_id in applicable_operators.iter() {
-                    let operator_id = op_id as usize;
-                    let operator = &operators[operator_id];
-                    let operator_cost = self.task.abstract_operator_cost(operator_id);
-                    let (successor_state, _) = state_registry
-                        .apply_operator_in_context(
-                            &current_registry_state,
-                            operator,
-                            &expansion_context,
-                            &mut successor_numeric,
-                            &mut successor_cost_values,
-                        )
-                        .map_err(|err| err.message)?;
-                    if successor_state.get_id() == current_registry_state.get_id() {
-                        continue;
-                    }
-
-                    let next_id = successor_state.get_id();
-                    if next_id >= representative_states.len() {
-                        if next_id != representative_states.len() {
-                            return Err(format!(
-                                "state registry produced non-contiguous abstract state id {next_id} while {} states are represented",
-                                representative_states.len()
-                            ));
-                        }
-
-                        representative_states.push(successor_state);
-                        predecessors.push(Vec::new());
-                        if next_id >= closed.len() {
-                            closed.resize(next_id + 1, false);
-                        }
-                        if next_id >= seen_or_closed.len() {
-                            seen_or_closed.resize(next_id + 1, false);
-                        }
-                    }
-
-                    predecessors[next_id].push((state_id, operator_id));
-
-                    if !seen_or_closed[next_id] {
-                        seen_or_closed[next_id] = true;
-                        seen_count += 1;
-                        let successor_ref = &representative_states[next_id];
-                        let inner_h = compute_inner_h(
-                            self.heuristic_config.exploration_heuristic,
-                            next_id,
-                            successor_ref,
-                            &state_registry,
-                        )?;
-                        if !inner_h.dead_end {
-                            let g = entry.g.into_inner() + operator_cost;
-                            let h = if matches!(
-                                self.heuristic_config.exploration_heuristic,
-                                PdbInternalHeuristic::Blind | PdbInternalHeuristic::Zero
-                            ) {
-                                0.0
-                            } else {
-                                inner_h.value
-                            };
-                            open.push(PdbOpenEntry {
-                                state_id: next_id,
-                                f: NotNan::new(g + h).map_err(|err| err.to_string())?,
-                                g: NotNan::new(g).map_err(|err| err.to_string())?,
-                            });
-                        }
-                    }
-                }
-            }
-
-            let exhausted_abstract_state_space = open.is_empty();
-
-            let built_states = representative_states
-                .iter()
-                .map(|state| {
-                    Ok(PdbState {
-                        propositional: state.get_state(&state_registry),
-                        numeric: state_registry
-                            .get_numeric_vars(state)
-                            .map_err(|err| format!("{err:?}"))?,
-                    })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-
-            let mut distances = vec![f64::INFINITY; built_states.len()];
-            let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-
-            let mut reached_goal_states = 0usize;
-            for &goal_state_id in &goal_states {
-                reached_goal_states += 1;
-                distances[goal_state_id] = 0.0;
-                heap.push((Reverse(NotNan::new(0.0).unwrap()), goal_state_id));
-            }
-
-            let mut frontier_states: Vec<usize> = Vec::new();
-            if truncated {
-                let mut seen_frontier = vec![false; built_states.len()];
-                while let Some(entry) = open.pop() {
-                    let state_id = entry.state_id;
-                    if state_id < closed.len() && closed[state_id] {
-                        continue;
-                    }
-                    if state_id >= seen_frontier.len() || seen_frontier[state_id] {
-                        continue;
-                    }
-                    seen_frontier[state_id] = true;
-                    frontier_states.push(state_id);
-                    let state = &representative_states[state_id];
-                    let seed_cost = if self.is_goal_state(&built_states[state_id].propositional) {
-                        0.0
-                    } else {
-                        let inner_h = compute_inner_h(
-                            self.heuristic_config.frontier_heuristic,
-                            state_id,
-                            state,
-                            &state_registry,
-                        )?;
-                        if inner_h.dead_end {
-                            continue;
-                        }
-                        inner_h.value.max(self.min_operator_cost())
-                    };
-                    if seed_cost + 1e-12 < distances[state_id] {
-                        distances[state_id] = seed_cost;
-                        heap.push((Reverse(NotNan::new(seed_cost).unwrap()), state_id));
-                    }
-                }
-                frontier_states.sort_unstable();
-                frontier_states.dedup();
-            }
-
-            while let Some((Reverse(distance), state_id)) = heap.pop() {
-                let distance = distance.into_inner();
-                if distance > distances[state_id] + 1e-12 {
-                    continue;
-                }
-
-                for &(parent_id, operator_id) in &predecessors[state_id] {
-                    let operator_cost = self.task.abstract_operator_cost(operator_id);
-                    let alternative = distance + operator_cost;
-                    if alternative + 1e-12 < distances[parent_id] {
-                        distances[parent_id] = alternative;
-                        heap.push((Reverse(NotNan::new(alternative).unwrap()), parent_id));
-                    }
-                }
-            }
-
-            (
-                built_states,
-                distances,
-                reached_goal_states,
-                goal_states,
-                frontier_states,
-                predecessors,
-                truncated,
-                exhausted_abstract_state_space,
-            )
-        };
-
-        self.truncated = truncated;
-        self.exhausted_abstract_state_space = exhausted_abstract_state_space;
-        self.states = built_states;
-        self.distances = distances;
-        self.goal_state_ids = goal_state_ids;
-        self.transition_predecessors = transition_predecessors;
-        self.reached_goal_states = reached_goal_states;
-        self.frontier_states = frontier_states;
+        let table = self.build_distance_table(max_states)?;
+        self.states = table.states;
+        self.distances = table.distances;
+        self.goal_state_ids = table.goal_state_ids;
+        self.transition_predecessors = table.transition_predecessors;
+        self.reached_goal_states = table.reached_goal_states;
+        self.frontier_states = table.frontier_states;
+        self.truncated = table.truncated;
+        self.exhausted_abstract_state_space = table.exhausted_abstract_state_space;
         self.rebuild_lookup_indexes();
-
         Ok(())
     }
+
+    /// Explore the projected task's abstract state space and compute the goal
+    /// distance of every state reached.
+    fn build_distance_table(&self, max_states: usize) -> Result<PdbDistanceTable, String> {
+        let mut registry = StateRegistry::for_task(Arc::new(&self.task));
+        let mut inner_heuristic = PdbInnerHeuristic::new(&self.task, self.uses_lmcut());
+        let mut exploration =
+            self.explore_abstract_state_space(max_states, &mut registry, &mut inner_heuristic)?;
+        let exhausted_abstract_state_space = exploration.open.is_empty();
+        let states = collect_pdb_states(&exploration.representative_states, &registry)?;
+
+        // Backward Dijkstra from the goal states over the recorded
+        // predecessors, seeded with the goal states at distance zero.
+        let mut distances = vec![f64::INFINITY; states.len()];
+        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
+        for &goal_state_id in &exploration.goal_states {
+            distances[goal_state_id] = 0.0;
+            heap.push((Reverse(NotNan::new(0.0).unwrap()), goal_state_id));
+        }
+        let frontier_states = if exploration.truncated {
+            self.seed_frontier_distances(
+                &mut exploration,
+                &states,
+                &registry,
+                &mut inner_heuristic,
+                &mut distances,
+                &mut heap,
+            )?
+        } else {
+            Vec::new()
+        };
+        self.propagate_distances_to_predecessors(
+            &exploration.predecessors,
+            &mut distances,
+            &mut heap,
+        );
+
+        let reached_goal_states = exploration.goal_states.len();
+        Ok(PdbDistanceTable {
+            states,
+            distances,
+            reached_goal_states,
+            goal_state_ids: exploration.goal_states,
+            frontier_states,
+            transition_predecessors: exploration.predecessors,
+            truncated: exploration.truncated,
+            exhausted_abstract_state_space,
+        })
+    }
+
+    fn uses_lmcut(&self) -> bool {
+        matches!(
+            self.heuristic_config.exploration_heuristic,
+            PdbInternalHeuristic::Lmcut
+        ) || matches!(
+            self.heuristic_config.frontier_heuristic,
+            PdbInternalHeuristic::Lmcut
+        )
+    }
+
+    /// Best-first exploration of the abstract state space, recording every
+    /// transition as a predecessor edge so distances can be propagated
+    /// backwards afterwards.
+    ///
+    /// Stops at `max_states` newly seen states; the states still queued then
+    /// are the frontier, and `truncated` says the table only bounds distances
+    /// rather than giving them exactly.
+    fn explore_abstract_state_space(
+        &self,
+        max_states: usize,
+        registry: &mut StateRegistry<'_>,
+        inner_heuristic: &mut PdbInnerHeuristic<'_>,
+    ) -> Result<PdbExploration, String> {
+        let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&self.task);
+        let mut applicable_operators: Vec<u32> = Vec::new();
+        let mut current_propositional: Vec<usize> = Vec::new();
+        let mut successor_numeric: Vec<f64> = Vec::new();
+        let mut successor_cost_values: Vec<f64> = Vec::new();
+        let mut expansion_context = ExpansionContext::default();
+
+        let mut exploration = PdbExploration {
+            representative_states: vec![registry.get_initial_state()],
+            predecessors: Vec::with_capacity(max_states),
+            goal_states: Vec::new(),
+            closed: vec![false],
+            seen_or_closed: vec![true],
+            open: BinaryHeap::new(),
+            truncated: false,
+        };
+        exploration.predecessors.push(Vec::new());
+        exploration.open.push(PdbOpenEntry {
+            state_id: 0,
+            f: NotNan::new(0.0).unwrap(),
+            g: NotNan::new(0.0).unwrap(),
+        });
+        let mut seen_count = 0usize;
+
+        loop {
+            if seen_count >= max_states {
+                exploration.truncated = true;
+                break;
+            }
+            let Some(entry) = exploration.open.pop() else {
+                break;
+            };
+            let state_id = entry.state_id;
+            if exploration.representative_states.len().is_multiple_of(500) {
+                info!(
+                    "Expanding state {}/{} ({} reached goal states, {} truncated frontier states)",
+                    state_id + 1,
+                    exploration.representative_states.len(),
+                    exploration.goal_states.len(),
+                    0
+                );
+            }
+            if exploration.is_closed(state_id) {
+                continue;
+            }
+            exploration.mark_closed(state_id);
+
+            applicable_operators.clear();
+            let current_registry_state = exploration.representative_states[state_id].clone();
+            current_registry_state.fill_state(registry, &mut current_propositional);
+            if self.is_goal_state(&current_propositional) {
+                exploration.goal_states.push(state_id);
+            }
+            successor_generator
+                .get_applicable_operators(&current_propositional, &mut applicable_operators);
+            registry
+                .build_expansion_context(&current_registry_state, &mut expansion_context)
+                .map_err(|err| err.message)?;
+
+            let operators = self.task.get_operators();
+            for &op_id in applicable_operators.iter() {
+                let operator_id = op_id as usize;
+                let (successor_state, _) = registry
+                    .apply_operator_in_context(
+                        &current_registry_state,
+                        &operators[operator_id],
+                        &expansion_context,
+                        &mut successor_numeric,
+                        &mut successor_cost_values,
+                    )
+                    .map_err(|err| err.message)?;
+                if successor_state.get_id() == current_registry_state.get_id() {
+                    continue;
+                }
+                let next_id = successor_state.get_id();
+                exploration.register_state(next_id, successor_state)?;
+                exploration.predecessors[next_id].push((state_id, operator_id));
+
+                if exploration.seen_or_closed[next_id] {
+                    continue;
+                }
+                exploration.seen_or_closed[next_id] = true;
+                seen_count += 1;
+                let inner_h = inner_heuristic.evaluate(
+                    self.heuristic_config.exploration_heuristic,
+                    next_id,
+                    &exploration.representative_states[next_id],
+                    registry,
+                )?;
+                if inner_h.dead_end {
+                    continue;
+                }
+                let g = entry.g.into_inner() + self.task.abstract_operator_cost(operator_id);
+                // Blind and Zero explore breadth-first: their value is a
+                // constant, so folding it into `f` would only shift every key.
+                let h = if matches!(
+                    self.heuristic_config.exploration_heuristic,
+                    PdbInternalHeuristic::Blind | PdbInternalHeuristic::Zero
+                ) {
+                    0.0
+                } else {
+                    inner_h.value
+                };
+                exploration.open.push(PdbOpenEntry {
+                    state_id: next_id,
+                    f: NotNan::new(g + h).map_err(|err| err.to_string())?,
+                    g: NotNan::new(g).map_err(|err| err.to_string())?,
+                });
+            }
+        }
+        Ok(exploration)
+    }
+
+    /// Seed the backward search with the states the exploration left queued.
+    ///
+    /// A truncated table only knows a lower bound for a frontier state, so it
+    /// takes the frontier heuristic — floored at the cheapest operator cost,
+    /// since a non-goal state always needs at least one more operator.
+    /// Returns the frontier state ids, ascending and deduplicated.
+    fn seed_frontier_distances(
+        &self,
+        exploration: &mut PdbExploration,
+        states: &[PdbState],
+        registry: &StateRegistry<'_>,
+        inner_heuristic: &mut PdbInnerHeuristic<'_>,
+        distances: &mut [f64],
+        heap: &mut BinaryHeap<(Reverse<NotNan<f64>>, usize)>,
+    ) -> Result<Vec<usize>, String> {
+        let mut frontier_states: Vec<usize> = Vec::new();
+        let mut seen_frontier = vec![false; states.len()];
+        while let Some(entry) = exploration.open.pop() {
+            let state_id = entry.state_id;
+            if exploration.is_closed(state_id) {
+                continue;
+            }
+            if state_id >= seen_frontier.len() || seen_frontier[state_id] {
+                continue;
+            }
+            seen_frontier[state_id] = true;
+            frontier_states.push(state_id);
+
+            let seed_cost = if self.is_goal_state(&states[state_id].propositional) {
+                0.0
+            } else {
+                let inner_h = inner_heuristic.evaluate(
+                    self.heuristic_config.frontier_heuristic,
+                    state_id,
+                    &exploration.representative_states[state_id],
+                    registry,
+                )?;
+                if inner_h.dead_end {
+                    continue;
+                }
+                inner_h.value.max(self.min_operator_cost())
+            };
+            if seed_cost + 1e-12 < distances[state_id] {
+                distances[state_id] = seed_cost;
+                heap.push((Reverse(NotNan::new(seed_cost).unwrap()), state_id));
+            }
+        }
+        frontier_states.sort_unstable();
+        frontier_states.dedup();
+        Ok(frontier_states)
+    }
+
+    /// Backward Dijkstra over the recorded predecessor edges.
+    fn propagate_distances_to_predecessors(
+        &self,
+        predecessors: &[Vec<(usize, usize)>],
+        distances: &mut [f64],
+        heap: &mut BinaryHeap<(Reverse<NotNan<f64>>, usize)>,
+    ) {
+        while let Some((Reverse(distance), state_id)) = heap.pop() {
+            let distance = distance.into_inner();
+            if distance > distances[state_id] + 1e-12 {
+                continue;
+            }
+            for &(parent_id, operator_id) in &predecessors[state_id] {
+                let alternative = distance + self.task.abstract_operator_cost(operator_id);
+                if alternative + 1e-12 < distances[parent_id] {
+                    distances[parent_id] = alternative;
+                    heap.push((Reverse(NotNan::new(alternative).unwrap()), parent_id));
+                }
+            }
+        }
+    }
+}
+
+/// Everything `PatternDatabase::build` writes back onto itself.
+struct PdbDistanceTable {
+    states: Vec<PdbState>,
+    distances: Vec<f64>,
+    reached_goal_states: usize,
+    goal_state_ids: Vec<usize>,
+    frontier_states: Vec<usize>,
+    transition_predecessors: Vec<Vec<(usize, usize)>>,
+    truncated: bool,
+    exhausted_abstract_state_space: bool,
+}
+
+/// The abstract state space the exploration reached.
+struct PdbExploration {
+    /// One concrete state per abstract state, indexed by abstract state id.
+    representative_states: Vec<ConcreteState>,
+    /// `predecessors[s]` are the `(parent, operator)` edges entering `s`.
+    predecessors: Vec<Vec<(usize, usize)>>,
+    goal_states: Vec<usize>,
+    closed: Vec<bool>,
+    seen_or_closed: Vec<bool>,
+    /// States generated but not expanded — the frontier, when truncated.
+    open: BinaryHeap<PdbOpenEntry>,
+    /// The exploration hit its state limit, so distances are bounds.
+    truncated: bool,
+}
+
+impl PdbExploration {
+    fn is_closed(&self, state_id: usize) -> bool {
+        self.closed.get(state_id).copied().unwrap_or(false)
+    }
+
+    fn mark_closed(&mut self, state_id: usize) {
+        if state_id >= self.closed.len() {
+            self.closed.resize(state_id + 1, false);
+        }
+        self.closed[state_id] = true;
+    }
+
+    /// Give a newly reached abstract state its slot. The state registry hands
+    /// out ids densely, so a gap means the registry and this table disagree
+    /// about which states exist.
+    fn register_state(&mut self, state_id: usize, state: ConcreteState) -> Result<(), String> {
+        if state_id < self.representative_states.len() {
+            return Ok(());
+        }
+        if state_id != self.representative_states.len() {
+            return Err(format!(
+                "state registry produced non-contiguous abstract state id {state_id} while {} states are represented",
+                self.representative_states.len()
+            ));
+        }
+        self.representative_states.push(state);
+        self.predecessors.push(Vec::new());
+        if state_id >= self.closed.len() {
+            self.closed.resize(state_id + 1, false);
+        }
+        if state_id >= self.seen_or_closed.len() {
+            self.seen_or_closed.resize(state_id + 1, false);
+        }
+        Ok(())
+    }
+}
+
+/// The inner heuristic PDB construction consults, memoised per abstract state.
+///
+/// `Blind` and `Zero` are constants and need no memory; only LM-cut is worth
+/// caching, and it is the only one that has to be built at all.
+struct PdbInnerHeuristic<'task> {
+    lmcut: Option<LmcutInnerHeuristic<'task>>,
+    cache: Vec<Option<InnerHeuristicResult>>,
+}
+
+impl<'task> PdbInnerHeuristic<'task> {
+    fn new(task: &'task dyn AbstractNumericTask, uses_lmcut: bool) -> Self {
+        Self {
+            lmcut: uses_lmcut.then(|| LmcutInnerHeuristic::new(task)),
+            cache: Vec::new(),
+        }
+    }
+
+    fn evaluate(
+        &mut self,
+        heuristic: PdbInternalHeuristic,
+        state_id: usize,
+        state: &ConcreteState,
+        registry: &StateRegistry<'_>,
+    ) -> Result<InnerHeuristicResult, String> {
+        match heuristic {
+            PdbInternalHeuristic::Zero | PdbInternalHeuristic::Blind => Ok(InnerHeuristicResult {
+                dead_end: false,
+                value: 0.0,
+            }),
+            PdbInternalHeuristic::Lmcut => {
+                if self.cache.len() <= state_id {
+                    self.cache.resize(state_id + 1, None);
+                }
+                if let Some(result) = self.cache[state_id] {
+                    return Ok(result);
+                }
+                let result = self
+                    .lmcut
+                    .as_mut()
+                    .expect("LM-cut inner heuristic must be initialized when configured")
+                    .evaluate_from_concrete_state(state, registry)?;
+                self.cache[state_id] = Some(result);
+                Ok(result)
+            }
+        }
+    }
+}
+
+/// Read every abstract state's propositional and numeric values out of the
+/// registry.
+fn collect_pdb_states(
+    representative_states: &[ConcreteState],
+    registry: &StateRegistry<'_>,
+) -> Result<Vec<PdbState>, String> {
+    representative_states
+        .iter()
+        .map(|state| {
+            Ok(PdbState {
+                propositional: state.get_state(registry),
+                numeric: registry
+                    .get_numeric_vars(state)
+                    .map_err(|err| format!("{err:?}"))?,
+            })
+        })
+        .collect()
 }
