@@ -38,11 +38,23 @@ codex-plan.md
 codex-implement.log
 
 # Local planning research and generated comparison artifacts.
+#
+# Notes, reviews and rendered papers accumulate at the repo root faster than
+# they can be curated, and none of them are inputs to the build. Ignore the
+# whole class and re-admit the few documents that belong to the project.
+*.md
+!README.md
+!CONTRIBUTING.md
+!CHANGELOG.md
+!/planforge-py/README.md
+!/tutorials/**/*.md
+!/tests/assets/**/*.md
+*.pdf
+*.html
+
 /.codex
 /AGENTS.md
 /CLAUDE.md
-/Interval Splitting for Abstractions.pdf
-/Numeric_Domain_Abstractions__SOCS_-2.pdf
 /codex-*.md
 /docs/
 /dominik/

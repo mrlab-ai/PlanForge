@@ -20,7 +20,7 @@
 mod tests;
 
 use crate::axioms::AxiomEvaluator;
-use crate::numeric_task::{AssignmentOperation, Operator, TaskRef};
+use crate::numeric_task::{AssignmentOperation, ExplicitFact, Operator, TaskRef};
 use crate::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
 use crate::utils::float_tolerance;
 use crate::utils::per_state_info::PerStateInformation;
@@ -1161,6 +1161,7 @@ impl<'a> StateRegistry<'a> {
         // successor is new, we run the full axiom pass after dedup.
         let defer_full_axioms = self.has_axiom_derived_bits;
         self.apply_numeric_effects_inner(
+            &ctx.parent_numeric,
             successor_values,
             cost_values,
             operator,
@@ -1246,6 +1247,19 @@ impl<'a> StateRegistry<'a> {
         }
 
         Ok((successor, op_cost))
+    }
+
+    /// Whether every condition of a conditional assignment effect holds in the
+    /// packed state `buffer`.
+    ///
+    /// Reads `buffer` directly instead of going through `ExplicitFact::is_hold`
+    /// so that callers holding only the parent's raw buffer (and no
+    /// `ConcreteState` for it) can check conditions on the hot successor path.
+    #[inline]
+    fn assignment_conditions_met(&self, conditions: &[ExplicitFact], buffer: &[u64]) -> bool {
+        conditions.iter().all(|condition| {
+            self.global_state_packer.get(buffer, condition.var()) == condition.value() as u64
+        })
     }
 
     /// Apply propositional effects of an operator to the state buffer.
@@ -1454,6 +1468,7 @@ impl<'a> StateRegistry<'a> {
     /// This is the improved version that works directly with buffers for efficiency.
     fn apply_numeric_effects(
         &self,
+        parent_values: &[f64],
         current_values: &mut [f64],
         cost_part: &mut [f64],
         operator: &Operator,
@@ -1461,6 +1476,7 @@ impl<'a> StateRegistry<'a> {
         previous_buffer: &[u64],
     ) -> Result<(), StateInsertError> {
         self.apply_numeric_effects_inner(
+            parent_values,
             current_values,
             cost_part,
             operator,
@@ -1478,6 +1494,7 @@ impl<'a> StateRegistry<'a> {
     /// new state worth registering — see `get_successor_state_with_buffers_and_cost`.
     fn apply_numeric_effects_inner(
         &self,
+        parent_values: &[f64],
         current_values: &mut [f64],
         cost_part: &mut [f64],
         operator: &Operator,
@@ -1485,36 +1502,56 @@ impl<'a> StateRegistry<'a> {
         previous_buffer: &[u64],
         run_full_axioms: bool,
     ) -> Result<(), StateInsertError> {
+        // All assignment effects of one operator take effect simultaneously:
+        // every right-hand side, left-hand side and effect condition reads the
+        // state *before* the operator was applied. An operator with
+        // `x += y` and `y += 1` must therefore add the parent's `y` to `x`,
+        // whatever order the effects happen to be stored in.
+        //
+        // `parent_values` is never written here, so one pass suffices: reads
+        // come from it (and from `previous_buffer`), writes go to
+        // `current_values`, `cost_part` and `next_buffer`. Reading operands
+        // out of `current_values` instead would make each effect visible to
+        // its successors and reintroduce order dependence.
         for effect in operator.assignment_effects() {
             let assignment_var_id = effect.var_id();
             let affected_var_id = effect.affected_var_id();
 
-            if assignment_var_id >= current_values.len() {
+            if assignment_var_id >= parent_values.len() {
                 return Err(StateInsertError {
                     message: format!("Assignment variable ID {} out of bounds", assignment_var_id),
                 });
             }
+            if affected_var_id >= parent_values.len() {
+                return Err(StateInsertError {
+                    message: format!("Affected variable ID {} out of bounds", affected_var_id),
+                });
+            }
 
-            let assignment_ty = self.numeric_var_types[assignment_var_id];
-            let affected_ty = self.numeric_var_types[affected_var_id];
+            // Effect conditions are evaluated against the parent state, in the
+            // same way `apply_propositional_effects` evaluates them against
+            // `current_state` rather than the partially updated buffer.
+            if !self.assignment_conditions_met(effect.conditions(), previous_buffer) {
+                continue;
+            }
 
-            let assignment_value = if assignment_ty == NumericType::Regular {
-                self.unpack_regular_numeric(self.global_state_packer.get(
-                    previous_buffer,
-                    self.numeric_indices[assignment_var_id].unwrap(),
-                ))
-            } else {
-                current_values[assignment_var_id]
-            };
+            let assignment_value =
+                if self.numeric_var_types[assignment_var_id] == NumericType::Regular {
+                    self.unpack_regular_numeric(self.global_state_packer.get(
+                        previous_buffer,
+                        self.numeric_indices[assignment_var_id].unwrap(),
+                    ))
+                } else {
+                    parent_values[assignment_var_id]
+                };
 
-            let result = AssignmentOperation::apply(
-                current_values[affected_var_id],
+            let result = float_tolerance::canonicalize(AssignmentOperation::apply(
+                parent_values[affected_var_id],
                 effect.operation(),
                 assignment_value,
-            );
-            let result = float_tolerance::canonicalize(result);
+            ));
 
-            match affected_ty {
+            match self.numeric_var_types[affected_var_id] {
                 NumericType::Cost => {
                     let cost_index = self.numeric_indices[affected_var_id].unwrap();
                     if cost_index >= cost_part.len() {
@@ -1534,7 +1571,7 @@ impl<'a> StateRegistry<'a> {
                     );
                     current_values[affected_var_id] = result;
                 }
-                _ => {
+                affected_ty => {
                     return Err(StateInsertError {
                         message: format!(
                             "Only regular and cost variables can be affected by assignment operations: {:?}",
@@ -1618,8 +1655,13 @@ impl<'a> StateRegistry<'a> {
             cost_values.resize(expected_cost_vars, 0.0);
         }
 
+        // `successor_numeric_values` still holds `state`'s values here, so this
+        // snapshot is the parent every effect must read from.
+        let parent_numeric_values = successor_numeric_values.clone();
+
         self.apply_propositional_effects(&mut next_buffer, state, operator);
         self.apply_numeric_effects(
+            &parent_numeric_values,
             &mut successor_numeric_values,
             cost_values.as_mut_slice(),
             operator,

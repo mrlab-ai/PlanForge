@@ -5,4 +5,6 @@ pub mod state_registry;
 pub mod utils;
 
 #[cfg(test)]
+pub(crate) mod simultaneous_effects_tests;
+#[cfg(test)]
 pub(crate) mod tests;

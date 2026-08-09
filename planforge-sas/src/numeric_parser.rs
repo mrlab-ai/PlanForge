@@ -341,15 +341,18 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         let (loop_input, cond_count) = u32(input)?;
         let is_conditional_effect = cond_count > 0;
         let mut conditions = vec![];
-        let (loop_input, _) = space1(loop_input)?;
+        let (mut loop_input, _) = space1(loop_input)?;
         for _ in 0..cond_count {
-            let (loop_input, var_id) = usize(input)?;
-            let (loop_input, _) = space1(loop_input)?;
-            let (loop_input, value) = usize(loop_input)?;
-            let (loop_input, _) = space1(loop_input)?;
-            input = loop_input;
-            let condition = ExplicitFact::new(var_id, value);
-            conditions.push(condition);
+            // Thread the remaining input through the loop, exactly as the
+            // propositional effect loop above does. Reading from `input` here
+            // would re-parse the condition count as the first condition's
+            // variable and leave `effect_var_id` pointing at a condition.
+            let (rest, var_id) = usize(loop_input)?;
+            let (rest, _) = space1(rest)?;
+            let (rest, value) = usize(rest)?;
+            let (rest, _) = space1(rest)?;
+            conditions.push(ExplicitFact::new(var_id, value));
+            loop_input = rest;
         }
         let (loop_input, effect_var_id) = usize(loop_input)?;
         let (loop_input, _) = space1(loop_input)?;
@@ -588,4 +591,63 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     );
 
     Ok((input, output))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One assignment effect guarded by a single condition: `if var5 == 1 then
+    /// var3 += var2`. Threading the input incorrectly through the condition
+    /// loop silently yields `var1 += var5` here, which is why this pins every
+    /// field rather than just the condition.
+    #[test]
+    fn conditional_assignment_effect_parses_all_fields() {
+        let input = "begin_operator\nmove\n0\n0\n1\n1 5 1 3 + 2\n7\nend_operator\n";
+
+        let (rest, operator) = parse_operator(input).expect("operator parses");
+
+        assert_eq!(rest, "");
+        assert_eq!(operator.name(), "move");
+        assert_eq!(operator.cost(), 7);
+
+        let effects = operator.assignment_effects();
+        assert_eq!(effects.len(), 1);
+        let effect = &effects[0];
+        assert!(effect.is_conditional());
+        assert_eq!(effect.conditions(), &vec![ExplicitFact::new(5, 1)]);
+        assert_eq!(effect.affected_var_id(), 3);
+        assert_eq!(effect.operation(), &AssignmentOperation::Plus);
+        assert_eq!(effect.var_id(), 2);
+    }
+
+    /// Two conditions, to catch an off-by-one in how the loop advances.
+    #[test]
+    fn multi_condition_assignment_effect_parses_all_conditions() {
+        let input = "begin_operator\nmove\n0\n0\n1\n2 5 1 6 0 3 + 2\n7\nend_operator\n";
+
+        let (_, operator) = parse_operator(input).expect("operator parses");
+
+        let effect = &operator.assignment_effects()[0];
+        assert_eq!(
+            effect.conditions(),
+            &vec![ExplicitFact::new(5, 1), ExplicitFact::new(6, 0)]
+        );
+        assert_eq!(effect.affected_var_id(), 3);
+        assert_eq!(effect.var_id(), 2);
+    }
+
+    /// The unconditional case must keep working unchanged.
+    #[test]
+    fn unconditional_assignment_effect_parses() {
+        let input = "begin_operator\nmove\n0\n0\n1\n0 3 + 2\n7\nend_operator\n";
+
+        let (_, operator) = parse_operator(input).expect("operator parses");
+
+        let effect = &operator.assignment_effects()[0];
+        assert!(!effect.is_conditional());
+        assert!(effect.conditions().is_empty());
+        assert_eq!(effect.affected_var_id(), 3);
+        assert_eq!(effect.var_id(), 2);
+    }
 }

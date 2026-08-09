@@ -635,19 +635,35 @@ pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>
     let mut numeric_values = initial_numeric_values.to_vec();
     let old_metric = evaluate_metric_from_values(task, &numeric_values);
 
+    // Effects of one operator apply simultaneously, so every read must see the
+    // pre-application values. Collect first, publish second; see
+    // `StateRegistry::apply_numeric_effects_inner` for the same reasoning on
+    // the search path.
+    let mut results = Vec::with_capacity(operator.assignment_effects().len());
     for effect in operator.assignment_effects() {
         let assignment_var_id = effect.var_id();
         let affected_var_id = effect.affected_var_id();
-        if assignment_var_id >= numeric_values.len() || affected_var_id >= numeric_values.len() {
-            continue;
-        }
+        assert!(
+            assignment_var_id < numeric_values.len(),
+            "assignment variable {assignment_var_id} of operator {} is out of bounds for {} numeric variables",
+            operator.name(),
+            numeric_values.len(),
+        );
+        assert!(
+            affected_var_id < numeric_values.len(),
+            "affected variable {affected_var_id} of operator {} is out of bounds for {} numeric variables",
+            operator.name(),
+            numeric_values.len(),
+        );
 
-        let assignment_value = numeric_values[assignment_var_id];
         let result = AssignmentOperation::apply(
             numeric_values[affected_var_id],
             effect.operation(),
-            assignment_value,
+            numeric_values[assignment_var_id],
         );
+        results.push((affected_var_id, result));
+    }
+    for (affected_var_id, result) in results {
         numeric_values[affected_var_id] = result;
     }
 
