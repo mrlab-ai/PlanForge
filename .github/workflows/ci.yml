@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to a branch makes the previous run's result irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail the build on warnings rather than letting them accumulate.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  format:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (advisory)
+    runs-on: ubuntu-latest
+    # Advisory on purpose, and only until the backlog is gone. `-D warnings`
+    # currently reports ~160 lints, 129 of them in planforge-translate, so a
+    # blocking job would be red on its first run and would train everyone to
+    # ignore it. Burn the backlog down, then delete this line and fold `-D
+    # warnings` in below. Do not silence individual lints to get there.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # `planforge-cplex` links against a proprietary CPLEX installation that
+      # is not available to CI, so it is excluded everywhere below.
+      - run: cargo clippy --workspace --exclude planforge-cplex --all-targets
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Includes the blind-search regression suite, which asserts the known
+      # optimal cost and plan length of every fixture in
+      # tests/assets/numeric-pddl-files. That is the real correctness gate: a
+      # planner regression changes a plan cost, and this fails.
+      - run: cargo test --workspace --exclude planforge-cplex
+
+  features:
+    name: optional features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # `sgd` is off by default, so nothing else in CI would compile it and it
+      # would rot unnoticed. Checking it here keeps the gradient engine and its
+      # candle backend building without imposing them on the default build.
+      - run: cargo check -p planforge --features sgd
+      - run: cargo test -p planforge-sgd --features candle
+
+  default-build-is-lean:
+    name: default build excludes optional backends
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The point of the `sgd` feature is that a default build never compiles
+      # the autograd backend. Assert it, rather than trusting the manifest:
+      # candle appears in Cargo.lock either way, so only the build graph is
+      # evidence.
+      - name: candle must not be in the default build graph
+        run: |
+          for crate in planforge tests; do
+            count=$(cargo tree -p "$crate" -e normal | grep -c candle || true)
+            if [ "$count" -ne 0 ]; then
+              echo "::error::$crate pulls in $count candle entries in a default build"
+              exit 1
+            fi
+          done
