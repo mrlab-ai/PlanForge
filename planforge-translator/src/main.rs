@@ -1,13 +1,19 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
-use planforge_translate::normalize;
-use planforge_translate::pddl_parser::PddlTask;
 use planforge_translator::{init_logger, translate_to_sas_to_path};
 use tracing::info;
-/// Minimal translator CLI for numeric PDDL -> SAS+ pipeline (placeholder)
+
+/// The translator's entry points name files, and a path that is not valid
+/// Unicode is bad user input rather than a broken invariant.
+fn as_str(path: &Path) -> anyhow::Result<&str> {
+    path.to_str()
+        .ok_or_else(|| anyhow::anyhow!("path must be valid Unicode: {}", path.display()))
+}
+
+/// CLI for the numeric PDDL to SAS+ pipeline.
 #[derive(Parser)]
 #[clap(
     name = "translator",
@@ -59,118 +65,13 @@ fn main() -> anyhow::Result<()> {
             init_logger(log_level.unwrap_or(tracing_subscriber::filter::LevelFilter::INFO));
 
             let start = Instant::now();
-            info!(
-                "translator: reading domain {:?} and problem {:?}",
-                domain, problem
-            );
-            let task = PddlTask::from_files(&domain, &problem).map_err(|e| anyhow::anyhow!(e))?;
-            info!(
-                "translator: parsed forms: {} domain / {} problem",
-                task.domain_forms.len(),
-                task.problem_forms.len()
-            );
-            let parsed_task = task.to_task();
-
-            // Create normalizable task and run normalization
-            info!("translator: normalizing task...");
-            let mut norm_task = normalize::NormalizableTask::from_task(parsed_task);
-            norm_task.add_global_constraints();
-            normalize::normalize(&mut norm_task).expect("normalization failed");
-            info!(
-                "translator: normalized - {} actions, {} axioms, {} numeric axioms",
-                norm_task.task.actions.len(),
-                norm_task.task.axioms.len(),
-                norm_task.task.function_administrator.axioms.len()
-            );
-            // Debug: print axioms
-            for (i, ax) in norm_task.task.axioms.iter().enumerate() {
-                info!(
-                    "  axiom[{}]: name={}, condition={:?}",
-                    i, ax.name, ax.condition
-                );
-            }
-            info!("  goal={:?}", norm_task.goal);
-
-            // Run instantiation (Phase 1: model-guided grounding)
-            // Use the normalized task for proper exploration rule generation
-            info!("\ntranslator: running instantiation...");
-            let result = planforge_translate::instantiate::explore_normalized(&norm_task)
-                .map_err(|e| anyhow::anyhow!(e))?;
-            info!(
-                "translator: instantiated {} grounded operators (model-guided)",
-                result.grounded_ops.len()
-            );
-            info!(
-                "translator: relaxed reachable: {}",
-                result.relaxed_reachable
-            );
-            info!("translator: atoms: {}", result.atoms.len());
-
-            // Debug: print action breakdown
-            info!("\nAction breakdown:");
-            let mut action_counts: std::collections::HashMap<String, usize> =
-                std::collections::HashMap::new();
-            for op in &result.grounded_ops {
-                let action_type = op.name.split('(').next().unwrap_or("unknown");
-                *action_counts.entry(action_type.to_string()).or_insert(0) += 1;
-            }
-            for (action_type, count) in action_counts.iter() {
-                info!("  {}: {}", action_type, count);
-            }
-
-            info!("\nFirst 20 grounded actions:");
-            for (i, op) in result.grounded_ops.iter().take(20).enumerate() {
-                info!("  {}: {}", i + 1, op.name);
-            }
-
-            // Build SAS task
-            info!("\ntranslator: building SAS task...");
-
-            // Use the instantiated numeric axioms from the model-guided grounding
-            // These are the 60+ axioms that were instantiated from the 8 templates
-            info!(
-                "translator: processing {} instantiated numeric axioms from model",
-                result.numeric_axioms.len()
-            );
-            let instantiated_num_axioms = result.numeric_axioms;
-
-            let py_groups: Option<Vec<Vec<String>>> = None;
-            let mut sastask =
-                planforge_translate::translate::translate_task_from_grounded_internal(
-                    &result.atoms,
-                    &result.grounded_ops,
-                    &task.domain_forms,
-                    &task.problem_forms,
-                    &result.num_fluents,
-                    &instantiated_num_axioms,
-                    py_groups,
-                    &result.grounded_axioms,
-                    &result.reachable_action_params,
-                    &norm_task.goal,
-                    &norm_task,
-                )
-                .map_err(|err| anyhow::anyhow!(err))?;
-            match planforge_translate::simplify::filter_unreachable_propositions(&mut sastask) {
-                Ok(()) => {
-                    info!("translator: simplified task");
-                }
-                Err(planforge_translate::simplify::SimplifyError::Impossible) => {
-                    info!("translator: task simplified to unsolvable");
-                    sastask = planforge_translate::simplify::trivial_task(false);
-                }
-                Err(planforge_translate::simplify::SimplifyError::TriviallySolvable) => {
-                    info!("translator: task simplified to trivially solvable");
-                    sastask = planforge_translate::simplify::trivial_task(true);
-                }
-            }
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
-            let py_task = planforge_translate::sas_tasks::from_internal(&sastask);
-            let mut out_file = std::fs::File::create(&out_path)?;
-            py_task.output(&mut out_file)?;
-            info!("translator: wrote {}", out_path.display());
-
-            let duration = start.elapsed();
-            info!("translator: completed in {:.2?} seconds", duration);
+            translate_to_sas_to_path(as_str(&domain)?, as_str(&problem)?, &out_path)?;
+            info!(
+                "translator: wrote {} in {:.2?}",
+                out_path.display(),
+                start.elapsed()
+            );
         }
         Commands::Preprocess {
             domain,
@@ -180,20 +81,13 @@ fn main() -> anyhow::Result<()> {
         } => {
             init_logger(log_level.unwrap_or(tracing_subscriber::filter::LevelFilter::INFO));
 
-            let domain_str = domain
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("domain path must be valid Unicode"))?;
-            let problem_str = problem
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("problem path must be valid Unicode"))?;
             let sas_path = PathBuf::from("output.sas");
-            translate_to_sas_to_path(domain_str, problem_str, &sas_path)?;
+            translate_to_sas_to_path(as_str(&domain)?, as_str(&problem)?, &sas_path)?;
 
-            let sas_input = sas_path
-                .to_str()
-                .expect("literal output.sas path is valid Unicode")
-                .to_owned();
-            let args = ["planforge-translator preprocess".to_string(), sas_input];
+            let args = [
+                "planforge-translator preprocess".to_string(),
+                sas_path.display().to_string(),
+            ];
             let out_path = output.unwrap_or_else(|| PathBuf::from("output"));
             planforge_translate::preprocess::run_preprocess_to_output(&args, &out_path);
         }

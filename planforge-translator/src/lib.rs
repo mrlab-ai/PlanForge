@@ -49,6 +49,8 @@ pub fn translate_to_sas_to_path(
     translate_to_sas_writer(domain, problem, false, &mut out_file)
 }
 
+/// As [`translate_to_sas_to_path`], but with one SAS variable per fact instead
+/// of the invariant-based encoding.
 pub fn translate_to_sas_to_path_fast(
     domain: &str,
     problem: &str,
@@ -86,15 +88,17 @@ pub fn translate_to_sas_writer<W: std::io::Write>(
     let result = planforge_translate::instantiate::explore_normalized(&norm_task)
         .map_err(|e| anyhow::anyhow!(e))?;
 
-    let instantiated_num_axioms = result.numeric_axioms;
     let py_groups: Option<Vec<Vec<String>>> = if fast_groups { Some(vec![]) } else { None };
-    let mut sastask = planforge_translate::translate::translate_task_from_grounded_internal(
+    // `translate_task_from_grounded_internal` already filters unreachable
+    // propositions and answers with a trivial task when that proves the task
+    // impossible or trivially solvable, so nothing is left to simplify here.
+    let sastask = planforge_translate::translate::translate_task_from_grounded_internal(
         &result.atoms,
         &result.grounded_ops,
         &task.domain_forms,
         &task.problem_forms,
         &result.num_fluents,
-        &instantiated_num_axioms,
+        &result.numeric_axioms,
         py_groups,
         &result.grounded_axioms,
         &result.reachable_action_params,
@@ -103,17 +107,6 @@ pub fn translate_to_sas_writer<W: std::io::Write>(
     )
     .map_err(|err| anyhow::anyhow!(err))?;
 
-    match planforge_translate::simplify::filter_unreachable_propositions(&mut sastask) {
-        Ok(()) => {}
-        Err(planforge_translate::simplify::SimplifyError::Impossible) => {
-            sastask = planforge_translate::simplify::trivial_task(false);
-        }
-        Err(planforge_translate::simplify::SimplifyError::TriviallySolvable) => {
-            sastask = planforge_translate::simplify::trivial_task(true);
-        }
-    }
-
-    let py_task = planforge_translate::sas_tasks::from_internal(&sastask);
-    py_task.output(out)?;
+    planforge_translate::sas_tasks::from_internal(&sastask).output(out)?;
     Ok(())
 }
