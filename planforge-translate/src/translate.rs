@@ -161,7 +161,7 @@ fn strips_to_sas_dictionary(
         }
 
         let mut fluent_list: Vec<PrimitiveNumericExpression> = num_fluents.to_vec();
-        fluent_list.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+        fluent_list.sort_by_cached_key(PrimitiveNumericExpression::to_string);
         for fluent in &fluent_list {
             if !numeric_dictionary.contains_key(fluent) {
                 numeric_dictionary.insert(fluent.clone(), num_count);

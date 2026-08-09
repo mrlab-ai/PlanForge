@@ -209,57 +209,49 @@ fn find_invariants(
     result
 }
 
-/// Python: def useful_groups(invariants, initial_facts)
+/// Turns the invariants into the mutex groups that are useful as SAS
+/// variables: those exactly one of whose facts holds initially. No fact means
+/// the group would be empty, more than one means the initial state already
+/// violates the invariant.
 fn useful_groups(invariants: &[Invariant], initial_facts: &[Atom]) -> Vec<Vec<Atom>> {
-    let mut predicate_to_invariants: HashMap<String, Vec<&Invariant>> = HashMap::new();
-    for inv in invariants {
-        for pred in &inv.predicates {
-            predicate_to_invariants
-                .entry(pred.clone())
+    let mut invariants_by_predicate: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (index, invariant) in invariants.iter().enumerate() {
+        for predicate in &invariant.predicates {
+            invariants_by_predicate
+                .entry(predicate)
                 .or_default()
-                .push(inv);
+                .push(index);
         }
     }
 
-    let mut nonempty_groups: HashSet<(usize, Vec<String>)> = HashSet::new();
-    let mut overcrowded_groups: HashSet<(usize, Vec<String>)> = HashSet::new();
-
-    // Map invariants to indices for hashing
-    let inv_to_idx: HashMap<*const Invariant, usize> = invariants
-        .iter()
-        .enumerate()
-        .map(|(i, inv)| (inv as *const Invariant, i))
-        .collect();
-
+    let mut nonempty: HashSet<(usize, Vec<String>)> = HashSet::new();
+    let mut overcrowded: HashSet<(usize, Vec<String>)> = HashSet::new();
     for atom in initial_facts {
-        let atom_cond = Condition::Atom(atom.clone());
-        if let Some(inv_list) = predicate_to_invariants.get(&atom.predicate) {
-            for inv in inv_list {
-                let params = inv.get_parameters(&atom_cond);
-                let inv_idx = inv_to_idx[&(*inv as *const Invariant)];
-                let group_key = (inv_idx, params);
-                if !nonempty_groups.contains(&group_key) {
-                    nonempty_groups.insert(group_key);
-                } else {
-                    overcrowded_groups.insert(group_key);
-                }
+        let Some(candidates) = invariants_by_predicate.get(atom.predicate.as_str()) else {
+            continue;
+        };
+        let atom_condition = Condition::Atom(atom.clone());
+        for &index in candidates {
+            let group = (index, invariants[index].get_parameters(&atom_condition));
+            if nonempty.contains(&group) {
+                overcrowded.insert(group);
+            } else {
+                nonempty.insert(group);
             }
         }
     }
 
-    let useful = &nonempty_groups - &overcrowded_groups;
-    let mut groups: Vec<Vec<Atom>> = vec![];
-    for (inv_idx, parameters) in useful {
-        let inv = &invariants[inv_idx];
-        let mut parts: Vec<&InvariantPart> = inv.parts.iter().collect();
-        parts.sort();
-        let group: Vec<Atom> = parts
-            .iter()
-            .map(|part| part.instantiate(&parameters))
-            .collect();
-        groups.push(group);
-    }
-    groups
+    nonempty
+        .difference(&overcrowded)
+        .map(|(index, parameters)| {
+            let mut parts: Vec<&InvariantPart> = invariants[*index].parts.iter().collect();
+            parts.sort();
+            parts
+                .iter()
+                .map(|part| part.instantiate(parameters))
+                .collect()
+        })
+        .collect()
 }
 
 /// Python: def get_groups(task, reachable_action_params)

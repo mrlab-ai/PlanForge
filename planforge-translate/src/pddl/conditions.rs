@@ -113,10 +113,17 @@ impl Atom {
 }
 
 impl fmt::Display for Atom {
-    /// Python: def __str__(self) -> "Atom %s(%s)"
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Atom {}({})", self.predicate, self.args.join(", "))
     }
+}
+
+/// Orders atoms the way comparing their `Debug` output does, without
+/// formatting anything. The SAS variable order is this order, so it has to
+/// stay exactly what it was when it was spelled `format!("{:?}", atom)`.
+pub fn cmp_atoms(left: &Atom, right: &Atom) -> std::cmp::Ordering {
+    crate::tools::cmp_quoted(&left.predicate, &right.predicate)
+        .then_with(|| crate::tools::cmp_quoted_slice(&left.args, &right.args))
 }
 
 /// Python: class NegatedAtom(Literal): negated = True

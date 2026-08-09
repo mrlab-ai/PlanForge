@@ -1,4 +1,70 @@
 use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::hash::Hash;
+
+/// A set that remembers the order things were inserted in.
+///
+/// The translator repeatedly needs both: membership has to be cheap, because
+/// the alternative in several places was a linear `Vec::contains` inside a
+/// loop over the same vector, and the order has to be reproducible, because it
+/// reaches the SAS task. A `HashSet` gives the first and not the second.
+#[derive(Debug, Clone)]
+pub struct OrderedSet<T> {
+    positions: HashMap<T, usize>,
+}
+
+impl<T: Eq + Hash> Default for OrderedSet<T> {
+    fn default() -> Self {
+        OrderedSet {
+            positions: HashMap::new(),
+        }
+    }
+}
+
+impl<T: Eq + Hash> OrderedSet<T> {
+    /// Inserts `value` and reports whether it was new. An element keeps the
+    /// position it first got.
+    pub fn insert(&mut self, value: T) -> bool {
+        let next = self.positions.len();
+        match self.positions.entry(value) {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(slot) => {
+                slot.insert(next);
+                true
+            }
+        }
+    }
+
+    pub fn contains(&self, value: &T) -> bool {
+        self.positions.contains_key(value)
+    }
+
+    pub fn len(&self) -> usize {
+        self.positions.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_empty()
+    }
+
+    /// The elements, in insertion order.
+    pub fn into_vec(self) -> Vec<T> {
+        let mut values: Vec<(T, usize)> = self.positions.into_iter().collect();
+        values.sort_unstable_by_key(|&(_, position)| position);
+        values.into_iter().map(|(value, _)| value).collect()
+    }
+}
+
+impl<T: Eq + Hash> FromIterator<T> for OrderedSet<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(values: I) -> Self {
+        let mut set = OrderedSet::default();
+        for value in values {
+            set.insert(value);
+        }
+        set
+    }
+}
 
 /// Compares two names the way `format!("{:?}", name)` compares them.
 ///

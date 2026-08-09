@@ -155,7 +155,7 @@ fn simplify(mut axioms: Vec<PropositionalAxiom>) -> Vec<PropositionalAxiom> {
     for axiom in &mut axioms {
         axiom
             .condition
-            .sort_by_key(|condition| format!("{:?}", condition));
+            .sort_by_cached_key(|condition| format!("{condition:?}"));
         remove_duplicate_conditions(&mut axiom.condition);
     }
 
@@ -216,7 +216,7 @@ fn compute_negative_axioms(
 ) -> Vec<PropositionalAxiom> {
     let mut new_axioms = vec![];
     let mut literals: Vec<Condition> = necessary_literals.iter().cloned().collect();
-    literals.sort_by_key(|literal| format!("{:?}", literal));
+    literals.sort_by_cached_key(|literal| format!("{literal:?}"));
     for literal in literals {
         if literal.is_negated() {
             if let Some(atom) = literal.literal_positive() {

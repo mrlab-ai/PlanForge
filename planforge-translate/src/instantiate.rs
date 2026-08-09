@@ -1,6 +1,6 @@
 /// Port of instantiate.py
 /// Instantiates the PDDL task using the logic program model.
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::build_model;
 use super::pddl::actions::PropositionalAction;
@@ -10,10 +10,11 @@ use super::pddl::f_expression::*;
 use super::pddl::pddl_types::TypedObject;
 use super::pddl::tasks::Task;
 use super::pddl_to_prolog;
+use super::tools::OrderedSet;
 
 fn collect_used_derived_pnes_from_expr(
     expr: &FunctionalExpression,
-    out: &mut HashSet<PrimitiveNumericExpression>,
+    out: &mut OrderedSet<PrimitiveNumericExpression>,
 ) {
     match expr {
         FunctionalExpression::PrimitiveNumericExpression(pne) => {
@@ -37,7 +38,7 @@ fn collect_used_derived_pnes_from_expr(
 
 fn collect_used_derived_pnes_from_condition(
     cond: &Condition,
-    out: &mut HashSet<PrimitiveNumericExpression>,
+    out: &mut OrderedSet<PrimitiveNumericExpression>,
 ) {
     match cond {
         Condition::FunctionComparison(fc) => {
@@ -156,33 +157,28 @@ fn function_type(symbol: &str) -> char {
     }
 }
 
-/// Python: def get_objects_by_type(typed_objects, types)
+/// Lists every object of each type, counting an object as belonging to all of
+/// its supertypes.
 fn get_objects_by_type(
     objects: &[TypedObject],
     types: &[super::pddl::pddl_types::Type],
 ) -> HashMap<String, Vec<String>> {
-    let mut result: HashMap<String, Vec<String>> = HashMap::new();
-    for obj in objects {
-        result
-            .entry(obj.type_name.clone())
-            .or_insert_with(Vec::new)
-            .push(obj.name.clone());
+    let supertype: HashMap<&str, &str> = types
+        .iter()
+        .filter_map(|t| Some((t.name.as_str(), t.basetype_name.as_deref()?)))
+        .collect();
 
-        // Also add to supertypes
-        let mut current_type = Some(obj.type_name.clone());
-        while let Some(ref type_name) = current_type {
-            if let Some(t) = types.iter().find(|t| &t.name == type_name) {
-                if let Some(ref base) = t.basetype_name {
-                    result
-                        .entry(base.clone())
-                        .or_insert_with(Vec::new)
-                        .push(obj.name.clone());
-                    current_type = Some(base.clone());
-                } else {
-                    current_type = None;
-                }
-            } else {
-                current_type = None;
+    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+    for object in objects {
+        let mut type_name = object.type_name.as_str();
+        loop {
+            result
+                .entry(type_name.to_owned())
+                .or_default()
+                .push(object.name.clone());
+            match supertype.get(type_name) {
+                Some(base) => type_name = base,
+                None => break,
             }
         }
     }
@@ -290,11 +286,9 @@ pub fn explore(task: &Task) -> ExploreResult {
     // Step 7: Instantiate axioms
     let mut grounded_axioms: Vec<PropositionalAxiom> = vec![];
     for axiom in &task.axioms {
-        // Try all possible parameter instantiations
-        let param_combinations = get_parameter_combinations(&axiom.parameters, &objects_by_type);
-        for params in &param_combinations {
+        for_each_parameter_tuple(&axiom.parameters, &objects_by_type, &mut |params| {
             let mut var_mapping: HashMap<String, String> = HashMap::new();
-            for (param, value) in axiom.parameters.iter().zip(params.iter()) {
+            for (param, value) in axiom.parameters.iter().zip(params) {
                 var_mapping.insert(param.name.clone(), value.clone());
             }
             if let Some(prop_axiom) = axiom.instantiate(
@@ -308,11 +302,13 @@ pub fn explore(task: &Task) -> ExploreResult {
             ) {
                 grounded_axioms.push(prop_axiom);
             }
-        }
+        });
     }
 
-    let mut numeric_axioms: Vec<InstantiatedNumericAxiom> = vec![];
-    let numeric_axioms_by_name: HashMap<String, super::pddl::axioms::NumericAxiom> =
+    let mut numeric_axioms: OrderedSet<InstantiatedNumericAxiom> = OrderedSet::default();
+    // Ordered by name: which of two equivalent axioms is instantiated first
+    // decides which one names a SAS numeric variable.
+    let numeric_axioms_by_name: BTreeMap<String, super::pddl::axioms::NumericAxiom> =
         task_function_admin
             .get_all_axioms()
             .into_iter()
@@ -332,13 +328,11 @@ pub fn explore(task: &Task) -> ExploreResult {
                 &mut task_function_admin,
                 &mut new_constant_numeric_axioms,
             );
-            if !numeric_axioms.contains(&instantiated) {
-                numeric_axioms.push(instantiated);
-            }
+            numeric_axioms.insert(instantiated);
         }
     }
 
-    let mut used_derived: HashSet<PrimitiveNumericExpression> = HashSet::new();
+    let mut used_derived: OrderedSet<PrimitiveNumericExpression> = OrderedSet::default();
     for op in &grounded_ops {
         for cond in &op.precondition {
             collect_used_derived_pnes_from_condition(cond, &mut used_derived);
@@ -362,6 +356,7 @@ pub fn explore(task: &Task) -> ExploreResult {
         }
     }
 
+    let used_derived = used_derived.into_vec();
     for axiom in numeric_axioms_by_name.values() {
         let head = axiom.get_head();
         for used in used_derived
@@ -379,15 +374,11 @@ pub fn explore(task: &Task) -> ExploreResult {
                 &mut task_function_admin,
                 &mut new_constant_numeric_axioms,
             );
-            if !numeric_axioms.contains(&instantiated) {
-                numeric_axioms.push(instantiated);
-            }
+            numeric_axioms.insert(instantiated);
         }
     }
     for axiom in new_constant_numeric_axioms {
-        if !numeric_axioms.contains(&axiom) {
-            numeric_axioms.push(axiom);
-        }
+        numeric_axioms.insert(axiom);
     }
 
     // Step 9: Collect fluent numeric expressions.
@@ -415,7 +406,7 @@ pub fn explore(task: &Task) -> ExploreResult {
         num_fluents,
         grounded_ops,
         grounded_axioms,
-        numeric_axioms,
+        numeric_axioms: numeric_axioms.into_vec(),
         init_constant_predicates,
         init_constant_numerics,
         reachable_action_params,
@@ -429,30 +420,45 @@ pub fn explore_normalized(
     Ok(explore(&norm_task.task))
 }
 
-/// Get all parameter combinations for a set of typed parameters.
-fn get_parameter_combinations(
+/// Visits every assignment of type-correct objects to `parameters`, last
+/// parameter varying fastest. The tuples are visited rather than collected:
+/// there is one per object combination, and an axiom with three parameters
+/// over a few hundred objects has more of them than fit in memory comfortably.
+fn for_each_parameter_tuple(
     parameters: &[TypedObject],
     objects_by_type: &HashMap<String, Vec<String>>,
-) -> Vec<Vec<String>> {
-    if parameters.is_empty() {
-        return vec![vec![]];
+    visit: &mut impl FnMut(&[String]),
+) {
+    const NO_OBJECTS: &[String] = &[];
+    let domains: Vec<&[String]> = parameters
+        .iter()
+        .map(|parameter| {
+            objects_by_type
+                .get(&parameter.type_name)
+                .map_or(NO_OBJECTS, Vec::as_slice)
+        })
+        .collect();
+    if domains.iter().any(|objects| objects.is_empty()) {
+        return;
     }
 
-    let param = &parameters[0];
-    let rest_combos = get_parameter_combinations(&parameters[1..], objects_by_type);
-
-    let objects = objects_by_type
-        .get(&param.type_name)
-        .cloned()
-        .unwrap_or_else(Vec::new);
-
-    let mut result = vec![];
-    for obj in &objects {
-        for combo in &rest_combos {
-            let mut new_combo = vec![obj.clone()];
-            new_combo.extend(combo.clone());
-            result.push(new_combo);
+    let mut cursor = vec![0usize; domains.len()];
+    let mut tuple: Vec<String> = domains.iter().map(|objects| objects[0].clone()).collect();
+    loop {
+        visit(&tuple);
+        let mut level = domains.len();
+        loop {
+            if level == 0 {
+                return;
+            }
+            level -= 1;
+            cursor[level] += 1;
+            if cursor[level] < domains[level].len() {
+                tuple[level].clone_from(&domains[level][cursor[level]]);
+                break;
+            }
+            cursor[level] = 0;
+            tuple[level].clone_from(&domains[level][0]);
         }
     }
-    result
 }

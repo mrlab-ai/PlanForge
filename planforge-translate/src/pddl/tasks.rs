@@ -219,7 +219,6 @@ impl DerivedFunctionAdministrator {
         format!("derived!{}", addition)
     }
 
-    /// Python: def get_derived_function(self, expression, fluent_functions)
     /// Gets or creates a derived function for the given expression.
     pub fn get_derived_function(
         &mut self,
@@ -243,7 +242,7 @@ impl DerivedFunctionAdministrator {
                     .map(|part| self.get_derived_function(part, fluent_functions))
                     .collect();
                 if ae.op == "+" || ae.op == "*" {
-                    subexpressions.sort_by_key(|p| format!("{}({})", p.symbol, p.args.join(",")));
+                    sort_commutative_operands(&mut subexpressions);
                 }
                 subexpressions.into_iter().flat_map(|df| df.args).collect()
             }
@@ -263,7 +262,7 @@ impl DerivedFunctionAdministrator {
                     .map(|part| self.get_derived_function(part, fluent_functions))
                     .collect();
                 if ae.op == "+" || ae.op == "*" {
-                    subexpressions.sort_by(|a, b| format!("{}", a).cmp(&format!("{}", b)));
+                    subexpressions.sort_by_cached_key(PrimitiveNumericExpression::to_string);
                 }
                 DerivedFunctionKey::Arithmetic(ae.op.clone(), subexpressions)
             }
@@ -309,7 +308,7 @@ impl DerivedFunctionAdministrator {
                     .map(|part| self.get_derived_function(part, fluent_functions))
                     .collect();
                 if ae.op == "+" || ae.op == "*" {
-                    subexpressions.sort_by_key(|p| format!("{}({})", p.symbol, p.args.join(",")));
+                    sort_commutative_operands(&mut subexpressions);
                 }
                 let args: Vec<String> = subexpressions
                     .iter()
@@ -380,4 +379,12 @@ pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
             );
         }
     }
+}
+
+/// Orders the operands of a commutative arithmetic expression so that two
+/// expressions differing only in operand order map to the same derived
+/// function. The key is formatted once per operand rather than at every
+/// comparison.
+fn sort_commutative_operands(operands: &mut [PrimitiveNumericExpression]) {
+    operands.sort_by_cached_key(|pne| format!("{}({})", pne.symbol, pne.args.join(",")));
 }

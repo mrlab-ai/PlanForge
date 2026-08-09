@@ -1,42 +1,45 @@
-use super::graph::Graph;
-use super::pddl_to_prolog::{Rule, RuleType, get_variables};
-/// Port of split_rules.py
-/// Splits rules with many conditions into binary rules.
+//! Splits a rule with many conditions into rules with at most two.
+
+use std::collections::HashMap;
 use std::collections::HashSet;
 
-/// Python: def get_connected_conditions(conditions)
-fn get_connected_conditions(conditions: &[Vec<String>]) -> Vec<Vec<usize>> {
-    let n = conditions.len();
-    let mut graph = Graph::new((0..n).collect());
+use super::pddl_to_prolog::{Rule, RuleType, get_variables};
 
-    // Build var_to_conditions mapping
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let vars_i: HashSet<&String> = conditions[i][1..]
-                .iter()
-                .filter(|a| a.starts_with('?'))
-                .collect();
-            let vars_j: HashSet<&String> = conditions[j][1..]
-                .iter()
-                .filter(|a| a.starts_with('?'))
-                .collect();
-            if vars_i.intersection(&vars_j).next().is_some() {
-                graph.connect(i, j);
-            }
+/// Representative of `node`'s component, halving the path on the way up.
+fn find(parent: &mut [usize], mut node: usize) -> usize {
+    while parent[node] != node {
+        parent[node] = parent[parent[node]];
+        node = parent[node];
+    }
+    node
+}
+
+/// Partitions the conditions into maximal sets connected by a shared variable.
+///
+/// Components come out sorted, and sorted by their smallest condition, because
+/// the rules built from them end up in the program in this order. Union-find
+/// over the variables replaces comparing every pair of conditions, which built
+/// two hash sets per pair.
+fn get_connected_conditions(conditions: &[Vec<String>]) -> Vec<Vec<usize>> {
+    let mut parent: Vec<usize> = (0..conditions.len()).collect();
+    let mut first_use: HashMap<&str, usize> = HashMap::new();
+    for (index, condition) in conditions.iter().enumerate() {
+        for variable in condition[1..].iter().filter(|arg| arg.starts_with('?')) {
+            let earlier = *first_use.entry(variable).or_insert(index);
+            let (left, right) = (find(&mut parent, earlier), find(&mut parent, index));
+            // The smaller index wins, so a component's representative is its
+            // smallest condition and the components below come out ordered.
+            parent[left.max(right)] = left.min(right);
         }
     }
 
-    let components = graph.connected_components();
-    let mut result: Vec<Vec<usize>> = components
-        .into_iter()
-        .map(|s| {
-            let mut v: Vec<usize> = s.into_iter().collect();
-            v.sort();
-            v
-        })
-        .collect();
-    result.sort();
-    result
+    let mut components: Vec<Vec<usize>> = vec![Vec::new(); conditions.len()];
+    for index in 0..conditions.len() {
+        let root = find(&mut parent, index);
+        components[root].push(index);
+    }
+    components.retain(|component| !component.is_empty());
+    components
 }
 
 /// Python: def project_rule(rule, conditions, name_generator)

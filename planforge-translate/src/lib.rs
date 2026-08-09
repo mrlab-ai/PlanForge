@@ -2,7 +2,6 @@ pub mod axiom_rules;
 pub mod build_model;
 pub mod constraints;
 pub mod fact_groups;
-pub mod graph;
 pub mod greedy_join;
 pub mod instantiate;
 pub mod invariant_finder;

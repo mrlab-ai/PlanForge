@@ -1,5 +1,6 @@
-/// Port of fact_groups.py
-/// Groups atoms into mutex groups / FDR variables.
+//! Groups mutually exclusive atoms into finite-domain SAS variables.
+
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use tracing::info;
@@ -41,38 +42,44 @@ fn instantiate_groups(
         .collect()
 }
 
-/// Python: class GroupCoverQueue
+/// Greedily hands out the largest remaining mutex group.
+///
+/// Under partial encoding a fact may be covered by only one selected group, so
+/// selecting a group shrinks every other group sharing a fact with it. Groups
+/// therefore live in one arena and are referred to by index: the size buckets
+/// hold indices, and `groups_by_fact` says which groups a popped fact has to
+/// be removed from, instead of every group being scanned on every pop.
 struct GroupCoverQueue {
+    groups: Vec<HashSet<Atom>>,
+    groups_by_fact: HashMap<Atom, Vec<usize>>,
     max_size: usize,
-    groups_by_size: Vec<Vec<HashSet<Atom>>>,
-    top: Option<HashSet<Atom>>,
+    by_size: Vec<Vec<usize>>,
+    top: Option<usize>,
 }
 
 impl GroupCoverQueue {
     fn new(groups: &[Vec<Atom>]) -> Self {
-        if groups.is_empty() {
-            return GroupCoverQueue {
-                max_size: 0,
-                groups_by_size: vec![],
-                top: None,
-            };
+        let groups: Vec<HashSet<Atom>> =
+            groups.iter().map(|g| g.iter().cloned().collect()).collect();
+        let max_size = groups.iter().map(HashSet::len).max().unwrap_or(0);
+        let mut by_size: Vec<Vec<usize>> = vec![vec![]; max_size + 1];
+        let mut groups_by_fact: HashMap<Atom, Vec<usize>> = HashMap::new();
+        for (index, group) in groups.iter().enumerate() {
+            by_size[group.len()].push(index);
+            for fact in group {
+                groups_by_fact.entry(fact.clone()).or_default().push(index);
+            }
         }
 
-        let max_size = groups.iter().map(|g| g.len()).max().unwrap_or(0);
-        let mut groups_by_size: Vec<Vec<HashSet<Atom>>> = vec![vec![]; max_size + 1];
-
-        for group in groups {
-            let group_set: HashSet<Atom> = group.iter().cloned().collect();
-            groups_by_size[group_set.len()].push(group_set.clone());
-        }
-
-        let mut q = GroupCoverQueue {
+        let mut queue = GroupCoverQueue {
+            groups,
+            groups_by_fact,
             max_size,
-            groups_by_size,
+            by_size,
             top: None,
         };
-        q.update_top();
-        q
+        queue.update_top();
+        queue
     }
 
     fn is_active(&self) -> bool {
@@ -80,14 +87,11 @@ impl GroupCoverQueue {
     }
 
     fn pop(&mut self) -> Vec<Atom> {
-        let selected = self.top.take().unwrap();
+        let selected = std::mem::take(&mut self.groups[self.top.take().expect("queue is active")]);
         if options::USE_PARTIAL_ENCODING {
-            // Queued groups are the source of truth for future selections.
-            // Removing from a detached clone leaves overlapping facts in later
-            // groups and violates partial encoding.
-            for groups in &mut self.groups_by_size {
-                for group in groups {
-                    group.retain(|fact| !selected.contains(fact));
+            for fact in &selected {
+                for &index in &self.groups_by_fact[fact] {
+                    self.groups[index].remove(fact);
                 }
             }
         }
@@ -95,27 +99,25 @@ impl GroupCoverQueue {
         selected.into_iter().collect()
     }
 
+    /// Finds the largest group still holding as many facts as its bucket
+    /// claims, moving the ones that have shrunk to their real bucket.
     fn update_top(&mut self) {
         while self.max_size > 1 {
-            // Collect candidates to redistribute
-            let mut to_redistribute: Vec<HashSet<Atom>> = vec![];
-            let mut found: Option<HashSet<Atom>> = None;
-
-            while let Some(candidate) = self.groups_by_size[self.max_size].pop() {
-                if candidate.len() == self.max_size {
+            let mut shrunk: Vec<(usize, usize)> = vec![];
+            let mut found = None;
+            while let Some(candidate) = self.by_size[self.max_size].pop() {
+                let size = self.groups[candidate].len();
+                if size == self.max_size {
                     found = Some(candidate);
                     break;
                 }
-                if !candidate.is_empty() {
-                    to_redistribute.push(candidate);
+                if size > 0 {
+                    shrunk.push((size, candidate));
                 }
             }
-
-            for cand in to_redistribute {
-                let sz = cand.len();
-                self.groups_by_size[sz].push(cand);
+            for (size, candidate) in shrunk {
+                self.by_size[size].push(candidate);
             }
-
             if found.is_some() {
                 self.top = found;
                 return;
@@ -217,17 +219,22 @@ fn collect_all_mutex_groups(groups: &[Vec<Atom>], atoms: &HashSet<Atom>) -> Vec<
     all_groups
 }
 
-/// Python: def sort_groups(groups)
-fn sort_groups(groups: Vec<Vec<Atom>>) -> Vec<Vec<Atom>> {
-    let mut sorted: Vec<Vec<Atom>> = groups
-        .into_iter()
-        .map(|mut g| {
-            g.sort_by(|a, b| format!("{:?}", a).cmp(&format!("{:?}", b)));
-            g
-        })
-        .collect();
-    sorted.sort_by(|a, b| format!("{:?}", a).cmp(&format!("{:?}", b)));
-    sorted
+/// Orders groups, and the facts inside each group, so that the SAS variable
+/// order does not depend on the hash seed.
+fn sort_groups(mut groups: Vec<Vec<Atom>>) -> Vec<Vec<Atom>> {
+    for group in &mut groups {
+        group.sort_unstable_by(cmp_atoms);
+    }
+    groups.sort_unstable_by(|left, right| {
+        left.iter()
+            .zip(right)
+            .find_map(|(left, right)| match cmp_atoms(left, right) {
+                Ordering::Equal => None,
+                order => Some(order),
+            })
+            .unwrap_or_else(|| right.len().cmp(&left.len()))
+    });
+    groups
 }
 
 /// Python: def compute_groups(task, atoms, reachable_action_params)
