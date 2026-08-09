@@ -1,4 +1,5 @@
 /// Main translation from STRIPS/PDDL ground representation to SAS+ finite-domain representation.
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use tracing::info;
@@ -115,8 +116,9 @@ struct Translation {
     /// the same comparison is not encoded twice.
     comparison_axioms: HashMap<(String, Vec<usize>), Condition>,
     sas_comparison_axioms: Vec<SASCompareAxiom>,
-    /// Number of SAS numeric variables.
-    num_count: usize,
+    /// The expression each SAS numeric variable is named after, one per
+    /// variable. Its length is the number of SAS numeric variables.
+    numeric_names: Vec<PrimitiveNumericExpression>,
     /// The human-readable name of each value of each variable.
     translation_key: Vec<Vec<String>>,
     /// One entry per mutex group, in SAS facts.
@@ -173,7 +175,11 @@ fn encode_facts(groups: &[Vec<Atom>], assert_partial: bool) -> FactEncoding {
 /// defines, then one per fluent none of them defines. An axiom made redundant
 /// by an equivalent one shares that one's variable.
 struct NumericEncoding {
-    count: usize,
+    /// The expression a SAS numeric variable is named after: the effect of the
+    /// axiom that defines it, or the fluent it stands for. Several expressions
+    /// can map onto the same variable, so the name cannot be recovered from
+    /// `variables` -- it is fixed here, where the variable is created.
+    names: Vec<PrimitiveNumericExpression>,
     variables: HashMap<PrimitiveNumericExpression, usize>,
 }
 
@@ -183,15 +189,20 @@ fn encode_numeric_fluents(
     num_fluents: &[PrimitiveNumericExpression],
 ) -> NumericEncoding {
     let mut variables: HashMap<PrimitiveNumericExpression, usize> = HashMap::new();
-    let mut count = 0usize;
+    let mut names: Vec<PrimitiveNumericExpression> = Vec::new();
 
     let mut redundant = vec![];
     for axiom in num_axioms {
         if equivalent.contains_key(&axiom.effect) {
             redundant.push(axiom.effect.clone());
         } else {
-            variables.insert(axiom.effect.clone(), count);
-            count += 1;
+            let previous = variables.insert(axiom.effect.clone(), names.len());
+            assert!(
+                previous.is_none(),
+                "numeric axiom effect {} defines a SAS variable twice",
+                axiom.effect
+            );
+            names.push(axiom.effect.clone());
         }
     }
     for effect in &redundant {
@@ -205,13 +216,13 @@ fn encode_numeric_fluents(
     let mut fluents: Vec<PrimitiveNumericExpression> = num_fluents.to_vec();
     fluents.sort_by_cached_key(PrimitiveNumericExpression::to_string);
     for fluent in fluents {
-        variables.entry(fluent).or_insert_with(|| {
-            count += 1;
-            count - 1
-        });
+        if let Entry::Vacant(entry) = variables.entry(fluent) {
+            names.push(entry.key().clone());
+            entry.insert(names.len() - 1);
+        }
     }
 
-    NumericEncoding { count, variables }
+    NumericEncoding { names, variables }
 }
 
 // ============================================================
@@ -1090,7 +1101,7 @@ fn translate_task(
     // splits `task.num_init` on exactly the same predicate and hands those facts to
     // `SASTask` as `task.init_constant_numerics`, so skipping them is the
     // complementary half of that split.
-    let mut num_init_values: Vec<f64> = vec![0.0; translation.num_count];
+    let mut num_init_values: Vec<f64> = vec![0.0; translation.numeric_names.len()];
 
     let mut relevant_numeric: Vec<usize> = vec![];
     for fact in task.num_init {
@@ -1153,7 +1164,7 @@ fn translate_task(
 
     // Compute axiom layers
     let mut axiom_layers: Vec<i32> = vec![-1; translation.ranges.len()];
-    let mut num_axiom_layers: Vec<i32> = vec![-1; translation.num_count];
+    let mut num_axiom_layers: Vec<i32> = vec![-1; translation.numeric_names.len()];
     let mut num_axiom_layer = 0i32;
 
     for (&layer, layer_axioms) in &numeric_axioms.by_layer {
@@ -1206,13 +1217,19 @@ fn translate_task(
         num_axiom_layer,
     );
 
-    // Build numeric variable names
-    let mut num_variables: Vec<String> = vec![String::new(); translation.num_count];
-    let mut num_var_types: Vec<String> = vec!["U".to_string(); translation.num_count];
-    for (entry, &idx) in &translation.numeric {
-        num_variables[idx] = format!("{}", entry);
-        num_var_types[idx] = entry.ntype.to_string();
-    }
+    // Name each numeric variable after the expression it was created for. The
+    // `numeric` map cannot serve here: equivalent axiom effects share a
+    // variable, so it holds several names per variable.
+    let num_variables: Vec<String> = translation
+        .numeric_names
+        .iter()
+        .map(|entry| format!("{}", entry))
+        .collect();
+    let num_var_types: Vec<String> = translation
+        .numeric_names
+        .iter()
+        .map(|entry| entry.ntype.to_string())
+        .collect();
 
     let numeric_variables =
         SASNumericVariables::new(num_variables, num_axiom_layers, num_var_types);
@@ -1460,7 +1477,7 @@ pub fn translate_task_from_grounded_internal(
         ranges: facts.ranges,
         dictionary: facts.dictionary,
         numeric: numeric.variables,
-        num_count: numeric.count,
+        numeric_names: numeric.names,
         mutex_ranges: mutex_facts.ranges,
         mutex_dictionary: mutex_facts.dictionary,
         mutex_key,
