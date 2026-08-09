@@ -435,6 +435,12 @@ impl<'a> AxiomEvaluator<'a> {
         }
     }
 
+    /// Compute the propositional axiom closure over `buffer`.
+    ///
+    /// Derived variables start at their default value and are proven upwards
+    /// through the axiom layers: each layer runs the Horn rules to fixpoint,
+    /// then admits negation-by-failure for the variables that stayed at their
+    /// default, which lets the next layer use "not proven" as a condition.
     pub fn evaluate_propositional_axioms(&self, buffer: &mut [u64]) -> Result<(), AxiomEvalError> {
         if self.numeric_task.axioms().is_empty() {
             return Ok(());
@@ -442,112 +448,142 @@ impl<'a> AxiomEvaluator<'a> {
 
         let mut queue = self.queue.borrow_mut();
         queue.clear();
-
         let mut unsatisfied_conditions = self.unsatisfied_conditions.borrow_mut();
         if unsatisfied_conditions.len() != self.rules.len() {
             unsatisfied_conditions.resize(self.rules.len(), 0);
         }
 
-        // Initialize queue with current variable values (following C++ logic).
-        for i in 0..self.numeric_task.get_num_variables() {
-            let axiom_layer = self.numeric_task.get_variable_axiom_layer(i).unwrap();
-            match axiom_layer {
-                None => {
-                    // Non-derived variable -> push immediately.
-                    queue.push(LiteralRef {
-                        var_id: i,
-                        value: self.state_packer.get(buffer, i) as usize,
-                    });
-                }
-                Some(_layer) => {
-                    if axiom_layer <= self.last_arithmetic_axiom_layer {
-                        return Err(AxiomEvalError::WrongAxiomLayer(WrongAxiomLayer {
-                            axiom_layer,
-                            last_arithmetic_axiom_layer: self.last_arithmetic_axiom_layer,
-                        }));
-                    } else if axiom_layer == self.comparison_axiom_layer {
-                        // Variable is the result of a comparison axiom.
-                        queue.push(LiteralRef {
-                            var_id: i,
-                            value: self.state_packer.get(buffer, i) as usize,
-                        });
-                    } else if axiom_layer <= self.last_propositional_axiom_layer {
-                        // Set derived variables to their default values initially.
-                        let default_value =
-                            self.numeric_task.get_initial_propositional_state_values()[i];
-                        self.state_packer.set(buffer, i, default_value as u64);
-                    } else {
-                        return Err(AxiomEvalError::WrongAxiomLayer(WrongAxiomLayer {
-                            axiom_layer,
-                            last_arithmetic_axiom_layer: self.last_arithmetic_axiom_layer,
-                        }));
-                    }
-                }
-            }
-        }
+        self.seed_queue_from_state(buffer, &mut queue)?;
+        self.fire_trivial_rules(buffer, &mut queue, &mut unsatisfied_conditions);
 
-        for (rule_index, rule) in self.rules.iter().enumerate() {
-            unsatisfied_conditions[rule_index] = rule.condition_count;
-
-            // Handle trivial axioms (no conditions).
-            if rule.condition_count == 0 {
-                let var_no = rule.effect_var;
-                let val = rule.effect_value as u64;
-                if self.state_packer.get(buffer, var_no) != val {
-                    self.state_packer.set(buffer, var_no, val);
-                    queue.push(LiteralRef {
-                        var_id: var_no,
-                        value: val as usize,
-                    });
-                }
-            }
-        }
-
-        // Process each axiom layer.
-        for layer_no in 0..self.nbf_info_by_layer.len() {
-            // Apply Horn rules - continue until queue is empty.
-            while let Some(curr_literal) = queue.pop() {
-                let dependent_rules =
-                    &self.axiom_literals[curr_literal.var_id][curr_literal.value].condition_of;
-
-                // For each rule that depends on this literal.
-                for &rule_index in dependent_rules {
-                    let remaining = &mut unsatisfied_conditions[rule_index];
-                    *remaining -= 1;
-
-                    if *remaining == 0 {
-                        let rule = &self.rules[rule_index];
-                        let var_no = rule.effect_var;
-                        let val = rule.effect_value as u64;
-                        if self.state_packer.get(buffer, var_no) != val {
-                            self.state_packer.set(buffer, var_no, val);
-                            queue.push(LiteralRef {
-                                var_id: var_no,
-                                value: val as usize,
-                            });
-                        }
-                    }
-                }
-            }
-
-            // Apply negation by failure rules (skip in last iteration for optimization).
-            if layer_no != self.nbf_info_by_layer.len() - 1 {
-                let nbf_info = &self.nbf_info_by_layer[layer_no];
-                for info in nbf_info {
-                    let var_no = info.var_id;
-                    let default_value =
-                        self.numeric_task.get_initial_propositional_state_values()[var_no];
-                    if self.state_packer.get(buffer, var_no) == default_value as u64 {
-                        queue.push(LiteralRef {
-                            var_id: var_no,
-                            value: info.literal_value,
-                        });
-                    }
-                }
+        let layer_count = self.nbf_info_by_layer.len();
+        for layer_no in 0..layer_count {
+            self.propagate_horn_rules(buffer, &mut queue, &mut unsatisfied_conditions);
+            // The last layer has nothing above it that could read the
+            // negation-by-failure literals, so it does not produce them.
+            if layer_no + 1 != layer_count {
+                self.enqueue_unproven_literals(buffer, &mut queue, layer_no);
             }
         }
 
         Ok(())
+    }
+
+    /// Queue every literal the closure may start from, and reset the derived
+    /// variables it will prove to their default values.
+    ///
+    /// Non-derived variables and comparison results hold their value from the
+    /// state; propositional derived variables do not, because a fact proven in
+    /// the predecessor state need not hold here.
+    #[inline]
+    fn seed_queue_from_state(
+        &self,
+        buffer: &mut [u64],
+        queue: &mut Vec<LiteralRef>,
+    ) -> Result<(), AxiomEvalError> {
+        for var_id in 0..self.numeric_task.get_num_variables() {
+            let axiom_layer = self.numeric_task.get_variable_axiom_layer(var_id).unwrap();
+            if axiom_layer.is_none() || axiom_layer == self.comparison_axiom_layer {
+                queue.push(LiteralRef {
+                    var_id,
+                    value: self.state_packer.get(buffer, var_id) as usize,
+                });
+                continue;
+            }
+            if axiom_layer <= self.last_arithmetic_axiom_layer
+                || axiom_layer > self.last_propositional_axiom_layer
+            {
+                return Err(AxiomEvalError::WrongAxiomLayer(WrongAxiomLayer {
+                    axiom_layer,
+                    last_arithmetic_axiom_layer: self.last_arithmetic_axiom_layer,
+                }));
+            }
+            let default_value = self.numeric_task.get_initial_propositional_state_values()[var_id];
+            self.state_packer.set(buffer, var_id, default_value as u64);
+        }
+        Ok(())
+    }
+
+    /// Reset every rule's outstanding-condition counter and apply the rules
+    /// that have no conditions at all, which hold in every state.
+    #[inline]
+    fn fire_trivial_rules(
+        &self,
+        buffer: &mut [u64],
+        queue: &mut Vec<LiteralRef>,
+        unsatisfied_conditions: &mut [usize],
+    ) {
+        for (rule_index, rule) in self.rules.iter().enumerate() {
+            unsatisfied_conditions[rule_index] = rule.condition_count;
+            if rule.condition_count == 0 {
+                self.derive_literal(buffer, queue, rule.effect_var, rule.effect_value as u64);
+            }
+        }
+    }
+
+    /// Run the Horn rules to fixpoint: each dequeued literal satisfies one
+    /// condition of every rule that names it, and a rule whose last condition
+    /// is satisfied derives its effect.
+    #[inline]
+    fn propagate_horn_rules(
+        &self,
+        buffer: &mut [u64],
+        queue: &mut Vec<LiteralRef>,
+        unsatisfied_conditions: &mut [usize],
+    ) {
+        while let Some(literal) = queue.pop() {
+            let dependent_rules = &self.axiom_literals[literal.var_id][literal.value].condition_of;
+            for &rule_index in dependent_rules {
+                let remaining = &mut unsatisfied_conditions[rule_index];
+                *remaining -= 1;
+                if *remaining == 0 {
+                    let rule = &self.rules[rule_index];
+                    self.derive_literal(buffer, queue, rule.effect_var, rule.effect_value as u64);
+                }
+            }
+        }
+    }
+
+    /// Negation by failure: a derived variable still at its default value
+    /// after this layer's fixpoint cannot be proven, so higher layers may
+    /// assume it false.
+    #[inline]
+    fn enqueue_unproven_literals(
+        &self,
+        buffer: &mut [u64],
+        queue: &mut Vec<LiteralRef>,
+        layer_no: usize,
+    ) {
+        for info in &self.nbf_info_by_layer[layer_no] {
+            let var_id = info.var_id;
+            let default_value = self.numeric_task.get_initial_propositional_state_values()[var_id];
+            if self.state_packer.get(buffer, var_id) == default_value as u64 {
+                queue.push(LiteralRef {
+                    var_id,
+                    value: info.literal_value,
+                });
+            }
+        }
+    }
+
+    /// Write a derived literal and queue it, unless the buffer already says
+    /// so — re-deriving a literal would make the fixpoint loop forever.
+    #[inline]
+    fn derive_literal(
+        &self,
+        buffer: &mut [u64],
+        queue: &mut Vec<LiteralRef>,
+        var_id: usize,
+        value: u64,
+    ) {
+        if self.state_packer.get(buffer, var_id) == value {
+            return;
+        }
+        self.state_packer.set(buffer, var_id, value);
+        queue.push(LiteralRef {
+            var_id,
+            value: value as usize,
+        });
     }
 
     pub fn evaluate(
