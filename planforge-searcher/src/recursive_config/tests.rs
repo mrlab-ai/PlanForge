@@ -920,3 +920,60 @@ fn contains_call_finds_only_nested_icaps_cartesian_sources() {
             .unwrap();
     assert!(!native.contains_call("icaps26_cartesian"));
 }
+
+// =============================================================================
+// `sgd(...)`
+// =============================================================================
+
+/// The spec must survive a round trip through `Display`, because `planforge`
+/// re-execs itself and passes `--search` back as a string. A variant that
+/// printed its own name twice would silently produce `sgd(sgd(...))` and fail
+/// only in the child process.
+#[test]
+fn sgd_spec_round_trips_through_display() {
+    for raw in [
+        "sgd()",
+        "sgd(horizon=12)",
+        "sgd(horizon=dovetail)",
+        "sgd(horizon=dovetail(8, 2.0, 512))",
+        "sgd(horizon=12, particles=8, seed=7, refresh=true)",
+    ] {
+        let spec = parse_search_spec(raw).expect("spec parses");
+        let printed = spec.to_string();
+        let reparsed = parse_search_spec(&printed).expect("printed spec re-parses");
+        assert_eq!(
+            spec, reparsed,
+            "round trip changed the spec: {raw} -> {printed}"
+        );
+        assert!(
+            printed.starts_with("sgd("),
+            "printed spec should start with `sgd(`, got {printed}"
+        );
+        assert!(
+            !printed.contains("sgd(sgd("),
+            "the spec printed its name twice: {printed}"
+        );
+    }
+}
+
+#[test]
+fn sgd_keeps_its_arguments_in_order() {
+    let spec = parse_search_spec("sgd(horizon=12, particles=4)").expect("parses");
+    match spec {
+        SearchSpec::Sgd(args) => {
+            assert_eq!(args.len(), 2);
+            assert_eq!(args[0].key(), Some("horizon"));
+            assert_eq!(args[1].key(), Some("particles"));
+        }
+        other => panic!("expected an sgd spec, got {other:?}"),
+    }
+}
+
+#[test]
+fn sgd_never_reports_a_nested_heuristic() {
+    // The engine is not allowed a heuristic, so `contains_call` must not claim
+    // one however the arguments are written.
+    let spec = parse_search_spec("sgd(horizon=12)").expect("parses");
+    assert!(!spec.contains_call("ff"));
+    assert!(!spec.contains_call("icaps26_cartesian"));
+}

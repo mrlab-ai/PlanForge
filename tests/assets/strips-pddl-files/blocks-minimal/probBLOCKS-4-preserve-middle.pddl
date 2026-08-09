@@ -1,0 +1,15 @@
+(define (problem BLOCKS-4-PRESERVE-MIDDLE)
+  (:domain BLOCKS)
+  (:objects A B D E)
+  (:init
+    (on E B)
+    (on B A)
+    (ontable A)
+    (ontable D)
+    (clear E)
+    (clear D)
+    (handempty))
+  (:goal (and
+    (on A E)
+    (on E B)
+    (on B D))))

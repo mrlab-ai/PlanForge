@@ -270,6 +270,11 @@ pub fn solve_task_with_state_storage(
                 "solve_task does not handle debug search specs",
             ))
         }
+        // `sgd(...)` is not a search engine and does not go through a state
+        // registry or an open list; `run_internal` dispatches it directly.
+        planforge_searcher::SearchSpec::Sgd(_) => Err(std::io::Error::other(
+            "solve_task does not handle `sgd(...)`; it is dispatched in run_internal",
+        )),
     }
 }
 
@@ -313,11 +318,20 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
             );
         }
     }
+    // Captured before the task is type-erased into a `TaskRef`: the global
+    // constraint is only reachable on the concrete root task, and the gradient
+    // engine's verifier requires it.
+    #[cfg_attr(not(feature = "sgd"), allow(unused_variables))]
+    let global_constraint = *task.global_constraint();
     let task: TaskRef<'static> = Arc::new(task);
     let parse_time = start_time.elapsed();
     info!("Parsed numeric SAS output in: {:?}", parse_time);
 
-    info!("=== Search Engine ===");
+    if matches!(cli.search, planforge_searcher::SearchSpec::Sgd(_)) {
+        info!("=== Gradient Plan Synthesis ===");
+    } else {
+        info!("=== Search Engine ===");
+    }
     info!("File: {}", sas_label);
     info!(
         "Variables: {} regular, {} numeric",
@@ -343,10 +357,27 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         planforge_searcher::SearchSpec::AstarDaDebug => {
             run_astar_da_debug(&*task, StateRegistry::for_task(task.clone()), cli.max_time)?
         }
+        #[cfg(feature = "sgd")]
+        planforge_searcher::SearchSpec::Sgd(args) => {
+            planforge_searcher::sgd::run_sgd(task.clone(), global_constraint, args)?
+        }
+        #[cfg(not(feature = "sgd"))]
+        planforge_searcher::SearchSpec::Sgd(_) => {
+            return Err(std::io::Error::other(
+                "`sgd(...)` requires the `sgd` cargo feature; rebuild with \
+                 `cargo build --release -p planforge --features sgd`",
+            ));
+        }
     };
 
     planforge_searcher::write_plan_file(&result)?;
-    print_search_result(&result);
+    // The gradient engine reports no search statistics, so it gets the plan
+    // block only.
+    if matches!(cli.search, planforge_searcher::SearchSpec::Sgd(_)) {
+        planforge_searcher::print_plan_result(&result);
+    } else {
+        print_search_result(&result);
+    }
 
     Ok(result)
 }

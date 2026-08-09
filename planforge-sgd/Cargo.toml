@@ -1,0 +1,23 @@
+[package]
+name = "planforge-sgd"
+description = "Search-free plan synthesis by gradient descent over a horizon-wide transcription"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+
+[dependencies]
+planforge-sas = { path = "../planforge-sas" }
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+rand_chacha = "0.3"
+
+# The autograd backend is optional. Without it the crate still builds and its
+# classical-fragment check, transcription and `f64` residual evaluation stay
+# fully testable; with it the tensor layer and the optimizer become available.
+# Note that merely declaring these resolves ~100 extra entries into
+# `Cargo.lock`; what the feature gate buys is that nothing *compiles* them,
+# which is where the real cost lives.
+candle-core = { version = "0.11", default-features = false, optional = true }
+candle-nn = { version = "0.11", default-features = false, optional = true }
+
+[features]
+candle = ["dep:candle-core", "dep:candle-nn"]

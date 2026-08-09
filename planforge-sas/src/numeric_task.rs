@@ -907,6 +907,17 @@ impl NumericRootTask {
         }
     }
 
+    /// The fact that must hold in every reachable state.
+    ///
+    /// The translator injects a global constraint into every task (see
+    /// `add_global_constraints`), so one is always present; for tasks without
+    /// real global constraints it is a derived atom that is unconditionally
+    /// true. The search engines never consult it, so a verifier that does is
+    /// strictly stronger than they are.
+    pub fn global_constraint(&self) -> &ExplicitFact {
+        &self.global_constraint
+    }
+
     pub fn from_file(file_name: impl AsRef<std::path::Path>) -> Self {
         Self::try_from_file(file_name).expect("failed to read numeric SAS task")
     }

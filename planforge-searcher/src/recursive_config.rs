@@ -67,6 +67,14 @@ pub enum SearchSpec {
     AstarFs(HeuristicSpec, HeuristicSpec),
     DaDebug,
     AstarDaDebug,
+    /// Search-free plan synthesis by gradient descent. Not a search engine at
+    /// all; it shares `--search` only to reuse the translation, resource-limit
+    /// and plan-writing plumbing.
+    ///
+    /// The arguments are kept as raw `ConfigArg`s rather than a `HeuristicSpec`
+    /// because a `HeuristicSpec` prints its own name, which would round-trip as
+    /// `sgd(sgd(...))` and break the self-re-exec.
+    Sgd(Vec<ConfigArg>),
 }
 
 impl SearchSpec {
@@ -75,6 +83,8 @@ impl SearchSpec {
             Self::Astar(heuristic, _) | Self::Gbfs(heuristic) => heuristic.contains_call(name),
             Self::AstarFs(fast, slow) => fast.contains_call(name) || slow.contains_call(name),
             Self::DaDebug | Self::AstarDaDebug => false,
+            // The sgd engine never nests a heuristic; it is not allowed one.
+            Self::Sgd(_) => false,
         }
     }
 }
@@ -124,6 +134,19 @@ impl fmt::Display for SearchSpec {
             Self::AstarFs(fast, slow) => write!(f, "astar_fs(fast={fast}, slow={slow})"),
             Self::DaDebug => write!(f, "da_debug()"),
             Self::AstarDaDebug => write!(f, "astar_da_debug()"),
+            Self::Sgd(args) => {
+                if args.is_empty() {
+                    return write!(f, "sgd()");
+                }
+                let parts: Vec<String> = args
+                    .iter()
+                    .map(|arg| match arg.key() {
+                        Some(key) => format!("{key}={}", fmt_value(arg.value())),
+                        None => fmt_value(arg.value()),
+                    })
+                    .collect();
+                write!(f, "sgd({})", parts.join(", "))
+            }
         }
     }
 }
@@ -397,6 +420,7 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchSpec, String> {
             ensure_no_args(call)?;
             Ok(SearchSpec::AstarDaDebug)
         }
+        "sgd" => Ok(SearchSpec::Sgd(call.args.clone())),
         other => Err(format!("unknown search engine `{other}`")),
     }
 }

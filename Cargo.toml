@@ -9,6 +9,7 @@ default-members = [
     "planforge-cli-utils",
     "planforge-portfolio",
     "planforge-config-derive",
+    "planforge-sgd",
     "tests",
 ]
 
@@ -24,6 +25,7 @@ members = [
     "planforge-portfolio",
     "planforge-config-derive",
     "planforge-cplex",
+    "planforge-sgd",
     "tutorials/rust-goal-count",
     "tests",
 ]
@@ -34,5 +36,13 @@ resolver = "2"
 lto = true
 # `codegen-units = 1` allows a more optimized compilation.
 codegen-units = 1
+
+# Fast optimization profile for iterative SGD experiments. Full LTO makes every
+# one-line loss change spend more than a minute relinking the planner, while the
+# optimizer itself needs optimized tensor loops to be measurable.
+[profile.experiment]
+inherits = "release"
+lto = false
+codegen-units = 16
 # Uncomment this for profiling.
 debug = "line-tables-only"

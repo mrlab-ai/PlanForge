@@ -47,6 +47,8 @@ use tracing_subscriber::prelude::*;
 
 mod abstraction_config;
 pub mod recursive_config;
+#[cfg(feature = "sgd")]
+pub mod sgd;
 
 pub use recursive_config::{HeuristicSpec, SearchSpec, parse_heuristic_spec, parse_search_spec};
 
@@ -949,6 +951,11 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
                 "`astar_fs(...)` is implemented in the `planforge` binary path, not `planforge-searcher`",
             ));
         }
+        crate::recursive_config::SearchSpec::Sgd(_) => {
+            return Err(std::io::Error::other(
+                "`sgd(...)` is implemented in the `planforge` binary path, not `planforge-searcher`",
+            ));
+        }
     };
     let result = {
         {
@@ -1021,6 +1028,40 @@ pub fn write_plan_file(result: &SearchResult) -> std::io::Result<()> {
 }
 
 pub fn print_search_result(result: &SearchResult) {
+    print_plan_result(result);
+
+    // Fast Downward-style statistics block.
+    info!("Expanded {} state(s).", result.nodes_expanded);
+    info!("Reopened {} state(s).", result.nodes_reopened);
+    info!("Evaluated {} state(s).", result.nodes_evaluated);
+    info!("Evaluations: {}", result.evaluations);
+    info!("Generated {} state(s).", result.nodes_generated);
+    info!("Dead ends: {} state(s).", result.dead_ends);
+    info!(
+        "Expanded until last jump: {} state(s).",
+        result.nodes_expanded_until_last_jump
+    );
+    info!(
+        "Reopened until last jump: {} state(s).",
+        result.nodes_reopened_until_last_jump
+    );
+    info!(
+        "Evaluated until last jump: {} state(s).",
+        result.nodes_evaluated_until_last_jump
+    );
+    info!(
+        "Generated until last jump: {} state(s).",
+        result.nodes_generated_until_last_jump
+    );
+    info!("Number of registered states: {}", result.registered_states);
+    info!("Search time: {:.6}s", result.search_time.as_secs_f64());
+}
+
+/// Print the outcome and write a found plan without claiming search statistics.
+///
+/// Gradient plan synthesis uses this directly because it has no search nodes,
+/// frontier, generated states, or expansions.
+pub fn print_plan_result(result: &SearchResult) {
     match result.status {
         SearchStatus::Solved(_) => {
             info!("Solution found!");
@@ -1050,30 +1091,4 @@ pub fn print_search_result(result: &SearchResult) {
             info!("Search ended in progress");
         }
     }
-
-    // Fast Downward-style statistics block.
-    info!("Expanded {} state(s).", result.nodes_expanded);
-    info!("Reopened {} state(s).", result.nodes_reopened);
-    info!("Evaluated {} state(s).", result.nodes_evaluated);
-    info!("Evaluations: {}", result.evaluations);
-    info!("Generated {} state(s).", result.nodes_generated);
-    info!("Dead ends: {} state(s).", result.dead_ends);
-    info!(
-        "Expanded until last jump: {} state(s).",
-        result.nodes_expanded_until_last_jump
-    );
-    info!(
-        "Reopened until last jump: {} state(s).",
-        result.nodes_reopened_until_last_jump
-    );
-    info!(
-        "Evaluated until last jump: {} state(s).",
-        result.nodes_evaluated_until_last_jump
-    );
-    info!(
-        "Generated until last jump: {} state(s).",
-        result.nodes_generated_until_last_jump
-    );
-    info!("Number of registered states: {}", result.registered_states);
-    info!("Search time: {:.6}s", result.search_time.as_secs_f64());
 }

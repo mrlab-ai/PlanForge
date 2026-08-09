@@ -11,6 +11,8 @@ doc = false
 [features]
 # Forward to planforge-search's native CPLEX backend.
 cplex = ["planforge-search/cplex"]
+# The gradient engine, which drags in the candle autograd backend.
+sgd = ["dep:planforge-sgd", "planforge-sgd/candle"]
 
 [dependencies]
 planforge-sas = { path = "../planforge-sas" }
@@ -26,3 +28,4 @@ tracing-subscriber = { version = "0.3", features = [
     "time",
 ] }
 serde = { version = "1", features = ["derive"] }
+planforge-sgd = { path = "../planforge-sgd", optional = true }

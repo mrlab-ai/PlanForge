@@ -11,6 +11,8 @@ doc = false
 [features]
 # Forward to every LP-backed component.
 cplex = ["planforge-searcher/cplex", "planforge-search/cplex"]
+# The search-free gradient engine, reachable as `--search 'sgd(...)'`.
+sgd = ["planforge-searcher/sgd"]
 
 [dependencies]
 planforge-sas = { path = "../planforge-sas" }
