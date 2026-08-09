@@ -1,4 +1,3 @@
-/// Port of instantiate.py
 /// Instantiates the PDDL task using the logic program model.
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -185,7 +184,6 @@ fn get_objects_by_type(
     result
 }
 
-/// Python: def init_function_values(num_init)
 fn init_function_values(
     num_init: &[FunctionAssignment],
 ) -> HashMap<PrimitiveNumericExpression, f64> {
@@ -413,7 +411,6 @@ pub fn explore(task: &Task) -> ExploreResult {
     }
 }
 
-/// Python: explore_normalized is the same but takes NormalizableTask
 pub fn explore_normalized(
     norm_task: &super::normalize::NormalizableTask,
 ) -> Result<ExploreResult, String> {

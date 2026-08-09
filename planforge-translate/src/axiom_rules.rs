@@ -1,4 +1,3 @@
-/// Port of axiom_rules.py
 /// Handles axiom layers, simplification, and negative axiom computation.
 use std::collections::{HashMap, HashSet};
 
@@ -6,7 +5,6 @@ use super::pddl::actions::PropositionalAction;
 use super::pddl::axioms::PropositionalAxiom;
 use super::pddl::conditions::*;
 
-/// Python: def handle_axioms(operators, axioms, goal_list, global_constraint)
 /// Returns (processed_axioms, axiom_init_atoms, axiom_layer_dict)
 pub fn handle_axioms(
     operators: &[PropositionalAction],
@@ -60,16 +58,16 @@ fn compute_necessary_axiom_literals(
                              necessary_literals: &mut HashSet<Condition>,
                              queue: &mut Vec<Condition>| {
         for literal in literals {
-            if let Some(positive_atom) = literal.literal_positive() {
-                if axioms_by_atom.contains_key(&positive_atom) {
-                    let normalized = if negated {
-                        negate_axiom_literal(literal)
-                    } else {
-                        literal.clone()
-                    };
-                    if necessary_literals.insert(normalized.clone()) {
-                        queue.push(normalized);
-                    }
+            if let Some(positive_atom) = literal.literal_positive()
+                && axioms_by_atom.contains_key(&positive_atom)
+            {
+                let normalized = if negated {
+                    negate_axiom_literal(literal)
+                } else {
+                    literal.clone()
+                };
+                if necessary_literals.insert(normalized.clone()) {
+                    queue.push(normalized);
                 }
             }
         }
@@ -99,16 +97,16 @@ fn compute_necessary_axiom_literals(
     }
 
     while let Some(literal) = queue.pop() {
-        if let Some(positive_atom) = literal.literal_positive() {
-            if let Some(axioms) = axioms_by_atom.get(&positive_atom) {
-                for axiom in axioms {
-                    register_literals(
-                        &axiom.condition,
-                        literal.is_negated(),
-                        &mut necessary_literals,
-                        &mut queue,
-                    );
-                }
+        if let Some(positive_atom) = literal.literal_positive()
+            && let Some(axioms) = axioms_by_atom.get(&positive_atom)
+        {
+            for axiom in axioms {
+                register_literals(
+                    &axiom.condition,
+                    literal.is_negated(),
+                    &mut necessary_literals,
+                    &mut queue,
+                );
             }
         }
     }
@@ -219,15 +217,15 @@ fn compute_negative_axioms(
     literals.sort_by_cached_key(|literal| format!("{literal:?}"));
     for literal in literals {
         if literal.is_negated() {
-            if let Some(atom) = literal.literal_positive() {
-                if let Some(axioms) = axioms_by_atom.get(&atom) {
-                    new_axioms.extend(negate(axioms));
-                }
+            if let Some(atom) = literal.literal_positive()
+                && let Some(axioms) = axioms_by_atom.get(&atom)
+            {
+                new_axioms.extend(negate(axioms));
             }
-        } else if let Some(atom) = literal.literal_positive() {
-            if let Some(axioms) = axioms_by_atom.get(&atom) {
-                new_axioms.extend(axioms.clone());
-            }
+        } else if let Some(atom) = literal.literal_positive()
+            && let Some(axioms) = axioms_by_atom.get(&atom)
+        {
+            new_axioms.extend(axioms.clone());
         }
     }
     new_axioms

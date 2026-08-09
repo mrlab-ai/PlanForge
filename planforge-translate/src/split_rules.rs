@@ -42,7 +42,6 @@ fn get_connected_conditions(conditions: &[Vec<String>]) -> Vec<Vec<usize>> {
     components
 }
 
-/// Python: def project_rule(rule, conditions, name_generator)
 fn project_rule(rule: &Rule, condition_indices: &[usize], counter: &mut usize) -> Rule {
     let selected_conditions: Vec<Vec<String>> = condition_indices
         .iter()
@@ -68,7 +67,6 @@ fn project_rule(rule: &Rule, condition_indices: &[usize], counter: &mut usize) -
     Rule::new(selected_conditions, effect)
 }
 
-/// Python: def split_rule(rule, name_generator)
 pub fn split_rule(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
     // Separate important (have variables) from trivial (no variables) conditions
     let mut important_indices = vec![];
@@ -123,7 +121,6 @@ pub fn split_rule(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
     result
 }
 
-/// Python: def split_into_binary_rules(rule, name_generator)
 pub fn split_into_binary_rules(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
     if rule.conditions.len() <= 1 {
         let mut r = rule.clone();

@@ -1,4 +1,3 @@
-/// Port of translate.py
 /// Main translation from STRIPS/PDDL ground representation to SAS+ finite-domain representation.
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -101,7 +100,6 @@ impl Domains {
 // strips_to_sas_dictionary
 // ============================================================
 
-/// Python: def strips_to_sas_dictionary(groups, num_axioms, num_axiom_map, num_fluents, assert_partial, include_numeric=True)
 fn strips_to_sas_dictionary(
     groups: &[Vec<Atom>],
     num_axioms: &[InstantiatedNumericAxiom],
@@ -122,7 +120,7 @@ fn strips_to_sas_dictionary(
         for (val_no, atom) in group.iter().enumerate() {
             dictionary
                 .entry(atom.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push((var_no, val_no));
         }
     }
@@ -153,10 +151,10 @@ fn strips_to_sas_dictionary(
             }
         }
         for axiom_effect in &redundant_axioms {
-            if let Some(mapped) = num_axiom_map.get(axiom_effect) {
-                if let Some(&idx) = numeric_dictionary.get(mapped) {
-                    numeric_dictionary.insert(axiom_effect.clone(), idx);
-                }
+            if let Some(mapped) = num_axiom_map.get(axiom_effect)
+                && let Some(&idx) = numeric_dictionary.get(mapped)
+            {
+                numeric_dictionary.insert(axiom_effect.clone(), idx);
             }
         }
 
@@ -202,15 +200,15 @@ fn translate_strips_conditions_aux(
                 };
 
                 // Check if fact is already in dictionary
-                if let Some(atom) = condition_to_atom(fact) {
-                    if let Some(pairs) = dictionary.get(&atom) {
-                        let (var, val) = pairs[0];
-                        if condition.get(var).is_some_and(|vals| !vals.contains(&val)) {
-                            return None; // conflicting
-                        }
-                        condition.set_single(var, val);
-                        continue;
+                if let Some(atom) = condition_to_atom(fact)
+                    && let Some(pairs) = dictionary.get(&atom)
+                {
+                    let (var, val) = pairs[0];
+                    if condition.get(var).is_some_and(|vals| !vals.contains(&val)) {
+                        return None; // conflicting
                     }
+                    condition.set_single(var, val);
+                    continue;
                 }
 
                 // Build parts lookup - extract PNE from FunctionalExpression
@@ -235,14 +233,14 @@ fn translate_strips_conditions_aux(
                     } else {
                         existing_fact.clone()
                     };
-                    if let Some(atom) = condition_to_atom(&lookup_fact) {
-                        if let Some(pairs) = dictionary.get(&atom) {
-                            let (var, val) = pairs[0];
-                            if condition.get(var).is_some_and(|vals| !vals.contains(&val)) {
-                                return None;
-                            }
-                            condition.set_single(var, val);
+                    if let Some(atom) = condition_to_atom(&lookup_fact)
+                        && let Some(pairs) = dictionary.get(&atom)
+                    {
+                        let (var, val) = pairs[0];
+                        if condition.get(var).is_some_and(|vals| !vals.contains(&val)) {
+                            return None;
                         }
+                        condition.set_single(var, val);
                     }
                 } else {
                     // Create new comparison axiom
@@ -263,21 +261,21 @@ fn translate_strips_conditions_aux(
 
                     dictionary
                         .entry(pos_atom.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push((ranges.len(), 0));
                     dictionary
                         .entry(neg_atom.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push((ranges.len(), 1));
                     ranges.push(3);
 
                     // Now use the fact
                     let lookup_fact = if negated { &neg_fact } else { &pos_fact };
-                    if let Some(atom) = condition_to_atom(lookup_fact) {
-                        if let Some(pairs) = dictionary.get(&atom) {
-                            let (var, val) = pairs[0];
-                            condition.set_single(var, val);
-                        }
+                    if let Some(atom) = condition_to_atom(lookup_fact)
+                        && let Some(pairs) = dictionary.get(&atom)
+                    {
+                        let (var, val) = pairs[0];
+                        condition.set_single(var, val);
                     }
                 }
             }
@@ -384,7 +382,6 @@ fn multiply_out(condition: Domains) -> Vec<Assignment> {
 // translate_strips_conditions
 // ============================================================
 
-/// Python: def translate_strips_conditions(conditions, dictionary, ranges, numeric_dictionary, mutex_dict, mutex_ranges, comp_axioms)
 fn translate_strips_conditions(
     conditions: &[Condition],
     dictionary: &mut HashMap<Atom, Vec<(usize, usize)>>,
@@ -409,9 +406,7 @@ fn translate_strips_conditions(
         sas_comp_axioms,
         true,
     );
-    if mutex_result.is_none() {
-        return None;
-    }
+    mutex_result.as_ref()?;
 
     translate_strips_conditions_aux(
         conditions,
@@ -428,7 +423,6 @@ fn translate_strips_conditions(
 // translate_strips_operator
 // ============================================================
 
-/// Python: def translate_strips_operator(operator, dictionary, ranges, ...)
 fn translate_strips_operator(
     simplified_effect_condition_counter: &mut usize,
     added_implied_precondition_counter: &mut usize,
@@ -487,7 +481,6 @@ fn translate_strips_operator(
 // negate_and_translate_condition
 // ============================================================
 
-/// Python: def negate_and_translate_condition(condition, dictionary, ranges, ...)
 fn negate_and_translate_condition(
     add_conds: &[Vec<Condition>],
     dictionary: &mut HashMap<Atom, Vec<(usize, usize)>>,
@@ -510,7 +503,7 @@ fn negate_and_translate_condition(
     // Cartesian product of all condition lists
     let combinations = cartesian_product_conditions(add_conds);
     for combination in &combinations {
-        let cond: Vec<Condition> = combination.iter().map(|l| negate_condition(l)).collect();
+        let cond: Vec<Condition> = combination.iter().map(negate_condition).collect();
         let translated = translate_strips_conditions(
             &cond,
             dictionary,
@@ -555,7 +548,6 @@ fn cartesian_product_conditions(lists: &[Vec<Condition>]) -> Vec<Vec<Condition>>
 // translate_strips_operator_aux
 // ============================================================
 
-/// Python: def translate_strips_operator_aux(operator, dictionary, ranges, ...)
 fn translate_strips_operator_aux(
     simplified_effect_condition_counter: &mut usize,
     added_implied_precondition_counter: &mut usize,
@@ -594,13 +586,13 @@ fn translate_strips_operator_aux(
             for &(var, val) in pairs {
                 effects_by_variable
                     .entry(var)
-                    .or_insert_with(HashMap::new)
+                    .or_default()
                     .entry(val)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .extend(eff_condition_list.clone().unwrap());
                 add_conds_by_variable
                     .entry(var)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(conditions_list.clone());
             }
         }
@@ -628,9 +620,9 @@ fn translate_strips_operator_aux(
             for &(var, val) in pairs {
                 del_effects_by_variable
                     .entry(var)
-                    .or_insert_with(HashMap::new)
+                    .or_default()
                     .entry(val)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .extend(eff_condition_list.clone().unwrap());
             }
         }
@@ -655,15 +647,15 @@ fn translate_strips_operator_aux(
             continue;
         }
         if let Some(expr_pne) = assignment.expression.as_pne() {
-            if let Some(&expr_var) = numeric_dictionary.get(expr_pne) {
-                if let Some(&fluent_var) = numeric_dictionary.get(&assignment.fluent) {
-                    ass_effects_by_variable
-                        .entry(fluent_var)
-                        .or_insert_with(HashMap::new)
-                        .entry((assignment.symbol.clone(), expr_var))
-                        .or_insert_with(Vec::new)
-                        .extend(eff_condition_list.unwrap());
-                }
+            if let Some(&expr_var) = numeric_dictionary.get(expr_pne)
+                && let Some(&fluent_var) = numeric_dictionary.get(&assignment.fluent)
+            {
+                ass_effects_by_variable
+                    .entry(fluent_var)
+                    .or_default()
+                    .entry((assignment.symbol.clone(), expr_var))
+                    .or_default()
+                    .extend(eff_condition_list.unwrap());
             }
         } else {
             // Expression might be in numeric dictionary directly
@@ -671,19 +663,17 @@ fn translate_strips_operator_aux(
         }
     }
 
-    if let Some(cost_assignment) = &operator.cost {
-        if let Some(expr_pne) = cost_assignment.expression.as_pne() {
-            if let Some(&expr_var) = numeric_dictionary.get(expr_pne) {
-                if let Some(&fluent_var) = numeric_dictionary.get(&cost_assignment.fluent) {
-                    ass_effects_by_variable
-                        .entry(fluent_var)
-                        .or_insert_with(HashMap::new)
-                        .entry((cost_assignment.symbol.clone(), expr_var))
-                        .or_insert_with(Vec::new)
-                        .push(Assignment::default());
-                }
-            }
-        }
+    if let Some(cost_assignment) = &operator.cost
+        && let Some(expr_pne) = cost_assignment.expression.as_pne()
+        && let Some(&expr_var) = numeric_dictionary.get(expr_pne)
+        && let Some(&fluent_var) = numeric_dictionary.get(&cost_assignment.fluent)
+    {
+        ass_effects_by_variable
+            .entry(fluent_var)
+            .or_default()
+            .entry((cost_assignment.symbol.clone(), expr_var))
+            .or_default()
+            .push(Assignment::default());
     }
 
     // Handle del effects: add var=none_of_those when deleted and no add effect
@@ -730,9 +720,9 @@ fn translate_strips_operator_aux(
                     if !contradicts {
                         effects_by_variable
                             .entry(var)
-                            .or_insert_with(HashMap::new)
+                            .or_default()
                             .entry(none_of_those)
-                            .or_insert_with(Vec::new)
+                            .or_default()
                             .push(new_cond);
                     }
                 }
@@ -902,7 +892,7 @@ fn build_sas_operator(
     if pre_post.is_empty() {
         // Check if any numeric effect is relevant
         let mut irrelevant = true;
-        for &(ref eff_var, _, _, _) in &num_pre_post {
+        for (eff_var, _, _, _) in &num_pre_post {
             if relevant_numeric_variables.contains(eff_var) {
                 irrelevant = false;
                 break;
@@ -1149,7 +1139,6 @@ fn add_key_to_comp_axioms(
 // translate_task
 // ============================================================
 
-/// Python: def translate_task(...)
 fn translate_task(
     simplified_effect_condition_counter: &mut usize,
     added_implied_precondition_counter: &mut usize,
@@ -1341,14 +1330,14 @@ fn translate_task(
         let mut sorted_axioms = layer_axioms.clone();
         sorted_axioms.sort_by(|a, b| a.name.cmp(&b.name));
         for axiom in &sorted_axioms {
-            if !num_axiom_map.contains_key(&axiom.effect) {
-                if let Some(&var) = numeric_strips_to_sas.get(&axiom.effect) {
-                    if layer == -1 {
-                        num_axiom_layers[var] = -1;
-                    } else {
-                        num_axiom_layers[var] = num_axiom_layer;
-                        num_axiom_layer += 1;
-                    }
+            if !num_axiom_map.contains_key(&axiom.effect)
+                && let Some(&var) = numeric_strips_to_sas.get(&axiom.effect)
+            {
+                if layer == -1 {
+                    num_axiom_layers[var] = -1;
+                } else {
+                    num_axiom_layers[var] = num_axiom_layer;
+                    num_axiom_layer += 1;
                 }
             }
         }
@@ -1403,7 +1392,7 @@ fn translate_task(
     let sas_init = SASInit::new(init_values, num_init_values);
 
     // Look up metric fluent
-    let sas_metric = if metric.1.symbol == "" || metric.1.ntype == 'X' {
+    let sas_metric = if metric.1.symbol.is_empty() || metric.1.ntype == 'X' {
         // Unit cost or special marker
         (metric.0.clone(), -1i64)
     } else {
@@ -1513,14 +1502,14 @@ fn build_implied_facts(
             if let Some(&prop_var) = lonely_propositions.get(prop) {
                 let prop_is_false = (prop_var, 1);
                 for other_prop in mutex_group {
-                    if other_prop != prop {
-                        if let Some(other_facts) = strips_to_sas.get(other_prop) {
-                            for &other_fact in other_facts {
-                                implied_facts
-                                    .entry(other_fact)
-                                    .or_insert_with(Vec::new)
-                                    .push(prop_is_false);
-                            }
+                    if other_prop != prop
+                        && let Some(other_facts) = strips_to_sas.get(other_prop)
+                    {
+                        for &other_fact in other_facts {
+                            implied_facts
+                                .entry(other_fact)
+                                .or_default()
+                                .push(prop_is_false);
                         }
                     }
                 }
@@ -1535,7 +1524,6 @@ fn build_implied_facts(
 // Main entry point: pddl_to_sas / translate_task_from_grounded_internal
 // ============================================================
 
-/// Python: def pddl_to_sas(task) — the main orchestrator
 /// Called from main.rs as translate_task_from_grounded_internal
 pub fn translate_task_from_grounded_internal(
     atoms: &[Atom],

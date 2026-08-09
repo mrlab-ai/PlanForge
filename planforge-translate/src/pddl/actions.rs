@@ -1,4 +1,3 @@
-/// Port of pddl/actions.py
 use std::collections::{HashMap, HashSet};
 
 use tracing::debug;
@@ -10,7 +9,6 @@ use super::f_expression::{
 };
 use super::pddl_types::TypedObject;
 
-/// Python: class Action(object)
 #[derive(Debug, Clone)]
 pub struct Action {
     pub name: String,
@@ -43,10 +41,8 @@ impl Action {
         }
     }
 
-    /// Python: def parse(alist)
     /// Parsing is handled in pddl_parser/parsing_functions.rs
 
-    /// Python: def uniquify_variables(self)
     pub fn uniquify_variables(&mut self) {
         let mut type_map: HashMap<String, usize> = HashMap::new();
         let mut renamings: HashMap<String, String> = HashMap::new();
@@ -86,7 +82,6 @@ impl Action {
         self.assign_effects = new_assign_effects;
     }
 
-    /// Python: def dump(self)
     pub fn dump(&self) {
         debug!("Action {} ({} params)", self.name, self.parameters.len());
         debug!("  precondition: {}", self.precondition);
@@ -98,7 +93,6 @@ impl Action {
         }
     }
 
-    /// Python: def instantiate(self, var_mapping, init_facts, fluent_facts, init_function_vals, fluent_functions, task, new_axiom, new_modules)
     /// Returns a PropositionalAction or None if the precondition is statically false.
     pub fn instantiate(
         &self,
@@ -124,17 +118,17 @@ impl Action {
 
         // Instantiate precondition
         let mut precondition = vec![];
-        match self.precondition.instantiate_action(
-            var_mapping,
-            init_facts,
-            fluent_facts,
-            fluent_functions,
-            init_function_vals,
-            task_function_admin,
-            new_constant_axioms,
-        ) {
-            Some(conds) => precondition = conds,
-            None => return None, // Precondition statically false
+        {
+            let conds = self.precondition.instantiate_action(
+                var_mapping,
+                init_facts,
+                fluent_facts,
+                fluent_functions,
+                init_function_vals,
+                task_function_admin,
+                new_constant_axioms,
+            )?;
+            precondition = conds
         }
 
         // Instantiate effects
@@ -257,7 +251,6 @@ impl Action {
     }
 }
 
-/// Python: class PropositionalAction(object)
 /// A ground action with propositional preconditions and effects.
 #[derive(Debug, Clone)]
 pub struct PropositionalAction {
@@ -331,17 +324,17 @@ impl Condition {
             Condition::Falsity => None,
             Condition::Conjunction(conj) => {
                 for part in &conj.parts {
-                    match part.instantiate_action(
-                        var_mapping,
-                        init_facts,
-                        fluent_facts,
-                        fluent_functions,
-                        init_function_vals,
-                        task_function_admin,
-                        new_constant_axioms,
-                    ) {
-                        Some(conds) => result.extend(conds),
-                        None => return None,
+                    {
+                        let conds = part.instantiate_action(
+                            var_mapping,
+                            init_facts,
+                            fluent_facts,
+                            fluent_functions,
+                            init_function_vals,
+                            task_function_admin,
+                            new_constant_axioms,
+                        )?;
+                        result.extend(conds)
                     }
                 }
                 Some(result)

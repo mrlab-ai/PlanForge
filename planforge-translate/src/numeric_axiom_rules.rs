@@ -1,4 +1,3 @@
-/// Port of numeric_axiom_rules.py
 /// Handles numeric axiom constant folding, layer computation, and equivalence detection.
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -9,7 +8,6 @@ use super::pddl::f_expression::{
     FunctionalExpression, NumericConstant, PrimitiveNumericExpression,
 };
 
-/// Python: def handle_axioms(axioms)
 /// Returns (processed_axioms, axioms_by_layer, max_layer, axiom_map, constant_axioms)
 pub fn handle_axioms(
     axioms: &[InstantiatedNumericAxiom],

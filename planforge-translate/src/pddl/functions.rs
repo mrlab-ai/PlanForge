@@ -1,8 +1,6 @@
 use super::pddl_types::TypedObject;
-/// Port of pddl/functions.py
 use std::fmt;
 
-/// Python: class Function(object): def __init__(self, name, arguments, type_name)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Function {
     pub name: String,

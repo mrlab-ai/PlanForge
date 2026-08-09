@@ -1,4 +1,3 @@
-/// Port of pddl_to_prolog.py
 /// Translates a PDDL task into a logic program for grounding.
 use std::collections::{HashMap, HashSet};
 
@@ -17,7 +16,6 @@ pub enum RuleType {
     Project,
 }
 
-/// Python: class Rule(object)
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub conditions: Vec<Vec<String>>, // each condition is [pred, arg1, arg2, ...]
@@ -65,7 +63,6 @@ impl Rule {
         }
     }
 
-    /// Python: def rename_duplicate_variables(self)
     pub fn rename_duplicate_variables(&mut self) {
         let mut extra_conditions: Vec<(String, String)> = vec![];
 
@@ -81,7 +78,6 @@ impl Rule {
     }
 }
 
-/// Python: def get_variables(symbolic_atoms)
 /// Get all variables (strings starting with '?') from a list of atoms.
 pub fn get_variables(atoms: &[Vec<String>]) -> HashSet<String> {
     let mut variables = HashSet::new();
@@ -117,7 +113,6 @@ impl PrologProgram {
         self.rules.push(rule);
     }
 
-    /// Python: def normalize(self)
     pub fn normalize(&mut self) {
         // 1. Remove free effect variables
         self.remove_free_effect_variables();
@@ -127,7 +122,6 @@ impl PrologProgram {
         self.convert_trivial_rules();
     }
 
-    /// Python: def split_rules(self)
     pub fn split_rules(&mut self) {
         let mut new_rules = vec![];
         let mut counter = 0;
@@ -138,7 +132,6 @@ impl PrologProgram {
         self.rules = new_rules;
     }
 
-    /// Python: def remove_free_effect_variables(self)
     pub fn remove_free_effect_variables(&mut self) {
         let mut must_add_predicate = false;
         for rule in &mut self.rules {
@@ -169,14 +162,12 @@ impl PrologProgram {
         }
     }
 
-    /// Python: def split_duplicate_arguments(self)
     pub fn split_duplicate_arguments(&mut self) {
         for rule in &mut self.rules {
             rule.rename_duplicate_variables();
         }
     }
 
-    /// Python: def convert_trivial_rules(self)
     pub fn convert_trivial_rules(&mut self) {
         // Convert rules with no conditions to facts
         let mut new_facts = vec![];
@@ -200,7 +191,6 @@ impl PrologProgram {
     }
 }
 
-/// Python: def translate_typed_object(prog, obj, type_dict)
 fn translate_typed_object(
     obj: &TypedObject,
     type_dict: &HashMap<String, &super::pddl::pddl_types::Type>,
@@ -216,7 +206,6 @@ fn translate_typed_object(
     }
 }
 
-/// Python: def translate_facts(task, program)
 fn translate_facts(task: &Task, program: &mut PrologProgram) {
     for atom in &task.init {
         let mut fact = vec![atom.predicate.clone()];
@@ -230,7 +219,6 @@ fn translate_facts(task: &Task, program: &mut PrologProgram) {
     }
 }
 
-/// Python: def translate(task) -> PrologProgram
 /// Main translation function: converts PDDL task to a logic program.
 pub fn translate(task: &Task) -> PrologProgram {
     let mut program = PrologProgram::new();
@@ -271,11 +259,7 @@ pub fn translate(task: &Task) -> PrologProgram {
 fn condition_to_atoms(cond: &Condition) -> Vec<Vec<String>> {
     match cond {
         Condition::Truth => vec![],
-        Condition::Conjunction(conj) => conj
-            .parts
-            .iter()
-            .flat_map(|p| condition_to_atoms(p))
-            .collect(),
+        Condition::Conjunction(conj) => conj.parts.iter().flat_map(condition_to_atoms).collect(),
         Condition::Atom(atom) => {
             let mut result = vec![atom.predicate.clone()];
             result.extend(atom.args.clone());

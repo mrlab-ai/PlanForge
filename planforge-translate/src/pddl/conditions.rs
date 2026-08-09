@@ -1,4 +1,3 @@
-/// Port of pddl/conditions.py
 /// Full condition hierarchy for PDDL conditions.
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -31,7 +30,6 @@ pub enum ConstantCondition {
 }
 
 // ----- Conjunction -----
-/// Python: class Conjunction(JunctorCondition)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Conjunction {
     pub parts: Vec<Condition>,
@@ -44,7 +42,6 @@ impl Conjunction {
 }
 
 // ----- Disjunction -----
-/// Python: class Disjunction(JunctorCondition)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Disjunction {
     pub parts: Vec<Condition>,
@@ -57,7 +54,6 @@ impl Disjunction {
 }
 
 // ----- UniversalCondition -----
-/// Python: class UniversalCondition(QuantifiedCondition)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UniversalCondition {
     pub parameters: Vec<super::pddl_types::TypedObject>,
@@ -71,7 +67,6 @@ impl UniversalCondition {
 }
 
 // ----- ExistentialCondition -----
-/// Python: class ExistentialCondition(QuantifiedCondition)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExistentialCondition {
     pub parameters: Vec<super::pddl_types::TypedObject>,
@@ -86,7 +81,6 @@ impl ExistentialCondition {
 
 // ----- Literal (base for Atom / NegatedAtom) -----
 
-/// Python: class Atom(Literal): negated = False
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Atom {
     pub predicate: String,
@@ -98,7 +92,6 @@ impl Atom {
         Atom { predicate, args }
     }
 
-    /// Python: def negate(self) -> NegatedAtom
     pub fn negate(&self) -> NegatedAtom {
         NegatedAtom {
             predicate: self.predicate.clone(),
@@ -106,7 +99,6 @@ impl Atom {
         }
     }
 
-    /// Python: def positive(self) -> Atom
     pub fn positive(&self) -> Atom {
         self.clone()
     }
@@ -126,7 +118,6 @@ pub fn cmp_atoms(left: &Atom, right: &Atom) -> std::cmp::Ordering {
         .then_with(|| crate::tools::cmp_quoted_slice(&left.args, &right.args))
 }
 
-/// Python: class NegatedAtom(Literal): negated = True
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NegatedAtom {
     pub predicate: String,
@@ -138,7 +129,6 @@ impl NegatedAtom {
         NegatedAtom { predicate, args }
     }
 
-    /// Python: def negate(self) -> Atom
     pub fn negate(&self) -> Atom {
         Atom {
             predicate: self.predicate.clone(),
@@ -146,7 +136,6 @@ impl NegatedAtom {
         }
     }
 
-    /// Python: def positive(self) -> Atom
     pub fn positive(&self) -> Atom {
         Atom {
             predicate: self.predicate.clone(),
@@ -156,7 +145,6 @@ impl NegatedAtom {
 }
 
 impl fmt::Display for NegatedAtom {
-    /// Python: def __str__(self) -> "NegatedAtom %s(%s)"
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -232,7 +220,6 @@ impl fmt::Display for Literal {
 }
 
 // ----- FunctionComparison -----
-/// Python: class FunctionComparison(Condition)
 /// comparator is one of "<", "<=", "=", ">=", ">"
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionComparison {
@@ -250,7 +237,6 @@ impl FunctionComparison {
         }
     }
 
-    /// Python: def negate(self) -> NegatedFunctionComparison
     pub fn negate(&self) -> NegatedFunctionComparison {
         NegatedFunctionComparison {
             comparator: self.comparator.clone(),
@@ -270,7 +256,6 @@ impl fmt::Display for FunctionComparison {
     }
 }
 
-/// Python: class NegatedFunctionComparison(FunctionComparison)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NegatedFunctionComparison {
     pub comparator: String,
@@ -287,7 +272,6 @@ impl NegatedFunctionComparison {
         }
     }
 
-    /// Python: def negate(self) -> FunctionComparison
     pub fn negate(&self) -> FunctionComparison {
         FunctionComparison {
             comparator: self.comparator.clone(),
@@ -312,7 +296,6 @@ impl fmt::Display for NegatedFunctionComparison {
 // =========================================================================
 
 impl Condition {
-    /// Python: def simplified(self)
     pub fn simplified(&self) -> Condition {
         match self {
             Condition::Truth => Condition::Truth,
@@ -359,7 +342,6 @@ impl Condition {
             }
             Condition::UniversalCondition(uc) => {
                 let new_parts: Vec<Condition> = uc.parts.iter().map(|p| p.simplified()).collect();
-                // Python: if isinstance(parts[0], ConstantCondition): return parts[0]
                 if new_parts.len() == 1
                     && matches!(&new_parts[0], Condition::Truth | Condition::Falsity)
                 {
@@ -373,7 +355,6 @@ impl Condition {
             }
             Condition::ExistentialCondition(ec) => {
                 let new_parts: Vec<Condition> = ec.parts.iter().map(|p| p.simplified()).collect();
-                // Python: if isinstance(parts[0], ConstantCondition): return parts[0]
                 if new_parts.len() == 1
                     && matches!(&new_parts[0], Condition::Truth | Condition::Falsity)
                 {
@@ -390,7 +371,6 @@ impl Condition {
         }
     }
 
-    /// Python: def relaxed(self)
     pub fn relaxed(&self) -> Condition {
         match self {
             Condition::Truth => Condition::Truth,
@@ -420,7 +400,6 @@ impl Condition {
         }
     }
 
-    /// Python: def untyped(self)
     pub fn untyped(&self) -> Condition {
         // Replaces typed quantifiers with untyped ones by adding type predicates.
         match self {
@@ -463,7 +442,6 @@ impl Condition {
         }
     }
 
-    /// Python: def uniquify_variables(self, type_map, renamings)
     pub fn uniquify_variables(
         &self,
         type_map: &mut HashMap<String, usize>,
@@ -548,7 +526,6 @@ impl Condition {
         }
     }
 
-    /// Python: def free_variables(self)
     pub fn free_variables(&self) -> HashSet<String> {
         match self {
             Condition::Truth | Condition::Falsity => HashSet::new(),
@@ -615,7 +592,6 @@ impl Condition {
         }
     }
 
-    /// Python: def has_disjunction(self)
     pub fn has_disjunction(&self) -> bool {
         match self {
             Condition::Disjunction(_) => true,
@@ -626,7 +602,6 @@ impl Condition {
         }
     }
 
-    /// Python: def has_existential_part(self)
     pub fn has_existential_part(&self) -> bool {
         match self {
             Condition::ExistentialCondition(_) => true,
@@ -637,7 +612,6 @@ impl Condition {
         }
     }
 
-    /// Python: def has_universal_part(self)
     pub fn has_universal_part(&self) -> bool {
         match self {
             Condition::UniversalCondition(_) => true,
@@ -731,7 +705,6 @@ impl Condition {
         }
     }
 
-    /// Python: def instantiate(self, var_mapping, init_facts, fluent_facts, init_function_vals, fluent_functions, task, new_axiom, new_modules, result)
     /// Instantiate the condition with a variable mapping.
     pub fn instantiate(
         &self,

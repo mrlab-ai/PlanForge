@@ -10,7 +10,6 @@ use super::options;
 use super::pddl::conditions::*;
 use super::pddl::tasks::Task;
 
-/// Python: def expand_group(group, task, reachable_facts)
 fn expand_group(group: &[Atom], task: &Task, reachable_facts: &HashSet<Atom>) -> Vec<Atom> {
     let mut result = vec![];
     for fact in group {
@@ -30,7 +29,6 @@ fn expand_group(group: &[Atom], task: &Task, reachable_facts: &HashSet<Atom>) ->
     result
 }
 
-/// Python: def instantiate_groups(groups, task, reachable_facts)
 fn instantiate_groups(
     groups: &[Vec<Atom>],
     task: &Task,
@@ -127,38 +125,6 @@ impl GroupCoverQueue {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{Atom, choose_groups};
-    use std::collections::HashSet;
-
-    fn atom(predicate: &str, argument: &str) -> Atom {
-        Atom::new(predicate.to_string(), vec![argument.to_string()])
-    }
-
-    #[test]
-    fn partial_encoding_removes_selected_facts_from_queued_groups() {
-        let shared = atom("tree", "cell6");
-        let left = atom("tree", "cell5");
-        let right = atom("crafting_table", "cell6");
-        let groups = vec![
-            vec![shared.clone(), left.clone()],
-            vec![shared.clone(), right.clone()],
-        ];
-        let reachable = HashSet::from([shared.clone(), left, right]);
-
-        let selected = choose_groups(&groups, &reachable);
-        let occurrences = selected
-            .iter()
-            .flatten()
-            .filter(|fact| **fact == shared)
-            .count();
-
-        assert_eq!(occurrences, 1);
-    }
-}
-
-/// Python: def choose_groups(groups, reachable_facts)
 fn choose_groups(groups: &[Vec<Atom>], reachable_facts: &HashSet<Atom>) -> Vec<Vec<Atom>> {
     let mut queue = GroupCoverQueue::new(groups);
     let mut uncovered_facts = reachable_facts.clone();
@@ -188,7 +154,6 @@ fn choose_groups(groups: &[Vec<Atom>], reachable_facts: &HashSet<Atom>) -> Vec<V
     result
 }
 
-/// Python: def build_translation_key(groups)
 pub fn build_translation_key(groups: &[Vec<Atom>]) -> Vec<Vec<String>> {
     let mut translation_keys = vec![];
     for group in groups {
@@ -203,7 +168,6 @@ pub fn build_translation_key(groups: &[Vec<Atom>]) -> Vec<Vec<String>> {
     translation_keys
 }
 
-/// Python: def collect_all_mutex_groups(groups, atoms)
 fn collect_all_mutex_groups(groups: &[Vec<Atom>], atoms: &HashSet<Atom>) -> Vec<Vec<Atom>> {
     let mut all_groups = vec![];
     let mut uncovered_facts = atoms.clone();
@@ -237,7 +201,6 @@ fn sort_groups(mut groups: Vec<Vec<Atom>>) -> Vec<Vec<Atom>> {
     groups
 }
 
-/// Python: def compute_groups(task, atoms, reachable_action_params)
 /// Returns (groups, mutex_groups, translation_key)
 pub fn compute_groups(
     task: &Task,
@@ -275,4 +238,35 @@ pub fn compute_singleton_groups(
     let translation_key = build_translation_key(&groups);
 
     (groups, mutex_groups, translation_key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Atom, choose_groups};
+    use std::collections::HashSet;
+
+    fn atom(predicate: &str, argument: &str) -> Atom {
+        Atom::new(predicate.to_string(), vec![argument.to_string()])
+    }
+
+    #[test]
+    fn partial_encoding_removes_selected_facts_from_queued_groups() {
+        let shared = atom("tree", "cell6");
+        let left = atom("tree", "cell5");
+        let right = atom("crafting_table", "cell6");
+        let groups = vec![
+            vec![shared.clone(), left.clone()],
+            vec![shared.clone(), right.clone()],
+        ];
+        let reachable = HashSet::from([shared.clone(), left, right]);
+
+        let selected = choose_groups(&groups, &reachable);
+        let occurrences = selected
+            .iter()
+            .flatten()
+            .filter(|fact| **fact == shared)
+            .count();
+
+        assert_eq!(occurrences, 1);
+    }
 }

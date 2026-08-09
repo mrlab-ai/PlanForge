@@ -1,4 +1,3 @@
-/// Port of simplify.py
 /// Simplification of SAS+ tasks by removing unreachable propositions.
 use std::collections::{HashMap, HashSet};
 
@@ -77,7 +76,7 @@ impl DomainTransitionGraph {
     }
 
     fn add_arc(&mut self, u: usize, v: usize) {
-        self.arcs.entry(u).or_insert_with(HashSet::new).insert(v);
+        self.arcs.entry(u).or_default().insert(v);
     }
 
     fn reachable(&self) -> HashSet<usize> {
@@ -201,7 +200,7 @@ impl VarValueRenaming {
         init_value: usize,
         new_domain: &HashSet<usize>,
     ) {
-        assert!(new_domain.len() >= 1 && new_domain.len() <= old_domain_size);
+        assert!(!new_domain.is_empty() && new_domain.len() <= old_domain_size);
         assert!(new_domain.contains(&init_value));
 
         if new_domain.len() == 1 {
@@ -291,10 +290,10 @@ impl VarValueRenaming {
             let mut new_facts = vec![];
             for &(var, val) in &mutex.facts {
                 let (new_var_no, new_value) = self.translate_pair(var, val);
-                if let RenamedValue::Normal(nv) = new_value {
-                    if let Some(nvn) = new_var_no {
-                        new_facts.push((nvn, nv));
-                    }
+                if let RenamedValue::Normal(nv) = new_value
+                    && let Some(nvn) = new_var_no
+                {
+                    new_facts.push((nvn, nv));
                 }
             }
             if new_facts.len() >= 2 {
@@ -472,7 +471,6 @@ impl VarValueRenaming {
         let (new_var, new_value) = self.translate_pair(axiom.effect.0, axiom.effect.1);
         match new_value {
             RenamedValue::AlwaysFalse => {
-                // Python: assert not new_value is always_false
                 // If the new_value is always false, then the condition must
                 // have been impossible (which should have been caught above).
                 panic!(
@@ -522,7 +520,6 @@ impl VarValueRenaming {
             }
         };
 
-        // Python: if new_post == new_pre: return None
         // For sentinels: always_true post is already handled above.
         // If both are always_true, post was handled. If both are Normal with same value, skip.
         let new_post_val = match new_post {
@@ -554,10 +551,10 @@ impl VarValueRenaming {
         };
 
         for &(cond_var, cond_value) in &new_cond {
-            if let Some(&cond_dict_val) = conditions_dict.get(&cond_var) {
-                if cond_dict_val != cond_value {
-                    return None; // Incompatible with applicability
-                }
+            if let Some(&cond_dict_val) = conditions_dict.get(&cond_var)
+                && cond_dict_val != cond_value
+            {
+                return None; // Incompatible with applicability
             }
         }
 
@@ -611,7 +608,6 @@ fn build_renaming(dtgs: &[DomainTransitionGraph]) -> VarValueRenaming {
 // filter_unreachable_propositions
 // ============================================================
 
-/// Python: def filter_unreachable_propositions(sas_task)
 /// Simplifies the task in-place. Returns Err(Impossible) or Err(TriviallySolvable)
 /// if the task is detected as unsolvable or trivially solvable.
 pub fn filter_unreachable_propositions(sas_task: &mut SASTask) -> Result<(), SimplifyError> {
@@ -637,7 +633,6 @@ pub fn filter_unreachable_propositions(sas_task: &mut SASTask) -> Result<(), Sim
 // trivial_task (for error recovery)
 // ============================================================
 
-/// Python: def trivial_task(solvable)
 /// Creates a trivial SAS task (either solvable or unsolvable).
 pub fn trivial_task(solvable: bool) -> SASTask {
     let variables = SASVariables::new(

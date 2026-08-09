@@ -1,5 +1,4 @@
 use itertools::Itertools;
-/// Port of invariants.py
 /// Invariant parts and invariant checking for mutex group computation.
 use std::collections::{HashMap, HashSet};
 
@@ -8,7 +7,6 @@ use super::pddl::actions::Action;
 use super::pddl::conditions::*;
 use super::tools;
 
-/// Python: def invert_list(alist)
 fn invert_list(alist: &[String]) -> HashMap<String, Vec<usize>> {
     let mut result: HashMap<String, Vec<usize>> = HashMap::new();
     for (pos, arg) in alist.iter().enumerate() {
@@ -17,7 +15,6 @@ fn invert_list(alist: &[String]) -> HashMap<String, Vec<usize>> {
     result
 }
 
-/// Python: def instantiate_factored_mapping(pairs)
 fn instantiate_factored_mapping(pairs: &[(Vec<usize>, Vec<i32>)]) -> Vec<Vec<(usize, i32)>> {
     let part_mappings: Vec<Vec<Vec<(usize, i32)>>> = pairs
         .iter()
@@ -30,7 +27,7 @@ fn instantiate_factored_mapping(pairs: &[(Vec<usize>, Vec<i32>)]) -> Vec<Vec<(us
                     preimg
                         .iter()
                         .cloned()
-                        .zip(perm_img.into_iter())
+                        .zip(perm_img)
                         .collect::<Vec<(usize, i32)>>()
                 })
                 .collect()
@@ -42,7 +39,6 @@ fn instantiate_factored_mapping(pairs: &[(Vec<usize>, Vec<i32>)]) -> Vec<Vec<(us
     tools::cartesian_product(&as_vec_vecs)
 }
 
-/// Python: def find_unique_variables(action, invariant)
 fn find_unique_variables(action: &Action, invariant: &Invariant) -> Vec<String> {
     let mut params: HashSet<String> = action.parameters.iter().map(|p| p.name.clone()).collect();
     for eff in &action.effects {
@@ -65,7 +61,6 @@ fn find_unique_variables(action: &Action, invariant: &Invariant) -> Vec<String> 
     inv_vars
 }
 
-/// Python: def get_literals(condition)
 fn get_literals(condition: &Condition) -> Vec<&Condition> {
     match condition {
         Condition::Atom(_) | Condition::NegatedAtom(_) => vec![condition],
@@ -87,7 +82,6 @@ fn literal_info(cond: &Condition) -> Option<(bool, &str, &[String])> {
     }
 }
 
-/// Python: def ensure_conjunction_sat(system, *parts)
 pub fn ensure_conjunction_sat(system: &mut ConstraintSystem, parts: &[&[&Condition]]) {
     let mut pos: HashMap<String, Vec<&Condition>> = HashMap::new();
     let mut neg: HashMap<String, Vec<&Condition>> = HashMap::new();
@@ -136,7 +130,6 @@ pub fn ensure_conjunction_sat(system: &mut ConstraintSystem, parts: &[&[&Conditi
     }
 }
 
-/// Python: def ensure_cover(system, literal, invariant, inv_vars)
 fn ensure_cover(
     system: &mut ConstraintSystem,
     literal: &Condition,
@@ -148,23 +141,21 @@ fn ensure_cover(
     system.add_assignment_disjunction(a);
 }
 
-/// Python: def ensure_inequality(system, literal1, literal2)
 fn ensure_inequality(system: &mut ConstraintSystem, literal1: &Condition, literal2: &Condition) {
     if let (Some((_, pred1, args1)), Some((_, pred2, args2))) =
         (literal_info(literal1), literal_info(literal2))
+        && pred1 == pred2
+        && !args1.is_empty()
     {
-        if pred1 == pred2 && !args1.is_empty() {
-            let parts: Vec<(String, String)> = args1
-                .iter()
-                .zip(args2.iter())
-                .map(|(a, b)| (a.clone(), b.clone()))
-                .collect();
-            system.add_negative_clause(NegativeClause::new(parts));
-        }
+        let parts: Vec<(String, String)> = args1
+            .iter()
+            .zip(args2.iter())
+            .map(|(a, b)| (a.clone(), b.clone()))
+            .collect();
+        system.add_negative_clause(NegativeClause::new(parts));
     }
 }
 
-/// Python: class InvariantPart(object)
 #[derive(Debug, Clone, Eq)]
 pub struct InvariantPart {
     pub predicate: String,
@@ -181,12 +172,10 @@ impl InvariantPart {
         }
     }
 
-    /// Python: def arity(self)
     pub fn arity(&self) -> usize {
         self.order.len()
     }
 
-    /// Python: def get_assignment(self, parameters, literal)
     pub fn get_assignment(&self, parameters: &[String], literal: &Condition) -> Assignment {
         if let Some((_, _, args)) = literal_info(literal) {
             let equalities: Vec<(String, String)> = parameters
@@ -200,7 +189,6 @@ impl InvariantPart {
         }
     }
 
-    /// Python: def get_parameters(self, literal)
     pub fn get_parameters(&self, literal: &Condition) -> Vec<String> {
         if let Some((_, _, args)) = literal_info(literal) {
             self.order.iter().map(|&pos| args[pos].clone()).collect()
@@ -209,7 +197,6 @@ impl InvariantPart {
         }
     }
 
-    /// Python: def instantiate(self, parameters)
     pub fn instantiate(&self, parameters: &[String]) -> Atom {
         let num_args = self.order.len() + if self.omitted_pos != -1 { 1 } else { 0 };
         let mut args = vec!["?X".to_string(); num_args];
@@ -222,7 +209,6 @@ impl InvariantPart {
         }
     }
 
-    /// Python: def possible_mappings(self, own_literal, other_literal)
     pub fn possible_mappings(
         &self,
         own_literal: &Condition,
@@ -270,7 +256,6 @@ impl InvariantPart {
         instantiate_factored_mapping(&factored_mapping)
     }
 
-    /// Python: def possible_matches(self, own_literal, other_literal)
     pub fn possible_matches(
         &self,
         own_literal: &Condition,
@@ -301,7 +286,6 @@ impl InvariantPart {
         result
     }
 
-    /// Python: def matches(self, other, own_literal, other_literal)
     pub fn matches(
         &self,
         other: &InvariantPart,
@@ -339,7 +323,6 @@ impl Ord for InvariantPart {
     }
 }
 
-/// Python: class Invariant(object)
 #[derive(Debug, Clone)]
 pub struct Invariant {
     pub parts: HashSet<InvariantPart>,
@@ -363,22 +346,19 @@ impl Invariant {
         }
     }
 
-    /// Python: def arity(self)
     pub fn arity(&self) -> usize {
         self.parts.iter().next().unwrap().arity()
     }
 
-    /// Python: def get_parameters(self, atom)
     pub fn get_parameters(&self, atom: &Condition) -> Vec<String> {
-        if let Some((_, pred, _)) = literal_info(atom) {
-            if let Some(part) = self.predicate_to_part.get(pred) {
-                return part.get_parameters(atom);
-            }
+        if let Some((_, pred, _)) = literal_info(atom)
+            && let Some(part) = self.predicate_to_part.get(pred)
+        {
+            return part.get_parameters(atom);
         }
         vec![]
     }
 
-    /// Python: def instantiate(self, parameters)
     pub fn instantiate(&self, parameters: &[String]) -> Vec<Atom> {
         self.parts
             .iter()
@@ -386,21 +366,19 @@ impl Invariant {
             .collect()
     }
 
-    /// Python: def get_covering_assignments(self, parameters, atom)
     pub fn get_covering_assignments(
         &self,
         parameters: &[String],
         atom: &Condition,
     ) -> Vec<Assignment> {
-        if let Some((_, pred, _)) = literal_info(atom) {
-            if let Some(part) = self.predicate_to_part.get(pred) {
-                return vec![part.get_assignment(parameters, atom)];
-            }
+        if let Some((_, pred, _)) = literal_info(atom)
+            && let Some(part) = self.predicate_to_part.get(pred)
+        {
+            return vec![part.get_assignment(parameters, atom)];
         }
         vec![]
     }
 
-    /// Python: def check_balance(self, balance_checker, enqueue_func)
     pub fn check_balance(
         &self,
         balance_checker: &BalanceChecker,
@@ -425,7 +403,6 @@ impl Invariant {
         true
     }
 
-    /// Python: def operator_too_heavy(self, h_action)
     pub fn operator_too_heavy(&self, h_action: &Action) -> bool {
         let add_effects: Vec<&super::pddl::effects::Effect> = h_action
             .effects
@@ -477,7 +454,6 @@ impl Invariant {
         false
     }
 
-    /// Python: def operator_unbalanced(self, action, enqueue_func)
     pub fn operator_unbalanced(
         &self,
         action: &Action,
@@ -526,7 +502,6 @@ impl Invariant {
         false
     }
 
-    /// Python: def minimal_covering_renamings(self, action, add_effect, inv_vars)
     fn minimal_covering_renamings(
         &self,
         action: &Action,
@@ -564,7 +539,6 @@ impl Invariant {
         minimal_renamings
     }
 
-    /// Python: def add_effect_unbalanced(self, action, add_effect, del_effects, inv_vars, enqueue_func)
     fn add_effect_unbalanced(
         &self,
         action: &Action,
@@ -607,33 +581,30 @@ impl Invariant {
         true
     }
 
-    /// Python: def refine_candidate(self, add_effect, action, enqueue_func)
     fn refine_candidate(
         &self,
         add_effect: &super::pddl::effects::Effect,
         action: &Action,
         enqueue_func: &mut dyn FnMut(Invariant),
     ) {
-        if let Some((_, add_pred, _)) = literal_info(&add_effect.peffect) {
-            if let Some(part) = self.predicate_to_part.get(add_pred) {
-                for del_eff in &action.effects {
-                    if let Some((negated, del_pred, _)) = literal_info(&del_eff.peffect) {
-                        if negated && !self.predicate_to_part.contains_key(del_pred) {
-                            for match_part in
-                                part.possible_matches(&add_effect.peffect, &del_eff.peffect)
-                            {
-                                let mut new_parts: HashSet<InvariantPart> = self.parts.clone();
-                                new_parts.insert(match_part);
-                                enqueue_func(Invariant::new(new_parts));
-                            }
-                        }
+        if let Some((_, add_pred, _)) = literal_info(&add_effect.peffect)
+            && let Some(part) = self.predicate_to_part.get(add_pred)
+        {
+            for del_eff in &action.effects {
+                if let Some((negated, del_pred, _)) = literal_info(&del_eff.peffect)
+                    && negated
+                    && !self.predicate_to_part.contains_key(del_pred)
+                {
+                    for match_part in part.possible_matches(&add_effect.peffect, &del_eff.peffect) {
+                        let mut new_parts: HashSet<InvariantPart> = self.parts.clone();
+                        new_parts.insert(match_part);
+                        enqueue_func(Invariant::new(new_parts));
                     }
                 }
             }
         }
     }
 
-    /// Python: def unbalanced_renamings(self, del_effect, add_effect, inv_vars, lhs_by_pred, unbalanced_renamings)
     fn unbalanced_renamings(
         &self,
         del_effect: &super::pddl::effects::Effect,
@@ -689,7 +660,6 @@ impl Invariant {
         still_unbalanced
     }
 
-    /// Python: def lhs_satisfiable(self, renaming, lhs_by_pred)
     fn lhs_satisfiable(
         &self,
         renaming: &ConstraintSystem,
@@ -705,7 +675,6 @@ impl Invariant {
         system.is_solvable()
     }
 
-    /// Python: def imply_del_effect(self, del_effect, lhs_by_pred)
     fn imply_del_effect(
         &self,
         del_effect: &super::pddl::effects::Effect,
@@ -796,7 +765,6 @@ fn negate_literal(cond: &Condition) -> Condition {
     }
 }
 
-/// Python: class BalanceChecker from invariant_finder.py
 /// Placed here to be accessible from Invariant methods.
 pub struct BalanceChecker {
     pub predicates_to_add_action_indices: HashMap<String, HashSet<usize>>,

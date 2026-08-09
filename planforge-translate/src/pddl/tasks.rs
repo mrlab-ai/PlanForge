@@ -1,4 +1,3 @@
-/// Port of pddl/tasks.py
 use std::collections::{HashMap, HashSet};
 
 use tracing::{debug, warn};
@@ -23,7 +22,6 @@ fn prettyprint(symbol: &str) -> String {
     }
 }
 
-/// Python: class Requirements(object)
 #[derive(Debug, Clone)]
 pub struct Requirements {
     pub requirements: Vec<String>,
@@ -39,7 +37,6 @@ impl Requirements {
     }
 }
 
-/// Python: class Task(object)
 /// The main PDDL task structure, aggregating everything parsed.
 #[derive(Debug, Clone)]
 pub struct Task {
@@ -76,7 +73,6 @@ impl Task {
         axioms: Vec<Axiom>,
         metric: (String, PrimitiveNumericExpression),
     ) -> Self {
-        // Python: FUNCTION_SYMBOLS computed from functions
         let mut function_admin = DerivedFunctionAdministrator::new();
         // Register all function symbols
         for func in &functions {
@@ -102,7 +98,6 @@ impl Task {
         }
     }
 
-    /// Python: def add_global_constraints(self)
     /// Creates a global constraint axiom from all axioms marked as global constraints.
     pub fn add_global_constraints(&mut self) {
         let mut universal_constraints: Vec<Condition> = vec![];
@@ -132,7 +127,6 @@ impl Task {
         self.global_constraint = Condition::Atom(Atom::new(axiom.predicate, vec![]));
     }
 
-    /// Python: def add_axiom(self, name, parameters, num_external, condition)
     pub fn add_axiom(
         &mut self,
         name: String,
@@ -152,7 +146,6 @@ impl Task {
         effect
     }
 
-    /// Python: def dump(self)
     pub fn dump(&self) {
         debug!("Task: {} (domain: {})", self.task_name, self.domain_name);
         debug!("  {} types", self.types.len());
@@ -167,7 +160,6 @@ impl Task {
     }
 }
 
-/// Python: class DerivedFunctionAdministrator(object)
 /// Manages derived numeric functions (numeric axioms created during instantiation).
 #[derive(Debug, Clone)]
 pub struct DerivedFunctionAdministrator {
@@ -181,6 +173,12 @@ enum DerivedFunctionKey {
     Constant(NumericConstant),
     AdditiveInverse(String),
     Arithmetic(String, Vec<PrimitiveNumericExpression>),
+}
+
+impl Default for DerivedFunctionAdministrator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DerivedFunctionAdministrator {
@@ -354,21 +352,15 @@ impl DerivedFunctionAdministrator {
     }
 }
 
-/// Python: def check_atom_consistency(atom, same_truth_value, other_truth_value, atom_is_true)
 pub fn check_atom_consistency(
     atom: &Atom,
     _same_truth_value: &HashSet<Atom>,
     other_truth_value: &HashSet<Atom>,
     _atom_is_true: bool,
 ) -> bool {
-    if other_truth_value.contains(atom) {
-        false
-    } else {
-        true
-    }
+    !other_truth_value.contains(atom)
 }
 
-/// Python: def check_for_duplicates(lst, what_type, what_list)
 pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
     let mut seen = HashSet::new();
     for item in lst {

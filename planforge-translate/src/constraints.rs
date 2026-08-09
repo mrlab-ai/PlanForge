@@ -1,8 +1,6 @@
-/// Port of constraints.py
 /// Constraint system for invariant checking.
 use std::collections::{HashMap, HashSet};
 
-/// Python: class NegativeClause(object)
 /// Represents a disjunction of inequalities: (v1 != v2) or (v3 != v4) or ...
 #[derive(Debug, Clone)]
 pub struct NegativeClause {
@@ -15,7 +13,6 @@ impl NegativeClause {
         NegativeClause { parts }
     }
 
-    /// Python: def is_satisfiable(self)
     /// Returns true if at least one pair (v1, v2) has v1 != v2.
     pub fn is_satisfiable(&self) -> bool {
         for (v1, v2) in &self.parts {
@@ -26,7 +23,6 @@ impl NegativeClause {
         false
     }
 
-    /// Python: def apply_mapping(self, m)
     pub fn apply_mapping(&self, mapping: &HashMap<String, String>) -> NegativeClause {
         let new_parts = self
             .parts
@@ -41,7 +37,6 @@ impl NegativeClause {
     }
 }
 
-/// Python: class Assignment(object)
 /// Represents a conjunction of equalities: (v1 = v2) and (v3 = v4) and ...
 /// Uses union-find equivalence classes to compute a mapping.
 #[derive(Debug, Clone)]
@@ -60,7 +55,6 @@ impl Assignment {
         }
     }
 
-    /// Python: def _compute_equivalence_classes(self)
     fn compute_equivalence_classes(&self) -> HashMap<String, HashSet<String>> {
         // Union-find style equivalence class computation
         let mut eq_classes: HashMap<String, HashSet<String>> = HashMap::new();
@@ -107,7 +101,6 @@ impl Assignment {
         eq_classes
     }
 
-    /// Python: def _compute_mapping(self)
     fn compute_mapping(&mut self) {
         let eq_classes = self.compute_equivalence_classes();
 
@@ -152,12 +145,10 @@ impl Assignment {
         self.mapping = Some(mapping);
     }
 
-    /// Python: def is_consistent(self)
     pub fn is_consistent(&mut self) -> bool {
         self.get_mapping().is_some()
     }
 
-    /// Python: def get_mapping(self)
     ///
     /// `None` exactly when the assignment is inconsistent, i.e. one equivalence
     /// class contains two different constants and no substitution can satisfy
@@ -171,11 +162,16 @@ impl Assignment {
     }
 }
 
-/// Python: class ConstraintSystem(object)
 #[derive(Debug, Clone)]
 pub struct ConstraintSystem {
     pub combinatorial_assignments: Vec<Vec<Assignment>>,
     pub neg_clauses: Vec<NegativeClause>,
+}
+
+impl Default for ConstraintSystem {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ConstraintSystem {
@@ -186,7 +182,6 @@ impl ConstraintSystem {
         }
     }
 
-    /// Python: def _all_clauses_satisfiable(self, assignment)
     fn all_clauses_satisfiable(&self, assignment: &mut Assignment) -> bool {
         let mapping = assignment
             .get_mapping()
@@ -200,7 +195,6 @@ impl ConstraintSystem {
         true
     }
 
-    /// Python: def _combine_assignments(self, assignments)
     fn combine_assignments(assignments: &[&Assignment]) -> Assignment {
         let mut new_equalities = vec![];
         for a in assignments {
@@ -209,22 +203,18 @@ impl ConstraintSystem {
         Assignment::new(new_equalities)
     }
 
-    /// Python: def add_assignment(self, assignment)
     pub fn add_assignment(&mut self, assignment: Assignment) {
         self.add_assignment_disjunction(vec![assignment]);
     }
 
-    /// Python: def add_assignment_disjunction(self, assignments)
     pub fn add_assignment_disjunction(&mut self, assignments: Vec<Assignment>) {
         self.combinatorial_assignments.push(assignments);
     }
 
-    /// Python: def add_negative_clause(self, clause)
     pub fn add_negative_clause(&mut self, clause: NegativeClause) {
         self.neg_clauses.push(clause);
     }
 
-    /// Python: def combine(self, other)
     pub fn combine(&self, other: &ConstraintSystem) -> ConstraintSystem {
         let mut combined = ConstraintSystem::new();
         combined.combinatorial_assignments = self.combinatorial_assignments.clone();
@@ -236,7 +226,6 @@ impl ConstraintSystem {
         combined
     }
 
-    /// Python: def copy(self)
     pub fn copy(&self) -> Self {
         let mut other = ConstraintSystem::new();
         other.combinatorial_assignments = self.combinatorial_assignments.clone();
@@ -244,12 +233,11 @@ impl ConstraintSystem {
         other
     }
 
-    /// Python: def is_solvable(self)
     pub fn is_solvable(&self) -> bool {
         // Cartesian product of combinatorial_assignments
         let combos = cartesian_product_refs(&self.combinatorial_assignments);
         for combo in &combos {
-            let refs: Vec<&Assignment> = combo.iter().copied().collect();
+            let refs: Vec<&Assignment> = combo.to_vec();
             let mut combined = Self::combine_assignments(&refs);
             if !combined.is_consistent() {
                 continue;

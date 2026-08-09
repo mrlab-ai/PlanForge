@@ -1,4 +1,3 @@
-/// Port of pddl/axioms.py
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -10,7 +9,6 @@ use super::f_expression::{
 };
 use super::pddl_types::TypedObject;
 
-/// Python: class Axiom(object)
 /// Represents a derived predicate axiom.
 #[derive(Debug, Clone)]
 pub struct Axiom {
@@ -52,7 +50,6 @@ impl Axiom {
         }
     }
 
-    /// Python: def dump(self)
     pub fn dump(&self) {
         debug!(
             "Axiom {} ({} params, global={})",
@@ -63,7 +60,6 @@ impl Axiom {
         debug!("  condition: {}", self.condition);
     }
 
-    /// Python: def uniquify_variables(self)
     pub fn uniquify_variables(&mut self) {
         let mut type_map: HashMap<String, usize> = HashMap::new();
         let mut renamings: HashMap<String, String> = HashMap::new();
@@ -75,7 +71,6 @@ impl Axiom {
             .uniquify_variables(&mut type_map, &mut renamings);
     }
 
-    /// Python: def instantiate(self, var_mapping, init_facts, fluent_facts, ...)
     /// Returns a PropositionalAxiom or None if statically false.
     pub fn instantiate(
         &self,
@@ -100,7 +95,7 @@ impl Axiom {
         let effect = Atom::new(self.name.clone(), arg_list);
 
         // Instantiate condition
-        let condition = match self.condition.instantiate_action(
+        let condition = self.condition.instantiate_action(
             var_mapping,
             init_facts,
             fluent_facts,
@@ -108,10 +103,7 @@ impl Axiom {
             init_function_vals,
             task_function_admin,
             new_constant_axioms,
-        ) {
-            Some(conds) => conds,
-            None => return None,
-        };
+        )?;
 
         Some(PropositionalAxiom {
             name: self.name.clone(),
@@ -121,7 +113,6 @@ impl Axiom {
     }
 }
 
-/// Python: class PropositionalAxiom(object)
 #[derive(Debug, Clone)]
 pub struct PropositionalAxiom {
     pub name: String,
@@ -138,7 +129,6 @@ impl PropositionalAxiom {
         }
     }
 
-    /// Python: def clone(self)
     pub fn clone_axiom(&self) -> Self {
         self.clone()
     }
@@ -163,7 +153,6 @@ impl fmt::Display for PropositionalAxiom {
     }
 }
 
-/// Python: class NumericAxiom(object)
 /// Represents an axiom for derived numeric expressions.
 #[derive(Debug, Clone)]
 pub struct NumericAxiom {
@@ -192,13 +181,11 @@ impl NumericAxiom {
         if self.op.is_empty() { 'C' } else { 'D' }
     }
 
-    /// Python: def get_head(self)
     pub fn get_head(&self) -> PrimitiveNumericExpression {
         let args: Vec<String> = self.parameters.iter().map(|p| p.name.clone()).collect();
         PrimitiveNumericExpression::with_type(self.name.clone(), args, self.ntype())
     }
 
-    /// Python: def instantiate(self, var_mapping, fluent_functions, task, new_axiom)
     pub fn instantiate(
         &self,
         var_mapping: &HashMap<String, String>,
@@ -257,7 +244,6 @@ impl fmt::Display for NumericAxiom {
     }
 }
 
-/// Python: class InstantiatedNumericAxiom(object)
 #[derive(Debug, Clone)]
 pub struct InstantiatedNumericAxiom {
     pub name: String,

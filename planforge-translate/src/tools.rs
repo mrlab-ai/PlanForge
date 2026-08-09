@@ -133,7 +133,6 @@ pub fn product<T: Clone>(sequences: &[Vec<T>]) -> Vec<Vec<T>> {
     result
 }
 
-/// Python: def get_peak_memory_in_kb()
 pub fn get_peak_memory_in_kb() -> Option<usize> {
     if let Ok(content) = std::fs::read_to_string("/proc/self/status") {
         for line in content.lines() {

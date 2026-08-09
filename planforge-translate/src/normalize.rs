@@ -1,4 +1,3 @@
-/// Port of normalize.py
 /// Normalization of PDDL tasks before grounding.
 use std::collections::{HashMap, HashSet};
 
@@ -9,7 +8,6 @@ use super::pddl::f_expression::*;
 use super::pddl::pddl_types::TypedObject;
 use super::pddl::tasks::Task;
 
-/// Python: NormalizableTask equivalent
 /// Wraps a Task with additional state for normalization.
 pub struct NormalizableTask {
     pub task: Task,
@@ -35,7 +33,6 @@ impl NormalizableTask {
     }
 }
 
-/// Python: normalize(task)
 /// Main normalization entry point. Performs multiple normalization steps.
 pub fn normalize(task: &mut NormalizableTask) -> Result<(), String> {
     let t = &mut task.task;
@@ -111,7 +108,6 @@ fn convert_types_to_predicates(task: &mut Task) {
     task.init.extend(extra_init);
 }
 
-/// Python: def remove_universal_quantifiers(task)
 /// Converts universal quantifiers in preconditions to negated existentials.
 fn remove_universal_quantifiers(task: &mut Task) {
     // Remove universals from action preconditions
@@ -148,7 +144,7 @@ fn remove_universal(cond: &Condition) -> Condition {
                 remove_universal(&uc.parts[0])
             } else {
                 Condition::Conjunction(Conjunction::new(
-                    uc.parts.iter().map(|p| remove_universal(p)).collect(),
+                    uc.parts.iter().map(remove_universal).collect(),
                 ))
             };
             // not(exists params. not(inner))
@@ -160,22 +156,21 @@ fn remove_universal(cond: &Condition) -> Condition {
             ))
         }
         Condition::Conjunction(conj) => Condition::Conjunction(Conjunction::new(
-            conj.parts.iter().map(|p| remove_universal(p)).collect(),
+            conj.parts.iter().map(remove_universal).collect(),
         )),
         Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
-            disj.parts.iter().map(|p| remove_universal(p)).collect(),
+            disj.parts.iter().map(remove_universal).collect(),
         )),
         Condition::ExistentialCondition(ec) => {
             Condition::ExistentialCondition(ExistentialCondition::new(
                 ec.parameters.clone(),
-                ec.parts.iter().map(|p| remove_universal(p)).collect(),
+                ec.parts.iter().map(remove_universal).collect(),
             ))
         }
         other => other.clone(),
     }
 }
 
-/// Python: def substitute_complicated_goal(task)
 fn substitute_complicated_goal(task: &mut Task) {
     let goal = &task.goal;
     // If goal is not a simple conjunction of literals, create an axiom
@@ -194,13 +189,11 @@ fn substitute_complicated_goal(task: &mut Task) {
     }
 }
 
-/// Python: def build_DNF(task)
 fn build_dnf(_task: &mut Task) {
     // For each action, if precondition has disjunctions, convert to DNF
     // This is handled during split_disjunctions
 }
 
-/// Python: def split_disjunctions(task)
 fn split_disjunctions(task: &mut Task) {
     // Split actions with disjunctive preconditions into multiple actions
     let mut new_actions = vec![];
@@ -263,7 +256,6 @@ fn to_dnf(cond: &Condition) -> Vec<Condition> {
     }
 }
 
-/// Python: def move_existential_quantifiers(task)
 fn move_existential_quantifiers(task: &mut Task) {
     fn recurse(condition: &Condition) -> Condition {
         match condition {
@@ -353,7 +345,6 @@ fn move_existential_quantifiers(task: &mut Task) {
     }
 }
 
-/// Python: Eliminate existential quantifiers by creating new axioms
 fn eliminate_existential_quantifiers(task: &mut Task) {
     // From preconditions
     eliminate_existential_quantifiers_from_preconditions(task);
@@ -407,13 +398,11 @@ fn existential_body(ec: &ExistentialCondition) -> Condition {
     }
 }
 
-/// Python: def verify_and_fix_arithmetic_expressions(task)
 fn verify_and_fix_arithmetic_expressions(_task: &mut Task) {
     // Verify that arithmetic expressions are well-formed
     // This step mainly checks for issues in the PDDL
 }
 
-/// Python: def remove_arithmetic_expressions(task)
 /// Creates numeric axioms for complex arithmetic expressions.
 fn remove_arithmetic_expressions(task: &mut Task) {
     fn rewrite_condition(
@@ -507,17 +496,17 @@ fn remove_arithmetic_expressions(task: &mut Task) {
                 );
             }
         }
-        if let Some(cost) = &mut action.cost {
-            if !matches!(
+        if let Some(cost) = &mut action.cost
+            && !matches!(
                 cost.expression,
                 FunctionalExpression::PrimitiveNumericExpression(_)
-            ) {
-                let expression = cost.expression.clone();
-                cost.expression = FunctionalExpression::PrimitiveNumericExpression(
-                    task.function_administrator
-                        .get_derived_function(&expression, &HashSet::new()),
-                );
-            }
+            )
+        {
+            let expression = cost.expression.clone();
+            cost.expression = FunctionalExpression::PrimitiveNumericExpression(
+                task.function_administrator
+                    .get_derived_function(&expression, &HashSet::new()),
+            );
         }
     }
 
@@ -530,7 +519,6 @@ fn remove_arithmetic_expressions(task: &mut Task) {
     task.goal = rewrite_condition(&mut task.function_administrator, &goal);
 }
 
-/// Python: def verify_axiom_predicates(task)
 fn verify_axiom_predicates(task: &mut Task) {
     // Verify that derived predicates are not used in :init or action effects.
     let mut axiom_names: HashSet<String> = HashSet::new();
@@ -551,13 +539,13 @@ fn verify_axiom_predicates(task: &mut Task) {
     // Check that axiom predicates don't appear in effects
     for action in &task.actions {
         for eff in &action.effects {
-            if let Some(pred) = eff.peffect.literal_predicate() {
-                if axiom_names.contains(pred) {
-                    panic!(
-                        "error: derived predicate {:?} appears in effect of action {:?}",
-                        pred, action.name
-                    );
-                }
+            if let Some(pred) = eff.peffect.literal_predicate()
+                && axiom_names.contains(pred)
+            {
+                panic!(
+                    "error: derived predicate {:?} appears in effect of action {:?}",
+                    pred, action.name
+                );
             }
         }
     }
@@ -565,7 +553,6 @@ fn verify_axiom_predicates(task: &mut Task) {
 
 // ==================== Exploration rules ====================
 
-/// Python: def build_exploration_rules(task)
 /// Builds a set of rules for the grounding process.
 /// These rules encode what atoms are reachable.
 pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {

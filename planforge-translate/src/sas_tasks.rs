@@ -1,4 +1,3 @@
-/// Port of sas_tasks.py
 /// SAS+ task representation for the planner output format.
 use std::io::Write;
 
@@ -641,7 +640,6 @@ impl SASOperator {
 
     pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
         writeln!(stream, "begin_operator")?;
-        // Python: print(self.name[1:-1]) — strips outer parens
         let name = if self.name.starts_with('(') && self.name.ends_with(')') {
             &self.name[1..self.name.len() - 1]
         } else {
@@ -895,7 +893,6 @@ impl SASNumericAxiom {
 // Conversion from internal representation
 // ============================================================
 
-/// Python: Called from main as sas_tasks.from_internal(&sastask)
 /// In this port, SASTask is already the final form, so this is identity.
 pub fn from_internal(task: &SASTask) -> &SASTask {
     task

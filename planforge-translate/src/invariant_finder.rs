@@ -1,5 +1,4 @@
 use itertools::Itertools;
-/// Port of invariant_finder.py
 /// Finds mutex invariants among ground atoms.
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
@@ -11,7 +10,6 @@ use super::pddl::actions::Action;
 use super::pddl::conditions::*;
 use super::pddl::tasks::Task;
 
-/// Python: class BalanceChecker.__init__(self, task, reachable_action_params)
 fn build_balance_checker(
     task: &Task,
     reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
@@ -63,7 +61,6 @@ fn build_balance_checker(
     }
 }
 
-/// Python: def add_inequality_preconds(action, reachable_action_params)
 fn add_inequality_preconds(
     action: &Action,
     reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
@@ -124,7 +121,6 @@ fn add_inequality_preconds(
     }
 }
 
-/// Python: def get_fluents(task)
 fn get_fluents(task: &Task) -> HashSet<String> {
     let mut fluent_names = HashSet::new();
     for action in &task.actions {
@@ -143,7 +139,6 @@ fn get_fluents(task: &Task) -> HashSet<String> {
     fluent_names
 }
 
-/// Python: def get_initial_invariants(task)
 fn get_initial_invariants(task: &Task) -> Vec<Invariant> {
     let fluent_names = get_fluents(task);
     let mut result = vec![];
@@ -172,7 +167,6 @@ fn get_initial_invariants(task: &Task) -> Vec<Invariant> {
     result
 }
 
-/// Python: def find_invariants(task, reachable_action_params)
 fn find_invariants(
     task: &Task,
     reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
@@ -254,7 +248,6 @@ fn useful_groups(invariants: &[Invariant], initial_facts: &[Atom]) -> Vec<Vec<At
         .collect()
 }
 
-/// Python: def get_groups(task, reachable_action_params)
 /// Main entry point: finds groups of mutex atoms.
 pub fn get_groups(
     task: &Task,

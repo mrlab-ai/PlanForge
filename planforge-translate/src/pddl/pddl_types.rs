@@ -1,8 +1,6 @@
-/// Port of pddl/pddl_types.py
 use std::fmt;
 
 /// Represents a PDDL type with a name and optional base type.
-/// Python: class Type(object): def __init__(self, name, basetype_name=None)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Type {
     pub name: String,
@@ -30,7 +28,6 @@ impl fmt::Display for Type {
 }
 
 /// Represents a typed object (variable or constant) in PDDL.
-/// Python: class TypedObject(object): def __init__(self, name, type_name)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypedObject {
     pub name: String,
@@ -45,7 +42,6 @@ impl TypedObject {
         }
     }
 
-    /// Python: def uniquify_name(self, type_map, renamings)
     /// Renames the variable to avoid clashes with existing names.
     pub fn uniquify_name(
         &mut self,
@@ -62,7 +58,6 @@ impl TypedObject {
         }
     }
 
-    /// Python: def get_atom(self)
     /// Returns an Atom representing the type predicate for this object.
     pub fn get_atom(&self) -> super::Atom {
         let predicate = get_type_predicate_name(&self.type_name);
@@ -76,7 +71,6 @@ impl fmt::Display for TypedObject {
     }
 }
 
-/// Python: def _get_type_predicate_name(type_name)
 pub fn get_type_predicate_name(type_name: &str) -> String {
     format!("=={}", type_name)
 }

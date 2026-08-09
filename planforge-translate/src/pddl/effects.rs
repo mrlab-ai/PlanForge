@@ -1,4 +1,3 @@
-/// Port of pddl/effects.py
 /// Effect types for PDDL actions.
 use std::fmt;
 
@@ -8,7 +7,6 @@ use super::conditions::{Condition, Conjunction};
 use super::f_expression::FunctionAssignment;
 use super::pddl_types::TypedObject;
 
-/// Python: class Effect(object)
 /// An effect consists of parameters (for universal effects), a condition, and a primitive effect.
 #[derive(Debug, Clone)]
 pub struct Effect {
@@ -27,7 +25,6 @@ impl Effect {
         }
     }
 
-    /// Python: def dump(self)
     pub fn dump(&self) {
         let indent = "  ";
         debug!("{}Effect(", indent);
@@ -41,7 +38,6 @@ impl Effect {
         debug!("{})", indent);
     }
 
-    /// Python: def relaxed(self)
     pub fn relaxed(&self) -> Effect {
         if self.peffect.is_negated() {
             // Delete effects are removed in relaxation
@@ -59,7 +55,6 @@ impl Effect {
         }
     }
 
-    /// Python: def simplified(self)
     pub fn simplified(&self) -> Option<Effect> {
         let new_cond = self.condition.simplified();
         let new_peff = self.peffect.simplified();
@@ -81,7 +76,6 @@ impl fmt::Display for Effect {
     }
 }
 
-/// Python: class ConditionalEffect(object)
 #[derive(Debug, Clone)]
 pub struct ConditionalEffect {
     pub condition: Condition,
@@ -97,7 +91,6 @@ impl ConditionalEffect {
     }
 }
 
-/// Python: class UniversalEffect(object)
 #[derive(Debug, Clone)]
 pub struct UniversalEffect {
     pub parameters: Vec<TypedObject>,
@@ -113,7 +106,6 @@ impl UniversalEffect {
     }
 }
 
-/// Python: class ConjunctiveEffect(object)
 #[derive(Debug, Clone)]
 pub struct ConjunctiveEffect {
     pub effects: Vec<EffectType>,
@@ -125,7 +117,6 @@ impl ConjunctiveEffect {
     }
 }
 
-/// Python: class SimpleEffect(object)
 #[derive(Debug, Clone)]
 pub struct SimpleEffect {
     pub effect: Condition, // Always an Atom or NegatedAtom
@@ -137,7 +128,6 @@ impl SimpleEffect {
     }
 }
 
-/// Python: class NumericEffect(object)
 #[derive(Debug, Clone)]
 pub struct NumericEffect {
     pub effect: FunctionAssignment,
@@ -161,7 +151,6 @@ pub enum EffectType {
 }
 
 impl EffectType {
-    /// Python: normalize() method on ConjunctiveEffect
     /// Converts the effect tree into a flat list of Effect structs.
     pub fn normalize(&self) -> Vec<(Vec<TypedObject>, Condition, EffectKind)> {
         self.normalize_aux(vec![], Condition::Truth)
@@ -204,7 +193,6 @@ impl EffectType {
         }
     }
 
-    /// Python: extract_cost(self) on ConjunctiveEffect
     /// Extracts the cost effect from a conjunctive effect and returns the remaining effects + cost.
     pub fn extract_cost(&self) -> (EffectType, Option<FunctionAssignment>) {
         match self {

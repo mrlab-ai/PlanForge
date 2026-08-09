@@ -1,8 +1,6 @@
 use super::pddl_types::TypedObject;
-/// Port of pddl/predicates.py
 use std::fmt;
 
-/// Python: class Predicate(object): def __init__(self, name, arguments)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Predicate {
     pub name: String,
@@ -14,7 +12,6 @@ impl Predicate {
         Predicate { name, arguments }
     }
 
-    /// Python: def get_arity(self)
     pub fn get_arity(&self) -> usize {
         self.arguments.len()
     }

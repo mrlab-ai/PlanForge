@@ -1,9 +1,7 @@
 use super::pddl_to_prolog::{Rule, RuleType, get_variables};
-/// Port of greedy_join.py
 /// Greedy algorithm for splitting rules into binary joins.
 use std::collections::{HashMap, HashSet};
 
-/// Python: class OccurrencesTracker(object)
 struct OccurrencesTracker {
     occurrences: HashMap<String, usize>,
 }
@@ -43,7 +41,6 @@ impl OccurrencesTracker {
     }
 }
 
-/// Python: class CostMatrix(object)
 struct CostMatrix {
     joinees: Vec<Vec<String>>,
     cost_matrix: Vec<Vec<(usize, usize, i32)>>,
@@ -127,7 +124,6 @@ impl CostMatrix {
     }
 }
 
-/// Python: class ResultList(object)
 struct ResultList {
     final_effect: Vec<String>,
     result: Vec<Rule>,
@@ -166,7 +162,6 @@ impl ResultList {
     }
 }
 
-/// Python: def greedy_join(rule, name_generator)
 pub fn greedy_join(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
     assert!(rule.conditions.len() >= 2);
 
@@ -179,8 +174,8 @@ pub fn greedy_join(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
         occurrences.update(&left, -1);
         occurrences.update(&right, -1);
 
-        let left_vars = get_variables(&[left.clone()]);
-        let right_vars = get_variables(&[right.clone()]);
+        let left_vars = get_variables(std::slice::from_ref(&left));
+        let right_vars = get_variables(std::slice::from_ref(&right));
         let common_vars: HashSet<String> = left_vars.intersection(&right_vars).cloned().collect();
         let condition_vars: HashSet<String> = left_vars.union(&right_vars).cloned().collect();
         let effect_vars: HashSet<String> = occurrences
@@ -191,7 +186,7 @@ pub fn greedy_join(rule: &Rule, counter: &mut usize) -> Vec<Rule> {
 
         let mut joinees = vec![left, right];
         for joinee in joinees.iter_mut() {
-            let joinee_vars = get_variables(&[joinee.clone()]);
+            let joinee_vars = get_variables(std::slice::from_ref(joinee));
             let retained_vars: HashSet<String> = joinee_vars
                 .intersection(&effect_vars.union(&common_vars).cloned().collect())
                 .cloned()

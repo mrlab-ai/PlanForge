@@ -1,5 +1,4 @@
 use ordered_float::OrderedFloat;
-/// Port of pddl/f_expression.py
 /// Functional expression hierarchy for numeric PDDL.
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -7,7 +6,6 @@ use std::hash::{Hash, Hasher};
 use tracing::debug;
 
 /// Root enum for functional expressions
-/// Python: class FunctionalExpression(object)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FunctionalExpression {
     NumericConstant(NumericConstant),
@@ -16,7 +14,6 @@ pub enum FunctionalExpression {
     AdditiveInverse(AdditiveInverse),
 }
 
-/// Python: class NumericConstant(FunctionalExpression)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NumericConstant {
     pub value: OrderedFloat<f64>,
@@ -41,7 +38,6 @@ impl fmt::Display for NumericConstant {
     }
 }
 
-/// Python: class PrimitiveNumericExpression(FunctionalExpression)
 /// ntype is one of 'C' (constant), 'D' (derived), 'I' (instrumental/total-cost), 'R' (regular)
 #[derive(Debug, Clone)]
 pub struct PrimitiveNumericExpression {
@@ -67,7 +63,6 @@ impl PrimitiveNumericExpression {
         }
     }
 
-    /// Python: def dump(self)
     pub fn dump(&self) {
         debug!("PNE {} {:?} [{}]", self.symbol, self.args, self.ntype);
     }
@@ -98,7 +93,6 @@ impl Hash for PrimitiveNumericExpression {
     }
 }
 
-/// Python: class ArithmeticExpression(FunctionalExpression)
 /// op is one of "+", "-", "*", "/"
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ArithmeticExpression {
@@ -119,16 +113,11 @@ impl fmt::Display for ArithmeticExpression {
 }
 
 /// Convenience constructors matching Python subclasses
-/// Python: class Difference(ArithmeticExpression) with op = "-"
 pub type Difference = ArithmeticExpression;
-/// Python: class Sum(ArithmeticExpression) with op = "+"
 pub type Sum = ArithmeticExpression;
-/// Python: class Product(ArithmeticExpression) with op = "*"
 pub type Product = ArithmeticExpression;
-/// Python: class Quotient(ArithmeticExpression) with op = "/"
 pub type Quotient = ArithmeticExpression;
 
-/// Python: class AdditiveInverse(FunctionalExpression)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AdditiveInverse {
     pub parts: Vec<FunctionalExpression>,
@@ -148,7 +137,6 @@ impl fmt::Display for AdditiveInverse {
 
 // ============== FunctionAssignment and subclasses ==============
 
-/// Python: class FunctionAssignment(object)
 /// Represents assign/increase/decrease/scale-up/scale-down operations.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionAssignment {
@@ -170,7 +158,6 @@ impl FunctionAssignment {
         }
     }
 
-    /// Python: def instantiate(self, var_mapping, init_facts, fluent_facts, init_function_vals, fluent_functions, task, new_axiom)
     pub fn instantiate(
         &self,
         var_mapping: &HashMap<String, String>,
@@ -201,7 +188,6 @@ impl FunctionAssignment {
         FunctionAssignment::new(self.symbol.clone(), new_fluent, new_expr)
     }
 
-    /// Python: def instantiate_cost(self, var_mapping, init_facts, fluent_facts, init_function_vals, fluent_functions, task, new_axiom)
     pub fn instantiate_cost(
         &self,
         var_mapping: &HashMap<String, String>,
@@ -236,7 +222,6 @@ impl FunctionAssignment {
         )
     }
 
-    /// Python: def is_cost_assignment(self)
     pub fn is_cost_assignment(&self) -> bool {
         self.fluent.symbol == "total-cost"
     }
@@ -260,21 +245,15 @@ impl fmt::Display for FunctionAssignment {
 }
 
 // Convenience type aliases for FunctionAssignment subclasses
-/// Python: class Assign(FunctionAssignment) with symbol "="
 pub type Assign = FunctionAssignment;
-/// Python: class Increase(FunctionAssignment) with symbol "+"
 pub type Increase = FunctionAssignment;
-/// Python: class Decrease(FunctionAssignment) with symbol "-"
 pub type Decrease = FunctionAssignment;
-/// Python: class ScaleUp(FunctionAssignment) with symbol "*"
 pub type ScaleUp = FunctionAssignment;
-/// Python: class ScaleDown(FunctionAssignment) with symbol "/"
 pub type ScaleDown = FunctionAssignment;
 
 // ============== Helper methods on FunctionalExpression ==============
 
 impl FunctionalExpression {
-    /// Python: def primitive_numeric_expressions(self)
     pub fn primitive_numeric_expressions(&self) -> Vec<PrimitiveNumericExpression> {
         match self {
             FunctionalExpression::NumericConstant(_) => vec![],
@@ -296,7 +275,6 @@ impl FunctionalExpression {
         }
     }
 
-    /// Python: def rename_variables(self, renamings)
     pub fn rename_variables(&self, renamings: &HashMap<String, String>) -> FunctionalExpression {
         match self {
             FunctionalExpression::NumericConstant(_) => self.clone(),
@@ -332,7 +310,6 @@ impl FunctionalExpression {
         }
     }
 
-    /// Python: def free_variables(self)
     pub fn free_variables(&self) -> HashSet<String> {
         match self {
             FunctionalExpression::NumericConstant(_) => HashSet::new(),
@@ -359,7 +336,6 @@ impl FunctionalExpression {
         }
     }
 
-    /// Python: def compile_objectfunctions_aux(self, used_variables, recurse_object_functions, task, mutex)
     /// Compiles object functions into numeric axioms.
     pub fn compile_objectfunctions_aux(
         &self,

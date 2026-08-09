@@ -1,4 +1,3 @@
-/// Port of pddl_parser/lisp_parser.py
 /// Simple S-expression parser that tokenizes and builds nested lists.
 use std::fs;
 use std::path::Path;
@@ -64,7 +63,6 @@ impl std::fmt::Display for SExpr {
     }
 }
 
-/// Python: def parse_nested_list(input_file)
 /// Reads a PDDL file and parses it into an S-expression.
 pub fn parse_nested_list(filepath: &Path) -> Result<SExpr, String> {
     let content = fs::read_to_string(filepath)
@@ -83,7 +81,6 @@ pub fn parse_nested_list_string(input: &str) -> Result<SExpr, String> {
     Ok(result)
 }
 
-/// Python: def tokenize(input)
 /// Splits input into tokens: "(", ")", or atoms. Strips comments (lines starting with ;).
 fn tokenize(input: &str) -> Vec<String> {
     let mut tokens = vec![];
@@ -103,7 +100,6 @@ fn tokenize(input: &str) -> Vec<String> {
     tokens
 }
 
-/// Python: def parse_list_aux(tokenstream)
 /// Recursively parses a token stream into an S-expression.
 fn parse_list_aux(
     tokens: &mut std::iter::Peekable<std::vec::IntoIter<String>>,

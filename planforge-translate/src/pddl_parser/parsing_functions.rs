@@ -1,4 +1,3 @@
-/// Port of pddl_parser/parsing_functions.py
 /// Main PDDL parsing functions that convert S-expressions into PDDL AST.
 use std::collections::HashMap;
 
@@ -15,7 +14,6 @@ use crate::pddl::pddl_types::{Type, TypedObject};
 use crate::pddl::predicates::Predicate;
 use crate::pddl::tasks::{Requirements, Task};
 
-/// Python: def parse_typed_list(alist, only_variables=False, constructor=TypedObject, default_type="object")
 /// Parses a list of typed items: "?x ?y - type ?z - type2"
 pub fn parse_typed_list(
     alist: &[SExpr],
@@ -56,7 +54,6 @@ pub fn parse_typed_list(
     result
 }
 
-/// Python: def parse_typed_list for types (constructor=Type)
 pub fn parse_type_list(alist: &[SExpr]) -> Vec<Type> {
     let mut result = vec![];
     let mut untyped_items: Vec<String> = vec![];
@@ -84,7 +81,6 @@ pub fn parse_type_list(alist: &[SExpr]) -> Vec<Type> {
     result
 }
 
-/// Python: def set_supertypes(type_list)
 /// Returns a map from type name -> list of all supertypes (transitive closure).
 pub fn set_supertypes(type_list: &[Type]) -> HashMap<String, Vec<String>> {
     let mut type_map: HashMap<String, Option<String>> = HashMap::new();
@@ -110,21 +106,18 @@ pub fn set_supertypes(type_list: &[Type]) -> HashMap<String, Vec<String>> {
     supertypes
 }
 
-/// Python: def parse_predicate(alist)
 pub fn parse_predicate(alist: &[SExpr]) -> Predicate {
     let name = alist[0].as_atom().to_string();
     let arguments = parse_typed_list(&alist[1..], true, "object");
     Predicate::new(name, arguments)
 }
 
-/// Python: def parse_function(alist, type_name)
 pub fn parse_function(alist: &[SExpr], type_name: &str) -> Function {
     let name = alist[0].as_atom().to_string();
     let arguments = parse_typed_list(&alist[1..], true, "object");
     Function::new(name, arguments, type_name.to_string())
 }
 
-/// Python: def parse_condition(alist, type_dict)
 pub fn parse_condition(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) -> Condition {
     match alist {
         SExpr::List(items) if items.is_empty() => Condition::Truth,
@@ -136,7 +129,6 @@ pub fn parse_condition(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) 
     }
 }
 
-/// Python: def parse_condition_aux(alist, type_dict)
 fn parse_condition_aux(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -> Condition {
     if alist.is_empty() {
         return Condition::Truth;
@@ -223,7 +215,6 @@ fn parse_condition_aux(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>
     }
 }
 
-/// Python: def is_function_comparison(alist)
 fn is_function_comparison(alist: &[SExpr]) -> bool {
     fn expression_looks_numeric(expr: &SExpr) -> bool {
         match expr {
@@ -262,10 +253,7 @@ fn parse_function_comparison(
     _type_dict: &HashMap<String, Vec<String>>,
 ) -> Condition {
     let comparator = alist[0].as_atom().to_string();
-    let parts: Vec<FunctionalExpression> = alist[1..]
-        .iter()
-        .map(|item| parse_expression(item))
-        .collect();
+    let parts: Vec<FunctionalExpression> = alist[1..].iter().map(parse_expression).collect();
     assert_eq!(
         parts.len(),
         2,
@@ -279,7 +267,6 @@ fn parse_function_comparison(
     Condition::FunctionComparison(FunctionComparison::new(comparator, vec![difference, zero]))
 }
 
-/// Python: def parse_literal(alist)
 pub fn parse_literal(alist: &SExpr) -> Condition {
     let items = alist.as_list();
     if items.is_empty() {
@@ -298,7 +285,6 @@ pub fn parse_literal(alist: &SExpr) -> Condition {
     }
 }
 
-/// Python: def parse_expression(alist)
 pub fn parse_expression(alist: &SExpr) -> FunctionalExpression {
     fn classify_pne(symbol: String, args: Vec<String>) -> PrimitiveNumericExpression {
         if symbol == "total-cost" && args.is_empty() {
@@ -330,10 +316,8 @@ pub fn parse_expression(alist: &SExpr) -> FunctionalExpression {
                         let inner = parse_expression(&items[1]);
                         FunctionalExpression::AdditiveInverse(AdditiveInverse::new(vec![inner]))
                     } else {
-                        let parts: Vec<FunctionalExpression> = items[1..]
-                            .iter()
-                            .map(|item| parse_expression(item))
-                            .collect();
+                        let parts: Vec<FunctionalExpression> =
+                            items[1..].iter().map(parse_expression).collect();
                         FunctionalExpression::ArithmeticExpression(ArithmeticExpression::new(
                             tag.to_string(),
                             parts,
@@ -352,7 +336,6 @@ pub fn parse_expression(alist: &SExpr) -> FunctionalExpression {
     }
 }
 
-/// Python: def parse_assignment(alist)
 pub fn parse_assignment(alist: &[SExpr]) -> FunctionAssignment {
     let tag = alist[0].as_atom();
     let symbol = match tag {
@@ -372,7 +355,6 @@ pub fn parse_assignment(alist: &[SExpr]) -> FunctionAssignment {
     FunctionAssignment::new(symbol.to_string(), fluent, expression)
 }
 
-/// Python: def parse_effects(alist, type_dict)
 /// Parses the effects section and returns an EffectType.
 pub fn parse_effects(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) -> EffectType {
     let items = alist.as_list();
@@ -391,7 +373,6 @@ pub fn parse_effects(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) ->
     }
 }
 
-/// Python: def parse_effect(alist, type_dict)
 fn parse_effect(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) -> EffectType {
     let items = alist.as_list();
     let tag = items[0].as_atom();
@@ -428,7 +409,6 @@ fn parse_effect(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) -> Effe
     }
 }
 
-/// Python: def parse_action(alist, type_dict)
 pub fn parse_action(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -> Action {
     // alist is the contents of (:action ...)
     // Expected: name :parameters (...) :precondition (...) :effect (...)
@@ -491,7 +471,6 @@ pub fn parse_action(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -
     action
 }
 
-/// Python: def parse_global_constraint(alist, type_dict)
 pub fn parse_global_constraint(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -> Axiom {
     let name = alist[0].as_atom().to_string();
     let mut parameters = vec![];
@@ -519,7 +498,6 @@ pub fn parse_global_constraint(alist: &[SExpr], type_dict: &HashMap<String, Vec<
     Axiom::new_global_constraint(name, parameters, num_external, condition)
 }
 
-/// Python: def parse_axiom(alist, type_dict)
 pub fn parse_axiom(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -> Axiom {
     let name = alist[0].as_atom().to_string();
     let mut parameters = vec![];
@@ -561,7 +539,6 @@ pub fn parse_axiom(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
     Axiom::new(name, parameters, num_external, condition)
 }
 
-/// Python: def parse_task(domain_pddl, task_pddl)
 /// Combines parsed domain and problem S-expressions into a Task.
 pub fn parse_task(domain_pddl: &SExpr, task_pddl: &SExpr) -> Task {
     let domain_items = domain_pddl.as_list();
@@ -630,7 +607,6 @@ pub fn parse_task(domain_pddl: &SExpr, task_pddl: &SExpr) -> Task {
     )
 }
 
-/// Python: def parse_domain_pddl(domain_pddl)
 /// Generator in Python, here returns all parsed components.
 fn parse_domain_pddl(
     items: &[SExpr],
@@ -754,7 +730,6 @@ fn parse_function_list(items: &[SExpr]) -> Vec<Function> {
     result
 }
 
-/// Python: def parse_task_pddl(task_pddl, type_dict)
 fn parse_task_pddl(
     items: &[SExpr],
     type_dict: &HashMap<String, Vec<String>>,
@@ -857,7 +832,6 @@ fn parse_task_pddl(
     )
 }
 
-/// Python: def check_for_duplicates(lst, what_type, what_list)
 pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
     use std::collections::HashSet;
     let mut seen = HashSet::new();
@@ -871,7 +845,6 @@ pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
     }
 }
 
-/// Python: def _get_predicate_id_and_arity(text, predicate_dict, n_predicates)
 /// Resolves a predicate name to (id, arity) or creates a new one.
 pub fn get_predicate_id_and_arity(
     text: &str,

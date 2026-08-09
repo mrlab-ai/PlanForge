@@ -1,4 +1,3 @@
-/// Port of pddl_parser/pddl_file.py
 /// Entry point for parsing PDDL files.
 use std::path::Path;
 
@@ -14,7 +13,6 @@ pub struct PddlTask {
 }
 
 impl PddlTask {
-    /// Python: def parse_pddl_file(type, filename)
     /// Parse domain and problem PDDL files.
     pub fn from_files(domain_path: &Path, problem_path: &Path) -> Result<PddlTask, String> {
         let domain_forms = lisp_parser::parse_nested_list(domain_path)?;
@@ -31,7 +29,6 @@ impl PddlTask {
     }
 }
 
-/// Python: def open(domain_filename=None, task_filename=None)
 /// Convenience function matching Python's pddl_parser.open().
 pub fn open(domain_filename: &str, task_filename: &str) -> Result<Task, String> {
     let task = PddlTask::from_files(Path::new(domain_filename), Path::new(task_filename))?;
