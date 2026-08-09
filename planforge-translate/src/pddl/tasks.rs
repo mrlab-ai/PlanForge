@@ -57,6 +57,16 @@ pub struct Task {
     pub global_constraint: Condition,
 }
 
+/// The task-wide tables an action or axiom is instantiated against: what
+/// holds initially, which predicates and functions are fluent, and what the
+/// numeric fluents start at.
+pub struct GroundingTables<'a> {
+    pub init_facts: &'a HashSet<Atom>,
+    pub fluent_facts: &'a HashSet<String>,
+    pub fluent_functions: &'a HashSet<PrimitiveNumericExpression>,
+    pub init_function_vals: &'a HashMap<PrimitiveNumericExpression, f64>,
+}
+
 /// What the `(define (domain ...))` form declares.
 pub struct DomainDefinition {
     pub domain_name: String,
@@ -257,10 +267,11 @@ impl DerivedFunctionAdministrator {
     }
 
     /// Gets or creates a derived function for the given expression.
+    /// The numeric variable that stands for `expression`, defining it by a new
+    /// numeric axiom if no equivalent expression has one yet.
     pub fn get_derived_function(
         &mut self,
         expression: &FunctionalExpression,
-        fluent_functions: &HashSet<PrimitiveNumericExpression>,
     ) -> PrimitiveNumericExpression {
         if let FunctionalExpression::PrimitiveNumericExpression(pne) = expression {
             return pne.clone();
@@ -269,14 +280,13 @@ impl DerivedFunctionAdministrator {
         let args = match expression {
             FunctionalExpression::NumericConstant(_) => vec![],
             FunctionalExpression::AdditiveInverse(ai) => {
-                self.get_derived_function(&ai.parts[0], fluent_functions)
-                    .args
+                self.get_derived_function(&ai.parts[0]).args
             }
             FunctionalExpression::ArithmeticExpression(ae) => {
                 let mut subexpressions: Vec<PrimitiveNumericExpression> = ae
                     .parts
                     .iter()
-                    .map(|part| self.get_derived_function(part, fluent_functions))
+                    .map(|part| self.get_derived_function(part))
                     .collect();
                 if ae.op == "+" || ae.op == "*" {
                     sort_commutative_operands(&mut subexpressions);
@@ -289,14 +299,14 @@ impl DerivedFunctionAdministrator {
         let key = match expression {
             FunctionalExpression::NumericConstant(nc) => DerivedFunctionKey::Constant(nc.clone()),
             FunctionalExpression::AdditiveInverse(ai) => {
-                let subexp = self.get_derived_function(&ai.parts[0], fluent_functions);
+                let subexp = self.get_derived_function(&ai.parts[0]);
                 DerivedFunctionKey::AdditiveInverse(subexp.symbol.clone())
             }
             FunctionalExpression::ArithmeticExpression(ae) => {
                 let mut subexpressions: Vec<PrimitiveNumericExpression> = ae
                     .parts
                     .iter()
-                    .map(|part| self.get_derived_function(part, fluent_functions))
+                    .map(|part| self.get_derived_function(part))
                     .collect();
                 if ae.op == "+" || ae.op == "*" {
                     subexpressions.sort_by_cached_key(PrimitiveNumericExpression::to_string);
@@ -321,7 +331,7 @@ impl DerivedFunctionAdministrator {
                 )
             }
             FunctionalExpression::AdditiveInverse(ai) => {
-                let subexp = self.get_derived_function(&ai.parts[0], fluent_functions);
+                let subexp = self.get_derived_function(&ai.parts[0]);
                 let args = subexp.args.clone();
                 let default_args = self.get_default_variables(args.len());
                 let rewritten = FunctionalExpression::PrimitiveNumericExpression(
@@ -342,7 +352,7 @@ impl DerivedFunctionAdministrator {
                 let mut subexpressions: Vec<PrimitiveNumericExpression> = ae
                     .parts
                     .iter()
-                    .map(|part| self.get_derived_function(part, fluent_functions))
+                    .map(|part| self.get_derived_function(part))
                     .collect();
                 if ae.op == "+" || ae.op == "*" {
                     sort_commutative_operands(&mut subexpressions);

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use tracing::debug;
 
@@ -95,13 +95,15 @@ impl Action {
     pub fn instantiate(
         &self,
         var_mapping: &HashMap<String, String>,
-        init_facts: &HashSet<Atom>,
-        fluent_facts: &HashSet<String>,
-        fluent_functions: &HashSet<PrimitiveNumericExpression>,
-        init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
+        tables: &super::tasks::GroundingTables,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut Vec<super::axioms::InstantiatedNumericAxiom>,
     ) -> Option<PropositionalAction> {
+        let super::tasks::GroundingTables {
+            fluent_functions,
+            init_function_vals,
+            ..
+        } = *tables;
         // Build the action name
         let arg_list: Vec<String> = self.parameters[..self.num_external_parameters]
             .iter()
@@ -119,10 +121,7 @@ impl Action {
         {
             let conds = self.precondition.instantiate_action(
                 var_mapping,
-                init_facts,
-                fluent_facts,
-                fluent_functions,
-                init_function_vals,
+                tables,
                 task_function_admin,
                 new_constant_axioms,
             )?;
@@ -138,10 +137,7 @@ impl Action {
             // Check effect condition
             let eff_condition = match eff.condition.instantiate_action(
                 var_mapping,
-                init_facts,
-                fluent_facts,
-                fluent_functions,
-                init_function_vals,
+                tables,
                 task_function_admin,
                 new_constant_axioms,
             ) {
@@ -181,10 +177,7 @@ impl Action {
             }
             let eff_condition = match condition.instantiate_action(
                 &eff_var_mapping,
-                init_facts,
-                fluent_facts,
-                fluent_functions,
-                init_function_vals,
+                tables,
                 task_function_admin,
                 new_constant_axioms,
             ) {
@@ -213,8 +206,7 @@ impl Action {
         } else {
             // Default cost: increase(total-cost, 1)
             let constant_expr = FunctionalExpression::NumericConstant(NumericConstant::new(1.0));
-            let derived =
-                task_function_admin.get_derived_function(&constant_expr, fluent_functions);
+            let derived = task_function_admin.get_derived_function(&constant_expr);
             if let Some(axiom) = task_function_admin
                 .get_all_axioms()
                 .into_iter()
@@ -309,13 +301,16 @@ impl Condition {
     pub fn instantiate_action(
         &self,
         var_mapping: &HashMap<String, String>,
-        init_facts: &HashSet<Atom>,
-        fluent_facts: &HashSet<String>,
-        fluent_functions: &HashSet<PrimitiveNumericExpression>,
-        init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
+        tables: &super::tasks::GroundingTables,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut Vec<super::axioms::InstantiatedNumericAxiom>,
     ) -> Option<Vec<Condition>> {
+        let super::tasks::GroundingTables {
+            init_facts,
+            fluent_facts,
+            fluent_functions,
+            init_function_vals,
+        } = *tables;
         let mut result = vec![];
         match self {
             Condition::Truth => Some(vec![]),
@@ -325,10 +320,7 @@ impl Condition {
                     {
                         let conds = part.instantiate_action(
                             var_mapping,
-                            init_facts,
-                            fluent_facts,
-                            fluent_functions,
-                            init_function_vals,
+                            tables,
                             task_function_admin,
                             new_constant_axioms,
                         )?;

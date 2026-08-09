@@ -416,7 +416,7 @@ fn remove_arithmetic_expressions(task: &mut Task) {
                     .iter()
                     .map(|part| {
                         FunctionalExpression::PrimitiveNumericExpression(
-                            function_administrator.get_derived_function(part, &HashSet::new()),
+                            function_administrator.get_derived_function(part),
                         )
                     })
                     .collect();
@@ -428,7 +428,7 @@ fn remove_arithmetic_expressions(task: &mut Task) {
                     .iter()
                     .map(|part| {
                         FunctionalExpression::PrimitiveNumericExpression(
-                            function_administrator.get_derived_function(part, &HashSet::new()),
+                            function_administrator.get_derived_function(part),
                         )
                     })
                     .collect();
@@ -492,7 +492,7 @@ fn remove_arithmetic_expressions(task: &mut Task) {
                 let expression = assignment.expression.clone();
                 assignment.expression = FunctionalExpression::PrimitiveNumericExpression(
                     task.function_administrator
-                        .get_derived_function(&expression, &HashSet::new()),
+                        .get_derived_function(&expression),
                 );
             }
         }
@@ -505,7 +505,7 @@ fn remove_arithmetic_expressions(task: &mut Task) {
             let expression = cost.expression.clone();
             cost.expression = FunctionalExpression::PrimitiveNumericExpression(
                 task.function_administrator
-                    .get_derived_function(&expression, &HashSet::new()),
+                    .get_derived_function(&expression),
             );
         }
     }

@@ -24,49 +24,21 @@ pub struct SASTask {
 }
 
 impl SASTask {
-    pub fn new(
-        variables: SASVariables,
-        numeric_variables: SASNumericVariables,
-        mutexes: Vec<SASMutexGroup>,
-        init: SASInit,
-        goal: SASGoal,
-        mut operators: Vec<SASOperator>,
-        mut axioms: Vec<SASAxiom>,
-        comp_axioms: Vec<SASCompareAxiom>,
-        numeric_axioms: Vec<SASNumericAxiom>,
-        global_constraint: (usize, usize),
-        metric: (String, i64),
-        init_constant_predicates: Vec<super::pddl::Atom>,
-        init_constant_numerics: Vec<super::pddl::FunctionAssignment>,
-    ) -> Self {
-        // Sort operators by (name, prevail, pre_post) as Python does
-        operators.sort_by(|a, b| {
+    /// Orders the operators and axioms, so that the file written for a task
+    /// depends on the task and not on the order the translation produced them
+    /// in. Every constructor of a `SASTask` calls this.
+    pub fn canonicalize(&mut self) {
+        self.operators.sort_by(|a, b| {
             a.name
                 .cmp(&b.name)
                 .then_with(|| a.prevail.cmp(&b.prevail))
                 .then_with(|| a.pre_post.cmp(&b.pre_post))
         });
-        // Sort axioms by (condition, effect)
-        axioms.sort_by(|a, b| {
+        self.axioms.sort_by(|a, b| {
             a.condition
                 .cmp(&b.condition)
                 .then_with(|| a.effect.cmp(&b.effect))
         });
-        SASTask {
-            variables,
-            numeric_variables,
-            mutexes,
-            init,
-            goal,
-            operators,
-            axioms,
-            comp_axioms,
-            numeric_axioms,
-            global_constraint,
-            metric,
-            init_constant_predicates,
-            init_constant_numerics,
-        }
     }
 
     pub fn validate(&self) {

@@ -250,6 +250,13 @@ pub fn explore(task: &Task) -> ExploreResult {
         }
     }
 
+    let tables = &super::pddl::tasks::GroundingTables {
+        init_facts: &init_facts,
+        fluent_facts: &fluent_facts,
+        fluent_functions: &fluent_functions,
+        init_function_vals: &init_func_vals,
+    };
+
     // Step 6: Instantiate actions
     let mut task_function_admin = task.function_administrator.clone();
     let mut grounded_ops: Vec<PropositionalAction> = vec![];
@@ -267,10 +274,7 @@ pub fn explore(task: &Task) -> ExploreResult {
                     // We need to handle them too
                     if let Some(prop_action) = action.instantiate(
                         &var_mapping,
-                        &init_facts,
-                        &fluent_facts,
-                        &fluent_functions,
-                        &init_func_vals,
+                        tables,
                         &mut task_function_admin,
                         &mut new_constant_numeric_axioms,
                     ) {
@@ -291,10 +295,7 @@ pub fn explore(task: &Task) -> ExploreResult {
             }
             if let Some(prop_axiom) = axiom.instantiate(
                 &var_mapping,
-                &init_facts,
-                &fluent_facts,
-                &fluent_functions,
-                &init_func_vals,
+                tables,
                 &mut task_function_admin,
                 &mut new_constant_numeric_axioms,
             ) {
@@ -321,8 +322,8 @@ pub fn explore(task: &Task) -> ExploreResult {
             }
             let instantiated = axiom.instantiate(
                 &var_mapping,
-                &fluent_functions,
-                &init_func_vals,
+                tables.fluent_functions,
+                tables.init_function_vals,
                 &mut task_function_admin,
                 &mut new_constant_numeric_axioms,
             );
@@ -367,8 +368,8 @@ pub fn explore(task: &Task) -> ExploreResult {
             }
             let instantiated = axiom.instantiate(
                 &var_mapping,
-                &fluent_functions,
-                &init_func_vals,
+                tables.fluent_functions,
+                tables.init_function_vals,
                 &mut task_function_admin,
                 &mut new_constant_numeric_axioms,
             );

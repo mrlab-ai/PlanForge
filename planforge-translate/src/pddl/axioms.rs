@@ -75,10 +75,7 @@ impl Axiom {
     pub fn instantiate(
         &self,
         var_mapping: &HashMap<String, String>,
-        init_facts: &HashSet<Atom>,
-        fluent_facts: &HashSet<String>,
-        fluent_functions: &HashSet<PrimitiveNumericExpression>,
-        init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
+        tables: &super::tasks::GroundingTables,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut Vec<InstantiatedNumericAxiom>,
     ) -> Option<PropositionalAxiom> {
@@ -97,10 +94,7 @@ impl Axiom {
         // Instantiate condition
         let condition = self.condition.instantiate_action(
             var_mapping,
-            init_facts,
-            fluent_facts,
-            fluent_functions,
-            init_function_vals,
+            tables,
             task_function_admin,
             new_constant_axioms,
         )?;

@@ -88,22 +88,13 @@ pub fn translate_to_sas_writer<W: std::io::Write>(
     let result = planforge_translate::instantiate::explore_normalized(&norm_task)
         .map_err(|e| anyhow::anyhow!(e))?;
 
-    let py_groups: Option<Vec<Vec<String>>> = if fast_groups { Some(vec![]) } else { None };
     // `translate_task_from_grounded_internal` already filters unreachable
     // propositions and answers with a trivial task when that proves the task
     // impossible or trivially solvable, so nothing is left to simplify here.
     let sastask = planforge_translate::translate::translate_task_from_grounded_internal(
-        &result.atoms,
-        &result.grounded_ops,
-        &task.domain_forms,
-        &task.problem_forms,
-        &result.num_fluents,
-        &result.numeric_axioms,
-        py_groups,
-        &result.grounded_axioms,
-        &result.reachable_action_params,
-        &norm_task.goal,
+        &result,
         &norm_task,
+        fast_groups,
     )
     .map_err(|err| anyhow::anyhow!(err))?;
 

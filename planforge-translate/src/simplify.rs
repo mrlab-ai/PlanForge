@@ -662,9 +662,9 @@ pub fn trivial_task(solvable: bool) -> SASTask {
     let init_constant_predicates = vec![];
     let init_constant_numerics = vec![];
 
-    SASTask::new(
+    let mut task = SASTask {
         variables,
-        num_variables,
+        numeric_variables: num_variables,
         mutexes,
         init,
         goal,
@@ -676,5 +676,7 @@ pub fn trivial_task(solvable: bool) -> SASTask {
         metric,
         init_constant_predicates,
         init_constant_numerics,
-    )
+    };
+    task.canonicalize();
+    task
 }

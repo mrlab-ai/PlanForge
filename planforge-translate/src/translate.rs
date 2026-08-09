@@ -1,5 +1,5 @@
 /// Main translation from STRIPS/PDDL ground representation to SAS+ finite-domain representation.
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use tracing::info;
 
@@ -96,6 +96,39 @@ impl Domains {
     }
 }
 
+/// Everything the translation of one task carries from step to step: the SAS
+/// encoding it is filling in, the parallel encoding it tests conditions
+/// against mutexes with, the comparison axioms it invents for numeric
+/// conditions, and the two counters it reports at the end.
+///
+/// These travelled as seven to fourteen parameters through every function
+/// below, always in the same order and always all together.
+struct Translation {
+    ranges: Vec<usize>,
+    dictionary: HashMap<Atom, Vec<SasFact>>,
+    numeric: HashMap<PrimitiveNumericExpression, usize>,
+    /// One variable per mutex group, including the groups no SAS variable was
+    /// built from, so that a condition can be tested against all of them.
+    mutex_ranges: Vec<usize>,
+    mutex_dictionary: HashMap<Atom, Vec<SasFact>>,
+    /// The variable a `(comparator, operands)` comparison was given, so that
+    /// the same comparison is not encoded twice.
+    comparison_axioms: HashMap<(String, Vec<usize>), Condition>,
+    sas_comparison_axioms: Vec<SASCompareAxiom>,
+    /// Number of SAS numeric variables.
+    num_count: usize,
+    /// The human-readable name of each value of each variable.
+    translation_key: Vec<Vec<String>>,
+    /// One entry per mutex group, in SAS facts.
+    mutex_key: Vec<Vec<SasFact>>,
+    implied_facts: HashMap<SasFact, Vec<SasFact>>,
+    /// The initial value of every numeric variable, for static costs.
+    num_vals: Vec<f64>,
+    relevant_numeric: Vec<usize>,
+    simplified_effect_conditions: usize,
+    added_implied_preconditions: usize,
+}
+
 // ============================================================
 // the SAS encoding of facts and numeric fluents
 // ============================================================
@@ -172,10 +205,10 @@ fn encode_numeric_fluents(
     let mut fluents: Vec<PrimitiveNumericExpression> = num_fluents.to_vec();
     fluents.sort_by_cached_key(PrimitiveNumericExpression::to_string);
     for fluent in fluents {
-        if !variables.contains_key(&fluent) {
-            variables.insert(fluent, count);
+        variables.entry(fluent).or_insert_with(|| {
             count += 1;
-        }
+            count - 1
+        });
     }
 
     NumericEncoding { count, variables }
@@ -188,14 +221,23 @@ fn encode_numeric_fluents(
 /// Translates a conjunction of ground literals into the finite-domain
 /// conditions that entail it, or `None` if it is unsatisfiable.
 fn translate_strips_conditions_aux(
+    translation: &mut Translation,
     conditions: &[Condition],
-    dictionary: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    ranges: &mut Vec<usize>,
-    numeric_dictionary: &HashMap<PrimitiveNumericExpression, usize>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
-    sas_comp_axioms: &mut Vec<SASCompareAxiom>,
     mutex_check: bool,
 ) -> Option<Vec<Assignment>> {
+    // The mutex pass encodes the same conditions against the full mutex
+    // groups; everything else about the translation is shared.
+    let (dictionary, ranges) = if mutex_check {
+        (
+            &mut translation.mutex_dictionary,
+            &mut translation.mutex_ranges,
+        )
+    } else {
+        (&mut translation.dictionary, &mut translation.ranges)
+    };
+    let numeric_dictionary = &translation.numeric;
+    let comp_axiom_dict = &mut translation.comparison_axioms;
+    let sas_comp_axioms = &mut translation.sas_comparison_axioms;
     let mut condition = Domains::default();
 
     for fact in conditions {
@@ -393,40 +435,18 @@ fn multiply_out(condition: Domains) -> Vec<Assignment> {
 // ============================================================
 
 fn translate_strips_conditions(
+    translation: &mut Translation,
     conditions: &[Condition],
-    dictionary: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    ranges: &mut Vec<usize>,
-    numeric_dictionary: &HashMap<PrimitiveNumericExpression, usize>,
-    mutex_dict: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    mutex_ranges: &mut Vec<usize>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
-    sas_comp_axioms: &mut Vec<SASCompareAxiom>,
 ) -> Option<Vec<Assignment>> {
     if conditions.is_empty() {
         return Some(vec![Assignment::default()]); // Quick exit for common case
     }
 
     // Check if the condition violates any mutexes
-    let mutex_result = translate_strips_conditions_aux(
-        conditions,
-        mutex_dict,
-        mutex_ranges,
-        numeric_dictionary,
-        comp_axiom_dict,
-        sas_comp_axioms,
-        true,
-    );
+    let mutex_result = translate_strips_conditions_aux(translation, conditions, true);
     mutex_result.as_ref()?;
 
-    translate_strips_conditions_aux(
-        conditions,
-        dictionary,
-        ranges,
-        numeric_dictionary,
-        comp_axiom_dict,
-        sas_comp_axioms,
-        false,
-    )
+    translate_strips_conditions_aux(translation, conditions, false)
 }
 
 // ============================================================
@@ -434,30 +454,10 @@ fn translate_strips_conditions(
 // ============================================================
 
 fn translate_strips_operator(
-    simplified_effect_condition_counter: &mut usize,
-    added_implied_precondition_counter: &mut usize,
+    translation: &mut Translation,
     operator: &PropositionalAction,
-    dictionary: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    ranges: &mut Vec<usize>,
-    numeric_dictionary: &HashMap<PrimitiveNumericExpression, usize>,
-    mutex_dict: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    mutex_ranges: &mut Vec<usize>,
-    implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
-    sas_comp_axioms: &mut Vec<SASCompareAxiom>,
-    num_vals: &[f64],
-    relevant_numeric_vars: &[usize],
 ) -> Vec<SASOperator> {
-    let conditions = translate_strips_conditions(
-        &operator.precondition,
-        dictionary,
-        ranges,
-        numeric_dictionary,
-        mutex_dict,
-        mutex_ranges,
-        comp_axiom_dict,
-        sas_comp_axioms,
-    );
+    let conditions = translate_strips_conditions(translation, &operator.precondition);
 
     if conditions.is_none() {
         return vec![];
@@ -465,22 +465,7 @@ fn translate_strips_operator(
 
     let mut sas_operators = vec![];
     for condition in conditions.unwrap() {
-        if let Some(op) = translate_strips_operator_aux(
-            simplified_effect_condition_counter,
-            added_implied_precondition_counter,
-            operator,
-            dictionary,
-            ranges,
-            numeric_dictionary,
-            mutex_dict,
-            mutex_ranges,
-            implied_facts,
-            &condition,
-            comp_axiom_dict,
-            sas_comp_axioms,
-            num_vals,
-            relevant_numeric_vars,
-        ) {
+        if let Some(op) = translate_strips_operator_aux(translation, operator, &condition) {
             sas_operators.push(op);
         }
     }
@@ -492,14 +477,8 @@ fn translate_strips_operator(
 // ============================================================
 
 fn negate_and_translate_condition(
+    translation: &mut Translation,
     add_conds: &[Vec<Condition>],
-    dictionary: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    ranges: &mut Vec<usize>,
-    numeric_dictionary: &HashMap<PrimitiveNumericExpression, usize>,
-    mutex_dict: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    mutex_ranges: &mut Vec<usize>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
-    sas_comp_axioms: &mut Vec<SASCompareAxiom>,
 ) -> Option<Vec<Assignment>> {
     // condition is a list of lists of literals (DNF)
     // the result is the negation of the condition in DNF in FDR
@@ -514,16 +493,7 @@ fn negate_and_translate_condition(
     let combinations = cartesian_product_conditions(add_conds);
     for combination in &combinations {
         let cond: Vec<Condition> = combination.iter().map(negate_condition).collect();
-        let translated = translate_strips_conditions(
-            &cond,
-            dictionary,
-            ranges,
-            numeric_dictionary,
-            mutex_dict,
-            mutex_ranges,
-            comp_axiom_dict,
-            sas_comp_axioms,
-        );
+        let translated = translate_strips_conditions(translation, &cond);
         if let Some(t) = translated {
             negation.extend(t);
         }
@@ -559,40 +529,20 @@ fn cartesian_product_conditions(lists: &[Vec<Condition>]) -> Vec<Vec<Condition>>
 // ============================================================
 
 fn translate_strips_operator_aux(
-    simplified_effect_condition_counter: &mut usize,
-    added_implied_precondition_counter: &mut usize,
+    translation: &mut Translation,
     operator: &PropositionalAction,
-    dictionary: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    ranges: &mut Vec<usize>,
-    numeric_dictionary: &HashMap<PrimitiveNumericExpression, usize>,
-    mutex_dict: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    mutex_ranges: &mut Vec<usize>,
-    implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
     condition: &Assignment,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
-    sas_comp_axioms: &mut Vec<SASCompareAxiom>,
-    num_vals: &[f64],
-    relevant_numeric: &[usize],
 ) -> Option<SASOperator> {
     // Collect all add effects
     let mut effects_by_variable: HashMap<usize, HashMap<usize, Vec<Assignment>>> = HashMap::new();
     let mut add_conds_by_variable: HashMap<usize, Vec<Vec<Condition>>> = HashMap::new();
 
     for (conditions_list, fact) in &operator.add_effects {
-        let eff_condition_list = translate_strips_conditions(
-            conditions_list,
-            dictionary,
-            ranges,
-            numeric_dictionary,
-            mutex_dict,
-            mutex_ranges,
-            comp_axiom_dict,
-            sas_comp_axioms,
-        );
+        let eff_condition_list = translate_strips_conditions(translation, conditions_list);
         if eff_condition_list.is_none() {
             continue; // Impossible condition
         }
-        if let Some(pairs) = dictionary.get(fact) {
+        if let Some(pairs) = translation.dictionary.get(fact) {
             for &(var, val) in pairs {
                 effects_by_variable
                     .entry(var)
@@ -613,20 +563,11 @@ fn translate_strips_operator_aux(
         HashMap::new();
 
     for (conditions_list, fact) in &operator.del_effects {
-        let eff_condition_list = translate_strips_conditions(
-            conditions_list,
-            dictionary,
-            ranges,
-            numeric_dictionary,
-            mutex_dict,
-            mutex_ranges,
-            comp_axiom_dict,
-            sas_comp_axioms,
-        );
+        let eff_condition_list = translate_strips_conditions(translation, conditions_list);
         if eff_condition_list.is_none() {
             continue;
         }
-        if let Some(pairs) = dictionary.get(fact) {
+        if let Some(pairs) = translation.dictionary.get(fact) {
             for &(var, val) in pairs {
                 del_effects_by_variable
                     .entry(var)
@@ -643,22 +584,13 @@ fn translate_strips_operator_aux(
         HashMap::new();
 
     for (conditions_list, assignment) in &operator.assign_effects {
-        let eff_condition_list = translate_strips_conditions(
-            conditions_list,
-            dictionary,
-            ranges,
-            numeric_dictionary,
-            mutex_dict,
-            mutex_ranges,
-            comp_axiom_dict,
-            sas_comp_axioms,
-        );
+        let eff_condition_list = translate_strips_conditions(translation, conditions_list);
         if eff_condition_list.is_none() {
             continue;
         }
         if let Some(expr_pne) = assignment.expression.as_pne() {
-            if let Some(&expr_var) = numeric_dictionary.get(expr_pne)
-                && let Some(&fluent_var) = numeric_dictionary.get(&assignment.fluent)
+            if let Some(&expr_var) = translation.numeric.get(expr_pne)
+                && let Some(&fluent_var) = translation.numeric.get(&assignment.fluent)
             {
                 ass_effects_by_variable
                     .entry(fluent_var)
@@ -668,15 +600,15 @@ fn translate_strips_operator_aux(
                     .extend(eff_condition_list.unwrap());
             }
         } else {
-            // Expression might be in numeric dictionary directly
+            // Expression might be in numeric translation.dictionary directly
             // Check if expression can be looked up
         }
     }
 
     if let Some(cost_assignment) = &operator.cost
         && let Some(expr_pne) = cost_assignment.expression.as_pne()
-        && let Some(&expr_var) = numeric_dictionary.get(expr_pne)
-        && let Some(&fluent_var) = numeric_dictionary.get(&cost_assignment.fluent)
+        && let Some(&expr_var) = translation.numeric.get(expr_pne)
+        && let Some(&fluent_var) = translation.numeric.get(&cost_assignment.fluent)
     {
         ass_effects_by_variable
             .entry(fluent_var)
@@ -693,22 +625,13 @@ fn translate_strips_operator_aux(
             .cloned()
             .unwrap_or_else(Vec::new);
 
-        let no_add_effect_condition = negate_and_translate_condition(
-            &add_conds,
-            dictionary,
-            ranges,
-            numeric_dictionary,
-            mutex_dict,
-            mutex_ranges,
-            comp_axiom_dict,
-            sas_comp_axioms,
-        );
+        let no_add_effect_condition = negate_and_translate_condition(translation, &add_conds);
 
         if no_add_effect_condition.is_none() {
             continue; // Always an add effect
         }
 
-        let none_of_those = ranges[var] - 1;
+        let none_of_those = translation.ranges[var] - 1;
         for (&val, conds) in del_vals {
             for cond in conds {
                 let mut guard_cond = cond.clone();
@@ -740,22 +663,14 @@ fn translate_strips_operator_aux(
         }
     }
 
+    let cost = sas_operator_cost(translation, &operator.name, operator.cost.as_ref());
     build_sas_operator(
-        simplified_effect_condition_counter,
-        added_implied_precondition_counter,
+        translation,
         &operator.name,
         condition,
         &effects_by_variable,
         &ass_effects_by_variable,
-        sas_operator_cost(
-            &operator.name,
-            operator.cost.as_ref(),
-            numeric_dictionary,
-            num_vals,
-        ),
-        ranges,
-        implied_facts,
-        relevant_numeric,
+        cost,
     )
 }
 
@@ -773,11 +688,11 @@ fn translate_strips_operator_aux(
 /// Anything else cannot be turned into a number here; returning a default
 /// would silently replace the action's real cost, so it is a hard error.
 fn sas_operator_cost(
+    translation: &Translation,
     action_name: &str,
     cost: Option<&FunctionAssignment>,
-    numeric_dictionary: &HashMap<PrimitiveNumericExpression, usize>,
-    num_vals: &[f64],
 ) -> f64 {
+    let (numeric_dictionary, num_vals) = (&translation.numeric, &translation.num_vals);
     let Some(cost) = cost else {
         return 1.0;
     };
@@ -798,17 +713,21 @@ fn sas_operator_cost(
 // ============================================================
 
 fn build_sas_operator(
-    simplified_effect_condition_counter: &mut usize,
-    added_implied_precondition_counter: &mut usize,
+    translation: &mut Translation,
     name: &str,
     condition: &Assignment,
     effects_by_variable: &HashMap<usize, HashMap<usize, Vec<Assignment>>>,
     ass_effects_by_variable: &HashMap<usize, HashMap<(String, usize), Vec<Assignment>>>,
     cost: f64,
-    ranges: &[usize],
-    implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
-    relevant_numeric_variables: &[usize],
 ) -> Option<SASOperator> {
+    let Translation {
+        ranges,
+        implied_facts,
+        relevant_numeric: relevant_numeric_variables,
+        simplified_effect_conditions: simplified_effect_condition_counter,
+        added_implied_preconditions: added_implied_precondition_counter,
+        ..
+    } = translation;
     let implied_precondition: HashSet<(usize, usize)> = if options::ADD_IMPLIED_PRECONDITIONS {
         let mut ip = HashSet::new();
         for fact in condition.iter() {
@@ -966,25 +885,10 @@ fn prune_stupid_effect_conditions(
 // ============================================================
 
 fn translate_strips_axiom(
+    translation: &mut Translation,
     axiom: &PropositionalAxiom,
-    dictionary: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    ranges: &mut Vec<usize>,
-    num_dict: &HashMap<PrimitiveNumericExpression, usize>,
-    mutex_dict: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    mutex_ranges: &mut Vec<usize>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
-    sas_comp_axioms: &mut Vec<SASCompareAxiom>,
 ) -> Vec<SASAxiom> {
-    let conditions = translate_strips_conditions(
-        &axiom.condition,
-        dictionary,
-        ranges,
-        num_dict,
-        mutex_dict,
-        mutex_ranges,
-        comp_axiom_dict,
-        sas_comp_axioms,
-    );
+    let conditions = translate_strips_conditions(translation, &axiom.condition);
     if conditions.is_none() {
         return vec![];
     }
@@ -992,15 +896,15 @@ fn translate_strips_axiom(
     let effect = match &axiom.effect {
         Condition::NegatedAtom(natom) => {
             let pos_atom = Atom::new(natom.predicate.clone(), natom.args.clone());
-            if let Some(pairs) = dictionary.get(&pos_atom) {
+            if let Some(pairs) = translation.dictionary.get(&pos_atom) {
                 let (var, _) = pairs[0];
-                (var, ranges[var] - 1)
+                (var, translation.ranges[var] - 1)
             } else {
                 return vec![];
             }
         }
         Condition::Atom(atom) => {
-            if let Some(pairs) = dictionary.get(atom) {
+            if let Some(pairs) = translation.dictionary.get(atom) {
                 pairs[0]
             } else {
                 return vec![];
@@ -1054,37 +958,12 @@ fn translate_numeric_axiom(
 // ============================================================
 
 fn translate_strips_operators(
-    simplified_effect_condition_counter: &mut usize,
-    added_implied_precondition_counter: &mut usize,
+    translation: &mut Translation,
     actions: &[PropositionalAction],
-    strips_to_sas: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    ranges: &mut Vec<usize>,
-    numeric_strips_to_sas: &HashMap<PrimitiveNumericExpression, usize>,
-    mutex_dict: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    mutex_ranges: &mut Vec<usize>,
-    implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
-    sas_comp_axioms: &mut Vec<SASCompareAxiom>,
-    num_vals: &[f64],
-    relevant_numeric_vars: &[usize],
 ) -> Vec<SASOperator> {
     let mut result = vec![];
     for action in actions {
-        let sas_ops = translate_strips_operator(
-            simplified_effect_condition_counter,
-            added_implied_precondition_counter,
-            action,
-            strips_to_sas,
-            ranges,
-            numeric_strips_to_sas,
-            mutex_dict,
-            mutex_ranges,
-            implied_facts,
-            comp_axiom_dict,
-            sas_comp_axioms,
-            num_vals,
-            relevant_numeric_vars,
-        );
+        let sas_ops = translate_strips_operator(translation, action);
         result.extend(sas_ops);
     }
     result
@@ -1095,27 +974,12 @@ fn translate_strips_operators(
 // ============================================================
 
 fn translate_strips_axioms(
+    translation: &mut Translation,
     axioms: &[PropositionalAxiom],
-    strips_to_sas: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    ranges: &mut Vec<usize>,
-    num_dict: &HashMap<PrimitiveNumericExpression, usize>,
-    mutex_dict: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    mutex_ranges: &mut Vec<usize>,
-    comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
-    sas_comp_axioms: &mut Vec<SASCompareAxiom>,
 ) -> Vec<SASAxiom> {
     let mut result = vec![];
     for axiom in axioms {
-        let sas_axioms = translate_strips_axiom(
-            axiom,
-            strips_to_sas,
-            ranges,
-            num_dict,
-            mutex_dict,
-            mutex_ranges,
-            comp_axiom_dict,
-            sas_comp_axioms,
-        );
+        let sas_axioms = translate_strips_axiom(translation, axiom);
         result.extend(sas_axioms);
     }
     result
@@ -1149,47 +1013,43 @@ fn add_key_to_comp_axioms(
 // translate_task
 // ============================================================
 
-fn translate_task(
-    simplified_effect_condition_counter: &mut usize,
-    added_implied_precondition_counter: &mut usize,
-    strips_to_sas: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    ranges: &mut Vec<usize>,
-    translation_key: &mut Vec<Vec<String>>,
-    numeric_strips_to_sas: &HashMap<PrimitiveNumericExpression, usize>,
-    num_count: usize,
-    mutex_dict: &mut HashMap<Atom, Vec<(usize, usize)>>,
-    mutex_ranges: &mut Vec<usize>,
-    mutex_key: &[Vec<(usize, usize)>],
-    init: &[Atom],
-    num_init: &[FunctionAssignment],
-    goal_list: &[Condition],
-    global_constraint: &Condition,
-    actions: &[PropositionalAction],
+/// The grounded task an SAS+ encoding is built from.
+struct GroundedTask<'a> {
+    init: &'a [Atom],
+    num_init: &'a [FunctionAssignment],
+    goal_list: &'a [Condition],
+    global_constraint: &'a Condition,
+    actions: &'a [PropositionalAction],
     axioms: Vec<PropositionalAxiom>,
-    num_axioms: &[InstantiatedNumericAxiom],
-    num_axioms_by_layer: &BTreeMap<i32, Vec<InstantiatedNumericAxiom>>,
-    num_axiom_map: &HashMap<PrimitiveNumericExpression, PrimitiveNumericExpression>,
-    const_num_axioms: &HashSet<InstantiatedNumericAxiom>,
-    metric: &(String, PrimitiveNumericExpression),
-    implied_facts: &HashMap<(usize, usize), Vec<(usize, usize)>>,
-    init_constant_predicates: &[Atom],
-    init_constant_numerics: &[FunctionAssignment],
+    metric: &'a (String, PrimitiveNumericExpression),
+    init_constant_predicates: &'a [Atom],
+    init_constant_numerics: &'a [FunctionAssignment],
+}
+
+fn translate_task(
+    translation: &mut Translation,
+    task: GroundedTask,
+    numeric_axioms: &numeric_axiom_rules::NumericAxioms,
 ) -> Result<SASTask, String> {
     // Process axioms
-    let (processed_axioms, axiom_init, axiom_layer_dict) =
-        axiom_rules::handle_axioms(actions, axioms, goal_list, global_constraint);
+    let (processed_axioms, axiom_init, axiom_layer_dict) = axiom_rules::handle_axioms(
+        task.actions,
+        task.axioms,
+        task.goal_list,
+        task.global_constraint,
+    );
 
     // Extend init with axiom init atoms
-    let mut full_init: Vec<Atom> = init.to_vec();
+    let mut full_init: Vec<Atom> = task.init.to_vec();
     full_init.extend(axiom_init);
 
     // Initialize init_values: Closed World Assumption
-    let mut init_values: Vec<i32> = ranges.iter().map(|&r| (r as i32) - 1).collect();
+    let mut init_values: Vec<i32> = translation.ranges.iter().map(|&r| (r as i32) - 1).collect();
     for fact in &full_init {
-        if let Some(pairs) = strips_to_sas.get(fact) {
+        if let Some(pairs) = translation.dictionary.get(fact) {
             for &(var, val) in pairs {
                 let curr_val = init_values[var];
-                if curr_val != (ranges[var] as i32 - 1) && curr_val != val as i32 {
+                if curr_val != (translation.ranges[var] as i32 - 1) && curr_val != val as i32 {
                     return Err(format!("Inconsistent init facts! [fact = {:?}]", fact));
                 }
                 init_values[var] = val as i32;
@@ -1197,34 +1057,12 @@ fn translate_task(
         }
     }
 
-    // Comparison axioms tracking
-    let mut comp_axiom_dict: HashMap<(String, Vec<usize>), Condition> = HashMap::new();
-    let mut sas_comp_axioms: Vec<SASCompareAxiom> = vec![];
-
     // Translate goal
-    let goal_dict_list = translate_strips_conditions(
-        goal_list,
-        strips_to_sas,
-        ranges,
-        numeric_strips_to_sas,
-        mutex_dict,
-        mutex_ranges,
-        &mut comp_axiom_dict,
-        &mut sas_comp_axioms,
-    );
+    let goal_dict_list = translate_strips_conditions(translation, task.goal_list);
 
     // Translate global constraint
-    let gc_as_list = vec![global_constraint.clone()];
-    let global_constraint_dict_list = translate_strips_conditions(
-        &gc_as_list,
-        strips_to_sas,
-        ranges,
-        numeric_strips_to_sas,
-        mutex_dict,
-        mutex_ranges,
-        &mut comp_axiom_dict,
-        &mut sas_comp_axioms,
-    );
+    let gc_as_list = vec![task.global_constraint.clone()];
+    let global_constraint_dict_list = translate_strips_conditions(translation, &gc_as_list);
 
     if goal_dict_list.is_none() {
         return Ok(trivial_task(false, "Goal violates a mutex"));
@@ -1249,14 +1087,14 @@ fn translate_task(
     // Numeric init values.
     //
     // Fluents without a SAS numeric variable are not dropped here: the caller
-    // splits `num_init` on exactly the same predicate and hands those facts to
-    // `SASTask` as `init_constant_numerics`, so skipping them is the
+    // splits `task.num_init` on exactly the same predicate and hands those facts to
+    // `SASTask` as `task.init_constant_numerics`, so skipping them is the
     // complementary half of that split.
-    let mut num_init_values: Vec<f64> = vec![0.0; num_count];
+    let mut num_init_values: Vec<f64> = vec![0.0; translation.num_count];
 
     let mut relevant_numeric: Vec<usize> = vec![];
-    for fact in num_init {
-        let Some(&var) = numeric_strips_to_sas.get(&fact.fluent) else {
+    for fact in task.num_init {
+        let Some(&var) = translation.numeric.get(&fact.fluent) else {
             continue;
         };
         let FunctionalExpression::NumericConstant(nc) = &fact.expression else {
@@ -1277,8 +1115,8 @@ fn translate_task(
     // compound cost expression into a derived function backed by such an
     // axiom. Constant axiom effects are derived fluents and therefore never
     // collide with the `:init` facts above.
-    for axiom in const_num_axioms {
-        if let Some(&var) = numeric_strips_to_sas.get(&axiom.effect) {
+    for axiom in &numeric_axioms.constant {
+        if let Some(&var) = translation.numeric.get(&axiom.effect) {
             let Some(FunctionalExpression::NumericConstant(nc)) = axiom.parts.first() else {
                 unreachable!(
                     "constant numeric axiom {} must hold a folded numeric constant",
@@ -1290,58 +1128,40 @@ fn translate_task(
     }
 
     // Translate operators
-    let operators = translate_strips_operators(
-        simplified_effect_condition_counter,
-        added_implied_precondition_counter,
-        actions,
-        strips_to_sas,
-        ranges,
-        numeric_strips_to_sas,
-        mutex_dict,
-        mutex_ranges,
-        implied_facts,
-        &mut comp_axiom_dict,
-        &mut sas_comp_axioms,
-        &num_init_values,
-        &relevant_numeric,
-    );
+    translation.num_vals = num_init_values;
+    translation.relevant_numeric = relevant_numeric;
+    let operators = translate_strips_operators(translation, task.actions);
 
     // Translate axioms
-    let sas_axioms = translate_strips_axioms(
-        &processed_axioms,
-        strips_to_sas,
-        ranges,
-        numeric_strips_to_sas,
-        mutex_dict,
-        mutex_ranges,
-        &mut comp_axiom_dict,
-        &mut sas_comp_axioms,
-    );
+    let sas_axioms = translate_strips_axioms(translation, &processed_axioms);
 
     // Translate numeric axioms
-    let const_num_axiom_effects: HashSet<PrimitiveNumericExpression> = const_num_axioms
+    let const_num_axiom_effects: HashSet<PrimitiveNumericExpression> = numeric_axioms
+        .constant
         .iter()
         .map(|ax| ax.effect.clone())
         .collect();
-    let sas_num_axioms: Vec<SASNumericAxiom> = num_axioms
+    let sas_num_axioms: Vec<SASNumericAxiom> = numeric_axioms
+        .axioms
         .iter()
         .filter(|ax| {
-            !const_num_axiom_effects.contains(&ax.effect) && !num_axiom_map.contains_key(&ax.effect)
+            !const_num_axiom_effects.contains(&ax.effect)
+                && !numeric_axioms.equivalent.contains_key(&ax.effect)
         })
-        .filter_map(|ax| translate_numeric_axiom(ax, strips_to_sas, numeric_strips_to_sas))
+        .filter_map(|ax| translate_numeric_axiom(ax, &translation.dictionary, &translation.numeric))
         .collect();
 
     // Compute axiom layers
-    let mut axiom_layers: Vec<i32> = vec![-1; ranges.len()];
-    let mut num_axiom_layers: Vec<i32> = vec![-1; num_count];
+    let mut axiom_layers: Vec<i32> = vec![-1; translation.ranges.len()];
+    let mut num_axiom_layers: Vec<i32> = vec![-1; translation.num_count];
     let mut num_axiom_layer = 0i32;
 
-    for (&layer, layer_axioms) in num_axioms_by_layer {
+    for (&layer, layer_axioms) in &numeric_axioms.by_layer {
         let mut sorted_axioms = layer_axioms.clone();
         sorted_axioms.sort_by(|a, b| a.name.cmp(&b.name));
         for axiom in &sorted_axioms {
-            if !num_axiom_map.contains_key(&axiom.effect)
-                && let Some(&var) = numeric_strips_to_sas.get(&axiom.effect)
+            if !numeric_axioms.equivalent.contains_key(&axiom.effect)
+                && let Some(&var) = translation.numeric.get(&axiom.effect)
             {
                 if layer == -1 {
                     num_axiom_layers[var] = -1;
@@ -1354,39 +1174,42 @@ fn translate_task(
     }
 
     // Extend init with comparison axiom init values
-    let comp_axiom_init: Vec<i32> = vec![2; sas_comp_axioms.len()]; // init to "none of those" (value 2)
+    let comp_axiom_init: Vec<i32> = vec![2; translation.sas_comparison_axioms.len()]; // init to "none of those" (value 2)
     init_values.extend(comp_axiom_init);
 
-    for axiom in &sas_comp_axioms {
+    for axiom in &translation.sas_comparison_axioms {
         axiom_layers[axiom.effect] = num_axiom_layer;
     }
 
     for (atom, &layer) in &axiom_layer_dict {
         assert!(layer >= 0);
-        if let Some(pairs) = strips_to_sas.get(atom) {
+        if let Some(pairs) = translation.dictionary.get(atom) {
             let (var, _val) = pairs[0];
             axiom_layers[var] = layer + num_axiom_layer + 1;
         }
     }
 
     // Extend axiom_layers for comparison axiom variables
-    while axiom_layers.len() < ranges.len() {
+    while axiom_layers.len() < translation.ranges.len() {
         axiom_layers.push(num_axiom_layer);
     }
 
-    add_key_to_comp_axioms(&sas_comp_axioms, translation_key);
+    add_key_to_comp_axioms(
+        &translation.sas_comparison_axioms.clone(),
+        &mut translation.translation_key,
+    );
 
     let variables = SASVariables::new(
-        ranges.clone(),
+        translation.ranges.clone(),
         axiom_layers,
-        translation_key.clone(),
+        translation.translation_key.clone(),
         num_axiom_layer,
     );
 
     // Build numeric variable names
-    let mut num_variables: Vec<String> = vec![String::new(); num_count];
-    let mut num_var_types: Vec<String> = vec!["U".to_string(); num_count];
-    for (entry, &idx) in numeric_strips_to_sas {
+    let mut num_variables: Vec<String> = vec![String::new(); translation.num_count];
+    let mut num_var_types: Vec<String> = vec!["U".to_string(); translation.num_count];
+    for (entry, &idx) in &translation.numeric {
         num_variables[idx] = format!("{}", entry);
         num_var_types[idx] = entry.ntype.to_string();
     }
@@ -1394,22 +1217,23 @@ fn translate_task(
     let numeric_variables =
         SASNumericVariables::new(num_variables, num_axiom_layers, num_var_types);
 
-    let mutexes: Vec<SASMutexGroup> = mutex_key
+    let mutexes: Vec<SASMutexGroup> = translation
+        .mutex_key
         .iter()
         .map(|group| SASMutexGroup::new(group.clone()))
         .collect();
 
-    let sas_init = SASInit::new(init_values, num_init_values);
+    let sas_init = SASInit::new(init_values, translation.num_vals.clone());
 
-    // Look up metric fluent
-    let sas_metric = if metric.1.symbol.is_empty() || metric.1.ntype == 'X' {
+    // Look up task.metric fluent
+    let sas_metric = if task.metric.1.symbol.is_empty() || task.metric.1.ntype == 'X' {
         // Unit cost or special marker
-        (metric.0.clone(), -1i64)
+        (task.metric.0.clone(), -1i64)
     } else {
-        if let Some(&idx) = numeric_strips_to_sas.get(&metric.1) {
-            (metric.0.clone(), idx as i64)
+        if let Some(&idx) = translation.numeric.get(&task.metric.1) {
+            (task.metric.0.clone(), idx as i64)
         } else {
-            (metric.0.clone(), -1i64)
+            (task.metric.0.clone(), -1i64)
         }
     };
 
@@ -1429,21 +1253,23 @@ fn translate_task(
         .next()
         .expect("length checked above");
 
-    Ok(SASTask::new(
+    let mut sas_task = SASTask {
         variables,
         numeric_variables,
         mutexes,
-        sas_init,
-        sas_goal,
+        init: sas_init,
+        goal: sas_goal,
         operators,
-        sas_axioms,
-        sas_comp_axioms,
-        sas_num_axioms,
-        gc_pair,
-        sas_metric,
-        init_constant_predicates.to_vec(),
-        init_constant_numerics.to_vec(),
-    ))
+        axioms: sas_axioms,
+        comp_axioms: std::mem::take(&mut translation.sas_comparison_axioms),
+        numeric_axioms: sas_num_axioms,
+        global_constraint: gc_pair,
+        metric: sas_metric,
+        init_constant_predicates: task.init_constant_predicates.to_vec(),
+        init_constant_numerics: task.init_constant_numerics.to_vec(),
+    };
+    sas_task.canonicalize();
+    Ok(sas_task)
 }
 
 // ============================================================
@@ -1535,20 +1361,26 @@ fn build_implied_facts(
 // ============================================================
 
 /// Called from main.rs as translate_task_from_grounded_internal
+/// Encodes a grounded task as SAS+.
+///
+/// `singleton_groups` skips invariant synthesis and gives every fact its own
+/// variable: a larger encoding of the same task.
 pub fn translate_task_from_grounded_internal(
-    atoms: &[Atom],
-    grounded_ops: &[PropositionalAction],
-    _dom: &super::pddl_parser::lisp_parser::SExpr,
-    _prob: &super::pddl_parser::lisp_parser::SExpr,
-    num_fluents: &[PrimitiveNumericExpression],
-    num_axioms: &[InstantiatedNumericAxiom],
-    py_groups: Option<Vec<Vec<String>>>,
-    grounded_axioms: &[PropositionalAxiom],
-    reachable_action_params: &HashMap<String, Vec<Vec<String>>>,
-    goal: &Condition,
+    explored: &crate::instantiate::ExploreResult,
     norm_task: &NormalizableTask,
+    singleton_groups: bool,
 ) -> Result<SASTask, String> {
     let task = &norm_task.task;
+    let crate::instantiate::ExploreResult {
+        atoms,
+        num_fluents,
+        grounded_ops,
+        grounded_axioms,
+        numeric_axioms: num_axioms,
+        reachable_action_params,
+        ..
+    } = explored;
+    let goal = &norm_task.goal;
 
     fn type_rank(ntype: char) -> u8 {
         match ntype {
@@ -1596,8 +1428,8 @@ pub fn translate_task_from_grounded_internal(
     let fact_groups::FactGroups {
         groups,
         mutex_groups,
-        mut translation_key,
-    } = if py_groups.is_some() {
+        translation_key,
+    } = if singleton_groups {
         // Fast path: skip invariant finding / mutex discovery.
         // This preserves semantics but produces a less compact encoding.
         fact_groups::compute_singleton_groups(&atoms_set)
@@ -1605,39 +1437,42 @@ pub fn translate_task_from_grounded_internal(
         fact_groups::compute_groups(task, &atoms_set, &Some(reachable_action_params.clone()))
     };
 
-    let numeric_axiom_rules::NumericAxioms {
-        axioms: processed_num_axioms,
-        by_layer: num_axioms_by_layer,
-        equivalent: num_axiom_map,
-        constant: const_num_axioms,
-        ..
-    } = numeric_axiom_rules::handle_axioms(num_axioms);
+    let numeric_axioms = numeric_axiom_rules::handle_axioms(num_axioms);
 
-    let FactEncoding {
-        mut ranges,
-        dictionary: mut strips_to_sas,
-    } = encode_facts(&groups, options::USE_PARTIAL_ENCODING);
-    let NumericEncoding {
-        count: num_count,
-        variables: numeric_strips_to_sas,
-    } = encode_numeric_fluents(&processed_num_axioms, &num_axiom_map, &num_fluents_vec);
-
+    let facts = encode_facts(&groups, options::USE_PARTIAL_ENCODING);
+    let numeric = encode_numeric_fluents(
+        &numeric_axioms.axioms,
+        &numeric_axioms.equivalent,
+        &num_fluents_vec,
+    );
     // The mutex groups overlap, so they get their own variables, used only to
     // test whether a condition violates a mutex.
-    let FactEncoding {
-        ranges: mut mutex_ranges,
-        dictionary: mut mutex_dict,
-    } = encode_facts(&mutex_groups, false);
+    let mutex_facts = encode_facts(&mutex_groups, false);
 
-    // Build implied facts
     let implied_facts = if options::ADD_IMPLIED_PRECONDITIONS {
-        build_implied_facts(&strips_to_sas, &groups, &mutex_groups)
+        build_implied_facts(&facts.dictionary, &groups, &mutex_groups)
     } else {
         HashMap::new()
     };
+    let mutex_key = build_mutex_key(&facts.dictionary, &mutex_groups);
 
-    // Build mutex key
-    let mutex_key = build_mutex_key(&strips_to_sas, &mutex_groups);
+    let mut translation = Translation {
+        ranges: facts.ranges,
+        dictionary: facts.dictionary,
+        numeric: numeric.variables,
+        num_count: numeric.count,
+        mutex_ranges: mutex_facts.ranges,
+        mutex_dictionary: mutex_facts.dictionary,
+        mutex_key,
+        translation_key,
+        comparison_axioms: HashMap::new(),
+        sas_comparison_axioms: Vec::new(),
+        implied_facts,
+        num_vals: Vec::new(),
+        relevant_numeric: Vec::new(),
+        simplified_effect_conditions: 0,
+        added_implied_preconditions: 0,
+    };
 
     // Build goal list
     let goal_list: Vec<Condition> = match goal {
@@ -1658,54 +1493,42 @@ pub fn translate_task_from_grounded_internal(
         "Global constraint must be an atom literal"
     );
 
-    let mut simplified_effect_condition_counter: usize = 0;
-    let mut added_implied_precondition_counter: usize = 0;
+    let constant_predicates: Vec<Atom> = task
+        .init
+        .iter()
+        .filter(|atom| !atoms_set.contains(atom))
+        .cloned()
+        .collect();
+    let constant_numerics: Vec<FunctionAssignment> = task
+        .num_init
+        .iter()
+        .filter(|assignment| !num_fluents_set.contains(&assignment.fluent))
+        .cloned()
+        .collect();
 
-    // Translate the task
     let sas_task = translate_task(
-        &mut simplified_effect_condition_counter,
-        &mut added_implied_precondition_counter,
-        &mut strips_to_sas,
-        &mut ranges,
-        &mut translation_key,
-        &numeric_strips_to_sas,
-        num_count,
-        &mut mutex_dict,
-        &mut mutex_ranges,
-        &mutex_key,
-        &task.init,
-        &task.num_init,
-        &goal_list,
-        gc,
-        grounded_ops,
-        grounded_axioms.to_vec(),
-        &processed_num_axioms,
-        &num_axioms_by_layer,
-        &num_axiom_map,
-        &const_num_axioms,
-        &task.metric,
-        &implied_facts,
-        &task
-            .init
-            .iter()
-            .filter(|a| !atoms_set.contains(a))
-            .cloned()
-            .collect::<Vec<_>>(),
-        &task
-            .num_init
-            .iter()
-            .filter(|a| !num_fluents_set.contains(&a.fluent))
-            .cloned()
-            .collect::<Vec<_>>(),
+        &mut translation,
+        GroundedTask {
+            init: &task.init,
+            num_init: &task.num_init,
+            goal_list: &goal_list,
+            global_constraint: gc,
+            actions: grounded_ops,
+            axioms: grounded_axioms.to_vec(),
+            metric: &task.metric,
+            init_constant_predicates: &constant_predicates,
+            init_constant_numerics: &constant_numerics,
+        },
+        &numeric_axioms,
     )?;
 
     info!(
         "{} effect conditions simplified",
-        simplified_effect_condition_counter
+        translation.simplified_effect_conditions
     );
     info!(
         "{} implied preconditions added",
-        added_implied_precondition_counter
+        translation.added_implied_preconditions
     );
 
     // Filter unreachable facts

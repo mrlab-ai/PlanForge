@@ -362,12 +362,12 @@ impl FunctionalExpression {
                 }) {
                     self.clone()
                 } else {
-                    let derived = task_function_admin.get_derived_function(self, fluent_functions);
+                    let derived = task_function_admin.get_derived_function(self);
                     FunctionalExpression::PrimitiveNumericExpression(derived)
                 }
             }
             FunctionalExpression::AdditiveInverse(_) => {
-                let derived = task_function_admin.get_derived_function(self, fluent_functions);
+                let derived = task_function_admin.get_derived_function(self);
                 FunctionalExpression::PrimitiveNumericExpression(derived)
             }
         }
@@ -409,8 +409,7 @@ pub fn instantiate_expression(
                 if let Some(value) = init_function_vals.get(&instantiated) {
                     let constant_expr =
                         FunctionalExpression::NumericConstant(NumericConstant::new(*value));
-                    let derived =
-                        task_function_admin.get_derived_function(&constant_expr, fluent_functions);
+                    let derived = task_function_admin.get_derived_function(&constant_expr);
                     if let Some(axiom) = task_function_admin
                         .get_all_axioms()
                         .into_iter()
