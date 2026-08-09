@@ -392,7 +392,7 @@ impl VarValueRenaming {
         *operators = new_operators;
     }
 
-    fn apply_to_axioms(&self, axioms: &mut Vec<SASAxiom>, comp_axioms: &mut Vec<SASCompareAxiom>) {
+    fn apply_to_axioms(&self, axioms: &mut Vec<SASAxiom>, comp_axioms: &mut [SASCompareAxiom]) {
         let mut new_axioms = vec![];
         let mut num_removed = 0;
         for axiom in axioms.iter() {
@@ -490,7 +490,7 @@ impl VarValueRenaming {
         &self,
         entry: &(usize, i32, usize, Vec<(usize, usize)>),
         conditions_dict: &HashMap<usize, usize>,
-    ) -> Option<(usize, i32, usize, Vec<(usize, usize)>)> {
+    ) -> Option<PrePost> {
         let (var_no, pre, post, ref cond) = *entry;
 
         let (new_var_no_opt, new_post) = self.translate_pair(var_no, post);

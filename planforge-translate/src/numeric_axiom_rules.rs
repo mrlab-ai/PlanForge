@@ -9,23 +9,31 @@ use super::pddl::f_expression::{
 };
 
 /// Returns (processed_axioms, axioms_by_layer, max_layer, axiom_map, constant_axioms)
-pub fn handle_axioms(
-    axioms: &[InstantiatedNumericAxiom],
-) -> (
-    Vec<InstantiatedNumericAxiom>,
-    BTreeMap<i32, Vec<InstantiatedNumericAxiom>>,
-    i32,
-    HashMap<PrimitiveNumericExpression, PrimitiveNumericExpression>,
-    HashSet<InstantiatedNumericAxiom>,
-) {
+/// The numeric axioms of a task, folded and layered.
+#[derive(Debug, PartialEq, Eq)]
+pub struct NumericAxioms {
+    /// Every axiom, ordered by the numeric variable it defines.
+    pub axioms: Vec<InstantiatedNumericAxiom>,
+    /// The axioms of each evaluation layer, lowest first.
+    pub by_layer: BTreeMap<i32, Vec<InstantiatedNumericAxiom>>,
+    /// The highest layer used, or `-1` when there are no axioms.
+    pub max_layer: i32,
+    /// Maps an axiom's effect onto the effect of an equivalent axiom that is
+    /// kept instead of it.
+    pub equivalent: HashMap<PrimitiveNumericExpression, PrimitiveNumericExpression>,
+    /// The axioms that fold to a constant.
+    pub constant: HashSet<InstantiatedNumericAxiom>,
+}
+
+pub fn handle_axioms(axioms: &[InstantiatedNumericAxiom]) -> NumericAxioms {
     if axioms.is_empty() {
-        return (
-            Vec::new(),
-            BTreeMap::new(),
-            -1,
-            HashMap::new(),
-            HashSet::new(),
-        );
+        return NumericAxioms {
+            axioms: Vec::new(),
+            by_layer: BTreeMap::new(),
+            max_layer: -1,
+            equivalent: HashMap::new(),
+            constant: HashSet::new(),
+        };
     }
 
     let mut processed_axioms = axioms.to_vec();
@@ -56,13 +64,13 @@ pub fn handle_axioms(
     let (axioms_by_layer, max_layer) = compute_axiom_layers(&processed_axioms, &constant_axioms);
     let axiom_map = identify_equivalent_axioms(&axioms_by_layer);
 
-    (
-        processed_axioms,
-        axioms_by_layer,
+    NumericAxioms {
+        axioms: processed_axioms,
+        by_layer: axioms_by_layer,
         max_layer,
-        axiom_map,
-        constant_axioms,
-    )
+        equivalent: axiom_map,
+        constant: constant_axioms,
+    }
 }
 
 fn is_folded_constant_axiom(axiom: &InstantiatedNumericAxiom) -> bool {
@@ -352,7 +360,7 @@ mod tests {
         let reverse = handle_axioms(&[second, first]);
 
         assert_eq!(forward, reverse);
-        assert_eq!(forward.0[0].effect.symbol, "a");
-        assert_eq!(forward.0[1].effect.symbol, "z");
+        assert_eq!(forward.axioms[0].effect.symbol, "a");
+        assert_eq!(forward.axioms[1].effect.symbol, "z");
     }
 }

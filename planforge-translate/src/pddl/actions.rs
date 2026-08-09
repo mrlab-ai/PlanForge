@@ -41,8 +41,6 @@ impl Action {
         }
     }
 
-    /// Parsing is handled in pddl_parser/parsing_functions.rs
-
     pub fn uniquify_variables(&mut self) {
         let mut type_map: HashMap<String, usize> = HashMap::new();
         let mut renamings: HashMap<String, String> = HashMap::new();

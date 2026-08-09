@@ -31,6 +31,15 @@ pub struct GroundModel {
 /// `(rule, condition)`: one place a ground atom can be plugged into.
 type Slot = (u32, u32);
 
+/// Argument tuples of the atoms that matched a condition.
+type Matched = Vec<Rc<[ObjectId]>>;
+
+/// Those tuples grouped by the values at a join's shared positions.
+type JoinIndex = HashMap<Box<[ObjectId]>, Matched>;
+
+/// A slot together with the constants its condition still has to match.
+type UnifierEntry<'a> = (&'a [(usize, ObjectId)], Slot);
+
 /// One condition of a rule, compiled for matching.
 ///
 /// Head variables are numbered by their position in the head, so a binding
@@ -61,11 +70,11 @@ enum Body {
     /// indexes its matches by the values at those shared positions.
     Join {
         key_positions: [Box<[usize]>; 2],
-        matched: [HashMap<Box<[ObjectId]>, Vec<Rc<[ObjectId]>>>; 2],
+        matched: [JoinIndex; 2],
     },
     /// Any number of conditions whose matches are enumerated as a product.
     Product {
-        matched: Vec<Vec<Rc<[ObjectId]>>>,
+        matched: Vec<Matched>,
         /// Conditions that have not matched anything yet: while this is
         /// positive the product is empty.
         unmatched: usize,
@@ -288,7 +297,7 @@ fn join_key_positions(left: &Condition, right: &Condition) -> [Box<[usize]>; 2] 
 
 /// Advances the product odometer, last condition fastest. Returns false once
 /// every combination has been visited.
-fn advance(cursor: &mut [usize], skip: usize, matched: &[Vec<Rc<[ObjectId]>>]) -> bool {
+fn advance(cursor: &mut [usize], skip: usize, matched: &[Matched]) -> bool {
     for position in (0..cursor.len()).rev() {
         if position == skip {
             continue;
@@ -320,7 +329,7 @@ struct Branch {
 }
 
 impl Generator {
-    fn build(entries: Vec<(&[(usize, ObjectId)], Slot)>) -> Generator {
+    fn build(entries: Vec<UnifierEntry>) -> Generator {
         let next_position = entries
             .iter()
             .filter_map(|(constants, _)| constants.first())
@@ -331,7 +340,7 @@ impl Generator {
         };
 
         let mut matches = Vec::new();
-        let mut by_object: HashMap<ObjectId, Vec<(&[(usize, ObjectId)], Slot)>> = HashMap::new();
+        let mut by_object: HashMap<ObjectId, Vec<UnifierEntry>> = HashMap::new();
         let mut rest = Vec::new();
         for (constants, slot) in entries {
             match constants.first() {
@@ -378,7 +387,7 @@ struct Unifier {
 
 impl Unifier {
     fn new(rules: &[Rule], predicate_count: usize) -> Self {
-        let mut entries: Vec<Vec<(&[(usize, ObjectId)], Slot)>> = vec![Vec::new(); predicate_count];
+        let mut entries: Vec<Vec<UnifierEntry>> = vec![Vec::new(); predicate_count];
         for (rule_index, rule) in rules.iter().enumerate() {
             for (condition_index, condition) in rule.conditions.iter().enumerate() {
                 entries[condition.predicate.index()].push((

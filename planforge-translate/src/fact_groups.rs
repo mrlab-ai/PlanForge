@@ -201,12 +201,22 @@ fn sort_groups(mut groups: Vec<Vec<Atom>>) -> Vec<Vec<Atom>> {
     groups
 }
 
-/// Returns (groups, mutex_groups, translation_key)
+/// The finite-domain encoding of the reachable atoms.
+pub struct FactGroups {
+    /// One group per SAS variable: the facts it can take as values.
+    pub groups: Vec<Vec<Atom>>,
+    /// Every mutex group found, including those no variable was built from.
+    pub mutex_groups: Vec<Vec<Atom>>,
+    /// The human-readable name of each value of each variable.
+    pub translation_key: Vec<Vec<String>>,
+}
+
+/// Builds the variables from the invariants the task admits.
 pub fn compute_groups(
     task: &Task,
     atoms: &HashSet<Atom>,
     reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
-) -> (Vec<Vec<Atom>>, Vec<Vec<Atom>>, Vec<Vec<String>>) {
+) -> FactGroups {
     let groups = invariant_finder::get_groups(task, reachable_action_params);
 
     info!("Instantiating groups...");
@@ -225,19 +235,24 @@ pub fn compute_groups(
     info!("Building translation key...");
     let translation_key = build_translation_key(&groups);
 
-    (groups, mutex_groups, translation_key)
+    FactGroups {
+        groups,
+        mutex_groups,
+        translation_key,
+    }
 }
 
-pub fn compute_singleton_groups(
-    atoms: &HashSet<Atom>,
-) -> (Vec<Vec<Atom>>, Vec<Vec<Atom>>, Vec<Vec<String>>) {
-    let mut groups: Vec<Vec<Atom>> = atoms.iter().cloned().map(|atom| vec![atom]).collect();
-    groups = sort_groups(groups);
-
-    let mutex_groups = groups.clone();
+/// Builds one variable per fact, skipping invariant synthesis. The encoding is
+/// larger but the task it describes is the same.
+pub fn compute_singleton_groups(atoms: &HashSet<Atom>) -> FactGroups {
+    let groups = sort_groups(atoms.iter().cloned().map(|atom| vec![atom]).collect());
     let translation_key = build_translation_key(&groups);
 
-    (groups, mutex_groups, translation_key)
+    FactGroups {
+        mutex_groups: groups.clone(),
+        groups,
+        translation_key,
+    }
 }
 
 #[cfg(test)]

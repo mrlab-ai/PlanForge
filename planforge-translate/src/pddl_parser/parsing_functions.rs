@@ -12,7 +12,7 @@ use crate::pddl::f_expression::*;
 use crate::pddl::functions::Function;
 use crate::pddl::pddl_types::{Type, TypedObject};
 use crate::pddl::predicates::Predicate;
-use crate::pddl::tasks::{Requirements, Task};
+use crate::pddl::tasks::{DomainDefinition, ProblemDefinition, Requirements, Task};
 
 /// Parses a list of typed items: "?x ?y - type ?z - type2"
 pub fn parse_typed_list(
@@ -541,86 +541,14 @@ pub fn parse_axiom(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
 
 /// Combines parsed domain and problem S-expressions into a Task.
 pub fn parse_task(domain_pddl: &SExpr, task_pddl: &SExpr) -> Task {
-    let domain_items = domain_pddl.as_list();
-    let task_items = task_pddl.as_list();
-
-    // Parse domain
-    let (
-        domain_name,
-        requirements,
-        types,
-        type_dict,
-        constants,
-        predicates,
-        functions,
-        actions,
-        axioms,
-    ) = parse_domain_pddl(domain_items);
-
-    // Parse problem
-    let (task_name, _task_domain, objects, mut init, num_init, goal, metric) =
-        parse_task_pddl(task_items, &type_dict);
-
-    // Combine objects
-    let mut all_objects = constants;
-    all_objects.extend(objects);
-
-    for obj in &all_objects {
-        init.push(Atom::new(
-            "=".to_string(),
-            vec![obj.name.clone(), obj.name.clone()],
-        ));
-    }
-
-    // Determine metric
-    let task_metric = metric.unwrap_or_else(|| {
-        (
-            "<".to_string(),
-            PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
-        )
-    });
-
-    // Check if total-cost function exists, if not add it
-    let mut all_functions = functions;
-    if !all_functions.iter().any(|f| f.name == "total-cost") {
-        all_functions.push(Function::new(
-            "total-cost".to_string(),
-            vec![],
-            "number".to_string(),
-        ));
-    }
-
-    Task::new(
-        domain_name,
-        task_name,
-        requirements,
-        types,
-        all_objects,
-        predicates,
-        all_functions,
-        init,
-        num_init,
-        goal,
-        actions,
-        axioms,
-        task_metric,
-    )
+    let (domain, type_dict) = parse_domain_pddl(domain_pddl.as_list());
+    let problem = parse_task_pddl(task_pddl.as_list(), &type_dict);
+    Task::new(domain, problem)
 }
 
-/// Generator in Python, here returns all parsed components.
-fn parse_domain_pddl(
-    items: &[SExpr],
-) -> (
-    String,                       // domain_name
-    Requirements,                 // requirements
-    Vec<Type>,                    // types
-    HashMap<String, Vec<String>>, // type_dict (supertypes)
-    Vec<TypedObject>,             // constants
-    Vec<Predicate>,               // predicates
-    Vec<Function>,                // functions
-    Vec<Action>,                  // actions
-    Vec<Axiom>,                   // axioms
-) {
+/// Parses a `(define (domain ...))` form, returning it together with the map
+/// from each type to its supertypes, which the problem needs to type objects.
+fn parse_domain_pddl(items: &[SExpr]) -> (DomainDefinition, HashMap<String, Vec<String>>) {
     assert_eq!(items[0].as_atom(), "define", "Expected (define ...)");
 
     let domain_name_list = items[1].as_list();
@@ -637,8 +565,8 @@ fn parse_domain_pddl(
     let mut actions: Vec<Action> = vec![];
     let mut axioms: Vec<Axiom> = vec![];
 
-    for i in 2..items.len() {
-        let section = items[i].as_list();
+    for item in &items[2..] {
+        let section = item.as_list();
         if section.is_empty() {
             continue;
         }
@@ -685,15 +613,17 @@ fn parse_domain_pddl(
     }
 
     (
-        domain_name,
-        requirements,
-        types,
+        DomainDefinition {
+            domain_name,
+            requirements,
+            types,
+            constants,
+            predicates,
+            functions,
+            actions,
+            axioms,
+        },
         type_dict,
-        constants,
-        predicates,
-        functions,
-        actions,
-        axioms,
     )
 }
 
@@ -730,41 +660,29 @@ fn parse_function_list(items: &[SExpr]) -> Vec<Function> {
     result
 }
 
-fn parse_task_pddl(
-    items: &[SExpr],
-    type_dict: &HashMap<String, Vec<String>>,
-) -> (
-    String,                                       // task_name
-    String,                                       // domain_name reference
-    Vec<TypedObject>,                             // objects
-    Vec<Atom>,                                    // init (propositional)
-    Vec<FunctionAssignment>,                      // num_init (numeric)
-    Condition,                                    // goal
-    Option<(String, PrimitiveNumericExpression)>, // metric
-) {
+fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -> ProblemDefinition {
     assert_eq!(items[0].as_atom(), "define");
 
     let problem_list = items[1].as_list();
     assert_eq!(problem_list[0].as_atom(), "problem");
     let task_name = problem_list[1].as_atom().to_string();
 
-    let mut domain_name = String::new();
     let mut objects: Vec<TypedObject> = vec![];
     let mut init: Vec<Atom> = vec![];
     let mut num_init: Vec<FunctionAssignment> = vec![];
     let mut goal = Condition::Truth;
     let mut metric: Option<(String, PrimitiveNumericExpression)> = None;
 
-    for i in 2..items.len() {
-        let section = items[i].as_list();
+    for item in &items[2..] {
+        let section = item.as_list();
         if section.is_empty() {
             continue;
         }
         let tag = section[0].as_atom();
         match tag {
-            ":domain" => {
-                domain_name = section[1].as_atom().to_string();
-            }
+            // The problem names the domain it belongs to; nothing checks
+            // that against the domain file, which the caller chose.
+            ":domain" => {}
             ":objects" => {
                 objects = parse_typed_list(&section[1..], false, "object");
             }
@@ -821,15 +739,14 @@ fn parse_task_pddl(
         }
     }
 
-    (
+    ProblemDefinition {
         task_name,
-        domain_name,
         objects,
         init,
         num_init,
         goal,
         metric,
-    )
+    }
 }
 
 pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {

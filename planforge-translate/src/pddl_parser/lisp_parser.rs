@@ -36,12 +36,17 @@ impl SExpr {
         matches!(self, SExpr::Atom(_))
     }
 
-    /// If this is a list, get its length; otherwise 0.
+    /// If this is a list, its length; an atom counts as length 0.
     pub fn len(&self) -> usize {
         match self {
             SExpr::List(l) => l.len(),
             SExpr::Atom(_) => 0,
         }
+    }
+
+    /// True for the empty list and for every atom.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

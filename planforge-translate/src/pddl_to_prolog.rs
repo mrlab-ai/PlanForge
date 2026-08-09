@@ -45,7 +45,7 @@ impl Rule {
     }
 
     fn rename_duplicate_variables_in_atom(
-        atom: &mut Vec<String>,
+        atom: &mut [String],
         extra_conditions: &mut Vec<(String, String)>,
     ) {
         let mut used_variables: HashSet<String> = HashSet::new();

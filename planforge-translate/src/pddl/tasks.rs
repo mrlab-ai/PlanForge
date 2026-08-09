@@ -57,43 +57,82 @@ pub struct Task {
     pub global_constraint: Condition,
 }
 
+/// What the `(define (domain ...))` form declares.
+pub struct DomainDefinition {
+    pub domain_name: String,
+    pub requirements: Requirements,
+    pub types: Vec<Type>,
+    pub constants: Vec<TypedObject>,
+    pub predicates: Vec<Predicate>,
+    pub functions: Vec<Function>,
+    pub actions: Vec<Action>,
+    pub axioms: Vec<Axiom>,
+}
+
+/// What the `(define (problem ...))` form declares.
+pub struct ProblemDefinition {
+    pub task_name: String,
+    pub objects: Vec<TypedObject>,
+    pub init: Vec<Atom>,
+    pub num_init: Vec<FunctionAssignment>,
+    pub goal: Condition,
+    pub metric: Option<(String, PrimitiveNumericExpression)>,
+}
+
 impl Task {
-    pub fn new(
-        domain_name: String,
-        task_name: String,
-        requirements: Requirements,
-        types: Vec<Type>,
-        objects: Vec<TypedObject>,
-        predicates: Vec<Predicate>,
-        functions: Vec<Function>,
-        init: Vec<Atom>,
-        num_init: Vec<FunctionAssignment>,
-        goal: Condition,
-        actions: Vec<Action>,
-        axioms: Vec<Axiom>,
-        metric: (String, PrimitiveNumericExpression),
-    ) -> Self {
-        let mut function_admin = DerivedFunctionAdministrator::new();
-        // Register all function symbols
-        for func in &functions {
-            function_admin.function_symbols.insert(func.name.clone());
+    /// Joins the two halves of a PDDL task: the problem's objects extend the
+    /// domain's constants, every object is made equal to itself so that `=`
+    /// preconditions can be grounded, and the metric defaults to minimising
+    /// `total-cost`, which is then declared if the domain did not declare it.
+    pub fn new(domain: DomainDefinition, problem: ProblemDefinition) -> Self {
+        let mut objects = domain.constants;
+        objects.extend(problem.objects);
+
+        let mut init = problem.init;
+        init.extend(objects.iter().map(|object| {
+            Atom::new(
+                "=".to_string(),
+                vec![object.name.clone(), object.name.clone()],
+            )
+        }));
+
+        let mut functions = domain.functions;
+        if !functions.iter().any(|f| f.name == "total-cost") {
+            functions.push(Function::new(
+                "total-cost".to_string(),
+                vec![],
+                "number".to_string(),
+            ));
+        }
+        let metric = problem.metric.unwrap_or_else(|| {
+            (
+                "<".to_string(),
+                PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
+            )
+        });
+
+        let mut function_administrator = DerivedFunctionAdministrator::new();
+        for function in &functions {
+            function_administrator
+                .function_symbols
+                .insert(function.name.clone());
         }
 
         Task {
-            domain_name,
-            task_name,
-            requirements,
-            types,
+            domain_name: domain.domain_name,
+            task_name: problem.task_name,
+            requirements: domain.requirements,
+            types: domain.types,
             objects,
-            predicates,
+            predicates: domain.predicates,
             functions,
             init,
-            num_init,
-            goal,
-            actions,
-            axioms,
+            num_init: problem.num_init,
+            goal: problem.goal,
+            actions: domain.actions,
+            axioms: domain.axioms,
             metric,
-            function_administrator: function_admin,
+            function_administrator,
             global_constraint: Condition::Truth,
         }
     }

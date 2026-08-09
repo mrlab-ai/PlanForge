@@ -1,4 +1,4 @@
-/// Configuration options for the translator.
+//! Configuration options for the translator.
 
 /// Whether to use partial encoding (default: true)
 pub const USE_PARTIAL_ENCODING: bool = true;

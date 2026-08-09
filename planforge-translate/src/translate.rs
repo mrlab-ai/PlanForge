@@ -97,25 +97,19 @@ impl Domains {
 }
 
 // ============================================================
-// strips_to_sas_dictionary
+// the SAS encoding of facts and numeric fluents
 // ============================================================
 
-fn strips_to_sas_dictionary(
-    groups: &[Vec<Atom>],
-    num_axioms: &[InstantiatedNumericAxiom],
-    num_axiom_map: &HashMap<PrimitiveNumericExpression, PrimitiveNumericExpression>,
-    num_fluents: &[PrimitiveNumericExpression],
-    assert_partial: bool,
-    include_numeric: bool,
-) -> (
-    Vec<usize>,                                 // ranges
-    HashMap<Atom, Vec<(usize, usize)>>,         // dictionary
-    usize,                                      // num_count
-    HashMap<PrimitiveNumericExpression, usize>, // numeric_dictionary
-) {
-    let mut dictionary: HashMap<Atom, Vec<(usize, usize)>> = HashMap::new();
-    let mut numeric_dictionary: HashMap<PrimitiveNumericExpression, usize> = HashMap::new();
+/// One SAS variable per group of mutually exclusive facts, plus a value for
+/// "none of those", and the map from a fact to the variable/value pairs that
+/// express it.
+struct FactEncoding {
+    ranges: Vec<usize>,
+    dictionary: HashMap<Atom, Vec<SasFact>>,
+}
 
+fn encode_facts(groups: &[Vec<Atom>], assert_partial: bool) -> FactEncoding {
+    let mut dictionary: HashMap<Atom, Vec<SasFact>> = HashMap::new();
     for (var_no, group) in groups.iter().enumerate() {
         for (val_no, atom) in group.iter().enumerate() {
             dictionary
@@ -127,48 +121,64 @@ fn strips_to_sas_dictionary(
 
     if assert_partial {
         for (atom, sas_pairs) in &dictionary {
-            assert!(
-                sas_pairs.len() == 1,
-                "Partial encoding assertion failed for atom {:?}: {} pairs",
-                atom,
+            assert_eq!(
+                sas_pairs.len(),
+                1,
+                "partial encoding covers {atom:?} by {} variables",
                 sas_pairs.len()
             );
         }
     }
 
-    let ranges: Vec<usize> = groups.iter().map(|group| group.len() + 1).collect();
+    FactEncoding {
+        ranges: groups.iter().map(|group| group.len() + 1).collect(),
+        dictionary,
+    }
+}
 
-    let mut num_count = 0usize;
+/// One SAS numeric variable per axiom effect that no equivalent axiom already
+/// defines, then one per fluent none of them defines. An axiom made redundant
+/// by an equivalent one shares that one's variable.
+struct NumericEncoding {
+    count: usize,
+    variables: HashMap<PrimitiveNumericExpression, usize>,
+}
 
-    if include_numeric {
-        let mut redundant_axioms = vec![];
-        for axiom in num_axioms {
-            if num_axiom_map.contains_key(&axiom.effect) {
-                redundant_axioms.push(axiom.effect.clone());
-            } else {
-                numeric_dictionary.insert(axiom.effect.clone(), num_count);
-                num_count += 1;
-            }
+fn encode_numeric_fluents(
+    num_axioms: &[InstantiatedNumericAxiom],
+    equivalent: &HashMap<PrimitiveNumericExpression, PrimitiveNumericExpression>,
+    num_fluents: &[PrimitiveNumericExpression],
+) -> NumericEncoding {
+    let mut variables: HashMap<PrimitiveNumericExpression, usize> = HashMap::new();
+    let mut count = 0usize;
+
+    let mut redundant = vec![];
+    for axiom in num_axioms {
+        if equivalent.contains_key(&axiom.effect) {
+            redundant.push(axiom.effect.clone());
+        } else {
+            variables.insert(axiom.effect.clone(), count);
+            count += 1;
         }
-        for axiom_effect in &redundant_axioms {
-            if let Some(mapped) = num_axiom_map.get(axiom_effect)
-                && let Some(&idx) = numeric_dictionary.get(mapped)
-            {
-                numeric_dictionary.insert(axiom_effect.clone(), idx);
-            }
-        }
-
-        let mut fluent_list: Vec<PrimitiveNumericExpression> = num_fluents.to_vec();
-        fluent_list.sort_by_cached_key(PrimitiveNumericExpression::to_string);
-        for fluent in &fluent_list {
-            if !numeric_dictionary.contains_key(fluent) {
-                numeric_dictionary.insert(fluent.clone(), num_count);
-                num_count += 1;
-            }
+    }
+    for effect in &redundant {
+        if let Some(kept) = equivalent.get(effect)
+            && let Some(&variable) = variables.get(kept)
+        {
+            variables.insert(effect.clone(), variable);
         }
     }
 
-    (ranges, dictionary, num_count, numeric_dictionary)
+    let mut fluents: Vec<PrimitiveNumericExpression> = num_fluents.to_vec();
+    fluents.sort_by_cached_key(PrimitiveNumericExpression::to_string);
+    for fluent in fluents {
+        if !variables.contains_key(&fluent) {
+            variables.insert(fluent, count);
+            count += 1;
+        }
+    }
+
+    NumericEncoding { count, variables }
 }
 
 // ============================================================
@@ -814,8 +824,8 @@ fn build_sas_operator(
     };
 
     let mut prevail_and_pre = condition.clone();
-    let mut pre_post: Vec<(usize, i32, usize, Vec<(usize, usize)>)> = vec![];
-    let mut num_pre_post: Vec<(usize, String, usize, Vec<(usize, usize)>)> = vec![];
+    let mut pre_post: Vec<PrePost> = vec![];
+    let mut num_pre_post: Vec<AssignEffect> = vec![];
 
     for (&var, effects) in effects_by_variable {
         let orig_pre = condition.get(var).map_or(-1, |value| value as i32);
@@ -1127,11 +1137,11 @@ fn add_key_to_comp_axioms(
             axiom.effect,
             translation_key.len()
         );
-        let mut value_list = vec![];
-        value_list.push(axiom.to_string());
-        value_list.push(axiom.invert_comparator().to_string());
-        value_list.push("<none of those>".to_string());
-        translation_key.push(value_list);
+        translation_key.push(vec![
+            axiom.to_string(),
+            axiom.invert_comparator().to_string(),
+            "<none of those>".to_string(),
+        ]);
     }
 }
 
@@ -1583,7 +1593,11 @@ pub fn translate_task_from_grounded_internal(
 
     // Compute fact groups
     let atoms_set: HashSet<Atom> = atoms.iter().cloned().collect();
-    let (groups, mutex_groups, mut translation_key) = if py_groups.is_some() {
+    let fact_groups::FactGroups {
+        groups,
+        mutex_groups,
+        mut translation_key,
+    } = if py_groups.is_some() {
         // Fast path: skip invariant finding / mutex discovery.
         // This preserves semantics but produces a less compact encoding.
         fact_groups::compute_singleton_groups(&atoms_set)
@@ -1591,35 +1605,29 @@ pub fn translate_task_from_grounded_internal(
         fact_groups::compute_groups(task, &atoms_set, &Some(reachable_action_params.clone()))
     };
 
-    // Handle numeric axioms
-    let (
-        processed_num_axioms,
-        num_axioms_by_layer,
-        _max_num_layer,
-        num_axiom_map,
-        const_num_axioms,
-    ) = numeric_axiom_rules::handle_axioms(num_axioms);
+    let numeric_axiom_rules::NumericAxioms {
+        axioms: processed_num_axioms,
+        by_layer: num_axioms_by_layer,
+        equivalent: num_axiom_map,
+        constant: const_num_axioms,
+        ..
+    } = numeric_axiom_rules::handle_axioms(num_axioms);
 
-    // Build STRIPS to SAS dictionary
-    let (mut ranges, mut strips_to_sas, num_count, numeric_strips_to_sas) =
-        strips_to_sas_dictionary(
-            &groups,
-            &processed_num_axioms,
-            &num_axiom_map,
-            &num_fluents_vec,
-            options::USE_PARTIAL_ENCODING,
-            true,
-        );
+    let FactEncoding {
+        mut ranges,
+        dictionary: mut strips_to_sas,
+    } = encode_facts(&groups, options::USE_PARTIAL_ENCODING);
+    let NumericEncoding {
+        count: num_count,
+        variables: numeric_strips_to_sas,
+    } = encode_numeric_fluents(&processed_num_axioms, &num_axiom_map, &num_fluents_vec);
 
-    // Build dictionary for full mutex groups
-    let (mut mutex_ranges, mut mutex_dict, _, _) = strips_to_sas_dictionary(
-        &mutex_groups,
-        &processed_num_axioms,
-        &num_axiom_map,
-        &num_fluents_vec,
-        false,
-        false,
-    );
+    // The mutex groups overlap, so they get their own variables, used only to
+    // test whether a condition violates a mutex.
+    let FactEncoding {
+        ranges: mut mutex_ranges,
+        dictionary: mut mutex_dict,
+    } = encode_facts(&mutex_groups, false);
 
     // Build implied facts
     let implied_facts = if options::ADD_IMPLIED_PRECONDITIONS {

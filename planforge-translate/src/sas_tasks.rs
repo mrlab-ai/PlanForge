@@ -504,21 +504,33 @@ impl SASGoal {
 // SASOperator
 // ============================================================
 
+/// A variable/value pair: one SAS fact.
+pub type SasFact = (usize, usize);
+
+/// An effect on a propositional variable: `(variable, precondition, new value,
+/// effect condition)`, where a precondition of `-1` means the effect applies
+/// whatever the variable's value is.
+pub type PrePost = (usize, i32, usize, Vec<SasFact>);
+
+/// An effect on a numeric variable: `(variable, operator, argument variable,
+/// effect condition)`.
+pub type AssignEffect = (usize, String, usize, Vec<SasFact>);
+
 #[derive(Debug, Clone)]
 pub struct SASOperator {
     pub name: String,
-    pub prevail: Vec<(usize, usize)>,
-    pub pre_post: Vec<(usize, i32, usize, Vec<(usize, usize)>)>, // (var, pre, post, cond) where pre=-1 means no precondition
-    pub assign_effects: Vec<(usize, String, usize, Vec<(usize, usize)>)>, // (nvar, op, ass_var, cond)
+    pub prevail: Vec<SasFact>,
+    pub pre_post: Vec<PrePost>,
+    pub assign_effects: Vec<AssignEffect>,
     pub cost: f64,
 }
 
 impl SASOperator {
     pub fn new(
         name: String,
-        mut prevail: Vec<(usize, usize)>,
-        pre_post: Vec<(usize, i32, usize, Vec<(usize, usize)>)>,
-        mut assign_effects: Vec<(usize, String, usize, Vec<(usize, usize)>)>,
+        mut prevail: Vec<SasFact>,
+        pre_post: Vec<PrePost>,
+        mut assign_effects: Vec<AssignEffect>,
         cost: f64,
     ) -> Self {
         prevail.sort();
@@ -533,19 +545,12 @@ impl SASOperator {
         }
     }
 
-    fn canonical_pre_post(
-        pre_post: Vec<(usize, i32, usize, Vec<(usize, usize)>)>,
-    ) -> Vec<(usize, i32, usize, Vec<(usize, usize)>)> {
-        // Tuplify -> sort -> dedup -> listify
-        let mut tupled: Vec<(usize, i32, usize, Vec<(usize, usize)>)> = pre_post;
-        tupled.sort_by(|a, b| {
-            a.0.cmp(&b.0)
-                .then_with(|| a.1.cmp(&b.1))
-                .then_with(|| a.2.cmp(&b.2))
-                .then_with(|| a.3.cmp(&b.3))
-        });
-        tupled.dedup();
-        tupled
+    /// Effects in a canonical order, so that two operators that differ only
+    /// in the order their effects were collected compare equal.
+    fn canonical_pre_post(mut pre_post: Vec<PrePost>) -> Vec<PrePost> {
+        pre_post.sort();
+        pre_post.dedup();
+        pre_post
     }
 
     pub fn validate(&self, variables: &SASVariables) {
