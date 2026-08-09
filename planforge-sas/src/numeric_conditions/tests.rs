@@ -343,11 +343,11 @@ fn precondition_is_contradicted_only_for_condition_vars() {
         nothing_known,
     ];
 
-    let holds = ExplicitFact::new(0, CONDITION_TRUE);
-    let fails = ExplicitFact::new(0, CONDITION_FALSE);
+    let holds = ExplicitFact::new(0, ConditionValue::True.as_usize());
+    let fails = ExplicitFact::new(0, ConditionValue::False.as_usize());
     assert!(!conditions.precondition_is_contradicted(&holds, &intervals));
     assert!(conditions.precondition_is_contradicted(&fails, &intervals));
 
-    let ordinary = ExplicitFact::new(3, CONDITION_TRUE);
+    let ordinary = ExplicitFact::new(3, ConditionValue::True.as_usize());
     assert!(!conditions.precondition_is_contradicted(&ordinary, &intervals));
 }

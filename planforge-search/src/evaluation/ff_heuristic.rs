@@ -62,6 +62,7 @@ use std::collections::{HashSet, VecDeque};
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 use planforge_sas::axioms::{CalOperator, ComparisonOperator};
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
     metric_operator_cost_from_initial_values,
@@ -72,8 +73,6 @@ type FactId = usize;
 type OpId = usize;
 type NumVarId = usize;
 type AxiomIdx = usize;
-
-const COMPARISON_TRUE_VALUE: usize = 0;
 
 /// Monotonic-relaxation envelope for one numeric variable.
 #[derive(Debug, Clone, Copy)]
@@ -366,13 +365,13 @@ impl<'task> FfHeuristic<'task> {
             if row.is_empty() {
                 *row = vec![None; task.variables()[affected].domain_size()];
             }
-            if COMPARISON_TRUE_VALUE >= row.len() {
+            if ConditionValue::True.as_usize() >= row.len() {
                 return Err(format!(
                     "comparison axiom {axiom_idx} affected variable has no TRUE value"
                 ));
             }
-            row[COMPARISON_TRUE_VALUE] = Some(fid);
-            fact_var_value.push((affected, COMPARISON_TRUE_VALUE));
+            row[ConditionValue::True.as_usize()] = Some(fid);
+            fact_var_value.push((affected, ConditionValue::True.as_usize()));
             fact_to_axiom.push(Some(axiom_idx));
             comparison_axioms.push(ComparisonAxiomDesc {
                 true_fact: fid,

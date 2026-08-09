@@ -36,7 +36,7 @@ use crate::evaluation::abstraction_collections::cost_partitioning::{
     RegionalCostAllocation, RegionalCostAllocationEntry, StateRegion, TransitionResidualCosts,
     state_region_intersection,
 };
-use planforge_sas::numeric_conditions::NumericConditions;
+use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 use planforge_sas::utils::interval::Interval;
 
 pub enum OcpTransitionSystemBuild {
@@ -55,9 +55,6 @@ impl OcpTransitionSystemBuild {
     }
 }
 
-const COMPARISON_TRUE_VAL: usize = 0;
-const COMPARISON_FALSE_VAL: usize = 1;
-const COMPARISON_UNKNOWN_VAL: usize = 2;
 // The comparison-enumeration cache short-circuits the per-state walk over
 // the comparison-tree forest in the regression Dijkstra. Each cached entry
 // is a `Vec<usize>` of resolved successor hashes, typically only a handful
@@ -2709,11 +2706,7 @@ impl DomainAbstractionFactory {
             let concrete_value = if comparison_var_ids.contains(&var)
                 && let Some(tree) = self.numeric_conditions.for_var(var)
             {
-                if tree.evaluate_point(&num_init) {
-                    COMPARISON_TRUE_VAL
-                } else {
-                    COMPARISON_FALSE_VAL
-                }
+                ConditionValue::from(tree.evaluate_point(&num_init)).as_usize()
             } else {
                 prop_init[var]
             };
@@ -2787,7 +2780,7 @@ impl DomainAbstractionFactory {
                 fixed_value
             } else {
                 *self.domain_mapping[var_id]
-                    .get(COMPARISON_UNKNOWN_VAL)
+                    .get(ConditionValue::Unknown.as_usize())
                     .with_context(|| {
                         format!("missing UNKNOWN mapping for comparison var {var_id}")
                     })?
@@ -2881,18 +2874,18 @@ impl DomainAbstractionFactory {
 
             let mult = hash_multipliers[var_id];
             let unknown_abs = *self.domain_mapping[var_id]
-                .get(COMPARISON_UNKNOWN_VAL)
+                .get(ConditionValue::Unknown.as_usize())
                 .with_context(|| format!("missing UNKNOWN mapping for comparison var {var_id}"))?
                 as i32;
             let delta_true = (self.domain_mapping[var_id]
-                .get(COMPARISON_TRUE_VAL)
+                .get(ConditionValue::True.as_usize())
                 .copied()
                 .with_context(|| format!("missing TRUE mapping for comparison var {var_id}"))?
                 as i32
                 - unknown_abs)
                 * mult as i32;
             let delta_false = (self.domain_mapping[var_id]
-                .get(COMPARISON_FALSE_VAL)
+                .get(ConditionValue::False.as_usize())
                 .copied()
                 .with_context(|| format!("missing FALSE mapping for comparison var {var_id}"))?
                 as i32
@@ -3643,7 +3636,8 @@ fn get_comparison_preconditions(
 ) -> Vec<ExplicitFact> {
     let mut out: Vec<ExplicitFact> = Vec::new();
     for f in &op.preconditions {
-        if comparison_var_ids.contains(&f.var()) && f.value() != COMPARISON_UNKNOWN_VAL {
+        if comparison_var_ids.contains(&f.var()) && f.value() != ConditionValue::Unknown.as_usize()
+        {
             out.push(f.clone());
         }
     }

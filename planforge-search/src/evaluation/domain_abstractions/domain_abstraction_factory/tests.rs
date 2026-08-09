@@ -11,7 +11,7 @@ use crate::evaluation::abstraction_collections::cost_partitioning::{
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
-use planforge_sas::numeric_conditions::{ConditionNode, NumericCondition};
+use planforge_sas::numeric_conditions::{ConditionNode, ConditionValue, NumericCondition};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
     NumericRootTask, NumericType, NumericVariable, Operator,
@@ -183,7 +183,7 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
             "x-lt-ten".into(),
             vec!["true".into(), "false".into(), "unknown".into()],
             Some(0),
-            COMPARISON_UNKNOWN_VAL,
+            ConditionValue::Unknown.as_usize(),
         ),
         ExplicitVariable::new(
             2,
@@ -201,7 +201,7 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
     let operators = vec![
         Operator::new(
             "increase-x".into(),
-            vec![ExplicitFact::new(0, COMPARISON_TRUE_VAL)],
+            vec![ExplicitFact::new(0, ConditionValue::True.as_usize())],
             vec![],
             vec![AssignmentEffect::new(
                 0,
@@ -214,7 +214,7 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         ),
         Operator::new(
             "finish".into(),
-            vec![ExplicitFact::new(0, COMPARISON_FALSE_VAL)],
+            vec![ExplicitFact::new(0, ConditionValue::False.as_usize())],
             vec![Effect::new(vec![], 1, Some(0), 1)],
             vec![],
             1,
@@ -227,13 +227,13 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         numeric_variables,
         vec![ExplicitFact::new(1, 1)],
         vec![],
-        vec![COMPARISON_UNKNOWN_VAL, 0],
+        vec![ConditionValue::Unknown.as_usize(), 0],
         vec![0.0, 10.0, 20.0],
         operators,
         vec![],
         vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)],
         vec![],
-        ExplicitFact::new(0, COMPARISON_UNKNOWN_VAL),
+        ExplicitFact::new(0, ConditionValue::Unknown.as_usize()),
     );
     let factory = factory_identity_cutpoints(&task).unwrap();
     let implicit = factory
@@ -432,7 +432,7 @@ fn enumerate_states_branches_on_undecidable_comparison() {
         numeric_variables,
         vec![],
         vec![],
-        vec![COMPARISON_UNKNOWN_VAL],
+        vec![ConditionValue::Unknown.as_usize()],
         vec![0.0, 0.0],
         vec![op],
         vec![],
@@ -499,7 +499,7 @@ fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
         numeric_variables,
         vec![],
         vec![],
-        vec![COMPARISON_UNKNOWN_VAL],
+        vec![ConditionValue::Unknown.as_usize()],
         vec![1.0, 2.0, 0.0],
         vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
         vec![],
@@ -521,7 +521,7 @@ fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
         .unwrap();
 
     let comparison_abs_value = init_hash / hash_multipliers[0];
-    assert_eq!(comparison_abs_value, COMPARISON_TRUE_VAL);
+    assert_eq!(comparison_abs_value, ConditionValue::True.as_usize());
 }
 
 #[test]
@@ -530,9 +530,9 @@ fn unknown_comparison_preconditions_are_not_treated_as_fixed() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::new(0, COMPARISON_UNKNOWN_VAL)],
+        regression_preconditions: vec![ExplicitFact::new(0, ConditionValue::Unknown.as_usize())],
         preconditions: vec![
-            ExplicitFact::new(0, COMPARISON_UNKNOWN_VAL),
+            ExplicitFact::new(0, ConditionValue::Unknown.as_usize()),
             ExplicitFact::new(1, 7),
         ],
         changed_numeric_vars: vec![],
@@ -752,16 +752,16 @@ fn match_tree_indexes_comparison_variables() {
             concrete_op_ids: vec![0],
             cost: 1.0,
             hash_effect: 0,
-            regression_preconditions: vec![ExplicitFact::new(0, COMPARISON_TRUE_VAL)],
-            preconditions: vec![ExplicitFact::new(0, COMPARISON_TRUE_VAL)],
+            regression_preconditions: vec![ExplicitFact::new(0, ConditionValue::True.as_usize())],
+            preconditions: vec![ExplicitFact::new(0, ConditionValue::True.as_usize())],
             changed_numeric_vars: vec![],
         },
         super::super::abstract_operator_generator::AbstractOperator {
             concrete_op_ids: vec![1],
             cost: 1.0,
             hash_effect: 0,
-            regression_preconditions: vec![ExplicitFact::new(0, COMPARISON_FALSE_VAL)],
-            preconditions: vec![ExplicitFact::new(0, COMPARISON_FALSE_VAL)],
+            regression_preconditions: vec![ExplicitFact::new(0, ConditionValue::False.as_usize())],
+            preconditions: vec![ExplicitFact::new(0, ConditionValue::False.as_usize())],
             changed_numeric_vars: vec![],
         },
     ];
@@ -769,10 +769,10 @@ fn match_tree_indexes_comparison_variables() {
     let tree = MatchTree::build(&[3], &[], &[1], &operators, &[0]);
     let mut out = Vec::new();
 
-    tree.get_applicable_operator_ids(COMPARISON_TRUE_VAL, &mut out);
+    tree.get_applicable_operator_ids(ConditionValue::True.as_usize(), &mut out);
     assert_eq!(out, vec![0]);
 
-    tree.get_applicable_operator_ids(COMPARISON_FALSE_VAL, &mut out);
+    tree.get_applicable_operator_ids(ConditionValue::False.as_usize(), &mut out);
     assert_eq!(out, vec![1]);
 }
 
@@ -801,7 +801,7 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
         vec![],
         vec![],
         // The concrete initial state used by numeric-fd has comparisons evaluated.
-        vec![COMPARISON_UNKNOWN_VAL],
+        vec![ConditionValue::Unknown.as_usize()],
         vec![0.0, 0.0],
         vec![op],
         vec![],
@@ -833,7 +833,7 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
         &mut nums,
     );
     assert_eq!(props.len(), 1);
-    assert_eq!(props[0][0], COMPARISON_FALSE_VAL);
+    assert_eq!(props[0][0], ConditionValue::False.as_usize());
 }
 
 #[test]
@@ -907,11 +907,14 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
         variables,
         numeric_variables,
         vec![
-            ExplicitFact::new(0, COMPARISON_TRUE_VAL),
-            ExplicitFact::new(1, COMPARISON_FALSE_VAL),
+            ExplicitFact::new(0, ConditionValue::True.as_usize()),
+            ExplicitFact::new(1, ConditionValue::False.as_usize()),
         ],
         vec![],
-        vec![COMPARISON_UNKNOWN_VAL, COMPARISON_UNKNOWN_VAL],
+        vec![
+            ConditionValue::Unknown.as_usize(),
+            ConditionValue::Unknown.as_usize(),
+        ],
         vec![0.0, 0.0, 0.0],
         vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
         vec![],
@@ -925,7 +928,7 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
     let hash_multipliers = generator.hash_multipliers().to_vec();
     let comparison_var_ids = vec![0usize, 1usize];
 
-    let unsorted_goal_hash = COMPARISON_TRUE_VAL + 3 * COMPARISON_FALSE_VAL;
+    let unsorted_goal_hash = ConditionValue::True.as_usize() + 3 * ConditionValue::False.as_usize();
     let states = factory
         .enumerate_states_with_evaluated_comparisons(
             unsorted_goal_hash,

@@ -3,6 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 
 use planforge_sas::axioms::AxiomEvaluator;
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact};
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::int_packer::IntDoublePacker;
@@ -52,8 +53,12 @@ pub(crate) fn identity_domain_mapping_and_sizes(
     let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
     for var_id in 0..num_vars {
         if task.numeric_conditions().is_condition_var(var_id) {
-            domain_mapping.push(vec![0, 1, 2]);
-            domain_sizes.push(3);
+            domain_mapping.push(
+                ConditionValue::DOMAIN
+                    .map(ConditionValue::as_usize)
+                    .to_vec(),
+            );
+            domain_sizes.push(ConditionValue::DOMAIN_SIZE);
         } else {
             let size = task
                 .get_variable_domain_size(var_id)

@@ -1,12 +1,10 @@
 use super::*;
 
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
-use planforge_sas::numeric_conditions::{CONDITION_FALSE, CONDITION_TRUE};
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
 };
-
-use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL;
 
 /// The propositional variable a comparison axiom writes: true / false /
 /// not-yet-derived, defaulting to the last.
@@ -16,7 +14,7 @@ fn condition_variable(name: &str) -> ExplicitVariable {
         name.into(),
         vec!["true".into(), "false".into(), "unknown".into()],
         None,
-        COMPARISON_UNKNOWN_VAL,
+        ConditionValue::Unknown.as_usize(),
     )
 }
 
@@ -38,7 +36,7 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
         numeric_variables,
         vec![],
         vec![],
-        vec![COMPARISON_UNKNOWN_VAL],
+        vec![ConditionValue::Unknown.as_usize()],
         vec![0.0, 10.0],
         vec![],
         vec![],
@@ -54,9 +52,9 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
 
     // Every value of x0 is below c1, so requiring the comparison to hold is
     // satisfiable and requiring it to fail is not.
-    let requires_true = ExplicitFact::new(0, CONDITION_TRUE);
-    let requires_false = ExplicitFact::new(0, CONDITION_FALSE);
-    let requires_unknown = ExplicitFact::new(0, COMPARISON_UNKNOWN_VAL);
+    let requires_true = ExplicitFact::new(0, ConditionValue::True.as_usize());
+    let requires_false = ExplicitFact::new(0, ConditionValue::False.as_usize());
+    let requires_unknown = ExplicitFact::new(0, ConditionValue::Unknown.as_usize());
     assert!(!conditions.precondition_is_contradicted(&requires_true, &intervals));
     assert!(conditions.precondition_is_contradicted(&requires_false, &intervals));
 
@@ -234,7 +232,7 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
         numeric_variables,
         vec![],
         vec![],
-        vec![COMPARISON_UNKNOWN_VAL],
+        vec![ConditionValue::Unknown.as_usize()],
         vec![0.0; 3],
         vec![],
         vec![],

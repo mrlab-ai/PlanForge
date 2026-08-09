@@ -19,7 +19,7 @@ fn comparison_task() -> NumericRootTask {
                 "cmp".into(),
                 vec!["true".into(), "false".into(), "unknown".into()],
                 None,
-                COMPARISON_UNKNOWN_VAL,
+                ConditionValue::Unknown.as_usize(),
             ),
             ExplicitVariable::new(2, "p".into(), vec!["p".into(), "not-p".into()], None, 0),
         ],
@@ -29,7 +29,7 @@ fn comparison_task() -> NumericRootTask {
         ],
         vec![],
         vec![],
-        vec![COMPARISON_UNKNOWN_VAL, 0],
+        vec![ConditionValue::Unknown.as_usize(), 0],
         vec![2.0, 1.0],
         vec![],
         vec![],
@@ -61,14 +61,14 @@ fn resolved_propositional_value_recomputes_comparison_axioms_from_numeric_state(
     // recomputed from the numeric state: x = 2.0 > one = 1.0.
     let concrete_val = resolved_propositional_value(
         0,
-        COMPARISON_UNKNOWN_VAL,
+        ConditionValue::Unknown.as_usize(),
         &[2.0, 1.0],
         task.numeric_conditions(),
         None,
     )
     .unwrap();
 
-    assert_eq!(concrete_val, COMPARISON_TRUE_VAL);
+    assert_eq!(concrete_val, ConditionValue::True.as_usize());
 }
 
 #[test]
@@ -76,17 +76,17 @@ fn resolved_propositional_value_prefers_supplied_comparison_values() {
     let task = comparison_task();
 
     // A supplied comparison value wins over the numeric state, which on its
-    // own would yield COMPARISON_TRUE_VAL.
+    // own would yield ConditionValue::True.as_usize().
     let concrete_val = resolved_propositional_value(
         0,
-        COMPARISON_UNKNOWN_VAL,
+        ConditionValue::Unknown.as_usize(),
         &[2.0, 1.0],
         task.numeric_conditions(),
-        Some(&[Some(COMPARISON_FALSE_VAL)]),
+        Some(&[Some(ConditionValue::False.as_usize())]),
     )
     .unwrap();
 
-    assert_eq!(concrete_val, COMPARISON_FALSE_VAL);
+    assert_eq!(concrete_val, ConditionValue::False.as_usize());
 }
 
 #[test]

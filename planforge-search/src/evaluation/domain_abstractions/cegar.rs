@@ -34,15 +34,11 @@ use super::additive_numeric_views::{
     comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
     is_refinable_numeric_dimension,
 };
-use planforge_sas::numeric_conditions::NumericCondition;
-use planforge_sas::numeric_conditions::NumericConditions;
+use planforge_sas::numeric_conditions::{ConditionValue, NumericCondition, NumericConditions};
 use planforge_sas::utils::interval::Interval;
 
 use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
-use super::domain_abstraction_heuristic::{
-    COMPARISON_FALSE_VAL, COMPARISON_TRUE_VAL, COMPARISON_UNKNOWN_VAL,
-};
 use super::utils::{compute_abstraction_size_u128, debug_print_refinement_summary};
 
 #[derive(Debug, Clone)]
@@ -1502,15 +1498,22 @@ fn trivial_domain_mapping_and_sizes(
     Ok((domain_mapping, domain_sizes))
 }
 
-fn comparison_eval_code(v: Option<bool>) -> usize {
-    match v {
-        Some(true) => COMPARISON_TRUE_VAL,
-        Some(false) => COMPARISON_FALSE_VAL,
-        None => COMPARISON_UNKNOWN_VAL,
+/// Which side of a split a comparison belongs to, given how it evaluates over
+/// the lower and the upper half.
+///
+/// Mirrors numeric-FD's preference order — FALSE beats UNKNOWN beats TRUE —
+/// which reduces to: take the lower half when it is the only FALSE side, or
+/// when it is UNKNOWN while the upper half is definitely TRUE.
+#[inline]
+fn prefers_lower_half(eval_lower: ConditionValue, eval_upper: ConditionValue) -> bool {
+    match (eval_lower, eval_upper) {
+        (ConditionValue::False, ConditionValue::False) => false,
+        (ConditionValue::False, _) => true,
+        (ConditionValue::Unknown, ConditionValue::True) => true,
+        _ => false,
     }
 }
 
-#[allow(clippy::if_same_then_else, clippy::needless_bool)]
 fn determine_include_in_lower(
     tree: &NumericCondition,
     split_var_id: usize,
@@ -1535,28 +1538,12 @@ fn determine_include_in_lower(
         upper_inputs[split_var_id] = Interval::new(split_value, f64::INFINITY, true, false);
     }
 
-    let eval_lower = comparison_eval_code(tree.evaluate_interval(&lower_inputs));
-    let eval_upper = comparison_eval_code(tree.evaluate_interval(&upper_inputs));
-
-    // Mirror numeric-FD's preference: FALSE (=1) over UNKNOWN (=2) over TRUE (=0).
-    if eval_lower == COMPARISON_FALSE_VAL && eval_upper != COMPARISON_FALSE_VAL {
-        true
-    } else if eval_upper == COMPARISON_FALSE_VAL && eval_lower != COMPARISON_FALSE_VAL {
-        false
-    } else if eval_lower == COMPARISON_FALSE_VAL && eval_upper == COMPARISON_FALSE_VAL {
-        false
-    } else if eval_lower == COMPARISON_UNKNOWN_VAL && eval_upper == COMPARISON_UNKNOWN_VAL {
-        false
-    } else if eval_lower == COMPARISON_UNKNOWN_VAL {
-        true
-    } else if eval_upper == COMPARISON_UNKNOWN_VAL {
-        false
-    } else {
-        false
-    }
+    prefers_lower_half(
+        tree.evaluate_interval(&lower_inputs).into(),
+        tree.evaluate_interval(&upper_inputs).into(),
+    )
 }
 
-#[allow(unused, clippy::if_same_then_else, clippy::needless_bool)]
 fn determine_include_in_lower_for_flaw_search_state(
     tree: &NumericCondition,
     state: &FlawSearchState,
@@ -1572,23 +1559,8 @@ fn determine_include_in_lower_for_flaw_search_state(
         .map(|v| Interval::singleton(v.upper))
         .collect();
 
-    let eval_lower = comparison_eval_code(tree.evaluate_interval(&lower_inputs));
-    let eval_upper = comparison_eval_code(tree.evaluate_interval(&upper_inputs));
-
-    // Mirror numeric-FD's preference: FALSE (=1) over UNKNOWN (=2) over TRUE (=0).
-    if eval_lower == COMPARISON_FALSE_VAL && eval_upper != COMPARISON_FALSE_VAL {
-        true
-    } else if eval_upper == COMPARISON_FALSE_VAL && eval_lower != COMPARISON_FALSE_VAL {
-        false
-    } else if eval_lower == COMPARISON_FALSE_VAL && eval_upper == COMPARISON_FALSE_VAL {
-        false
-    } else if eval_lower == COMPARISON_UNKNOWN_VAL && eval_upper == COMPARISON_UNKNOWN_VAL {
-        false
-    } else if eval_lower == COMPARISON_UNKNOWN_VAL {
-        true
-    } else if eval_upper == COMPARISON_UNKNOWN_VAL {
-        false
-    } else {
-        false
-    }
+    prefers_lower_half(
+        tree.evaluate_interval(&lower_inputs).into(),
+        tree.evaluate_interval(&upper_inputs).into(),
+    )
 }

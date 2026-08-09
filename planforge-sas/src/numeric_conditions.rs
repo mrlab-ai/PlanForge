@@ -36,10 +36,77 @@ use crate::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOpe
 use crate::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, NumericVariable};
 use crate::utils::interval::{EMPTY_INTERVAL, Interval};
 
-/// Value a condition variable takes when the comparison holds.
-pub const CONDITION_TRUE: usize = 0;
-/// Value a condition variable takes when the comparison does not hold.
-pub const CONDITION_FALSE: usize = 1;
+/// The three values a propositional variable carrying a numeric condition's
+/// truth value can take.
+///
+/// The discriminants *are* the SAS encoding — a condition variable's domain is
+/// exactly these three values in this order — so [`Self::as_usize`] needs no
+/// lookup table. This enum is the workspace's only definition of that
+/// encoding; nothing else spells the literals out.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum ConditionValue {
+    /// The comparison holds.
+    True = 0,
+    /// The comparison does not hold.
+    False = 1,
+    /// The comparison has not been derived from the numeric state yet.
+    Unknown = 2,
+}
+
+impl ConditionValue {
+    /// Domain size of a condition variable.
+    pub const DOMAIN_SIZE: usize = 3;
+
+    /// The domain of a condition variable, in value order.
+    pub const DOMAIN: [ConditionValue; Self::DOMAIN_SIZE] =
+        [Self::True, Self::False, Self::Unknown];
+
+    /// The SAS value this variant encodes.
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self as usize
+    }
+
+    /// The variant `value` encodes, or `None` when it is outside the domain.
+    #[inline]
+    pub const fn from_usize(value: usize) -> Option<Self> {
+        match value {
+            0 => Some(Self::True),
+            1 => Some(Self::False),
+            2 => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
+impl From<bool> for ConditionValue {
+    #[inline]
+    fn from(holds: bool) -> Self {
+        if holds { Self::True } else { Self::False }
+    }
+}
+
+/// A three-valued verdict, as produced by evaluating a condition over
+/// intervals: `None` — both outcomes possible — is exactly [`Unknown`].
+///
+/// [`Unknown`]: ConditionValue::Unknown
+impl From<Option<bool>> for ConditionValue {
+    #[inline]
+    fn from(verdict: Option<bool>) -> Self {
+        match verdict {
+            Some(holds) => Self::from(holds),
+            None => Self::Unknown,
+        }
+    }
+}
+
+impl From<ConditionValue> for usize {
+    #[inline]
+    fn from(value: ConditionValue) -> Self {
+        value.as_usize()
+    }
+}
 
 /// Index of a [`NumericCondition`] inside [`NumericConditions`].
 ///
@@ -332,9 +399,8 @@ impl NumericCondition {
         self.id
     }
 
-    /// Propositional variable holding this condition's truth value, as
-    /// [`CONDITION_TRUE`] / [`CONDITION_FALSE`]; a third value marks "not yet
-    /// derived".
+    /// Propositional variable holding this condition's truth value, encoded as
+    /// a [`ConditionValue`].
     #[inline]
     pub fn prop_var_id(&self) -> usize {
         self.prop_var_id
@@ -786,10 +852,13 @@ impl NumericConditions {
         let Some(condition) = self.for_var(precondition.var()) else {
             return false;
         };
-        match precondition.value() {
-            CONDITION_TRUE => !condition.admits_true(numeric_intervals),
-            CONDITION_FALSE => !condition.admits_false(numeric_intervals),
-            _ => false,
+        match ConditionValue::from_usize(precondition.value()) {
+            Some(ConditionValue::True) => !condition.admits_true(numeric_intervals),
+            Some(ConditionValue::False) => !condition.admits_false(numeric_intervals),
+            // `Unknown` asserts nothing about the numeric state, so no
+            // assignment can contradict it. Abstracted values land outside the
+            // concrete domain and are likewise not contradicted here.
+            Some(ConditionValue::Unknown) | None => false,
         }
     }
 }

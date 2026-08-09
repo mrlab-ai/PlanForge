@@ -12,11 +12,7 @@ use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::utils;
-use planforge_sas::numeric_conditions::{NumericCondition, NumericConditions};
-
-pub(crate) const COMPARISON_TRUE_VAL: usize = 0;
-pub(crate) const COMPARISON_FALSE_VAL: usize = 1;
-pub(crate) const COMPARISON_UNKNOWN_VAL: usize = 2;
+use planforge_sas::numeric_conditions::{ConditionValue, NumericCondition, NumericConditions};
 
 fn fast_hash_enabled() -> bool {
     static CACHE: OnceLock<bool> = OnceLock::new();
@@ -284,12 +280,8 @@ impl DomainAbstractionHeuristic {
             out.resize(self.abstraction.factory.domain_sizes().len(), None);
         }
         for condition in conditions.iter() {
-            let value = if evaluate_condition_on_concrete_numeric_state(condition, numeric_values)?
-            {
-                COMPARISON_TRUE_VAL
-            } else {
-                COMPARISON_FALSE_VAL
-            };
+            let holds = evaluate_condition_on_concrete_numeric_state(condition, numeric_values)?;
+            let value = ConditionValue::from(holds).as_usize();
             let prop_var_id = condition.prop_var_id();
             if prop_var_id >= out.len() {
                 out.resize(prop_var_id + 1, None);
@@ -480,13 +472,8 @@ fn resolved_propositional_value(
 
     // Concrete evaluation on the state's numeric values. This is the
     // deterministic α-image of the concrete state's comparison bit.
-    Ok(
-        if evaluate_condition_on_concrete_numeric_state(condition, numeric)? {
-            COMPARISON_TRUE_VAL
-        } else {
-            COMPARISON_FALSE_VAL
-        },
-    )
+    let holds = evaluate_condition_on_concrete_numeric_state(condition, numeric)?;
+    Ok(ConditionValue::from(holds).as_usize())
 }
 
 fn evaluate_condition_on_concrete_numeric_state(

@@ -21,12 +21,8 @@ use super::additive_numeric_views::{AdditiveNumericViews, active_comparison_dime
 use super::domain_abstraction::NumericPartitions;
 use super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees;
 use super::utils;
-use planforge_sas::numeric_conditions::ArithOp;
+use planforge_sas::numeric_conditions::{ArithOp, ConditionValue};
 use planforge_sas::utils::interval::Interval;
-
-const COMPARISON_TRUE_VAL: usize = 0;
-const COMPARISON_FALSE_VAL: usize = 1;
-const COMPARISON_UNKNOWN_VAL: usize = 2;
 
 fn ensure_generation_deadline(deadline: Option<Instant>) -> Result<()> {
     crate::resource_limits::ensure_before_deadline(deadline, "abstract operator generation")
@@ -755,12 +751,12 @@ impl AbstractOperatorGenerator {
         let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
         for var_id in 0..num_vars {
             if task.numeric_conditions().is_condition_var(var_id) {
-                domain_mapping.push(vec![
-                    COMPARISON_TRUE_VAL,
-                    COMPARISON_FALSE_VAL,
-                    COMPARISON_UNKNOWN_VAL,
-                ]);
-                domain_sizes.push(3);
+                domain_mapping.push(
+                    ConditionValue::DOMAIN
+                        .map(ConditionValue::as_usize)
+                        .to_vec(),
+                );
+                domain_sizes.push(ConditionValue::DOMAIN_SIZE);
             } else {
                 let size = task
                     .get_variable_domain_size(var_id)
@@ -1042,7 +1038,7 @@ fn build_branch_for_operator(
             continue;
         }
         let source_abs = generator.abstract_value(var_id, pre.value());
-        let target_abs = generator.abstract_value(var_id, COMPARISON_UNKNOWN_VAL);
+        let target_abs = generator.abstract_value(var_id, ConditionValue::Unknown.as_usize());
         pre_pairs.push(ExplicitFact::new(var_id, source_abs));
         eff_pairs.push(ExplicitFact::new(var_id, target_abs));
     }
@@ -1671,12 +1667,10 @@ fn comparison_preconditions_admit_combo(
         let Some(&required_concrete) = precondition_required.get(&var_id) else {
             continue;
         };
-        if required_concrete == COMPARISON_TRUE_VAL {
-            if !tree.admits_true(source_inputs) {
-                return false;
-            }
-        } else if required_concrete == COMPARISON_FALSE_VAL && !tree.admits_false(source_inputs) {
-            return false;
+        match ConditionValue::from_usize(required_concrete) {
+            Some(ConditionValue::True) if !tree.admits_true(source_inputs) => return false,
+            Some(ConditionValue::False) if !tree.admits_false(source_inputs) => return false,
+            _ => {}
         }
     }
 
