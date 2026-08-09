@@ -411,7 +411,17 @@ pub struct ExplicitVariable {
     name: String,
     fact_names: Vec<String>,
     axiom_layer: Option<usize>,
-    axiom_default_value: usize, // Is this field even required?
+    /// The value a *derived* variable holds until an axiom proves otherwise.
+    ///
+    /// The axiom closure resets every derived variable to this value before it
+    /// runs, and reads "still at the default" as "not proven" when it admits
+    /// negation-by-failure literals. The SAS format carries it in the
+    /// initial-state block, which is why the parser can only fill it in once
+    /// that block has been read.
+    ///
+    /// A non-derived variable is never reset, so this field is not read for
+    /// one; it then just repeats the variable's initial value.
+    axiom_default_value: usize,
 }
 
 impl ExplicitVariable {

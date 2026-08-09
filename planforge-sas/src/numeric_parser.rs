@@ -46,7 +46,21 @@ fn parse_metric(input: &str) -> IResult<&str, Metric> {
     Ok((input, metric))
 }
 
-fn parse_variable(input: &str) -> IResult<&str, ExplicitVariable> {
+/// One `begin_variable` block, as it stands in the file.
+///
+/// A derived variable's axiom default is *not* part of this block: the SAS
+/// format writes it into the initial-state block instead and lets the axiom
+/// closure compute the real value on top of it. An [`ExplicitVariable`] can
+/// therefore only be built once the initial state has been read, which is what
+/// [`build_variables`] does.
+struct VariableBlock {
+    domain_size: usize,
+    name: String,
+    fact_names: Vec<String>,
+    axiom_layer: Option<usize>,
+}
+
+fn parse_variable(input: &str) -> IResult<&str, VariableBlock> {
     let (input, _) = tag("begin_variable")(input)?;
     let (input, _) = line_ending(input)?;
     let (input, variable_name) = alphanumeric1(input)?;
@@ -66,21 +80,20 @@ fn parse_variable(input: &str) -> IResult<&str, ExplicitVariable> {
     }
     let (input, _) = tag("end_variable")(input)?;
     let (input, _) = line_ending(input)?;
-    let var = ExplicitVariable::new(
+    let block = VariableBlock {
         domain_size,
-        variable_name.to_string(),
+        name: variable_name.to_string(),
         fact_names,
-        if axiom_layer >= 0 {
+        axiom_layer: if axiom_layer >= 0 {
             Some(axiom_layer as usize)
         } else {
             None
         },
-        0,
-    );
-    Ok((input, var))
+    };
+    Ok((input, block))
 }
 
-fn parse_all_variables(input: &str) -> IResult<&str, Vec<ExplicitVariable>> {
+fn parse_all_variables(input: &str) -> IResult<&str, Vec<VariableBlock>> {
     let (input, num_variables) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let mut variables = Vec::new();
@@ -91,6 +104,40 @@ fn parse_all_variables(input: &str) -> IResult<&str, Vec<ExplicitVariable>> {
         input = loop_input;
     }
     Ok((input, variables))
+}
+
+/// Join the variable blocks with the initial state they were written against.
+///
+/// The initial-state entry of a derived variable is its axiom default — the
+/// value it holds until an axiom proves something else — so this is where
+/// [`ExplicitVariable::axiom_default_value`] comes from. Non-derived variables
+/// are never reset, so their entry is simply their initial value and the field
+/// is never read for them.
+fn build_variables(blocks: Vec<VariableBlock>, initial_state: &[usize]) -> Vec<ExplicitVariable> {
+    assert_eq!(
+        blocks.len(),
+        initial_state.len(),
+        "the SAS initial state must name every variable"
+    );
+    blocks
+        .into_iter()
+        .zip(initial_state)
+        .map(|(block, &initial_value)| {
+            assert!(
+                initial_value < block.domain_size,
+                "initial value {initial_value} of variable {} is outside its domain of size {}",
+                block.name,
+                block.domain_size
+            );
+            ExplicitVariable::new(
+                block.domain_size,
+                block.name,
+                block.fact_names,
+                block.axiom_layer,
+                initial_value,
+            )
+        })
+        .collect()
 }
 
 fn parse_line_type(input: &str) -> IResult<&str, NumericType> {
@@ -560,10 +607,11 @@ fn parse_global_constraint(input: &str) -> IResult<&str, ExplicitFact> {
 pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     let (input, version) = parse_version(input)?;
     let (input, metric) = parse_metric(input)?;
-    let (input, variables) = parse_all_variables(input)?;
+    let (input, variable_blocks) = parse_all_variables(input)?;
     let (input, numeric_variables) = parse_all_numeric_variables(input)?;
     let (input, mutexes) = parse_mutexes(input)?;
     let (input, state) = parse_state(input)?;
+    let variables = build_variables(variable_blocks, &state);
     let (input, numeric_state) = parse_numeric_state(input)?;
     let (input, goals) = parse_goal(input)?;
     let (input, operators) = parse_operators(input)?;

@@ -29,14 +29,16 @@ struct AxiomLiteral {
 #[derive(Debug, Clone, Copy, Default)]
 struct NegationByFailureInfo {
     var_id: usize,
-    literal_value: usize,
+    /// The variable's axiom default. It is both the value that says "nothing
+    /// proved this variable" and the literal the closure then announces.
+    default_value: usize,
 }
 
 impl NegationByFailureInfo {
-    fn new(var_id: usize, literal_value: usize) -> Self {
+    fn new(var_id: usize, default_value: usize) -> Self {
         Self {
             var_id,
-            literal_value,
+            default_value,
         }
     }
 }
@@ -57,7 +59,8 @@ pub(crate) struct CompiledAxiomEvaluatorData {
     last_propositional_axiom_layer: Option<usize>,
     last_arithmetic_axiom_layer: Option<usize>,
     nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
-    initial_propositional_values: Vec<usize>,
+    /// Per variable, the value the closure resets it to.
+    axiom_default_values: Vec<usize>,
     has_numeric_axioms: bool,
     has_propositional_axioms: bool,
 }
@@ -166,8 +169,8 @@ impl<'a> CompiledAxiomEvaluator<'a> {
                     value: self.state_packer.get(buffer, i) as usize,
                 });
             } else if axiom_layer <= self.data.last_propositional_axiom_layer {
-                let default_value = self.data.initial_propositional_values[i];
-                self.state_packer.set(buffer, i, default_value as u64);
+                self.state_packer
+                    .set(buffer, i, self.data.axiom_default_values[i] as u64);
             } else {
                 return Err(AxiomEvalError::WrongAxiomLayer(WrongAxiomLayer {
                     axiom_layer,
@@ -218,12 +221,10 @@ impl<'a> CompiledAxiomEvaluator<'a> {
             if layer_no != self.data.nbf_info_by_layer.len() - 1 {
                 let nbf_info = &self.data.nbf_info_by_layer[layer_no];
                 for info in nbf_info {
-                    let var_no = info.var_id;
-                    let default_value = self.data.initial_propositional_values[var_no];
-                    if self.state_packer.get(buffer, var_no) == default_value as u64 {
+                    if self.state_packer.get(buffer, info.var_id) == info.default_value as u64 {
                         scratch.queue.push(LiteralRef {
-                            var_id: var_no,
-                            value: info.literal_value,
+                            var_id: info.var_id,
+                            value: info.default_value,
                         });
                     }
                 }
@@ -332,16 +333,19 @@ fn build_compiled_axiom_evaluator_data(
     }
     nbf_info_by_layer.resize(last_layer.map_or(0, |x| x + 1), vec![]);
 
-    let initial_propositional_values = numeric_task
-        .get_initial_propositional_state_values()
-        .to_vec();
+    let axiom_default_values: Vec<usize> = (0..numeric_task.get_num_variables())
+        .map(|var_id| {
+            numeric_task
+                .get_variable_default_axiom_value(var_id)
+                .expect("variable id below the variable count is in bounds")
+        })
+        .collect();
     for var_id in 0..numeric_task.get_num_variables() {
         let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
         if let Some(axiom) = axiom_layer
             && axiom_layer != last_layer
         {
-            let nbf_value = initial_propositional_values[var_id];
-            let nbf_info = NegationByFailureInfo::new(var_id, nbf_value);
+            let nbf_info = NegationByFailureInfo::new(var_id, axiom_default_values[var_id]);
             nbf_info_by_layer[axiom].push(nbf_info);
         }
     }
@@ -354,7 +358,7 @@ fn build_compiled_axiom_evaluator_data(
         last_propositional_axiom_layer,
         last_arithmetic_axiom_layer,
         nbf_info_by_layer,
-        initial_propositional_values,
+        axiom_default_values,
         has_numeric_axioms: !numeric_task.assignment_axioms().is_empty()
             || !numeric_task.comparison_axioms().is_empty(),
         has_propositional_axioms: !numeric_task.axioms().is_empty(),

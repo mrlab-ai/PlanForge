@@ -230,14 +230,16 @@ struct AxiomLiteral {
 #[derive(Debug, Clone, Copy, Default)]
 struct NegationByFailureInfo {
     var_id: usize,
-    literal_value: usize,
+    /// The variable's axiom default. It is both the value that says "nothing
+    /// proved this variable" and the literal the closure then announces.
+    default_value: usize,
 }
 
 impl NegationByFailureInfo {
-    pub fn new(var_id: usize, literal_value: usize) -> Self {
+    pub fn new(var_id: usize, default_value: usize) -> Self {
         NegationByFailureInfo {
             var_id,
-            literal_value,
+            default_value,
         }
     }
 }
@@ -258,7 +260,10 @@ struct AxiomEvaluatorData {
     last_propositional_axiom_layer: Option<usize>,
     last_arithmetic_axiom_layer: Option<usize>,
     nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
-    initial_propositional_values: Vec<usize>,
+    /// Per variable, the value the closure resets it to. Copied out of the
+    /// task once so the hot reset loop is an indexed load rather than a
+    /// borrow of the task's shared initial state.
+    axiom_default_values: Vec<usize>,
     has_numeric_axioms: bool,
     has_propositional_axioms: bool,
 }
@@ -330,16 +335,19 @@ fn build_compiled_axiom_evaluator_data(
     }
     nbf_info_by_layer.resize(last_layer.map(|x| x + 1).unwrap_or(0), vec![]);
 
-    let initial_propositional_values = numeric_task
-        .get_initial_propositional_state_values()
-        .to_vec();
+    let axiom_default_values: Vec<usize> = (0..numeric_task.get_num_variables())
+        .map(|var_id| {
+            numeric_task
+                .get_variable_default_axiom_value(var_id)
+                .expect("variable id below the variable count is in bounds")
+        })
+        .collect();
     for var_id in 0..numeric_task.get_num_variables() {
         let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
         if let Some(idx) = axiom_layer
             && axiom_layer != last_layer
         {
-            let nbf_value = initial_propositional_values[var_id];
-            let nbf_info = NegationByFailureInfo::new(var_id, nbf_value);
+            let nbf_info = NegationByFailureInfo::new(var_id, axiom_default_values[var_id]);
             nbf_info_by_layer[idx].push(nbf_info);
         }
     }
@@ -352,7 +360,7 @@ fn build_compiled_axiom_evaluator_data(
         last_propositional_axiom_layer,
         last_arithmetic_axiom_layer,
         nbf_info_by_layer,
-        initial_propositional_values,
+        axiom_default_values,
         has_numeric_axioms: !numeric_task.assignment_axioms().is_empty()
             || !numeric_task.comparison_axioms().is_empty(),
         has_propositional_axioms: !numeric_task.axioms().is_empty(),
@@ -370,6 +378,7 @@ pub struct AxiomEvaluator<'a> {
     last_propositional_axiom_layer: Option<usize>,
     last_arithmetic_axiom_layer: Option<usize>,
     nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
+    axiom_default_values: Vec<usize>,
     queue: RefCell<Vec<LiteralRef>>,
     unsatisfied_conditions: RefCell<Vec<usize>>,
 }
@@ -389,6 +398,7 @@ impl<'a> AxiomEvaluator<'a> {
             last_propositional_axiom_layer: compiled.last_propositional_axiom_layer,
             last_arithmetic_axiom_layer: compiled.last_arithmetic_axiom_layer,
             nbf_info_by_layer: compiled.nbf_info_by_layer,
+            axiom_default_values: compiled.axiom_default_values,
             queue: RefCell::new(Vec::new()),
             unsatisfied_conditions: RefCell::new(vec![0; rule_count]),
         }
@@ -498,8 +508,8 @@ impl<'a> AxiomEvaluator<'a> {
                     last_arithmetic_axiom_layer: self.last_arithmetic_axiom_layer,
                 }));
             }
-            let default_value = self.numeric_task.get_initial_propositional_state_values()[var_id];
-            self.state_packer.set(buffer, var_id, default_value as u64);
+            self.state_packer
+                .set(buffer, var_id, self.axiom_default_values[var_id] as u64);
         }
         Ok(())
     }
@@ -555,12 +565,10 @@ impl<'a> AxiomEvaluator<'a> {
         layer_no: usize,
     ) {
         for info in &self.nbf_info_by_layer[layer_no] {
-            let var_id = info.var_id;
-            let default_value = self.numeric_task.get_initial_propositional_state_values()[var_id];
-            if self.state_packer.get(buffer, var_id) == default_value as u64 {
+            if self.state_packer.get(buffer, info.var_id) == info.default_value as u64 {
                 queue.push(LiteralRef {
-                    var_id,
-                    value: info.literal_value,
+                    var_id: info.var_id,
+                    value: info.default_value,
                 });
             }
         }
