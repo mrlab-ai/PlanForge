@@ -9,18 +9,6 @@ use super::pddl::conditions::*;
 use super::pddl::pddl_types::{TypedObject, get_type_predicate_name};
 use super::pddl::tasks::Task;
 
-/// Python: class Fact(object)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Fact {
-    pub atom: Vec<String>, // predicate name followed by args
-}
-
-impl Fact {
-    pub fn new(atom: Vec<String>) -> Self {
-        Fact { atom }
-    }
-}
-
 /// Rule type for build_model dispatch
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuleType {
@@ -107,24 +95,22 @@ pub fn get_variables(atoms: &[Vec<String>]) -> HashSet<String> {
     variables
 }
 
-/// Python: class PrologProgram(object)
+/// A set of ground facts plus the rules that derive more of them. Every atom
+/// is a predicate name followed by its arguments.
+#[derive(Default)]
 pub struct PrologProgram {
-    pub facts: HashSet<Fact>,
+    pub facts: HashSet<Vec<String>>,
     pub rules: Vec<Rule>,
     pub objects: HashSet<String>,
 }
 
 impl PrologProgram {
     pub fn new() -> Self {
-        PrologProgram {
-            facts: HashSet::new(),
-            rules: vec![],
-            objects: HashSet::new(),
-        }
+        Self::default()
     }
 
     pub fn add_fact(&mut self, atom: Vec<String>) {
-        self.facts.insert(Fact::new(atom));
+        self.facts.insert(atom);
     }
 
     pub fn add_rule(&mut self, rule: Rule) {

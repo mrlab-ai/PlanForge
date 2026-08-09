@@ -1,6 +1,35 @@
-/// Port of tools.py
+use std::cmp::Ordering;
 
-/// Python: def cartesian_product(sequences)
+/// Compares two names the way `format!("{:?}", name)` compares them.
+///
+/// `Debug` for `str` wraps the name in quotes, so the closing quote terminates
+/// it: `derived!` sorts *before* `derived` because `!` is below `"`. Several
+/// translator orderings were written as comparisons of `Debug` output and the
+/// SAS variable order depends on them, so they are reproduced here rather than
+/// formatted afresh at every comparison.
+pub fn cmp_quoted(left: &str, right: &str) -> Ordering {
+    debug_assert!(
+        !left.contains(['"', '\\']) && !right.contains(['"', '\\']),
+        "name needs Debug escaping, so the quote is no longer a terminator: {left:?} {right:?}"
+    );
+    left.bytes()
+        .chain(std::iter::once(b'"'))
+        .cmp(right.bytes().chain(std::iter::once(b'"')))
+}
+
+/// Compares two name lists the way `Debug` compares them: element by element,
+/// and a list that still has elements sorts before one that ended, because `,`
+/// is below `]`.
+pub fn cmp_quoted_slice(left: &[String], right: &[String]) -> Ordering {
+    for (left, right) in left.iter().zip(right) {
+        match cmp_quoted(left, right) {
+            Ordering::Equal => {}
+            order => return order,
+        }
+    }
+    right.len().cmp(&left.len())
+}
+
 /// This isn't actually a proper cartesian product because we
 /// concatenate lists, rather than forming sequences of atomic elements.
 pub fn cartesian_product<T: Clone>(sequences: &[Vec<Vec<T>>]) -> Vec<Vec<T>> {

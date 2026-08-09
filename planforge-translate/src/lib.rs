@@ -17,5 +17,6 @@ pub mod preprocess;
 pub mod sas_tasks;
 pub mod simplify;
 pub mod split_rules;
+pub mod symbols;
 pub mod tools;
 pub mod translate;

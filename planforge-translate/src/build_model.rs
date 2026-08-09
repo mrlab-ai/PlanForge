@@ -1,642 +1,510 @@
+//! Forward chaining over the grounding program.
+//!
+//! This fixpoint is the translator's hottest loop, so predicate and object
+//! names are interned before it starts. Join keys, duplicate checks and rule
+//! lookups then work on dense `u32`s instead of strings, an atom's arguments
+//! are allocated once and shared by reference count, and the tables a derived
+//! atom has to consult are indexed by its predicate rather than hashed.
+
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+
 use tracing::info;
 
-use super::pddl_to_prolog::{Fact, PrologProgram, RuleType};
-/// Port of build_model.py
-/// Forward-chaining model builder for grounding.
-use std::collections::{HashMap, HashSet};
+use crate::pddl_to_prolog::{PrologProgram, RuleType};
+use crate::symbols::{ObjectId, PredicateId, Symbols};
+use crate::tools::cmp_quoted_slice;
 
-/// An atom in the model: predicate + arguments.
-/// Arguments can be integers (variable positions) or strings (constants/variables).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Arg {
-    Pos(usize),  // refers to position in effect
-    Str(String), // constant or unbound variable
+/// A ground atom derived by the model builder.
+pub struct GroundAtom {
+    pub predicate: PredicateId,
+    pub args: Rc<[ObjectId]>,
 }
 
-/// An internal atom representation for the model builder.
-#[derive(Debug, Clone)]
-struct InternalAtom {
-    predicate: String,
-    args: Vec<Arg>,
+/// Every ground atom the program derives, plus the table that reads the ids
+/// back as names.
+pub struct GroundModel {
+    pub symbols: Symbols,
+    pub atoms: Vec<GroundAtom>,
 }
 
-/// Converts variables to position numbers as in Python's `variables_to_numbers`.
-fn variables_to_numbers(
-    effect: &[String],
-    conditions: &[Vec<String>],
-) -> (InternalAtom, Vec<InternalAtom>) {
-    let mut rename_map: HashMap<String, usize> = HashMap::new();
-    let mut new_effect_args = Vec::new();
+/// `(rule, condition)`: one place a ground atom can be plugged into.
+type Slot = (u32, u32);
 
-    for (i, arg) in effect[1..].iter().enumerate() {
-        if arg.starts_with('?') {
-            rename_map.insert(arg.clone(), i);
-            new_effect_args.push(Arg::Pos(i));
-        } else {
-            new_effect_args.push(Arg::Str(arg.clone()));
-        }
-    }
-
-    let new_effect = InternalAtom {
-        predicate: effect[0].clone(),
-        args: new_effect_args,
-    };
-
-    let new_conditions: Vec<InternalAtom> = conditions
-        .iter()
-        .map(|cond| {
-            let args = cond[1..]
-                .iter()
-                .map(|arg| {
-                    if let Some(&pos) = rename_map.get(arg) {
-                        Arg::Pos(pos)
-                    } else {
-                        Arg::Str(arg.clone())
-                    }
-                })
-                .collect();
-            InternalAtom {
-                predicate: cond[0].clone(),
-                args,
-            }
-        })
-        .collect();
-
-    (new_effect, new_conditions)
+/// One condition of a rule, compiled for matching.
+///
+/// Head variables are numbered by their position in the head, so a binding
+/// names the head slot it fills directly.
+struct Condition {
+    predicate: PredicateId,
+    /// `(argument position, head position)` for arguments holding a head
+    /// variable. Condition variables absent from the head match anything and
+    /// are not recorded.
+    bindings: Box<[(usize, usize)]>,
+    /// `(argument position, object)` for arguments fixed to a constant.
+    constants: Box<[(usize, ObjectId)]>,
 }
 
-/// A ground atom in the model.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct GroundAtom {
-    predicate: String,
-    args: Vec<String>,
-}
-
-impl GroundAtom {
-    fn new(predicate: String, args: Vec<String>) -> Self {
-        GroundAtom { predicate, args }
-    }
-
-    fn to_fact(&self) -> Fact {
-        let mut atom = vec![self.predicate.clone()];
-        atom.extend(self.args.clone());
-        Fact::new(atom)
-    }
-}
-
-// ============== Build Rules ==============
-
-trait BuildRule {
-    fn prepare_effect(&self, new_atom: &GroundAtom, cond_index: usize) -> Vec<Option<String>>;
-    fn update_index(&mut self, new_atom: &GroundAtom, cond_index: usize);
-    fn fire(
-        &self,
-        new_atom: &GroundAtom,
-        cond_index: usize,
-        enqueue: &mut dyn FnMut(&str, &[Option<String>]),
-    );
-    fn conditions(&self) -> &[InternalAtom];
-}
-
-fn prepare_effect_impl(
-    effect: &InternalAtom,
-    conditions: &[InternalAtom],
-    new_atom: &GroundAtom,
-    cond_index: usize,
-) -> Vec<Option<String>> {
-    let mut effect_args: Vec<Option<String>> = effect
-        .args
-        .iter()
-        .map(|a| match a {
-            Arg::Str(s) => Some(s.clone()),
-            Arg::Pos(_) => None,
-        })
-        .collect();
-
-    let cond = &conditions[cond_index];
-    for (var_no, obj) in cond.args.iter().zip(new_atom.args.iter()) {
-        if let Arg::Pos(pos) = var_no {
-            effect_args[*pos] = Some(obj.clone());
-        }
-    }
-    effect_args
-}
-
-// ============== JoinRule ==============
-
-struct JoinRule {
-    effect: InternalAtom,
-    conditions: Vec<InternalAtom>,
-    common_var_positions: [Vec<usize>; 2],
-    atoms_by_key: [HashMap<Vec<String>, Vec<GroundAtom>>; 2],
-}
-
-impl JoinRule {
-    fn new(effect: InternalAtom, conditions: Vec<InternalAtom>) -> Self {
-        assert_eq!(conditions.len(), 2);
-
-        let left_args = &conditions[0].args;
-        let right_args = &conditions[1].args;
-
-        let left_vars: HashSet<usize> = left_args
-            .iter()
-            .filter_map(|a| match a {
-                Arg::Pos(p) => Some(*p),
-                _ => None,
-            })
-            .collect();
-        let right_vars: HashSet<usize> = right_args
-            .iter()
-            .filter_map(|a| match a {
-                Arg::Pos(p) => Some(*p),
-                _ => None,
-            })
-            .collect();
-
-        let mut common_vars: Vec<usize> = left_vars.intersection(&right_vars).cloned().collect();
-        common_vars.sort();
-
-        let left_positions: Vec<usize> = common_vars
-            .iter()
-            .map(|var| {
-                left_args
-                    .iter()
-                    .position(|a| matches!(a, Arg::Pos(p) if p == var))
-                    .unwrap()
-            })
-            .collect();
-        let right_positions: Vec<usize> = common_vars
-            .iter()
-            .map(|var| {
-                right_args
-                    .iter()
-                    .position(|a| matches!(a, Arg::Pos(p) if p == var))
-                    .unwrap()
-            })
-            .collect();
-
-        JoinRule {
-            effect,
-            conditions,
-            common_var_positions: [left_positions, right_positions],
-            atoms_by_key: [HashMap::new(), HashMap::new()],
+impl Condition {
+    fn bind(&self, args: &[ObjectId], head: &mut [ObjectId]) {
+        for &(position, slot) in &self.bindings {
+            head[slot] = args[position];
         }
     }
 }
 
-impl BuildRule for JoinRule {
-    fn prepare_effect(&self, new_atom: &GroundAtom, cond_index: usize) -> Vec<Option<String>> {
-        prepare_effect_impl(&self.effect, &self.conditions, new_atom, cond_index)
-    }
-
-    fn update_index(&mut self, new_atom: &GroundAtom, cond_index: usize) {
-        let key: Vec<String> = self.common_var_positions[cond_index]
-            .iter()
-            .map(|&pos| new_atom.args[pos].clone())
-            .collect();
-        self.atoms_by_key[cond_index]
-            .entry(key)
-            .or_default()
-            .push(new_atom.clone());
-    }
-
-    fn fire(
-        &self,
-        new_atom: &GroundAtom,
-        cond_index: usize,
-        enqueue: &mut dyn FnMut(&str, &[Option<String>]),
-    ) {
-        let effect_args = self.prepare_effect(new_atom, cond_index);
-        let key: Vec<String> = self.common_var_positions[cond_index]
-            .iter()
-            .map(|&pos| new_atom.args[pos].clone())
-            .collect();
-        let other_cond_index = 1 - cond_index;
-        let other_cond = &self.conditions[other_cond_index];
-
-        if let Some(atoms) = self.atoms_by_key[other_cond_index].get(&key) {
-            for atom in atoms {
-                // Reset effect args to partially filled state
-                let mut ea = effect_args.clone();
-                for (var_no, obj) in other_cond.args.iter().zip(atom.args.iter()) {
-                    if let Arg::Pos(pos) = var_no {
-                        ea[*pos] = Some(obj.clone());
-                    }
-                }
-                enqueue(&self.effect.predicate, &ea);
-            }
-        }
-    }
-
-    fn conditions(&self) -> &[InternalAtom] {
-        &self.conditions
-    }
+/// How a rule combines the matches of its conditions.
+enum Body {
+    /// One condition: every match fires on its own.
+    Project,
+    /// Two conditions, joined on the head variables they share. Each side
+    /// indexes its matches by the values at those shared positions.
+    Join {
+        key_positions: [Box<[usize]>; 2],
+        matched: [HashMap<Box<[ObjectId]>, Vec<Rc<[ObjectId]>>>; 2],
+    },
+    /// Any number of conditions whose matches are enumerated as a product.
+    Product {
+        matched: Vec<Vec<Rc<[ObjectId]>>>,
+        /// Conditions that have not matched anything yet: while this is
+        /// positive the product is empty.
+        unmatched: usize,
+    },
 }
 
-// ============== ProductRule ==============
-
-struct ProductRule {
-    effect: InternalAtom,
-    conditions: Vec<InternalAtom>,
-    atoms_by_index: Vec<Vec<GroundAtom>>,
-    empty_atom_list_no: usize,
+struct Rule {
+    head_predicate: PredicateId,
+    /// Head arguments with the constants filled in. Variable slots hold
+    /// [`ObjectId::UNBOUND`] and are overwritten by every firing.
+    head: Box<[ObjectId]>,
+    conditions: Box<[Condition]>,
+    body: Body,
 }
 
-impl ProductRule {
-    fn new(effect: InternalAtom, conditions: Vec<InternalAtom>) -> Self {
-        let n = conditions.len();
-        ProductRule {
-            effect,
-            atoms_by_index: vec![vec![]; n],
-            empty_atom_list_no: n,
-            conditions,
-        }
-    }
+/// Buffers reused across firings so that a rule that fires millions of times
+/// allocates only for the atoms it actually derives.
+#[derive(Default)]
+struct Scratch {
+    head: Vec<ObjectId>,
+    key: Vec<ObjectId>,
+    cursor: Vec<usize>,
+}
 
-    fn get_bindings(atom: &GroundAtom, cond: &InternalAtom) -> Vec<(usize, String)> {
-        cond.args
+impl Rule {
+    fn compile(rule: &crate::pddl_to_prolog::Rule, symbols: &mut Symbols) -> Rule {
+        let (head_name, head_args) = rule
+            .effect
+            .split_first()
+            .expect("rule head has a predicate");
+        let variables: HashMap<&str, usize> = head_args
             .iter()
-            .zip(atom.args.iter())
-            .filter_map(|(var_no, obj)| {
-                if let Arg::Pos(pos) = var_no {
-                    Some((*pos, obj.clone()))
+            .enumerate()
+            .filter(|(_, arg)| arg.starts_with('?'))
+            .map(|(position, arg)| (arg.as_str(), position))
+            .collect();
+        let head: Box<[ObjectId]> = head_args
+            .iter()
+            .map(|arg| {
+                if arg.starts_with('?') {
+                    ObjectId::UNBOUND
                 } else {
-                    None
+                    symbols.object(arg)
                 }
             })
-            .collect()
-    }
-}
+            .collect();
 
-impl BuildRule for ProductRule {
-    fn prepare_effect(&self, new_atom: &GroundAtom, cond_index: usize) -> Vec<Option<String>> {
-        prepare_effect_impl(&self.effect, &self.conditions, new_atom, cond_index)
-    }
+        let mut bound = vec![false; head.len()];
+        let conditions: Box<[Condition]> = rule
+            .conditions
+            .iter()
+            .map(|condition| {
+                let (name, args) = condition.split_first().expect("condition has a predicate");
+                let mut bindings = Vec::new();
+                let mut constants = Vec::new();
+                for (position, arg) in args.iter().enumerate() {
+                    match variables.get(arg.as_str()) {
+                        Some(&slot) => {
+                            bound[slot] = true;
+                            bindings.push((position, slot));
+                        }
+                        // A variable the head does not mention matches anything.
+                        None if arg.starts_with('?') => {}
+                        None => constants.push((position, symbols.object(arg))),
+                    }
+                }
+                Condition {
+                    predicate: symbols.predicate(name),
+                    bindings: bindings.into(),
+                    constants: constants.into(),
+                }
+            })
+            .collect();
 
-    fn update_index(&mut self, new_atom: &GroundAtom, cond_index: usize) {
-        if self.atoms_by_index[cond_index].is_empty() {
-            self.empty_atom_list_no -= 1;
+        // Every rule kind consults all of its conditions when it fires, so a
+        // head variable bound by any of them is bound by the time the derived
+        // atom is enqueued. `PrologProgram::remove_free_effect_variables`
+        // establishes this; without it `UNBOUND` would escape into the model.
+        for (slot, bound) in bound.iter().enumerate() {
+            assert!(
+                *bound || head[slot] != ObjectId::UNBOUND,
+                "head variable {} of rule {:?} is bound by no condition",
+                head_args[slot],
+                rule.effect
+            );
         }
-        self.atoms_by_index[cond_index].push(new_atom.clone());
-    }
 
-    fn fire(
-        &self,
-        new_atom: &GroundAtom,
-        cond_index: usize,
-        enqueue: &mut dyn FnMut(&str, &[Option<String>]),
-    ) {
-        if self.empty_atom_list_no > 0 {
-            return;
-        }
-
-        // Build bindings factors from all other conditions
-        let mut bindings_factors: Vec<Vec<Vec<(usize, String)>>> = vec![];
-        for (pos, cond) in self.conditions.iter().enumerate() {
-            if pos == cond_index {
-                continue;
+        let body = match rule.rule_type.as_ref().unwrap_or(&RuleType::Join) {
+            RuleType::Project => {
+                assert_eq!(conditions.len(), 1, "project rule needs one condition");
+                Body::Project
             }
-            let atoms = &self.atoms_by_index[pos];
-            let factor: Vec<Vec<(usize, String)>> = atoms
-                .iter()
-                .map(|atom| Self::get_bindings(atom, cond))
-                .collect();
-            bindings_factors.push(factor);
-        }
-
-        let eff_args = self.prepare_effect(new_atom, cond_index);
-
-        // Compute cartesian product of bindings_factors
-        let mut products: Vec<Vec<Vec<(usize, String)>>> = vec![vec![]];
-        for factor in &bindings_factors {
-            let mut new_products = vec![];
-            for existing in &products {
-                for bindings in factor {
-                    let mut combined = existing.clone();
-                    combined.push(bindings.clone());
-                    new_products.push(combined);
+            RuleType::Join => {
+                assert_eq!(conditions.len(), 2, "join rule needs two conditions");
+                Body::Join {
+                    key_positions: join_key_positions(&conditions[0], &conditions[1]),
+                    matched: Default::default(),
                 }
             }
-            products = new_products;
-        }
+            RuleType::Product => Body::Product {
+                matched: vec![Vec::new(); conditions.len()],
+                unmatched: conditions.len(),
+            },
+        };
 
-        for bindings_list in &products {
-            let mut ea = eff_args.clone();
-            for bindings in bindings_list {
-                for (var_no, obj) in bindings {
-                    ea[*var_no] = Some(obj.clone());
-                }
+        Rule {
+            head_predicate: symbols.predicate(head_name),
+            head,
+            conditions,
+            body,
+        }
+    }
+
+    /// Records a match so that later firings of the *other* conditions can
+    /// combine with it.
+    fn record(&mut self, index: usize, args: &Rc<[ObjectId]>, key: &mut Vec<ObjectId>) {
+        match &mut self.body {
+            Body::Project => {}
+            Body::Join {
+                key_positions,
+                matched,
+            } => {
+                fill_key(key, &key_positions[index], args);
+                matched[index]
+                    .entry(key.as_slice().into())
+                    .or_default()
+                    .push(Rc::clone(args));
             }
-            enqueue(&self.effect.predicate, &ea);
+            Body::Product { matched, unmatched } => {
+                if matched[index].is_empty() {
+                    *unmatched -= 1;
+                }
+                matched[index].push(Rc::clone(args));
+            }
         }
     }
 
-    fn conditions(&self) -> &[InternalAtom] {
-        &self.conditions
-    }
-}
-
-// ============== ProjectRule ==============
-
-struct ProjectRule {
-    effect: InternalAtom,
-    conditions: Vec<InternalAtom>,
-}
-
-impl ProjectRule {
-    fn new(effect: InternalAtom, conditions: Vec<InternalAtom>) -> Self {
-        assert_eq!(conditions.len(), 1);
-        ProjectRule { effect, conditions }
-    }
-}
-
-impl BuildRule for ProjectRule {
-    fn prepare_effect(&self, new_atom: &GroundAtom, cond_index: usize) -> Vec<Option<String>> {
-        prepare_effect_impl(&self.effect, &self.conditions, new_atom, cond_index)
-    }
-
-    fn update_index(&mut self, _new_atom: &GroundAtom, _cond_index: usize) {
-        // No index needed for projection
-    }
-
+    /// Enqueues the head for every way the rest of the body can be satisfied
+    /// alongside `args` matching condition `index`.
     fn fire(
         &self,
-        new_atom: &GroundAtom,
-        cond_index: usize,
-        enqueue: &mut dyn FnMut(&str, &[Option<String>]),
+        index: usize,
+        args: &[ObjectId],
+        scratch: &mut Scratch,
+        enqueue: &mut dyn FnMut(PredicateId, &[ObjectId]),
     ) {
-        let effect_args = self.prepare_effect(new_atom, cond_index);
-        enqueue(&self.effect.predicate, &effect_args);
-    }
+        let Scratch { head, key, cursor } = scratch;
+        head.clear();
+        head.extend_from_slice(&self.head);
+        self.conditions[index].bind(args, head);
 
-    fn conditions(&self) -> &[InternalAtom] {
-        &self.conditions
+        match &self.body {
+            Body::Project => enqueue(self.head_predicate, head),
+            Body::Join {
+                key_positions,
+                matched,
+            } => {
+                fill_key(key, &key_positions[index], args);
+                let other = 1 - index;
+                let Some(partners) = matched[other].get(key.as_slice()) else {
+                    return;
+                };
+                // The two conditions agree on exactly the head slots the key
+                // covers, so binding the partner cannot invalidate the slots
+                // already written and no reset is needed between partners.
+                for partner in partners {
+                    self.conditions[other].bind(partner, head);
+                    enqueue(self.head_predicate, head);
+                }
+            }
+            Body::Product { matched, unmatched } => {
+                if *unmatched > 0 {
+                    return;
+                }
+                cursor.clear();
+                cursor.resize(self.conditions.len(), 0);
+                loop {
+                    head.clear();
+                    head.extend_from_slice(&self.head);
+                    self.conditions[index].bind(args, head);
+                    for (other, condition) in self.conditions.iter().enumerate() {
+                        if other != index {
+                            condition.bind(&matched[other][cursor[other]], head);
+                        }
+                    }
+                    enqueue(self.head_predicate, head);
+                    if !advance(cursor, index, matched) {
+                        return;
+                    }
+                }
+            }
+        }
     }
 }
 
-// ============== Unifier ==============
+fn fill_key(key: &mut Vec<ObjectId>, positions: &[usize], args: &[ObjectId]) {
+    key.clear();
+    key.extend(positions.iter().map(|&position| args[position]));
+}
 
-/// A node in the unification trie.
+/// Positions, in each condition, of the head variables both conditions bind.
+/// Both sides list them in the same order, so equal keys mean equal bindings.
+fn join_key_positions(left: &Condition, right: &Condition) -> [Box<[usize]>; 2] {
+    let right_slots: HashMap<usize, usize> = right
+        .bindings
+        .iter()
+        .map(|&(position, slot)| (slot, position))
+        .collect();
+    let mut shared: Vec<(usize, usize, usize)> = left
+        .bindings
+        .iter()
+        .filter_map(|&(position, slot)| Some((slot, position, *right_slots.get(&slot)?)))
+        .collect();
+    shared.sort_unstable();
+    [
+        shared.iter().map(|&(_, left, _)| left).collect(),
+        shared.iter().map(|&(_, _, right)| right).collect(),
+    ]
+}
+
+/// Advances the product odometer, last condition fastest. Returns false once
+/// every combination has been visited.
+fn advance(cursor: &mut [usize], skip: usize, matched: &[Vec<Rc<[ObjectId]>>]) -> bool {
+    for position in (0..cursor.len()).rev() {
+        if position == skip {
+            continue;
+        }
+        cursor[position] += 1;
+        if cursor[position] < matched[position].len() {
+            return true;
+        }
+        cursor[position] = 0;
+    }
+    false
+}
+
+/// Trie over the constant arguments of the rule conditions sharing a
+/// predicate: given a ground atom it yields every slot the atom can fill.
 enum Generator {
-    Leaf(LeafGenerator),
-    Match(MatchGenerator),
+    Leaf(Box<[Slot]>),
+    Branch(Branch),
 }
 
-struct LeafGenerator {
-    matches: Vec<(usize, usize)>, // (rule_index, cond_index)
-}
-
-struct MatchGenerator {
-    index: usize,
-    matches: Vec<(usize, usize)>,
-    match_generator: HashMap<String, Box<Generator>>,
-    next: Box<Generator>,
+struct Branch {
+    /// Argument position this node discriminates on.
+    position: usize,
+    /// Slots whose conditions have no constant left to check.
+    matches: Box<[Slot]>,
+    by_object: HashMap<ObjectId, Generator>,
+    /// Slots whose next constant sits at a later position.
+    rest: Box<Generator>,
 }
 
 impl Generator {
-    fn generate(&self, atom: &GroundAtom, result: &mut Vec<(usize, usize)>) {
-        match self {
-            Generator::Leaf(leaf) => {
-                result.extend_from_slice(&leaf.matches);
-            }
-            Generator::Match(mg) => {
-                result.extend_from_slice(&mg.matches);
-                if mg.index < atom.args.len() {
-                    if let Some(gener) = mg.match_generator.get(&atom.args[mg.index]) {
-                        gener.generate(atom, result);
-                    }
-                }
-                mg.next.generate(atom, result);
+    fn build(entries: Vec<(&[(usize, ObjectId)], Slot)>) -> Generator {
+        let next_position = entries
+            .iter()
+            .filter_map(|(constants, _)| constants.first())
+            .map(|&(position, _)| position)
+            .min();
+        let Some(position) = next_position else {
+            return Generator::Leaf(entries.into_iter().map(|(_, slot)| slot).collect());
+        };
+
+        let mut matches = Vec::new();
+        let mut by_object: HashMap<ObjectId, Vec<(&[(usize, ObjectId)], Slot)>> = HashMap::new();
+        let mut rest = Vec::new();
+        for (constants, slot) in entries {
+            match constants.first() {
+                None => matches.push(slot),
+                Some(&(at, object)) if at == position => by_object
+                    .entry(object)
+                    .or_default()
+                    .push((&constants[1..], slot)),
+                Some(_) => rest.push((constants, slot)),
             }
         }
+        Generator::Branch(Branch {
+            position,
+            matches: matches.into(),
+            by_object: by_object
+                .into_iter()
+                .map(|(object, entries)| (object, Generator::build(entries)))
+                .collect(),
+            rest: Box::new(Generator::build(rest)),
+        })
     }
 
-    fn insert(self, args: &[(usize, String)], value: (usize, usize)) -> Generator {
+    fn collect_slots(&self, args: &[ObjectId], out: &mut Vec<Slot>) {
         match self {
-            Generator::Leaf(mut leaf) => {
-                if args.is_empty() {
-                    leaf.matches.push(value);
-                    Generator::Leaf(leaf)
-                } else {
-                    let mut root = Generator::Leaf(LeafGenerator {
-                        matches: vec![value],
-                    });
-                    for &(arg_index, ref arg) in args.iter().rev() {
-                        let mut new_root = MatchGenerator {
-                            index: arg_index,
-                            matches: vec![],
-                            match_generator: HashMap::new(),
-                            next: Box::new(Generator::Leaf(LeafGenerator { matches: vec![] })),
-                        };
-                        new_root.match_generator.insert(arg.clone(), Box::new(root));
-                        root = Generator::Match(new_root);
-                    }
-                    // Transfer existing matches
-                    match &mut root {
-                        Generator::Match(mg) => {
-                            mg.matches = leaf.matches;
-                        }
-                        _ => unreachable!(),
-                    }
-                    root
+            Generator::Leaf(matches) => out.extend_from_slice(matches),
+            Generator::Branch(branch) => {
+                out.extend_from_slice(&branch.matches);
+                if let Some(next) = args
+                    .get(branch.position)
+                    .and_then(|object| branch.by_object.get(object))
+                {
+                    next.collect_slots(args, out);
                 }
-            }
-            Generator::Match(mut mg) => {
-                if args.is_empty() {
-                    mg.matches.push(value);
-                    Generator::Match(mg)
-                } else {
-                    let (arg_index, ref arg) = args[0];
-                    if mg.index < arg_index {
-                        let next = (*mg.next).insert(args, value);
-                        mg.next = Box::new(next);
-                        Generator::Match(mg)
-                    } else if mg.index > arg_index {
-                        let mut new_parent = MatchGenerator {
-                            index: arg_index,
-                            matches: vec![],
-                            match_generator: HashMap::new(),
-                            next: Box::new(Generator::Match(mg)),
-                        };
-                        let new_branch = Generator::Leaf(LeafGenerator { matches: vec![] })
-                            .insert(&args[1..], value);
-                        new_parent
-                            .match_generator
-                            .insert(arg.clone(), Box::new(new_branch));
-                        Generator::Match(new_parent)
-                    } else {
-                        // mg.index == arg_index
-                        let branch = mg.match_generator.remove(arg).unwrap_or_else(|| {
-                            Box::new(Generator::Leaf(LeafGenerator { matches: vec![] }))
-                        });
-                        let new_branch = (*branch).insert(&args[1..], value);
-                        mg.match_generator.insert(arg.clone(), Box::new(new_branch));
-                        Generator::Match(mg)
-                    }
-                }
+                branch.rest.collect_slots(args, out);
             }
         }
     }
 }
 
+/// Maps a derived atom to the rule conditions it matches, by predicate.
 struct Unifier {
-    predicate_to_generator: HashMap<String, Generator>,
+    by_predicate: Vec<Generator>,
 }
 
 impl Unifier {
-    fn new(rules: &[Box<dyn BuildRule>]) -> Self {
-        let mut pred_to_gen: HashMap<String, Generator> = HashMap::new();
-
-        for (rule_idx, rule) in rules.iter().enumerate() {
-            for (cond_idx, cond) in rule.conditions().iter().enumerate() {
-                let constant_args: Vec<(usize, String)> = cond
-                    .args
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, arg)| match arg {
-                        Arg::Str(s) if !s.starts_with('?') => Some((i, s.clone())),
-                        _ => None,
-                    })
-                    .collect();
-
-                let gener = pred_to_gen
-                    .remove(&cond.predicate)
-                    .unwrap_or(Generator::Leaf(LeafGenerator { matches: vec![] }));
-                let new_gen = gener.insert(&constant_args, (rule_idx, cond_idx));
-                pred_to_gen.insert(cond.predicate.clone(), new_gen);
+    fn new(rules: &[Rule], predicate_count: usize) -> Self {
+        let mut entries: Vec<Vec<(&[(usize, ObjectId)], Slot)>> = vec![Vec::new(); predicate_count];
+        for (rule_index, rule) in rules.iter().enumerate() {
+            for (condition_index, condition) in rule.conditions.iter().enumerate() {
+                entries[condition.predicate.index()].push((
+                    &condition.constants[..],
+                    (rule_index as u32, condition_index as u32),
+                ));
             }
         }
-
         Unifier {
-            predicate_to_generator: pred_to_gen,
+            by_predicate: entries.into_iter().map(Generator::build).collect(),
         }
     }
 
-    fn unify(&self, atom: &GroundAtom) -> Vec<(usize, usize)> {
-        let mut result = vec![];
-        if let Some(gener) = self.predicate_to_generator.get(&atom.predicate) {
-            gener.generate(atom, &mut result);
-        }
-        result
+    fn slots(&self, predicate: PredicateId, args: &[ObjectId], out: &mut Vec<Slot>) {
+        out.clear();
+        self.by_predicate[predicate.index()].collect_slots(args, out);
     }
 }
 
-// ============== Queue ==============
-
+/// The derived atoms, in derivation order, with duplicates suppressed.
 struct Queue {
-    queue: Vec<GroundAtom>,
-    queue_pos: usize,
-    enqueued: HashSet<Vec<String>>, // (pred, arg1, arg2, ...)
-    num_pushes: usize,
+    atoms: Vec<GroundAtom>,
+    position: usize,
+    /// Argument tuples already derived, per predicate. Sharing the `Rc` with
+    /// the queue keeps the deduplication index free of extra allocations.
+    enqueued: Vec<HashSet<Rc<[ObjectId]>>>,
+    pushes: usize,
 }
 
 impl Queue {
-    fn new(atoms: Vec<GroundAtom>) -> Self {
-        let enqueued: HashSet<Vec<String>> = atoms
-            .iter()
-            .map(|a| {
-                let mut key = vec![a.predicate.clone()];
-                key.extend(a.args.clone());
-                key
-            })
-            .collect();
-        let num_pushes = atoms.len();
+    fn new(predicate_count: usize) -> Self {
         Queue {
-            queue: atoms,
-            queue_pos: 0,
-            enqueued,
-            num_pushes,
+            atoms: Vec::new(),
+            position: 0,
+            enqueued: vec![HashSet::new(); predicate_count],
+            pushes: 0,
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.queue_pos >= self.queue.len()
-    }
-
-    fn push(&mut self, predicate: &str, args: &[Option<String>]) {
-        self.num_pushes += 1;
-        // Only enqueue if all args are bound
-        let bound_args: Vec<String> = match args
-            .iter()
-            .map(|a| a.clone())
-            .collect::<Option<Vec<String>>>()
-        {
-            Some(a) => a,
-            None => return,
-        };
-        let mut key = vec![predicate.to_string()];
-        key.extend(bound_args.clone());
-        if self.enqueued.insert(key) {
-            self.queue
-                .push(GroundAtom::new(predicate.to_string(), bound_args));
+    fn push(&mut self, predicate: PredicateId, args: &[ObjectId]) {
+        self.pushes += 1;
+        let derived = &mut self.enqueued[predicate.index()];
+        if derived.contains(args) {
+            return;
         }
-    }
-
-    fn pop(&mut self) -> GroundAtom {
-        let result = self.queue[self.queue_pos].clone();
-        self.queue_pos += 1;
-        result
+        let args: Rc<[ObjectId]> = Rc::from(args);
+        derived.insert(Rc::clone(&args));
+        self.atoms.push(GroundAtom { predicate, args });
     }
 }
 
-/// Convert program rules to typed BuildRule objects.
-fn convert_rules(prog: &PrologProgram) -> Vec<Box<dyn BuildRule>> {
-    let mut result: Vec<Box<dyn BuildRule>> = vec![];
-    for rule in &prog.rules {
-        let (new_effect, new_conditions) = variables_to_numbers(&rule.effect, &rule.conditions);
-        let rule_type = rule.rule_type.as_ref().unwrap_or(&RuleType::Join);
-        let build_rule: Box<dyn BuildRule> = match rule_type {
-            RuleType::Join => Box::new(JoinRule::new(new_effect, new_conditions)),
-            RuleType::Product => Box::new(ProductRule::new(new_effect, new_conditions)),
-            RuleType::Project => Box::new(ProjectRule::new(new_effect, new_conditions)),
-        };
-        result.push(build_rule);
-    }
-    result
-}
+/// Computes the least model of `prog` by forward chaining.
+pub fn compute_model(prog: &PrologProgram) -> GroundModel {
+    let mut symbols = Symbols::default();
 
-/// Python: compute_model(prog) -> list of Fact
-/// Performs forward chaining to compute the model (set of reachable ground atoms).
-pub fn compute_model(prog: &PrologProgram) -> Vec<Fact> {
-    let mut rules = convert_rules(prog);
-    let unifier = Unifier::new(&rules);
+    // The seed order decides the order of everything the model feeds, down to
+    // the SAS variable order, so it is fixed before any interning happens.
+    let mut facts: Vec<&[String]> = prog.facts.iter().map(Vec::as_slice).collect();
+    facts.sort_unstable_by(|left, right| cmp_quoted_slice(left, right));
 
-    // Convert program facts to GroundAtoms
-    let mut fact_atoms: Vec<GroundAtom> = prog
-        .facts
+    let mut rules: Vec<Rule> = prog
+        .rules
         .iter()
-        .map(|f| GroundAtom::new(f.atom[0].clone(), f.atom[1..].to_vec()))
+        .map(|rule| Rule::compile(rule, &mut symbols))
         .collect();
-    fact_atoms.sort_by(|a, b| format!("{:?}", a).cmp(&format!("{:?}", b)));
+    let interned_facts: Vec<(PredicateId, Vec<ObjectId>)> = facts
+        .iter()
+        .map(|fact| {
+            let (predicate, args) = fact.split_first().expect("fact has a predicate");
+            let predicate = symbols.predicate(predicate);
+            (predicate, args.iter().map(|a| symbols.object(a)).collect())
+        })
+        .collect();
 
-    let mut queue = Queue::new(fact_atoms);
+    // Interning is complete, so the per-predicate tables can be sized once.
+    let predicate_count = symbols.predicate_count();
+    let auxiliary: Vec<bool> = symbols
+        .predicates()
+        .map(|(_, name)| name.contains('$'))
+        .collect();
+    let unifier = Unifier::new(&rules, predicate_count);
+
+    let mut queue = Queue::new(predicate_count);
+    for (predicate, args) in &interned_facts {
+        queue.push(*predicate, args);
+    }
 
     info!("Generated {} rules.", rules.len());
 
+    let mut scratch = Scratch::default();
+    let mut slots: Vec<Slot> = Vec::new();
     let mut relevant_atoms = 0;
     let mut auxiliary_atoms = 0;
-
-    while !queue.is_empty() {
-        let next_atom = queue.pop();
-        if next_atom.predicate.contains('$') {
+    while queue.position < queue.atoms.len() {
+        let predicate = queue.atoms[queue.position].predicate;
+        // The queue grows while the atom fires, so its arguments are held by
+        // reference count rather than borrowed out of it.
+        let args = Rc::clone(&queue.atoms[queue.position].args);
+        queue.position += 1;
+        if auxiliary[predicate.index()] {
             auxiliary_atoms += 1;
         } else {
             relevant_atoms += 1;
         }
 
-        let matches = unifier.unify(&next_atom);
-        for (rule_idx, cond_idx) in matches {
-            rules[rule_idx].update_index(&next_atom, cond_idx);
-            rules[rule_idx].fire(&next_atom, cond_idx, &mut |pred, args| {
-                queue.push(pred, args);
-            });
+        unifier.slots(predicate, &args, &mut slots);
+        for &(rule_index, condition_index) in &slots {
+            let rule = &mut rules[rule_index as usize];
+            let condition_index = condition_index as usize;
+            rule.record(condition_index, &args, &mut scratch.key);
+            rule.fire(
+                condition_index,
+                &args,
+                &mut scratch,
+                &mut |predicate, args| queue.push(predicate, args),
+            );
         }
     }
 
-    info!("{} relevant atoms", relevant_atoms);
-    info!("{} auxiliary atoms", auxiliary_atoms);
-    info!("{} final queue length", queue.queue.len());
-    info!("{} total queue pushes", queue.num_pushes);
+    info!("{relevant_atoms} relevant atoms");
+    info!("{auxiliary_atoms} auxiliary atoms");
+    info!("{} final queue length", queue.atoms.len());
+    info!("{} total queue pushes", queue.pushes);
 
-    queue.queue.into_iter().map(|a| a.to_fact()).collect()
+    GroundModel {
+        symbols,
+        atoms: queue.atoms,
+    }
 }

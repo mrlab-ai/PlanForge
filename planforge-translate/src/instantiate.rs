@@ -87,9 +87,8 @@ pub struct ExploreResult {
     pub reachable_action_params: HashMap<String, Vec<Vec<String>>>,
 }
 
-/// Python: def get_fluent_facts(task, model)
-fn get_fluent_facts(task: &Task, _model: &[pddl_to_prolog::Fact]) -> HashSet<String> {
-    // A predicate is fluent if it appears in any action effect
+/// A predicate is fluent if it appears in some action effect or is derived.
+fn get_fluent_facts(task: &Task) -> HashSet<String> {
     let mut fluent_preds: HashSet<String> = HashSet::new();
     for action in &task.actions {
         for eff in &action.effects {
@@ -98,35 +97,63 @@ fn get_fluent_facts(task: &Task, _model: &[pddl_to_prolog::Fact]) -> HashSet<Str
             }
         }
     }
-    // Also add derived predicates (axioms)
     for axiom in &task.axioms {
         fluent_preds.insert(axiom.name.clone());
     }
     fluent_preds
 }
 
-/// Python: def get_fluent_functions(task)
-fn get_fluent_functions(model: &[pddl_to_prolog::Fact]) -> HashSet<PrimitiveNumericExpression> {
-    let mut result = HashSet::new();
-    for fact in model {
-        if let Some(pred) = fact.atom.first() {
-            if let Some(symbol) = pred.strip_prefix("@fluent-function-") {
-                let ntype = if symbol == "total-cost" {
-                    'I'
-                } else if symbol.starts_with("derived!") {
-                    'D'
-                } else {
-                    'R'
-                };
-                result.insert(PrimitiveNumericExpression::with_type(
-                    symbol.to_string(),
-                    fact.atom[1..].to_vec(),
-                    ntype,
-                ));
-            }
+/// What a grounded predicate contributes to the instantiated task. Grounding
+/// derives one atom per reachable fact, so the classification is done once per
+/// predicate rather than by re-testing every atom's name.
+struct Role<'a> {
+    /// The predicate is fluent, so its atoms become SAS facts. Independent of
+    /// `bookkeeping`: normalization marks `@goal-reachable` fluent as well.
+    fluent: bool,
+    bookkeeping: Bookkeeping<'a>,
+}
+
+/// The roles normalization gives to the predicates it introduces itself.
+enum Bookkeeping<'a> {
+    None,
+    /// A reachable numeric fluent, named by its function symbol.
+    Function(&'a str),
+    /// A reachable parameter tuple of the named action.
+    ActionParameters(&'a str),
+    /// A reachable instance of the named numeric axiom.
+    FunctionAxiom(&'a str),
+    /// The goal is reachable in the delete relaxation.
+    GoalReachable,
+}
+
+impl<'a> Role<'a> {
+    fn classify(predicate: &'a str, fluent_facts: &HashSet<String>) -> Self {
+        let bookkeeping = if let Some(symbol) = predicate.strip_prefix("@fluent-function-") {
+            Bookkeeping::Function(symbol)
+        } else if let Some(name) = predicate.strip_prefix("@action-") {
+            Bookkeeping::ActionParameters(name)
+        } else if let Some(name) = predicate.strip_prefix("@function-axiom-") {
+            Bookkeeping::FunctionAxiom(name)
+        } else if predicate == "@goal-reachable" {
+            Bookkeeping::GoalReachable
+        } else {
+            Bookkeeping::None
+        };
+        Role {
+            fluent: fluent_facts.contains(predicate),
+            bookkeeping,
         }
     }
-    result
+}
+
+/// Numeric fluents are typed by their symbol: the metric is integral, a
+/// function introduced by normalization is derived, everything else is real.
+fn function_type(symbol: &str) -> char {
+    match symbol {
+        "total-cost" => 'I',
+        _ if symbol.starts_with("derived!") => 'D',
+        _ => 'R',
+    }
 }
 
 /// Python: def get_objects_by_type(typed_objects, types)
@@ -175,51 +202,57 @@ fn init_function_values(
     result
 }
 
-/// Python: def explore(task)
-/// Main exploration entry point. Translates task to logic program,
-/// builds model, then instantiates actions and axioms.
+/// Translates the task into a logic program, computes its model and
+/// instantiates the actions and axioms the model proves reachable.
 pub fn explore(task: &Task) -> ExploreResult {
-    // Step 1: Translate to logic program
     let prog = pddl_to_prolog::translate(task);
-
-    // Step 2: Build model
     let model = build_model::compute_model(&prog);
 
-    // Step 3: Determine fluent facts and functions
-    let fluent_facts = get_fluent_facts(task, &model);
-    let fluent_functions = get_fluent_functions(&model);
+    let fluent_facts = get_fluent_facts(task);
     let objects_by_type = get_objects_by_type(&task.objects, &task.types);
     let init_func_vals = init_function_values(&task.num_init);
-
-    // Step 4: Collect reachable atoms
     let init_facts: HashSet<Atom> = task.init.iter().cloned().collect();
 
+    let roles: Vec<Role> = model
+        .symbols
+        .predicates()
+        .map(|(_, name)| Role::classify(name, &fluent_facts))
+        .collect();
+
+    let mut fluent_functions: HashSet<PrimitiveNumericExpression> = HashSet::new();
     let mut reachable_atoms: Vec<Atom> = vec![];
-    for fact in &model {
-        if let Some(pred) = fact.atom.first() {
-            if fluent_facts.contains(pred) {
-                reachable_atoms.push(Atom::new(pred.clone(), fact.atom[1..].to_vec()));
-            }
-        }
-    }
-
-    let mut relaxed_reachable = false;
-
-    // Step 5: Collect reachable action parameters and check goal reachability
     let mut reachable_action_params: HashMap<String, Vec<Vec<String>>> = HashMap::new();
-    for fact in &model {
-        if fact.atom.len() >= 1 {
-            let pred = &fact.atom[0];
-            if pred.starts_with("@action-") {
-                let action_name = &pred["@action-".len()..];
-                let params = fact.atom[1..].to_vec();
-                reachable_action_params
-                    .entry(action_name.to_string())
-                    .or_insert_with(Vec::new)
-                    .push(params);
-            } else if pred == "@goal-reachable" {
-                relaxed_reachable = true;
+    let mut axiom_instances: Vec<(&str, Vec<String>)> = vec![];
+    let mut relaxed_reachable = false;
+    for atom in &model.atoms {
+        let args = || -> Vec<String> {
+            atom.args
+                .iter()
+                .map(|&arg| model.symbols.object_name(arg).to_owned())
+                .collect()
+        };
+        let role = &roles[atom.predicate.index()];
+        if role.fluent {
+            reachable_atoms.push(Atom::new(
+                model.symbols.predicate_name(atom.predicate).to_owned(),
+                args(),
+            ));
+        }
+        match role.bookkeeping {
+            Bookkeeping::None => {}
+            Bookkeeping::Function(symbol) => {
+                fluent_functions.insert(PrimitiveNumericExpression::with_type(
+                    symbol.to_owned(),
+                    args(),
+                    function_type(symbol),
+                ));
             }
+            Bookkeeping::ActionParameters(name) => reachable_action_params
+                .entry(name.to_owned())
+                .or_default()
+                .push(args()),
+            Bookkeeping::FunctionAxiom(name) => axiom_instances.push((name, args())),
+            Bookkeeping::GoalReachable => relaxed_reachable = true,
         }
     }
 
@@ -286,26 +319,21 @@ pub fn explore(task: &Task) -> ExploreResult {
             .map(|axiom| (axiom.name.clone(), axiom))
             .collect();
 
-    for fact in &model {
-        if fact.atom.is_empty() {
-            continue;
-        }
-        if let Some(name) = fact.atom[0].strip_prefix("@function-axiom-") {
-            if let Some(axiom) = numeric_axioms_by_name.get(name) {
-                let mut var_mapping: HashMap<String, String> = HashMap::new();
-                for (parameter, value) in axiom.parameters.iter().zip(fact.atom.iter().skip(1)) {
-                    var_mapping.insert(parameter.name.clone(), value.clone());
-                }
-                let instantiated = axiom.instantiate(
-                    &var_mapping,
-                    &fluent_functions,
-                    &init_func_vals,
-                    &mut task_function_admin,
-                    &mut new_constant_numeric_axioms,
-                );
-                if !numeric_axioms.contains(&instantiated) {
-                    numeric_axioms.push(instantiated);
-                }
+    for (name, args) in &axiom_instances {
+        if let Some(axiom) = numeric_axioms_by_name.get(*name) {
+            let mut var_mapping: HashMap<String, String> = HashMap::new();
+            for (parameter, value) in axiom.parameters.iter().zip(args) {
+                var_mapping.insert(parameter.name.clone(), value.clone());
+            }
+            let instantiated = axiom.instantiate(
+                &var_mapping,
+                &fluent_functions,
+                &init_func_vals,
+                &mut task_function_admin,
+                &mut new_constant_numeric_axioms,
+            );
+            if !numeric_axioms.contains(&instantiated) {
+                numeric_axioms.push(instantiated);
             }
         }
     }
