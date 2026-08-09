@@ -18,10 +18,11 @@ use planforge_sas::utils::float_tolerance;
 use crate::evaluation::abstraction_task::validate_abstraction_operator;
 
 use super::additive_numeric_views::{AdditiveNumericViews, active_comparison_dimensions};
-use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
-use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
+use super::domain_abstraction::NumericPartitions;
 use super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees;
 use super::utils;
+use planforge_sas::numeric_conditions::ArithOp;
+use planforge_sas::utils::interval::Interval;
 
 const COMPARISON_TRUE_VAL: usize = 0;
 const COMPARISON_FALSE_VAL: usize = 1;
@@ -608,11 +609,8 @@ pub struct AbstractOperatorGenerator {
     numeric_domain_sizes: Vec<usize>,
     hash_multipliers: Vec<usize>,
     partitions: NumericPartitions,
-    comparison_index: Option<ComparisonAxiomIndex>,
-    comparison_trees: Vec<ComparisonTree>,
     additive_numeric_views: AdditiveNumericViews,
     comparisons_by_numeric_dep: Vec<Vec<usize>>,
-    derived_prop_vars: HashSet<usize>,
     combine_labels: bool,
     /// Per-operator scratch buffers reused across `build_branch_for_operator`
     /// calls. Each entry is sized to `num_variables` and the buffer is
@@ -679,38 +677,14 @@ impl AbstractOperatorGenerator {
 
         let hash_multipliers = compute_hash_multipliers(&domain_sizes, &numeric_domain_sizes)?;
 
-        let comparison_index = if task.comparison_axioms().is_empty() {
-            None
-        } else {
-            Some(
-                ComparisonAxiomIndex::from_task(task)
-                    .map_err(|e| anyhow!(e))
-                    .context("failed to build ComparisonAxiomIndex")?,
-            )
-        };
-
-        let mut comparison_trees: Vec<ComparisonTree> =
-            Vec::with_capacity(task.comparison_axioms().len());
-        for comparison_axiom_id in 0..task.comparison_axioms().len() {
-            let tree = ComparisonTree::from_task(task, comparison_axiom_id).map_err(|e| {
-                anyhow!(
-                    "failed to build ComparisonTree for comparison axiom {comparison_axiom_id}: {e:?}"
-                )
-            })?;
-            comparison_trees.push(tree);
-        }
-
         let additive_numeric_views =
             AdditiveNumericViews::for_active_dimensions(task, &numeric_domain_sizes)?;
         let mut comparisons_by_numeric_dep: Vec<Vec<usize>> =
             vec![Vec::new(); task.numeric_variables().len()];
-        for (tree_idx, tree) in comparison_trees.iter().enumerate() {
-            for dep in active_comparison_dimensions(
-                task,
-                tree,
-                &numeric_domain_sizes,
-                &additive_numeric_views,
-            ) {
+        for (tree_idx, tree) in task.numeric_conditions().iter().enumerate() {
+            for dep in
+                active_comparison_dimensions(tree, &numeric_domain_sizes, &additive_numeric_views)
+            {
                 ensure!(
                     dep < comparisons_by_numeric_dep.len(),
                     "comparison tree depends on numeric var {dep}, but only {} numeric vars exist",
@@ -719,12 +693,6 @@ impl AbstractOperatorGenerator {
                 comparisons_by_numeric_dep[dep].push(tree_idx);
             }
         }
-
-        let derived_prop_vars: HashSet<usize> = task
-            .comparison_axioms()
-            .iter()
-            .map(|ax| ax.get_affected_var_id())
-            .collect();
 
         let num_variables = task.get_num_variables();
         let cached_operator_costs: Arc<[f64]> = task
@@ -738,11 +706,8 @@ impl AbstractOperatorGenerator {
             numeric_domain_sizes,
             hash_multipliers,
             partitions,
-            comparison_index,
-            comparison_trees,
             additive_numeric_views,
             comparisons_by_numeric_dep,
-            derived_prop_vars,
             combine_labels,
             precondition_on_var_scratch: vec![None; num_variables],
             effect_on_var_scratch: vec![None; num_variables],
@@ -786,16 +751,10 @@ impl AbstractOperatorGenerator {
         combine_labels: bool,
     ) -> Result<Self> {
         let num_vars = task.get_num_variables();
-        let derived_prop: HashSet<usize> = task
-            .comparison_axioms()
-            .iter()
-            .map(|ax| ax.get_affected_var_id())
-            .collect();
-
         let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
         let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
         for var_id in 0..num_vars {
-            if derived_prop.contains(&var_id) {
+            if task.numeric_conditions().is_condition_var(var_id) {
                 domain_mapping.push(vec![
                     COMPARISON_TRUE_VAL,
                     COMPARISON_FALSE_VAL,
@@ -1043,7 +1002,7 @@ fn build_branch_for_operator(
             continue;
         }
 
-        debug_assert!(!generator.derived_prop_vars.contains(&eff.var_id()));
+        debug_assert!(!task.numeric_conditions().is_condition_var(eff.var_id()));
 
         let abs_val = generator.domain_mapping[var_id][eff.value()];
         let pre = generator.precondition_on_var_scratch[var_id];
@@ -1066,7 +1025,7 @@ fn build_branch_for_operator(
         let abs_val = generator.abstract_value(var_id, pre.value());
         if generator.effect_on_var_scratch[var_id].is_some() {
             pre_pairs.push(ExplicitFact::new(var_id, abs_val));
-        } else if !generator.derived_prop_vars.contains(&(var_id)) {
+        } else if !task.numeric_conditions().is_condition_var(var_id) {
             prev_pairs.push(ExplicitFact::new(var_id, abs_val));
         }
     }
@@ -1077,7 +1036,9 @@ fn build_branch_for_operator(
     // comparison from the target numeric partition.
     for pre in merged_preconditions {
         let var_id = pre.var();
-        if generator.variable_is_trivial(var_id) || !generator.derived_prop_vars.contains(&var_id) {
+        if generator.variable_is_trivial(var_id)
+            || !task.numeric_conditions().is_condition_var(var_id)
+        {
             continue;
         }
         let source_abs = generator.abstract_value(var_id, pre.value());
@@ -1290,16 +1251,12 @@ fn compute_hash_effects_with_preconditions(
     // transition count by orders of magnitude in domains like minecraft
     // where most concrete operators do not query most refined numerics.
     let mut needed_numeric_vars: HashSet<usize> = HashSet::new();
-    if let Some(index) = &generator.comparison_index {
+    if !task.numeric_conditions().is_empty() {
         // Deps of comparison-axiom preconditions are needed so we can filter
         // dead combos via optimistic eval on source intervals.
         for pre in op_preconditions {
-            if !generator.derived_prop_vars.contains(&pre.var()) {
-                continue;
-            }
-            if let Some(tree) = index.comparison_tree(pre.var()) {
+            if let Some(tree) = task.numeric_conditions().for_var(pre.var()) {
                 for dep in active_comparison_dimensions(
-                    task,
                     tree,
                     &generator.numeric_domain_sizes,
                     &generator.additive_numeric_views,
@@ -1318,13 +1275,12 @@ fn compute_hash_effects_with_preconditions(
         // when the affected dep crosses a value-relevant partition boundary —
         // disconnecting "comparison = TRUE" states from the initial state and
         // producing standalone_h = ∞ on deeply-refined abstractions.
-        for tree in &generator.comparison_trees {
-            let var_id = tree.affected_var_id;
+        for tree in task.numeric_conditions().iter() {
+            let var_id = tree.prop_var_id();
             if generator.domain_sizes.get(var_id).copied().unwrap_or(1) <= 1 {
                 continue;
             }
             let deps = active_comparison_dimensions(
-                task,
                 tree,
                 &generator.numeric_domain_sizes,
                 &generator.additive_numeric_views,
@@ -1436,7 +1392,7 @@ fn compute_hash_effects_with_preconditions(
     // this lets us short-circuit the interval/cascade work on every combo.
     let op_has_comparison_preconditions = op_preconditions
         .iter()
-        .any(|pre| generator.derived_prop_vars.contains(&pre.var()));
+        .any(|pre| task.numeric_conditions().is_condition_var(pre.var()));
 
     // Pre-decide the "this combo can possibly change a comparison's truth
     // value" flag at the level of the operator: any affected (changed)
@@ -1551,8 +1507,7 @@ fn enumerate_partition_combos(
             source_intervals_buf,
         )?;
 
-        if !comparison_preconditions_admit_combo(generator, op_preconditions, source_intervals_buf)
-        {
+        if !comparison_preconditions_admit_combo(task, op_preconditions, source_intervals_buf) {
             return Ok(());
         }
 
@@ -1669,7 +1624,7 @@ fn prepare_comparison_tree_inputs_for_combo_into(
         out[*var_id] = iv;
     }
 
-    fill_derived_numeric_intervals_from_comparison_trees(&generator.comparison_trees, out);
+    fill_derived_numeric_intervals_from_comparison_trees(task.numeric_conditions().all(), out);
 
     for interval in out.iter_mut() {
         if interval.is_empty() {
@@ -1689,11 +1644,12 @@ fn prepare_comparison_tree_inputs_for_combo_into(
 /// `DomainAbstractionFactory` instead. This function is therefore purely a
 /// filter.
 fn comparison_preconditions_admit_combo(
-    generator: &AbstractOperatorGenerator,
+    task: &dyn AbstractNumericTask,
     op_preconditions: &[ExplicitFact],
     source_inputs: &[Interval],
 ) -> bool {
-    if generator.comparison_index.is_none() {
+    let conditions = task.numeric_conditions();
+    if conditions.is_empty() {
         return true;
     }
 
@@ -1706,22 +1662,20 @@ fn comparison_preconditions_admit_combo(
     // relative to numeric-FD.
     let precondition_required: HashMap<usize, usize> = op_preconditions
         .iter()
-        .filter(|p| generator.derived_prop_vars.contains(&p.var()))
+        .filter(|p| conditions.is_condition_var(p.var()))
         .map(|p| (p.var(), p.value()))
         .collect();
 
-    for tree in &generator.comparison_trees {
-        let var_id = tree.affected_var_id;
+    for tree in conditions.iter() {
+        let var_id = tree.prop_var_id();
         let Some(&required_concrete) = precondition_required.get(&var_id) else {
             continue;
         };
         if required_concrete == COMPARISON_TRUE_VAL {
-            if !tree.evaluate_interval_admits_true(source_inputs) {
+            if !tree.admits_true(source_inputs) {
                 return false;
             }
-        } else if required_concrete == COMPARISON_FALSE_VAL
-            && !tree.evaluate_interval_admits_false(source_inputs)
-        {
+        } else if required_concrete == COMPARISON_FALSE_VAL && !tree.admits_false(source_inputs) {
             return false;
         }
     }

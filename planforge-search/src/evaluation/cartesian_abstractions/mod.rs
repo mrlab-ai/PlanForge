@@ -48,10 +48,10 @@ use super::domain_abstractions::additive_numeric_views::{
     AdditiveNumericView, analyze_additive_numeric_view, comparison_refinement_dimensions,
     numeric_dimension_delta_for_operator,
 };
-use super::domain_abstractions::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstractions::domain_abstraction_factory::AbstractDistanceTable;
 use super::domain_abstractions::utils::{fact_is_hold, get_initial_state, make_prop_state_packer};
 use icaps26::{ArtifactMt19937, Icaps26SplitSelection};
+use planforge_sas::utils::interval::Interval;
 
 const EPSILON: f64 = 1e-9;
 
@@ -784,8 +784,6 @@ enum SplitDimension {
 
 struct CartesianSemantics<'task> {
     task: &'task dyn AbstractNumericTask,
-    comparison_tree_by_prop_var: Vec<Option<usize>>,
-    comparison_trees: Vec<ComparisonTree>,
     propositional_axioms_by_prop_var: Vec<Vec<usize>>,
     operator_costs: Vec<f64>,
     prop_split_dependent_operators: Vec<OperatorBitSet>,
@@ -807,20 +805,15 @@ struct CartesianSemantics<'task> {
 fn mark_fact_split_dependencies(
     task: &dyn AbstractNumericTask,
     fact: &ExplicitFact,
-    comparison_tree_by_prop_var: &[Option<usize>],
-    comparison_trees: &[ComparisonTree],
     propositional_axioms_by_prop_var: &[Vec<usize>],
     visiting: &mut [bool],
     prop_dependencies: &mut [bool],
     numeric_dependencies: &mut [bool],
 ) -> Result<()> {
     let var_id = fact.var();
-    if let Some(tree_id) = comparison_tree_by_prop_var[var_id] {
-        let tree = comparison_trees
-            .get(tree_id)
-            .with_context(|| format!("missing comparison tree {tree_id}"))?;
-        let mut dimensions = tree.regular_numeric_var_dependencies(task);
-        dimensions.extend(comparison_refinement_dimensions(task, tree));
+    if let Some(condition) = task.numeric_conditions().for_var(var_id) {
+        let mut dimensions = condition.regular_numeric_var_dependencies().to_vec();
+        dimensions.extend(comparison_refinement_dimensions(task, condition));
         dimensions.sort_unstable();
         dimensions.dedup();
         for numeric_var_id in dimensions {
@@ -846,8 +839,6 @@ fn mark_fact_split_dependencies(
             mark_fact_split_dependencies(
                 task,
                 condition,
-                comparison_tree_by_prop_var,
-                comparison_trees,
                 propositional_axioms_by_prop_var,
                 visiting,
                 prop_dependencies,
@@ -868,26 +859,6 @@ impl<'task> CartesianSemantics<'task> {
             validate_abstraction_operator(task, op, op_id)?;
         }
 
-        let mut comparison_tree_by_prop_var = vec![None; task.get_num_variables()];
-        let mut comparison_trees = Vec::with_capacity(task.comparison_axioms().len());
-        for (axiom_id, axiom) in task.comparison_axioms().iter().enumerate() {
-            let var_id = axiom.get_affected_var_id();
-            ensure!(
-                var_id < comparison_tree_by_prop_var.len(),
-                "comparison axiom {axiom_id} affects missing prop var {var_id}"
-            );
-            let tree = ComparisonTree::from_task(task, axiom_id).map_err(|error| {
-                anyhow::anyhow!("invalid comparison axiom {axiom_id}: {error:?}")
-            })?;
-            let tree_id = comparison_trees.len();
-            comparison_trees.push(tree);
-            ensure!(
-                comparison_tree_by_prop_var[var_id]
-                    .replace(tree_id)
-                    .is_none(),
-                "multiple comparison axioms affect prop var {var_id}"
-            );
-        }
         let mut propositional_axioms_by_prop_var = vec![Vec::new(); task.get_num_variables()];
         for (axiom_id, axiom) in task.axioms().iter().enumerate() {
             let var_id = axiom.var_id();
@@ -956,8 +927,6 @@ impl<'task> CartesianSemantics<'task> {
                 mark_fact_split_dependencies(
                     task,
                     precondition,
-                    &comparison_tree_by_prop_var,
-                    &comparison_trees,
                     &propositional_axioms_by_prop_var,
                     &mut visiting,
                     &mut prop_dependencies,
@@ -966,7 +935,7 @@ impl<'task> CartesianSemantics<'task> {
             }
             for effect in op.effects() {
                 let var_id = effect.var_id();
-                if comparison_tree_by_prop_var[var_id].is_none()
+                if !task.numeric_conditions().is_condition_var(var_id)
                     && propositional_axioms_by_prop_var[var_id].is_empty()
                 {
                     prop_dependencies[var_id] = true;
@@ -1049,8 +1018,6 @@ impl<'task> CartesianSemantics<'task> {
         }
         Ok(Self {
             task,
-            comparison_tree_by_prop_var,
-            comparison_trees,
             propositional_axioms_by_prop_var,
             operator_costs,
             prop_split_dependent_operators,
@@ -1217,12 +1184,7 @@ impl<'task> CartesianSemantics<'task> {
         visiting: &mut [bool],
     ) -> Result<bool> {
         let var_id = fact.var();
-        if let Some(axiom_id) = self
-            .comparison_tree_by_prop_var
-            .get(var_id)
-            .copied()
-            .flatten()
-        {
+        if let Some(axiom_id) = self.task.numeric_conditions().id_for_var(var_id) {
             let (may_true, may_false) = self.comparison_truths(region, axiom_id)?;
             return Ok(match fact.value() {
                 0 => may_true,
@@ -1280,12 +1242,7 @@ impl<'task> CartesianSemantics<'task> {
         visiting: &mut [bool],
     ) -> Result<bool> {
         let var_id = fact.var();
-        if let Some(axiom_id) = self
-            .comparison_tree_by_prop_var
-            .get(var_id)
-            .copied()
-            .flatten()
-        {
+        if let Some(axiom_id) = self.task.numeric_conditions().id_for_var(var_id) {
             let (may_true, may_false) = self.comparison_truths(region, axiom_id)?;
             return Ok(match fact.value() {
                 0 => may_true && !may_false,
@@ -1379,7 +1336,8 @@ impl<'task> CartesianSemantics<'task> {
 
     fn comparison_truths(&self, region: &StateRegion, tree_id: usize) -> Result<(bool, bool)> {
         let tree = self
-            .comparison_trees
+            .task
+            .numeric_conditions()
             .get(tree_id)
             .with_context(|| format!("missing comparison tree {tree_id}"))?;
         ensure!(
@@ -1415,7 +1373,7 @@ impl<'task> CartesianSemantics<'task> {
         var_id: usize,
     ) -> bool {
         debug_assert!(
-            self.comparison_tree_by_prop_var[var_id].is_none()
+            !self.task.numeric_conditions().is_condition_var(var_id)
                 && self.propositional_axioms_by_prop_var[var_id].is_empty(),
             "derived proposition {var_id} has no explicit transition relation"
         );
@@ -1483,12 +1441,7 @@ impl<'task> CartesianSemantics<'task> {
     fn icaps_numeric_precondition(&self, op_id: usize, var_id: usize) -> Result<Interval> {
         let mut interval = Interval::unbounded();
         for fact in self.task.get_operators()[op_id].preconditions() {
-            let Some(tree_id) = self
-                .comparison_tree_by_prop_var
-                .get(fact.var())
-                .copied()
-                .flatten()
-            else {
+            let Some(tree_id) = self.task.numeric_conditions().id_for_var(fact.var()) else {
                 continue;
             };
             let (condition_var_id, condition) =
@@ -1536,7 +1489,7 @@ impl<'task> CartesianSemantics<'task> {
             return Ok(false);
         }
         for var_id in 0..self.task.get_num_variables() {
-            if self.comparison_tree_by_prop_var[var_id].is_some()
+            if self.task.numeric_conditions().is_condition_var(var_id)
                 || !self.propositional_axioms_by_prop_var[var_id].is_empty()
             {
                 continue;
@@ -3474,12 +3427,7 @@ fn constrain_desired_region(
     desired: &mut StateRegion,
     fact: &ExplicitFact,
 ) -> Result<()> {
-    if let Some(comparison_axiom_id) = semantics
-        .comparison_tree_by_prop_var
-        .get(fact.var())
-        .copied()
-        .flatten()
-    {
+    if let Some(comparison_axiom_id) = semantics.task.numeric_conditions().id_for_var(fact.var()) {
         let (numeric_var_id, interval) =
             desired_comparison_interval(semantics, comparison_axiom_id, fact.value())?;
         let current = desired.numeric[numeric_var_id];
@@ -3626,7 +3574,7 @@ fn splits_for_desired_region(
         .with_context(|| format!("missing Cartesian state {state_id}"))?;
     let mut candidates = Vec::new();
     for (var_id, current_values) in current.propositions.iter().enumerate() {
-        if semantics.comparison_tree_by_prop_var[var_id].is_some()
+        if semantics.task.numeric_conditions().is_condition_var(var_id)
             || !semantics.propositional_axioms_by_prop_var[var_id].is_empty()
         {
             continue;
@@ -4198,12 +4146,7 @@ fn split_failed_fact(
     numeric_values: &[f64],
     description: String,
 ) -> Result<Split> {
-    if let Some(tree_id) = semantics
-        .comparison_tree_by_prop_var
-        .get(fact.var())
-        .copied()
-        .flatten()
-    {
+    if let Some(tree_id) = semantics.task.numeric_conditions().id_for_var(fact.var()) {
         return comparison_refinement(
             working,
             semantics,
@@ -4321,12 +4264,7 @@ fn split_to_guarantee_fact(
         concrete_value == fact.value(),
         "cannot guarantee fact {fact:?}: concrete value is {concrete_value}"
     );
-    if let Some(tree_id) = semantics
-        .comparison_tree_by_prop_var
-        .get(fact.var())
-        .copied()
-        .flatten()
-    {
+    if let Some(tree_id) = semantics.task.numeric_conditions().id_for_var(fact.var()) {
         return comparison_refinement(
             working,
             semantics,
@@ -4459,7 +4397,8 @@ fn comparison_refinement(
 ) -> Result<Split> {
     let desired_truth = goal.desired_truth();
     let tree = semantics
-        .comparison_trees
+        .task
+        .numeric_conditions()
         .get(tree_id)
         .with_context(|| format!("missing comparison tree {tree_id}"))?;
     let concrete_truth = tree.evaluate_point(numeric_values);
@@ -4473,7 +4412,7 @@ fn comparison_refinement(
         .get(state_id)
         .with_context(|| format!("missing Cartesian state {state_id}"))?;
     let mut candidates = Vec::new();
-    for var_id in tree.regular_numeric_var_dependencies(semantics.task) {
+    for var_id in tree.regular_numeric_var_dependencies().iter().copied() {
         let witness_value = float_tolerance::canonicalize(
             *numeric_values
                 .get(var_id)
@@ -4646,7 +4585,7 @@ fn split_deviation_candidates(
     let mut candidates = Vec::new();
     let mut rejected_numeric_splits = Vec::new();
     for (var_id, allowed) in target.propositions.iter().enumerate() {
-        if semantics.comparison_tree_by_prop_var[var_id].is_some()
+        if semantics.task.numeric_conditions().is_condition_var(var_id)
             || !semantics.propositional_axioms_by_prop_var[var_id].is_empty()
         {
             continue;

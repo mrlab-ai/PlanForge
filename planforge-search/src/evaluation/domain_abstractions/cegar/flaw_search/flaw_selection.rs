@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::{collections::HashSet, fmt};
 
+use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::AbstractNumericTask;
 use planforge_sas::utils::float_tolerance;
 use rand::rngs::SmallRng;
@@ -68,7 +69,6 @@ pub trait FlawTreatment {
         task: &dyn AbstractNumericTask,
         flaws: &[Flaw],
         config: &CegarConfig,
-        comparison_var_ids: &HashSet<usize>,
         rng: &mut SmallRng,
         blacklisted_prop_var_ids: &mut HashSet<usize>,
         blacklisted_numeric_var_ids: &mut HashSet<usize>,
@@ -175,10 +175,9 @@ impl FlawTreatment for FlawTreatmentVariants {
     #[allow(clippy::too_many_arguments)]
     fn choose_flaws(
         &self,
-        _task: &dyn AbstractNumericTask,
+        task: &dyn AbstractNumericTask,
         flaws: &[Flaw],
         _config: &CegarConfig,
-        comparison_var_ids: &HashSet<usize>,
         rng: &mut SmallRng,
         _blacklisted_prop_var_ids: &mut HashSet<usize>,
         _blacklisted_numeric_var_ids: &mut HashSet<usize>,
@@ -188,13 +187,14 @@ impl FlawTreatment for FlawTreatmentVariants {
         numeric_domain_sizes: &mut [usize],
         plan_length: usize,
     ) -> ChosenFlaws {
+        let conditions = task.numeric_conditions();
         match self {
             FlawTreatmentVariants::RandomSingleAtom => choose_single_random_flaw(flaws, rng),
             FlawTreatmentVariants::OneSplitPerAtom => choose_flaws_per_atom(flaws),
             FlawTreatmentVariants::OneSplitPerVariable => fix_flaws_per_variable(flaws),
             FlawTreatmentVariants::MaxRefinedSingleAtom => fix_single_flaw_max_refined(
                 flaws,
-                comparison_var_ids,
+                conditions,
                 domain_sizes,
                 numeric_domain_sizes,
                 1,
@@ -202,14 +202,14 @@ impl FlawTreatment for FlawTreatmentVariants {
             ),
             FlawTreatmentVariants::MinGrowthSingleAtom => fix_single_flaw_min_growth(
                 flaws,
-                comparison_var_ids,
+                conditions,
                 domain_sizes,
                 numeric_domain_sizes,
                 rng,
             ),
             Self::MaxRefinedPreferringProp => fix_single_flaw_max_refined(
                 flaws,
-                comparison_var_ids,
+                conditions,
                 domain_sizes,
                 numeric_domain_sizes,
                 100,
@@ -218,7 +218,7 @@ impl FlawTreatment for FlawTreatmentVariants {
             FlawTreatmentVariants::ClosestToGoal => fix_closest_to_goal(flaws),
             Self::BalanceMaxRefinedAndClosestToGoal => fix_balance_max_refined_closest_to_goal(
                 flaws,
-                comparison_var_ids,
+                conditions,
                 domain_sizes,
                 numeric_domain_sizes,
                 plan_length,
@@ -227,7 +227,7 @@ impl FlawTreatment for FlawTreatmentVariants {
             Self::BalanceMaxRefinedPreferringPropAndClosestToGoal => {
                 fix_balance_max_refined_closest_to_goal(
                     flaws,
-                    comparison_var_ids,
+                    conditions,
                     domain_sizes,
                     numeric_domain_sizes,
                     plan_length,
@@ -320,7 +320,7 @@ pub(super) fn fix_flaws_per_variable(flaws: &[Flaw]) -> ChosenFlaws {
 
 fn compute_max_refined(
     flaws: &[Flaw],
-    comparison_var_ids: &HashSet<usize>,
+    conditions: &NumericConditions,
     domain_sizes: &mut [usize],
     numeric_domain_sizes: &mut [usize],
     prop_multiplier: usize,
@@ -337,7 +337,7 @@ fn compute_max_refined(
             Flaw::Propositional(pf) => {
                 let var_id = pf.fact.var();
                 let base: usize = domain_sizes.get(var_id).copied().unwrap_or(0) * prop_multiplier;
-                if comparison_var_ids.contains(&var_id) && !pf.dependent_numeric_flaws.is_empty() {
+                if conditions.is_condition_var(var_id) && !pf.dependent_numeric_flaws.is_empty() {
                     let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
                     for nf in pf.dependent_numeric_flaws.iter().cloned() {
                         let partitions = numeric_domain_sizes
@@ -372,7 +372,7 @@ fn compute_max_refined(
 
 pub(super) fn fix_single_flaw_max_refined(
     flaws: &[Flaw],
-    comparison_var_ids: &HashSet<usize>,
+    conditions: &NumericConditions,
     domain_sizes: &mut [usize],
     numeric_domain_sizes: &mut [usize],
     prop_multiplier: usize,
@@ -384,7 +384,7 @@ pub(super) fn fix_single_flaw_max_refined(
 
     let (mut candidates, _max_score) = compute_max_refined(
         flaws,
-        comparison_var_ids,
+        conditions,
         domain_sizes,
         numeric_domain_sizes,
         prop_multiplier,
@@ -435,7 +435,7 @@ fn best_min_growth_dependent_flaws(
 
 pub(super) fn fix_single_flaw_min_growth(
     flaws: &[Flaw],
-    comparison_var_ids: &HashSet<usize>,
+    conditions: &NumericConditions,
     domain_sizes: &mut [usize],
     numeric_domain_sizes: &mut [usize],
     rng: &mut SmallRng,
@@ -453,12 +453,12 @@ pub(super) fn fix_single_flaw_min_growth(
             Flaw::Propositional(pf) => {
                 let var_id = pf.fact.var();
                 let prop_size = domain_sizes.get(var_id).copied().unwrap_or(1).max(1);
-                let prop_growth = if comparison_var_ids.contains(&var_id) && prop_size >= 2 {
+                let prop_growth = if conditions.is_condition_var(var_id) && prop_size >= 2 {
                     (1, 1)
                 } else {
                     growth_key_for_domain_size(prop_size)
                 };
-                if comparison_var_ids.contains(&var_id)
+                if conditions.is_condition_var(var_id)
                     && !pf.dependent_numeric_flaws.is_empty()
                     && let Some((deps, dep_growth)) = best_min_growth_dependent_flaws(
                         &pf.dependent_numeric_flaws,
@@ -514,7 +514,7 @@ pub(super) fn fix_closest_to_goal(flaws: &[Flaw]) -> ChosenFlaws {
 
 pub(super) fn fix_balance_max_refined_closest_to_goal(
     flaws: &[Flaw],
-    comparison_var_ids: &HashSet<usize>,
+    conditions: &NumericConditions,
     domain_sizes: &mut [usize],
     numeric_domain_sizes: &mut [usize],
     plan_length: usize,
@@ -522,7 +522,7 @@ pub(super) fn fix_balance_max_refined_closest_to_goal(
 ) -> ChosenFlaws {
     let (mut candidates, max_score) = compute_max_refined(
         flaws,
-        comparison_var_ids,
+        conditions,
         domain_sizes,
         numeric_domain_sizes,
         prop_multiplier,
@@ -544,11 +544,34 @@ pub(super) fn fix_balance_max_refined_closest_to_goal(
 
 #[cfg(test)]
 mod tests {
-    use planforge_sas::numeric_task::ExplicitFact;
+    use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
+    use planforge_sas::numeric_task::{ExplicitFact, NumericType, NumericVariable};
     use rand::SeedableRng;
 
     use super::*;
     use crate::evaluation::domain_abstractions::cegar::flaw_search::PropFlaw;
+
+    /// One numeric condition `x0 = x0` writing propositional variable
+    /// `prop_var_id`; only the "is this a condition variable?" answer matters
+    /// for flaw scoring.
+    fn condition_on_prop_var(prop_var_id: usize) -> NumericConditions {
+        NumericConditions::build(
+            prop_var_id + 1,
+            &[NumericVariable::new(
+                "x0".into(),
+                NumericType::Regular,
+                None,
+            )],
+            &[ComparisonAxiom::new(
+                prop_var_id,
+                0,
+                0,
+                ComparisonOperator::Equal,
+            )],
+            &[],
+        )
+        .unwrap()
+    }
 
     fn prop_flaw(var: usize, deps: Vec<NumericFlaw>) -> Flaw {
         Flaw::Propositional(PropFlaw {
@@ -573,14 +596,14 @@ mod tests {
             prop_flaw(1, Vec::new()),
             prop_flaw(0, vec![numeric_flaw(0)]),
         ];
-        let comparison_var_ids = HashSet::from([0]);
+        let conditions = condition_on_prop_var(0);
         let mut domain_sizes = vec![1, 2];
         let mut numeric_domain_sizes = vec![1];
         let mut rng = SmallRng::seed_from_u64(1);
 
         let chosen = fix_single_flaw_max_refined(
             &flaws,
-            &comparison_var_ids,
+            &conditions,
             &mut domain_sizes,
             &mut numeric_domain_sizes,
             1,
@@ -593,13 +616,13 @@ mod tests {
     #[test]
     fn max_refined_continues_most_refined_dependent_numeric_view() {
         let flaws = vec![prop_flaw(0, vec![numeric_flaw(0), numeric_flaw(1)])];
-        let comparison_var_ids = HashSet::from([0]);
+        let conditions = condition_on_prop_var(0);
         let mut domain_sizes = vec![2];
         let mut numeric_domain_sizes = vec![7, 2];
 
         let (chosen, _) = compute_max_refined(
             &flaws,
-            &comparison_var_ids,
+            &conditions,
             &mut domain_sizes,
             &mut numeric_domain_sizes,
             1,
@@ -615,14 +638,14 @@ mod tests {
     #[test]
     fn min_growth_continues_most_refined_dependent_numeric_view() {
         let flaws = vec![prop_flaw(0, vec![numeric_flaw(0), numeric_flaw(1)])];
-        let comparison_var_ids = HashSet::from([0]);
+        let conditions = condition_on_prop_var(0);
         let mut domain_sizes = vec![2];
         let mut numeric_domain_sizes = vec![7, 2];
         let mut rng = SmallRng::seed_from_u64(1);
 
         let chosen = fix_single_flaw_min_growth(
             &flaws,
-            &comparison_var_ids,
+            &conditions,
             &mut domain_sizes,
             &mut numeric_domain_sizes,
             &mut rng,
@@ -642,7 +665,7 @@ mod tests {
             Flaw::Numeric(numeric_flaw(1)),
             Flaw::Numeric(numeric_flaw(2)),
         ];
-        let comparison_var_ids = HashSet::new();
+        let conditions = NumericConditions::default();
         let mut first_choices = HashSet::new();
 
         for seed in 0..32 {
@@ -651,7 +674,7 @@ mod tests {
             let mut rng = SmallRng::seed_from_u64(seed);
             let chosen = fix_single_flaw_min_growth(
                 &flaws,
-                &comparison_var_ids,
+                &conditions,
                 &mut domain_sizes,
                 &mut numeric_domain_sizes,
                 &mut rng,

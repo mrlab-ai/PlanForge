@@ -1,6 +1,5 @@
 pub mod abstract_operator_generator;
 pub(crate) mod additive_numeric_views;
-pub mod comparison_expression;
 pub mod domain_abstraction;
 pub mod domain_abstraction_collection_generator_multiple_cegar;
 pub mod numeric_context;

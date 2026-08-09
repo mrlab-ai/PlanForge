@@ -5,8 +5,10 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
+use planforge_sas::numeric_conditions::{NumericConditionError, NumericConditions};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitVariable, Metric,
     NumericRootTask, NumericType, NumericVariable, Operator,
@@ -121,6 +123,7 @@ pub enum ProjectedTaskBuildError {
     InitialStateEvaluationFailed {
         reason: String,
     },
+    MalformedNumericConditions(NumericConditionError),
 }
 
 impl fmt::Display for ProjectedTaskBuildError {
@@ -147,6 +150,12 @@ impl fmt::Display for ProjectedTaskBuildError {
                 formatter,
                 "failed to evaluate projected initial state: {reason}"
             ),
+            Self::MalformedNumericConditions(error) => {
+                write!(
+                    formatter,
+                    "projected task has malformed numeric axioms: {error}"
+                )
+            }
         }
     }
 }
@@ -161,6 +170,7 @@ pub struct ProjectedTask<'task> {
     numeric_variables: Vec<NumericVariable>,
     assignment_axioms: Vec<AssignmentAxiom>,
     comparison_axioms: Vec<ComparisonAxiom>,
+    numeric_conditions: Arc<NumericConditions>,
     axioms: Vec<PropositionalAxiom>,
     metric: Metric,
     operators: Vec<Operator>,
@@ -505,12 +515,10 @@ impl<'task> ProjectedTask<'task> {
             }
         }
 
-        let comparison_axiom_by_affected_var =
-            build_comparison_axiom_lookup(base, base.variables().len());
         let propositional_axiom_by_affected_var =
             build_propositional_axiom_lookup(base, base.variables().len());
         for original_var_id in projected_var_to_original.clone() {
-            let Some(comparison_axiom_id) = comparison_axiom_by_affected_var[original_var_id]
+            let Some(comparison_axiom_id) = base.numeric_conditions().id_for_var(original_var_id)
             else {
                 continue;
             };
@@ -524,7 +532,6 @@ impl<'task> ProjectedTask<'task> {
         let goal_facts = collect_restricted_projected_goals(
             base,
             pattern,
-            &comparison_axiom_by_affected_var,
             &propositional_axiom_by_affected_var,
             &mut projected_var_to_original,
             &mut original_var_to_projected,
@@ -697,6 +704,16 @@ impl<'task> ProjectedTask<'task> {
                 .and_then(|mapped| *mapped)
         };
 
+        let numeric_conditions = Arc::new(
+            NumericConditions::build(
+                variables.len(),
+                &numeric_variables,
+                &comparison_axioms,
+                &assignment_axioms,
+            )
+            .map_err(ProjectedTaskBuildError::MalformedNumericConditions)?,
+        );
+
         let compilation_task = NumericRootTask::new(
             1,
             Metric::new(base.metric().is_min(), metric_var_id),
@@ -728,6 +745,7 @@ impl<'task> ProjectedTask<'task> {
             numeric_variables,
             assignment_axioms,
             comparison_axioms,
+            numeric_conditions,
             axioms,
             metric: Metric::new(base.metric().is_min(), metric_var_id),
             operators,
@@ -1464,6 +1482,10 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         &self.comparison_axioms
     }
 
+    fn numeric_conditions(&self) -> &Arc<NumericConditions> {
+        &self.numeric_conditions
+    }
+
     fn axioms(&self) -> &Vec<PropositionalAxiom> {
         &self.axioms
     }
@@ -1714,20 +1736,6 @@ fn push_unique_projected_id(projected_id: usize, ids: &mut Vec<usize>) {
     }
 }
 
-fn build_comparison_axiom_lookup(
-    task: &dyn AbstractNumericTask,
-    num_vars: usize,
-) -> Vec<Option<usize>> {
-    let mut lookup = vec![None; num_vars];
-    for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-        let affected = comparison_axiom.get_affected_var_id();
-        if affected < lookup.len() {
-            lookup[affected] = Some(comparison_axiom_id);
-        }
-    }
-    lookup
-}
-
 fn build_propositional_axiom_lookup(
     task: &dyn AbstractNumericTask,
     num_vars: usize,
@@ -1770,7 +1778,6 @@ fn include_restricted_comparison_operands(
 fn collect_restricted_projected_goals(
     task: &dyn AbstractNumericTask,
     pattern: &Pattern,
-    comparison_axiom_by_affected_var: &[Option<usize>],
     propositional_axiom_by_affected_var: &[Option<usize>],
     projected_var_to_original: &mut Vec<usize>,
     original_var_to_projected: &mut [Option<usize>],
@@ -1788,7 +1795,6 @@ fn collect_restricted_projected_goals(
             task.get_goal_fact(goal_index),
             &pattern_regular,
             &pattern_numeric,
-            comparison_axiom_by_affected_var,
             propositional_axiom_by_affected_var,
             projected_var_to_original,
             original_var_to_projected,
@@ -1810,7 +1816,6 @@ fn collect_restricted_projected_goal_fact(
     fact: &ExplicitFact,
     pattern_regular: &BTreeSet<usize>,
     pattern_numeric: &BTreeSet<usize>,
-    comparison_axiom_by_affected_var: &[Option<usize>],
     propositional_axiom_by_affected_var: &[Option<usize>],
     projected_var_to_original: &mut Vec<usize>,
     original_var_to_projected: &mut [Option<usize>],
@@ -1823,11 +1828,7 @@ fn collect_restricted_projected_goal_fact(
         return Ok(());
     }
 
-    if let Some(comparison_axiom_id) = comparison_axiom_by_affected_var
-        .get(fact.var())
-        .copied()
-        .flatten()
-    {
+    if let Some(comparison_axiom_id) = task.numeric_conditions().id_for_var(fact.var()) {
         let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
         let operands = [
             comparison_axiom.get_left_var_id(),
@@ -1871,7 +1872,6 @@ fn collect_restricted_projected_goal_fact(
                 condition,
                 pattern_regular,
                 pattern_numeric,
-                comparison_axiom_by_affected_var,
                 propositional_axiom_by_affected_var,
                 projected_var_to_original,
                 original_var_to_projected,

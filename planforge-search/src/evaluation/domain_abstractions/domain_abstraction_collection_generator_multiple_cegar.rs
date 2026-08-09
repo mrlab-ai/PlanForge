@@ -30,13 +30,13 @@ use super::cegar::InitialSeedSplit;
 use super::cegar::SplitDirection;
 pub use super::cegar::flaw_search::flaw_selection::{FlawTreatmentVariants, InitSplitMethod};
 use super::cegar::flaw_search::numeric_requirement_for_comparison_fact;
-use super::comparison_expression::{CompOp, Interval};
-use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator, DomainAbstractionMetadata,
 };
 use super::utils::compute_abstraction_size_u128;
 use crate::resource_limits;
+use planforge_sas::numeric_conditions::CompOp;
+use planforge_sas::utils::interval::Interval;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -910,9 +910,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 
     fn backward_goal_seed_splits(&self, task: &dyn AbstractNumericTask) -> Vec<InitialSeedSplit> {
-        let Ok(comparison_index) = ComparisonAxiomIndex::from_task(task) else {
-            return goal_seed_splits(task);
-        };
         let initial_numeric = initial_numeric_values_with_additive_views(task);
         let deltas = numeric_effect_deltas(task);
         let mut seeds = Vec::new();
@@ -933,7 +930,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 for precondition in op.preconditions() {
                     for requirement in target_centered_requirements_for_comparison_fact(
                         task,
-                        &comparison_index,
                         precondition,
                         &initial_numeric,
                     ) {
@@ -1018,7 +1014,6 @@ fn complete_shape_root_groups(
     task: &dyn AbstractNumericTask,
     goal: &ExplicitFact,
 ) -> Option<Vec<RootGroup>> {
-    let comparison_index = ComparisonAxiomIndex::from_task(task).ok()?;
     let achievers = task
         .get_operators()
         .iter()
@@ -1034,9 +1029,7 @@ fn complete_shape_root_groups(
         let mut by_shape: HashMap<NumericRootGroupKey, HashSet<usize>> = HashMap::new();
         let mut by_coarse_shape: HashMap<Vec<OrderedFloat<f64>>, HashSet<usize>> = HashMap::new();
         for precondition in op.preconditions() {
-            for numeric_var_id in
-                comparison_root_vars_for_fact(task, &comparison_index, precondition)
-            {
+            for numeric_var_id in comparison_root_vars_for_fact(task, precondition) {
                 let shape = numeric_root_group_key(source_task, task, numeric_var_id)?;
                 by_coarse_shape
                     .entry(shape.coefficient_shape.clone())
@@ -1110,9 +1103,6 @@ fn all_goal_relevant_numeric_vars(
     task: &dyn AbstractNumericTask,
     goal: &ExplicitFact,
 ) -> HashSet<usize> {
-    let Ok(comparison_index) = ComparisonAxiomIndex::from_task(task) else {
-        return HashSet::new();
-    };
     let mut relevant = HashSet::new();
     for op in task
         .get_operators()
@@ -1120,11 +1110,7 @@ fn all_goal_relevant_numeric_vars(
         .filter(|op| operator_has_unconditional_effect(op, goal))
     {
         for precondition in op.preconditions() {
-            relevant.extend(comparison_root_vars_for_fact(
-                task,
-                &comparison_index,
-                precondition,
-            ));
+            relevant.extend(comparison_root_vars_for_fact(task, precondition));
         }
     }
     relevant
@@ -1132,10 +1118,9 @@ fn all_goal_relevant_numeric_vars(
 
 fn comparison_root_vars_for_fact(
     task: &dyn AbstractNumericTask,
-    comparison_index: &ComparisonAxiomIndex,
     fact: &ExplicitFact,
 ) -> Vec<usize> {
-    let Some(tree) = comparison_index.comparison_tree(fact.var()) else {
+    let Some(tree) = task.numeric_conditions().for_var(fact.var()) else {
         return Vec::new();
     };
     comparison_refinement_dimensions(task, tree)
@@ -1347,7 +1332,7 @@ fn log_split_numeric_partitions(abstraction: &DomainAbstraction, task: &dyn Abst
     }
 }
 
-fn partition_preview(parts: &[super::comparison_expression::Interval]) -> String {
+fn partition_preview(parts: &[Interval]) -> String {
     let mut entries = Vec::new();
     for interval in parts.iter().take(3) {
         entries.push(format!("{interval:?}"));
@@ -1370,10 +1355,7 @@ struct NumericRequirement {
 }
 
 impl NumericRequirement {
-    fn from_interval(
-        numeric_var_id: usize,
-        interval: super::comparison_expression::Interval,
-    ) -> Self {
+    fn from_interval(numeric_var_id: usize, interval: Interval) -> Self {
         Self {
             numeric_var_id,
             lower: interval.lower.is_finite().then_some(interval.lower),
@@ -1384,28 +1366,25 @@ impl NumericRequirement {
 
 fn target_centered_requirements_for_comparison_fact(
     task: &dyn AbstractNumericTask,
-    comparison_index: &ComparisonAxiomIndex,
     fact: &ExplicitFact,
     numeric_state: &[f64],
 ) -> Vec<NumericRequirement> {
-    if let Some((numeric_var_id, interval)) =
-        numeric_requirement_for_comparison_fact(task, comparison_index, fact)
-    {
+    if let Some((numeric_var_id, interval)) = numeric_requirement_for_comparison_fact(task, fact) {
         if is_refinable_numeric_dimension(task, numeric_var_id) {
             return vec![NumericRequirement::from_interval(numeric_var_id, interval)];
         }
     }
 
-    let Some(tree) = comparison_index.comparison_tree(fact.var()) else {
+    let Some(tree) = task.numeric_conditions().for_var(fact.var()) else {
         return Vec::new();
     };
-    let Ok(left) = linearize_numeric_var(task, tree.left_numeric_var_id) else {
+    let Ok(left) = linearize_numeric_var(task, tree.left_numeric_var_id()) else {
         return Vec::new();
     };
-    let Ok(right) = linearize_numeric_var(task, tree.right_numeric_var_id) else {
+    let Ok(right) = linearize_numeric_var(task, tree.right_numeric_var_id()) else {
         return Vec::new();
     };
-    let Some(required_op) = required_comparison_op(tree.op, fact.value()) else {
+    let Some(required_op) = required_comparison_op(tree.op(), fact.value()) else {
         return Vec::new();
     };
 
@@ -1550,17 +1529,10 @@ fn compare_goals_for_collection(
 }
 
 fn estimate_goal_distance_from_initial(task: &dyn AbstractNumericTask, goal: &ExplicitFact) -> f64 {
-    let Ok(comparison_index) = ComparisonAxiomIndex::from_task(task) else {
-        return 0.0;
-    };
     let initial_numeric = initial_numeric_values_with_additive_views(task);
     let mut best_direct = 0.0f64;
-    let direct_requirements = target_centered_requirements_for_comparison_fact(
-        task,
-        &comparison_index,
-        goal,
-        &initial_numeric,
-    );
+    let direct_requirements =
+        target_centered_requirements_for_comparison_fact(task, goal, &initial_numeric);
     if !direct_requirements.is_empty() {
         best_direct = approximate_distance_from_initial(&direct_requirements, &initial_numeric);
     }
@@ -1575,7 +1547,6 @@ fn estimate_goal_distance_from_initial(task: &dyn AbstractNumericTask, goal: &Ex
         for precondition in op.preconditions() {
             requirements.extend(target_centered_requirements_for_comparison_fact(
                 task,
-                &comparison_index,
                 precondition,
                 &initial_numeric,
             ));
@@ -1755,54 +1726,8 @@ fn seed_group_key(group: &[InitialSeedSplit]) -> (usize, OrderedFloat<f64>, bool
         .unwrap_or((usize::MAX, OrderedFloat(0.0), false))
 }
 
-fn goal_seed_splits(task: &dyn AbstractNumericTask) -> Vec<InitialSeedSplit> {
-    let mut goal_axiom_map: HashMap<usize, Vec<ExplicitFact>> = HashMap::new();
-    for axiom in task.axioms() {
-        if !axiom.conditions().is_empty() {
-            goal_axiom_map.insert(axiom.var_id(), axiom.conditions().to_vec());
-        }
-    }
-
-    let mut seeds = Vec::new();
-    for goal_id in 0..task.get_num_goals() {
-        let goal = task.get_goal_fact(goal_id);
-        if let Some(conditions) = goal_axiom_map.get(&goal.var()) {
-            seeds.extend(
-                conditions
-                    .iter()
-                    .map(|fact| InitialSeedSplit::Propositional {
-                        var_id: fact.var(),
-                        value: fact.value(),
-                    }),
-            );
-        } else {
-            seeds.push(InitialSeedSplit::Propositional {
-                var_id: goal.var(),
-                value: goal.value(),
-            });
-        }
-    }
-    seeds.sort_by_key(|seed| match seed {
-        InitialSeedSplit::Propositional { var_id, value } => (0, *var_id, *value),
-        InitialSeedSplit::Numeric {
-            numeric_var_id,
-            value,
-            ..
-        } => (1, *numeric_var_id, value.to_bits() as usize),
-    });
-    seeds.dedup();
-    seeds
-}
-
 fn collect_logic_axiom_effect_vars(task: &dyn AbstractNumericTask) -> HashSet<usize> {
     task.axioms().iter().map(|axiom| axiom.var_id()).collect()
-}
-
-fn collect_comparison_axiom_var_ids(task: &dyn AbstractNumericTask) -> HashSet<usize> {
-    task.comparison_axioms()
-        .iter()
-        .map(|axiom| axiom.get_affected_var_id())
-        .collect()
 }
 
 fn collect_goal_related_propositional_vars(task: &dyn AbstractNumericTask) -> HashSet<usize> {
@@ -1840,7 +1765,6 @@ fn collect_init_split_candidate_var_ids(
 ) -> Vec<usize> {
     let goal_related = collect_goal_related_propositional_vars(task);
     let logic_axiom_effect_vars = collect_logic_axiom_effect_vars(task);
-    let comparison_axiom_vars = collect_comparison_axiom_var_ids(task);
 
     let mut candidates: Vec<usize> = match subset {
         VariableSubset::Goals => goal_related.iter().copied().collect(),
@@ -1848,13 +1772,14 @@ fn collect_init_split_candidate_var_ids(
             .filter(|var_id| {
                 !goal_related.contains(var_id)
                     && !logic_axiom_effect_vars.contains(var_id)
-                    && !comparison_axiom_vars.contains(var_id)
+                    && !task.numeric_conditions().is_condition_var(*var_id)
             })
             .collect(),
         VariableSubset::All => (0..task.variables().len())
             .filter(|var_id| {
                 !logic_axiom_effect_vars.contains(var_id)
-                    && (!comparison_axiom_vars.contains(var_id) || goal_related.contains(var_id))
+                    && (!task.numeric_conditions().is_condition_var(*var_id)
+                        || goal_related.contains(var_id))
             })
             .collect(),
     };
@@ -1946,7 +1871,7 @@ struct IntervalFingerprint {
 }
 
 impl IntervalFingerprint {
-    fn from_interval(interval: super::comparison_expression::Interval) -> Self {
+    fn from_interval(interval: Interval) -> Self {
         Self {
             lower: OrderedFloat(interval.lower),
             upper: OrderedFloat(interval.upper),

@@ -24,8 +24,7 @@ use super::abstract_operator_generator::{
     AbstractOperator, AbstractOperatorGenerator, DomainMapping,
 };
 use super::additive_numeric_views::AdditiveNumericViews;
-use super::comparison_expression::{ComparisonTree, Interval};
-use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
+use super::domain_abstraction::NumericPartitions;
 use super::numeric_context::{
     prepare_comparison_tree_inputs_from_abstract_state,
     prepare_comparison_tree_inputs_from_abstract_state_into,
@@ -37,6 +36,8 @@ use crate::evaluation::abstraction_collections::cost_partitioning::{
     RegionalCostAllocation, RegionalCostAllocationEntry, StateRegion, TransitionResidualCosts,
     state_region_intersection,
 };
+use planforge_sas::numeric_conditions::NumericConditions;
+use planforge_sas::utils::interval::Interval;
 
 pub enum OcpTransitionSystemBuild {
     Complete(AbstractTransitionSystem),
@@ -365,8 +366,9 @@ pub struct DomainAbstractionFactory {
     pub domain_sizes: Vec<usize>,
     pub partitions: NumericPartitions,
     pub numeric_domain_sizes: Vec<usize>,
-    comparison_index: Option<ComparisonAxiomIndex>,
-    comparison_trees: Vec<ComparisonTree>,
+    /// Shared with the task the factory was built from: the conditions are
+    /// task data, not abstraction data, but the factory outlives the borrow.
+    numeric_conditions: Arc<NumericConditions>,
     additive_numeric_views: AdditiveNumericViews,
     /// Per-concrete-operator metric cost, evaluated once over the initial
     /// numeric state. The cost is task-deterministic, so caching here (and
@@ -429,27 +431,6 @@ impl DomainAbstractionFactory {
             );
         }
 
-        let comparison_index = if task.comparison_axioms().is_empty() {
-            None
-        } else {
-            Some(
-                ComparisonAxiomIndex::from_task(task)
-                    .map_err(|e| anyhow!(e))
-                    .context("failed to build ComparisonAxiomIndex")?,
-            )
-        };
-
-        let mut comparison_trees: Vec<ComparisonTree> =
-            Vec::with_capacity(task.comparison_axioms().len());
-        for comparison_axiom_id in 0..task.comparison_axioms().len() {
-            let tree = ComparisonTree::from_task(task, comparison_axiom_id).map_err(|e| {
-                anyhow!(
-                    "failed to build ComparisonTree for comparison axiom {comparison_axiom_id}: {e:?}"
-                )
-            })?;
-            comparison_trees.push(tree);
-        }
-
         let cached_operator_costs: Arc<[f64]> = task
             .get_operators()
             .iter()
@@ -462,8 +443,7 @@ impl DomainAbstractionFactory {
             domain_sizes,
             partitions,
             numeric_domain_sizes,
-            comparison_index,
-            comparison_trees,
+            numeric_conditions: Arc::clone(task.numeric_conditions()),
             additive_numeric_views,
             cached_operator_costs,
         })
@@ -489,12 +469,8 @@ impl DomainAbstractionFactory {
         &self.numeric_domain_sizes
     }
 
-    pub fn comparison_index(&self) -> Option<&ComparisonAxiomIndex> {
-        self.comparison_index.as_ref()
-    }
-
-    pub fn comparison_trees(&self) -> &[ComparisonTree] {
-        &self.comparison_trees
+    pub fn numeric_conditions(&self) -> &NumericConditions {
+        &self.numeric_conditions
     }
 
     pub fn make_operator_generator(
@@ -2014,14 +1990,9 @@ impl DomainAbstractionFactory {
             let mut cascade_numeric_deps: std::collections::HashSet<usize> =
                 std::collections::HashSet::new();
             for &cmp_var_id in &comparison_var_ids {
-                if let Some(tree) = self
-                    .comparison_trees
-                    .iter()
-                    .find(|t| t.affected_var_id == cmp_var_id)
-                {
-                    for dep in tree.regular_numeric_var_dependencies(task) {
-                        cascade_numeric_deps.insert(dep);
-                    }
+                if let Some(condition) = self.numeric_conditions.for_var(cmp_var_id) {
+                    cascade_numeric_deps
+                        .extend(condition.regular_numeric_var_dependencies().iter().copied());
                 }
             }
             if !cascade_numeric_deps.is_empty() {
@@ -2630,9 +2601,8 @@ impl DomainAbstractionFactory {
         utils::dump_distances(self, task, table);
     }
     fn comparison_var_ids(&self) -> Vec<usize> {
-        self.comparison_trees
-            .iter()
-            .map(|t| t.affected_var_id)
+        self.numeric_conditions
+            .condition_var_ids()
             .filter(|&var_id| self.domain_sizes.get(var_id).copied().unwrap_or(1) > 1)
             .collect()
     }
@@ -2737,10 +2707,7 @@ impl DomainAbstractionFactory {
         for var in 0..num_props {
             let mult = hash_multipliers[var];
             let concrete_value = if comparison_var_ids.contains(&var)
-                && let Some(tree) = self
-                    .comparison_index
-                    .as_ref()
-                    .and_then(|index| index.comparison_tree(var))
+                && let Some(tree) = self.numeric_conditions.for_var(var)
             {
                 if tree.evaluate_point(&num_init) {
                     COMPARISON_TRUE_VAL
@@ -2851,7 +2818,7 @@ impl DomainAbstractionFactory {
     ) -> Result<Vec<Interval>> {
         prepare_comparison_tree_inputs_from_abstract_state(
             task,
-            &self.comparison_trees,
+            self.numeric_conditions.all(),
             &self.partitions,
             state_hash,
             self.domain_sizes.len(),
@@ -2896,11 +2863,11 @@ impl DomainAbstractionFactory {
         let mut intervals_built = false;
 
         let mut states: Vec<usize> = vec![state_unknown];
-        for tree in &self.comparison_trees {
-            let var_id = tree.affected_var_id;
+        for tree in self.numeric_conditions.iter() {
+            let var_id = tree.prop_var_id();
             ensure!(
                 var_id < num_props,
-                "comparison tree affected_var_id out of range: {var_id} >= {num_props}"
+                "numeric condition variable out of range: {var_id} >= {num_props}"
             );
             if !is_evaluated_var(var_id) {
                 continue;
@@ -2935,7 +2902,7 @@ impl DomainAbstractionFactory {
             if !intervals_built {
                 prepare_comparison_tree_inputs_from_abstract_state_into(
                     task,
-                    &self.comparison_trees,
+                    self.numeric_conditions.all(),
                     &self.partitions,
                     base_state_hash,
                     num_props,

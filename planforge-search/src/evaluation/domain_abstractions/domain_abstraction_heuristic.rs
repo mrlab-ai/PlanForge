@@ -10,9 +10,9 @@ use crate::evaluation::heuristic::Heuristic;
 use planforge_sas::numeric_task::Operator;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 
-use super::comparison_expression::{ComparisonTree, ComparisonTreeNode};
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::utils;
+use planforge_sas::numeric_conditions::{NumericCondition, NumericConditions};
 
 pub(crate) const COMPARISON_TRUE_VAL: usize = 0;
 pub(crate) const COMPARISON_FALSE_VAL: usize = 1;
@@ -81,7 +81,7 @@ pub(crate) fn compute_collection_abstract_state_ids(
     let has_required_domains = !scratch.required_domain_ids.is_empty();
     // The registry's axiom evaluator has already materialized every comparison
     // axiom's truth value into `scratch.prop[affected_var_id]`. In that case
-    // we can read those bits directly and skip the per-state `ComparisonTree`
+    // we can read those bits directly and skip the per-state `NumericCondition`
     // walks entirely. `DA_NO_FAST_HASH=1` disables this for A/B benchmarking.
     let prop_has_resolved_comparisons = has_required_domains && fast_hash_enabled();
 
@@ -150,8 +150,6 @@ pub struct DomainAbstractionHeuristic {
     numeric_scratch: RefCell<Vec<f64>>,
     active_prop_vars: Vec<usize>,
     active_numeric_vars: Vec<usize>,
-    comparison_tree_by_var: Vec<Option<usize>>,
-    comparison_tree_required_lens: Vec<usize>,
 }
 
 impl DomainAbstractionHeuristic {
@@ -170,18 +168,6 @@ impl DomainAbstractionHeuristic {
             .enumerate()
             .filter_map(|(var_id, &size)| (size > 1).then_some(var_id))
             .collect();
-        let mut comparison_tree_by_var = vec![None; abstraction.factory.domain_sizes().len()];
-        for (tree_id, tree) in abstraction.factory.comparison_trees().iter().enumerate() {
-            if tree.affected_var_id < comparison_tree_by_var.len() {
-                comparison_tree_by_var[tree.affected_var_id] = Some(tree_id);
-            }
-        }
-        let comparison_tree_required_lens: Vec<usize> = abstraction
-            .factory
-            .comparison_trees()
-            .iter()
-            .map(comparison_tree_numeric_len)
-            .collect();
         Self {
             name: name.unwrap_or_else(|| "domain_abstraction".to_string()),
             abstraction,
@@ -189,8 +175,6 @@ impl DomainAbstractionHeuristic {
             numeric_scratch: RefCell::new(Vec::new()),
             active_prop_vars,
             active_numeric_vars,
-            comparison_tree_by_var,
-            comparison_tree_required_lens,
         }
     }
 
@@ -295,29 +279,22 @@ impl DomainAbstractionHeuristic {
         numeric_values: &[f64],
         out: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
-        if out.len() < self.comparison_tree_by_var.len() {
-            out.resize(self.comparison_tree_by_var.len(), None);
+        let conditions = self.abstraction.factory.numeric_conditions();
+        if out.len() < self.abstraction.factory.domain_sizes().len() {
+            out.resize(self.abstraction.factory.domain_sizes().len(), None);
         }
-        for (tree_id, tree) in self
-            .abstraction
-            .factory
-            .comparison_trees()
-            .iter()
-            .enumerate()
-        {
-            let value = if evaluate_comparison_tree_on_concrete_numeric_state(
-                tree,
-                numeric_values,
-                self.comparison_tree_required_lens[tree_id],
-            )? {
+        for condition in conditions.iter() {
+            let value = if evaluate_condition_on_concrete_numeric_state(condition, numeric_values)?
+            {
                 COMPARISON_TRUE_VAL
             } else {
                 COMPARISON_FALSE_VAL
             };
-            if tree.affected_var_id >= out.len() {
-                out.resize(tree.affected_var_id + 1, None);
+            let prop_var_id = condition.prop_var_id();
+            if prop_var_id >= out.len() {
+                out.resize(prop_var_id + 1, None);
             }
-            out[tree.affected_var_id] = Some(value);
+            out[prop_var_id] = Some(value);
         }
         Ok(())
     }
@@ -369,7 +346,7 @@ impl DomainAbstractionHeuristic {
         // The registry's buffer already holds correct comparison-axiom-derived
         // bits in `prop`; they were materialized when the state was
         // registered. We can skip the per-evaluation re-evaluation of
-        // `ComparisonTree`s entirely.
+        // `NumericCondition`s entirely.
         // Set DA_NO_FAST_HASH=1 to disable for A/B benchmarking.
         let prop_has_resolved_comparisons = fast_hash_enabled();
         self.compute_abstract_hash_inner(&prop, &numeric, None, prop_has_resolved_comparisons)
@@ -472,9 +449,7 @@ impl DomainAbstractionHeuristic {
                 var,
                 prop_values[var],
                 numeric_values,
-                self.abstraction.factory.comparison_trees(),
-                &self.comparison_tree_by_var,
-                &self.comparison_tree_required_lens,
+                self.abstraction.factory.numeric_conditions(),
                 comparison_values,
             )?;
             let abs_val = abstract_propositional_value(var, concrete_val, mapping)?;
@@ -489,9 +464,7 @@ fn resolved_propositional_value(
     var: usize,
     stored_val: usize,
     numeric: &[f64],
-    comparison_trees: &[ComparisonTree],
-    comparison_tree_by_var: &[Option<usize>],
-    comparison_tree_required_lens: &[usize],
+    conditions: &NumericConditions,
     comparison_values: Option<&[Option<usize>]>,
 ) -> Result<usize, EvaluationError> {
     if let Some(value) = comparison_values
@@ -501,63 +474,36 @@ fn resolved_propositional_value(
     {
         return Ok(value);
     }
-    let Some(tree_id) = comparison_tree_by_var.get(var).copied().flatten() else {
+    let Some(condition) = conditions.for_var(var) else {
         return Ok(stored_val);
     };
-    let tree = &comparison_trees[tree_id];
 
     // Concrete evaluation on the state's numeric values. This is the
     // deterministic α-image of the concrete state's comparison bit.
-    let eval = evaluate_comparison_tree_on_concrete_numeric_state(
-        tree,
-        numeric,
-        comparison_tree_required_lens[tree_id],
-    )?;
-    Ok(if eval {
-        COMPARISON_TRUE_VAL
-    } else {
-        COMPARISON_FALSE_VAL
-    })
+    Ok(
+        if evaluate_condition_on_concrete_numeric_state(condition, numeric)? {
+            COMPARISON_TRUE_VAL
+        } else {
+            COMPARISON_FALSE_VAL
+        },
+    )
 }
 
-fn evaluate_comparison_tree_on_concrete_numeric_state(
-    tree: &ComparisonTree,
+fn evaluate_condition_on_concrete_numeric_state(
+    condition: &NumericCondition,
     numeric: &[f64],
-    required_len: usize,
 ) -> Result<bool, EvaluationError> {
+    let required_len = condition.required_numeric_len();
     if numeric.len() < required_len {
         return Err(EvaluationError::InvalidState(format!(
-            "numeric state too short for comparison tree on var {}: {} < {}",
-            tree.affected_var_id,
+            "numeric state too short for numeric condition on var {}: {} < {}",
+            condition.prop_var_id(),
             numeric.len(),
             required_len
         )));
     }
 
-    Ok(tree.evaluate_point(numeric))
-}
-
-fn comparison_tree_numeric_len(tree: &ComparisonTree) -> usize {
-    let mut max_numeric_var_id = tree.left_numeric_var_id.max(tree.right_numeric_var_id);
-    for node in &tree.nodes {
-        match node {
-            ComparisonTreeNode::Leaf { numeric_var_id } => {
-                max_numeric_var_id = max_numeric_var_id.max(*numeric_var_id);
-            }
-            ComparisonTreeNode::Arith {
-                result_numeric_var_id,
-                left_numeric_var_id,
-                right_numeric_var_id,
-                ..
-            } => {
-                max_numeric_var_id = max_numeric_var_id
-                    .max(*result_numeric_var_id)
-                    .max(*left_numeric_var_id)
-                    .max(*right_numeric_var_id);
-            }
-        }
-    }
-    max_numeric_var_id + 1
+    Ok(condition.evaluate_point(numeric))
 }
 
 fn abstract_propositional_value(

@@ -2,8 +2,9 @@ use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericType};
 use planforge_sas::utils::float_tolerance;
 
-use super::comparison_expression::{ComparisonTree, Interval};
 use super::domain_abstraction::NumericPartitions;
+use planforge_sas::numeric_conditions::NumericCondition;
+use planforge_sas::utils::interval::Interval;
 
 pub fn seed_numeric_intervals_from_initial_state(task: &dyn AbstractNumericTask) -> Vec<Interval> {
     let initial_numeric_values = task.get_initial_numeric_state_values();
@@ -26,7 +27,7 @@ pub fn seed_numeric_intervals_from_initial_state(task: &dyn AbstractNumericTask)
 /// comparison is indeterminate on this box, not that the fill failed. Only
 /// callers that want the truth value keep it.
 pub fn fill_derived_numeric_intervals_from_comparison_trees(
-    comparison_trees: &[ComparisonTree],
+    comparison_trees: &[NumericCondition],
     numeric_intervals: &mut [Interval],
 ) {
     for tree in comparison_trees {
@@ -36,7 +37,7 @@ pub fn fill_derived_numeric_intervals_from_comparison_trees(
 
 pub fn prepare_comparison_tree_inputs_from_initial_state(
     task: &dyn AbstractNumericTask,
-    comparison_trees: &[ComparisonTree],
+    comparison_trees: &[NumericCondition],
 ) -> Result<Vec<Interval>> {
     let initial_numeric_values = task.get_initial_numeric_state_values();
     let mut numeric_intervals: Vec<Interval> = Vec::with_capacity(initial_numeric_values.len());
@@ -58,7 +59,7 @@ pub fn prepare_comparison_tree_inputs_from_initial_state(
 
 pub fn prepare_comparison_tree_inputs_from_abstract_state(
     task: &dyn AbstractNumericTask,
-    comparison_trees: &[ComparisonTree],
+    comparison_trees: &[NumericCondition],
     partitions: &NumericPartitions,
     state_hash: usize,
     num_props: usize,
@@ -83,7 +84,7 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state(
 /// and want to reuse one `Vec<Interval>` across the loop.
 pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
     task: &dyn AbstractNumericTask,
-    comparison_trees: &[ComparisonTree],
+    comparison_trees: &[NumericCondition],
     partitions: &NumericPartitions,
     state_hash: usize,
     num_props: usize,
@@ -150,7 +151,7 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
 
 pub fn evaluate_comparison_tree_from_initial_state(
     task: &dyn AbstractNumericTask,
-    tree: &ComparisonTree,
+    tree: &NumericCondition,
 ) -> Result<Option<bool>> {
     let mut numeric_intervals =
         prepare_comparison_tree_inputs_from_initial_state(task, std::slice::from_ref(tree))?;
@@ -159,7 +160,7 @@ pub fn evaluate_comparison_tree_from_initial_state(
 
 pub fn evaluate_comparison_tree_from_abstract_state(
     task: &dyn AbstractNumericTask,
-    tree: &ComparisonTree,
+    tree: &NumericCondition,
     partitions: &NumericPartitions,
     state_hash: usize,
     num_props: usize,

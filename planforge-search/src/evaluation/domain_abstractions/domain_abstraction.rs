@@ -1,15 +1,12 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
-
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, AssignmentOperation, NumericType};
 use planforge_sas::utils::float_tolerance;
 
-use super::comparison_expression::{ArithOp, ComparisonTree, Interval};
 use super::utils::EquispacedPartitioning;
+use planforge_sas::numeric_conditions::ArithOp;
+use planforge_sas::utils::interval::Interval;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumericPartitions {
@@ -189,72 +186,4 @@ fn intervals_overlap(a: Interval, b: Interval) -> bool {
     }
 
     true
-}
-
-#[derive(Debug, Clone)]
-pub struct ComparisonAxiomIndex {
-    trees: Vec<ComparisonTree>,
-    by_affected_var_id: HashMap<usize, usize>,
-}
-
-impl ComparisonAxiomIndex {
-    pub fn from_task(task: &dyn AbstractNumericTask) -> Result<Self, String> {
-        let mut trees: Vec<ComparisonTree> = Vec::new();
-        let mut by_affected_var_id: HashMap<usize, usize> = HashMap::new();
-
-        for comparison_axiom_id in 0..task.comparison_axioms().len() {
-            let tree = ComparisonTree::from_task(task, comparison_axiom_id)
-                .map_err(|e| format!("failed to build comparison tree: {e:?}"))?;
-            let idx = trees.len();
-            if let Some(first_idx) = by_affected_var_id.insert(tree.affected_var_id, idx) {
-                let first_axiom_id = trees[first_idx].comparison_axiom_id;
-                return Err(format!(
-                    "comparison axioms {first_axiom_id} and {comparison_axiom_id} both affect propositional variable {}",
-                    tree.affected_var_id
-                ));
-            }
-            trees.push(tree);
-        }
-
-        Ok(Self {
-            trees,
-            by_affected_var_id,
-        })
-    }
-
-    pub fn is_comparison_axiom_variable(&self, prop_var_id: usize) -> bool {
-        self.by_affected_var_id.contains_key(&prop_var_id)
-    }
-
-    pub fn comparison_tree(&self, prop_var_id: usize) -> Option<&ComparisonTree> {
-        let tree_idx = *self.by_affected_var_id.get(&prop_var_id)?;
-        self.trees.get(tree_idx)
-    }
-
-    /// Returns `true` if the given propositional precondition cannot be
-    /// satisfied by any concrete numeric assignment in `numeric_intervals`.
-    ///
-    /// Uses the optimistic interval semantics that the rest of operator
-    /// construction relies on: a `TRUE` precondition is contradicted only
-    /// when the interval admits no value making the comparison true
-    /// (`evaluate_interval == Some(false)`); a `FALSE` precondition is
-    /// contradicted only when the interval admits no value making the
-    /// comparison false (`evaluate_interval == Some(true)`). Concrete
-    /// axiom values are recomputed per state during heuristic evaluation.
-    pub fn precondition_is_contradicted(
-        &self,
-        pre: &ExplicitFact,
-        numeric_intervals: &[Interval],
-    ) -> bool {
-        let var_id = pre.var();
-        let Some(tree) = self.comparison_tree(var_id) else {
-            return false;
-        };
-
-        match pre.value() {
-            0 => !tree.evaluate_interval_admits_true(numeric_intervals),
-            1 => !tree.evaluate_interval_admits_false(numeric_intervals),
-            _ => false,
-        }
-    }
 }

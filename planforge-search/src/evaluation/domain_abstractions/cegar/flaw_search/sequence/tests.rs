@@ -1,4 +1,3 @@
-use crate::evaluation::domain_abstractions::comparison_expression::Interval;
 use crate::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
@@ -6,6 +5,7 @@ use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
     NumericRootTask, NumericType, NumericVariable, Operator,
 };
+use planforge_sas::utils::interval::Interval;
 
 use super::*;
 

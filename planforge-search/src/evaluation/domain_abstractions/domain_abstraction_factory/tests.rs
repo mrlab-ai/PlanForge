@@ -11,34 +11,35 @@ use crate::evaluation::abstraction_collections::cost_partitioning::{
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planforge_sas::numeric_conditions::{ConditionNode, NumericCondition};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
     NumericRootTask, NumericType, NumericVariable, Operator,
 };
 
+/// Initial values of the constant numeric variables `condition` reads.
+///
+/// Every leaf id is a valid numeric variable: `NumericConditions::build`
+/// rejects out-of-range references before a task is ever constructed.
 fn constant_leaf_values(
-    tree: &ComparisonTree,
+    condition: &NumericCondition,
     task: &dyn AbstractNumericTask,
     initial_numeric_values: &[f64],
 ) -> Vec<f64> {
-    let num_numeric_vars = task.numeric_variables().len();
+    let numeric_variables = task.numeric_variables();
     let mut out: HashSet<u64> = HashSet::new();
-    for node in &tree.nodes {
-        let super::super::comparison_expression::ComparisonTreeNode::Leaf { numeric_var_id } = node
-        else {
+    for node in condition.nodes() {
+        let ConditionNode::Leaf { numeric_var_id } = node else {
             continue;
         };
-        if *numeric_var_id >= num_numeric_vars {
+        if numeric_variables[*numeric_var_id].get_type() != &NumericType::Constant {
             continue;
         }
-        if task.numeric_variables()[*numeric_var_id].get_type() != &NumericType::Constant {
+        let value = initial_numeric_values[*numeric_var_id];
+        if value.is_nan() {
             continue;
         }
-        let v = initial_numeric_values[*numeric_var_id];
-        if v.is_nan() {
-            continue;
-        }
-        out.insert(v.to_bits());
+        out.insert(value.to_bits());
     }
     out.into_iter().map(f64::from_bits).collect()
 }
@@ -66,37 +67,26 @@ fn partitions_from_cutpoints(cutpoints: &[f64]) -> Vec<Interval> {
 fn cutpoint_partitions_for_task(
     task: &dyn AbstractNumericTask,
 ) -> Result<(NumericPartitions, Vec<usize>)> {
-    let mut comparison_trees: Vec<ComparisonTree> =
-        Vec::with_capacity(task.comparison_axioms().len());
-    for comparison_axiom_id in 0..task.comparison_axioms().len() {
-        let tree = ComparisonTree::from_task(task, comparison_axiom_id).map_err(|e| {
-            anyhow!(
-                "failed to build ComparisonTree for comparison axiom {comparison_axiom_id}: {e:?}"
-            )
-        })?;
-        comparison_trees.push(tree);
-    }
-
     let initial_numeric_values = task.get_initial_numeric_state_values();
     let num_numeric_vars = task.numeric_variables().len();
 
     let mut cutpoints_by_var: Vec<BTreeSet<NotNan<f64>>> = vec![BTreeSet::new(); num_numeric_vars];
-    for tree in &comparison_trees {
-        let constant_values = constant_leaf_values(tree, task, &initial_numeric_values);
+    for condition in task.numeric_conditions().iter() {
+        let constant_values = constant_leaf_values(condition, task, &initial_numeric_values);
         if constant_values.is_empty() {
             continue;
         }
 
-        for dep in tree.regular_numeric_var_dependencies(task) {
+        for &dep in condition.regular_numeric_var_dependencies() {
             ensure!(
                 dep < cutpoints_by_var.len(),
-                "comparison tree depends on numeric var {dep}, but only {} numeric vars exist",
+                "numeric condition depends on numeric var {dep}, but only {} numeric vars exist",
                 cutpoints_by_var.len()
             );
-            for &v in &constant_values {
-                let v = NotNan::new(v).map_err(|_| anyhow!("NaN cutpoint encountered"))?;
-                if v.is_finite() {
-                    cutpoints_by_var[dep].insert(v);
+            for &value in &constant_values {
+                let value = NotNan::new(value).map_err(|_| anyhow!("NaN cutpoint encountered"))?;
+                if value.is_finite() {
+                    cutpoints_by_var[dep].insert(value);
                 }
             }
         }

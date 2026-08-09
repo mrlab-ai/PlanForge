@@ -164,7 +164,7 @@ impl CausalGraph {
     ) -> Vec<CausalGraphVariable> {
         let mut sources = BTreeSet::new();
         for fact in preconditions {
-            if let Some(comparison_axiom_id) = comparison_axiom_id_for_var(task, fact.var()) {
+            if let Some(comparison_axiom_id) = task.numeric_conditions().id_for_var(fact.var()) {
                 if let Some(numeric_var_id) = self.comparison_numeric_var(comparison_axiom_id) {
                     sources.insert(CausalGraphVariable::Numeric(numeric_var_id));
                 }
@@ -211,7 +211,9 @@ impl CausalGraph {
         let mut queue = VecDeque::new();
         for goal_index in 0..task.get_num_goals() {
             let goal = task.get_goal_fact(goal_index);
-            let goal_var = comparison_axiom_id_for_var(task, goal.var())
+            let goal_var = task
+                .numeric_conditions()
+                .id_for_var(goal.var())
                 .and_then(|id| self.comparison_numeric_var(id))
                 .map(CausalGraphVariable::Numeric)
                 .or_else(|| {
@@ -545,15 +547,9 @@ fn numeric_effect_target(
     Some(CausalGraphVariable::Numeric(effect.affected_var_id()))
 }
 
-fn comparison_axiom_id_for_var(task: &dyn AbstractNumericTask, var_id: usize) -> Option<usize> {
-    task.comparison_axioms()
-        .iter()
-        .position(|axiom| axiom.get_affected_var_id() == var_id)
-}
-
 fn is_regular_propositional_var(task: &dyn AbstractNumericTask, var_id: usize) -> bool {
     task.get_variable_axiom_layer(var_id)
         .unwrap_or(None)
         .is_none()
-        && comparison_axiom_id_for_var(task, var_id).is_none()
+        && !task.numeric_conditions().is_condition_var(var_id)
 }

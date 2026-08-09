@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 
 use planforge_sas::axioms::AxiomEvaluator;
@@ -9,8 +9,6 @@ use planforge_sas::utils::int_packer::IntDoublePacker;
 use tracing::debug;
 
 use super::cegar::flaw_search::Flaw;
-use super::comparison_expression::Interval;
-use super::domain_abstraction::ComparisonAxiomIndex;
 use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{
     AbstractDistanceTable, DomainAbstractionFactory, WildcardPlanResult,
@@ -21,6 +19,7 @@ use crate::evaluation::domain_abstractions::cegar::flaw_search::SplitDirection;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::progression::{
     get_progression_numeric_deviation_flaws, get_progression_precondition_flaws,
 };
+use planforge_sas::utils::interval::Interval;
 
 pub(crate) fn compute_abstraction_size_u128(
     domain_sizes: &[usize],
@@ -49,16 +48,10 @@ pub(crate) fn identity_domain_mapping_and_sizes(
     task: &dyn AbstractNumericTask,
 ) -> Result<(DomainMapping, Vec<usize>)> {
     let num_vars = task.get_num_variables();
-    let derived_prop: HashSet<usize> = task
-        .comparison_axioms()
-        .iter()
-        .map(|ax| ax.get_affected_var_id())
-        .collect();
-
     let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
     let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
     for var_id in 0..num_vars {
-        if derived_prop.contains(&(var_id)) {
+        if task.numeric_conditions().is_condition_var(var_id) {
             domain_mapping.push(vec![0, 1, 2]);
             domain_sizes.push(3);
         } else {
@@ -619,7 +612,6 @@ fn debug_print_concrete_trace(
         fmt_concrete_nums(&numeric_state, &num_scope, partitions, 200)
     );
 
-    let comparison_index = ComparisonAxiomIndex::from_task(task).ok();
     let max_tries_per_step = 30usize;
     for step in 0..shown_steps {
         if step + 1 >= plan.abstract_numeric_states.len() {
@@ -644,29 +636,21 @@ fn debug_print_concrete_trace(
             };
             tries += 1;
 
-            let applicable = if let Some(idx) = comparison_index.as_ref() {
-                // Debug-trace only; we use Forward direction which does not
-                // consult `deltas`, so an empty map is fine here.
-                let deltas: std::collections::HashMap<usize, Vec<f64>> =
-                    std::collections::HashMap::new();
-                get_progression_precondition_flaws(
-                    task,
-                    &deltas,
-                    partitions,
-                    idx,
-                    op,
-                    &state_packer,
-                    &buffer,
-                    &numeric_state,
-                    step,
-                    SplitDirection::Forward,
-                )
-                .is_empty()
-            } else {
-                op.preconditions()
-                    .iter()
-                    .all(|pre| fact_is_hold(pre, &state_packer, &buffer))
-            };
+            // Debug-trace only; we use Forward direction which does not
+            // consult `deltas`, so an empty map is fine here.
+            let deltas: HashMap<usize, Vec<f64>> = HashMap::new();
+            let applicable = get_progression_precondition_flaws(
+                task,
+                &deltas,
+                partitions,
+                op,
+                &state_packer,
+                &buffer,
+                &numeric_state,
+                step,
+                SplitDirection::Forward,
+            )
+            .is_empty();
             if !applicable {
                 continue;
             }

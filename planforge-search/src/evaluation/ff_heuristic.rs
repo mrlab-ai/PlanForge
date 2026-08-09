@@ -330,11 +330,6 @@ impl<'task> FfHeuristic<'task> {
         //    propositional variable. Do not feed those indices into the
         //    propositional bucket; conflating the namespaces silently
         //    dropped legitimate prop facts in earlier versions.
-        let mut comparison_axiom_prop_vars: HashSet<usize> = HashSet::new();
-        for axiom in task.comparison_axioms() {
-            comparison_axiom_prop_vars.insert(axiom.get_affected_var_id());
-        }
-
         // 2. Enumerate propositional facts (one FactId per non-axiom-var
         //    value) then comparison-axiom TRUE facts (one FactId per axiom).
         let num_props = task.variables().len();
@@ -345,7 +340,7 @@ impl<'task> FfHeuristic<'task> {
         let mut fact_to_axiom: Vec<Option<AxiomIdx>> = Vec::new();
 
         for var_id in 0..num_props {
-            if comparison_axiom_prop_vars.contains(&var_id) {
+            if task.numeric_conditions().is_condition_var(var_id) {
                 // Skip — only the TRUE value (registered in step 3) is
                 // representable under the monotonic relaxation.
                 continue;

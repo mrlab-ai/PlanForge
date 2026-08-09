@@ -1,4 +1,5 @@
 use crate::axioms::{AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, PropositionalAxiom};
+use crate::numeric_conditions::NumericConditions;
 use crate::numeric_parser::parse_numeric_sas_output;
 use crate::state_registry::{ConcreteState, StateRegistry};
 use crate::utils::int_packer::IntDoublePacker;
@@ -18,6 +19,15 @@ pub trait AbstractNumericTask {
     fn numeric_variables(&self) -> &Vec<NumericVariable>;
     fn assignment_axioms(&self) -> &Vec<AssignmentAxiom>;
     fn comparison_axioms(&self) -> &Vec<ComparisonAxiom>;
+    /// The task's numeric conditions, one per comparison axiom, built once
+    /// when the task is constructed. This is the only place the
+    /// "propositional variable -> comparison axiom" mapping lives.
+    ///
+    /// Returned behind an `Arc` so components that outlive the borrow —
+    /// abstraction factories, heuristics — can share the conditions instead
+    /// of rebuilding or deep-copying them. Method calls auto-deref, so
+    /// `task.numeric_conditions().for_var(v)` reads as usual.
+    fn numeric_conditions(&self) -> &Arc<NumericConditions>;
     fn axioms(&self) -> &Vec<PropositionalAxiom>;
     fn metric(&self) -> &Metric;
 
@@ -208,6 +218,9 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     }
     fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
         (**self).comparison_axioms()
+    }
+    fn numeric_conditions(&self) -> &Arc<NumericConditions> {
+        (**self).numeric_conditions()
     }
     fn axioms(&self) -> &Vec<PropositionalAxiom> {
         (**self).axioms()
@@ -866,6 +879,7 @@ pub struct NumericRootTask {
     axioms: Vec<PropositionalAxiom>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
+    numeric_conditions: Arc<NumericConditions>,
     global_constraint: ExplicitFact,
 }
 
@@ -888,6 +902,15 @@ impl NumericRootTask {
     ) -> Self {
         let abstract_propositional_var_ids = (0..state.len()).collect();
         let abstract_numeric_var_ids = (0..numeric_state.len()).collect();
+        let numeric_conditions = Arc::new(
+            NumericConditions::build(
+                variables.len(),
+                &numeric_variables,
+                &comparison_axioms,
+                &assignment_axioms,
+            )
+            .unwrap_or_else(|error| panic!("malformed numeric axioms in SAS task: {error}")),
+        );
         NumericRootTask {
             version,
             metric,
@@ -903,6 +926,7 @@ impl NumericRootTask {
             axioms,
             comparison_axioms,
             assignment_axioms,
+            numeric_conditions,
             global_constraint,
         }
     }
@@ -975,6 +999,10 @@ impl AbstractNumericTask for NumericRootTask {
 
     fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
         &self.comparison_axioms
+    }
+
+    fn numeric_conditions(&self) -> &Arc<NumericConditions> {
+        &self.numeric_conditions
     }
 
     fn get_operators(&self) -> &Vec<Operator> {

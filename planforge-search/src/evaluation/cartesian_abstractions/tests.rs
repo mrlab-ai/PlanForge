@@ -21,7 +21,7 @@ use super::{
     select_next_cartesian_collection_goal, select_refinement_split,
 };
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
-use crate::evaluation::domain_abstractions::comparison_expression::Interval;
+use planforge_sas::utils::interval::Interval;
 
 #[test]
 fn icaps_rng_matches_std_mt19937_uniform_integer_distribution() {

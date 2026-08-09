@@ -6,8 +6,8 @@ use planforge_sas::numeric_task::{
     NumericType, NumericVariable, Operator,
 };
 
-use crate::evaluation::domain_abstractions::comparison_expression::Interval;
 use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
+use planforge_sas::utils::interval::Interval;
 
 #[test]
 fn propositional_effect_without_precondition_preserves_sibling_branches() {

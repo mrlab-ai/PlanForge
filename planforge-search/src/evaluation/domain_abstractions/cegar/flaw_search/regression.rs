@@ -7,12 +7,13 @@ use planforge_sas::{
     numeric_task::{AbstractNumericTask, ExplicitFact, Operator},
 };
 
+use planforge_sas::utils::interval::{EMPTY_INTERVAL, Interval, UNBOUNDED_INTERVAL};
+
 use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
 use crate::evaluation::domain_abstractions::{
     abstract_operator_generator::DomainMapping,
     cegar::flaw_search::{numeric_requirement_for_comparison_fact, state::FlawSearchState},
-    comparison_expression::{EMPTY_INTERVAL, Interval, UNBOUNDED_INTERVAL},
-    domain_abstraction::{ComparisonAxiomIndex, NumericPartitions},
+    domain_abstraction::NumericPartitions,
     domain_abstraction_factory::WildcardPlanResult,
     utils::make_prop_state_packer,
 };
@@ -26,11 +27,9 @@ pub fn get_regression_flaws(
 ) -> Result<Vec<Flaw>> {
     let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
     let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
-    let comparison_index = ComparisonAxiomIndex::from_task(task)
-        .map_err(|e| anyhow::anyhow!("failed to build comparison axiom index: {e}"))?;
 
     let mut state = FlawSearchState::goals_partial_state(task, domain_mapping);
-    materialize_comparison_requirements(task, &comparison_index, &mut state);
+    materialize_comparison_requirements(task, &mut state);
 
     let mut collected_flaws: Vec<Flaw> = Vec::new();
     let mut step: usize = wildcard_plan.wildcard_plan.len();
@@ -45,7 +44,7 @@ pub fn get_regression_flaws(
             let operator_flaws = get_regression_precondition_flaws(op, &state, step);
             if operator_flaws.is_empty() {
                 state.regress(op, &axiom_evaluator)?;
-                materialize_comparison_requirements(task, &comparison_index, &mut state);
+                materialize_comparison_requirements(task, &mut state);
                 collected_flaws.clear();
                 break;
             } else {
@@ -137,7 +136,6 @@ pub fn get_init_state_flaws(
 
 pub(crate) fn materialize_comparison_requirements(
     task: &dyn AbstractNumericTask,
-    comparison_index: &ComparisonAxiomIndex,
     state: &mut FlawSearchState,
 ) {
     for var in 0..state.concrete_prop.len() {
@@ -146,7 +144,7 @@ pub(crate) fn materialize_comparison_requirements(
         };
         let fact = ExplicitFact::new(var, value);
         let Some((numeric_var_id, required_interval)) =
-            numeric_requirement_for_comparison_fact(task, comparison_index, &fact)
+            numeric_requirement_for_comparison_fact(task, &fact)
         else {
             continue;
         };

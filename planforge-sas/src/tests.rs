@@ -1,8 +1,8 @@
 use crate::{
-    axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom},
+    axioms::{ComparisonAxiom, PropositionalAxiom},
     numeric_task::{
-        Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
-        NumericVariable, Operator,
+        AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
+        NumericRootTask, NumericType, NumericVariable, Operator,
     },
 };
 
@@ -46,11 +46,19 @@ pub(crate) fn get_root_task() -> NumericRootTask {
     let mutexes = Vec::new();
     let state = vec![1, 1];
     let numeric_state = vec![1f64, 0f64];
+    // `drop` bumps the cost counter by one, which flips the comparison below
+    // and therefore distinguishes the successor from the initial state.
     let operators = vec![Operator::new(
         String::from("drop"),
         vec![ExplicitFact::new(1, 1)],
         vec![Effect::new(Vec::new(), 1, Some(1), 5)],
-        Vec::new(),
+        vec![AssignmentEffect::new(
+            1,
+            AssignmentOperation::Plus,
+            0,
+            false,
+            vec![],
+        )],
         1,
     )];
     let axioms = vec![PropositionalAxiom::new(vec![], 0, 0, 1)];
@@ -58,14 +66,12 @@ pub(crate) fn get_root_task() -> NumericRootTask {
         1,
         0,
         1,
-        crate::axioms::ComparisonOperator::Equal,
+        crate::axioms::ComparisonOperator::GreaterThan,
     )];
-    let assignment_axioms = vec![AssignmentAxiom::new(
-        1,
-        crate::axioms::CalOperator::Sum,
-        0,
-        1,
-    )];
+    // Accumulating a variable into itself is an operator effect, not an
+    // assignment axiom: axioms define a numeric variable from *other*
+    // numeric variables, and a self-referential definition has no fixpoint.
+    let assignment_axioms = Vec::new();
     let global_constraint = ExplicitFact::new(0, 0);
     NumericRootTask::new(
         version,

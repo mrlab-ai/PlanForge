@@ -34,8 +34,11 @@ use super::additive_numeric_views::{
     comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
     is_refinable_numeric_dimension,
 };
-use super::comparison_expression::Interval;
-use super::domain_abstraction::{ComparisonAxiomIndex, NumericPartitions};
+use planforge_sas::numeric_conditions::NumericCondition;
+use planforge_sas::numeric_conditions::NumericConditions;
+use planforge_sas::utils::interval::Interval;
+
+use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
 use super::domain_abstraction_heuristic::{
     COMPARISON_FALSE_VAL, COMPARISON_TRUE_VAL, COMPARISON_UNKNOWN_VAL,
@@ -759,13 +762,13 @@ fn can_refine_propositional_variable_with_blacklist(
     var_id: usize,
     new_domain_size: usize,
     max_abstraction_size: usize,
-    comparison_var_ids: &HashSet<usize>,
+    conditions: &NumericConditions,
     blacklisted_prop_var_ids: &mut HashSet<usize>,
 ) -> bool {
     if blacklisted_prop_var_ids.contains(&var_id) {
         return false;
     }
-    if comparison_var_ids.contains(&var_id) && domain_sizes.get(var_id).copied().unwrap_or(0) >= 2 {
+    if conditions.is_condition_var(var_id) && domain_sizes.get(var_id).copied().unwrap_or(0) >= 2 {
         return true;
     }
     if can_refine_propositional_variable(
@@ -834,17 +837,10 @@ pub fn fix_flaws(
         return Ok(RefinementSummary::default());
     }
 
-    let comparison_var_ids: HashSet<usize> = task
-        .comparison_axioms()
-        .iter()
-        .map(|ax| ax.get_affected_var_id())
-        .collect();
-
     let chosen_flaws: ChosenFlaws = config.flaw_treatment.choose_flaws(
         task,
         &flaws,
         config,
-        &comparison_var_ids,
         rng,
         blacklisted_prop_var_ids,
         blacklisted_numeric_var_ids,
@@ -879,7 +875,6 @@ pub fn fix_flaws(
                 task,
                 &chosen,
                 config,
-                &comparison_var_ids,
                 blacklisted_prop_var_ids,
                 blacklisted_numeric_var_ids,
                 domain_mapping,
@@ -907,7 +902,6 @@ fn try_refine_from_flaw(
     task: &dyn AbstractNumericTask,
     flaw: &Flaw,
     config: &CegarConfig,
-    comparison_var_ids: &HashSet<usize>,
     blacklisted_prop_var_ids: &mut HashSet<usize>,
     blacklisted_numeric_var_ids: &mut HashSet<usize>,
     domain_mapping: &mut DomainMapping,
@@ -981,14 +975,14 @@ fn try_refine_from_flaw(
             let mut changed = false;
             let mut prop_domain_size_changed = false;
 
-            if comparison_var_ids.contains(&var_id) {
+            if task.numeric_conditions().is_condition_var(var_id) {
                 if !can_refine_propositional_variable_with_blacklist(
                     domain_sizes,
                     numeric_domain_sizes,
                     var_id,
                     2,
                     config.max_abstraction_size,
-                    comparison_var_ids,
+                    task.numeric_conditions(),
                     blacklisted_prop_var_ids,
                 ) {
                     return Ok(None);
@@ -1030,7 +1024,7 @@ fn try_refine_from_flaw(
                     var_id,
                     abs_size + 1,
                     config.max_abstraction_size,
-                    comparison_var_ids,
+                    task.numeric_conditions(),
                     blacklisted_prop_var_ids,
                 ) {
                     return Ok(None);
@@ -1156,12 +1150,7 @@ fn compute_initial_split_mapping(
         .get(var_id)
         .copied()
         .unwrap_or(0);
-    let comparison_var_ids: HashSet<usize> = task
-        .comparison_axioms()
-        .iter()
-        .map(|axiom| axiom.get_affected_var_id())
-        .collect();
-    let is_comparison_var = comparison_var_ids.contains(&var_id);
+    let is_comparison_var = task.numeric_conditions().is_condition_var(var_id);
 
     match config.init_split_method {
         InitSplitMethod::GoalValue => {
@@ -1358,8 +1347,6 @@ fn apply_initial_goal_splits(
     // selected init split lets different CEGAR iterations focus on
     // different comparison axioms, producing pattern diversity (and
     // hence additivity) in the resulting collection.
-    let index = ComparisonAxiomIndex::from_task(task)
-        .map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
     let init_split_filter: Option<&HashSet<usize>> = config.init_split_var_ids.as_ref();
     for fact in goal_variable_values(task) {
         if let Some(allowed) = init_split_filter
@@ -1367,7 +1354,7 @@ fn apply_initial_goal_splits(
         {
             continue;
         }
-        let Some(tree) = index.comparison_tree(fact.var()) else {
+        let Some(tree) = task.numeric_conditions().for_var(fact.var()) else {
             continue;
         };
         for numeric_var_id in comparison_refinement_dimensions(task, tree) {
@@ -1415,12 +1402,6 @@ fn apply_initial_seed_splits(
     partitions: &mut NumericPartitions,
     numeric_domain_sizes: &mut [usize],
 ) -> Result<()> {
-    let comparison_var_ids: HashSet<usize> = task
-        .comparison_axioms()
-        .iter()
-        .map(|axiom| axiom.get_affected_var_id())
-        .collect();
-
     for seed in &config.initial_seed_splits {
         match *seed {
             InitialSeedSplit::Numeric {
@@ -1465,17 +1446,18 @@ fn apply_initial_seed_splits(
                 if value >= concrete_size {
                     continue;
                 }
-                let (new_domain_size, mapping) = if comparison_var_ids.contains(&var_id) {
-                    let mut mapping = vec![0; concrete_size];
-                    if !mapping.is_empty() {
-                        mapping[0] = 1;
-                    }
-                    (2, mapping)
-                } else {
-                    let mut mapping = vec![0; concrete_size];
-                    mapping[value] = 1;
-                    (2, mapping)
-                };
+                let (new_domain_size, mapping) =
+                    if task.numeric_conditions().is_condition_var(var_id) {
+                        let mut mapping = vec![0; concrete_size];
+                        if !mapping.is_empty() {
+                            mapping[0] = 1;
+                        }
+                        (2, mapping)
+                    } else {
+                        let mut mapping = vec![0; concrete_size];
+                        mapping[value] = 1;
+                        (2, mapping)
+                    };
                 if !can_refine_propositional_variable(
                     domain_sizes,
                     numeric_domain_sizes,
@@ -1530,7 +1512,7 @@ fn comparison_eval_code(v: Option<bool>) -> usize {
 
 #[allow(clippy::if_same_then_else, clippy::needless_bool)]
 fn determine_include_in_lower(
-    tree: &super::comparison_expression::ComparisonTree,
+    tree: &NumericCondition,
     split_var_id: usize,
     split_value: f64,
     concrete_values: &[f64],
@@ -1576,7 +1558,7 @@ fn determine_include_in_lower(
 
 #[allow(unused, clippy::if_same_then_else, clippy::needless_bool)]
 fn determine_include_in_lower_for_flaw_search_state(
-    tree: &super::comparison_expression::ComparisonTree,
+    tree: &NumericCondition,
     state: &FlawSearchState,
 ) -> bool {
     let lower_inputs: Vec<Interval> = state

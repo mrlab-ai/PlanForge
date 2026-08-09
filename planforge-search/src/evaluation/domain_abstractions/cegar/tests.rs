@@ -195,9 +195,9 @@ fn empty_wildcard_plan_is_real_exactly_when_initial_state_is_goal() {
 
 #[test]
 fn get_flaws_reports_numeric_deviation_flaw() {
-    use crate::evaluation::domain_abstractions::comparison_expression::Interval;
     use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
     use planforge_sas::numeric_task::{AssignmentEffect, AssignmentOperation, NumericType};
+    use planforge_sas::utils::interval::Interval;
 
     let variables = vec![
         ExplicitVariable::new(

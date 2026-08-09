@@ -45,12 +45,11 @@ use crate::evaluation::domain_abstractions::cegar::flaw_search::sequence::{
     SequenceDirection, get_sequence_flaws,
 };
 use crate::evaluation::domain_abstractions::cegar::flaw_search::state::FlawSearchState;
-use crate::evaluation::domain_abstractions::comparison_expression::{CompOp, Interval};
-use crate::evaluation::domain_abstractions::domain_abstraction::{
-    ComparisonAxiomIndex, NumericPartitions,
-};
+use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
 use crate::evaluation::domain_abstractions::domain_abstraction_factory::WildcardPlanResult;
 use crate::evaluation::domain_abstractions::utils::partition_for_value;
+use planforge_sas::numeric_conditions::CompOp;
+use planforge_sas::utils::interval::Interval;
 
 /// Mirrors numeric-FD's `NumericFlaw = tuple<int, ap_float, bool>`.
 #[derive(Debug, Clone, PartialEq)]
@@ -262,12 +261,11 @@ fn score_flaw(
 fn dependent_numeric_flaws_for_comparison_prop_var(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
     prop_var_id: usize,
     numeric_state: &[f64],
     step: usize,
 ) -> Vec<NumericFlaw> {
-    let Some(tree) = comparison_index.comparison_tree(prop_var_id) else {
+    let Some(tree) = task.numeric_conditions().for_var(prop_var_id) else {
         return vec![];
     };
 
@@ -301,12 +299,11 @@ fn dependent_numeric_flaws_for_comparison_prop_var(
 fn dependent_numeric_flaws_in_interval_for_comparison_prop_var(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
     prop_var_id: usize,
     state: &FlawSearchState,
     step: usize,
 ) -> Vec<NumericFlaw> {
-    let Some(tree) = comparison_index.comparison_tree(prop_var_id) else {
+    let Some(tree) = task.numeric_conditions().for_var(prop_var_id) else {
         return vec![];
     };
 
@@ -345,17 +342,16 @@ fn dependent_numeric_flaws_in_interval_for_comparison_prop_var(
 
 pub(crate) fn numeric_requirement_for_comparison_fact(
     task: &dyn AbstractNumericTask,
-    comparison_index: &ComparisonAxiomIndex,
     fact: &ExplicitFact,
 ) -> Option<(usize, Interval)> {
-    let tree = comparison_index.comparison_tree(fact.var())?;
-    let required_op = required_comparison_op(tree.op, fact.value())?;
-    let left = linearize_numeric_var(task, tree.left_numeric_var_id).ok()?;
-    let right = linearize_numeric_var(task, tree.right_numeric_var_id).ok()?;
+    let tree = task.numeric_conditions().for_var(fact.var())?;
+    let required_op = required_comparison_op(tree.op(), fact.value())?;
+    let left = linearize_numeric_var(task, tree.left_numeric_var_id()).ok()?;
+    let right = linearize_numeric_var(task, tree.right_numeric_var_id()).ok()?;
     let num_numeric_vars = task.numeric_variables().len();
-    if is_refinable_numeric_dimension(task, tree.left_numeric_var_id) && right.is_constant() {
+    if is_refinable_numeric_dimension(task, tree.left_numeric_var_id()) && right.is_constant() {
         let expression =
-            LinearExpression::variable(num_numeric_vars, tree.left_numeric_var_id).subtract(
+            LinearExpression::variable(num_numeric_vars, tree.left_numeric_var_id()).subtract(
                 &LinearExpression::constant(num_numeric_vars, right.constant),
             );
         if let Some(requirement) =
@@ -364,9 +360,9 @@ pub(crate) fn numeric_requirement_for_comparison_fact(
             return Some(requirement);
         }
     }
-    if is_refinable_numeric_dimension(task, tree.right_numeric_var_id) && left.is_constant() {
+    if is_refinable_numeric_dimension(task, tree.right_numeric_var_id()) && left.is_constant() {
         let expression = LinearExpression::constant(num_numeric_vars, left.constant).subtract(
-            &LinearExpression::variable(num_numeric_vars, tree.right_numeric_var_id),
+            &LinearExpression::variable(num_numeric_vars, tree.right_numeric_var_id()),
         );
         if let Some(requirement) =
             single_var_interval_for_linear_zero_comparison(&expression, required_op)

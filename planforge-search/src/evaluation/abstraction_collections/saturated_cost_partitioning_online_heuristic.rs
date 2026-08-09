@@ -5139,9 +5139,11 @@ mod handcrafted_sailing_tests {
     use std::cell::{Ref, RefMut};
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
     use std::time::Duration;
 
     use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
+    use planforge_sas::numeric_conditions::NumericConditions;
     use planforge_sas::numeric_task::{
         AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
         NumericVariable, Operator,
@@ -5156,13 +5158,13 @@ mod handcrafted_sailing_tests {
         CartesianRefinementDirection,
     };
     use crate::evaluation::domain_abstractions::cegar::InitialSeedSplit;
-    use crate::evaluation::domain_abstractions::comparison_expression::Interval;
     use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
     use crate::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
     use crate::evaluation::domain_abstractions::domain_abstraction_generator::{
         DomainAbstractionMetadata, compute_hash_multipliers,
     };
     use crate::task_restriction::build_restricted_task;
+    use planforge_sas::utils::interval::Interval;
 
     #[test]
     fn regional_order_conflict_preserves_disjoint_infinite_tails() {
@@ -5828,6 +5830,9 @@ mod handcrafted_sailing_tests {
         }
         fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
             self.base.comparison_axioms()
+        }
+        fn numeric_conditions(&self) -> &Arc<NumericConditions> {
+            self.base.numeric_conditions()
         }
         fn axioms(&self) -> &Vec<PropositionalAxiom> {
             self.base.axioms()

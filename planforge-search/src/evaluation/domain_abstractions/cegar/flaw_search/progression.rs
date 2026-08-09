@@ -19,7 +19,7 @@ use super::{
 };
 use crate::evaluation::domain_abstractions::{
     additive_numeric_views::numeric_dimension_delta_for_operator,
-    domain_abstraction::{ComparisonAxiomIndex, NumericPartitions},
+    domain_abstraction::NumericPartitions,
     domain_abstraction_factory::WildcardPlanResult,
     utils::{fact_is_hold, get_initial_state, make_prop_state_packer, partition_for_value},
 };
@@ -38,9 +38,6 @@ pub fn get_progression_flaws(
     wildcard_plan: &WildcardPlanResult,
     direction: SplitDirection,
 ) -> Result<Vec<Flaw>> {
-    let comparison_index = ComparisonAxiomIndex::from_task(task)
-        .map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
-
     let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
     let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
 
@@ -75,7 +72,6 @@ pub fn get_progression_flaws(
                 task,
                 &deltas,
                 partitions,
-                &comparison_index,
                 op,
                 &state_packer,
                 &prop_state,
@@ -123,7 +119,6 @@ pub fn get_progression_flaws(
         task,
         &deltas,
         partitions,
-        &comparison_index,
         &state_packer,
         &prop_state,
         &numeric_state,
@@ -141,9 +136,6 @@ pub fn get_execute_entire_plan_flaws(
     wildcard_plan: &WildcardPlanResult,
     direction: SplitDirection,
 ) -> Result<Vec<Flaw>> {
-    let comparison_index = ComparisonAxiomIndex::from_task(task)
-        .map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
-
     let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
     let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
     let deltas = numeric_effect_deltas(task);
@@ -178,7 +170,6 @@ pub fn get_execute_entire_plan_flaws(
                 task,
                 &deltas,
                 partitions,
-                &comparison_index,
                 op,
                 &state_packer,
                 &prop_state,
@@ -221,7 +212,6 @@ pub fn get_execute_entire_plan_flaws(
         task,
         &deltas,
         partitions,
-        &comparison_index,
         &state_packer,
         &prop_state,
         &numeric_state,
@@ -418,7 +408,6 @@ pub fn get_progression_precondition_flaws(
     task: &dyn AbstractNumericTask,
     deltas: &std::collections::HashMap<usize, Vec<f64>>,
     partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
     op: &Operator,
     packer: &IntDoublePacker,
     buffer: &[u64],
@@ -433,7 +422,6 @@ pub fn get_progression_precondition_flaws(
                 task,
                 deltas,
                 partitions,
-                comparison_index,
                 pre,
                 numeric_state,
                 step,
@@ -449,7 +437,6 @@ pub fn get_goal_flaws(
     task: &dyn AbstractNumericTask,
     deltas: &std::collections::HashMap<usize, Vec<f64>>,
     partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
     packer: &IntDoublePacker,
     buffer: &[u64],
     numeric_state: &[f64],
@@ -473,7 +460,6 @@ pub fn get_goal_flaws(
                 task,
                 deltas,
                 partitions,
-                comparison_index,
                 goal_fact,
                 numeric_state,
                 step,
@@ -496,7 +482,6 @@ pub fn get_goal_flaws(
                     task,
                     deltas,
                     partitions,
-                    comparison_index,
                     pre,
                     numeric_state,
                     step,
@@ -516,19 +501,17 @@ fn build_prop_flaw_for_fact(
     task: &dyn AbstractNumericTask,
     deltas: &std::collections::HashMap<usize, Vec<f64>>,
     partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
     fact: &ExplicitFact,
     numeric_state: &[f64],
     step: usize,
     direction: SplitDirection,
 ) -> Flaw {
-    let dependent_numeric_flaws = if comparison_index.is_comparison_axiom_variable(fact.var()) {
+    let dependent_numeric_flaws = if task.numeric_conditions().is_condition_var(fact.var()) {
         match direction {
             SplitDirection::Forward | SplitDirection::ForwardPartitionDeviation => {
                 dependent_numeric_flaws_for_comparison_prop_var(
                     task,
                     partitions,
-                    comparison_index,
                     fact.var(),
                     numeric_state,
                     step,
@@ -538,7 +521,6 @@ fn build_prop_flaw_for_fact(
                 task,
                 deltas,
                 partitions,
-                comparison_index,
                 fact,
                 numeric_state,
                 step,

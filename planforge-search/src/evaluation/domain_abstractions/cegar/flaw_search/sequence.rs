@@ -18,7 +18,7 @@ use crate::evaluation::domain_abstractions::{
         regression::{get_init_state_flaws, get_regression_precondition_flaws},
         state::{FlawSearchState, get_initial_flaw_search_state},
     },
-    domain_abstraction::{ComparisonAxiomIndex, NumericPartitions},
+    domain_abstraction::NumericPartitions,
     domain_abstraction_factory::WildcardPlanResult,
     utils::{make_prop_state_packer, partitions_for_interval},
 };
@@ -96,9 +96,6 @@ fn get_sequence_progression_flaws(
     wildcard_plan: &WildcardPlanResult,
     collected_flaws: &mut Vec<Flaw>,
 ) -> Result<()> {
-    let comparison_index = ComparisonAxiomIndex::from_task(task)
-        .map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
-
     let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
     let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
 
@@ -126,14 +123,8 @@ fn get_sequence_progression_flaws(
             if fallback_op.is_none() {
                 fallback_op = Some(op);
             }
-            let operator_flaws = get_progression_sequence_precondition_flaws(
-                task,
-                partitions,
-                &comparison_index,
-                op,
-                &state,
-                step,
-            );
+            let operator_flaws =
+                get_progression_sequence_precondition_flaws(task, partitions, op, &state, step);
             if operator_flaws.is_empty() {
                 chosen_op = Some(op);
                 (state, next_state, flawed) = progress_and_get_sequence_deviation_flaws(
@@ -192,13 +183,7 @@ fn get_sequence_progression_flaws(
         step += 1;
     }
 
-    collected_flaws.extend(get_goal_sequence_flaws(
-        task,
-        partitions,
-        &comparison_index,
-        &state,
-        step,
-    ));
+    collected_flaws.extend(get_goal_sequence_flaws(task, partitions, &state, step));
 
     Ok(())
 }
@@ -212,11 +197,9 @@ fn get_sequence_regression_flaws(
 ) -> Result<()> {
     let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
     let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
-    let comparison_index = ComparisonAxiomIndex::from_task(task)
-        .map_err(|e| anyhow::anyhow!("failed to build comparison axiom index: {e}"))?;
 
     let mut state = FlawSearchState::goals_partial_state(task, domain_mapping);
-    super::regression::materialize_comparison_requirements(task, &comparison_index, &mut state);
+    super::regression::materialize_comparison_requirements(task, &mut state);
 
     let mut step: usize = wildcard_plan.wildcard_plan.len();
 
@@ -238,11 +221,7 @@ fn get_sequence_regression_flaws(
                 chosen_op = Some(op);
                 step_flaws.clear();
                 state.regress(op, &axiom_evaluator)?;
-                super::regression::materialize_comparison_requirements(
-                    task,
-                    &comparison_index,
-                    &mut state,
-                );
+                super::regression::materialize_comparison_requirements(task, &mut state);
                 break;
             } else {
                 step_flaws.extend(operator_flaws);
@@ -255,11 +234,7 @@ fn get_sequence_regression_flaws(
             && chosen_op.is_none()
         {
             state.regress(op, &axiom_evaluator)?;
-            super::regression::materialize_comparison_requirements(
-                task,
-                &comparison_index,
-                &mut state,
-            );
+            super::regression::materialize_comparison_requirements(task, &mut state);
         }
 
         collected_flaws.extend(step_flaws);
@@ -395,7 +370,6 @@ pub fn get_progression_numeric_sequence_deviation_flaws(
 pub fn get_progression_sequence_precondition_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
     op: &Operator,
     state: &FlawSearchState,
     step: usize,
@@ -404,19 +378,18 @@ pub fn get_progression_sequence_precondition_flaws(
     for pre in op.preconditions().iter() {
         if !state.fact_is_hold(pre) {
             let prop_var_id = pre.var();
-            let dependent_numeric_flaws =
-                if comparison_index.is_comparison_axiom_variable(prop_var_id) {
-                    dependent_numeric_flaws_in_interval_for_comparison_prop_var(
-                        task,
-                        partitions,
-                        comparison_index,
-                        prop_var_id,
-                        state,
-                        step,
-                    )
-                } else {
-                    vec![]
-                };
+            let dependent_numeric_flaws = if task.numeric_conditions().is_condition_var(prop_var_id)
+            {
+                dependent_numeric_flaws_in_interval_for_comparison_prop_var(
+                    task,
+                    partitions,
+                    prop_var_id,
+                    state,
+                    step,
+                )
+            } else {
+                vec![]
+            };
             out.push(Flaw::Propositional(PropFlaw {
                 fact: pre.clone(),
                 dependent_numeric_flaws,
@@ -430,7 +403,6 @@ pub fn get_progression_sequence_precondition_flaws(
 pub fn get_goal_sequence_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
     state: &FlawSearchState,
     step: usize,
 ) -> Vec<Flaw> {
@@ -448,19 +420,18 @@ pub fn get_goal_sequence_flaws(
         }
         if !state.fact_is_hold(goal_fact) && seen.insert(goal_fact.clone()) {
             let prop_var_id = goal_fact.var();
-            let dependent_numeric_flaws =
-                if comparison_index.is_comparison_axiom_variable(prop_var_id) {
-                    dependent_numeric_flaws_in_interval_for_comparison_prop_var(
-                        task,
-                        partitions,
-                        comparison_index,
-                        prop_var_id,
-                        state,
-                        step,
-                    )
-                } else {
-                    vec![]
-                };
+            let dependent_numeric_flaws = if task.numeric_conditions().is_condition_var(prop_var_id)
+            {
+                dependent_numeric_flaws_in_interval_for_comparison_prop_var(
+                    task,
+                    partitions,
+                    prop_var_id,
+                    state,
+                    step,
+                )
+            } else {
+                vec![]
+            };
             out.push(Flaw::Propositional(PropFlaw {
                 fact: goal_fact.clone(),
                 dependent_numeric_flaws,
@@ -481,11 +452,10 @@ pub fn get_goal_sequence_flaws(
             if !state.fact_is_hold(pre) && seen.insert(pre.clone()) {
                 let prop_var_id = pre.var();
                 let dependent_numeric_flaws =
-                    if comparison_index.is_comparison_axiom_variable(prop_var_id) {
+                    if task.numeric_conditions().is_condition_var(prop_var_id) {
                         dependent_numeric_flaws_in_interval_for_comparison_prop_var(
                             task,
                             partitions,
-                            comparison_index,
                             prop_var_id,
                             state,
                             step,

@@ -10,8 +10,8 @@ use planforge_sas::{
 };
 
 use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
-use crate::evaluation::domain_abstractions::comparison_expression::{Interval, UNBOUNDED_INTERVAL};
 use crate::evaluation::domain_abstractions::utils::get_initial_state;
+use planforge_sas::utils::interval::{Interval, UNBOUNDED_INTERVAL};
 
 /// States used during the search of flaws.
 /// Some variables may have a concrete value (`concrete_prop`), while

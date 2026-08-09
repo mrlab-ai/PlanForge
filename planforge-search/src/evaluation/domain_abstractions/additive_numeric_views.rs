@@ -6,7 +6,7 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::linear_effects::{LinearExpression, linearize_numeric_var};
 
-use super::comparison_expression::ComparisonTree;
+use planforge_sas::numeric_conditions::{ConditionNode, NumericCondition};
 
 const EPSILON: f64 = 1e-12;
 
@@ -201,9 +201,9 @@ pub(crate) fn is_refinable_numeric_dimension(
 /// back to its regular leaves, preserving the existing general behavior.
 pub(crate) fn comparison_refinement_dimensions(
     task: &dyn AbstractNumericTask,
-    tree: &ComparisonTree,
+    tree: &NumericCondition,
 ) -> Vec<usize> {
-    let mut direct = [tree.left_numeric_var_id, tree.right_numeric_var_id]
+    let mut direct = [tree.left_numeric_var_id(), tree.right_numeric_var_id()]
         .into_iter()
         .filter(|&numeric_var_id| is_refinable_numeric_dimension(task, numeric_var_id))
         .collect::<Vec<_>>();
@@ -212,27 +212,27 @@ pub(crate) fn comparison_refinement_dimensions(
     if !direct.is_empty() {
         return direct;
     }
-    tree.regular_numeric_var_dependencies(task)
+    tree.regular_numeric_var_dependencies().to_vec()
 }
 
 /// Every refined coordinate that can constrain evaluation of `tree`.
 pub(crate) fn active_comparison_dimensions(
-    task: &dyn AbstractNumericTask,
-    tree: &ComparisonTree,
+    tree: &NumericCondition,
     numeric_domain_sizes: &[usize],
     additive_views: &AdditiveNumericViews,
 ) -> Vec<usize> {
     let mut dimensions = tree
-        .regular_numeric_var_dependencies(task)
-        .into_iter()
+        .regular_numeric_var_dependencies()
+        .iter()
+        .copied()
         .filter(|&numeric_var_id| {
             numeric_domain_sizes
                 .get(numeric_var_id)
                 .is_some_and(|&size| size > 1)
         })
         .collect::<Vec<_>>();
-    for node in &tree.nodes {
-        let super::comparison_expression::ComparisonTreeNode::Arith {
+    for node in tree.nodes() {
+        let ConditionNode::Arith {
             result_numeric_var_id,
             ..
         } = node

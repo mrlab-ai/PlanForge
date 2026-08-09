@@ -2,8 +2,47 @@ use super::*;
 
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericVariable,
+    AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
+    NumericVariable,
 };
+
+/// Variable 0 carries the comparison `x > one`, variable 1 is an ordinary
+/// propositional variable. Numerically, `x = 2.0` and the constant `one = 1.0`,
+/// so the comparison holds in the initial state.
+fn comparison_task() -> NumericRootTask {
+    NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        vec![
+            ExplicitVariable::new(
+                3,
+                "cmp".into(),
+                vec!["true".into(), "false".into(), "unknown".into()],
+                None,
+                COMPARISON_UNKNOWN_VAL,
+            ),
+            ExplicitVariable::new(2, "p".into(), vec!["p".into(), "not-p".into()], None, 0),
+        ],
+        vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+        ],
+        vec![],
+        vec![],
+        vec![COMPARISON_UNKNOWN_VAL, 0],
+        vec![2.0, 1.0],
+        vec![],
+        vec![],
+        vec![ComparisonAxiom::new(
+            0,
+            0,
+            1,
+            ComparisonOperator::GreaterThan,
+        )],
+        vec![],
+        ExplicitFact::new(0, 0),
+    )
+}
 
 #[test]
 fn comparison_projection_uses_concrete_value_mapping() {
@@ -16,51 +55,47 @@ fn comparison_projection_uses_concrete_value_mapping() {
 
 #[test]
 fn resolved_propositional_value_recomputes_comparison_axioms_from_numeric_state() {
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![ExplicitVariable::new(
-            3,
-            "cmp".into(),
-            vec!["true".into(), "false".into(), "unknown".into()],
-            None,
-            2,
-        )],
-        vec![
-            NumericVariable::new(
-                "x".into(),
-                planforge_sas::numeric_task::NumericType::Regular,
-                None,
-            ),
-            NumericVariable::new(
-                "one".into(),
-                planforge_sas::numeric_task::NumericType::Constant,
-                None,
-            ),
-        ],
-        vec![],
-        vec![],
-        vec![2],
-        vec![2.0, 1.0],
-        vec![],
-        vec![],
-        vec![ComparisonAxiom::new(
-            0,
-            0,
-            1,
-            ComparisonOperator::GreaterThan,
-        )],
-        vec![],
-        ExplicitFact::new(0, 0),
-    );
+    let task = comparison_task();
 
-    let tree = ComparisonTree::from_task(&task, 0).unwrap();
-
-    let tree_by_var = vec![Some(0)];
-    let tree_lens = vec![comparison_tree_numeric_len(&tree)];
-    let concrete_val =
-        resolved_propositional_value(0, 2, &[2.0, 1.0], &[tree], &tree_by_var, &tree_lens, None)
-            .unwrap();
+    // The stored value is "not yet derived", so the comparison has to be
+    // recomputed from the numeric state: x = 2.0 > one = 1.0.
+    let concrete_val = resolved_propositional_value(
+        0,
+        COMPARISON_UNKNOWN_VAL,
+        &[2.0, 1.0],
+        task.numeric_conditions(),
+        None,
+    )
+    .unwrap();
 
     assert_eq!(concrete_val, COMPARISON_TRUE_VAL);
+}
+
+#[test]
+fn resolved_propositional_value_prefers_supplied_comparison_values() {
+    let task = comparison_task();
+
+    // A supplied comparison value wins over the numeric state, which on its
+    // own would yield COMPARISON_TRUE_VAL.
+    let concrete_val = resolved_propositional_value(
+        0,
+        COMPARISON_UNKNOWN_VAL,
+        &[2.0, 1.0],
+        task.numeric_conditions(),
+        Some(&[Some(COMPARISON_FALSE_VAL)]),
+    )
+    .unwrap();
+
+    assert_eq!(concrete_val, COMPARISON_FALSE_VAL);
+}
+
+#[test]
+fn resolved_propositional_value_passes_through_ordinary_variables() {
+    let task = comparison_task();
+
+    // Variable 1 carries no comparison, so its stored value is returned as is.
+    let concrete_val =
+        resolved_propositional_value(1, 1, &[2.0, 1.0], task.numeric_conditions(), None).unwrap();
+
+    assert_eq!(concrete_val, 1);
 }

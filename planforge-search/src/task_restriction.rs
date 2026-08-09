@@ -10,8 +10,6 @@ use planforge_sas::numeric_task::{
 use planforge_sas::utils::float_tolerance;
 use tracing::info;
 
-use crate::evaluation::domain_abstractions::comparison_expression::ComparisonTree;
-
 #[derive(Debug)]
 pub struct RestrictedTask {
     task: NumericRootTask,
@@ -208,12 +206,9 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
     };
 
     let mut root_var_ids = BTreeSet::new();
-    for comparison_axiom_id in 0..task.comparison_axioms().len() {
-        let tree = ComparisonTree::from_task(task, comparison_axiom_id).map_err(|e| {
-            anyhow::anyhow!("failed to inspect comparison axiom {comparison_axiom_id}: {e:?}")
-        })?;
-        root_var_ids.insert(tree.left_numeric_var_id);
-        root_var_ids.insert(tree.right_numeric_var_id);
+    for condition in task.numeric_conditions().iter() {
+        root_var_ids.insert(condition.left_numeric_var_id());
+        root_var_ids.insert(condition.right_numeric_var_id());
     }
 
     let mut root_exprs = BTreeMap::new();

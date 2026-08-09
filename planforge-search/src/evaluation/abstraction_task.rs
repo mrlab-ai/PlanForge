@@ -2,6 +2,9 @@ use std::cell::{Ref, RefMut};
 
 use anyhow::{Context, Result, ensure};
 use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
+use std::sync::Arc;
+
+use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericType,
     NumericVariable, Operator,
@@ -51,6 +54,10 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
 
     fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
         self.base.comparison_axioms()
+    }
+
+    fn numeric_conditions(&self) -> &Arc<NumericConditions> {
+        self.base.numeric_conditions()
     }
 
     fn axioms(&self) -> &Vec<PropositionalAxiom> {

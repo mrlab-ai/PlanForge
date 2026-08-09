@@ -20,7 +20,7 @@ use ordered_float::NotNan;
 use planforge_sas::numeric_task::ExplicitFact;
 use planforge_sas::utils::float_tolerance;
 
-use crate::evaluation::domain_abstractions::comparison_expression::Interval;
+use planforge_sas::utils::interval::Interval;
 
 const EPSILON: f64 = 1e-9;
 const ABSTRACT_OPERATOR_REGION_HASH: usize = usize::MAX;

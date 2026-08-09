@@ -9,16 +9,14 @@
 use std::collections::HashMap;
 
 use planforge_sas::{
+    numeric_conditions::CompOp,
     numeric_task::{AbstractNumericTask, ExplicitFact, NumericType},
-    utils::linear_effects::linearize_numeric_var,
+    utils::{interval::Interval, linear_effects::linearize_numeric_var},
 };
 
 use super::{NumericFlaw, can_split_numeric_var, numeric_requirement_for_comparison_fact};
 pub(super) use crate::evaluation::domain_abstractions::additive_numeric_views::numeric_effect_deltas;
-use crate::evaluation::domain_abstractions::{
-    comparison_expression::{CompOp, Interval},
-    domain_abstraction::{ComparisonAxiomIndex, NumericPartitions},
-};
+use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
 
 /// Backward-direction split helper for deviation flaws.
 ///
@@ -68,13 +66,12 @@ pub(super) fn dependent_numeric_flaws_backward(
     task: &dyn AbstractNumericTask,
     deltas: &HashMap<usize, Vec<f64>>,
     partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
     fact: &ExplicitFact,
     numeric_state: &[f64],
     step: usize,
 ) -> Vec<NumericFlaw> {
     if let Some((numeric_var_id, required_interval)) =
-        numeric_requirement_for_comparison_fact(task, comparison_index, fact)
+        numeric_requirement_for_comparison_fact(task, fact)
     {
         let Some(&concrete_value) = numeric_state.get(numeric_var_id) else {
             return Vec::new();
@@ -89,37 +86,28 @@ pub(super) fn dependent_numeric_flaws_backward(
         );
     }
 
-    target_centered_linear_comparison_flaws(
-        task,
-        deltas,
-        partitions,
-        comparison_index,
-        fact,
-        numeric_state,
-        step,
-    )
+    target_centered_linear_comparison_flaws(task, deltas, partitions, fact, numeric_state, step)
 }
 
 fn target_centered_linear_comparison_flaws(
     task: &dyn AbstractNumericTask,
     deltas: &HashMap<usize, Vec<f64>>,
     partitions: &NumericPartitions,
-    comparison_index: &ComparisonAxiomIndex,
     fact: &ExplicitFact,
     numeric_state: &[f64],
     step: usize,
 ) -> Vec<NumericFlaw> {
-    let Some(tree) = comparison_index.comparison_tree(fact.var()) else {
+    let Some(tree) = task.numeric_conditions().for_var(fact.var()) else {
         return Vec::new();
     };
-    let Ok(left) = linearize_numeric_var(task, tree.left_numeric_var_id) else {
+    let Ok(left) = linearize_numeric_var(task, tree.left_numeric_var_id()) else {
         return Vec::new();
     };
-    let Ok(right) = linearize_numeric_var(task, tree.right_numeric_var_id) else {
+    let Ok(right) = linearize_numeric_var(task, tree.right_numeric_var_id()) else {
         return Vec::new();
     };
     let expression = left.subtract(&right);
-    let Some(required_op) = required_comparison_op(tree.op, fact.value()) else {
+    let Some(required_op) = required_comparison_op(tree.op(), fact.value()) else {
         return Vec::new();
     };
 

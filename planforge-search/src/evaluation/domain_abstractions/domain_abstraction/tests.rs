@@ -1,9 +1,24 @@
 use super::*;
 
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planforge_sas::numeric_conditions::{CONDITION_FALSE, CONDITION_TRUE};
 use planforge_sas::numeric_task::{
-    ExplicitFact, Metric, NumericRootTask, NumericType, NumericVariable,
+    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
 };
+
+use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::COMPARISON_UNKNOWN_VAL;
+
+/// The propositional variable a comparison axiom writes: true / false /
+/// not-yet-derived, defaulting to the last.
+fn condition_variable(name: &str) -> ExplicitVariable {
+    ExplicitVariable::new(
+        3,
+        name.into(),
+        vec!["true".into(), "false".into(), "unknown".into()],
+        None,
+        COMPARISON_UNKNOWN_VAL,
+    )
+}
 
 #[test]
 fn comparison_tree_interval_evaluates_definitely_and_unknown() {
@@ -19,11 +34,11 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
     let task = NumericRootTask::new(
         4,
         Metric::new(true, None),
-        vec![],
+        vec![condition_variable("x0 < c1")],
         numeric_variables,
         vec![],
         vec![],
-        vec![],
+        vec![COMPARISON_UNKNOWN_VAL],
         vec![0.0, 10.0],
         vec![],
         vec![],
@@ -32,20 +47,24 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
         ExplicitFact::new(0, 0),
     );
 
-    let index = ComparisonAxiomIndex::from_task(&task).unwrap();
+    let conditions = task.numeric_conditions();
 
     // x0 in [0, 5], c1 is exactly 10
     let intervals = [Interval::closed(0.0, 5.0), Interval::singleton(10.0)];
 
-    // precondition var0==0 means comparison is true (we store !result)
-    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 0), &intervals));
-    assert!(index.precondition_is_contradicted(&ExplicitFact::new(0, 1), &intervals),);
+    // Every value of x0 is below c1, so requiring the comparison to hold is
+    // satisfiable and requiring it to fail is not.
+    let requires_true = ExplicitFact::new(0, CONDITION_TRUE);
+    let requires_false = ExplicitFact::new(0, CONDITION_FALSE);
+    let requires_unknown = ExplicitFact::new(0, COMPARISON_UNKNOWN_VAL);
+    assert!(!conditions.precondition_is_contradicted(&requires_true, &intervals));
+    assert!(conditions.precondition_is_contradicted(&requires_false, &intervals));
 
-    // Unknown case: x0 in [0, 20]
+    // Unknown case: x0 in [0, 20] straddles c1, so both outcomes remain possible.
     let intervals = [Interval::closed(0.0, 20.0), Interval::singleton(10.0)];
-    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 0), &intervals),);
-    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 1), &intervals),);
-    assert!(!index.precondition_is_contradicted(&ExplicitFact::new(0, 2), &intervals),);
+    assert!(!conditions.precondition_is_contradicted(&requires_true, &intervals));
+    assert!(!conditions.precondition_is_contradicted(&requires_false, &intervals));
+    assert!(!conditions.precondition_is_contradicted(&requires_unknown, &intervals));
 }
 
 #[test]
@@ -211,11 +230,11 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
     let task = NumericRootTask::new(
         4,
         Metric::new(true, None),
-        vec![],
+        vec![condition_variable("d2 == x0")],
         numeric_variables,
         vec![],
         vec![],
-        vec![],
+        vec![COMPARISON_UNKNOWN_VAL],
         vec![0.0; 3],
         vec![],
         vec![],
@@ -224,5 +243,12 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
         ExplicitFact::new(0, 0),
     );
 
-    let _ = ComparisonAxiomIndex::from_task(&task).unwrap();
+    // The derived variable is expanded into the condition's DAG instead of
+    // being read from the state, so the condition depends on x0 and x1 only.
+    let condition = task
+        .numeric_conditions()
+        .for_var(0)
+        .expect("var 0 carries the comparison's truth value");
+    assert_eq!(condition.regular_numeric_var_dependencies(), &[0, 1]);
+    assert_eq!(condition.required_numeric_len(), 3);
 }
